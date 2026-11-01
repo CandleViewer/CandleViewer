@@ -19,21 +19,22 @@ the anchored values, the default-deny pins and the mutations).
    cited line (G-AROW).
 3. **Gates.** One FAIL line per gate: G-RULED (the heading names the ruling and the list; the
    ruling's sentences verbatim, bold dropped), G-PENDING (BQ-0 … BQ-10 once each, the three the
-   ruling changed marked "RULED, changed", the other eight "ruled as the default"),
-   G-BOARDS (at most ten boards, twins at most a third, every board pending or drawn with its id
-   and PNG, the not-drawn paragraph), G-ARCH (the five archetype columns, every cell filled, the
-   ring table's archetypes), G-MAP (every `14` id exactly once; the reserved ids are exactly those
-   without a heading and the register's reserved screens; each row's Type equals the first word
-   of each id's Type line), G-FINDINGS (the rows equal the register's E47-D04 rows: ids, screens,
-   SC, status, remediation; each closed by an R-n of §1.4), G-RETAIN (every event class names a
-   destination that is never the body, and an announcement cell), G-SAFE (no initial target is a
-   destructive or committing control), G-CONTRAST (12 backgrounds incl. the brightest heatmap
-   cells and the canvas; ring-halo pair and edge at least 3:1 in every theme), G-NORM (`05` §3.4
-   item 11 carries every R-n of §1.4 and points here; the dead `05`:46 pointer is gone; the
-   "Cancel focused order" row binds `Ctrl+Delete`, never a bare `Esc`, BQ-4), G-HEUR,
-   G-WALK (at most ten items), G-OWNER (G-ledger owners are tickets or owners, never an agent),
-   G-UNMERGED, G-URL, G-UNTOUCHED (only this ticket's files, `05` and the boards differ from the
-   merge base with origin/main), G-BUDGET (600 spec lines, 150 hand-off lines), G-MUTLIST.
+   ruling changed marked "RULED, changed", the other eight "ruled as the default"), G-BOARDS (at
+   most ten boards, twins at most a third, every board pending or drawn with its id, its own PNG
+   and its own theme's gate, the not-drawn paragraph), G-ARCH (the five archetype columns, every
+   cell filled, the ring table's archetypes), G-MAP (every `14` id exactly once; the reserved ids
+   are exactly those without a heading and the register's reserved screens; each row's Type equals
+   the first word of each id's Type line), G-FINDINGS (the rows equal the register's E47-D04 rows:
+   ids, screens, SC, status, remediation; each closed by an R-n of §1.4), G-RETAIN (every event
+   class names a destination that is never the body, and an announcement cell), G-SAFE (no initial
+   target is a destructive or committing control), G-CONTRAST (12 backgrounds incl. the brightest
+   heatmap cells and the canvas; ring-halo pair and edge at least 3:1 in every theme), G-NORM (`05`
+   §3.4 item 11 carries every R-n of §1.4 and points here; the dead `05`:46 pointer is gone; the
+   "Cancel focused order" row binds `Ctrl+Delete`, never a bare `Esc`, BQ-4), G-HEUR, G-WALK (at
+   most ten items), G-OWNER (G-ledger owners are tickets or owners, never an agent), G-UNMERGED,
+   G-URL, G-UNTOUCHED (only this ticket's files, `05`, the boards, their sheet kit, its MANIFEST
+   lines and `.prettierignore` entry differ from the merge base with origin/main), G-BUDGET (600
+   spec lines, 150 hand-off lines), G-MUTLIST.
 4. **Pins (G-RULED-PIN).** A whole-document default-deny pin set over every unit of both documents
    (each heading, table row by its lead cell and prose line, by heading path and occurrence, with
    a line-shape tag per region) in `e47_d04_ruled_pins.txt`. Anchored values are cut out of the
@@ -74,11 +75,18 @@ TOOL_REL = "docs/design/_tools/e47_d04_focus_model_audit.py"
 PIN_REL = "docs/design/_tools/e47_d04_ruled_pins.txt"
 NORM_REL = "docs/plan/05-accessibility-standard.md"  # §3.4 item 11 is edited by this PR (BQ-2)
 OWN = (SPEC_REL, HAND_REL, TOOL_REL, PIN_REL, NORM_REL)
-OWN_BOARDS = re.compile(r"docs/design/E47/img/E47-D04-\d\d-[a-z0-9-]+\.png")
+OWN_BOARDS = re.compile(
+    r"docs/design/E47/img/E47-D04-\d\d-[a-z0-9-]+\.png|\.prettierignore"
+    r"|docs/design/_tools/sheets/(?:e47-d04/[A-Za-z0-9._/-]+|MANIFEST\.sha256)"
+)
 DRAWN_CELL = re.compile(
     r"drawn: board id `[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`, "
-    r"`docs/design/E47/img/E47-D04-(?P<nn>\d\d)-(?P<slug>[a-z0-9-]+)\.png` \(\d+ × \d+\)"
+    r"`docs/design/E47/img/E47-D04-(?P<nn>\d\d)-(?P<slug>[a-z0-9-]+)\.png` \(\d+ × \d+\), "
+    r"\d+ frames?, [\d,]+ shapes / [\d,]+ text nodes; (?P<gate>dark|light|high-contrast) gate PASS "
+    r"\((?:own [\d,]+ px, other [\d,]+ px|hc primary [\d,]+ px, light [\d,]+ px)\)"
 )
+# a drawn cell's gate is its row's theme
+GATE_OF = {"dark": "dark", "light": "light", "hc": "high-contrast"}
 PENDING_CELL = "pending: drawn later in this PR"
 SPEC_BUDGET = 600
 HAND_BUDGET = 150
@@ -531,8 +539,9 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-BOARDS",
         "spec",
         "## 0.",
-        "| dark  | pending: drawn later in this PR       |",
-        "| dark  | —       |",
+        "drawn: board id `77692e72-cc05-8095-8008-e0bdca9b90f9`, "
+        "`docs/design/E47/img/E47-D04-01-landmarks-ring.png`",
+        "drawn",
     ),
     Mutation(
         "M-2",
@@ -958,6 +967,8 @@ def g_boards(t: Texts) -> list[Finding]:
             drawn and name and (drawn["nn"], drawn["slug"]) == name.groups()
         ):
             bad.append(f"board {r[0]} is neither pending nor drawn")
+        elif drawn and drawn["gate"] != GATE_OF[r[3]]:
+            bad.append(f"board {r[0]}'s drawn cell names another theme's gate")
     if not any(
         ln.startswith("**Not drawn (the text is binding)**") for ln in body(t.spec, "## 0.")
     ):
