@@ -617,8 +617,10 @@ index alone, removing nothing.
   `pw-browsers-<runner OS>-<Playwright version from the lockfile>`, with no `restore-keys`, so a
   Playwright bump starts a cold cache. The step summary names the key and says hit or miss: both
   run `install-deps` first, once and bound like a download (each bound kills the command's whole
-  process group, `sudo`'s `apt-get` included, TERM then KILL 10 s later, `PW_KILL_GRACE`; exit
-  124), and a hit stops there; a miss then runs
+  process group, TERM then KILL 10 s later, `PW_KILL_GRACE`; exit 124; the root `apt-get` dies
+  only if `sudo` relays the TERM and `apt-get` honours it, since the runner user's KILL cannot
+  reach a root process, and the vr font step's lock wait backstops one that outlasts it), and a
+  hit stops there; a miss then runs
   the plain `install chromium` and saves the cache in its own step, so a cold run that later fails
   or runs long still seeds it. The system-deps step is optional on the hosted image (its libraries
   are already installed): when it fails the job logs a `::warning::` with the exit code and the
@@ -656,7 +658,8 @@ index alone, removing nothing.
   `fonts-inter` or `fonts-jetbrains-mono` at the versions it pins (noble's release pocket), or
   fontconfig has no `Inter` or `JetBrains Mono` family after the install, so the shard would draw
   the token families in a substitute and fail every cell. Before each `apt-get` the step waits up to
-  120 s for apt's lists lock and dpkg's locks (`sudo fuser`, a warning names the seconds waited;
+  120 s for apt's lists lock, dpkg's locks and the archives lock (`sudo fuser`, a warning names
+  the seconds waited, and another says when `fuser` is missing and the wait is skipped;
   `DPkg::Lock::Timeout` covers only dpkg's), then tries `update` and `install` three times each,
   20 s apart, with a warning per failed try; a lock still held after 120 s fails with this code and
   says so. A held lock is usually an `apt-get` an earlier step left: `playwright_browsers.sh` kills

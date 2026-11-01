@@ -24,6 +24,9 @@
 # signal the root `apt-get` that install-deps starts, so that `apt-get` outlived the bound and held
 # /var/lib/apt/lists/lock through the vr job's font step (CI-A11Y-008). Sent from outside the group,
 # the TERM is relayed by `sudo` to its `apt-get`. A bound that fires exits 124, as `timeout` did.
+# The KILL after the grace cannot reach a root process (EPERM from the runner user), so the real
+# apt-get dies only if `sudo` relays the TERM and apt-get honours it; when it outlasts that, the vr
+# job's font step still waits up to 120 s for apt's locks before its own apt-get (CI-A11Y-008).
 set -euo pipefail
 
 summary=${GITHUB_STEP_SUMMARY:-/dev/null}
@@ -34,10 +37,20 @@ kill_grace=${PW_KILL_GRACE:-10}
 fail() {
   msg="CI-A11Y-005: $* - Playwright browser setup failed; re-run the job, never change a budget"
   echo "::error::$msg" >&2
+  drop_errf
   exit 1
 }
 
-[[ "$attempt_timeout" =~ ^[0-9]+$ ]] || fail "PW_INSTALL_TIMEOUT must be whole seconds"
+# The install's stderr file goes when the script ends, removed by name here and never by an EXIT
+# trap: every subshell inherits that trap until it resets it, and the bound's watchdog, killed in that
+# window when the command ends first, ran it and unlinked the stderr it was meant to keep (#5275).
+errf=""
+drop_errf() {
+  if [ -n "$errf" ]; then rm -f "$errf"; fi
+}
+
+# 0 would fire the bound at once (`read -t 0` returns immediately), so the bound is at least 1 s.
+[[ "$attempt_timeout" =~ ^[1-9][0-9]*$ ]] || fail "PW_INSTALL_TIMEOUT must be whole seconds, at least 1"
 [[ "$kill_grace" =~ ^[0-9]+$ ]] || fail "PW_KILL_GRACE must be whole seconds"
 [ "${#backoff[@]}" -gt 0 ] || fail "PW_BACKOFF is empty"
 for wait_s in "${backoff[@]}"; do
@@ -52,16 +65,22 @@ pause() {
 
 # bounded <command...>: runs the command in its own session and process group, and kills the whole
 # group when it outlives attempt_timeout: TERM, then KILL once kill_grace seconds pass with any of
-# the group left. Returns the command's status, or 124 when the bound fired.
+# the group left. Returns the command's status, or 124 when the bound sent its TERM.
+# Never enable job control (`set -m`) here: a background job would then lead its own group, `setsid`
+# would fork, and $! would not be the command's group. `-w` keeps the command's status in that case.
 bounded() {
   local pid watchdog fired rc=0
   fired=$(mktemp)
-  setsid "$@" &
+  setsid -w "$@" &
   pid=$!
   (
     pause "$attempt_timeout"
-    echo fired >"$fired"
+    # "firing" before the TERM, so the parent never reaps the leader without giving the group its
+    # grace; "fired" only once the TERM reached the group, so a command that ended by itself in the
+    # same instant keeps its own status.
+    echo firing >"$fired"
     kill -TERM -- "-$pid" 2>/dev/null || exit 0
+    echo fired >"$fired"
     for ((t = 0; t < kill_grace; t++)); do
       kill -0 -- "-$pid" 2>/dev/null || exit 0
       pause 1
@@ -74,7 +93,7 @@ bounded() {
     # The leader is gone; the watchdog gives the rest of the group (sudo relaying the TERM to its
     # apt-get) its grace, then kills what is left.
     wait "$watchdog" 2>/dev/null || true
-    rc=124
+    if [ "$(cat "$fired")" = fired ]; then rc=124; fi
   else
     kill "$watchdog" 2>/dev/null || true
     wait "$watchdog" 2>/dev/null || true
@@ -107,7 +126,6 @@ case "${1:-}" in
       state=miss
     fi
     errf=$(mktemp)
-    trap 'rm -f "$errf"' EXIT
     # run_logged <label> <command...>: bounded run; stderr goes to $errf, and a failure prints its last
     # lines in a log group. Sets cause to a one-line reason.
     run_logged() {
@@ -156,6 +174,7 @@ case "${1:-}" in
       fi
     fi
     echo "- Playwright browsers: cache key \`$key\`, cache $state (playwright $want)" >>"$summary"
+    drop_errf
     ;;
   *) fail "usage: playwright_browsers.sh version|install" ;;
 esac

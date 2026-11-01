@@ -99,7 +99,9 @@ def _installs(env: dict[str, str]) -> list[str]:
 
 
 def _downloads(env: dict[str, str]) -> list[str]:
-    return [c for c in _installs(env) if not c.startswith("exec playwright install-deps")]
+    return [
+        c for c in _installs(env) if not c.startswith("exec playwright install-deps")
+    ]
 
 
 def _summary(env: dict[str, str]) -> str:
@@ -190,15 +192,25 @@ def test_download_always_fails_ends_with_the_code_naming_the_download(
     assert len(_downloads(env)) == 5
 
 
-@pytest.mark.parametrize("var", ["PW_INSTALL_TIMEOUT", "PW_KILL_GRACE"])
-def test_the_bound_and_its_grace_are_whole_seconds(env: dict[str, str], var: str) -> None:
+@pytest.mark.parametrize(
+    ("var", "value"),
+    [
+        ("PW_INSTALL_TIMEOUT", "soon"),
+        ("PW_INSTALL_TIMEOUT", "0"),
+        ("PW_KILL_GRACE", "soon"),
+    ],
+)
+def test_the_bound_and_its_grace_are_whole_seconds(
+    env: dict[str, str], var: str, value: str
+) -> None:
+    # A bound of 0 would fire at once (`read -t 0`), so it is refused like a non-number.
     bad = _run(
         env,
         "install",
         PW_CACHE_KEY=KEY,
         PW_CACHE_HIT="false",
         PW_VERSION=VERSION,
-        **{var: "soon"},
+        **{var: value},
     )
     assert bad.returncode == 1 and "CI-A11Y-005" in bad.stderr and var in bad.stderr
     assert _installs(env) == []
@@ -219,7 +231,9 @@ def _alive(pid: int) -> bool:
     return state != "Z"
 
 
-def test_the_bound_kills_the_whole_group_of_a_stuck_install_deps(env: dict[str, str]) -> None:
+def test_the_bound_kills_the_whole_group_of_a_stuck_install_deps(
+    env: dict[str, str],
+) -> None:
     # #5275: the orphaned root apt-get. A child that ignores TERM outlives its parent's death; the
     # bound kills it with the group, so nothing is left holding the apt lists lock.
     if not shutil.which("setsid"):
@@ -246,7 +260,9 @@ def test_the_bound_kills_the_whole_group_of_a_stuck_install_deps(env: dict[str, 
     assert not (Path(env["FAKE"]) / "sleeps.log").exists()
 
 
-def test_a_stuck_download_is_killed_after_its_bound_and_retried(env: dict[str, str]) -> None:
+def test_a_stuck_download_is_killed_after_its_bound_and_retried(
+    env: dict[str, str],
+) -> None:
     r = _run(
         env,
         "install",
@@ -265,10 +281,19 @@ def test_a_stuck_download_is_killed_after_its_bound_and_retried(env: dict[str, s
 def test_a_bounded_command_runs_in_its_own_process_group() -> None:
     text = SCRIPT.read_text()
     code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
-    assert 'setsid "$@" &' in code
+    assert 'setsid -w "$@" &' in code
     assert 'kill -TERM -- "-$pid"' in code and 'kill -KILL -- "-$pid"' in code
     # coreutils timeout signals only its own group, which sudo ignores (#5275).
     assert not re.search(r"\btimeout\b", code)
+
+
+def test_the_stderr_file_is_never_removed_by_an_exit_trap() -> None:
+    # #5275 review: the watchdog subshell, killed before it reset the inherited EXIT trap, ran it and
+    # unlinked the install's stderr, so the cause was intermittently "no stderr output".
+    text = SCRIPT.read_text()
+    code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+    assert not re.search(r"\btrap\b", code)
+    assert code.count("drop_errf") == 3  # the definition, fail() and the install's end
 
 
 def test_failed_deps_on_a_miss_warns_then_downloads_with_the_cause_in_the_summary(

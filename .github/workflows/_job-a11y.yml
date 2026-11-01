@@ -386,8 +386,15 @@ jobs:
           # 2 s, before each apt-get; then try it three times, 20 s apart, a warning per failure.
           apt_locks=(/var/lib/apt/lists/lock /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend
             /var/cache/apt/archives/lock)
+          # Without fuser the wait is skipped, loudly; DPkg::Lock::Timeout and the retries remain.
+          have_fuser=1
+          if ! command -v fuser >/dev/null; then
+            have_fuser=""
+            echo "::warning::CI-A11Y-008 fuser is missing, so the step does not wait for the apt lock"
+          fi
           wait_for_apt() {
             local waited=0
+            [ -n "$have_fuser" ] || return 0
             while sudo fuser "${apt_locks[@]}" >/dev/null 2>&1; do
               if [ "$waited" -ge 120 ]; then
                 fail "the apt lock was still held after 120 s before the pinned fonts"
