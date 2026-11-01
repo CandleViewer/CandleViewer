@@ -20,3 +20,15 @@ describe("candle-series bench: 5k and 100k bars, pan and feed frames", () => {
     expect(bench.allocationsSinceWarm).toBe(0);
   });
 });
+
+describe("candle-series bench: a theme switch", () => {
+  it("re-resolves the palette with no upload and still draws twice", () => {
+    const gl = new FakeGl();
+    const bench = new CandleSeriesBench(5_000, gl);
+    bench.backend.takeUploadedBytes();
+    const writes = gl.writes.length;
+    for (let f = 1; f <= 40; f += 1) bench.switchTheme(f * 16);
+    expect([gl.writes.length - writes, bench.backend.takeUploadedBytes()]).toEqual([0, 0]);
+    expect([bench.backend.trace.draws, bench.allocationsSinceWarm]).toEqual([2, 0]);
+  });
+});

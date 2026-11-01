@@ -68,8 +68,10 @@ void main() {
     y0 = yOf(a_ohlc.x);
     y1 = yOf(a_ohlc.w);
     if (dir >= 2) {
-      float tall = u_geom[0].w < 8.0 ? h : 2.0 * h;
-      if (dir == 3) w = max(w, 3.0 * h);
+      // D06 §9: a doji is 2 hairlines tall (1 below 8 px); a zero-range bar 2 hairlines always,
+      // max(body, roundHalfUp(3 dpr)) wide.
+      float tall = dir == 3 || u_geom[0].w >= 8.0 ? 2.0 * h : h;
+      if (dir == 3) w = max(w, floor(3.0 * u_geom[1].x + 0.5));
       y0 = floor(y0 - tall * 0.5 + 0.5);
       y1 = y0 + tall;
       v_color = u_palette[2];
@@ -94,7 +96,7 @@ void main() {
   gl_Position = vec4(p.x / u_viewport.x * 2.0 - 1.0, 1.0 - p.y / u_viewport.y * 2.0, 0.0, 1.0);
 }`,
   fragment: `#version 300 es
-precision mediump float;
+precision highp float; // u_geom is shared with the vertex stage: one precision (ESSL 3.00 link)
 uniform vec4 u_geom[2];
 in vec4 v_color;
 in vec4 v_fill;

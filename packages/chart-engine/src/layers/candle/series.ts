@@ -3,8 +3,7 @@
 // It owns the two batch blocks the submit loop binds per batch: the part and the ring's (head,
 // mask, length), the per-frame geometry and the palette, written in place (no per-frame
 // allocation). A theme without a candle token makes it undrawable (BQ-4), never a fallback colour.
-import type { AttributeLayout } from "../../gl/buffers.js";
-import type { BatchUniforms } from "../../gl/submit.js";
+import type { AttributeLayout, BatchUniforms } from "../../scene/gpu-types.js";
 import type { SceneGraph } from "../../scene/graph.js";
 import { PROGRAM } from "../../scene/instance-layout.js";
 import { type HostContext, type HostDeps, type HostedPlugin, SeriesHost } from "../host.js";

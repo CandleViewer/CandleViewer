@@ -76,8 +76,11 @@ export function candleRect(
     y0 = projectRel(k, o - tickBase);
     y1 = projectRel(k, c - tickBase);
     if (dir === CANDLE_DIR.doji || dir === CANDLE_DIR.zeroRange) {
-      const tall = (geom[GEOM.spacing] ?? 0) < 8 ? hair : 2 * hair;
-      if (dir === CANDLE_DIR.zeroRange) w = Math.max(w, 3 * hair);
+      // D06 §9: a doji is 2 hairlines tall (1 below 8 px); a zero-range bar 2 hairlines always,
+      // max(body, roundHalfUp(3 dpr)) wide.
+      const zero = dir === CANDLE_DIR.zeroRange;
+      const tall = zero || (geom[GEOM.spacing] ?? 0) >= 8 ? 2 * hair : hair;
+      if (zero) w = Math.max(w, Math.floor(3 * (geom[GEOM.dpr] ?? 1) + 0.5));
       y0 = Math.floor(y0 - tall * 0.5 + 0.5);
       y1 = y0 + tall;
     }
