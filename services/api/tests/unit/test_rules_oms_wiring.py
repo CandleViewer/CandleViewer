@@ -161,6 +161,38 @@ async def test_rule_action_records_never_carry_a_parameter_value_a_figure_or_a_c
     }  # fmt: skip
 
 
+async def test_audit_fields_map_each_id_of_the_request_to_its_own_field() -> None:
+    """24 §15.5: each id a record names comes from its own field of the request, with no two
+    alike here (rule, version, `ir_hash`, owner, armer, instance, the account the action targets),
+    so a field read from another shows; the record's `after_state` carries each under its name."""
+    rule, armer, run = str(uuid.UUID(int=0x71)), str(uuid.UUID(int=0xA7)), uuid.UUID(int=0x81)
+    target = uuid.UUID(int=0xB7)  # the action's account, not the instance's
+    scope = RuleScope.model_validate({"level": "account", "account_ids": [str(ACCOUNT)]})
+    instance = ScopeInstanceRef(f"ETHUSDT@{ACCOUNT}", "ETHUSDT", ACCOUNT)
+    action = Action(node_id="n9", type="cancel_order", params={})
+    req = action_request(
+        scope, OWNER, instance, action_type="cancel_order", payload=action, rule_id=rule,
+        version=5, ir_hash="9e" * 32, run_id=run, armed_by=armer,
+    )  # fmt: skip
+    mapped = audit_fields(req, account_id=target, dedupe_key="5d" * 32, blocked_by="cap")
+    assert mapped == ActionAuditFields(
+        rule_id=rule, version=5, ir_hash="9e" * 32, run_id=run, node_id="n9",
+        action_type="cancel_order", scope_instance=f"ETHUSDT@{ACCOUNT}", account_id=target,
+        owner=OWNER, armed_by=armer, dedupe_key="5d" * 32, blocked_by="cap",
+    )  # fmt: skip
+    emitter = _Emitter()
+    await RuleActionAudit(emitter).blocked(mapped)
+    ((_, key, entry),) = emitter.records
+    assert key == "5d" * 32 and entry["actor_label"] == f"rule:{rule}@v5"
+    assert entry["after_state"] == {
+        "actor_type": "rule", "rule_id": rule, "version": 5, "ir_sha256": "9e" * 32,
+        "run_id": str(run), "node_id": "n9", "action_type": "cancel_order",
+        "scope_instance": f"ETHUSDT@{ACCOUNT}", "account_id": str(target),
+        "owner_user_id": str(OWNER), "owner_role": None, "armed_by_user_id": armer,
+        "armed_by_role": None, "dedupe_sha256": "5d" * 32, "blocked_by": "cap",
+    }  # fmt: skip
+
+
 async def test_the_input_snapshot_is_stored_with_decimals_as_text_and_never_logged() -> None:
     snapshot = {"close": Decimal("64123.750"), "rsi": Decimal("1E+1"), "armed": True,
                 "label": PLANTED[2], "missing": None}  # fmt: skip
@@ -252,8 +284,9 @@ class _Events:
 # fmt: off
 async def test_partial_fire_pages_once_per_rule_per_episode_and_writes_a_system_event_each_time() -> None:  # noqa: E501 -- the plan's test name (#5000)
     """BQ-7: the CRITICAL `cv_page` line once per rule and kind per episode (the episode ends when
-    the rule's next fire ends with no partial outcome), one `critical` `system_events` row per
-    occurrence (component `rules`, a fixed message, the ids in `details`)."""
+    the rule's next fire ends with no partial outcome, for both kinds), one `critical`
+    `system_events` row per occurrence (component `rules`, a fixed message, the ids in
+    `details`)."""
     events, other = _Events(), str(uuid.UUID(int=9))
     alerts = RuleAlerts(events)
     occurrences = [
@@ -262,6 +295,8 @@ async def test_partial_fire_pages_once_per_rule_per_episode_and_writes_a_system_
         ("partial_fire", other, uuid.UUID(int=23), "a1"), ("settled", RULE, None, ""),
         ("partial_fire", RULE, uuid.UUID(int=24), "a1"),
         ("write_ahead_failed", RULE, uuid.UUID(int=25), "a4"),
+        ("write_ahead_failed", RULE, uuid.UUID(int=26), "a4"), ("settled", RULE, None, ""),
+        ("write_ahead_failed", RULE, uuid.UUID(int=27), "a2"),
     ]  # fmt: skip
     with capture_logs() as logs:
         for kind, rule, run, node in occurrences:
@@ -275,6 +310,7 @@ async def test_partial_fire_pages_once_per_rule_per_episode_and_writes_a_system_
         ("rules.partial_fire", other, str(uuid.UUID(int=23))),
         ("rules.partial_fire", RULE, str(uuid.UUID(int=24))),
         ("rules.write_ahead_failed", RULE, str(uuid.UUID(int=25))),
+        ("rules.write_ahead_failed", RULE, str(uuid.UUID(int=27))),
     ]
     assert {e["log_level"] for e in logs if e.get("cv_page")} == {"critical"}
     assert [(r.component, r.kind, r.severity) for r in events.rows] == [

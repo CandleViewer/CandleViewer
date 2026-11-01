@@ -3960,8 +3960,9 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "actions",
         ("reason",),
-        "Armed rule actions dropped, nothing sent, because the dispatch-time re-read of the rule's "
-        "row (24 Sec.11.5 check 1) failed: timeout (no answer within its bound) or store_error.",
+        "Rule check-1 reads that failed, one per fire at most: the dispatch-time re-read of the "
+        "rule's row (24 Sec.11.5 check 1), by reason: timeout (no answer within its bound) or "
+        "store_error.",
         "dashboard only",
         _L,
         "E35",

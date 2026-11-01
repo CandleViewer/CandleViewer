@@ -46,10 +46,10 @@ RUN_ROW = RunRow(
 
 class Store:
     """`RunRecords`: logs each write as it goes in; `fail` names the write that raises, `hang`
-    the one that never answers."""
+    the one that never answers (`hanging` is set once it waits)."""
 
     def __init__(self, *, fail: str | None = None, hang: str | None = None) -> None:
-        self.fail, self.hang = fail, hang
+        self.fail, self.hang, self.hanging = fail, hang, asyncio.Event()
         self.writes: list[str] = []
         self.runs: list[RunRow] = []
         self.events: list[EventRow] = []
@@ -58,6 +58,7 @@ class Store:
     async def _gate(self, write: str) -> None:
         self.writes.append(write)
         if write == self.hang:
+            self.hanging.set()
             await asyncio.Event().wait()
         if write == self.fail:
             raise RuntimeError(f"{write} refused for {PLANTED}")
@@ -80,11 +81,12 @@ class Audit:
     """`ActionAudit`: logs `rules.fired` and `rules.blocked` as `(verb, fields)`."""
 
     def __init__(self, *, fail: str | None = None, hang: str | None = None) -> None:
-        self.fail, self.hang = fail, hang
+        self.fail, self.hang, self.hanging = fail, hang, asyncio.Event()
         self.log: list[tuple[str, ActionAuditFields]] = []
 
     async def _gate(self, verb: str, fields: ActionAuditFields) -> None:
         if verb == self.hang:
+            self.hanging.set()
             await asyncio.Event().wait()
         if verb == self.fail:
             raise OSError(f"audit refused for {PLANTED}")
@@ -165,10 +167,10 @@ async def test_action_not_sent_when_audit_write_fails() -> None:
 async def test_action_not_sent_when_a_write_outlasts_its_bound(
     write: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Each write has its own bound (`WRITE_AHEAD_TIMEOUT_S`, BQ-9): one that does not answer
+    """Each write has its own bound (`FIRE_RECORD_TIMEOUT_S`, BQ-9): one that does not answer
     within it stops the fire as a failure does. The bound is read at each write."""
-    assert writeahead.WRITE_AHEAD_TIMEOUT_S == 2.0
-    monkeypatch.setattr(writeahead, "WRITE_AHEAD_TIMEOUT_S", 0.0)
+    assert writeahead.FIRE_RECORD_TIMEOUT_S == 2.0
+    monkeypatch.setattr(writeahead, "FIRE_RECORD_TIMEOUT_S", 0.0)
     store, sent = Store(hang=write if write != "fired" else None), list[str]()
     audit = Audit(hang=write if write == "fired" else None)
     records = FireRecords(RUN_ROW, store, audit)
@@ -180,6 +182,25 @@ async def test_action_not_sent_when_a_write_outlasts_its_bound(
     kind = {"begin": "run", "append": "event", "fired": "audit"}[write]
     assert (failed.value.write, failed.value.cause) == (kind, "TimeoutError")
     assert "a2" not in sent
+
+
+@pytest.mark.parametrize("write", ["begin", "fired"])
+async def test_a_cancel_during_a_write_ahead_goes_on_as_a_cancel(write: str) -> None:
+    """A cancel aimed at the fire while a store or audit write waits is never taken for a failed
+    write: it goes on as a cancel, so neither the action's bound nor a stop is held by it, and
+    the hand-over never runs (C-2.18)."""
+    store = Store(hang=write if write == "begin" else None)
+    audit = Audit(hang=write if write == "fired" else None)
+    sent: list[str] = []
+    records = FireRecords(RUN_ROW, store, audit)
+    task = asyncio.create_task(records.admitted(_fields("a1"), _sender(sent, "a1")))
+    async with asyncio.timeout(GUARD_S):
+        await (store if write == "begin" else audit).hanging.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        async with asyncio.timeout(GUARD_S):
+            await task
+    assert task.cancelled() and sent == []
 
 
 async def test_a_retried_write_ahead_writes_one_audit_record(tmp_path: Path) -> None:
@@ -267,3 +288,15 @@ async def test_events_are_numbered_in_order_within_a_fire() -> None:
     unwritten = Store()
     await FireRecords(RUN_ROW, unwritten, Audit()).closed("ok", 0)
     assert unwritten.writes == []  # a fire that wrote nothing has no row to close
+    gaps = Store(fail="begin")  # a failed or late write spends its number: the next is `seq + 1`
+    spending = FireRecords(RUN_ROW, gaps, Audit())
+    with pytest.raises(WriteAheadFailed):
+        await spending.admitted(_fields("a1"), _sender([], "a1"))  # 1, its `begin` failed
+    gaps.fail = "append"
+    await spending.answered(_result("a1", "failed"))  # 2, the row's `begin` with it
+    with pytest.raises(WriteAheadFailed):
+        await spending.answered(_result("a2", "skipped"))  # 3, its `append` failed
+    gaps.fail = None
+    await spending.answered(_result("a3", "skipped"))  # 4
+    assert [(e.seq, e.node_ref) for e in gaps.events] == [(2, "a1"), (4, "a3")]
+    assert gaps.writes == ["begin", "begin", "append", "append"]

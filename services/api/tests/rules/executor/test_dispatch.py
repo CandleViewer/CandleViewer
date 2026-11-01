@@ -26,6 +26,7 @@ from candleviewer.rules.executor import dispatch
 from candleviewer.rules.executor.engine import ActionExecutor
 from candleviewer.rules.ir.models import Action, RuleScope
 from candleviewer.rules.manager import InMemoryRuleStore
+from candleviewer.rules.runner import EvalTick
 from candleviewer.rules.scope import ActionRequest, ScopeInstanceRef
 from candleviewer.rules.service import RulesService
 from candleviewer.settings import Settings
@@ -503,6 +504,56 @@ async def test_no_dispatch_runs_while_the_evaluator_is_off() -> None:
         await svc.stop(1.0)
 
 
+async def test_a_fire_hands_its_run_rows_facts_to_the_records(rig: DispatchRig) -> None:
+    """A fire carries its run row's facts from the tick (24 §11.5, 21 §3.4.3): the active version
+    it was evaluated under, the `trigger_reason` its trigger maps to and the metric values its
+    conditions saw, a decimal as its plain text."""
+    rid = await rig.add("armed")
+    row = await rig.row(rid)
+    row.versions[0].ir["trigger"] = {"type": "on_order_fill"}  # a trigger whose reason is not tick
+    await rig.fire(price="150.50", trigger="on_order_fill")
+    await rig.settle()
+    (run,) = rig.records.runs.values()
+    assert (run.rule_id, run.version_id, run.mode) == (rid, row.active_version_id, "armed")
+    assert (run.trigger_reason, dict(run.input_snapshot)) == ("fill", {"price": "150.5"})
+
+
+async def test_the_recheck_before_a_retry_runs_check_one_then_the_scope_recheck(
+    rig: DispatchRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`RulesService._recheck`, the hook `retry_once` runs before its retry (24 §11.9): with no
+    scope resolver, or a grant withdrawn since, it is `scope`; a row no longer armed, on another
+    `ir_hash` or unread is `mode_changed`, check 1 first; else nothing refuses (`None`)."""
+    rid = await rig.add("armed")
+    row = await rig.row(rid)
+    scope = RuleScope.model_validate(
+        {"level": "account", "account_ids": [str(A)], "symbols": ["BTCUSDT"]}
+    )
+    req = action_request(
+        scope, OWNER, ScopeInstanceRef(f"BTCUSDT@{A}", "BTCUSDT", A), rule_id=rid,
+        version=row.versions[0].version, ir_hash=row.versions[0].ir_hash,
+    )  # fmt: skip
+    recheck, resolver = rig.svc._recheck, rig.svc.scope_resolver
+    assert await recheck(req) is None
+    rig.svc.scope_resolver = None
+    assert await recheck(req) == "scope"  # no resolver: nothing passes the scope re-check
+    rig.svc.scope_resolver = resolver
+    rig.source.grants = [(B, True, False)]  # the grant on A is withdrawn
+    await rig.svc.refresh_scope(OWNER)
+    assert await recheck(req) == "scope"
+    assert await recheck(replace(req, ir_hash="f" * 64)) == "mode_changed"  # before the scope's
+    row.mode = "disabled"
+    assert await recheck(req) == "mode_changed"
+    row.mode = "armed"
+
+    async def unreadable(_rule_id: str) -> Any:
+        raise ConnectionError("the rule store is unreachable")
+
+    monkeypatch.setattr(rig.store, "get", unreadable)
+    assert await recheck(req) == "mode_changed"
+    assert rig.counted.reread() == {"store_error": 1}
+
+
 def _fire(
     run: int, *nodes: str, emit: Callable[[ActionRequest], Awaitable[bool]], rule: str = RULE
 ) -> dispatch.Fire:
@@ -697,6 +748,47 @@ async def test_the_audit_queue_drains_in_what_the_fire_queue_left_of_the_grace(
     monkeypatch.setattr(rig.audit_queue, "stop", audits)
     await rig.svc.stop(10.0)
     assert graces == [("fires", 10.0), ("audits", 7.0)]
+
+
+async def test_a_stop_cancelled_while_the_runner_ends_goes_on_to_the_caller(
+    rig: DispatchRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cancel aimed at `stop()`'s caller while the runner's task is still ending goes on to the
+    caller, never absorbed by the runner's stop, and ends both queues' workers at once too: no
+    `rule-dispatch*` task outlives the module (#5231's carry, the runner's
+    `suppress(CancelledError)`, under RC-02's rule)."""
+    reading, ending, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    every = rig.store.all
+
+    async def read_all() -> Any:
+        task = asyncio.current_task()
+        if task is not None and task.get_name() == "rule-runner":
+            reading.set()
+            try:
+                await asyncio.Event().wait()  # the tick's read, which the runner's stop cancels
+            finally:
+                ending.set()
+                await release.wait()  # the runner's task ends only once released
+        return await every()
+
+    monkeypatch.setattr(rig.store, "all", read_all)
+    runner = rig.runner._task
+    rig.runner.submit(EvalTick("on_price_update", "BTCUSDT"))
+    async with asyncio.timeout(GUARD_S):
+        await reading.wait()
+    stopping = asyncio.create_task(rig.svc.stop(GUARD_S))
+    async with asyncio.timeout(GUARD_S):
+        await ending.wait()  # the runner's task has its cancel and has not ended
+    stopping.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        async with asyncio.timeout(GUARD_S / 2):
+            await stopping
+    assert _dispatch_tasks() == [] and rig.svc._audits is None
+    release.set()
+    assert runner is not None
+    async with asyncio.timeout(GUARD_S):
+        await asyncio.wait({runner})
+    assert runner.cancelled()
 
 
 async def test_a_raise_execute_lets_through_is_logged_by_its_class_and_queue() -> None:

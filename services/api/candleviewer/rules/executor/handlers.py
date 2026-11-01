@@ -61,9 +61,19 @@ class Prepared:
 
 
 def prepared(request: Mapping[str, Any]) -> Prepared:
-    """`Prepared` for `request`, fingerprinted once, here (24 §11.9)."""
-    held = MappingProxyType(dict(request))
+    """`Prepared` for `request`, fingerprinted once, here (24 §11.9): a copy frozen at every depth
+    (each mapping read-only, each list a tuple), so no later change to the caller's request
+    reaches it, and its canonical form, so its fingerprint, is the request's."""
+    held = MappingProxyType({k: _frozen(v) for k, v in request.items()})
     return Prepared(held, request_sha256(held))
+
+
+def _frozen(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({k: _frozen(v) for k, v in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_frozen(v) for v in value)
+    return value
 
 
 class Handler(Protocol):

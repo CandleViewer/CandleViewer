@@ -9,7 +9,9 @@ refused for good as `native_sl` (24 §8.8 rule 5).
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import fields, replace
+from decimal import Decimal
 from typing import Any, get_args
 
 import pytest
@@ -24,10 +26,14 @@ from candleviewer.rules.executor.handlers import (
     HandlerTableError,
     Prepared,
     build_handlers,
+    prepared,
     refusal,
 )
+from candleviewer.rules.executor.keys import request_sha256
 from candleviewer.rules.ir.models import ActionType
 from candleviewer.rules.vocabulary.catalogue import ACTIONS, RETIRED_ACTIONS
+
+ACCOUNT = uuid.UUID(int=0xB1)
 
 #: 24 §11.5 "Actions that cannot run yet" and #5000's out-of-scope list: capability, binder.
 _OWNERS: dict[str, tuple[str, str | None]] = {
@@ -153,3 +159,25 @@ def test_widen_stop_is_refused_as_native_sl_never_unavailable() -> None:
     assert refusal(spec) == "native_sl"
     assert refusal(replace(spec, handler=_Bound())) == "native_sl"  # a binding changes nothing
     assert (spec.places_orders, spec.capability, spec.bound_by) == (False, "none", None)
+
+
+def test_prepared_keeps_a_frozen_copy_no_later_change_reaches() -> None:
+    """A request is built once and sent unchanged by every attempt (24 §11.9): `prepared` keeps a
+    copy frozen at every depth, so a later change to the caller's request, nested too, reaches
+    neither the request a retry sends nor its fingerprint, and the copy takes no change itself."""
+    source: dict[str, Any] = {
+        "symbol": "BTCUSDT", "stop": {"trigger": Decimal("62000")},
+        "legs": [{"qty": Decimal("0.010"), "account": ACCOUNT}],
+    }  # fmt: skip
+    prep = prepared(source)
+    assert prep.request_sha256 == request_sha256(source)
+    source["symbol"], source["stop"]["trigger"] = "ETHUSDT", Decimal("1")
+    source["legs"][0]["qty"] = Decimal("9")
+    source["legs"].append({"qty": Decimal("1")})
+    assert prep.request == {
+        "symbol": "BTCUSDT", "stop": {"trigger": Decimal("62000")},
+        "legs": ({"qty": Decimal("0.010"), "account": ACCOUNT},),
+    }  # fmt: skip
+    assert request_sha256(prep.request) == prep.request_sha256
+    with pytest.raises(TypeError):  # read-only at every depth
+        prep.request["stop"]["trigger"] = Decimal("2")

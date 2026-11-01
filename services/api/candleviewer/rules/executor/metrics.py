@@ -54,8 +54,9 @@ class ExecutorMetrics:
                 )
 
     def result(self, result: ActionResult) -> None:
-        """One action's result: by type and outcome, its duration, and its `blocked_by` (24
-        §11.9), which a `skipped` result after a stop never has."""
+        """One action's result: by type and outcome, its duration unless it is `skipped` (never
+        attempted, so never timed), and its `blocked_by` (24 §11.9), which a `skipped` result
+        after a stop never has."""
         action_type = _closed(result.action_type, _TYPES, "type")
         outcome = _closed(result.outcome, OUTCOMES, "result")
         reason = (
@@ -64,8 +65,9 @@ class ExecutorMetrics:
         if not self._series:
             return
         self._series["rule_actions_total"].labels(action_type, outcome).inc()
-        seconds = result.duration_us / 1_000_000
-        self._series["rule_action_duration_seconds"].labels(action_type).observe(seconds)
+        if outcome != "skipped":
+            seconds = result.duration_us / 1_000_000
+            self._series["rule_action_duration_seconds"].labels(action_type).observe(seconds)
         if reason is not None:
             self._series["rule_actions_blocked_total"].labels(reason).inc()
 

@@ -4,7 +4,7 @@ AC-14; C-2.9).
 `FireRecords` keeps one armed fire's records and its event `seq`, from 1: the run row with its
 first event in one write, then per action `action_start` and `rules.fired` before the hand-over, its
 `action_ok` or `action_fail` after it, a refusal's `action_fail` and `rules.blocked`, and the run
-row's close. Each write has its own bound (`WRITE_AHEAD_TIMEOUT_S`); a write that fails or outlasts
+row's close. Each write has its own bound (`FIRE_RECORD_TIMEOUT_S`); a write that fails or outlasts
 it raises `WriteAheadFailed`, naming the write and the cause's class alone (C-12.6), and a
 hand-over never runs after one. Nothing here retries, catches a cancel or logs the snapshot.
 """
@@ -30,7 +30,7 @@ from candleviewer.rules.executor.results import ActionResult
 
 #: Each write's own bound (BQ-9): the bound the rule-row read and the audit writer's callers use,
 #: inside the action's dispatch bound. Read at each write.
-WRITE_AHEAD_TIMEOUT_S: Final = 2.0
+FIRE_RECORD_TIMEOUT_S: Final = 2.0
 #: The `error_code` of an action whose write ahead failed: it was not sent (24 §11.5).
 WRITE_AHEAD_FAILED: Final = "write_ahead_failed"
 WriteKind = Literal["run", "event", "audit"]
@@ -115,7 +115,7 @@ class FireRecords:
         caused it, whose text may hold a value, is neither its cause nor its context."""
         failed: WriteAheadFailed | None = None
         try:
-            async with asyncio.timeout(WRITE_AHEAD_TIMEOUT_S):
+            async with asyncio.timeout(FIRE_RECORD_TIMEOUT_S):
                 await start()
         except Exception as exc:  # never `CancelledError`, which is no `Exception`
             failed = WriteAheadFailed(write, exc)

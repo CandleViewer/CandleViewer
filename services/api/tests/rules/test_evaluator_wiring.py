@@ -11,9 +11,11 @@ from pathlib import Path
 from typing import Any
 
 from candleviewer.app import create_app
+from candleviewer.rules.executor.metrics import ExecutorMetrics
 from candleviewer.rules.ir.models import MetricRef
 from candleviewer.rules.manager import Actor, InMemoryRuleStore
 from candleviewer.rules.runner import EvalTick, RuleEvaluationRunner
+from candleviewer.rules_oms_wiring import RuleActionAudit, RuleAlerts, RuleRunRecords
 from candleviewer.settings import Settings
 
 FIX = Path(__file__).parents[1] / "fixtures/rule_ir"
@@ -45,6 +47,21 @@ async def test_evaluator_not_constructed_when_flag_off() -> None:
         assert ctx.rules.runner is None
     finally:
         await ctx.rules.stop(1.0)
+
+
+def test_create_app_binds_the_executors_records_alerts_and_metrics() -> None:
+    """E35-T09: the composition root binds the action executor's records written ahead (the run
+    row and its events, `rules.fired` and `rules.blocked`), its alerts and its five series (24
+    §11.5, BQ-7, BQ-8). Unbound, every armed action would fail closed and nothing be counted."""
+    rules = create_app().state.app_context.rules
+    assert rules._records is not None
+    run_records, action_audit = rules._records
+    assert isinstance(run_records, RuleRunRecords) and isinstance(action_audit, RuleActionAudit)
+    assert isinstance(rules._alerts, RuleAlerts) and isinstance(rules._metrics, ExecutorMetrics)
+    assert set(rules._metrics._series) == {
+        "rule_actions_total", "rule_action_duration_seconds", "rule_actions_blocked_total",
+        "rule_dispatch_reread_failed_total", "rule_records_shed_total",
+    }  # fmt: skip
 
 
 async def test_create_rule_feed_snapshot_evaluator_records_result() -> None:
