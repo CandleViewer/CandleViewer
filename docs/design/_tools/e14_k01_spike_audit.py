@@ -90,6 +90,19 @@ SPEC_REL = "docs/plan/spikes/E14-K01.md"
 RESULTS_REL = "docs/plan/spikes/E14-K01-results.json"
 HARNESS_DIR = "docs/plan/spikes/E14-K01-harness/"
 HARNESS_JS = HARNESS_DIR + "harness.mjs"
+# post-merge, only these tool files may change in the one bundle that fixes them (G-SCOPE)
+BUNDLE_TOOLS = (
+    "docs/design/_tools/e09_d11_designqa_audit.py",
+    "docs/design/_tools/e12_d11_a11y_review_audit.py",
+    "docs/design/_tools/e14_d10_a11y_review_audit.py",
+    "docs/design/_tools/e14_k01_spike_audit.py",
+    "docs/design/_tools/e32_d07_handoff_audit.py",
+    "docs/design/_tools/e14_d12_handoff_audit.py",
+    "docs/design/_tools/e12_d12_handoff_audit.py",
+    "docs/design/_tools/e08_d13_handoff_audit.py",
+    "docs/design/_tools/e07_d01_storage_model_audit.py",
+)
+
 TOOL_REL = "docs/design/_tools/e14_k01_spike_audit.py"
 PINS_REL = "docs/design/_tools/e14_k01_ruled_pins.txt"
 P05_REL = "docs/plan/05-accessibility-standard.md"
@@ -1013,7 +1026,7 @@ def g_ruled(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
 def g_scope(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
     for p in ctx.changed:
         # post-merge, a fix to this tool may ship in one bundle with its sibling design tools
-        sibling = ctx.merged_spec is not None and p.startswith("docs/design/_tools/")
+        sibling = ctx.merged_spec is not None and p in BUNDLE_TOOLS
         own = p in OWN or p in (P05_REL, P14_REL) or p.startswith(HARNESS_DIR)
         if not own and not sibling:
             f.append(("G13-SCOPE", f"{p} is outside the edit set"))
@@ -1450,6 +1463,10 @@ MUTATIONS: list[tuple[str, Callable[[Ctx], Ctx]]] = [
     ),
     ("G12-RULED", lambda c: dataclasses.replace(c, spec=c.spec + "\n<!-- BQ-07 -->\n")),
     ("G13-SCOPE", lambda c: dataclasses.replace(c, changed=[*c.changed, "docs/plan/15-x.md"])),
+    (
+        "G13-SCOPE",
+        lambda c: dataclasses.replace(c, changed=[*c.changed, "docs/design/_tools/cvd_sim.py"]),
+    ),
     (
         "G14-EDITS",
         lambda c: dataclasses.replace(c, p14=_swap(c.p14, "`Alt+O` fib", "`Alt+F` fib")),

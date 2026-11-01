@@ -45,7 +45,7 @@ Gates (one mutation each in `--self-test`):
               lines.
   G-UNTOUCHED PR-1 mode: the tree differs from the merge-base only in this pack's files and `14`,
               and `14` equals the merge-base with the six lines applied by content. Post-merge
-              mode: `14` is untouched; a sibling design tool may change in the same bundle.
+              mode: `14` is untouched; only the listed bundle tools (BUNDLE_TOOLS) may change.
   G-TICKS     every evidence cite of the six `14` ticks resolves at the base: a `§n` to a heading
               of the named parent, a board to its board list, a row id to a table row (the ticks are
               a Texts field, so the self-test moves them in the tool and in `14` together).
@@ -97,6 +97,19 @@ BQ_TOTAL = 19
 SPEC_REL = "docs/design/E32/E32-D07.md"
 REVIEW_REL = "docs/design/E32/E32-D07-a11y.md"
 DECK_REL = "docs/design/E32/E32-D07-copy.json"
+# post-merge, only these tool files may change in the one bundle that fixes them (G-SCOPE)
+BUNDLE_TOOLS = (
+    "docs/design/_tools/e09_d11_designqa_audit.py",
+    "docs/design/_tools/e12_d11_a11y_review_audit.py",
+    "docs/design/_tools/e14_d10_a11y_review_audit.py",
+    "docs/design/_tools/e14_k01_spike_audit.py",
+    "docs/design/_tools/e32_d07_handoff_audit.py",
+    "docs/design/_tools/e14_d12_handoff_audit.py",
+    "docs/design/_tools/e12_d12_handoff_audit.py",
+    "docs/design/_tools/e08_d13_handoff_audit.py",
+    "docs/design/_tools/e07_d01_storage_model_audit.py",
+)
+
 TOOL_REL = "docs/design/_tools/e32_d07_handoff_audit.py"
 PIN_REL = "docs/design/_tools/e32_d07_ruled_pins.txt"
 PLAN14_REL = "docs/plan/14-screens-catalogue.md"
@@ -1312,7 +1325,10 @@ VERSION_LEVER = "lever:version-at-head"  # self-test only: judge G-VERSION at or
 def g_version(t: Texts) -> list[Finding]:
     out: list[Finding] = []
     if post_merge(t) and VERSION_LEVER not in t.env.memo:
-        return out  # post-merge, every cite is judged at its frozen base, not at the moving main
+        # post-merge, every cite is judged at its frozen base (G-CITE), not at the moving main
+        return [
+            Finding("NOTE", "G-VERSION", "post-merge: judged at the frozen base, nothing further")
+        ]
     seen: set[tuple[str, int]] = set()
     for doc, key, a, b, n in all_cites(t):
         base = t.env.lines(t.env.base, PATHS[key])
@@ -1527,7 +1543,7 @@ def g_untouched(t: Texts) -> list[Finding]:
     if t.changed is None:
         return one("G-UNTOUCHED", ["git did not list the changed paths"])
     for p in t.changed:
-        sibling = post_merge(t) and p.startswith("docs/design/_tools/")  # a bundled tool fix
+        sibling = post_merge(t) and p in BUNDLE_TOOLS  # a bundled tool fix
         if p not in OWN_PATHS and not sibling:
             bad.append(f"{p} differs from the merge-base (not this pack's)")
     base14 = t.env.show(t.env.mb, PLAN14_REL) or ""
@@ -1814,7 +1830,7 @@ def frozen_base_problems(t: Texts) -> list[str]:
     memo[f"show:{sim}:{PLAN14_REL}"] = t.plan14
     moved = head_gone(replace(t, env=Env(t.env.base, sim, memo)))
     moved.env.memo.pop(VERSION_LEVER, None)
-    if g_version(moved):
+    if [x for x in g_version(moved) if x.level != "NOTE"]:
         out.append("post-merge G-VERSION follows the moving main, not the recorded base")
     if compute(moved)["SHA:base"] != t.env.base[:10] or not t.env.base.startswith(BASE):
         out.append("the cite base followed the merge-base, not the recorded base")
@@ -1831,6 +1847,11 @@ def deck_edit(t: Texts) -> Texts:
     k = "d05:sl.loosen.refused"
     data["entries"][k]["text"] = data["entries"][k]["text"] + " "
     return replace(t, deck=json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+
+
+def sibling_tool_changed(t: Texts) -> Texts:
+    """An unrelated file under the tools directory is not in the bundle allow-list."""
+    return replace(t, changed=[*(t.changed or []), "docs/design/_tools/cvd_sim.py"])
 
 
 def parent_changed(t: Texts) -> Texts:
@@ -1901,6 +1922,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation("G-OPENROWS", "widen a parent's range past its last row",
              subst("| G-1..G-23 ", "| G-1..G-24 ")),
     Mutation("G-UNTOUCHED", "edit a parent in the same tree", parent_changed),
+    Mutation("G-UNTOUCHED", "an unrelated tool file", sibling_tool_changed),
     Mutation("G-TICKS", "point a tick's evidence at a missing section and board (tool and 14)",
              tick_moved),
     Mutation("G-T2", "drop the reason node's `aria-describedby` link from R-5",

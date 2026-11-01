@@ -90,6 +90,19 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[3]
 TOOLS = ROOT / "docs" / "design" / "_tools"
 SPEC_REL = "docs/design/E14/E14-D10.md"
+# post-merge, only these tool files may change in the one bundle that fixes them (G-SCOPE)
+BUNDLE_TOOLS = (
+    "docs/design/_tools/e09_d11_designqa_audit.py",
+    "docs/design/_tools/e12_d11_a11y_review_audit.py",
+    "docs/design/_tools/e14_d10_a11y_review_audit.py",
+    "docs/design/_tools/e14_k01_spike_audit.py",
+    "docs/design/_tools/e32_d07_handoff_audit.py",
+    "docs/design/_tools/e14_d12_handoff_audit.py",
+    "docs/design/_tools/e12_d12_handoff_audit.py",
+    "docs/design/_tools/e08_d13_handoff_audit.py",
+    "docs/design/_tools/e07_d01_storage_model_audit.py",
+)
+
 TOOL_REL = "docs/design/_tools/e14_d10_a11y_review_audit.py"
 PINS_REL = "docs/design/_tools/e14_d10_ruled_pins.txt"
 P14_REL = "docs/plan/14-screens-catalogue.md"
@@ -1022,7 +1035,7 @@ def g_ruled(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
 def g_scope(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
     for p in ctx.changed:
         # post-merge, a fix to this tool may ship in one bundle with its sibling design tools
-        sibling = ctx.merged_spec is not None and p.startswith("docs/design/_tools/")
+        sibling = ctx.merged_spec is not None and p in BUNDLE_TOOLS
         if p not in OWN and p != P14_REL and not sibling:
             f.append(("G13-SCOPE", f"{p} is outside the edit set"))
 
@@ -1399,6 +1412,10 @@ MUTATIONS: list[tuple[str, Callable[[Ctx], Ctx]]] = [
     ),
     ("G12-RULED", lambda c: _spec(c, _swap(c.spec, f"| {RULED_STAMP} |", "| pending |"))),
     ("G13-SCOPE", lambda c: dataclasses.replace(c, changed=[*c.changed, "docs/plan/15-x.md"])),
+    (
+        "G13-SCOPE",
+        lambda c: dataclasses.replace(c, changed=[*c.changed, "docs/design/_tools/cvd_sim.py"]),
+    ),
     (
         "G14-POINTERS",
         lambda c: dataclasses.replace(

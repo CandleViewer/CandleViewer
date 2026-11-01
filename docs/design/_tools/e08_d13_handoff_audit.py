@@ -19,13 +19,14 @@ token file and the committed PNGs; then the pack and its copy deck from the work
 3. **Cites.** Every `DOC:line` or `` `NN`:line `` cite outside the copied blocks is read at the
    base (G-CITE); G-VERSION is content based (in PR-1 mode each cited range stands at
    `origin/main`; post-merge, every cite is judged at its frozen base `BASE`, the base the merged
-   pack records, so a moved main does not FAIL it) and reads the version line. G-QUOTE: every quoted string of QUOTE_MIN+ characters is verbatim in
-   a source the line cites, the deck, a core source or the ruling's own words.
+   pack records, so a moved main does not FAIL it) and reads the version line. G-QUOTE: every
+   quoted string of QUOTE_MIN+ characters is verbatim in a source the line cites, the deck, a
+   core source or the ruling's own words.
 4. **Gates.** Row-id indexes (G-INDEX), components in `15` (G-CMP), the `14` checklists item by
    item (G-CHECKLIST), budgets (G-BUDGET), the per-story table and the story-text deltas
    (G-STORY), the design-ahead rows (G-AHEAD), the open-rows log (G-OPENROWS), `14` = the nine
-   pointer lines and nothing else in PR-1 mode, nothing in post-merge mode, where a sibling
-   design tool may change in the same bundle (G-UNTOUCHED), the
+   pointer lines and nothing else in PR-1 mode, nothing in post-merge mode, where only the listed
+   bundle tools (BUNDLE_TOOLS) may change (G-UNTOUCHED), the
    dry-run table (G-WALK), PNGs (G-PNG), §0's status cells (G-STATUS), the ruling (G-RULED),
    hygiene (G-HEX, G-PENPOT, G-NAMES, G-CLOSE, G-WORDS, G-SESSION, G-MARKER).
 5. **Pins (G-RULED-PIN).** A default-deny pin set over every unit of the pack and every deck
@@ -69,6 +70,19 @@ HEAD = "origin/main"  # G-VERSION: a cited range edited at origin/main FAILs
 
 SPEC_REL = "docs/design/E08/E08-D13.md"
 DECK_REL = "docs/design/E08/E08-D13-copy.json"
+# post-merge, only these tool files may change in the one bundle that fixes them (G-SCOPE)
+BUNDLE_TOOLS = (
+    "docs/design/_tools/e09_d11_designqa_audit.py",
+    "docs/design/_tools/e12_d11_a11y_review_audit.py",
+    "docs/design/_tools/e14_d10_a11y_review_audit.py",
+    "docs/design/_tools/e14_k01_spike_audit.py",
+    "docs/design/_tools/e32_d07_handoff_audit.py",
+    "docs/design/_tools/e14_d12_handoff_audit.py",
+    "docs/design/_tools/e12_d12_handoff_audit.py",
+    "docs/design/_tools/e08_d13_handoff_audit.py",
+    "docs/design/_tools/e07_d01_storage_model_audit.py",
+)
+
 TOOL_REL = "docs/design/_tools/e08_d13_handoff_audit.py"
 PIN_REL = "docs/design/_tools/e08_d13_ruled_pins.txt"
 PLAN14_REL = "docs/plan/14-screens-catalogue.md"
@@ -493,6 +507,7 @@ Values = dict[str, str]
 Finding = tuple[str, str, str | None, str | None]  # (gate, message, doc, section)
 Unit = tuple[str, str, str, str]  # (doc, region, loc, text)
 EXTRA_PATHS: list[str] = []  # self-test lever: paths pretended changed (G-UNTOUCHED)
+EXTRA_NAMES: list[str] = []  # self-test lever: names pretended listed by git, before the filter
 PLAN_OVERRIDE: list[tuple[str, str]] = []  # self-test lever: a working-tree plan text (id, text)
 PIN_UNITS_OVERRIDE: list[tuple[Unit, ...]] = []  # self-test lever: re-pinned units
 HEAD_OVERRIDE: list[tuple[str, str]] = []  # self-test lever: (rel, text) pretended at origin/main
@@ -2498,15 +2513,11 @@ def stray_paths_at(ref: str) -> tuple[str, ...] | None:
     ok_new, new = git_ok("ls-files", "--others", "--exclude-standard")
     if not (ok_diff and ok_new):
         return None
-    names = [*diff.split("\n"), *new.split("\n")]
+    names = [*diff.split("\n"), *new.split("\n"), *EXTRA_NAMES]
     post = post_merge()  # post-merge, a fix to this tool may ship with its sibling design tools
     return tuple(
         sorted(
-            {
-                n
-                for n in names
-                if n and n not in own_paths() and not (post and n.startswith("docs/design/_tools/"))
-            }
+            {n for n in names if n and n not in own_paths() and not (post and n in BUNDLE_TOOLS)}
         )
     )
 
@@ -2976,6 +2987,18 @@ def lever_extra_path() -> Callable[[], None]:
     return popper(EXTRA_PATHS)
 
 
+def lever_sibling_tool() -> Callable[[], None]:
+    """Post-merge mode: an unrelated file under the tools directory is not in the bundle."""
+    POST_MERGE_OVERRIDE.append(True)
+    EXTRA_NAMES.append("docs/design/_tools/cvd_sim.py")
+
+    def undo() -> None:
+        POST_MERGE_OVERRIDE.pop()
+        EXTRA_NAMES.pop()
+
+    return undo
+
+
 def lever_plan14_edit() -> Callable[[], None]:
     """Post-merge mode: `14` carries one stray line over the merge-base."""
     POST_MERGE_OVERRIDE.append(True)
@@ -3161,6 +3184,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation("M-20", "G-UNTOUCHED", "a stray path", lever=lever_extra_path),
     Mutation("M-21", "G-UNTOUCHED", "a pointer line moved", lever=lever_pointer_moved),
     Mutation("M-22", "G-UNTOUCHED", "post-merge: `14` edited again", lever=lever_plan14_edit),
+    Mutation("M-40", "G-UNTOUCHED", "post-merge: an unrelated tool file", lever=lever_sibling_tool),
     Mutation(
         "M-23",
         "G-WALK",
@@ -3314,7 +3338,7 @@ def selftest(spec: str, deck: str, paths: tuple[Path, ...]) -> tuple[bool, list[
         new = [x for x in fails if x not in base_fails]
         named = [x for x in new if x.startswith(f"[{mu.gate}]")]
         hit = bool(named) and len(new) == 1
-        levers = EXTRA_PATHS or PLAN_OVERRIDE or PIN_UNITS_OVERRIDE or HEAD_OVERRIDE
+        levers = EXTRA_PATHS or EXTRA_NAMES or PLAN_OVERRIDE or PIN_UNITS_OVERRIDE or HEAD_OVERRIDE
         restored = (
             digest_texts(spec_f, deck) == pristine
             and digest(paths) == on_disk

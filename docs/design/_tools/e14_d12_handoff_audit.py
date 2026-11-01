@@ -22,7 +22,8 @@ Gates (one mutation each in `--self-test`):
   G-COPY      every source COPY block equals its source block at the base, byte for byte.
   G-CITE      every `KEY`:line cite (and its `, :n` continuations) is in range at the base and the
               range's ends are non-blank; copied blocks are the source's own and are skipped.
-  G-VERSION   PR-1 mode: every cited line's content stands at `origin/main` (moved = WARN, gone = FAIL).
+  G-VERSION   PR-1 mode: every cited line's content stands at `origin/main` (moved = WARN, gone =
+              FAIL).
               Post-merge mode: every cite is judged at its frozen base `BASE` (the base the merged
               spec records), so a moved main neither WARNs nor FAILs.
   G-TOOLS     the derived behaviour table equals its derivation cell by cell (one row per `22`
@@ -52,7 +53,8 @@ Gates (one mutation each in `--self-test`):
   G-AHEAD     the sprint, date and margin values from the calendar and the backlog JSON.
   G-UNTOUCHED PR-1 mode: the tree differs from the merge-base only in this pack's files and `14`,
               and `14` equals the merge-base with the three pointer lines and the SCR-037 ticks
-              applied by content. Post-merge mode: `14` is untouched; a sibling design tool may change in the same bundle.
+              applied by content. Post-merge mode: `14` is untouched; only the listed bundle
+              tools (BUNDLE_TOOLS) may change.
   G-TICKS     every SCR-037 tick's evidence resolves at its source: a `§n` to a heading of the
               named parent, a board to its PNG on the base; the pack's evidence table agrees.
   G-FROZEN    post-merge mode: every version row of the merge-base stands unchanged and a new
@@ -97,6 +99,19 @@ BQ_TOTAL = 16
 
 SPEC_REL = "docs/design/E14/E14-D12.md"
 DECK_REL = "docs/design/E14/E14-D12-copy.json"
+# post-merge, only these tool files may change in the one bundle that fixes them (G-SCOPE)
+BUNDLE_TOOLS = (
+    "docs/design/_tools/e09_d11_designqa_audit.py",
+    "docs/design/_tools/e12_d11_a11y_review_audit.py",
+    "docs/design/_tools/e14_d10_a11y_review_audit.py",
+    "docs/design/_tools/e14_k01_spike_audit.py",
+    "docs/design/_tools/e32_d07_handoff_audit.py",
+    "docs/design/_tools/e14_d12_handoff_audit.py",
+    "docs/design/_tools/e12_d12_handoff_audit.py",
+    "docs/design/_tools/e08_d13_handoff_audit.py",
+    "docs/design/_tools/e07_d01_storage_model_audit.py",
+)
+
 TOOL_REL = "docs/design/_tools/e14_d12_handoff_audit.py"
 PIN_REL = "docs/design/_tools/e14_d12_ruled_pins.txt"
 PLAN14_REL = "docs/plan/14-screens-catalogue.md"
@@ -1392,7 +1407,10 @@ VERSION_LEVER = "lever:version-at-head"  # self-test only: judge G-VERSION at or
 def g_version(t: Texts) -> list[Finding]:
     out: list[Finding] = []
     if post_merge(t) and VERSION_LEVER not in t.env.memo:
-        return out  # post-merge, every cite is judged at its frozen base, not at the moving main
+        # post-merge, every cite is judged at its frozen base (G-CITE), not at the moving main
+        return [
+            Finding("NOTE", "G-VERSION", "post-merge: judged at the frozen base, nothing further")
+        ]
     seen: set[tuple[str, int]] = set()
     for doc, key, a, b, n in all_cites(t):
         base = t.env.lines(t.env.base, PATHS[key])
@@ -1734,7 +1752,7 @@ def g_untouched(t: Texts) -> list[Finding]:
     if t.changed is None:
         return one("G-UNTOUCHED", ["git did not list the changed paths"])
     for p in t.changed:
-        sibling = post_merge(t) and p.startswith("docs/design/_tools/")  # a bundled tool fix
+        sibling = post_merge(t) and p in BUNDLE_TOOLS  # a bundled tool fix
         if p not in OWN_PATHS and not sibling:
             bad.append(f"{p} differs from the merge-base (not this pack's)")
     base14 = t.env.show(t.env.mb, PLAN14_REL) or ""
@@ -1942,7 +1960,7 @@ def frozen_base_problems(t: Texts) -> list[str]:
     memo[f"show:{sim}:{PLAN14_REL}"] = t.plan14
     moved = head_gone(replace(t, env=Env(t.env.base, sim, memo)))
     moved.env.memo.pop(VERSION_LEVER, None)
-    if g_version(moved):
+    if [x for x in g_version(moved) if x.level != "NOTE"]:
         out.append("post-merge G-VERSION follows the moving main, not the recorded base")
     if compute(moved)["SHA:base"] != t.env.base[:10] or not t.env.base.startswith(BASE):
         out.append("the cite base followed the merge-base, not the recorded base")
@@ -1959,6 +1977,11 @@ def deck_edit(t: Texts) -> Texts:
     k = "d06:01"
     data["entries"][k]["text"] = data["entries"][k]["text"] + " "
     return replace(t, deck=json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+
+
+def sibling_tool_changed(t: Texts) -> Texts:
+    """An unrelated file under the tools directory is not in the bundle allow-list."""
+    return replace(t, changed=[*(t.changed or []), "docs/design/_tools/cvd_sim.py"])
 
 
 def parent_changed(t: Texts) -> Texts:
@@ -2078,6 +2101,7 @@ MUTATIONS: tuple[Mutation, ...] = (
                             "its chapter is \"pending, cited from the ticket text only\""))),
     Mutation("G-AHEAD", "type a margin by hand", anchor_edit("DAYS:margin.s10", "99")),
     Mutation("G-UNTOUCHED", "edit a parent in the same tree", parent_changed),
+    Mutation("G-UNTOUCHED", "an unrelated tool file", sibling_tool_changed),
     Mutation("G-TICKS", "point a tick's evidence at a missing section (tool, 14 and §15.1)",
              tick_moved),
     Mutation("G-FROZEN", "post-merge: edit the merged v1 row", merged_and_edited),
