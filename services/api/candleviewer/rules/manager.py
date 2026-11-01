@@ -963,7 +963,9 @@ class RulesManager:
     async def visible_rule_ids(self, actor: Actor) -> frozenset[str]:
         """The rules *actor* may read, exactly as `list_rules` lists them, for a read model that
         joins rule history (`GET /notifications`, E40-T04): the store's ids in the caller's scope
-        (SR-051), under which the Owner role reaches every live rule."""
+        (SR-051), under which the Owner role reaches every live rule. It answers ids and presents
+        no row, so `_visible` has nothing to re-check; the property and seeded-population tests
+        hold the ids equal to the reading rule."""
         return await self._s.scoped_ids(read_scope(actor))
 
     async def update(
@@ -1044,9 +1046,13 @@ class RulesManager:
 
     # ----- versions ----------------------------------------------------------------
     async def versions(self, rule_id: str) -> list[dict[str, Any]]:
+        """A rule's versions by its id, newest first, with no actor and no scope: a system and
+        test read. A route answers a caller through `versions_for`, in the caller's scope."""
         return [self._version_view(v) for v in reversed((await self._row(rule_id)).versions)]
 
     async def version(self, rule_id: str, version_id: str) -> dict[str, Any]:
+        """One version of a rule by id, with no actor and no scope: a system and test read, as
+        `versions`. A route answers a caller through `version_for`, in the caller's scope."""
         return self._pick_version(await self._row(rule_id), version_id)
 
     async def versions_for(self, rule_id: str, actor: Actor) -> list[dict[str, Any]]:

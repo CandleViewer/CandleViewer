@@ -20,7 +20,7 @@ from typing import Any, get_args
 from uuid import UUID, uuid5
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 from structlog.testing import capture_logs
 
@@ -453,6 +453,13 @@ async def test_scope_admits_exactly_what_rule_visible_shows(spec: Spec, actor: A
 
 @settings(deadline=None, max_examples=40)
 @given(spec=_ROWS, actor=_ACTORS, limit=st.integers(min_value=1, max_value=5))
+# A page of one, with three rows of another user ahead of the one visible row: a page cut before
+# the scope holds none of the caller's rows, so this walk fails it under every Hypothesis profile.
+@example(
+    spec=[(OTHER, [V((A,))], False)] * 3 + [(MGR, [V((A,))], False)],
+    actor=_actor(MGR, A),
+    limit=1,
+)
 async def test_pages_walked_by_the_cursor_concatenate_to_the_visible_set(
     spec: Spec, actor: Actor, limit: int
 ) -> None:

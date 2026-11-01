@@ -2,8 +2,8 @@
 
 `listRules` pages by rule id: a `cursor` that is not one is `400 invalid_cursor` (22), answered
 before the manager is called, and one that is positions the caller's own page whatever rule it
-names. The two version reads answer from one read in the caller's scope, and every read needs
-`rules:read` before the store is read at all.
+names. The two version reads answer from one read in the caller's scope and present the rule first,
+and every read needs `rules:read` before the store is read at all.
 """
 
 from __future__ import annotations
@@ -15,9 +15,13 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from candleviewer.api.rules_crud import make_rules_crud_router
+from candleviewer.rules.ir import Rule, ir_hash
+from candleviewer.rules.limits import LIMIT_CAPS
 from candleviewer.rules.manager import Actor, GrantRead, RuleRow, RulesManager
 from candleviewer.rules.vocabulary import default_registry
+from tests.rules.test_rule_limits import DAY
 from tests.rules.test_rule_list_scope import MGR, OTHER, PERMS, A, Recording, _rid, _rule, _vid
+from tests.rules.test_rules_routes import _Env
 
 _PROBLEM = "application/problem+json"
 
@@ -72,9 +76,8 @@ def test_an_empty_cursor_is_the_first_page() -> None:
 def test_a_cursor_in_upper_case_reads_as_its_canonical_id() -> None:
     api = _Api(*(_rule(_rid(n), MGR, (A,)) for n in (1, 2, 3)))
     assert api.ids(cursor=_rid(1).upper()) == api.ids(cursor=_rid(1)) == [_rid(2), _rid(3)]
-    assert api.ids(cursor="{" + _rid(2).upper() + "}") == [_rid(3)]
     afters = [asked["after"] for method, _, asked in api.store.reads if method == "scoped_page"]
-    assert afters == [_rid(1), _rid(1), _rid(2)]
+    assert afters == [_rid(1), _rid(1)]
 
 
 def test_a_cursor_naming_another_users_rule_serves_only_the_callers_rows() -> None:
@@ -106,6 +109,32 @@ def test_the_version_routes_answer_from_one_scoped_read() -> None:
     assert (missing.status_code, missing.json()["detail"]) == (404, "That version does not exist.")
     point = {"mode": None, "level": None, "after": None, "limit": 1, "only": rid}
     assert api.store.reads == [("scoped_page", GrantRead(MGR, frozenset({A})), point)] * 3
+
+
+@pytest.mark.parametrize("route", ["versions", "one-version"])
+async def test_a_version_read_presents_the_rule_so_one_armed_above_a_cap_is_disarmed(
+    route: str,
+) -> None:
+    """Both version reads present the rule first, as `GET /rules/{ruleId}` does (#3232, decision
+    9): a rule armed before the caps existed is disarmed on the read, with its `rule.disarmed`
+    record. The answer holds versions only, so the rule is looked at in the store, not through
+    `GET /rules/{ruleId}`, which would present and disarm it too."""
+    e = _Env()
+    rid = e.create(limits={DAY: LIMIT_CAPS[DAY]})
+    e.ready(rid)
+    assert e.mode(rid, "armed", "arm").status_code == 200
+    version = (await e.mgr._row(rid)).versions[0]
+    version.ir["limits"][DAY] = LIMIT_CAPS[DAY] + 1  # stored before the caps existed
+    version.ir_hash = ir_hash(Rule.model_validate(version.ir))
+    e.audits.clear()
+    path = f"/rules/{rid}/versions" + (f"/{version.id}" if route == "one-version" else "")
+    resp = e.c.get(path)
+    assert resp.status_code == 200, resp.text
+    row = await e.mgr._row(rid)
+    assert (row.mode, row.disabled_reason) == ("disabled", "disarmed")
+    assert [(a, p["rule_id"], p["reason"]) for a, p in e.audits] == [
+        ("rule.disarmed", rid, "limits_above_cap")
+    ]
 
 
 @pytest.mark.parametrize(

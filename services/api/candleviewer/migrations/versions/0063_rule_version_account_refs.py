@@ -15,7 +15,10 @@ the statement itself (`rules_store_pg.py`). The store writes the set with each v
 * NULL means not yet computed, and no non-Owner read scope admits a version holding NULL. The store
   fills the versions saved before this revision from their stored IR with the same walker, in
   bounded batches and only where the column is still NULL, before its first grant-scoped read in
-  a process; the Owner role's reads and the save's name check never read the column.
+  a process; the Owner role's reads and the save's name check never read the column. The fill runs
+  once per process, so a NULL written afterwards (by an older build still serving, or an
+  out-of-band insert) is filled at the next start: deploy by migrating, then restarting every API
+  process.
 * No default and no rewrite: `ADD COLUMN` of a nullable column with no default changes only the
   catalogue. No index: the column is read per version, through `ix_rv_rule`, and never searched
   across the table.

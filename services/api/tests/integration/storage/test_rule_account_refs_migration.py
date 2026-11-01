@@ -1,14 +1,16 @@
-"""Integration (#2291, SR-051): `0063_rule_version_account_refs` on real Postgres 16.
+"""Integration (#2291, SR-051): the `rule_version_account_refs` revision on real Postgres 16.
 
 The revision adds one nullable `text[]` column and drops it on the downgrade: up, down and up again
 on an empty database and on one holding a version saved before it (C-5.2, C-5.5). A version saved
-before the revision holds no set (NULL), which the store fills. The revision below it is this
-file's `_PREV`: whoever merges second renames and re-parents the revision (C-5.3) and moves it.
+before the revision holds no set (NULL), which the store fills. The revision's parent (`_PREV`) is
+read from its file, so a re-parent or a renumber at merge (C-5.3) changes nothing here.
 Not run on a laptop without docker; exercised by CI `integration`.
 """
 
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -18,8 +20,21 @@ from tests.integration.storage import test_rules_migration as _mig
 pytestmark = pytest.mark.integration
 pg_dsn = _mig.pg_dsn  # a module-scoped Postgres 16 container, upgraded to head
 
-#: The revision `0063_rule_version_account_refs` sits on (its `down_revision`).
-_PREV = "0061_password_history"
+_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _parent() -> str:
+    """The revision's `down_revision`, read from its file: the number in its name moves at merge."""
+    versions = _ROOT / "candleviewer" / "migrations" / "versions"
+    [path] = sorted(versions.glob("*_rule_version_account_refs.py"))
+    spec = importlib.util.spec_from_file_location("_rev_rule_version_account_refs", path)
+    assert spec is not None and spec.loader is not None
+    revision = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(revision)
+    return str(revision.down_revision)
+
+
+_PREV = _parent()  # the revision this one sits on
 _COLUMN = (
     "SELECT data_type, udt_name, is_nullable, column_default FROM information_schema.columns "
     "WHERE table_name = 'rule_versions' AND column_name = 'account_refs'"
