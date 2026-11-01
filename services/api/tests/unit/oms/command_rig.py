@@ -20,7 +20,7 @@ from candleviewer.exchange.base.models import AccountRef, Order, Position, RateL
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.clock_halt import ClockHalt
 from candleviewer.oms.commands import ExitKind, ExitWatch, OmsCommandPort
-from candleviewer.oms.errors import HandoverUnavailable, TradingDisabled
+from candleviewer.oms.errors import HandoverUnavailable, OmsNotReady, TradingDisabled
 from candleviewer.oms.fakes import (
     FakeClockHealth,
     InMemoryOrderStore,
@@ -308,14 +308,22 @@ class Credentials:
 
 @dataclass
 class Switches:
-    """`TradingSwitches` answering a refusal set per account."""
+    """`TradingSwitches` answering a refusal set per account; `raising` raises an `OmsNotReady`
+    one, as `FencedSwitches` does while the serving loop stalls, instead of returning it, as the
+    environment lock's fence (`TradingSwitchesBinding`) does."""
 
-    refusals: dict[AccountId, TradingDisabled] = field(default_factory=dict)
+    refusals: dict[AccountId, TradingDisabled | OmsNotReady] = field(default_factory=dict)
     asked: list[tuple[AccountId, Environment]] = field(default_factory=list)
+    raising: bool = False
 
-    def refusal(self, account_id: AccountId, environment: Environment) -> TradingDisabled | None:
+    def refusal(
+        self, account_id: AccountId, environment: Environment
+    ) -> TradingDisabled | OmsNotReady | None:
         self.asked.append((account_id, environment))
-        return self.refusals.get(account_id)
+        refusal = self.refusals.get(account_id)
+        if self.raising and isinstance(refusal, OmsNotReady):
+            raise refusal
+        return refusal
 
 
 @dataclass

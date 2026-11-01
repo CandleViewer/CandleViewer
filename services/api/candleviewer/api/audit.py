@@ -1,4 +1,5 @@
-"""`GET /admin/audit`, `POST /admin/audit/verify`, `POST /admin/audit/export`
+"""`GET /admin/audit`, `POST /admin/audit/verify`, `POST /admin/audit/export`,
+`POST /admin/audit/chain-breaks/{firstBadId}/acknowledge` (#2904, `acknowledgeAuditChainBreak`)
 (E09-T02 acceptance criteria: "Endpoints ... `GET /admin/audit` ... `POST
 /admin/audit/verify` ... `POST /admin/audit/export`"; the signed export since #889
 S10), the export's download, `GET /admin/audit/exports/{jobId}` (#889 S9), and
@@ -82,8 +83,14 @@ from candleviewer.api.audit_verify import (
 )
 from candleviewer.api.idempotency import IdempotencyKeyReuse, request_fingerprint
 from candleviewer.api.recorder_admin import JobConflict
-from candleviewer.api.step_up import StepUpAuth, require_session_elevation
-from candleviewer.api.step_up_challenge import export_audit_text
+from candleviewer.api.step_up import (
+    SpentGrant,
+    StepUpAuth,
+    require_bound_elevation,
+    require_session_elevation,
+)
+from candleviewer.api.step_up_challenge import ChallengeText, export_audit_text, raw_request_target
+from candleviewer.api.step_up_challenge import request_fingerprint as bound_fingerprint
 from candleviewer.audit.access import (
     AuditAccessDenied,
     AuditPrincipal,
@@ -91,12 +98,14 @@ from candleviewer.audit.access import (
     authorize,
     redact_entry_for_view,
 )
+from candleviewer.audit.break_halt import AckOutcome, AckRequest, AuditBreakHalt, BreakIdentity
 from candleviewer.audit.cursor import AuditCursor, InvalidAuditCursor, decode_cursor
 from candleviewer.audit.export_job import ExportRequest, ExportSettings, SignedExport
 from candleviewer.audit.export_signing import Signer, SigningKeyDirectory
 from candleviewer.audit.hashing import ChainHasherBusy
 from candleviewer.audit.models import (
     AUDIT_QUERY_DEFAULT_LIMIT,
+    AuditBreakAckRequest,
     AuditExportRequest,
     AuditOutcome,
     AuditQueryRequest,
@@ -201,6 +210,27 @@ class AuditServiceLike(Protocol):
     def writer(self) -> AuditWriterLike: ...
 
 
+class BreakAck(Protocol):
+    """`audit.break_halt.AuditBreakHaltService`, as `acknowledgeAuditChainBreak` uses it."""
+
+    @property
+    def halt(self) -> AuditBreakHalt: ...
+
+    async def acknowledge(
+        self, request: AckRequest, *, is_owner: bool, emit: Callable[..., Awaitable[None]]
+    ) -> AckOutcome: ...
+
+
+class _StepUpEmitter:
+    """The writer, as the step-up gate records a mismatched grant through it."""
+
+    def __init__(self, writer: _Emitter) -> None:
+        self._writer = writer
+
+    async def emit(self, action: str, **kwargs: Any) -> None:
+        await self._writer.emit(action, **kwargs)
+
+
 class PrincipalResolver(Protocol):
     """Resolves the authenticated caller for an `/admin/audit*` request.
 
@@ -276,6 +306,9 @@ def _invalid(exc: ValidationError, model: type[BaseModel], status_code: int = 42
 #: The verify body holds two ids at most, the export body two instants and a flag; a longer one
 #: is refused without reading the rest.
 _VERIFY_BODY_MAX_BYTES = 1024
+#: The acknowledgement body: a kind and a reason of at most 280 characters.
+_ACK_BODY_MAX_BYTES: Final = 2048
+_INT64_MAX: Final = 2**63 - 1
 #: `exportAuditLog`'s request fingerprint covers the contract path (22 Idempotency).
 _EXPORT_PATH: Final = "/admin/audit/export"
 #: Why export alone is unavailable, its `503 signing_unavailable`'s detail by its record's reason.
@@ -435,11 +468,14 @@ def make_audit_router(
     export_limiter: AuditVerifyLimiter | None = None,
     export_max_range_days: int = 31,
     break_halt: BreakHalt | None = None,
+    break_ack: BreakAck | None = None,
 ) -> APIRouter:
     """Bind `/admin/audit*` to a concrete `AuditService` instance.
 
     `break_halt` is the audit-chain break halt (#2904): a break an on-demand verify finds halts
-    position-opening order entry before the run's records are written.
+    position-opening order entry before the run's records are written. `break_ack` serves its
+    acknowledgement (`acknowledgeAuditChainBreak`); without it, or without `step_up`, that is a
+    `503` and nothing is lifted.
 
     `audit_service=None` (fake/CI-default backend, mirrors `AuthService`'s
     own optionality) and `principal_resolver=None` (no session module wired
@@ -823,6 +859,87 @@ def make_audit_router(
             )
             await record_halt(break_halt, owed, result, "on_demand")
         return JSONResponse(status_code=200, content=_jsonable(result))
+
+    @router.post("/chain-breaks/{firstBadId}/acknowledge")
+    @_no_store
+    async def acknowledge_audit_chain_break(
+        request: Request, first_bad_id: Annotated[str, Path(alias="firstBadId")]
+    ) -> JSONResponse:
+        """`acknowledgeAuditChainBreak` (#2904) in 22's **Order of the checks**: `401`, `403
+        forbidden` (Owner only, `admin.audit_denied`), the path and body (`422`), the no-grace
+        `killswitch` step-up bound to this request, then the named break: `409` when this process
+        holds no halt on it (`audit.chain_break_ack_denied`), `503 audit_unavailable` when the
+        write-ahead `audit.chain_break_acknowledged` cannot be written (the halt stays)."""
+        try:
+            service, principal, _ = await _authorize_or_raise(request, "ack_break")
+        except _HttpProblem as problem:
+            return problem.response
+        checked = await _ack_request(request, first_bad_id)
+        if isinstance(checked, JSONResponse):
+            return checked
+        identity, body = checked
+        if break_ack is None or step_up is None:  # a wiring fault: nothing is lifted (C-2.21)
+            detail = "break acknowledgement not wired"
+            return _problem(503, "Service unavailable", detail, code="service_unavailable")
+        restated = f"Acknowledge the audit-chain break at entry {identity.object_id}"
+        spent = await require_bound_elevation(
+            step_up,
+            principal.session_id,
+            "killswitch",
+            fingerprint=bound_fingerprint(
+                request.method, raw_request_target(request), body.model_dump(mode="json")
+            ),
+            emitter=_StepUpEmitter(service.writer),
+            text=ChallengeText(f"{restated} and resume order entry"),
+        )
+        if not isinstance(spent, SpentGrant):
+            return spent
+        ack = AckRequest(
+            identity=identity,
+            reason=body.reason,
+            actor_user_id=principal.actor_id,
+            actor_label=principal.actor_name,
+            session_id=principal.session_id,
+            actor_ip=principal.ip,
+            request_id=principal.request_id,
+            challenge_id=spent.challenge_id,
+        )
+        # Owner-ness follows `PrincipalSnapshot.is_owner` alone (SR-017), as the console's.
+        owner = principal.is_owner
+        outcome = await break_ack.acknowledge(ack, is_owner=owner, emit=service.writer.emit)
+        if outcome is AckOutcome.NOT_ENGAGED:
+            return _problem(409, "Conflict", "no halt is engaged on that break", code="conflict")
+        if outcome is AckOutcome.NOT_OWNER:  # pragma: no cover - `authorize` refused non-Owners
+            return _problem(403, "Forbidden", "owner only", code="forbidden")
+        if outcome is AckOutcome.RECORD_FAILED:
+            detail = "the acknowledgement could not be recorded; the halt stays"
+            return _problem(
+                503, "Service unavailable", detail, code="audit_unavailable", retry_after_s=1
+            )
+        content = {
+            "first_bad_id": identity.first_bad_id,
+            "kind": identity.kind,
+            "halted": break_ack.halt.engaged,
+        }
+        return JSONResponse(status_code=200, content=content)
+
+    async def _ack_request(
+        request: Request, first_bad_id: str
+    ) -> tuple[BreakIdentity, AuditBreakAckRequest] | JSONResponse:
+        """The named break and the body, checked strictly; else the `422`, naming no value."""
+        if (
+            not (first_bad_id.isascii() and first_bad_id.isdigit())
+            or int(first_bad_id) > _INT64_MAX
+        ):
+            return _rule("firstBadId", "int64", "firstBadId is not a non-negative integer")
+        raw = await _read_capped(request, _ACK_BODY_MAX_BYTES)
+        if raw is None:
+            return _rule("", "max_body_bytes", f"the body is over {_ACK_BODY_MAX_BYTES} bytes")
+        try:
+            body = AuditBreakAckRequest.model_validate_json(raw)
+        except ValidationError as exc:
+            return _invalid(exc, AuditBreakAckRequest)
+        return BreakIdentity(int(first_bad_id), str(body.kind)), body
 
     @router.get("/signing-keys")
     @_no_store

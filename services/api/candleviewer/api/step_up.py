@@ -707,6 +707,9 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     ("POST", "/admin/keys/kek-rewrap", "keys"),  # rewrapKek (#2266, 04 row 41a)
     ("POST", "/admin/keys/audit-signing/rotate", "keys"),  # rotateAuditSigningKey (#889 S7)
     ("POST", "/admin/audit/export", "audit"),  # exportAuditLog (04 row 50)
+    # acknowledgeAuditChainBreak (#2904, 04 row 49c): after RBAC (Owner only) and the body, the
+    # no-grace `killswitch` grant bound to the request it validated.
+    ("POST", "/admin/audit/chain-breaks/{firstBadId}/acknowledge", "killswitch"),
     # #2304 slice 3c, likewise: the invite writes (04 row 38) after the body or the target's
     # lookup; the recorder's retention set and pin (04 row 9) after the body and the entry's
     # lookup, their records still written ahead by the policy and the route; the profile writes

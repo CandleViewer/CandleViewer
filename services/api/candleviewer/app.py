@@ -2299,6 +2299,7 @@ def create_app(
             verify_deadline_s=resolved.audit_verify_deadline_s,
             verify_events=chain_break_events,
             break_halt=audit_halt,
+            break_ack=audit_halt,  # #2904: acknowledgeAuditChainBreak
             exports=audit_exports,
             step_up=ctx.auth,
             download_limiter=AuditVerifyLimiter(

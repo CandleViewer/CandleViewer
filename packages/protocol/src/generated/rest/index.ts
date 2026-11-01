@@ -105,6 +105,56 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/admin/audit/chain-breaks/{firstBadId}/acknowledge": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description The break's first divergent entry id, as the verifier reported it (`first_bad_id`; `0` when a break carried none). */
+        firstBadId: number;
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Acknowledge an audit-chain break and lift its order-entry halt (owner, step-up `killswitch`)
+     * @description A verified audit-chain break halts every new position-opening order until the Owner
+     *     acknowledges that named break (`04-security-program.md` §8.1 "Enforced posture" owns the
+     *     rules, #2904). This operation is that acknowledgement. The request names the break by
+     *     its first divergent entry (`firstBadId`) and its `kind`, and carries a typed `reason`. It
+     *     is not `acknowledgeIncident`, and releasing the kill switch (`setKillSwitch`) never
+     *     clears this halt, nor does this acknowledgement release an engaged kill switch.
+     *
+     *     **Who.** Owner only (`04-security-program.md` §7.2.2 row 49c), with a step-up of the
+     *     `killswitch` action class, which has no grace window: each acknowledgement spends a fresh
+     *     one-shot grant bound to this request (`POST /auth/step-up`, Challenges). A Manager
+     *     holding `killswitch:write` is refused with `403 forbidden`, as a Viewer is.
+     *
+     *     **Order of the checks.** `503 store_unavailable` when the audit backend is not wired;
+     *     authentication (`401`); authorisation (`403 forbidden`, recorded as `admin.audit_denied`
+     *     under the audit budget described on `queryAuditLog`); the body (`422 validation_failed`,
+     *     a `kind` outside the verifier's vocabulary included); the step-up (`403
+     *     step_up_required` with `action_class: killswitch`, whose `action_summary` restates the
+     *     break); then the break: one this process does not hold engaged (unknown, already
+     *     acknowledged, or a different `kind`) is `409 conflict`, recorded as
+     *     `audit.chain_break_ack_denied` with reason `not_engaged`. Every process re-reads the
+     *     halt records at most every 5 s, so a break another process found just now may answer
+     *     `409` until then; retry after about 10 s. Last, the write-ahead
+     *     `audit.chain_break_acknowledged` record (severity `critical`, the reason in it): when it
+     *     cannot be written the answer is `503 audit_unavailable` and the halt stays engaged. Then
+     *     this process lifts the halt on that break at once, and every other process within 5 s.
+     *
+     *     **Response.** `halted` is whether order entry is still halted in this process after the
+     *     acknowledgement: by another unacknowledged break, or while the halt records are unread.
+     */
+    post: operations["acknowledgeAuditChainBreak"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/admin/audit/export": {
     parameters: {
       query?: never;
@@ -13251,6 +13301,75 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
       429: components["responses"]["RateLimited"];
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
+  acknowledgeAuditChainBreak: {
+    parameters: {
+      query?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
+      path: {
+        /** @description The break's first divergent entry id, as the verifier reported it (`first_bad_id`; `0` when a break carried none). */
+        firstBadId: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": {
+          /**
+           * @description How the break diverges, as the verifier reported it (`unknown` when it carried no kind).
+           * @enum {string}
+           */
+          kind:
+            | "prev_hash_mismatch"
+            | "entry_hash_mismatch"
+            | "checkpoint_mismatch"
+            | "checkpoint_missing"
+            | "tail_truncated"
+            | "unknown";
+          /** @description Why the Owner resumes order entry, written to the audit chain: printable, at least 3 characters that are not blank (else `422`). */
+          reason: string;
+        };
+      };
+    };
+    responses: {
+      /** @description The break is acknowledged; its halt is lifted. */
+      200: {
+        headers: {
+          "Cache-Control"?: "no-store";
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            /** Format: int64 */
+            first_bad_id: number;
+            /** @description Order entry is still halted here: another break, or the halt records unread. */
+            halted: boolean;
+            /** @enum {string} */
+            kind:
+              | "prev_hash_mismatch"
+              | "entry_hash_mismatch"
+              | "checkpoint_mismatch"
+              | "checkpoint_missing"
+              | "tail_truncated"
+              | "unknown";
+          };
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      409: components["responses"]["Conflict"];
+      422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };

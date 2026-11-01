@@ -12,6 +12,8 @@ Grants follow `docs/plan/04-security-program.md` §7.2.1 / §7.2.2 rows 49,
 * `verify` (`audit:read`, row 49a): Owner only.
 * `signing_keys` (`audit:read`, row 49b): Owner only, as `verify` (#889 S7, `listAuditSigningKeys`).
 * `export` (`audit:export`, row 50): Owner only (step-up enforced upstream).
+* `ack_break` (`killswitch:write`, row 49c): Owner only, `acknowledgeAuditChainBreak` (#2904; its
+  `killswitch` step-up is the handler's).
 
 Owner-ness arrives on the principal (`is_owner`), resolved by the caller via
 `candleviewer.auth.scopes.PrincipalSnapshot.is_owner`; the wildcard grant
@@ -35,17 +37,18 @@ from typing import Literal, Protocol
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditEntry, AuditOutcome, Severity
 
-AuditPermission = Literal["audit:read", "audit:export"]
+AuditPermission = Literal["audit:read", "audit:export", "killswitch:write"]
 
 _OPERATION_PERMISSION: dict[str, AuditPermission] = {
     "query": "audit:read",
     "verify": "audit:read",
     "signing_keys": "audit:read",
     "export": "audit:export",
+    "ack_break": "killswitch:write",
 }
 
 #: Operations only the Owner may perform even when `audit:read` is held.
-_OWNER_ONLY: frozenset[str] = frozenset({"verify", "signing_keys", "export"})
+_OWNER_ONLY: frozenset[str] = frozenset({"verify", "signing_keys", "export", "ack_break"})
 
 
 class AuditView(StrEnum):
@@ -130,8 +133,8 @@ class AuditAccessDenied(AuditError):
 
 
 async def authorize(principal: AuditPrincipal, operation: str, emitter: _Emitter) -> AuditView:
-    """Allow `operation` (`query`/`verify`/`signing_keys`/`export`) for `principal` and return
-    the projection it may see, or audit the denial and raise
+    """Allow `operation` (`query`/`verify`/`signing_keys`/`export`/`ack_break`) for `principal`
+    and return the projection it may see, or audit the denial and raise
     `AuditAccessDenied`. Unknown operations are denied (fail closed)."""
     permission = _OPERATION_PERMISSION.get(operation)
     if permission is not None and principal.has(permission):

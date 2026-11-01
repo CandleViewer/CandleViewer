@@ -25,6 +25,15 @@ operations:
     public: false
     state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
+  POST /admin/audit/chain-breaks/{firstBadId}/acknowledge:
+    permissions: ['killswitch:write']
+    scope: none
+    public: false
+    state: executed
+    request:
+      path: {firstBadId: '41207'}
+      json: {kind: entry_hash_mismatch, reason: rbac matrix}
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   POST /admin/audit/export:
     permissions: ['audit:export']
     scope: none

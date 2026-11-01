@@ -22,9 +22,9 @@ included: the verifier names only the first break, so the scheduled run resumes 
 acknowledged one (`acknowledges`, `ChainVerifyRunner`). A trip whose record could not be written
 stays engaged here and its record is written again at each read until the chain holds it.
 
-`acknowledge_break` is the one acknowledgement path (the host console now, the Owner's route in
-PR 2): Owner only, against a named engaged break, written ahead; a refusal is recorded as
-`audit.chain_break_ack_denied`.
+`acknowledge_break` is the one acknowledgement path (the host console, and the Owner's route
+`acknowledgeAuditChainBreak` through `AuditBreakHaltService.acknowledge`): Owner only, against a
+named engaged break, written ahead; a refusal is recorded as `audit.chain_break_ack_denied`.
 """
 
 from __future__ import annotations
@@ -332,6 +332,19 @@ class AuditBreakHaltService:
                 await self._write_halt(identity, {"trigger": "rewrite"})
         await self._publish()
 
+    async def acknowledge(
+        self, request: AckRequest, *, is_owner: bool, emit: Callable[..., Awaitable[None]]
+    ) -> AckOutcome:
+        """The route's acknowledgement: `acknowledge_break` against the breaks this process holds
+        engaged. A written one lifts the halt here at once and is published; every other process
+        lifts it at its next read."""
+        engaged = self.halt.breaks
+        outcome = await acknowledge_break(request, is_owner=is_owner, engaged=engaged, emit=emit)
+        if outcome is AckOutcome.ACKNOWLEDGED:
+            self.halt.acknowledged(request.identity)
+            await self._publish()
+        return outcome
+
     async def start(self) -> None:
         """Before traffic: one read (engaged on failure), then the re-reads start."""
         await self.refresh()
@@ -401,6 +414,7 @@ class AckRequest:
     session_id: uuid.UUID | None = None
     actor_ip: str | None = None
     request_id: uuid.UUID | None = None
+    challenge_id: uuid.UUID | None = None  # the spent step-up grant, when the route took one
 
 
 async def acknowledge_break(
@@ -424,7 +438,9 @@ async def acknowledge_break(
         "object_kind": OBJECT_KIND,
         "object_id": identity.object_id,
     }
-    state = {"first_bad_id": identity.first_bad_id, "kind": identity.kind}
+    state: dict[str, Any] = {"first_bad_id": identity.first_bad_id, "kind": identity.kind}
+    if request.challenge_id is not None:
+        state["challenge_id"] = str(request.challenge_id)
     refusal = None
     if not is_owner:
         refusal = AckOutcome.NOT_OWNER
