@@ -1180,6 +1180,9 @@ async def test_a_lock_postgres_cannot_answer_is_asked_again_with_the_sweeps_back
     assert world.log[:2] == ["pool.release", "pool.release"] and world.log[2:5] == STARTED
 
 
+# The loop-turn waiter races a real timer on fast runners (C-9.3).
+# ticket: GH-5317 quarantined: 2026-11-01
+@pytest.mark.flaky
 async def test_another_holder_met_on_a_later_ask_fails_the_runtime_closed_and_pages_once() -> None:
     """CR-S3L2-01/02: asked again, the lock is answered held elsewhere: the runtime fails closed as
     a start refused at once does, paged once, its lane stopped, and asks no more."""

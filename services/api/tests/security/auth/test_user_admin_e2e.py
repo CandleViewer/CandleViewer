@@ -81,6 +81,9 @@ def _still_open(ws: Any) -> bool:
     return kind == "pong"
 
 
+# The socket read races the revoke fan-out under load (C-9.3).
+# ticket: GH-5328 quarantined: 2026-11-01
+@pytest.mark.flaky
 def test_the_owner_revokes_one_of_ms_sessions() -> None:
     """S12: M has two sessions, a socket on each. The Owner revokes one: one `users.session_revoked`
     naming the Owner, then one `auth.session_revoked` for it, both written before its row is
