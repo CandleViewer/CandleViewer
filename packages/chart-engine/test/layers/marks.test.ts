@@ -172,6 +172,18 @@ describe("MarkRing", () => {
     expect([marks.count, events(marks)]).toEqual([0, []]);
   });
 
+  it("a full buffer re-marking one of its bars keeps its array (no reallocation)", () => {
+    const { store, ring, marks, of } = setup(16);
+    ring.sync(store, store.replace(flagged(0, 4, [AMENDED, AMENDED, AMENDED, FORMING])));
+    const data = marks.data;
+    expect([marks.count, marks.slots]).toEqual([4, 4]);
+    const live = flagged(3, 1, [FORMING]);
+    (live.high as Int32Array)[0] = 9; // the forming bar's new high: its entry changes
+    ring.sync(store, store.append(live, true));
+    expect([marks.count, marks.slots, marks.data === data]).toEqual([4, 4, true]);
+    expect(of("marks").at(-1)).toEqual(["marks", 3, 4]); // only that entry is patched
+  });
+
   it("grows past its 4 entries into a new array; the event queue grows the same way", () => {
     const { store, ring, marks } = setup(64);
     const data = marks.data;

@@ -924,14 +924,19 @@ store.
 
 E12-D06 §7.1 and §7.3, in the engine. The ring's `meta` word already carried the bar's flags (bits
 0..3) under the direction (bits 4..5). A fourth host per series, the marks (part 7 of the `candle`
-program, after E12-S07's hollow parts 5 and 6), draws two kinds of mark. A forming bar (`confirm: false`, flag bit 1) gets a static
-`dash.2-2` ring in `color.candle.wick`: 1 hairline wide, 1 hairline outside the union of the wick
-and body, dashed 2 on / 2 off clockwise from its snapped top-left corner, so a pan never moves
-the dash phase. A corrected bar (`amended`, bit 3) gets a 3 × 3-hairline square, 2 hairlines above
-the high, centred on the hairline column. The numbers are `MARK_GEOM` in the geometry twin
-(`markRect`, `ringOn`), and the shader spells them; a test pins both. Marks draw at L0 only
-(s ≥ 3 CSS px, `MARKS_FROM`), and only while a marked bar is in view (BQ-1 default: a
-conditional extra batch). At L1 / L2 the words alone carry the state (D06 §7.1).
+program, after E12-S07's hollow parts 5 and 6), draws two kinds of mark. A forming bar
+(`confirm: false`, flag bit 1) gets a static `dash.2-2` ring in `color.candle.wick`: 1 hairline
+wide, 1 hairline outside the union of the wick and body, dashed 2 on / 2 off clockwise from its
+snapped top-left corner, so a pan never moves the dash phase. A corrected bar (`amended`, bit 3)
+gets a 3 × 3-hairline square, 2 hairlines above the high, centred on the hairline column. On a
+2-hairline wick (a down bar; under hollow a colour-down one) the square therefore sits half a
+hairline left of the wick's centre, by choice: D06 §7.3 gives no centring rule, and centring on the
+weighted wick would be a D06-C row. The numbers are `MARK_GEOM` in the geometry twin (`markRect`,
+`ringOn`), and the shader spells them; a test pins both. Until the #391 real-GPU goldens, GLSL
+parity is pinned only by those constant spellings; the 2D painter's parity is behavioural (it
+paints exactly the pixels `ringOn` inks inside `markRect`). Marks draw at L0 only (s ≥ 3 CSS px,
+`MARKS_FROM`), and only while a marked bar is in view (BQ-1 default: a conditional extra batch). At
+L1 / L2 the words alone carry the state (D06 §7.1).
 
 `MarkRing` (`src/layers/candle/marks.ts`) follows the SeamRing pattern. It holds one entry per
 drawn bit, `[slot, high, low, open, kind | dir << 4 | heavy]`, sorted by logical index, and it

@@ -225,10 +225,12 @@ export function candleRect(
  * A mark (E12-S10, D06 §7) of bar `index` as [x, y, w, h] in `u_viewport` px, the shader's part-7
  * arithmetic; `hi`, `lo`, `o` and `meta` (word 4: `kind | dir << 4 | heavy`) are the mark entry's,
  * the drawn bar's (Heikin-Ashi's when on). `kind` is the mark entry's flag bit: `forming` places
- * the ring's outer rect around
- * the union of the bar's wick and body (the doji / zero-range body around `o`; an up / down body
- * lies inside the wick's span), snapped out to whole pixels; `amended` the square, centred on the
- * hairline column, `lift` above the high (below it on an inverted scale).
+ * the ring's outer rect around the union of the bar's wick and body (the doji / zero-range body
+ * around `o`; an up / down body lies inside the wick's span), snapped out to whole pixels;
+ * `amended` the square, centred on the hairline column, `lift` above the high (below it on an
+ * inverted scale). A 2-hairline wick (down; hollow: colour-down) grows right from that column, so
+ * the square sits half a hairline left of the wick's centre: a deliberate choice, as D06 §7.3
+ * gives no centring rule (centring on the weighted wick would be a D06-C row).
  */
 export function markRect(
   kind: number,
