@@ -23,7 +23,7 @@ const item = (
   at: T0 - ago * 6e4,
   ...more,
 });
-const LIVE = { env: "LIVE" } as const;
+const LIVE = { env: "live" } as const;
 const CRITICAL = { severity: "critical" } as const;
 
 /** OV-3's five items (E42-D03 §6 and the §14 `strip.*` words), given out of order. */
@@ -140,7 +140,10 @@ export const StripPrecedence: Story = {
   },
 };
 
-/** 200 % text at 1280 (`05` §5): the band and the strip wrap and no item is truncated. */
+/**
+ * 200 % text at 1280 (`05` §5): the band and the strip wrap, no item is truncated, and nothing
+ * overflows the strip's box: a trailing margin once did, by 8 px (A11Y-5287-02).
+ */
 export const LongText: Story = {
   args: { ...OVERVIEW, ...GRACE, strip: PRECEDENCE },
   decorators: [
@@ -151,9 +154,10 @@ export const LongText: Story = {
     ),
   ],
   play: async ({ canvasElement }) => {
-    for (const link of within(canvasElement).getAllByRole("link")) {
-      await expect(link.scrollWidth).toBeLessThanOrEqual(link.clientWidth + 1);
-    }
+    const strip = region(canvasElement, "Needs your action");
+    await expect(strip.scrollWidth).toBeLessThanOrEqual(strip.clientWidth + 1);
+    const band = region(canvasElement, "Admin area");
+    await expect(band.scrollWidth).toBeLessThanOrEqual(band.clientWidth + 1);
   },
 };
 

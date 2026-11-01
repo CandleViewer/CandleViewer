@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type JSX, type MutableRefObject, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type FocusEvent, type JSX, type ReactNode } from "react";
 import { Icon } from "../icons/Icon.js";
 import type { IconName } from "../icons/registry.js";
 import { Button } from "./Button.js";
@@ -63,7 +63,7 @@ export interface SystemHealthTileProps {
   readonly runbookHref?: string | undefined;
   /**
    * Retry, last; kept while loading, busy, so a pressed Retry keeps focus. The host drops it after
-   * a good read: a Retry that held focus then hands it to the heading link.
+   * a good read: a Retry that held focus then hands it to the heading link, as any line does.
    */
   readonly onRetry?: (() => void) | undefined;
   readonly env?: SystemHealthTileEnv | undefined;
@@ -129,7 +129,7 @@ function Lines(
         : COPY.tone[look]);
   const last = utc(props.lastGoodAt);
   const at = utc(props.asOf);
-  const times = [last && `${COPY.lastGood} ${last}`, at && `${COPY.asOf} ${at}`].filter(Boolean);
+  // E42-D03 board 09 (Warning): "last good" over what stops working, "as of" the last line.
   return (
     <>
       <p className="cv-health-tile__state">
@@ -149,7 +149,7 @@ function Lines(
       </p>
       {"value" in props ? <Value {...props} /> : null}
       {props.children}
-      {times.length > 0 ? <p className="cv-health-tile__meta">{times.join(" · ")}</p> : null}
+      {last === null ? null : <p className="cv-health-tile__meta">{`${COPY.lastGood} ${last}`}</p>}
       {stopsWorking ? <p>{stopsWorking}</p> : null}
       {props.stillSafe === true ? <p>{COPY.stillSafe}</p> : null}
       {hint ? <p className="cv-health-tile__hint">{hint}</p> : null}
@@ -161,28 +161,16 @@ function Lines(
           </Link>
         </p>
       ) : null}
+      {at === null ? null : <p className="cv-health-tile__meta">{`${COPY.asOf} ${at}`}</p>}
     </>
   );
 }
 
 /** Retry: busy while loading, never disabled, so a pressed Retry keeps focus through the read. */
-function Retry(props: {
-  readonly loading: boolean;
-  readonly onRetry: () => void;
-  readonly heldFocus: MutableRefObject<boolean>;
-}): JSX.Element {
-  const { loading, onRetry, heldFocus } = props;
-  const box = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const node = box.current;
-    // React runs this before it takes the node out: whether the button held focus as it went.
-    return () => {
-      heldFocus.current = node?.contains(document.activeElement) ?? false;
-    };
-  }, [heldFocus]);
+function Retry(props: { readonly loading: boolean; readonly onRetry: () => void }): JSX.Element {
   return (
-    <div ref={box} className="cv-health-tile__retry">
-      <Button loading={loading} onClick={onRetry}>
+    <div className="cv-health-tile__retry">
+      <Button loading={props.loading} onClick={props.onRetry}>
         {COPY.retry}
       </Button>
     </div>
@@ -200,16 +188,37 @@ export function SystemHealthTile(props: SystemHealthTileProps): JSX.Element {
   const busy = loading || undefined;
   const look = state === "error" || state === "unavailable" ? "danger" : tone;
   const tile = useRef<HTMLDivElement>(null);
-  const retryHeldFocus = useRef(false);
-  const hasRetry = onRetry !== undefined;
-  // A good read drops Retry: a Retry that held focus hands it to the heading link, never to <body>.
+  // The element holding focus inside the tile, from focus landing there until focus leaves it.
+  const held = useRef<Element | null>(null);
+  // After each commit: whatever held focus and a re-render took out (a Retry a good read dropped,
+  // a host row a re-read replaced, a link whose condition cleared) hands it to the heading link,
+  // never to <body> (A-5330-02). Focus moved elsewhere on purpose is never taken back.
   useLayoutEffect(() => {
-    if (hasRetry || !retryHeldFocus.current) return;
-    retryHeldFocus.current = false;
+    const node = held.current;
+    if (node === null || node.isConnected) return;
+    held.current = null;
     const active = document.activeElement;
     if (active !== null && active !== document.body) return;
     tile.current?.querySelector<HTMLElement>(`h${headingLevel} a`)?.focus();
-  }, [hasRetry, headingLevel]);
+  });
+  const onFocus = (event: FocusEvent<HTMLDivElement>): void => {
+    held.current = event.target;
+  };
+  const onBlur = (event: FocusEvent<HTMLDivElement>): void => {
+    const next = event.relatedTarget;
+    if (next !== null) {
+      if (!event.currentTarget.contains(next)) held.current = null;
+      return;
+    }
+    // Focus went nowhere: a press on the page, or the element is being taken out. Once this event
+    // is over, an element still in the document and no longer focused was left on purpose.
+    const node = event.target;
+    queueMicrotask(() => {
+      if (held.current === node && node.isConnected && document.activeElement !== node) {
+        held.current = null;
+      }
+    });
+  };
   const title = (
     <>
       {linkAs === undefined ? (
@@ -232,6 +241,8 @@ export function SystemHealthTile(props: SystemHealthTileProps): JSX.Element {
       data-cmp="CMP-178"
       data-state={state}
       aria-busy={busy}
+      onFocus={onFocus}
+      onBlur={onBlur}
     >
       <Card region title={title} headingLevel={headingLevel}>
         <div className="cv-health-tile__body">
@@ -239,9 +250,7 @@ export function SystemHealthTile(props: SystemHealthTileProps): JSX.Element {
           {loading ? (
             <span className="cv-health-tile__loading cv-visually-hidden">{COPY.loading}</span>
           ) : null}
-          {onRetry === undefined ? null : (
-            <Retry loading={loading} onRetry={onRetry} heldFocus={retryHeldFocus} />
-          )}
+          {onRetry === undefined ? null : <Retry loading={loading} onRetry={onRetry} />}
         </div>
       </Card>
     </div>
