@@ -239,14 +239,19 @@ def test_integrity_withheld_bar_is_named_to_the_client(
 ) -> None:
     """#452 F9 (new in PR-2): the edited row is withheld and counted, but the 200 carries no sign
     of it (`meta` is the page's count, cursor, sources and times), so a chart draws a bar-wide gap
-    that reads as no trading. `meta.coverage_holes` (22 `DataMeta`) is the contract's gap list;
-    the shape of the fix is contract-first, so this pins the gap, not a field."""
+    that reads as no trading. This pins `meta.coverage_holes` (22 `DataMeta`, the contract's gap
+    list); a fix using another field updates this check."""
     rows = {k: list(v) for k, v in mw.stored_rows().items()}
     edited = rows["1m"][7] = {**rows["1m"][7], "close": 1.0}
     monkeypatch.setattr(mw, "stored_rows", lambda: rows)
     query = {"symbol": SYMBOL, "bar_type": "time", "param": "1", "limit": 5000,
              "from": _iso(mw.T0), "to": _iso(mw.NOW)}  # fmt: skip
-    meta = stores.get("getBars", query).json()["meta"]
+    before = _mismatches()
+    resp = stores.get("getBars", query)
+    assert resp.status_code == 200, resp.text[:300]
+    assert edited["index"] not in {b["index"] for b in resp.json()["bars"]}
+    assert _mismatches() == before + 1
+    meta = resp.json()["meta"]
     at = ts_us_from_row(edited["ts"])
     holes = meta.get("coverage_holes") or []
     if not any(h["start_us"] <= at < h["end_us"] for h in holes):

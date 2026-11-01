@@ -139,9 +139,8 @@ proposal for E12-Q05 and E12-T05 to confirm against real tape density, not a set
 make a legitimate setting unreachable (or, set lower, reopen BR-29); it must be validated per liquidity tier first.
 
 **Rejection cost (SR-E12-01; E12-X02 BQ-5), interim, ruled 2026-11-01, owner ratification on #2701:** a refused
-request costs at most **2 ms** of CPU, the median `process_time` it adds over an unauthenticated refusal, in
-process, and a refused `tick:1` request makes no storage call (no recording-start read, no print count, no bar
-read). Held by `test_caps_tick_1_refusal_costs_under_the_cpu_budget` and the call-set spies of the E12-X02 suite
+`tick:1` request adds at most **2 ms** of CPU (median `process_time`) over an unauthenticated refusal, in
+process, and makes no storage call (no recording-start read, no print count, no bar read). Held by `test_caps_tick_1_refusal_costs_under_the_cpu_budget` and the call-set spies of the E12-X02 suite
 (`docs/security/abuse-cases/e12-bars.md`).
 
 **Timestamp grammar (E12-X02 F6, accepted 2026-11-01):** `from` and `to` are read by `datetime.fromisoformat`,
@@ -495,6 +494,24 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
     25 ms or less for 20 symbols, and the index-write cost measured on the ingestion soak. REST `/market/bars` reads are bounded by the window caps, the estimate gate and the
     2 s timeout, not by rows. The read's cost is measured in D2-G3; `MAX_TAIL_SCAN_ROWS` is re-sized on the
     target host with the D2-M4 bench.
+  - E12-X02's open findings (#452; `docs/security/abuse-cases/e12-bars.md`, its Findings and Follow-ups), carried
+    here so they outlive #452:
+    - F2, klines half: `/market/klines` has no SR-E12-01 deadline on its hot and recording-start reads, and a raw
+      driver error from the hot read is a 500. Owner: post-freeze filing (the bars half is #3287).
+    - F3 (BR-36): no per-user rate limit and no single-flight on the two REST routes. Owner: #528 (E12-Q05), whose
+      real-QuestDB contention leg is the escalation trigger: if it fails budget #13 cross-session, one security
+      issue and a contract-first `429 rate_limited` on `getKlines`/`getBars`.
+    - F4b: no alert rule on the bars rejection or rebuild rate; it must exclude `reason="unavailable"`.
+      Owner: post-freeze filing.
+    - F8 (SR-E12-03): the `volume`/`delta` floor applied is 1, so 10 x `qty_step` is unreachable over the integer
+      wire grammar. Owner: post-freeze filing.
+    - F9 (BR-08, SR-E12-11): a row withheld for a failed checksum leaves a silent gap in the REST page. Owner:
+      post-freeze filing (contract first, 22 `DataMeta`).
+    - The ADR-0033 Decision 2 abuse cases (AC-05, AC-08, AC-11 `rebuild_id`). Owner: #535.
+    - The 10-minute k6 battery. Owner: #528 (E12-Q05).
+    - Follow-ups: klines `from`/`to` through a float (±1 µs; reuse `market_bars._ts_us`); one WARN per
+      unauthenticated refusal, to sample if F3's limiter slips; a `limit` outside 1..5000 is FastAPI's 422, not
+      counted; the E08-X02 long parser fuzz is not selected by `fuzz-nightly.yml`. Owner: post-freeze filing.
   - SR-E12-07's subscribe rate limit is built per connection (SR-193; #2293, built by #3301) and per user across a
     user's connections (#3476, K = 4), in each gateway process: a second one would keep its own (E17 model §10).
 - A High residual with no mitigation and no Owner acceptance blocks the E12 epic DoD (ticket acceptance
