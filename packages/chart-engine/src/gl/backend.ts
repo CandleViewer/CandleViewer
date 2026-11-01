@@ -16,7 +16,7 @@ import {
 } from "./program-cache.js";
 import { GlRegistry } from "./registry.js";
 import { type PaneUniformSource, submitDrawList } from "./submit.js";
-import { ATLAS_TEXTURE, GlTextures } from "./textures.js";
+import { ATLAS_TEXTURE, GlTextures, LUT_TEXTURE } from "./textures.js";
 import { DrawTrace } from "./trace.js";
 
 /** What a backend needs of the CPU atlas (E11-S11, BQ-266): the texture size and its packed rows. */
@@ -24,6 +24,14 @@ export interface AtlasRows {
   readonly width: number;
   readonly height: number;
   readonly rows: Uint8Array;
+}
+
+/** The colour LUTs as one RGBA8 image (E11-T04): `width` entries × `height` ramps, row-major. */
+export interface LutImage {
+  readonly width: number;
+  readonly height: number;
+  /** Caller-owned and rewritten in place per theme; kept as the restore copy. */
+  readonly pixels: Uint8Array;
 }
 
 /** A backend failure the runtime posts as a recoverable `error`, then falls back (BQ-85). */
@@ -85,6 +93,7 @@ export class GLBackend implements RenderBackend, LossCapable {
   paneUniforms: PaneUniformSource | null = null;
   private readonly rgb = [0, 0, 0];
   private background: string | undefined = "#000";
+  private lut: LutImage | null = null;
 
   /** `renderer` is the probe's unmasked string, null when `WEBGL_debug_renderer_info` is absent. */
   constructor(
@@ -150,6 +159,25 @@ export class GLBackend implements RenderBackend, LossCapable {
   uploadAtlas({ width, height, rows }: AtlasRows): void {
     this.textures.define(ATLAS_TEXTURE, width, height, null, "r8");
     this.textures.patchRows(ATLAS_TEXTURE, 0, rows);
+  }
+
+  /**
+   * The colour LUTs into texture `LUT_TEXTURE` (E11-T04, 26 §5 rule 1): one upload per theme
+   * switch. The first call (or a new buffer or size) defines the texture from `pixels`, one
+   * `texImage2D`; every later switch over the same buffer is one `texSubImage2D` of the whole
+   * image. The buffer is the restore copy, so a restored context gets the current theme's LUTs.
+   * The GL wiring into `setTheme` is PR-4's.
+   */
+  uploadLuts(image: LutImage): void {
+    const { width, height, pixels } = image;
+    if (pixels.length < width * height * 4) throw new RangeError("uploadLuts: pixels too short");
+    const last = this.lut;
+    this.lut = image;
+    if (last?.pixels === pixels && last.width === width && last.height === height) {
+      this.textures.patch(LUT_TEXTURE, 0, 0, width, height, pixels);
+      return;
+    }
+    this.textures.define(LUT_TEXTURE, width, height, pixels, "rgba8", true);
   }
 
   /** On `webglcontextlost`: every GL object is gone; the CPU mirrors stay. */
