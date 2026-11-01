@@ -1,4 +1,5 @@
-"""E35-T09 (#5000) part 1 of `rules_oms_wiring`: the executor's write-ahead adapters.
+"""E35-T09 (#5000) part 1 of `rules_oms_wiring`: the executor's write-ahead adapters; and E35-T10's
+(#5002) switches, principal fields, budget rebuild and breaker alert.
 
 `RuleActionAudit` writes `rules.fired` and `rules.blocked` keyed by the fire key, naming the rule as
 the actor and both users, never a parameter's value, a figure or a credential (24 §15.5, BQ-11).
@@ -25,6 +26,7 @@ from structlog.testing import capture_logs
 from candleviewer import rules_oms_wiring
 from candleviewer.audit.redact import redact
 from candleviewer.observability.health_probes import SystemEvent
+from candleviewer.oms_wiring import HaltingKillSwitch, InterimKillSwitch
 from candleviewer.rules.executor.ports import (
     ActionAuditFields,
     EventRow,
@@ -46,6 +48,7 @@ from tests.rules.executor.request_builders import action_request
 
 RULE, OWNER, ARMER = str(uuid.UUID(int=7)), uuid.UUID(int=0xA1), str(uuid.UUID(int=0xA2))
 ACCOUNT, RUN = uuid.UUID(int=0xB1), uuid.UUID(int=8)
+_A, _B = ACCOUNT, uuid.UUID(int=0xB2)
 #: Planted where a careless record would copy it: a figure, a credential, a free-text value.
 PLANTED = ("64123.75", "sk-live-planted", "planted note")
 
@@ -357,3 +360,53 @@ async def test_a_failed_system_event_write_is_counted_and_never_holds_the_next_f
     with capture_logs() as logs:
         await unbound.partial_fire(RULE, RUN, "a2")
     assert [e["event"] for e in logs] == ["rules.partial_fire"] and unbound.events_failed_total == 0
+
+
+class _Views:
+    """The two flag views `rule_switches` reads, as `FeatureFlagsRuntime` holds them."""
+
+    def __init__(self, enabled: object, killed: object) -> None:
+        self.reads: list[str] = []
+        self._enabled, self._killed = enabled, killed
+
+    def rules_enabled(self) -> bool:
+        self.reads.append("rules.enabled")
+        return cast(bool, self._enabled)
+
+    def order_entry_killed(self) -> bool:
+        self.reads.append("killswitch.order_entry")
+        return cast(bool, self._killed)
+
+
+def test_the_rule_switches_read_the_two_views_and_the_shared_kill_switch_port() -> None:
+    """E35-T10 (BQ-2): checks 2 and 3 read the master switch's view and the order-entry kill
+    switch's view as they read, a value other than a boolean as closed; B18 through the OMS's
+    shared port (`HaltingKillSwitch`, #2904), asked for the global account when an action names
+    none, so the audit-chain break halt engages it on every account; and the rollout port, off
+    until E35-T11."""
+    asked: list[uuid.UUID] = []
+
+    def engaged_on_b(account_id: Any) -> object | None:
+        asked.append(account_id)
+        return "refused" if account_id == _B else None
+
+    views = _Views(True, False)
+    switches = rules_oms_wiring.rule_switches(views, engaged_on_b)
+    assert (switches.rules_enabled(), switches.order_entry_killed()) == (True, False)
+    assert views.reads == ["rules.enabled", "killswitch.order_entry"]
+    assert (switches.kill_switch_engaged(_A), switches.kill_switch_engaged(_B)) == (False, True)
+    assert switches.kill_switch_engaged(None) is False and asked[-1] == uuid.UUID(int=0)
+    assert switches.oms_actions() is False
+    halt = _Halt()
+    port = HaltingKillSwitch(InterimKillSwitch(), halt)
+    closed = rules_oms_wiring.rule_switches(_Views(None, None), port.refusal)
+    assert (closed.rules_enabled(), closed.order_entry_killed()) == (False, True)
+    assert not any(closed.kill_switch_engaged(a) for a in (_A, _B, None))  # the interim admits
+    halt.engaged = True  # the audit-chain break halt: B18 engaged on every account
+    assert all(closed.kill_switch_engaged(a) for a in (_A, _B, None))
+
+
+class _Halt:
+    """The audit-chain break halt's view (`oms_wiring.HaltView`), set by the test."""
+
+    engaged = False

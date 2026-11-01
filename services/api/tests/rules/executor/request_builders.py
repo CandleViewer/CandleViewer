@@ -1,10 +1,11 @@
-"""Builders for the dispatch envelope (24 §11.9), and the executor's ports in memory (E35-T09), for
-the rules tests that need them."""
+"""Builders for the dispatch envelope (24 §11.9), and the executor's ports in memory (E35-T09,
+E35-T10), for the rules tests that need them."""
 
 from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 from candleviewer.observability.metrics import Metrics
@@ -33,6 +34,29 @@ def action_request(
         "armed_by": str(owner),
     }
     return ActionRequest(**(fields | over))
+
+
+@dataclass
+class Switches:
+    """`RuleSwitches` in memory (E35-T10), open unless a test closes one: B18 is engaged on each
+    account of `engaged`, and on every account (the global verdict) once it holds `None`."""
+
+    enabled: bool = True
+    order_entry: bool = False
+    engaged: set[uuid.UUID | None] = field(default_factory=set)
+    rollout: bool = True
+
+    def rules_enabled(self) -> bool:
+        return self.enabled
+
+    def order_entry_killed(self) -> bool:
+        return self.order_entry
+
+    def kill_switch_engaged(self, account_id: uuid.UUID | None) -> bool:
+        return None in self.engaged or account_id in self.engaged
+
+    def oms_actions(self) -> bool:
+        return self.rollout
 
 
 class Records:

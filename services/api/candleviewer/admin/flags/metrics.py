@@ -60,11 +60,11 @@ order_entry_gate_poll_dead_total = Counter(
     "Maintenance poll tasks that ended other than by their stop; each latches order entry off.",
 )
 
-#: The flag views' poll deaths (`flags_wiring`), per view's flag (three keys): each latches that
-#: view to its fail-closed value (off) until a restart.
+#: The flag views' poll deaths (`flags_wiring`), per view's flag (five keys): each latches that
+#: view to its fail-closed value (off, but engaged for `killswitch.order_entry`) until a restart.
 flag_view_stopped_total = Counter(
     "cv_flag_view_stopped_total",
-    "Flag-view poll tasks that ended other than by their stop; each latches its view off.",
+    "Flag-view poll tasks that ended other than by their stop; each latches its view closed.",
     ["flag"],
 )
 
