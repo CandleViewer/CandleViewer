@@ -260,11 +260,11 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 +--------------------------------------------------+
 ```
 
-- **Data:** `POST /auth/step-up` `{password, code, action_class?}` → `{elevated_until, action_class, single_use, step_up_expires_at}`; there is no token, elevation is server-side session state.
+- **Data:** `POST /auth/step-up` `{password, code, challenge_id?, action_class?}` → `{elevated_until, action_class, single_use, step_up_expires_at, challenge_id?, tokens}`; elevation is server-side session state, and a granted step-up rotates the session (SR-013, #2101): the reply carries the new access token in `tokens` and sets the rotated `cv_refresh` and `__Host-cv_csrf` cookies, the grant moving with the session.
 - **Validation:** typed confirmation must match exactly (case-sensitive); Confirm stays enabled; a press with an incomplete field is refused with focus to that field.
 - **Audit:** `auth.step_up_granted|failed|required` with the target action key; `auth.session_readonly_downgrade` on the 3rd failure. **Stories:** US-AUTH-008, US-ADMIN-011.
 - **A11y:** Dialog is `role="alertdialog"` with the sensitive action named in the accessible description ('Confirm: rotate API key for Main'); the reason for step-up is text, not an icon; focus starts on the password field and is trapped until resolved; failures are announced via `aria-live="assertive"`.
-- **Performance:** Step-up elevation <=400 ms p95; there is no token: remaining validity is rendered from the server-provided `step_up_expires_at`, never a client clock assumption.
+- **Performance:** Step-up elevation <=400 ms p95; remaining validity is rendered from the server-provided `step_up_expires_at`, never a client clock assumption.
 - **Components:** CMP-001 Button, CMP-027 ErrorState / InlineError, CMP-043 Dialog, CMP-201 PasswordField, CMP-204 OtpInput.
 - **Stories:** US-ONB-005.
 - **Hi-fi (E09-D06):** code-only, code+typed confirmation, valid-grace (server expiry), failures 1-2, 3rd-failure read-only downgrade (5 min), no-grace variant for Live enablement / kill-switch disable. Spec: `docs/design/E09/E09-D06.md`.
