@@ -237,6 +237,7 @@ jobs:
 
       - name: Storage chaos stack up (E07-Q04 scenarios 1/2/3b/8, C-13.6)
         env:
+          COMPOSE_PROJECT_NAME: cv-chaos # the one name tests/chaos/bars/_gate.py trusts
           POSTGRES_PASSWORD: cv-chaos-ci
           GF_SECURITY_ADMIN_PASSWORD: unused-ci
           MINIO_ROOT_PASSWORD: unused-ci
@@ -258,6 +259,7 @@ jobs:
       - name: Storage chaos scenarios (pytest -m "chaos and integration and not flaky")
         working-directory: services/api
         env:
+          COMPOSE_PROJECT_NAME: cv-chaos # the one name tests/chaos/bars/_gate.py trusts
           POSTGRES_PASSWORD: cv-chaos-ci
           GF_SECURITY_ADMIN_PASSWORD: unused-ci
           MINIO_ROOT_PASSWORD: unused-ci
@@ -271,6 +273,7 @@ jobs:
       - name: Storage chaos S2, S3b and S8 repeated x5 (GH-3087 regression check)
         working-directory: services/api
         env:
+          COMPOSE_PROJECT_NAME: cv-chaos # the one name tests/chaos/bars/_gate.py trusts
           POSTGRES_PASSWORD: cv-chaos-ci
           GF_SECURITY_ADMIN_PASSWORD: unused-ci
           MINIO_ROOT_PASSWORD: unused-ci
@@ -286,6 +289,7 @@ jobs:
       - name: Storage chaos stack down
         if: always()
         env:
+          COMPOSE_PROJECT_NAME: cv-chaos # the one name tests/chaos/bars/_gate.py trusts
           POSTGRES_PASSWORD: unused-ci
           GF_SECURITY_ADMIN_PASSWORD: unused-ci
           MINIO_ROOT_PASSWORD: unused-ci

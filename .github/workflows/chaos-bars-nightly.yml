@@ -3,10 +3,12 @@ name: chaos-bars-nightly
 # E12-Q06 (#529): the bars chaos suite (services/api/tests/chaos/bars, catalogue in its
 # SCENARIOS.md: C-13.6 #1 and #12 mid-bar, #3 gap and out-of-order, #5 backfill rate limit, #6 clock
 # skew, #10 store outage, plus the delisted-symbol extension), every night on main and on demand.
-# Additive to the PR lane: _job-py.yml's db-chaos shards run the suite (marker `chaos`, no docker);
-# this run repeats it and is the signal C-13.6 asks for. Fakes and the virtual clock only; the one test that needs QuestDB
-# (test_s05b_questdb_container.py, `chaos` and `integration`) skips here (no QuestDB is up on the runner: `qdb_up()`)
-# and runs in _job-integration.yml's storage chaos step, which brings the stack up.
+# Additive to the PR lane: _job-py.yml's db-chaos shards run the suite (marker `chaos`, no
+# docker); this run repeats it and is the signal C-13.6 asks for. Fakes and the virtual clock
+# only. The one test that needs QuestDB (test_s05b_questdb_container.py, `chaos` and
+# `integration`) skips here: this job brings up no stack. It runs in _job-integration.yml's
+# storage chaos step (`pytest tests/chaos -m "chaos and integration"`), under the pinned compose
+# project `cv-chaos`.
 # Not a required check (C-9.1 is unchanged), but a red night blocks the next release (C-9.2,
 # C-13.6). One pytest call; its own `-m` replaces addopts', so `not flaky` repeats the C-9.3
 # quarantine. No retries: a flaky test is quarantined, never re-run until green. `--no-cov`, as

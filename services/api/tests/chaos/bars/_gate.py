@@ -3,7 +3,7 @@
 It stops and starts that container, so it must only ever do so on a stack the job owns. On this
 host a self-hosted runner (`cv-bench-01`) sets `GITHUB_ACTIONS` beside a demo QuestDB, so that
 variable alone proves nothing: a GitHub-hosted runner is `RUNNER_ENVIRONMENT=github-hosted`, and
-a local run must name the chaos compose project it owns.
+both it and a local run must name the chaos compose project.
 """
 
 from __future__ import annotations
@@ -12,19 +12,20 @@ import json
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 
-#: The compose project of the chaos stack. Nothing in the repo names one (no `name:` in the compose
-#: file, no `-p`, no `COMPOSE_PROJECT_NAME` in `_job-integration.yml` or `_stack.py`: CI gets the
-#: directory default, `compose`), so this is our own constant: a local run pins it with
-#: `COMPOSE_PROJECT_NAME` and starts its stack under it.
+#: The compose project of the chaos stack, the single source. `_job-integration.yml` sets
+#: `COMPOSE_PROJECT_NAME` to it on every storage chaos step (stack up, pytest, repeat, down), and
+#: `_stack.py`'s `docker compose` calls inherit it from the environment; a local run pins it too.
 CHAOS_PROJECT = "cv-chaos"
 
 
 def stack_skip_reason(env: Mapping[str, str]) -> str | None:
     """Why the container test must not run in this environment, or `None` when it may."""
     if env.get("GITHUB_ACTIONS"):
-        if env.get("RUNNER_ENVIRONMENT") == "github-hosted":
-            return None
-        return "GITHUB_ACTIONS without a github-hosted runner: the stack may not be ours"
+        if env.get("RUNNER_ENVIRONMENT") != "github-hosted":
+            return "GITHUB_ACTIONS without a github-hosted runner: the stack may not be ours"
+        if env.get("COMPOSE_PROJECT_NAME") != CHAOS_PROJECT:
+            return f"a hosted run needs COMPOSE_PROJECT_NAME={CHAOS_PROJECT} (the job pins it)"
+        return None
     if env.get("CV_CHAOS_STACK") == "1":
         if env.get("COMPOSE_PROJECT_NAME") == CHAOS_PROJECT:
             return None

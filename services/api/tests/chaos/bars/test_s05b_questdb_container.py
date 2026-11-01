@@ -1,11 +1,12 @@
 """Scenario 5b - the real QuestDB container is stopped under the bars writer. C-13.6 #10.
 
-The container leg of `test_s05_store_outage.py` (E12-Q06 AC2), run only by the nightly /
-merge-queue integration job that brings up the compose stack (`-m "chaos and integration"`,
-`tests/chaos/storage/_stack.py`). It stops and starts the compose QuestDB, so it runs only where
-that stack is the job's own: on GitHub Actions, or locally with `CV_CHAOS_STACK=1` on a stack you
-own. Anywhere else, and without a reachable QuestDB, it is skipped; it never starts a container
-that was not already up.
+The container leg of `test_s05_store_outage.py` (E12-Q06 AC2). It runs only in the integration job
+(`_job-integration.yml`'s storage chaos step, `pytest tests/chaos -m "chaos and integration"`),
+which brings the compose stack up under the pinned project `cv-chaos`. It is NOT run by the bars
+nightly (`chaos-bars-nightly.yml` starts no stack, so it skips there) nor by the PR lane. It stops
+and starts the compose QuestDB, so `_gate.py` opens only on a github-hosted runner with the
+pinned project, or locally with `CV_CHAOS_STACK=1` and that project. Anywhere else, and without
+a reachable QuestDB, it skips; it never starts a container that was not already up.
 
 `BarWriter` over the production `IlpWriter` over a real TCP socket writes the recorded-corpus
 volume bars of a unique symbol; QuestDB is stopped half way (the second half is submitted while
@@ -57,7 +58,7 @@ async def _questdb_reachable() -> None:
     if (reason := questdb_ownership_skip([st.QDB_PG_PORT, st.QDB_ILP_PORT])) is not None:
         pytest.skip(reason)  # never talk to a port we cannot prove is our own container
     if not await st.qdb_up():
-        pytest.skip("QuestDB compose stack not reachable: nightly integration lane only")
+        pytest.skip("QuestDB compose stack not reachable: integration job only")
 
 
 async def _stored(symbol: str) -> list[tuple[int, float]]:
