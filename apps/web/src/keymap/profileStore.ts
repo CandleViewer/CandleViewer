@@ -33,6 +33,7 @@ const SCOPE: Readonly<Record<KeymapContext, Schemas["HotkeyBinding"]["scope"]>> 
   Rules: "rules",
   Admin: "admin",
   Settings: "settings",
+  Watchlist: "watchlist",
 };
 const PATH = "/api/v1/settings/hotkeys";
 /** `21` §10.6's name for a user's profile. */
