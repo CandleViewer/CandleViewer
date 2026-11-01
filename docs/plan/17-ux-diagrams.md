@@ -144,6 +144,45 @@ journey
 | 6–7 Commit, pending    | The step-up, a screen lock that drops the arm, or a slow server confirmation that invites a retry                                                                    | DEMO preselected; LIVE, disabled with a reason for a Manager: `live_enablement`, a no-grace step-up bound to the arm request (SCR-006 frame `no-grace-live-enable`, as E09-D06 draws it for live enablement: password + TOTP + a typed "LIVE"; challenge 5 min, grant 60 s), at most one open challenge per session (a newer one supersedes it); `Enter` on SCR-085's radios never arms; "Arming…" until `rules` confirms; any drop of the held arm says nothing was sent (CA-17, CA-18, CA-35) | F25, F26, F29           |
 | 9 Something goes wrong | The state does not say what stopped the rule or whether it comes back, so the trader disarms it or stops using rules                                                 | The cause and "resumes by itself" in the state (CA-20); after a kill or an error stop, "needs a step-up to arm again" (SC-21); a text per event (CA-19, CA-22–CA-24); what persists (CA-26)                                                                                                                                                                                                                                                                                                     | F7–F9, F24              |
 
+### 1.6 Review journey — reviewing yesterday's session (E41-D01, heuristic)
+
+This journey comes from E41-D01's heuristic evaluation (`docs/design/research/e41-journal-review.md` §4–§6) and
+assumes that memo's PROPOSED decisions (WD-n). Its scores are designer judgement (DJ: a `journey` needs one), not
+measurements; the owner-run sessions of `docs/design/research/e41-d01-session-protocol.md` will replace them.
+Owner and Manager share each score: no persona difference is predicted at this depth. Each low score's basis
+is named below; the Trigger score of 2 rests on hypothesis H1 (untested).
+
+```mermaid
+journey
+  title Owner and Manager: reviewing yesterday's session (predicted scores)
+  section Trigger
+    A losing session or a rule that acted unexpectedly: 2: Owner, Manager
+  section Find the trades
+    Opens SCR-093 in LIVE scope, filters to yesterday and a tag: 4: Owner, Manager
+    Reads R and net P&L first, totals for the filter only: 4: Owner, Manager
+  section Look at one trade
+    Opens the loser on SCR-094 - fills, excursions, who moved the stop: 4: Owner, Manager
+    Context not recorded - fills listed, no spinner: 3: Owner, Manager
+    Jumps to replay at entry and back: 4: Owner
+  section Record what was learned
+    Writes a note, re-tags, removes a wrong auto tag on record: 3: Owner, Manager
+  section Look for a pattern
+    Opens SCR-095 - stats shown with the low-sample caveat and n: 3: Owner, Manager
+    Reads each chart as a table: 4: Owner, Manager
+  section Take it elsewhere
+    Exports the filtered list - the confirm names the account data: 3: Owner, Manager
+```
+
+**Abandonment points** (WD ids as in the memo §6)
+
+| Step                    | Why a trader abandons                                  | What the screen must show                                 | Basis    |
+| ----------------------- | ------------------------------------------------------ | --------------------------------------------------------- | -------- |
+| Find the trades         | A total that may hold DEMO, or a group counted twice   | One scope label per total (WD-1); per-account rows (WD-9) | F-1, F-6 |
+| Look at one trade       | A spinner where no recording exists                    | Context not recorded, bar-only or pruned in words (WD-6)  | F-4      |
+| Record what was learned | An auto tag that cannot be removed, or no record of it | `auto` on the tag, removable, the removal recorded (WD-8) | F-5      |
+| Look for a pattern      | A rate with no sample size, or a chart with no table   | The caveat and n (WD-3, WD-4); "View as table" (WD-11)    | F-2, F-8 |
+| Take it elsewhere       | An export that does not say whose data it holds        | The confirm names accounts, environment and range (WD-10) | F-7      |
+
 ---
 
 ## 2. Service blueprint (frontstage / backstage / systems)
