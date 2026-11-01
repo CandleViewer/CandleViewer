@@ -195,6 +195,12 @@ export const ManualWithPosition: Story = {
   },
 };
 
+/** D02 §3 `paused` (board 04): retention accelerated, so the Retention cell reads both figures. */
+export const AcceleratedRetention: Story = {
+  args: { diskLevel: 2, budgetShare: 0.08, retentionAcceleratedDays: 15 },
+  play: shows("30 d → 15 d (accelerated)", "15.6 GB · 0.52/d · 8 % of budget"),
+};
+
 /** State=lingering: "stops in 24 min" (whole minutes, rounded up); Keep recording. */
 export const Lingering: Story = {
   args: { ...SOL, state: "lingering", lingerUntil: new Date(NOW + 23.5 * 60e3).toISOString() },
