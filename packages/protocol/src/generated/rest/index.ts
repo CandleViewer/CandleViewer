@@ -3712,7 +3712,28 @@ export interface paths {
      * @description Sourced from the `allLiquidation.{symbol}` WS topic (the legacy `liquidation` topic is
      *     retired — digest 06 §9). Bybit batches at most one push per symbol per 500 ms, so
      *     counts are lower bounds on distinct liquidation events. `cluster_window_ms` groups
-     *     prints into liquidation cascades for the cluster overlay.
+     *     prints into liquidation cascades for the cluster overlay: a cluster gathers the prints
+     *     of one `side` within `cluster_window_ms` of its first print into one item whose `size`
+     *     and `notional_usd` are its members' sums, `ts` and `price` its first print's (as on
+     *     `/market/trades`),
+     *     and `cluster_size` its member count (1 when `cluster_window_ms` is 0). Clustering is
+     *     exact over the stored prints, so no item is estimated. `notional_usd` is `price × size`,
+     *     computed once at ingest with decimal arithmetic.
+     *
+     *     There is no REST history for liquidations: depth is bounded by recorder uptime
+     *     (21 §4.6). `meta.coverage` says what is stored for the symbol: `first_available_ts` is
+     *     the first stored print (`null` when none is), `covered_from` / `covered_to` the part of
+     *     the requested window the store can answer for, and `no_coverage` is true when the
+     *     window ends before `first_available_ts` (or nothing is stored), so an empty page there
+     *     means "not recorded", never "no liquidations".
+     *
+     *     **Bounds** (E24-X01 G1), checked before the store is read: `to - from` is at most
+     *     31 days and `from` must be before `to` (400 `invalid_time_range`); `limit` is 1–500,
+     *     default 100, and `cluster_window_ms` is 0–60000 here (WS `liquidations` takes
+     *     0–5000, the 23 topic registry), both 400 `validation_failed` when outside; a
+     *     malformed, foreign or expired `cursor`, or one over 512 characters, is 400
+     *     `invalid_cursor`. A malformed `symbol` is 400 `validation_failed`; a well-formed symbol
+     *     that is not listed is 422 `validation_failed`, as on `/market/data-coverage`.
      */
     get: operations["getLiquidations"];
     put?: never;
@@ -3768,7 +3789,28 @@ export interface paths {
     };
     /**
      * Open-interest history from the local store
-     * @description Backfilled from Bybit `GET /v5/market/open-interest` (5min…1d intervals, limit ≤200/page) and continuously extended from the recorded `tickers` stream at higher resolution.
+     * @description Two series, never mixed in one page (E24-T01, #665). `interval=1s` is the series
+     *     recorded from the `tickers` stream (`source: ws_ticker`, at most one point per second
+     *     per symbol). `5min`…`1d` are backfilled from Bybit `GET /v5/market/open-interest`
+     *     (`source: rest`, limit ≤200/page, cursor paging), so the native granularity of those
+     *     points is the interval itself. Every item carries its `interval` and `source`.
+     *     `open_interest` is in base coin; `open_interest_value` is USD and is `null` on a `rest`
+     *     point, since the venue's history carries no USD value and none is computed.
+     *
+     *     `meta.coverage` states what the store holds for the requested `(symbol, interval)`:
+     *     `from` / `to` are its first and last stored point (`null` when nothing is stored), and
+     *     `gaps[]` lists the spans of this window that hold no point where one was due (more
+     *     than one interval between points for `rest`, more than 10 s for `ws_ticker`), so a
+     *     missing span is reported and never filled. The first request for a `(symbol,
+     *     interval)` the store does not cover queues a bounded background backfill and answers
+     *     at once with what is stored.
+     *
+     *     **Bounds** (E24-X01 G1), checked before the store is read: `to - from` is at most
+     *     400 days and `from` must be before `to` (400 `invalid_time_range`); `limit` is 1–500,
+     *     default 100 (400 `validation_failed`); a malformed, foreign or expired `cursor`, or
+     *     one over 512 characters, is 400 `invalid_cursor`. A malformed `symbol` is 400
+     *     `validation_failed`; a well-formed symbol that is not listed is 422
+     *     `validation_failed`, as on `/market/data-coverage`.
      */
     get: operations["getOpenInterestHistory"];
     put?: never;
@@ -9420,14 +9462,30 @@ export interface components {
       | "error";
     Liquidation: {
       cluster_size?: number;
+      /** @description `price × size` in USD, computed once at ingest (a cluster: the sum). */
       notional_usd?: components["schemas"]["Decimal"];
       price?: components["schemas"]["Decimal"];
-      /** @enum {string} */
+      /**
+       * @description The print's side as the `side` query parameter reads it; which position was liquidated follows the adapter's mapping of Bybit's `S` (24 §2.5 `liquidated_side`), never a client's own reading of the venue field.
+       * @enum {string}
+       */
       side?: "buy" | "sell";
       size?: components["schemas"]["Decimal"];
       symbol?: components["schemas"]["Symbol"];
       /** Format: date-time */
       ts?: string;
+    };
+    /** @description `PageMeta` plus the stored coverage of the symbol (E24-T03, #667). */
+    LiquidationsPageMeta: components["schemas"]["PageMeta"] & {
+      coverage: {
+        /** Format: date-time */
+        covered_from: string | null;
+        /** Format: date-time */
+        covered_to: string | null;
+        /** Format: date-time */
+        first_available_ts: string | null;
+        no_coverage: boolean;
+      };
     };
     LoginRequest: {
       /** @description Shown in the session list. */
@@ -9685,6 +9743,37 @@ export interface components {
         consequences?: components["schemas"]["AccountConsequenceSummary"];
         remedy?: components["schemas"]["ExposureRemedy"];
       } & (unknown & unknown));
+    /** @description `PageMeta` plus the stored coverage of the requested series (E24-T01, #665). */
+    OpenInterestPageMeta: components["schemas"]["PageMeta"] & {
+      coverage: {
+        /** Format: date-time */
+        from: string | null;
+        gaps: {
+          /** Format: date-time */
+          from: string;
+          /** Format: date-time */
+          to: string;
+        }[];
+        /** @enum {string} */
+        native_interval: "1s" | "5min" | "15min" | "30min" | "1h" | "4h" | "1d";
+        /** @enum {string} */
+        source: "ws_ticker" | "rest";
+        /** Format: date-time */
+        to: string | null;
+      };
+    };
+    OpenInterestPoint: {
+      /** @enum {string} */
+      interval: "1s" | "5min" | "15min" | "30min" | "1h" | "4h" | "1d";
+      /** @description Base-coin open interest, both sides. */
+      open_interest: components["schemas"]["Decimal"];
+      /** @description USD value from the ticker; `null` on a `rest` point (never computed). */
+      open_interest_value: components["schemas"]["Decimal"] | null;
+      /** @enum {string} */
+      source: "ws_ticker" | "rest";
+      /** Format: date-time */
+      t: string;
+    };
     Order: {
       algo?: components["schemas"]["AlgoSpec"];
       avg_fill_price?: components["schemas"]["Decimal"] | null;
@@ -18542,12 +18631,15 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["Page"] & {
             items?: components["schemas"]["Liquidation"][];
+            meta?: components["schemas"]["LiquidationsPageMeta"];
           };
         };
       };
+      400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -18595,7 +18687,7 @@ export interface operations {
         cursor?: components["parameters"]["Cursor"];
         /** @description Inclusive start of the time window (RFC 3339 UTC). */
         from?: components["parameters"]["From"];
-        interval?: "5min" | "15min" | "30min" | "1h" | "4h" | "1d";
+        interval?: "1s" | "5min" | "15min" | "30min" | "1h" | "4h" | "1d";
         /** @description Page size. */
         limit?: components["parameters"]["Limit"];
         symbol: components["parameters"]["SymbolQuery"];
@@ -18615,19 +18707,17 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["Page"] & {
-            items?: {
-              open_interest?: components["schemas"]["Decimal"];
-              open_interest_value?: components["schemas"]["Decimal"];
-              /** Format: date-time */
-              t?: string;
-            }[];
+            items?: components["schemas"]["OpenInterestPoint"][];
+            meta?: components["schemas"]["OpenInterestPageMeta"];
             symbol?: components["schemas"]["Symbol"];
           };
         };
       };
+      400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };

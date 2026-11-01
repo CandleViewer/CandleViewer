@@ -52,6 +52,7 @@ _BOOT = (
     "disk_budget.start",
     "rule_prune_task.start",
     "funding_refresh_task.start",
+    "oi_runtime.start",
     "bars_runtime.start",
     "kline_boundary_refresh.load_now",
     "kline_boundary_refresh.start",

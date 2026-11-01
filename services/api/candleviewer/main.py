@@ -132,6 +132,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # one, would otherwise wait out its grace for a server that never served.
     feature_flags = scrub_task = audit_verify = disk_budget = rule_prune = funding_task = None
     audit_halt = None
+    oi_runtime = None
     rolloff_task: RollOffTask | None = None
     bars_runtime = kline_refresh = audit_flush = overrides = health_registry = None
     account_health = ws_runtime = lost_jobs = view_as_flush = view_as_sweeper = None
@@ -191,6 +192,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         funding_task = getattr(app.state, "funding_refresh_task", None)
         if funding_task is not None:
             funding_task.start()
+        oi_runtime = getattr(app.state, "oi_runtime", None)
+        if oi_runtime is not None:  # E24-T01: ticker tap, backfill worker, refresh (tracked)
+            oi_runtime.start()
         bars_runtime = getattr(app.state, "bars_runtime", None)
         if bars_runtime is not None:
             await bars_runtime.start()
@@ -323,6 +327,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await teardown.run("rule_prune_task", rule_prune.stop)
             if funding_task is not None:
                 await teardown.run("funding_refresh_task", funding_task.stop)
+            if oi_runtime is not None:
+                await teardown.run("oi_runtime", oi_runtime.stop)
             for t in alert_tasks:  # each is its own class, so its class name names the step
                 await teardown.run(type(t).__name__, t.stop)
             if scrub_task is not None:

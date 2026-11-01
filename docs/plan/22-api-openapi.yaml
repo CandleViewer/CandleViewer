@@ -5265,13 +5265,39 @@ paths:
       tags: [market-data]
       operationId: getOpenInterestHistory
       summary: Open-interest history from the local store
-      description: "Backfilled from Bybit `GET /v5/market/open-interest` (5min…1d intervals, limit ≤200/page) and continuously extended from the recorded `tickers` stream at higher resolution."
+      description: |
+        Two series, never mixed in one page (E24-T01, #665). `interval=1s` is the series
+        recorded from the `tickers` stream (`source: ws_ticker`, at most one point per second
+        per symbol). `5min`…`1d` are backfilled from Bybit `GET /v5/market/open-interest`
+        (`source: rest`, limit ≤200/page, cursor paging), so the native granularity of those
+        points is the interval itself. Every item carries its `interval` and `source`.
+        `open_interest` is in base coin; `open_interest_value` is USD and is `null` on a `rest`
+        point, since the venue's history carries no USD value and none is computed.
+
+        `meta.coverage` states what the store holds for the requested `(symbol, interval)`:
+        `from` / `to` are its first and last stored point (`null` when nothing is stored), and
+        `gaps[]` lists the spans of this window that hold no point where one was due (more
+        than one interval between points for `rest`, more than 10 s for `ws_ticker`), so a
+        missing span is reported and never filled. The first request for a `(symbol,
+        interval)` the store does not cover queues a bounded background backfill and answers
+        at once with what is stored.
+
+        **Bounds** (E24-X01 G1), checked before the store is read: `to - from` is at most
+        400 days and `from` must be before `to` (400 `invalid_time_range`); `limit` is 1–500,
+        default 100 (400 `validation_failed`); a malformed, foreign or expired `cursor`, or
+        one over 512 characters, is 400 `invalid_cursor`. A malformed `symbol` is 400
+        `validation_failed`; a well-formed symbol that is not listed is 422
+        `validation_failed`, as on `/market/data-coverage`.
       parameters:
         - $ref: "#/components/parameters/SymbolQuery"
         - name: interval
           in: query
           schema:
-            { type: string, enum: ["5min", "15min", "30min", "1h", "4h", "1d"], default: "5min" }
+            {
+              type: string,
+              enum: ["1s", "5min", "15min", "30min", "1h", "4h", "1d"],
+              default: "5min",
+            }
         - $ref: "#/components/parameters/From"
         - $ref: "#/components/parameters/To"
         - $ref: "#/components/parameters/Cursor"
@@ -5290,12 +5316,8 @@ paths:
                       symbol: { $ref: "#/components/schemas/Symbol" }
                       items:
                         type: array
-                        items:
-                          type: object
-                          properties:
-                            t: { type: string, format: date-time }
-                            open_interest: { $ref: "#/components/schemas/Decimal" }
-                            open_interest_value: { $ref: "#/components/schemas/Decimal" }
+                        items: { $ref: "#/components/schemas/OpenInterestPoint" }
+                      meta: { $ref: "#/components/schemas/OpenInterestPageMeta" }
               examples:
                 oi:
                   {
@@ -5307,15 +5329,32 @@ paths:
                             {
                               t: "2026-09-14T10:25:00Z",
                               open_interest: "61180.220",
-                              open_interest_value: "3861100000.00",
+                              open_interest_value: null,
+                              interval: "5min",
+                              source: rest,
                             },
                           ],
-                        meta: { next_cursor: null, has_more: false, count: 1 },
+                        meta:
+                          {
+                            next_cursor: null,
+                            has_more: false,
+                            count: 1,
+                            coverage:
+                              {
+                                from: "2026-09-01T00:00:00Z",
+                                to: "2026-09-14T10:25:00Z",
+                                native_interval: "5min",
+                                source: rest,
+                                gaps: [],
+                              },
+                          },
                       },
                   }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /market/funding:
@@ -5395,7 +5434,28 @@ paths:
         Sourced from the `allLiquidation.{symbol}` WS topic (the legacy `liquidation` topic is
         retired — digest 06 §9). Bybit batches at most one push per symbol per 500 ms, so
         counts are lower bounds on distinct liquidation events. `cluster_window_ms` groups
-        prints into liquidation cascades for the cluster overlay.
+        prints into liquidation cascades for the cluster overlay: a cluster gathers the prints
+        of one `side` within `cluster_window_ms` of its first print into one item whose `size`
+        and `notional_usd` are its members' sums, `ts` and `price` its first print's (as on
+        `/market/trades`),
+        and `cluster_size` its member count (1 when `cluster_window_ms` is 0). Clustering is
+        exact over the stored prints, so no item is estimated. `notional_usd` is `price × size`,
+        computed once at ingest with decimal arithmetic.
+
+        There is no REST history for liquidations: depth is bounded by recorder uptime
+        (21 §4.6). `meta.coverage` says what is stored for the symbol: `first_available_ts` is
+        the first stored print (`null` when none is), `covered_from` / `covered_to` the part of
+        the requested window the store can answer for, and `no_coverage` is true when the
+        window ends before `first_available_ts` (or nothing is stored), so an empty page there
+        means "not recorded", never "no liquidations".
+
+        **Bounds** (E24-X01 G1), checked before the store is read: `to - from` is at most
+        31 days and `from` must be before `to` (400 `invalid_time_range`); `limit` is 1–500,
+        default 100, and `cluster_window_ms` is 0–60000 here (WS `liquidations` takes
+        0–5000, the 23 topic registry), both 400 `validation_failed` when outside; a
+        malformed, foreign or expired `cursor`, or one over 512 characters, is 400
+        `invalid_cursor`. A malformed `symbol` is 400 `validation_failed`; a well-formed symbol
+        that is not listed is 422 `validation_failed`, as on `/market/data-coverage`.
       parameters:
         - $ref: "#/components/parameters/SymbolQuery"
         - $ref: "#/components/parameters/From"
@@ -5424,6 +5484,7 @@ paths:
                   - type: object
                     properties:
                       items: { type: array, items: { $ref: "#/components/schemas/Liquidation" } }
+                      meta: { $ref: "#/components/schemas/LiquidationsPageMeta" }
               examples:
                 liqs:
                   value:
@@ -5437,10 +5498,22 @@ paths:
                           notional_usd: "202473.60",
                           cluster_size: 1,
                         }
-                    meta: { next_cursor: null, has_more: false, count: 1 }
+                    meta:
+                      next_cursor: null
+                      has_more: false
+                      count: 1
+                      coverage:
+                        {
+                          first_available_ts: "2026-09-01T00:00:00.250Z",
+                          covered_from: "2026-09-14T10:00:00Z",
+                          covered_to: "2026-09-14T11:00:00Z",
+                          no_coverage: false,
+                        }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /market/data-coverage:
@@ -20227,11 +20300,71 @@ components:
       properties:
         ts: { type: string, format: date-time }
         symbol: { $ref: "#/components/schemas/Symbol" }
-        side: { type: string, enum: [buy, sell] }
+        side:
+          type: string
+          enum: [buy, sell]
+          description: >-
+            The print's side as the `side` query parameter reads it; which position was
+            liquidated follows the adapter's mapping of Bybit's `S` (24 §2.5
+            `liquidated_side`), never a client's own reading of the venue field.
         price: { $ref: "#/components/schemas/Decimal" }
         size: { $ref: "#/components/schemas/Decimal" }
-        notional_usd: { $ref: "#/components/schemas/Decimal" }
-        cluster_size: { type: integer }
+        notional_usd:
+          $ref: "#/components/schemas/Decimal"
+          description: "`price × size` in USD, computed once at ingest (a cluster: the sum)."
+        cluster_size: { type: integer, minimum: 1 }
+    LiquidationsPageMeta:
+      description: "`PageMeta` plus the stored coverage of the symbol (E24-T03, #667)."
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [coverage]
+          properties:
+            coverage:
+              type: object
+              required: [first_available_ts, covered_from, covered_to, no_coverage]
+              properties:
+                first_available_ts: { type: ["string", "null"], format: date-time }
+                covered_from: { type: ["string", "null"], format: date-time }
+                covered_to: { type: ["string", "null"], format: date-time }
+                no_coverage: { type: boolean }
+    OpenInterestPoint:
+      type: object
+      required: [t, open_interest, open_interest_value, interval, source]
+      properties:
+        t: { type: string, format: date-time }
+        open_interest:
+          $ref: "#/components/schemas/Decimal"
+          description: Base-coin open interest, both sides.
+        open_interest_value:
+          oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }]
+          description: USD value from the ticker; `null` on a `rest` point (never computed).
+        interval: { type: string, enum: ["1s", "5min", "15min", "30min", "1h", "4h", "1d"] }
+        source: { type: string, enum: [ws_ticker, rest] }
+    OpenInterestPageMeta:
+      description: "`PageMeta` plus the stored coverage of the requested series (E24-T01, #665)."
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [coverage]
+          properties:
+            coverage:
+              type: object
+              required: [from, to, native_interval, source, gaps]
+              properties:
+                from: { type: ["string", "null"], format: date-time }
+                to: { type: ["string", "null"], format: date-time }
+                native_interval:
+                  { type: string, enum: ["1s", "5min", "15min", "30min", "1h", "4h", "1d"] }
+                source: { type: string, enum: [ws_ticker, rest] }
+                gaps:
+                  type: array
+                  items:
+                    type: object
+                    required: [from, to]
+                    properties:
+                      from: { type: string, format: date-time }
+                      to: { type: string, format: date-time }
     DataCoverage:
       type: object
       properties:

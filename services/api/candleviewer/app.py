@@ -93,6 +93,7 @@ from candleviewer.api import (
     make_instruments_router,
     make_log_level_router,
     make_market_router,
+    make_open_interest_router,
     make_orderbook_router,
     make_rules_router,
     make_ticker_router,
@@ -344,6 +345,7 @@ from candleviewer.observability.service import ObservabilityService
 from candleviewer.observability.support_bundle import filter_config
 from candleviewer.observability.support_bundle_wiring import build_support_bundle_service
 from candleviewer.observability.telemetry import SessionRateLimiter, TelemetrySink
+from candleviewer.oi_wiring import OiRuntime, wire_open_interest
 from candleviewer.oms.service import OmsService
 from candleviewer.oms.ws_topics import FAMILIES as OMS_FAMILIES
 from candleviewer.oms_reads_wiring import oms_reads, order_versions
@@ -362,6 +364,7 @@ from candleviewer.orderflow.indicators.engine import IndicatorEngine, StoredHist
 from candleviewer.orderflow.indicators.metrics import export_indicator_metrics
 from candleviewer.orderflow.limits import min_size_floor, notional_size
 from candleviewer.orderflow.liquidity_metrics import export_liquidity_metrics
+from candleviewer.orderflow.open_interest import OiStore
 from candleviewer.orderflow.service import OrderflowService
 from candleviewer.paper.service import PaperService
 from candleviewer.profile_notices_wiring import ProfileNotices
@@ -3249,12 +3252,19 @@ def create_app(
     # The same instance, read-only, for the scanner (#4708): one venue budget for both consumers.
     ticker_universe: UniverseTickerSource | None = bulk_tickers
     app.state.ticker_universe = ticker_universe
+    app.state.oi_runtime = _compose_open_interest(ctx, resolved, catalogue_rest)
     # E24-T02: funding history + predicted rate; same resolver/fail-closed rules.
     app.include_router(
         make_funding_router(lambda: ctx.orderflow.funding, principal_resolver=audit_resolver)
     )
     # E24-T02-F1: compose FundingService (503 until the hot tier serves it).
     app.state.funding_refresh_task = _compose_funding(ctx, resolved)
+    # E24-T01 (#665): open interest, read side + ticker tap + backfill; same resolver rules.
+    app.include_router(
+        make_open_interest_router(
+            lambda: ctx.orderflow.open_interest, principal_resolver=audit_resolver
+        )
+    )
     # E08-S04: in-memory hot tape (newest-first); same resolver/fail-closed rules.
     app.include_router(
         make_trades_router(
@@ -3839,6 +3849,34 @@ def _compose_funding(ctx: AppContext, settings: Settings) -> Any:
         )
     return wire_funding(
         ctx, store=store, fetcher=None, closer=None, now_us=lambda: time.time_ns() // 1000
+    )
+
+
+def _compose_open_interest(
+    ctx: AppContext, settings: Settings, public_rest: PublicRest | None
+) -> OiRuntime:
+    """E24-T01 (#665): fake backend -> in-memory store; real -> the QuestDB store over the hot
+    tier's own writer and reader, built on first use. A fetcher exists only where the app talks
+    to the exchange (the catalogue's public client, one governor, `MARKET_DATA`), so the dev and
+    CI defaults never make a call (C-13.5)."""
+    from candleviewer.storage.questdb.oi_store import InMemoryOiStore, QuestDbOiStore
+    from candleviewer.storage.questdb.repository import QuestDbMarketDataRepository
+
+    def _real(repo: object) -> OiStore | None:
+        if not isinstance(repo, QuestDbMarketDataRepository):
+            return None
+        return QuestDbOiStore(*repo.derivatives_io)
+
+    fake = settings.storage_backend == "fake"
+    fetcher = None
+    if public_rest is not None:
+        fetcher = ctx.exchange_bybit.open_interest_fetcher(public_rest.client)
+    return wire_open_interest(
+        ctx,
+        store=InMemoryOiStore() if fake else None,
+        fetcher=fetcher,
+        store_factory=None if fake else _real,
+        now_us=lambda: time.time_ns() // 1000,
     )
 
 

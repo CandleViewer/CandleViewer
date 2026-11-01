@@ -2122,7 +2122,12 @@ class Liquidation(BaseModel):
             pattern="^[A-Z0-9]{2,20}USDT$",
         ),
     ] = None
-    side: Literal["buy", "sell"] | None = None
+    side: Annotated[
+        Literal["buy", "sell"] | None,
+        Field(
+            description="The print's side as the `side` query parameter reads it; which position was liquidated follows the adapter's mapping of Bybit's `S` (24 §2.5 `liquidated_side`), never a client's own reading of the venue field."
+        ),
+    ] = None
     price: Annotated[
         str | None,
         Field(
@@ -2142,12 +2147,58 @@ class Liquidation(BaseModel):
     notional_usd: Annotated[
         str | None,
         Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            description="`price × size` in USD, computed once at ingest (a cluster: the sum).",
             examples=["63120.50", "-0.0004", "0"],
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    cluster_size: JsonInt | None = None
+    cluster_size: Annotated[JsonInt | None, Field(ge=1)] = None
+
+
+class Coverage(BaseModel):
+    first_available_ts: AwareDatetime | None
+    covered_from: AwareDatetime | None
+    covered_to: AwareDatetime | None
+    no_coverage: StrictBool
+
+
+class LiquidationsPageMeta(PageMeta):
+    coverage: Coverage
+
+
+class OpenInterestPoint(BaseModel):
+    t: AwareDatetime
+    open_interest: Annotated[
+        str,
+        Field(
+            description="Base-coin open interest, both sides.",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ]
+    open_interest_value: Annotated[
+        Decimal | None,
+        Field(description="USD value from the ticker; `null` on a `rest` point (never computed)."),
+    ]
+    interval: Literal["1s", "5min", "15min", "30min", "1h", "4h", "1d"]
+    source: Literal["ws_ticker", "rest"]
+
+
+class Gap(BaseModel):
+    from_: Annotated[AwareDatetime, Field(alias="from")]
+    to: AwareDatetime
+
+
+class Coverage1(BaseModel):
+    from_: Annotated[AwareDatetime | None, Field(alias="from")]
+    to: AwareDatetime | None
+    native_interval: Literal["1s", "5min", "15min", "30min", "1h", "4h", "1d"]
+    source: Literal["ws_ticker", "rest"]
+    gaps: list[Gap]
+
+
+class OpenInterestPageMeta(PageMeta):
+    coverage: Coverage1
 
 
 class Interval(BaseModel):
@@ -2157,7 +2208,7 @@ class Interval(BaseModel):
     rows: JsonInt | None = None
 
 
-class Gap(BaseModel):
+class Gap1(BaseModel):
     from_: Annotated[AwareDatetime | None, Field(alias="from")] = None
     to: AwareDatetime | None = None
     reason: Annotated[
@@ -2192,7 +2243,7 @@ class Stream(BaseModel):
         | None
     ) = None
     intervals: list[Interval] | None = None
-    gaps: list[Gap] | None = None
+    gaps: list[Gap1] | None = None
 
 
 class DataCoverage(BaseModel):

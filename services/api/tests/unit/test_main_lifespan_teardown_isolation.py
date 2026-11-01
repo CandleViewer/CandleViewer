@@ -47,6 +47,7 @@ _STEPS = (
     "kline_boundary_refresh",
     "rule_prune_task",
     "funding_refresh_task",
+    "oi_runtime",
     "alert_purge_task",
     "alert_gauge_task",
     "drawings_purge_task",

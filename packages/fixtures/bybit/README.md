@@ -24,20 +24,21 @@ own `capture_date` (the `recorded_*` files below).
 
 ## Coverage
 
-| Scenario                                              | File                                                                         |
-| ----------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Clean 3 h windows (BTCUSDT, ETHUSDT, mid-cap SOLUSDT) | `ws/clean_publicTrade_*.jsonl`                                               |
-| Sequence gap                                          | `ws/gap_orderbook_ETHUSDT.jsonl`, `ws/orderbook_BTCUSDT.jsonl`               |
-| Reconnect                                             | `ws/reconnect_publicTrade_ETHUSDT.jsonl`, `ws/publicTrade_BTCUSDT.jsonl`     |
-| Ticker delta-only burst                               | `ws/burst_tickers_BTCUSDT.jsonl`                                             |
-| Kline page boundary (450 rows, limit 200)             | `rest/kline_BTCUSDT_1_page{0,1,2}.json`                                      |
-| Errors 10018 / 10002 / 5xx                            | `rest/error_10018.json`, `rest/error_10002.json`, `rest/error_503.json`      |
-| Delisted symbol + changed tick size                   | `rest/instruments_before.json` -> `rest/instruments_after.json`              |
-| Live feed fields (#3447): `RPI`, `seq`, newer tickers | `ws/recorded_publicTrade_BTCUSDT.jsonl`, `ws/recorded_tickers_BTCUSDT.jsonl` |
-| Risk-limit tiers (#913): one recorded page each       | `rest/risk_limit_BTCUSDT.json`, `rest/risk_limit_ETHUSDT.json`               |
-| Bulk ticker route (#4707): one recorded reply each    | `rest/recorded_tickers_{BTCUSDT,ETHUSDT,SOLUSDT}.json`                       |
-| Order path (#2877): trade replies, reads, two errors  | `rest/trading-*.json` (docs-transcribed, below)                              |
-| Private stream (#3963): replies and topic pushes      | `ws/private-*.jsonl` (docs-transcribed, below)                               |
+| Scenario                                               | File                                                                             |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| Clean 3 h windows (BTCUSDT, ETHUSDT, mid-cap SOLUSDT)  | `ws/clean_publicTrade_*.jsonl`                                                   |
+| Sequence gap                                           | `ws/gap_orderbook_ETHUSDT.jsonl`, `ws/orderbook_BTCUSDT.jsonl`                   |
+| Reconnect                                              | `ws/reconnect_publicTrade_ETHUSDT.jsonl`, `ws/publicTrade_BTCUSDT.jsonl`         |
+| Ticker delta-only burst                                | `ws/burst_tickers_BTCUSDT.jsonl`                                                 |
+| Kline page boundary (450 rows, limit 200)              | `rest/kline_BTCUSDT_1_page{0,1,2}.json`                                          |
+| Errors 10018 / 10002 / 5xx                             | `rest/error_10018.json`, `rest/error_10002.json`, `rest/error_503.json`          |
+| Delisted symbol + changed tick size                    | `rest/instruments_before.json` -> `rest/instruments_after.json`                  |
+| Live feed fields (#3447): `RPI`, `seq`, newer tickers  | `ws/recorded_publicTrade_BTCUSDT.jsonl`, `ws/recorded_tickers_BTCUSDT.jsonl`     |
+| Risk-limit tiers (#913): one recorded page each        | `rest/risk_limit_BTCUSDT.json`, `rest/risk_limit_ETHUSDT.json`                   |
+| Bulk ticker route (#4707): one recorded reply each     | `rest/recorded_tickers_{BTCUSDT,ETHUSDT,SOLUSDT}.json`                           |
+| Order path (#2877): trade replies, reads, two errors   | `rest/trading-*.json` (docs-transcribed, below)                                  |
+| Private stream (#3963): replies and topic pushes       | `ws/private-*.jsonl` (docs-transcribed, below)                                   |
+| Open-interest history (#665): 260 rows, 2 cursor pages | `rest/open_interest_BTCUSDT_5min_page{0,1}.json`, `rest/docs-open-interest.json` |
 
 ## Provenance and size
 
@@ -185,6 +186,19 @@ account id.
 - `private-execution-fast.jsonl`: source: docs-transcribed, `websocket/private/fast-execution`; 2026-10-21; symbol ICPUSDT; env none; redaction none.
 - `private-position.jsonl`: source: docs-transcribed, `websocket/private/position`; 2026-10-21; symbol BTCUSDT; env none; redaction none.
 - `private-wallet.jsonl`: source: docs-transcribed, `websocket/private/wallet`; 2026-10-21; symbol none (one BTC coin row); env none; redaction none.
+
+### Docs-transcribed open-interest shape (#665, E24-T01)
+
+No recording holds a `GET /v5/market/open-interest` reply yet. `rest/docs-open-interest.json` is
+the docs page's Response Example (`market/open-interest`, at `bybit-exchange/docs` commit
+`19518b90fb36`), keys and values unchanged (whitespace compacted): an inverse `BTCUSD` page, so
+evidence of the documented shape only. The two `open_interest_BTCUSDT_5min_page*.json` files are
+documented-shape (exception #1778 A), not docs-transcribed: they take that row and envelope shape,
+read from the page retrieved 2026-10-31, with generated (seeded) linear values, built by
+`build_corpus.py`.
+A recording made with `capture_fixture.py --rest-path` replaces all three.
+
+- `docs-open-interest.json`: source: docs-transcribed, `market/open-interest`; 2026-10-31; symbol BTCUSD (inverse); env none; redaction none.
 
 ## Gates
 

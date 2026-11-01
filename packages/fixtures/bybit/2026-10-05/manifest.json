@@ -2,6 +2,20 @@
   "capture_date": "2026-10-05",
   "fixtures": [
     {
+      "path": "rest/docs-open-interest.json",
+      "symbol": "BTCUSD",
+      "stream": "GET /v5/market/open-interest",
+      "host": "bybit-exchange.github.io",
+      "capture_date": "2026-10-31",
+      "source": "docs-transcribed",
+      "notable_event": "docs Response Example: 5 inverse rows, a nextPageCursor",
+      "http_status": null,
+      "size_cap_bytes": 4000,
+      "retrieved": "2026-10-31",
+      "source_url": "https://bybit-exchange.github.io/docs/v5/market/open-interest",
+      "source_ref": "github.com/bybit-exchange/docs@19518b90fb36e1527eaf99ff692076487a977921:docs/v5/market/open-interest.mdx"
+    },
+    {
       "path": "rest/error_10002.json",
       "symbol": "*",
       "stream": "GET /v5/market/kline",
@@ -113,6 +127,36 @@
       "http_status": 200,
       "size_cap_bytes": 32000,
       "note": "open times realigned -20000 ms onto the 1-minute epoch grid (#2044 review F2); real Bybit kline open times are interval multiples (W from Monday 00:00 UTC); row count and OHLCV unchanged; documented-shape, not a live capture"
+    },
+    {
+      "path": "rest/open_interest_BTCUSDT_5min_page0.json",
+      "symbol": "BTCUSDT",
+      "stream": "GET /v5/market/open-interest",
+      "host": "api.bybit.com",
+      "capture_date": "2026-10-05",
+      "source": "documented-shape (exception #1778 A)",
+      "notable_event": "cursor paging: page 0 of 2 (limit 200, 260 rows)",
+      "http_status": 200,
+      "size_cap_bytes": 32000,
+      "source_url": "https://bybit-exchange.github.io/docs/v5/market/open-interest",
+      "source_ref": "github.com/bybit-exchange/docs@19518b90fb36e1527eaf99ff692076487a977921:docs/v5/market/open-interest.mdx",
+      "retrieved": "2026-10-31",
+      "note": "documented-shape, not docs-transcribed and not a live capture: the row and envelope shape follow the docs page retrieved 2026-10-31 (rest/docs-open-interest.json, the transcription); every value is generated (seeded)"
+    },
+    {
+      "path": "rest/open_interest_BTCUSDT_5min_page1.json",
+      "symbol": "BTCUSDT",
+      "stream": "GET /v5/market/open-interest",
+      "host": "api.bybit.com",
+      "capture_date": "2026-10-05",
+      "source": "documented-shape (exception #1778 A)",
+      "notable_event": "cursor paging: page 1 of 2 (limit 200, 260 rows)",
+      "http_status": 200,
+      "size_cap_bytes": 32000,
+      "source_url": "https://bybit-exchange.github.io/docs/v5/market/open-interest",
+      "source_ref": "github.com/bybit-exchange/docs@19518b90fb36e1527eaf99ff692076487a977921:docs/v5/market/open-interest.mdx",
+      "retrieved": "2026-10-31",
+      "note": "documented-shape, not docs-transcribed and not a live capture: the row and envelope shape follow the docs page retrieved 2026-10-31 (rest/docs-open-interest.json, the transcription); every value is generated (seeded)"
     },
     {
       "path": "rest/recent_trade_BTCUSDT.json",
