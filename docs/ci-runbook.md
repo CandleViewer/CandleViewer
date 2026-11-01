@@ -1211,7 +1211,10 @@ carries a warning annotation titled `regression-guard (non-required)`, and the j
   entry); on staging it stops and alerts — roll back manually (§8). Check
   the `migrate` step's log first (`docker compose ... logs migrate`): a
   failed schema step stops `up` before `api` starts, and a long wait on its
-  advisory lock (E03-T10) is a CI-DEP-004.
+  advisory lock (E03-T10) is a CI-DEP-004. After a failed `up` the deploy
+  leaves the exited `migrate` container in place; once its log is read,
+  remove it (`docker compose ... rm -f migrate`): it holds the owner DSN the
+  step ran with.
 - **CI-DEP-003** (image mismatch after deploy): the probes are ok, but the
   running `api` container's image id is not the image id of the verified
   `<ref>@<digest>`; the error names both ids. The smoke test compares
@@ -1315,10 +1318,12 @@ section in the same sprint — do not just work around it and move on.
   `cosign verify`s the digest immediately before applying it, renders
   `infra/compose/.env` from `infra/compose/.env.example`, runs
   `docker compose ... up -d --wait --no-build` with the deploy overlay
-  `infra/compose/docker-compose.deploy.yml` (the `api` service runs the
-  verified `<ref>@<digest>`), smoke-tests `/healthz` + `/readyz` and checks
-  that the running `api` container's image id is the verified image's
-  (CI-DEP-003 otherwise), then appends a record to
+  `infra/compose/docker-compose.deploy.yml` (the `api` service and the
+  `migrate` step it waits for run the verified `<ref>@<digest>`), removes
+  the exited `migrate` container (it holds the owner DSN the step ran with;
+  after a failed `up` it stays, for its log), smoke-tests `/healthz` +
+  `/readyz` and checks that the running `api` container's image id is the
+  verified image's (CI-DEP-003 otherwise), then appends a record to
   `deployments/ledger.jsonl` (sha, digest, environment, actor, timestamp,
   outcome, duration) — committed by the workflow for auditability until
   E04's observability lands.
@@ -1339,8 +1344,10 @@ section in the same sprint — do not just work around it and move on.
   artifact / SBOM-diff job summary). That rollback is a deploy of the
   previous digest: it runs through the same overlay, and the smoke test
   checks its image id. It is a full `up`, so it runs that image's schema
-  step first: against a schema a newer image migrated the step exits 4 and
-  `up` starts no `api`; start the older `api` alone with `up --no-deps api`
+  step first, and against a schema a newer image migrated the step refuses
+  (exit 4: Alembic cannot find the database's revision; exit 9: QuestDB
+  holds columns a newer DDL file added) and `up` starts no `api`; start the
+  older `api` alone with `up --no-deps api`, the way out for both
   (`docs/ops/runbooks/storage-migrate.md`).
 - Rollback never runs a down-migration (ADR-0013 rule 9): migrations are
   additive expand/contract, so redeploying an older image against the

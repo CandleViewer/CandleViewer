@@ -48,6 +48,15 @@ C="docker compose -f infra/compose/docker-compose.yml"
 CV_PG_OWNER_DSN='<the cv_owner DSN>' $C --profile core up -d --build api
 ```
 
+The `migrate` container stays after the step exits, and its stored configuration holds the owner
+DSN it was given (`docker inspect` shows it to anyone with Docker access) until it is removed or
+recreated. Remove it once the `up` has returned; a running `api` is left alone. If the step failed,
+read its log first (`$C --profile core logs migrate`), then remove it:
+
+```bash
+$C --profile core rm -f migrate
+```
+
 The step reads `CV_PG_OWNER_DSN` (the owner role, `cv_owner`: `21-database-schema.md` §9.1). Compose
 hands it to the `migrate` container as its `CV_PG_DSN`; the `api` service does not take it, and
 `CV_PG_DSN` stays the app role's (`cv_app`, which has no DDL privileges). Every `up` that
@@ -73,12 +82,15 @@ one-shot and starts `api` once it has exited 0: `api` has
 `depends_on: {migrate: {condition: service_completed_successfully}}`, and `migrate` has the profiles
 `core` and `migrate`, because compose refuses an `api` that depends on a service of an inactive
 profile. The step runs on every `up` that includes `api`, a routine one of a running stack too:
-compose starts the exited `migrate` container again, and a run with nothing left to apply exits 0
-(the crash window between a file's DDL and its `_cv_migrations` record no longer fails a run, #3093:
-see "After a crash"). A failed step stops that `up` (see "Exit status"): `api` is not started, and
-an `api` that is already running is left as it is. `restart api` and `up --no-deps api` start `api`
-alone and run no step, which is how to start an older image on a schema a newer one migrated: its
-step cannot find the database's revision and exits 4.
+compose runs the `migrate` container again (it starts the exited one, or creates it once it was
+removed), and a run with nothing left to apply exits 0 (the crash window between a file's DDL and
+its `_cv_migrations` record no longer fails a run, #3093: see "After a crash"). A failed step stops
+that `up` (see "Exit status"): `api` is not started, and an `api` that is already running is left
+as it is. `restart api` and `up --no-deps api` start `api` alone and run no step, which is how to
+start an older image on a schema a newer one migrated: a full `up` of that image runs its step
+first, and the step refuses, with exit 4 when Alembic cannot find the database's revision and with
+exit 9 when QuestDB holds columns that a newer DDL file added (`StorageSchemaDrift`, those columns
+as `extra`).
 
 To run the step alone, as a rehearsal or the first run on a new install, give it the owner DSN the
 same way. `run` starts Postgres and QuestDB if they are down, waits until they are healthy and

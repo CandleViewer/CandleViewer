@@ -16,7 +16,9 @@ Flow (ticket "Scope / Deliverables" + acceptance scenarios):
      service, and the `migrate` one-shot that it waits for (the schema step,
      #4014), run the verified `<ref>@<digest>`, which compose also gets in
      its own environment (`--wait` waits on the `api` healthcheck, which is
-     only `/healthz`; step 3 checks the image).
+     only `/healthz`; step 3 checks the image). Once `up` has returned, the
+     exited `migrate` container, which holds the owner DSN the step ran with,
+     is removed; after a failed `up` it stays, for its log.
   3. Smoke test: poll `GET /healthz` and `GET /readyz` until both report
      `status: ok`, then check that the running `api` container's image id
      equals the verified image's id (`check_running_image`; CI-DEP-003
@@ -258,6 +260,18 @@ def compose_up(
         )
 
 
+def remove_schema_step(compose_files: tuple[str, ...], *, profile: str = "core") -> None:
+    """Remove the exited `migrate` container once `up` has returned. Compose hands the step the
+    owner DSN as its `CV_PG_DSN`, and a stopped container keeps it in its configuration until it
+    is removed or recreated. `rm` takes stopped containers only (no `-s`), so a running `api` is
+    left alone. Only a successful `up` gets here: after a failed one the container stays, for its
+    log (`docs/ops/runbooks/storage-migrate.md`). CI-DEP-002 if `rm` fails."""
+    _docker_query(
+        [*_compose_args(compose_files, profile), "rm", "-f", "migrate"],
+        "docker compose rm -f migrate",
+    )
+
+
 def _get_json(url: str, timeout_s: float = 3.0) -> dict:
     with urllib.request.urlopen(url, timeout=timeout_s) as resp:
         return json.loads(resp.read().decode("utf-8"))
@@ -271,7 +285,7 @@ _DOCKER_QUERY_TIMEOUT_S = 20.0
 
 
 def _docker_query(args: list[str], what: str) -> str:
-    """Run one read-only docker query; CI-DEP-002 (never echoing stdout) if it cannot complete."""
+    """Run one docker command, bounded; CI-DEP-002 (never echoing stdout) if it cannot complete."""
     try:
         result = subprocess.run(
             args, capture_output=True, text=True, check=False, timeout=_DOCKER_QUERY_TIMEOUT_S
@@ -434,6 +448,7 @@ def deploy(
 
     try:
         compose_up(compose_files, image_ref=image_ref, digest=digest)
+        remove_schema_step(compose_files)
         smoke_test(base_url, image, compose_files, timeout_s=smoke_timeout_s)
     except DeployError as exc:
         outcome: Literal["smoke-failed", "sha-mismatch"] = (

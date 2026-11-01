@@ -1,9 +1,10 @@
 """The edit hook `.claude/hooks/pre_edit_guard.py` (#4014, C-5.4).
 
 Run as a subprocess on a throwaway git repository whose `origin/main` holds an applied QuestDB DDL
-file, its lock and an applied Alembic revision, with the tool's JSON on stdin. An edit of an applied
-file is blocked (exit 2, the reason on stderr); a new file and the lock beside the DDL files pass;
-the hook passes on input it cannot read. Hermetic: no global or system git config, no network.
+file, its lock, an applied Alembic revision and SQL files outside the DDL directory, with the tool's
+JSON on stdin. An edit of an applied file is blocked (exit 2, the reason on stderr); a new file, the
+lock beside the DDL files and a SQL file elsewhere pass, one under `backend/db/` included; the hook
+passes on input it cannot read. Hermetic: no global or system git config, no network.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ STATECHART = "services/api/candleviewer/statechart"
 APPLIED_DDL = f"{DDL}/0001_core.sql"
 APPLIED_REVISION = f"{REVISIONS}/0001_initial.py"
 OTHER_SQL = "infra/scripts/pg_bootstrap.sql"
+NEAR_MISS_SQL = "backend/db/seeds/example.sql"  # under `backend/db/`, beside the DDL directory
 IMPORT = "import xstate_statemachine as xs\n"
 IDENTITY = {"NAME": "t", "EMAIL": "t@example.invalid"}
 
@@ -47,9 +49,9 @@ def _git(project: Path, env: dict[str, str], *args: str) -> None:
 
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
-    """A repo on branch `work` whose `origin/main` ref holds the applied files and a SQL file."""
+    """A repo on branch `work` whose `origin/main` ref holds the applied files and two SQL files."""
     root = tmp_path / "project"
-    for name in (APPLIED_DDL, f"{DDL}/lockfile.json", APPLIED_REVISION, OTHER_SQL):
+    for name in (APPLIED_DDL, f"{DDL}/lockfile.json", APPLIED_REVISION, OTHER_SQL, NEAR_MISS_SQL):
         (root / name).parent.mkdir(parents=True, exist_ok=True)
         (root / name).write_text("applied\n", encoding="utf-8")
     env = _env(root, tmp_path)
@@ -95,8 +97,11 @@ def test_hook_passes_an_edit_of_the_lock_file(project: Path) -> None:
     assert (done.returncode, done.stderr) == (0, "")
 
 
-def test_hook_passes_an_edit_of_a_sql_file_outside_the_ddl_directory(project: Path) -> None:
-    done = _run(project, _edit(project / OTHER_SQL))
+@pytest.mark.parametrize("sql", [OTHER_SQL, NEAR_MISS_SQL], ids=["elsewhere", "beside-the-ddl"])
+def test_hook_passes_an_edit_of_a_sql_file_outside_the_ddl_directory(
+    project: Path, sql: str
+) -> None:
+    done = _run(project, _edit(project / sql))
     assert (done.returncode, done.stderr) == (0, "")
 
 

@@ -391,8 +391,8 @@ handoff that still names `black --check .` is stale (#4229): run `ruff format --
 | Container scan                                                      | `trivy image candleviewer/api:dev`                                                                            |
 
 `make up` and `make dev` also run the `migrate` one-shot (the Postgres and QuestDB schemas,
-`docs/ops/runbooks/storage-migrate.md`) before `api` starts: `api` waits for it, and a failed step
-stops `up`.
+`docs/ops/runbooks/storage-migrate.md`) before `api` starts: `api` waits for it, a failed step stops
+`up`, and `make up` needs `CV_PG_OWNER_DSN` to resolve to the stack's login, as the runbook says.
 
 ### Governance (C-16.4, C-16.5 — runnable today; stdlib Python plus `jsonschema` for GOV-004)
 

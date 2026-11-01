@@ -8,7 +8,7 @@ service is a one-shot in the `core` and `migrate` profiles that is rebuilt from 
 definition and takes the owner role's DSN from its own variable (never the one `api` reads). `api`
 waits for it to complete successfully, so the API never starts after a schema step that failed. The
 runbook recipe is the one `up` that runs it first, as this checkout's build, with the owner DSN on
-that one command.
+that one command, and the line that removes the step's exited container afterwards.
 """
 
 from __future__ import annotations
@@ -85,16 +85,20 @@ def test_the_owner_dsn_reaches_migrate_through_its_own_variable_and_never_api(
     assert [name for name, service in services.items() if _OWNER_DSN in str(service)] == ["migrate"]
 
 
-def _bash_blocks() -> list[str]:
-    """The runbook's fenced bash blocks, continuation lines joined."""
+def _block_holding(command: str) -> str:
+    """The one fenced bash block of the runbook that holds `command`, continuation lines joined.
+    Chosen by its content, so a block added before or between the others changes nothing."""
     text = _RUNBOOK.read_text(encoding="utf-8")
-    return [
+    blocks: list[str] = [
         block.replace("\\\n", " ") for block in re.findall(r"```bash\n(.*?)```", text, re.DOTALL)
     ]
+    holding = [block for block in blocks if command in block]
+    assert len(holding) == 1, f"{len(holding)} bash blocks of the runbook hold {command!r}, not one"
+    return holding[0]
 
 
 def test_the_recipe_rebuilds_both_images_and_gives_the_owner_dsn_to_the_one_command() -> None:
-    recipe = _bash_blocks()[0]  # the run recipe: the runbook's first fenced bash block
+    recipe = _block_holding("up -d --build api")  # the run recipe
     prefix, _, command = recipe.partition("$C")
     # One `up`: `api` waits for the step, so there is no second command to run it before. `--build`
     # makes `api` this checkout's build; `migrate` rebuilds itself on every `up` (`pull_policy`).
@@ -103,8 +107,15 @@ def test_the_recipe_rebuilds_both_images_and_gives_the_owner_dsn_to_the_one_comm
     assert "export" not in recipe  # never left in the shell's environment
 
 
+def test_the_exited_step_container_is_removed_with_no_owner_dsn_and_without_stopping_api() -> None:
+    """`up` leaves the exited `migrate` container, whose stored configuration holds the owner DSN
+    until it is removed or recreated. Without `-s`, `rm` takes stopped containers only."""
+    removal = _block_holding("rm -f migrate")
+    assert removal.strip() == "$C --profile core rm -f migrate"
+
+
 def test_the_rehearsal_runs_the_step_alone_with_the_owner_dsn_on_its_command() -> None:
-    rehearsal = _bash_blocks()[1]  # the second block: `run` returns the step's exit status
+    rehearsal = _block_holding("run --rm --build migrate")  # `run` returns the step's exit status
     assert "--profile core run --rm --build migrate" in rehearsal
     assert rehearsal.lstrip().startswith(f"{_OWNER_DSN}=") and "export" not in rehearsal
 

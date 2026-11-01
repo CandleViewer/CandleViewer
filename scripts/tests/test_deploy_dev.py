@@ -49,11 +49,14 @@ def fake_docker(
     ps: tuple[int, str] = (0, CONTAINER_ID + "\n"),
     inspect: tuple[int, str] = (0, IMAGE_ID + "\n"),
     image: tuple[int, str] = (0, IMAGE_ID + "\n"),
+    up: tuple[int, str] = (0, ""),
+    rm: tuple[int, str] = (0, ""),
 ) -> SimpleNamespace:
-    """Fake `subprocess.run`: cosign and `compose up` succeed, the smoke test's three
-    queries answer (rc, stdout): `compose ps`, the container's `inspect`, `image inspect`.
+    """Fake `subprocess.run`: cosign succeeds, and `compose up`, `compose rm` and the smoke test's
+    three queries answer (rc, stdout): `compose ps`, the container's `inspect`, `image inspect`.
     `.calls` logs each argv, `.kwargs` its keywords."""
     log = SimpleNamespace(calls=[], kwargs=[])
+    answers = {"ps": ps, "up": up, "rm": rm}
 
     def run(cmd: list[str], **kwargs: object) -> SimpleNamespace:
         log.calls.append(cmd)
@@ -63,7 +66,7 @@ def fake_docker(
         elif cmd[:2] == ["docker", "inspect"]:
             rc, out = inspect
         else:
-            rc, out = ps if "ps" in cmd else (0, "")
+            rc, out = next((a for word, a in answers.items() if word in cmd), (0, ""))
         return SimpleNamespace(returncode=rc, stdout=out, stderr="")
 
     monkeypatch.setattr(dd.subprocess, "run", run)
@@ -619,11 +622,58 @@ def test_dev_rollback_restarts_api_alone_and_never_runs_the_schema_step(
     forward_up, rollback_up = (c for c in docker.calls if "up" in c)
     assert forward_up[-1] == "--no-build" and "--no-deps" not in forward_up
     assert rollback_up[-3:] == ["--no-build", "--no-deps", "api"]
-    assert [c for c in docker.calls if "migrate" in c] == []  # no call names the step
+    # Only the forward deploy's removal of the exited step container names the step.
+    removal = [*forward_up[: forward_up.index("up")], "rm", "-f", "migrate"]
+    assert [c for c in docker.calls if "migrate" in c] == [removal]
     base = yaml.safe_load(BASE.read_text(encoding="utf-8"))["services"]
     assert "migrate" in base["api"]["depends_on"]  # so only `--no-deps` keeps it out of this `up`
     outcomes = [json.loads(x)["outcome"] for x in ledger.read_text(encoding="utf-8").splitlines()]
     assert outcomes == ["success", "sha-mismatch", "rolled-back"]
+
+
+def test_a_successful_forward_up_is_followed_by_removing_the_exited_schema_step_container(
+    tmp_path: Path, env_example: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `migrate` container stays after it exits 0, and its stored configuration holds the owner
+    DSN the step ran with (handed to it as `CV_PG_DSN`) until it is removed or recreated. Once `up`
+    has returned, the deploy removes it, with the `up`'s files and profile and without `-s`, so a
+    running `api` is left alone."""
+    docker = fake_docker(monkeypatch)
+    probes(monkeypatch)
+    assert run_deploy(tmp_path, env_example, tmp_path / "ledger.jsonl") == 0
+    up = next(c for c in docker.calls if "up" in c)
+    removal = [*up[: up.index("up")], "rm", "-f", "migrate"]
+    assert [c for c in docker.calls if "rm" in c] == [removal]
+    assert docker.calls.index(removal) > docker.calls.index(up)
+
+
+def test_a_failed_forward_up_keeps_the_exited_schema_step_container_for_its_log(
+    tmp_path: Path, env_example: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A step that failed exits non-zero: compose reports it and starts no `api`, and the
+    container's log says why. The deploy leaves it there to be read (the runbook says to remove it
+    afterwards)."""
+    docker = fake_docker(monkeypatch, up=(1, ""))
+    ledger = tmp_path / "ledger.jsonl"
+    assert run_deploy(tmp_path, env_example, ledger) == 1
+    assert [c for c in docker.calls if "up" in c] != []  # the `up` ran, and failed
+    assert [c for c in docker.calls if "rm" in c] == []
+    row = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
+    assert row["outcome"] == "smoke-failed" and row["detail"].startswith("CI-DEP-002")
+
+
+def test_a_failed_removal_of_the_schema_step_container_fails_the_deploy_as_ci_dep_002(
+    tmp_path: Path, env_example: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `rm` that fails is a failed docker command like any other: CI-DEP-002, ahead of the smoke
+    test."""
+    fake_docker(monkeypatch, rm=(1, ""))
+    urls = probes(monkeypatch)
+    ledger = tmp_path / "ledger.jsonl"
+    assert run_deploy(tmp_path, env_example, ledger) == 1
+    row = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
+    assert row["outcome"] == "smoke-failed" and urls == []
+    assert row["detail"].startswith("CI-DEP-002: docker compose rm -f migrate failed (exit 1)")
 
 
 @pytest.mark.parametrize("pinned", [[], [DIGEST_B]], ids=["runs-it", "runs-another-image"])
@@ -921,7 +971,7 @@ def test_deploy_staging_never_auto_rolls_back(
         ledger,
     )
     monkeypatch.setattr(
-        dd.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0, stderr="")
+        dd.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0, stdout="", stderr="")
     )
     monkeypatch.setattr(dd, "compose_up", lambda *a, **k: None)
     monkeypatch.setattr(dd.time, "sleep", lambda _s: None)
