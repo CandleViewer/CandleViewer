@@ -2,6 +2,10 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuditRecord } from "../src/keymap/audit";
 
+// Every test here renders the whole SCR-113 command table (85 rows), several times over for the
+// import and export paths; under coverage on the shared runner that sits near vitest's 5 s default.
+vi.setConfig({ testTimeout: 15_000 });
+
 /**
  * #305 (E10-S02) PR B: SCR-113's editor (R-202) over the conflict engine, in the minimal form BQ-8 rules. A conflict
  * offers a one-click Swap (AC3), Export sits beside Import (AC7), a locked command has no change control (AC4), and
@@ -18,13 +22,15 @@ const load = async () => ({
 let m: Awaited<ReturnType<typeof load>>;
 let audits: AuditRecord[];
 
+// The first test's hook also pays the keymap modules' cold transform: 30.3 s at load 28 on the lane's
+// host, past vitest's 10 s hook default, which is why the first "conflict" tests timed out (#5363).
 beforeEach(async () => {
   window.localStorage.clear();
   vi.resetModules();
   m = await load();
   audits = [];
   m.setAuditSink((r) => audits.push(r));
-});
+}, 60_000);
 
 function mount(): void {
   const { HotkeyEditor, ShellAnnouncer } = m;
