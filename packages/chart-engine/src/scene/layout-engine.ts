@@ -40,9 +40,17 @@ export class LayoutEngine {
 
   constructor(
     private readonly graph: SceneGraph,
-    readonly priceGutter = PRICE_GUTTER_PX,
+    /** E11-S06 (BQ-201): measured from the widest price label (`setPriceGutter`). */
+    public priceGutter = PRICE_GUTTER_PX,
     readonly timeGutter = TIME_GUTTER_PX,
   ) {}
+
+  /** The axes' measured gutter: LAYOUT only when the width changes (BQ-201). */
+  setPriceGutter(px: number): void {
+    if (!(px > 0) || px === this.priceGutter) return;
+    this.priceGutter = px;
+    this.graph.markResize();
+  }
 
   /** Lays out a pane already in the graph, below the others. */
   addPane(id: string, ratio = 1): void {

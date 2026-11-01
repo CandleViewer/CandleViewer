@@ -23,6 +23,8 @@ export function createScaleBadge(
   container: HTMLElement,
   colors: Readonly<Record<string, string>>,
   restore: () => void,
+  /** Where focus goes when the badge leaves under it: the price-axis stop (E11-S06, G-19). */
+  focusAfter: () => HTMLElement = () => container,
 ): ScaleBadge {
   let theme = colors;
   let b: HTMLButtonElement | null = null; // made on the first lock: no DOM while auto
@@ -58,8 +60,9 @@ export function createScaleBadge(
         // Activated from the keyboard, the badge goes while it holds focus: hand focus to the
         // container (focusable once E11-S13 gives it its stop) rather than drop it to <body>.
         // The axis stop of E11-D03 D7 is E11-S06's (README G-19).
-        if (b !== null && b.ownerDocument.activeElement === b)
-          container.focus({ preventScroll: true });
+        if (b !== null && b.ownerDocument.activeElement === b) {
+          focusAfter().focus({ preventScroll: true });
+        }
         b?.remove();
         return;
       }

@@ -80,10 +80,13 @@ describe("the price scale through the runtime", () => {
     scale({ mode: "log" });
     frame();
     const after = out.slice(posted);
-    // No data request, no buffer upload: a viewport report and a frame with 0 bytes uploaded.
-    expect(after.map((m) => m.t).sort()).toEqual(["frame", "viewport"]);
-    expect(after.find((m) => m.t === "frame")).toMatchObject({ uploadedBytes: 0 });
-    expect(gl.writes.length).toBe(writes);
+    // No data request and no series buffer upload: a viewport report and a frame. E11-S06 (C-66):
+    // the relabelled axes post `axes`, and only the axis grid's own ring is rewritten.
+    expect(after.map((m) => m.t).sort()).toEqual(["axes", "frame", "viewport"]);
+    const grid = gl.writes.slice(writes);
+    expect(grid.length).toBeLessThanOrEqual(1);
+    const bytes = after.find((m) => m.t === "frame");
+    expect(bytes?.t === "frame" && bytes.uploadedBytes % 36).toBe(0); // whole line instances
     expect(viewports().at(-1)).toMatchObject({ mode: "log", requestedMode: "log" });
   });
 
