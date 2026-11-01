@@ -1,0 +1,132 @@
+# E05-Q02 (#262): design system v0 accessibility audit, run record v1
+
+v1 supersedes v0 (the first run, before the rebase onto the E05-S04 slice H merge). It re-runs the full sweep at the rebased head, adds the automatable manual passes, and links the per-cell results.
+
+## 0. Honest scope
+
+This is an **agent-run** audit. It is not a human pass: no screen reader was operated by a person, no pointer-free session was driven by a person, and nobody zoomed a browser by hand. Every number below was measured by a committed driver; every item that needs a person is listed as human-owed in §5.
+
+- **Swept sha:** `4393c2d867d834ef3eb3cd7a2b5394bf3c6fa35e` (the E05-Q02 branch rebased onto `main` after E05-S04 slice H (#5237) merged). After #5243 merged, this report's commits were replayed onto `main`. Between the swept sha and this PR's head, `packages/ui/src` (every component, story and stylesheet the sweep renders) is byte-identical. The only `packages/ui` changes are `eslint.config.mjs` and two test files from other tickets, which the built Storybook does not render. So the sweep stands for this head (`git diff 4393c2d86 HEAD -- packages/ui/src` is empty).
+- **Fix commits (post-rebase shas):** `2b09253d5` (skip link) and `d716c6a82` (error summary links and the Typography story). The v0 record named their pre-rebase shas.
+- **Environment:** the built Storybook, served on loopback, Playwright Chromium, headless, 1280 x 800. No live exchange, no network beyond loopback. The sweep counts off-site requests; there were none.
+- **Out of scope** (ticket): application screens and routes (E47), design-contract sign-off (E05-D04), chart canvas a11y.
+
+## 1. Tools
+
+| Tool                                           | Version | Source           |
+| ---------------------------------------------- | ------- | ---------------- |
+| axe-core                                       | 4.14.0  | `pnpm-lock.yaml` |
+| @axe-core/playwright                           | 4.14.0  | `pnpm-lock.yaml` |
+| @playwright/test                               | 1.64.1  | `pnpm-lock.yaml` |
+| playwright-core / playwright (Chromium driver) | 1.64.1  | `pnpm-lock.yaml` |
+| pa11y / pa11y-ci                               | none    | not in the repo  |
+
+Drivers (all in `docs/plan/a11y/_tools/`): `e05-q02-ds.qa.ts` + `e05-q02-ds.config.ts` + `e05-q02-merge.mjs` (the axe sweep), `e05-q02-manual.qa.ts` + `e05-q02-manual.config.ts` (keyboard, zoom, reduced motion).
+
+## 2. Full automated sweep (axe-core)
+
+| Measure             | Value                                                                                                                                                                         |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stories swept       | 842 (5 perf stories excluded; 847 in the index)                                                                                                                               |
+| Cells               | 9,822: 842 stories x 6 cells (3 themes x 2 densities) at motion no-preference, plus 795 stories x 6 cells at reduce (47 stories pin their own motion and have no reduce cell) |
+| Errored cells       | 0                                                                                                                                                                             |
+| Missing story files | 0                                                                                                                                                                             |
+| Off-site requests   | 0                                                                                                                                                                             |
+| Critical            | 0                                                                                                                                                                             |
+| Serious             | 0                                                                                                                                                                             |
+| Moderate            | 0                                                                                                                                                                             |
+| Minor               | 0                                                                                                                                                                             |
+
+The merge ran with `--strict` and exited 0. v0 swept 776 stories / 9,030 cells at the slice-H head and found 30 serious and 12 moderate (all three defect classes in §3); this run is the **full** re-sweep after the fixes that v0 only re-swept for the three components. The R0 baseline is therefore **0 / 0 / 0 / 0** over 9,822 cells.
+
+- **Negative control:** a must-trip fixture (an image with no alt text, a button with no name) runs first in every sweep. It tripped `image-alt` and `button-name`, so a zero elsewhere is not a silent driver.
+- **Three page-level rules disabled, with reason:** `landmark-one-main`, `page-has-heading-one` and `region`. A lone component in the isolated story iframe has no main landmark, no h1 and no region by construction. The E47 screens sweep covers them on real pages.
+- **Rule set:** axe-core WCAG 2.0/2.1/2.2 A and AA tags, plus best-practice.
+- **Per-cell results (committed):** `docs/qa/a11y/e05-q02-design-system-v1-results/sweep-cells.json.gz` (every cell: story, theme, density, motion, counts by impact, rule ids; sha256 `2295b3a83bf0fe8df833172526acf959763382e5647880c3bf07c2982c4398c1`) and `sweep-summary.md`. `zcat` it to read.
+- **pa11y-ci: a gap, not run.** The ticket and `03-testing-strategy.md` name a complementary pa11y-ci sweep. `pa11y` and `pa11y-ci` are not dependencies (no match in `pnpm-lock.yaml`, no workflow runs it) and this ticket may not add one. The root `.pa11yci.json` (E03-T06) lists one URL, the apps/web placeholder, and nothing targets Storybook. AC 1 is therefore met for axe only (§5, FU-3).
+
+## 3. Findings and fixes
+
+All three defect classes were caught by axe, so no manual-only defect class was found. The automatable manual passes of §3.1 found **no new defect**.
+
+| #   | Component                        | Rule          | WCAG SC               | Impact   | Cells | Fix                                                                                                                                         | Status                        |
+| --- | -------------------------------- | ------------- | --------------------- | -------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| F-1 | SkipLink (focused)               | target-size   | 2.5.8                 | serious  | 18    | `2b09253d5`: the focused pill is in flow and takes space instead of overlaying the first header control (#262 BQ-4, the lane's default (b)) | fixed, verified by the v1 run |
+| F-2 | ErrorState (summary links)       | target-size   | 2.5.8                 | serious  | 12    | `d716c6a82`: `min-block-size` is `size.target.min` (24 px)                                                                                  | fixed, verified by the v1 run |
+| F-3 | Typography (heading-level story) | heading-order | 1.3.1 (best practice) | moderate | 12    | `d716c6a82`: the story renders h1 then h2 (it jumped h1 to h4)                                                                              | fixed, verified by the v1 run |
+
+Cell counts are from the v0 run (30 serious + 12 moderate). No finding is open. The v1 sweep reports 0 of every impact.
+
+### 3.1 Automatable manual passes
+
+`e05-q02-manual.qa.ts` drives the built Storybook with real key events and DOM measurement (no new dependency). 3,402 checks, all pass: 875 keyboard, 93 zoom, 2,432 reduced motion, 2 negative controls. Results: `manual-checks.json.gz` (sha256 `bc8f8c9f697f1e3db2c703969de1b7484dce0b544eabda2d7408d77e85ddca40`). Negative controls: an injected Tab trap and an injected hard-clipped box are both detected, so the keyboard and clip checks can fail.
+
+**Keyboard-only (SC 2.1.1, 2.1.2, 2.4.1, 2.4.3), 33 named checks plus a Tab walk of every story:**
+
+| Component     | Interaction driven with `page.keyboard`                                                                                                                                                                                                                          |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SkipLink      | first Tab stop is the skip link; Enter moves focus to the main region                                                                                                                                                                                            |
+| Combobox      | Tab reaches it; ArrowDown opens; options exposed; ArrowDown + Enter picks and closes; Escape closes, focus stays                                                                                                                                                 |
+| Menu          | Tab, Enter opens, focus on first item; ArrowDown; End; Escape closes and returns focus; Enter activates and closes                                                                                                                                               |
+| Table         | grid: Tab enters on the first header, ArrowDown / ArrowRight, Home / End, Ctrl+End / Ctrl+Home, Tab leaves (one stop); sortable: Enter changes `aria-sort`; selectable: Space on select-all toggles every row and back                                           |
+| ConfirmDialog | standard: Enter opens, focus on Cancel, Tab to Confirm, focus stays inside, Escape closes and focus returns; hold: see below                                                                                                                                     |
+| Tab walk      | 842 stories, 1,909 tabbable elements, 1,873 distinct stops reached, 0 keyboard traps; 215 stories have nothing tabbable. the 36 tabbable elements not reached separately are grouped controls (a radio group takes one Tab stop) and were not checked one by one |
+
+**Hold-to-confirm, honest limit.** The hold stories run on a story clock (`now={storyNow}`), which the page cannot drive, so a wall-clock discrete two-press path cannot be timed from outside. What is asserted: the stories `hold`, `hold-keyboard` and `hold-released-early` reach phase "finished", which means their play functions passed in the real browser (`hold-keyboard` is the discrete path: a Space press, then Enter 250 ms to 5 s later, with real key events on the story clock, confirming with gate `double-press`); a bare Enter on the hold Confirm never confirms (the dialog stays open); the hold ring is a named `progressbar` with its text twin. Component tests `ConfirmDialogHold.test.tsx` and `ConfirmDialogGateMatrix.test.tsx` cover the gate in jsdom.
+
+**200% zoom and 125% text scale (SC 1.4.4, 1.4.10), compact density, three themes:** five Table stories (`compact`, `default`, `reflow`, `long-text`, `grid`) at a 640 x 400 CSS px viewport (200% of 1280 x 800) and at `data-text-scale="125"` on a 1280 px viewport. Story hosts pin fixed widths (44rem, 1280 px), so the check sets those ancestors to 100 % first; otherwise it would measure the harness. Per story and mode: every header and cell text of the 1280 px render is still present (a stacked cell keeps its text and gains its column label), the page has no horizontal scroll, no element is hard-clipped (a text-overflow ellipsis keeps the full text in the DOM and is counted separately; there were none after unpinning), and for `reflow` at 200 % the table stacks with no sideways overflow in its region. 93 checks, all pass.
+
+**Reduced motion (SC 2.3.3, 1.3.1, 4.1.3):** every non-perf story rendered with the motion override off and on (`motion:off` / `motion:on`, plus the matching OS preference). 795 stories were probed; 47 pin their own motion state (the matrices and the `reduced-motion` / `motion-safe` variants) and are recorded as not applicable. In the 795: no element keeps a CSS animation under reduce (the two recipe demo stories draw the safe value beside the reduce value on purpose; the check there is that the reduce half stops, 22 animated elements fall to 11). 92 stories (2,077 elements) had an animation that reduce removes: confirm dialog, toast, skeleton and skeleton chart, dialog, drawer, inline spinner and spinner, command palette, info panel, button busy, menu, preview tile, table sort pending, fuzzy list, symbol search. Every such element is in its end state (displayed, visible, opaque), and the change keeps a non-motion cue (its own text, name or value, or a dialog, status or progress role on the page; a scrim fading in is decorative and the dialog role plus the focus move convey the open). The cue is the DOM signal, not a judgement that a sighted user perceives the change.
+
+## 4. Accessible-name check
+
+`packages/ui/test/a11y-names.test.ts`: 15 tests (14 table rows and one no-leak test) covering 12 components: CMP-001, 002, 003, 004, 005, 008, 010, 013, 023, 025, 033, 034. Each asserts the role and the computed accessible name (testing-library `getByRole(role, { name })`, which reads the accessibility tree) against the `A11y` line of `docs/plan/15-component-catalogue.md`. A name that is present but wrong fails the test. Re-run at the swept head: 15 of 15 pass.
+
+- **CMP-034 MaskedValue never exposes its value while masked** (the ticket's security note): asserted by the test.
+- Components whose `A11y` line names no fixed label, and the overlays reached only by a play function, are listed with a reason at the top of the test file.
+- This is a computed-name check in jsdom. It is not a screen-reader announcement.
+
+## 5. Acceptance criteria and Definition of Done
+
+| Item                                                                                | Result                                                        | Evidence and what remains                                                                                                                                                                                                                                                          |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AC 1: zero serious or critical in 3 themes x 2 densities, axe and pa11y-ci          | **axe pass; pa11y-ci gap**                                    | §2: 842 stories, 9,822 cells, 0 of every impact. pa11y-ci is not a dependency and was not run (§2, FU-3).                                                                                                                                                                          |
+| AC 2: announced name matches the documented name table                              | **pass** (computed) / **human-owed** (announced)              | §4. The announcement under a real screen reader is the manual pass below.                                                                                                                                                                                                          |
+| AC 3: keyboard-only completion, incl. hold-to-confirm and table row navigation      | **pass (automated real-key)** / **human-owed**                | §3.1: the interactive stories driven with `page.keyboard`; the hold's discrete path runs in the story's play function on the story clock. A person operating every interaction with no pointer remains owed.                                                                       |
+| AC 4: 200% zoom, compact table, reflow without clipping or data loss                | **pass (viewport and text-scale emulation)** / **human-owed** | §3.1: 93 checks, three themes. A 640 x 400 viewport and `data-text-scale=125` stand in for browser zoom; nobody zoomed a real browser.                                                                                                                                             |
+| AC 5: no information lost under `data-motion="reduce"`                              | **pass (DOM cue check)**                                      | §3.1: 795 stories, 0 surviving animations, 2,077 motion-removed elements all in their end state with a non-motion cue. Whether a person perceives each change is human-owed with the SR pass.                                                                                      |
+| AC 6: an unresolved serious finding gates the epic                                  | **pass**                                                      | No serious finding is open (§3).                                                                                                                                                                                                                                                   |
+| DoD 1: automated sweep green, zero serious or critical, all themes and densities    | **pass for axe; pa11y-ci gap**                                | §2.                                                                                                                                                                                                                                                                                |
+| DoD 2: manual SR passes per the coverage matrix, versions recorded                  | **human-owed**                                                | `05-accessibility-standard.md` §8.1 pins four combinations (NVDA on the Electron shell P0, JAWS on Electron P1, NVDA on Chromium P0, VoiceOver on Electron P1) and §8.2 the protocol. No screen reader was run; no SR or browser version is recorded because none was used (BQ-1). |
+| DoD 3: keyboard-only, 200% zoom and reduced-motion passes                           | **pass (automated)** / **human-owed**                         | §3.1. A person's keyboard-only and zoom pass is FU-2.                                                                                                                                                                                                                              |
+| DoD 4: findings logged with WCAG SC, blocking ones fixed                            | **pass**                                                      | §3.                                                                                                                                                                                                                                                                                |
+| DoD 5: report attached; Accessibility role and QA both sign off                     | **pending**                                                   | This record is the report. Sign-off is human-owed.                                                                                                                                                                                                                                 |
+| DoD 6: follow-ups to automate any manually caught defect class                      | **pass** (none)                                               | No defect was found by hand, so no class needs automating. The tightening rows are in §6.                                                                                                                                                                                          |
+| Performance note: does reduce-motion measurably reduce frame work (SCR-117's claim) | **not measured**                                              | No frame-work measurement was made. The claim is neither confirmed nor refuted here.                                                                                                                                                                                               |
+
+## 6. Follow-ups
+
+No new issues are filed from this record. Rows for the coordinator to place:
+
+| Row  | Item                                                                                                                                                                                                                                                                                                                          | Suggested home                     |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| FU-1 | The manual SR pass per `05` §8.2 on the §8.1 matrix, with SR and browser versions recorded (BQ-1)                                                                                                                                                                                                                             | #262 itself, human-owed            |
+| FU-2 | A person's keyboard-only pass and a real-browser 200 % zoom / 125 % text-scale pass, compact table first; plus the hold's discrete press on a wall clock                                                                                                                                                                      | #262, human-owed                   |
+| FU-3 | The pa11y-ci complementary sweep: neither `pa11y` nor `pa11y-ci` is a dependency and a root `.pa11yci.json` (E03-T06) lists one URL, the apps/web placeholder, unwired; adding the dependency and extending the list to Storybook needs its own ticket (E03-T12 schedules the nightly)                                        | E03-T12                            |
+| FU-4 | Measure frame work with reduce-motion on and off, for SCR-117's claim                                                                                                                                                                                                                                                         | the SCR-117 owner                  |
+| FU-5 | Wire both e05-q02 drivers into a CI or nightly job so a regression in the three fixed components, or a new story, is swept                                                                                                                                                                                                    | the E05-T03 harness owner          |
+| FU-6 | The accessible-name table omits CMP-007, 009, 011, 012, 016, 017, 020, 022, 031, 032 and the play-function overlays; add rows when E05-S04 supplies their open-state stories                                                                                                                                                  | E05-S04 follow-on                  |
+| FU-7 | (#5237 read, Minor 1) `E05S04Matrix.stories.tsx` reads the tokens at render, so the low-contrast tile shows no "Low contrast:" note in the dark and high-contrast matrix baselines (PreviewTile's own story reads in an effect and shows 1.28:1): read in an effect, assert the note in `play`, re-run `vr_update` (12 cells) | the next design-system touch (E05) |
+| FU-8 | (#5237 read, Minor 2) the CMP-019 lock stays decorative in `Button.tsx`, `internal/ChoiceRow.tsx` and most atoms while IconButton, TextInput and the field atoms name it "Not available"; the `15` CMP-079 contract line reads as if all do: reconcile the line or the atoms                                                  | the next design-system touch (E05) |
+| FU-9 | (#5237 read, Minor 3) `14` SCR-116 also rewrites the theme list (the colour-vision-safe options become a chart-palette choice) where BQ-19 ruled only the density words: a C-row to SCR-116's owner                                                                                                                           | SCR-116's owner                    |
+
+## Observability
+
+The §2 counts by severity are the R0 baseline: 842 stories, 9,822 cells, 0 critical, 0 serious, 0 moderate, 0 minor. The per-cell results are committed (`docs/qa/a11y/e05-q02-design-system-v1-results/`).
+
+## 7. Reproduce
+
+1. Build tokens and Storybook: `node packages/ui/scripts/build-tokens.mjs`, then `pnpm --filter @candleviewer/ui run storybook:build` (the config serves `storybook-static` on loopback).
+2. Axe sweep, from `apps/web`: `A11Y_SHA=$(git rev-parse HEAD) A11Y_WORKERS=8 A11Y_OUT=<dir> npx playwright test -c ../../docs/plan/a11y/_tools/e05-q02-ds.config.ts` (add `--shard n/m` to split, one `A11Y_OUT` per shard), then `node ../../docs/plan/a11y/_tools/e05-q02-merge.mjs --strict <dir>`.
+3. Manual passes, from `apps/web`: `A11Y_SHA=$(git rev-parse HEAD) A11Y_OUT=<dir> npx playwright test -c ../../docs/plan/a11y/_tools/e05-q02-manual.config.ts` (writes `<dir>/manual/*.json`; `-g "keyboard:|zoom:|tab walk|motion probe|negative controls"` selects a group).
+4. `pnpm --filter @candleviewer/ui exec vitest run --project unit test/a11y-names.test.ts` for the name check.
