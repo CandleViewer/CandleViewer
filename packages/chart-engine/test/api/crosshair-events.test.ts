@@ -85,7 +85,10 @@ describe("AC5: crosshair events are edge-triggered (BQ-10, BQ-11)", () => {
       c.dispatch("pointermove", pointer(x, 20 + (x - 100), x));
       frames();
     }
-    expect(cross).toEqual([{ time: 60e6, price: expect.any(Number), barIndex: 1 }]);
+    // E11-S09 (BQ-6, additive): the event names the pane under the pointer.
+    expect(cross).toEqual([
+      { time: 60e6, price: expect.any(Number), barIndex: 1, paneId: expect.any(String) },
+    ]);
     expect(readout.length).toBeGreaterThan(150); // the y moved every frame
     expect(readout.every((r) => r.visible && r.bar === 1 && r.timeText !== "")).toBe(true);
     c.dispatch("pointerleave", pointer(-1, -1, 400));

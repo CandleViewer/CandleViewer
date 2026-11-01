@@ -24,9 +24,10 @@ import {
   type DegradeDetails,
   ENGINE_WORKER_LOST,
   type FromWorker,
+  PANE_LABEL_MAX,
   type RunMode,
 } from "../worker/protocol.js";
-import { createPane, type PaneInternal } from "./pane.js";
+import { createPane, type PaneHost, type PaneInternal } from "./pane.js";
 import { checkScaleOptions, createTimeScale } from "./scales.js";
 import type {
   Chart,
@@ -93,6 +94,19 @@ function magnetMode(m: unknown): MagnetMode {
 
 type CrosshairMessage = Extract<FromWorker, { t: "crosshair" }>;
 
+/** BQ-15: the first pane is the price pane; a later one is "Pane N" (its key + 1). */
+export const paneLabelFor = (key: number): string => (key === 0 ? "Price pane" : `Pane ${key + 1}`);
+
+function paneLabel(label: unknown, key: number): string {
+  if (label === undefined) return paneLabelFor(key);
+  if (typeof label !== "string" || label.length > PANE_LABEL_MAX) {
+    throw new RangeError(
+      `chart-engine: a pane label must be a string of at most ${PANE_LABEL_MAX}`,
+    );
+  }
+  return label;
+}
+
 function positiveInt(value: number | undefined, fallback: number, name: string): number {
   if (value === undefined) return fallback;
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -119,6 +133,8 @@ export function createChart(opts: ChartOptions): Chart {
   let density: Density = opts.density ?? CHART_DEFAULTS.density;
   let disposed = false;
   let paneSeq = 0;
+  let paneKeys = 0; // BQ-1: the next stable key; 0 is the first pane's, never reused
+  const byKey = (key: number): PaneInternal | undefined => panes.find((p) => p.key === key);
   let renderProfile: FrameStats["renderProfile"] | null = null;
   let lastStats: FrameStats | null = null;
   let lastRange = { from: 0, to: 1 };
@@ -175,15 +191,16 @@ export function createChart(opts: ChartOptions): Chart {
         };
         emit("frameStats", lastStats);
         return;
-      case "viewport":
+      case "viewport": {
         lastRange = { from: msg.timeStart, to: msg.timeEnd };
         timeScale.observe(lastRange);
-        // The runtime lays out one pane (BQ-45): its window is the first pane's, in ticks.
-        panes[0]?.priceScale.observe(
+        // E11-S09 (BQ-1, BQ-5): one message per pane, addressed by its stable key.
+        const target = byKey(msg.pane);
+        target?.priceScale.observe(
           msg.priceHigh > msg.priceLow ? { low: msg.priceLow, high: msg.priceHigh } : null,
         );
         // E11-S05 (BQ-124): the scale state; `viewportChanged` also tells of a lock (C-35).
-        panes[msg.pane]?.priceScale.observeState({
+        target?.priceScale.observeState({
           mode: msg.mode,
           requestedMode: msg.requestedMode,
           inverted: msg.inverted,
@@ -192,12 +209,20 @@ export function createChart(opts: ChartOptions): Chart {
           logReason: msg.logReason,
           anchorTick: msg.anchorTick,
         });
-        if (msg.pane === 0) badge.set(!msg.autoScale);
+        if (msg.pane === (panes[0]?.key ?? 0)) badge.set(!msg.autoScale);
         emit("viewportChanged", {
           timeStart: msg.timeStart,
           timeEnd: msg.timeEnd,
           barSpacing: msg.barSpacing,
         });
+        return;
+      }
+      case "layout":
+        // BQ-4: the worker owns the shares; the facade mirrors them (BQ-11's API is pending).
+        for (const box of msg.panes) {
+          const pane = byKey(box.pane);
+          if (pane !== undefined) pane.share = box.share;
+        }
         return;
       case "error":
         emit("error", {
@@ -222,7 +247,13 @@ export function createChart(opts: ChartOptions): Chart {
         // BQ-10: the bar's edge only; a price-only move and the pointer leaving never fire.
         if (msg.visible && msg.bar !== emittedBar) {
           emittedBar = msg.bar;
-          emit("crosshair", { time: msg.time, price: msg.price, barIndex: msg.bar });
+          const pane = msg.pane === undefined ? undefined : byKey(msg.pane);
+          emit("crosshair", {
+            time: msg.time,
+            price: msg.price,
+            barIndex: msg.bar,
+            ...(pane !== undefined && { paneId: pane.id }),
+          });
         }
         // A moved bar or snap brings its `readout` next (the worker's rule): one event a frame.
         const follows = msg.visible && (prev?.bar !== msg.bar || prev?.snap !== msg.snap);
@@ -259,7 +290,7 @@ export function createChart(opts: ChartOptions): Chart {
   const badge = createScaleBadge(
     opts.container,
     opts.theme.colors,
-    () => host.command({ k: "setPriceScale", pane: 0, auto: true }),
+    () => host.command({ k: "setPriceScale", pane: panes[0]?.key ?? 0, auto: true }),
     () => stops?.price ?? opts.container,
   );
   const env = (envOverride ?? defaultHostEnv)(doc);
@@ -330,20 +361,31 @@ export function createChart(opts: ChartOptions): Chart {
       assertLive();
       const scale = paneOpts.priceScale;
       if (scale !== undefined) checkScaleOptions(scale);
+      const key = paneKeys;
+      const label = paneLabel(paneOpts.label, key);
+      paneKeys += 1;
       paneSeq += 1;
-      const pane = createPane(`pane-${paneSeq}` as PaneId, paneOpts, {
+      const paneHost = {
         assertLive,
         data: (store, op, layout, buffer) => host.data(store, op, layout, buffer),
-        scale(id, fields): void {
-          const i = panes.findIndex((p) => p.id === id);
-          if (i >= 0) host.command({ k: "setPriceScale", pane: i, ...fields });
+        scale(_id, fields): void {
+          host.command({ k: "setPriceScale", pane: key, ...fields }); // BQ-1: the key
+        },
+        // Lens M1: the stack never drops to zero panes; dispose still removes them all.
+        canRemove: (): boolean => disposed || panes.length > 1,
+        resized(): void {
+          // BQ-3: the whole weight vector, so the wire never carries a partial state.
+          host.command({ k: "setPaneShares", shares: panes.map((p) => [p.key, p.heightRatio]) });
         },
         onRemoved(id: PaneId): void {
           const i = panes.findIndex((p) => p.id === id);
           if (i >= 0) panes.splice(i, 1);
+          if (!disposed) host.command({ k: "removePane", pane: key });
         },
-      });
+      } satisfies PaneHost;
+      const pane = createPane(`pane-${paneSeq}` as PaneId, paneOpts, paneHost, key, label);
       panes.push(pane);
+      host.command({ k: "addPane", pane: key, share: pane.heightRatio, label });
       if (scale !== undefined) {
         // BQ-121: the persisted scale (mode and invert survive; the lock never does).
         const { mode, inverted, ...rest } = scale;
@@ -408,7 +450,7 @@ export function createChart(opts: ChartOptions): Chart {
     getVisibleWindow: (): VisibleWindow | null => null,
     // BQ-23: a bar while a key-driven cursor is placed (key wiring is BQ-7's); null otherwise.
     getFocusedUnit(): FocusedUnit | null {
-      const pane = panes[0];
+      const pane = (cursor?.pane === undefined ? undefined : byKey(cursor.pane)) ?? panes[0];
       if (cursor === null || !cursor.visible || cursor.driver !== "key" || pane === undefined) {
         return null;
       }

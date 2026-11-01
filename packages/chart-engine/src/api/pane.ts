@@ -1,6 +1,12 @@
 // Pane facade (stub). Series, overlay and indicator handles record their lifecycle only; the
 // stores, batches and plugin hosting behind them are E11-T03 / E11-S01 / E12+.
-import { encodeCandles, type BufferLayout, type DataOp, type StoreId } from "../worker/protocol.js";
+import {
+  encodeCandles,
+  LastPaneError,
+  type BufferLayout,
+  type DataOp,
+  type StoreId,
+} from "../worker/protocol.js";
 import { createPriceScale, type PriceScaleState, type ScaleFields } from "./scales.js";
 import type {
   CandleData,
@@ -23,6 +29,10 @@ export interface PaneHost {
   data(store: StoreId, op: DataOp, layout: BufferLayout, buffer: ArrayBuffer): void;
   /** Forwards this pane's price-scale fields (E11-S05, a `setPriceScale` command). */
   scale?(id: PaneId, fields: ScaleFields): void;
+  /** E11-S09 (BQ-3): this pane's weight changed; the host sends the whole vector. */
+  resized?(id: PaneId): void;
+  /** E11-S09 (lens M1): false for the last pane of a live chart: `remove` throws instead. */
+  canRemove?(id: PaneId): boolean;
 }
 
 /** A series handle plus the state the stub records (read by tests; no renderer yet). */
@@ -37,6 +47,11 @@ export interface PaneInternal extends Pane {
   readonly heightRatio: number;
   readonly seriesCount: number;
   readonly removed: boolean;
+  /** E11-S09: the stable key on the wire (BQ-1) and the accessible name (BQ-15). */
+  readonly key: number;
+  readonly label: string;
+  /** E11-S09 (BQ-4): the normalised share the worker last laid out; NaN before its first. */
+  share: number;
 }
 
 function checkRatio(r: number): number {
@@ -46,7 +61,13 @@ function checkRatio(r: number): number {
   return r;
 }
 
-export function createPane(id: PaneId, opts: PaneOptions, host: PaneHost): PaneInternal {
+export function createPane(
+  id: PaneId,
+  opts: PaneOptions,
+  host: PaneHost,
+  key = 0,
+  label = opts.label ?? "",
+): PaneInternal {
   let heightRatio = checkRatio(opts.heightRatio ?? 1);
   let removed = false;
   const series = new Set<object>();
@@ -62,6 +83,9 @@ export function createPane(id: PaneId, opts: PaneOptions, host: PaneHost): PaneI
 
   return {
     id,
+    key,
+    label,
+    share: Number.NaN,
     priceScale,
     get heightRatio(): number {
       return heightRatio;
@@ -124,9 +148,11 @@ export function createPane(id: PaneId, opts: PaneOptions, host: PaneHost): PaneI
     setHeightRatio(r: number): void {
       live();
       heightRatio = checkRatio(r);
+      host.resized?.(id);
     },
     remove(): void {
       if (removed) return;
+      if (host.canRemove?.(id) === false) throw new LastPaneError();
       removed = true;
       series.clear();
       host.onRemoved(id);

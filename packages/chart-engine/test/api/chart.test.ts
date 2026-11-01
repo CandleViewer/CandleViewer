@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CHART_DEFAULTS, createChart, type ChartInternal } from "../../src/api/chart.js";
 import type { PaneInternal, SeriesInternal } from "../../src/api/pane.js";
 import type { PriceScaleState } from "../../src/api/scales.js";
+import { LastPaneError } from "../../src/worker/protocol.js";
 import type {
   ChartEvents,
   ChartOptions,
@@ -254,10 +255,13 @@ describe("panes and series", () => {
     chart.removePane(a.id);
     chart.removePane(a.id); // unknown id: no-op
     expect(a.removed).toBe(true);
-    b.remove();
-    b.remove();
-    expect(chart.panes).toEqual([]);
-    chart.dispose();
+    // E11-S09 (lens M1): the last pane stays; its removal is refused with a typed error.
+    expect(() => b.remove()).toThrow(LastPaneError);
+    expect(() => chart.removePane(b.id)).toThrow(LastPaneError);
+    expect(chart.panes).toEqual([b]);
+    expect(b.removed).toBe(false);
+    chart.dispose(); // dispose still removes them all
+    expect(b.removed).toBe(true);
   });
 
   it("validates height ratios", () => {
@@ -320,6 +324,7 @@ describe("panes and series", () => {
   it("refuses work on a removed pane or a disposed chart", () => {
     const chart = mount();
     const pane = chart.addPane({});
+    chart.addPane({}); // so the first is not the last pane (lens M1)
     pane.remove();
     expect(() => pane.addSeries("histogram", { colorToken: "x" })).toThrow(/removed/);
     const other = chart.addPane({});

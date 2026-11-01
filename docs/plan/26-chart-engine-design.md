@@ -598,7 +598,14 @@ export interface OrderLine {
 export interface ChartEvents {
   // Fires on a barIndex change only (price in ticks); a price-only move, leaving the plot, and
   // leaving and re-entering the same bar fire nothing (E11-S07).
-  crosshair: { time: number; price: number; barIndex: number; cell?: FootprintCellRef };
+  // E11-S09: paneId names the pane under the pointer; price is in that pane's ticks.
+  crosshair: {
+    time: number;
+    price: number;
+    barIndex: number;
+    cell?: FootprintCellRef;
+    paneId?: PaneId;
+  };
   readout: ReadoutEvent; // E11-S07: the tooltip's values, at most once per frame
   click: { time: number; price: number; button: number; modifiers: Modifiers };
   orderLineDragged: { id: string; price: number; commit: boolean };
@@ -696,6 +703,8 @@ above. It defines the supporting types this sketch names but leaves open (`Theme
 records each choice in the package README's "Design deltas". The pre-§8 palette/flags handle is served
 at `@candleviewer/chart-engine/compat`, never from the package root.
 
+E11-S09 PR 1 (#446 BQ-15) adds one optional member to `PaneOptions`: `label?: string`, at most 120 characters. It is the pane's accessible name, used for its region, separator and announcements. The default is "Price pane" for the first pane and "Pane N" after that. `Pane.setHeightRatio` now reaches the renderer: the facade sends every pane's weight, and the worker normalises them. `heightRatio` is a weight relative to the other panes, not a fraction of the chart; its cap of 1 is a bound. Removing a chart's last pane is refused with `LastPaneError` (code `ENGINE_LAST_PANE`), so the stack never drops to zero panes.
+
 React binding (in `apps/web`, deliberately thin). As shipped (E11-T01): `syncGroup` is a field of
 `options`, `label` names the chart region (05 §6.1), `onFrameStats` is optional, and the crosshair is
 read with the `useCrosshair()` hook rather than an `onCrosshair` prop:
@@ -769,6 +778,7 @@ Replay uses exactly the same series and the same frame types — only the subscr
 | Data sequence gap                              | Engine keeps the last consistent state and requests a snapshot; UI shows a per-pane stale badge                                                                                                                                                                      |
 | Frame budget exceeded for 3 consecutive frames | Step down one LOD level; if already at the lowest, reduce DPI of the heatmap layer; log the step; code `ENGINE_LOD_STEPDOWN` (recoverable, informational)                                                                                                            |
 | Frame budget exceeded (first frame of a run)   | Log the per-stage timings once per over-budget run; code `ENGINE_FRAME_BUDGET_EXCEEDED` (recoverable, informational; package README BQ-44)                                                                                                                           |
+| Removing the last pane                         | Refused: the facade throws `LastPaneError`, the worker answers `error` `ENGINE_LAST_PANE` (recoverable) and the stack keeps its one pane (E11-S09, §8)                                                                                                               |
 | Worker crash                                   | The controller detects the `error`/`close` event, respawns the worker, replays store state from the last snapshot                                                                                                                                                    |
 
 _Shipped (E11-T05 PR 1, package README BQ-84 to BQ-97): `degraded-2d` is whole-chart. A chart with no WebGL2, or after a compile or restore handoff, draws through `Canvas2DBackend` behind the same `RenderBackend` (§3.4): lines, quads and colour-only cells in one path per style bucket; text waits for E11-S11's text runs (`footprint-text` is disclosed). `ENGINE_NO_WEBGL2` carries the optional `details: { reducedCapabilities, reason }` as codes (§8). Export is reject, not flag (F-13): while parked mid-loss or failed, the worker answers `exported { blob: null, reason }` and `takeScreenshot` rejects with `ExportUnavailableError` (`ENGINE_EXPORT_UNAVAILABLE`); a healthy `degraded-2d` chart draws, then encodes._

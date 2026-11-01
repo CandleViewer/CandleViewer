@@ -16,6 +16,7 @@ import type {
   FrameStats,
   HeatmapColumnData,
   Pane,
+  PaneId,
   SeriesHandle,
   SeriesType,
   ThemeTokens,
@@ -232,6 +233,18 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       "viewportChanged",
       "visibleRangeNeedsData",
     ]);
+  });
+
+  it("E11-S09 widens two members, additively: PaneOptions.label and the crosshair's paneId", () => {
+    expect(Object.keys(surface.members("PaneOptions")).sort()).toEqual([
+      "heightRatio",
+      "label",
+      "priceScale",
+    ]);
+    expect(surface.members("PaneOptions")["label"]).toBe("string | undefined");
+    expectTypeOf<ChartEvents["crosshair"]["paneId"]>().toEqualTypeOf<PaneId | undefined>();
+    // The §8 sketch carries the crosshair's new field (contract first).
+    expect(readSketch().text).toMatch(/paneId\?: PaneId/);
   });
 
   it("type-checks the key signatures (enforced by tsc over test/)", () => {

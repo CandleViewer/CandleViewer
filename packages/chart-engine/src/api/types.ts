@@ -153,7 +153,14 @@ export interface OrderLine {
 export interface ChartEvents {
   // E11-S07 (BQ-10): fires on a `barIndex` change only, price in ticks; leaving the plot and
   // re-entering the same bar fires nothing.
-  crosshair: { time: number; price: number; barIndex: number; cell?: FootprintCellRef };
+  // E11-S09 (BQ-6, additive): `paneId` names the pane under the pointer; `price` is in its ticks.
+  crosshair: {
+    time: number;
+    price: number;
+    barIndex: number;
+    cell?: FootprintCellRef;
+    paneId?: PaneId;
+  };
   // E11-S07 (BQ-11, in §8): the tooltip's values, at most once per frame.
   readout: ReadoutEvent;
   click: { time: number; price: number; button: number; modifiers: Modifiers };
@@ -278,8 +285,16 @@ export interface ReadoutEvent {
 export type PaneId = string & { readonly __brand: "PaneId" };
 
 export interface PaneOptions {
-  /** Share of the chart height, in (0, 1]; default 1. */
+  /**
+   * Share of the chart height, in (0, 1]; default 1. E11-S09: a weight relative to the other
+   * panes (the renderer normalises them), not a fraction of the chart: the cap of 1 is a bound.
+   */
   heightRatio?: number;
+  /**
+   * E11-S09 (BQ-15): the pane's accessible name (its region, separator and announcements);
+   * "Price pane" for the first pane, "Pane N" after that.
+   */
+  label?: string;
   /**
    * E11-S05 (README BQ-121, C-35): the persisted scale, applied at `addPane`; the lock is session
    * state and never part of it.
