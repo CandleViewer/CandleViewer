@@ -926,8 +926,8 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts], tuple[str, ...]], ...
         "G-STATES",
         "a frame renamed in §2",
         sub(
-            "`SCR-137/fidelity-unavailable` (`D03`:60–63)",
-            "`SCR-137/fidelity-missing` (`D03`:60–63)",
+            "`SCR-137/fidelity-unavailable` (`D03`:61–64)",
+            "`SCR-137/fidelity-missing` (`D03`:61–64)",
         ),
         FULL_ONLY,
     ),
@@ -981,7 +981,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts], tuple[str, ...]], ...
         ),
         FULL_ONLY,
     ),
-    ("G-CITE", "a `D03` cite one line off", sub("`D03`:118", "`D03`:119"), FULL_ONLY),
+    ("G-CITE", "a `D03` cite one line off", sub("`D03`:127", "`D03`:128"), FULL_ONLY),
     (
         "G-HYGIENE",
         "a closing keyword against #1077",
@@ -1004,7 +1004,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts], tuple[str, ...]], ...
     (
         "G-COPY",
         "a count typed by hand",
-        sub("Of 147<!--=COPY:total-->", "Of 148<!--=COPY:total-->"),
+        sub("Of 148<!--=COPY:total-->", "Of 149<!--=COPY:total-->"),
         FULL_ONLY,
     ),
     (
