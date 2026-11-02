@@ -1537,3 +1537,69 @@ describe("the Watchlist focus context (E08-D07 §6.2; #5335 A-5335-02, B-5335-03
     expect(toasts()).not.toContain("Rules");
   });
 });
+
+describe("SCR-100's no-list states sit under the page's h1 (#5335 delta A-5335-d05)", () => {
+  it("'No watchlists yet' is an h2, so no heading level is skipped (axe heading-order)", async () => {
+    mount([], MAJORS);
+    await flush();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "No watchlists yet" }),
+    ).toBeInTheDocument();
+  });
+
+  it("read-only, the sentence form's 'No watchlists' is an h2 as well", async () => {
+    const { api } = fakeApi([]);
+    render(
+      <WatchlistPanel
+        listId={MAJORS.id}
+        paneId="r111"
+        api={api}
+        hub={hub}
+        instruments={fakeIndex()}
+        paneSettings={createLocalPaneSettings()}
+        readOnly
+      />,
+    );
+    await flush();
+    expect(screen.getByRole("heading", { level: 2, name: "No watchlists" })).toBeInTheDocument();
+  });
+});
+
+describe("SCR-100's empty-list and no-match states sit under the page's h1 too (A-4702F-01)", () => {
+  const EMPTY = list("Majors", [], MAJORS.id);
+  const emptyTitle = { level: 2, name: "No symbols on this watchlist" } as const;
+
+  it("an empty list's 'No symbols on this watchlist' is an h2, so no heading level is skipped", async () => {
+    mount([EMPTY], EMPTY);
+    await flush();
+    expect(screen.getByRole("heading", emptyTitle)).toBeInTheDocument();
+  });
+
+  it("read-only, the empty list's sentence form is an h2 as well", async () => {
+    const { api } = fakeApi([EMPTY]);
+    render(
+      <WatchlistPanel
+        listId={EMPTY.id}
+        paneId="r111"
+        api={api}
+        hub={hub}
+        instruments={fakeIndex()}
+        paneSettings={createLocalPaneSettings()}
+        readOnly
+      />,
+    );
+    await flush();
+    expect(screen.getByRole("heading", emptyTitle)).toBeInTheDocument();
+  });
+
+  it("a filter that matches nothing says so as an h2", async () => {
+    mount([MAJORS], MAJORS);
+    await flush();
+    const filter = screen.getByRole("searchbox", { name: "Filter symbols" });
+    fireEvent.change(filter, { target: { value: "zzzz" } });
+    await flush(300);
+    expect(
+      screen.getByRole("heading", { level: 2, name: "No symbol on Majors matches 'zzzz'." }),
+    ).toBeInTheDocument();
+  });
+});

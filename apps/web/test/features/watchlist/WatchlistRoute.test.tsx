@@ -321,4 +321,72 @@ describe("#5335's lens round (the route)", () => {
       expect(router.state.location.search).toBe("?next=%2Fwatchlist%2Fx");
     },
   );
+
+  it.each([
+    { who: "owner", title: "No watchlists yet", permissions: ["workspaces:write"] },
+    { who: "viewer", title: "No watchlists", permissions: [] },
+  ] as const)(
+    "A-5335-d05: R-110 with no list ($who): the no-list state's heading is an h2 under the page's h1, no level skipped",
+    { timeout: 60_000 },
+    async ({ who, title, permissions }) => {
+      setMeClaims({ authenticated: true, role: who, permissions: [...permissions] });
+      setShellState({
+        me: {
+          role: who,
+          permissions: [...permissions],
+          user: { username: "robin" },
+        } as unknown as Me,
+      });
+      held = [];
+      renderAt("/watchlist?modal=watchlists");
+      const dialog = await screen.findByRole("dialog", { name: "Watchlists" }, WAIT);
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+      await waitFor(
+        () => expect(screen.queryByRole("dialog", { name: "Watchlists" })).toBeNull(),
+        WAIT,
+      );
+      const levels = within(screen.getByRole("main"))
+        .getAllByRole("heading")
+        .map((heading) => [heading.tagName, heading.textContent]);
+      expect(levels).toEqual([
+        ["H1", "Watchlist"],
+        ["H2", title],
+      ]);
+    },
+  );
+
+  it.each([
+    { who: "owner", symbols: [], filter: "", title: "No symbols on this watchlist" },
+    { who: "viewer", symbols: [], filter: "", title: "No symbols on this watchlist" },
+    {
+      who: "owner",
+      symbols: MAJORS.symbols,
+      filter: "zzzz",
+      title: "No symbol on Majors matches 'zzzz'.",
+    },
+  ] as const)(
+    "A-4702F-01: R-111's $title ($who): the state's heading is an h2 under the page's h1, no level skipped",
+    { timeout: 60_000 },
+    async ({ who, symbols, filter, title }) => {
+      const permissions = who === "owner" ? ["workspaces:write"] : [];
+      setMeClaims({ authenticated: true, role: who, permissions });
+      setShellState({
+        me: { role: who, permissions, user: { username: "robin" } } as unknown as Me,
+      });
+      held = [{ ...MAJORS, symbols: [...symbols] }];
+      renderAt(`/watchlist/${MAJORS.id}`);
+      if (filter !== "") {
+        const box = await screen.findByRole("searchbox", { name: "Filter symbols" }, WAIT);
+        fireEvent.change(box, { target: { value: filter } });
+      }
+      await screen.findByRole("heading", { name: title }, WAIT);
+      const levels = within(screen.getByRole("main"))
+        .getAllByRole("heading")
+        .map((heading) => [heading.tagName, heading.textContent]);
+      expect(levels).toEqual([
+        ["H1", "Watchlist"],
+        ["H2", title],
+      ]);
+    },
+  );
 });
