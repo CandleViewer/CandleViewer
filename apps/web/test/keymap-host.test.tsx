@@ -22,6 +22,11 @@ const load = async () => ({
 });
 let mods: Awaited<ReturnType<typeof load>>;
 
+// Every test reloads the keymap modules and renders the editor over the full command registry; the
+// import case is synchronous and CPU-bound, so on a saturated runner it nears vitest's 5 s default
+// (#5395, the #5363 / #5364 class, fixed the same way in #5370). One value for the whole file.
+vi.setConfig({ testTimeout: 15_000 });
+
 /**
  * An Owner signed in, as the bootstrap applies `/me` (#305, A55): the profile and the audit outbox are keyed by the
  * user, and the audit is sent only for a session holding `settings:write`.
@@ -50,7 +55,8 @@ beforeEach(async () => {
   window.localStorage.clear();
   vi.resetModules();
   mods = await load();
-});
+  // The first test's hook also pays the modules' cold transform, past vitest's 10 s hook default.
+}, 60_000);
 
 afterEach(() => {
   vi.unstubAllGlobals();
