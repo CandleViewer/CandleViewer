@@ -213,7 +213,10 @@ export default tseslint.config(
     // E11-S04: and the gesture, velocity and momentum logic (src/interaction, BQ-98).
     // E11-S08: and picking (src/hit, BQ-140). E11-S11: and the SDF atlas (src/text, BQ-261), whose
     // font, raster and store needs reach the browser only through the TextPlatform seam.
-    files: ["src/{core,layers,scene,model,gl,viewport,canvas2d,interaction,hit,text}/**/*.ts"],
+    // E11-T04: and the theme ingest (src/theme), which never reads CSS (BQ-T04-03).
+    files: [
+      "src/{core,layers,scene,model,gl,viewport,canvas2d,interaction,hit,text,theme}/**/*.ts",
+    ],
     rules: {
       "no-restricted-globals": ["error", ...NETWORK_GLOBALS, ...DOM_GLOBALS],
     },
