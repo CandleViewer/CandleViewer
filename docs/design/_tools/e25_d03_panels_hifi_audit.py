@@ -15,7 +15,9 @@ deuteranopia statement; E the board plan (<= 10 boards, light twins <= one third
 §0's heading names: PENDING (every row PENDING, no id, no export committed) or drawn (every row
 its export path and board uuid, the page id, the exports table equal to the committed PNGs -
 their IHDR size and sha256 - with the greyscale / deuteranopia renders of 01-09; uuids only
-inside §0); F the spec's own tables and strings (the chip bindings equal their catalogue entries, no
+inside §0; each `15` A-row applied - its Proposed text once in its field, its Today's text gone;
+and, in a git work tree, nothing but this spec, this tool, its exports, the three `14` pointer
+lines and the two `15` fields differing from the merge base with origin/main); F the spec's own tables and strings (the chip bindings equal their catalogue entries, no
 dashed line on SCR-055, no trend glyph on SCR-057, the motion pairs, the spoken announcement
 forms, the E25-D02 strings carried verbatim, the hygiene patterns, the rule ids).
 
@@ -40,12 +42,13 @@ import json
 import math
 import re
 import struct
+import subprocess
 import sys
 import zlib
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, NamedTuple
 
 ROOT = Path(__file__).resolve().parents[3]
 TOKENS = ROOT / "packages" / "ui" / "tokens"
@@ -54,6 +57,9 @@ SPEC = ROOT / "docs" / "design" / "E25" / "E25-D03.md"
 CONSTITUTION = ROOT / "CONSTITUTION.md"
 IMG_REL = "docs/design/E25/img"
 IMG = ROOT / IMG_REL
+CAT15_REL = "docs/plan/15-component-catalogue.md"
+CAT14_REL = "docs/plan/14-screens-catalogue.md"
+BASE_REF = "origin/main"  # the scope gate diffs the work tree against its merge base with this ref
 THEMES = ("dark", "light", "high-contrast")
 BAR: dict[str, float | None] = {"text": 4.5, "non-text": 3.0}
 BAR.update({"decorative": None, "reported": None, "rejected-text": 4.5, "rejected-non-text": 3.0})
@@ -547,6 +553,45 @@ PNG_SIG = b"\x89PNG\r\n\x1a\n"
 Files = dict[str, bytes]
 
 
+class Repo(NamedTuple):
+    """`15` as on disk, and the work tree's changed lines against the merge base (None: no git)."""
+
+    cat15: str | None
+    diff: dict[str, list[str]] | None
+
+
+def git(*args: str) -> str | None:
+    try:
+        run = subprocess.run(
+            ["git", "-C", str(ROOT), *args], check=False, capture_output=True, text=True, timeout=60
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return run.stdout if run.returncode == 0 else None
+
+
+def read_repo() -> Repo:
+    cat = ROOT / CAT15_REL
+    cat15 = cat.read_text(encoding="utf-8") if cat.exists() else None
+    if git("rev-parse", "--is-inside-work-tree") is None:
+        return Repo(cat15, None)  # an archive (no git): the scope gate cannot run
+    base = git("merge-base", "HEAD", BASE_REF)
+    names = git("diff", "--name-only", base.strip()) if base else None
+    if base is None or names is None:
+        return Repo(cat15, {"?": [f"no merge base with {BASE_REF}"]})
+    diff: dict[str, list[str]] = {}
+    for path in names.split():
+        diff[path] = []
+        if path in (CAT14_REL, CAT15_REL):
+            body = git("diff", "-U0", base.strip(), "--", path) or ""
+            diff[path] = [
+                ln
+                for ln in body.splitlines()
+                if ln[:1] in "+-" and not ln.startswith(("+++", "---"))
+            ]
+    return Repo(cat15, diff)
+
+
 def read_exports() -> Files:
     """Every committed E25-D03 PNG, by its repo path."""
     if not IMG.is_dir():
@@ -652,6 +697,62 @@ def boards(spec: str, problems: list[str], files: Files) -> dict[str, Any]:
     if files:
         problems.append(f"board plan: {len(files)} E25-D03 export(s) committed while §0 is PENDING")
     return out
+
+
+SCOPE_FILES = {
+    "docs/design/E25/E25-D03.md",
+    "docs/design/_tools/e25_d03_panels_hifi_audit.py",
+    CAT14_REL,
+    CAT15_REL,
+}
+SCOPE_IMG_RX = re.compile(r"^docs/design/E25/img/E25-D03-[a-z0-9-]+\.png$")
+POINTER_14 = "- **Hi-fi (E25-D03):**"
+
+
+def cmp_field(cat15: str, entry: str, field: str) -> str | None:
+    i = cat15.find(f"\n### {entry} ")
+    j = cat15.find("\n### ", i + 5)
+    block = cat15[i : j if j > 0 else len(cat15)] if i >= 0 else ""
+    return next((ln for ln in block.splitlines() if ln.startswith(f"- **{field}**:")), None)
+
+
+def arow_gate(spec: str, repo: Repo, problems: list[str]) -> int:
+    """Each `15` A-row applied verbatim: Proposed once in its field, Today's text gone."""
+    if repo.cat15 is None:
+        problems.append(f"A-rows: {CAT15_REL} not found")
+        return 0
+    n = 0
+    for ln in spec.splitlines():
+        if not re.match(r"^\| A-\d+ ", ln):
+            continue
+        r = cells(ln)
+        if not r[1].startswith("CMP-"):
+            continue  # a `16` row (the `16` owner's, not applied here)
+        n += 1
+        field = r[2].split(" (")[0]
+        today, prop = r[3].strip('"'), r[4].strip('"')
+        line = cmp_field(repo.cat15, r[1], field)
+        if line is None or line.count(prop) != 1 or today in line:
+            problems.append(f"{r[0]}: not applied verbatim in `15` {r[1]} {field}")
+    return n
+
+
+def scope_gate(repo: Repo, problems: list[str]) -> str:
+    """Only this ticket's set differs from the merge base (C-4.9)."""
+    if repo.diff is None:
+        return "skipped (no git work tree)"
+    out = sorted(p for p in repo.diff if p not in SCOPE_FILES and not SCOPE_IMG_RX.match(p))
+    if out:
+        problems.append(f"scope: outside E25-D03's set, differs from the merge base: {out}")
+    if any(not ln[1:].startswith(POINTER_14) for ln in repo.diff.get(CAT14_REL, [])):
+        problems.append("scope: `14` changes a line other than the three E25-D03 pointer lines")
+    lines15 = repo.diff.get(CAT15_REL, [])
+    heads = [ln[1:].split(":", 1)[0] for ln in lines15]
+    if any(h not in ("- **Tokens**", "- **A11y**") for h in heads) or any(
+        heads.count(h) > 2 for h in heads
+    ):  # one -/+ pair per field at most; which entry they sit in is the A-row gate's to prove
+        problems.append("scope: `15` changes a line other than CMP-131's Tokens / A11y")
+    return f"{len(repo.diff)} file(s) differ, all in E25-D03's set" if not out else "outside"
 
 
 def counts(spec: str, problems: list[str]) -> dict[str, Any]:
@@ -823,7 +924,7 @@ def drift(
     return [n for n in need if n not in spec]
 
 
-def evaluate(spec: str, files: Files) -> tuple[list[str], dict[str, Any]]:
+def evaluate(spec: str, files: Files, repo: Repo) -> tuple[list[str], dict[str, Any]]:
     problems: list[str] = []
     out: dict[str, Any] = {}
     out["tokens"] = tokens(spec)
@@ -832,6 +933,9 @@ def evaluate(spec: str, files: Files) -> tuple[list[str], dict[str, Any]]:
     out["formats"] = formats(problems)
     out["cvd"] = cvd(problems)
     out["boards"] = boards(spec, problems, files)
+    if out["boards"]["mode"] == "drawn":  # PR 2: the `15` A-rows applied and the file scope
+        out["boards"]["arows"] = arow_gate(spec, repo, problems)
+        out["boards"]["scope"] = scope_gate(repo, problems)
     out["counts"] = counts(spec, problems)
     out["gates"] = table_gates(spec, problems)
     out["drift"] = drift(spec, out["matrix"], out["formats"], out["boards"], out["cvd"])
@@ -885,14 +989,14 @@ MUTATIONS: tuple[tuple[str, ...], ...] = (  # (name, old, new[, occurrences])
     ("a state row is lost", "| S57-12 |", "| S57-12x |"),
     ("a dangling rule cite", "Honesty (C-2.13)", "Honesty (C-9.99)"),
 )
-View = tuple[str, Files]
+View = tuple[str, Files, Repo]
 Mutation = tuple[str, bool, Callable[[View], View | None]]  # (name, on the drawn view, apply)
 
 
 def literal(old: str, new: str, times: int = 1) -> Callable[[View], View | None]:
     def apply(view: View) -> View | None:
-        spec, files = view
-        return None if spec.count(old) < times else (spec.replace(old, new, times), files)
+        spec, files, repo = view
+        return None if spec.count(old) < times else (spec.replace(old, new, times), files, repo)
 
     return apply
 
@@ -901,14 +1005,14 @@ def two_more_twins(view: View) -> View | None:
     spec, n = re.subn(
         r"^(\| 0[34] +\|[^|]*\|[^|]*\| )dark( +\|)", r"\1light\2", view[0], flags=re.MULTILINE
     )
-    return (spec, view[1]) if n == 2 else None
+    return (spec, view[1], view[2]) if n == 2 else None
 
 
 def row_pending(view: View) -> View | None:
     spec, n = re.subn(
         r"^(\| 02 +\|.*\| )`[0-9a-f-]{36}`( +\|)$", r"\1PENDING\2", view[0], flags=re.MULTILINE
     )
-    return (spec, view[1]) if n == 1 else None
+    return (spec, view[1], view[2]) if n == 1 else None
 
 
 def first_export(spec: str) -> re.Match[str] | None:
@@ -921,25 +1025,51 @@ def sha_drifts(view: View) -> View | None:
     if not m:
         return None
     sha = m.group(5)[:-1] + ("0" if m.group(5)[-1] != "0" else "1")
-    return view[0][: m.start(5)] + sha + view[0][m.end(5) :], view[1]
+    return view[0][: m.start(5)] + sha + view[0][m.end(5) :], view[1], view[2]
 
 
 def size_drifts(view: View) -> View | None:
     m = first_export(view[0])
     if not m:
         return None
-    return view[0][: m.start(3)] + str(int(m.group(3)) + 1) + view[0][m.end(3) :], view[1]
+    return view[0][: m.start(3)] + str(int(m.group(3)) + 1) + view[0][m.end(3) :], view[1], view[2]
 
 
 def render_missing(view: View) -> View | None:
     gone = next((k for k in sorted(view[1]) if k.endswith(CVD_SUFFIXES[1] + ".png")), None)
-    return None if gone is None else (view[0], {k: v for k, v in view[1].items() if k != gone})
+    if gone is None:
+        return None
+    return view[0], {k: v for k, v in view[1].items() if k != gone}, view[2]
 
 
 def uuid_outside(view: View) -> View | None:
     old = "## 20. Summary"
     tag = f" (`{synth_uuid(999)}`)"
-    return None if old not in view[0] else (view[0].replace(old, old + tag, 1), view[1])
+    return None if old not in view[0] else (view[0].replace(old, old + tag, 1), view[1], view[2])
+
+
+def arow_word_drifts(view: View) -> View | None:
+    cat = view[2].cat15 or ""
+    line = cmp_field(cat, "CMP-131", "Tokens")
+    if line is None or "2 px" not in line:
+        return None
+    return (
+        view[0],
+        view[1],
+        view[2]._replace(cat15=cat.replace(line, line.replace("2 px", "3 px", 1))),
+    )
+
+
+def extra_file(view: View) -> View | None:
+    diff = dict(view[2].diff or {})
+    diff["docs/plan/16-design-system-brief.md"] = []
+    return view[0], view[1], view[2]._replace(diff=diff)
+
+
+def other_14_line(view: View) -> View | None:
+    diff = dict(view[2].diff or {})
+    diff[CAT14_REL] = [*diff.get(CAT14_REL, []), "+- **Wireframes (E25-D02):** boards PENDING"]
+    return view[0], view[1], view[2]._replace(diff=diff)
 
 
 def plan() -> list[Mutation]:
@@ -955,6 +1085,9 @@ def plan() -> list[Mutation]:
         ("an export's size cell drifts (the drawn view)", True, size_drifts),
         ("a greyscale / deuteranopia render is missing (the drawn view)", True, render_missing),
         ("a uuid outside §0 (the drawn view)", True, uuid_outside),
+        ("an applied A-row word drifts in 15 (the drawn view)", True, arow_word_drifts),
+        ("a file outside E25-D03's set differs (the drawn view)", True, extra_file),
+        ("a 14 line other than the pointers changes (the drawn view)", True, other_14_line),
     ]
 
 
@@ -967,11 +1100,22 @@ def fake_png(w: int, h: int) -> bytes:
     return PNG_SIG + struct.pack(">I", 13) + ihdr + struct.pack(">I", zlib.crc32(ihdr))
 
 
-def drawn_view(spec: str, files: Files) -> tuple[View, bool]:
+def applied(spec: str, cat15: str) -> str:
+    """`15` with every CMP A-row of the spec applied (the synthesised drawn view)."""
+    for ln in spec.splitlines():
+        if re.match(r"^\| A-\d+ ", ln) and cells(ln)[1].startswith("CMP-"):
+            r = cells(ln)
+            line = cmp_field(cat15, r[1], r[2].split(" (")[0])
+            if line is not None:
+                cat15 = cat15.replace(line, line.replace(r[3].strip('"'), r[4].strip('"'), 1))
+    return cat15
+
+
+def drawn_view(spec: str, files: Files, repo: Repo) -> tuple[View, bool]:
     """The drawn state: the committed one, or (§0 PENDING) one synthesised in memory."""
     s0 = s0_of(spec)
     if s0.startswith("\n" + DRAWN_HEAD):
-        return (spec, files), False
+        return (spec, files, repo._replace(diff=repo.diff or {})), False
     rows = [cells(ln) for ln in s0.splitlines() if BOARD_RX.match(ln)]
     fake: Files = {}
     table = ["", "| Export | Size | sha256 |", "| --- | --- | --- |"]
@@ -989,7 +1133,8 @@ def drawn_view(spec: str, files: Files) -> tuple[View, bool]:
             last = k
     lines[last + 1 : last + 1] = table
     lines[1] = DRAWN_HEAD + f" (PR 2; page id `{synth_uuid(100)}`)"
-    return (spec.replace(s0, "\n".join(lines), 1), fake), True
+    synth = Repo(applied(spec, repo.cat15 or ""), {})
+    return (spec.replace(s0, "\n".join(lines), 1), fake, synth), True
 
 
 def read(path: Path) -> str:
@@ -999,13 +1144,13 @@ def read(path: Path) -> str:
 def self_test(spec_path: Path) -> int:
     spec = read(spec_path)
     before = spec_path.read_bytes()
-    files = read_exports()
-    base, _ = evaluate(spec, files)
+    files, repo = read_exports(), read_repo()
+    base, _ = evaluate(spec, files, repo)
     ok = not base
     print(f"clean spec: rc {1 if base else 0} ({len(base)} problem(s))")
     for p in base:
         print(f"  {p}")
-    dview, synth = drawn_view(spec, files)
+    dview, synth = drawn_view(spec, files, repo)
     dbase, _ = evaluate(*dview)
     ok = ok and not dbase
     kind = "synthesised in memory (§0 PENDING)" if synth else "the committed state"
@@ -1015,7 +1160,7 @@ def self_test(spec_path: Path) -> int:
     seen: dict[str, str] = {}
     muts = plan()
     for no, (name, on_drawn, apply) in enumerate(muts, start=1):
-        start, ref = (dview, dbase) if on_drawn else ((spec, files), base)
+        start, ref = (dview, dbase) if on_drawn else ((spec, files, repo), base)
         view = apply(start)
         if view is None:
             ok = False
@@ -1032,7 +1177,7 @@ def self_test(spec_path: Path) -> int:
         for p in fresh:
             print(f"  {p}")
             seen.setdefault(p, name)
-    restored, _ = evaluate(spec, read_exports())
+    restored, _ = evaluate(spec, read_exports(), read_repo())
     same = spec_path.read_bytes() == before
     ok = ok and not restored and same
     print(
@@ -1056,7 +1201,7 @@ def main(argv: list[str] | None = None) -> int:
     if "--self-test" in argv:
         return self_test(spec_path)
     spec = read(spec_path) if spec_path.exists() else ""
-    problems, out = evaluate(spec, read_exports())
+    problems, out = evaluate(spec, read_exports(), read_repo())
     if "--json" in argv:
         print(json.dumps(out, ensure_ascii=False, indent=1, default=str))
     else:
@@ -1091,6 +1236,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"E. boards {bd['boards']}, light twins {bd['light_twins']}, §0 {bd['mode']}, "
             f"exports {bd.get('exports', 0)}"
+            + (f", A-rows applied {bd['arows']}, scope {bd['scope']}" if "scope" in bd else "")
         )
         print(f"F. counts {out['counts']}; gates {out['gates']}")
         print(f"G. drift {len(out['drift'])}")
