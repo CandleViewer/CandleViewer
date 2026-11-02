@@ -15,6 +15,9 @@ carry what the rule asked for to the OMS, whose size step is the last word.
   as the OMS places no emulated algo yet.
 - `scale_in`: `qty` or `qty_pct` (a percent of the open position, above 0 and at most 100), not
   both; with neither, the profile sizes it. It adds to the open position, on its side.
+
+E35-T12 reads the exits' the same way (24 §11.6 "The exits' parameters"): `scale_out` names
+`qty_pct` or `qty` and a `market` order type; a flatten an optional `symbols`.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, model_validator
 
+from candleviewer.domain.primitives import Symbol
 from candleviewer.rules.ir.canonical import IrValueError, dec_str
 
 #: 22 `Offset`'s units, as the OMS's `StopOffset` takes them; the OMS refuses those it cannot place
@@ -128,6 +132,50 @@ def entry_params(action_type: str, params: Mapping[str, Any]) -> EntryParams | N
     """`params` of a `place_order` or `scale_in` action, typed; `None` when they do not parse (or
     the type is neither), so the handler answers `invalid_params`. The error names no value."""
     model = _MODELS.get(action_type)
+    if model is None:
+        return None
+    try:
+        return model.model_validate(dict(params))
+    except ValidationError:
+        return None
+
+
+class ScaleOutParams(BaseModel):
+    """`scale_out`'s parameters (E35-T12; 24 §11.6 "The exits' parameters"): `qty_pct` (above 0,
+    at most 100) or `qty`, one of the two, and `order_type` `market`, as a reduce-only exit is a
+    market order and the table names no price for a limit one."""
+
+    model_config = _STRICT
+    order_type: Literal["market"]
+    qty: Positive | None = None
+    qty_pct: Percent | None = None
+
+    @model_validator(mode="after")
+    def _one_size(self) -> ScaleOutParams:
+        if (self.qty is None) == (self.qty_pct is None):
+            raise ValueError("a scale_out names qty or qty_pct, one of the two")
+        return self
+
+
+class FlattenParams(BaseModel):
+    """`flatten_position`'s and `flatten_all_positions`' parameters: an optional `symbols`, each a
+    symbol code, which a flatten closes in place of the instance's symbol, or narrows to."""
+
+    model_config = _STRICT
+    symbols: tuple[Symbol, ...] | None = Field(default=None, min_length=1, max_length=64)
+
+
+ReduceParams = ScaleOutParams | FlattenParams
+_REDUCE: Final[Mapping[str, type[ScaleOutParams] | type[FlattenParams]]] = {
+    "scale_out": ScaleOutParams, "flatten_position": FlattenParams,
+    "flatten_all_positions": FlattenParams,
+}  # fmt: skip
+
+
+def reduce_params(action_type: str, params: Mapping[str, Any]) -> ReduceParams | None:
+    """`params` of a reduce-only exit, typed as `entry_params` types an entry's: `None` when they
+    do not parse (a percent above 100 among them) or the type is none of the three."""
+    model = _REDUCE.get(action_type)
     if model is None:
         return None
     try:

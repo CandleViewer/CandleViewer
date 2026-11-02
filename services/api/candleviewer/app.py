@@ -416,6 +416,7 @@ from candleviewer.risk.service import RiskService
 from candleviewer.rolloff_wiring import build_rolloff_job
 from candleviewer.rules.manager import REFUSED_CAPS, Actor
 from candleviewer.rules.service import RulesService
+from candleviewer.rules_oms_exits import StoredOpenPositions, rule_reduce_handlers
 from candleviewer.rules_oms_orders import StoredPositionSides, rule_order_handlers
 from candleviewer.rules_oms_principals import IdentityPrincipalSource, RulePrincipals
 from candleviewer.rules_oms_wiring import (
@@ -3496,6 +3497,17 @@ def create_app(
                 principals=rule_principals,
                 positions=None if reads is None else StoredPositionSides(reads),
             ),
+        )
+        # E35-T12 (#5004): the reduce-only exits over the same order port, each close the close
+        # routes' own order through the pipeline, never protective (BQ-5), its positions read in
+        # the owner's scope within 2 s (BQ-6).
+        ctx.rules.bind(
+            handlers=rule_reduce_handlers(
+                lambda: oms_runtime_of(app.state),
+                oms_enabled=feature_flags.oms_enabled,
+                principals=rule_principals,
+                positions=None if reads is None else StoredOpenPositions(reads),
+            )
         )
     rules_actor = (
         SessionRulesActorResolver(
