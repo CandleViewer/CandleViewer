@@ -165,6 +165,20 @@ groups:
         annotations:
           summary: "Audit export signing key unavailable: export refused, trading unaffected"
           runbook_url: "docs/ops/runbooks/kek-custody.md#alert-auditsigningkeyunavailable"
+      - alert: AuthKeyringUnavailable
+        # #2152 (ADR-0009 Amendment 4, BQ-14): the environment's auth keyring cannot be used with
+        # the KEK up, so the MFA operations answer 503 auth_unavailable and trading is not
+        # latched. A state gauge, as AuditSigningKeyUnavailable's: boot sets it before the first
+        # scrape and it holds for the life of the process. Its own component, so no `secrets`
+        # ticket is hidden behind it; with the KEK down KekUnavailable pages instead.
+        expr: max by (env) (cv_auth_keyring_unavailable_state) == 1
+        for: 0m
+        labels:
+          severity: page
+          component: auth_keyring
+        annotations:
+          summary: "Auth keyring unavailable: MFA answers 503, trading unaffected"
+          runbook_url: "docs/ops/runbooks/kek-custody.md#alert-authkeyringunavailable"
       - alert: NetBindingUnsafe
         # #2496 (E09-T04: fires as soon as the gauge goes to 0). The mesh guard found a public or
         # off-mesh listener, or could not check, and tripped the read-only gate: no new orders.

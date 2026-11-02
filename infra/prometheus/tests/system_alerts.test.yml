@@ -196,6 +196,29 @@ tests:
     exp_alerts: []
 - interval: 1m
   input_series:
+  - series: cv_auth_keyring_unavailable_state{env="live"}
+    values: 1+0x20
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: AuthKeyringUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: auth_keyring
+        env: live
+      exp_annotations:
+        summary: 'Auth keyring unavailable: MFA answers 503, trading unaffected'
+        runbook_url: docs/ops/runbooks/kek-custody.md#alert-authkeyringunavailable
+- interval: 1m
+  input_series:
+  - series: cv_auth_keyring_unavailable_state{env="live"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: AuthKeyringUnavailable
+    exp_alerts: []
+- interval: 1m
+  input_series:
   - series: net_binding_safe{env="live"}
     values: 1+0x4 0+0x10
   alert_rule_test:
@@ -2553,6 +2576,56 @@ tests:
   alert_rule_test:
   - eval_time: 6m
     alertname: AuditSigningKeyBootStepFailed
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_auth_keyring_boot_failures_total{env="live",step="rewrap"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: AuthKeyringBootStepFailed
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: secrets
+        env: live
+        step: rewrap
+      exp_annotations:
+        summary: 'Auth keyring boot step failed: a row is left under the previous
+          KEK'
+        runbook_url: docs/ops/runbooks/kek-custody.md#alert-authkeyringbootstepfailed
+- interval: 1m
+  input_series:
+  - series: cv_auth_keyring_boot_failures_total{env="live",step="rewrap"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 9h49m
+    alertname: AuthKeyringBootStepFailed
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: secrets
+        env: live
+        step: rewrap
+      exp_annotations:
+        summary: 'Auth keyring boot step failed: a row is left under the previous
+          KEK'
+        runbook_url: docs/ops/runbooks/kek-custody.md#alert-authkeyringbootstepfailed
+- interval: 1m
+  input_series:
+  - series: cv_auth_keyring_boot_failures_total{env="live",step="rewrap"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 9h52m
+    alertname: AuthKeyringBootStepFailed
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_auth_keyring_boot_failures_total{env="live",step="rewrap"}
+    values: 3+0x700
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: AuthKeyringBootStepFailed
     exp_alerts: []
 - interval: 1m
   input_series:

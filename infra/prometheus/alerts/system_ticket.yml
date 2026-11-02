@@ -364,6 +364,21 @@ groups:
         annotations:
           summary: "An audit export signing key boot step failed: a retired seed kept, or a key left under the previous KEK"
           runbook_url: "docs/ops/runbooks/kek-custody.md#alert-auditsigningkeybootstepfailed"
+      - alert: AuthKeyringBootStepFailed
+        # #2152 (BQ-4): the rotation boot's re-wrap of an auth keyring row failed and degraded
+        # nothing (`step="rewrap"`): the keyring still opens under the previous KEK on that boot,
+        # and the KEK re-wrap run holds `kek_rotated` back until a boot moves the row. Bound at
+        # import, so read as the export key's is; the runbook reads the boot log after a restart.
+        # Held past the quiet-hours mute as UserLifecycleStepFailed is.
+        expr: sum by (env, step) (increase(cv_auth_keyring_boot_failures_total[15m])) > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: secrets
+        annotations:
+          summary: "Auth keyring boot step failed: a row is left under the previous KEK"
+          runbook_url: "docs/ops/runbooks/kek-custody.md#alert-authkeyringbootstepfailed"
       - alert: UserLifecycleStepFailed
         # #965 R7: a step of the user disable cascade after its commit (socket close, session
         # sweep, B16 revoke, rule scope refresh, rule disarm, invite revoke) failed, or the

@@ -869,6 +869,30 @@ tests:
               summary: "Expected metric cv_audit_signing_key_unavailable_state is not emitted"
               runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       - eval_time: 14m
+        alertname: ExpectedMetricMissingCvAuthKeyringUnavailableState
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingCvAuthKeyringUnavailableState
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric cv_auth_keyring_unavailable_state is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
+        alertname: ExpectedMetricMissingCvAuthKeyringBootFailuresTotal
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ExpectedMetricMissingCvAuthKeyringBootFailuresTotal
+        exp_alerts:
+          - exp_labels:
+              severity: "ticket"
+              component: "alerting"
+            exp_annotations:
+              summary: "Expected metric cv_auth_keyring_boot_failures_total is not emitted"
+              runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - eval_time: 14m
         alertname: ExpectedMetricMissingCvAuditSigningKeyBootFailuresTotal
         exp_alerts: []
       - eval_time: 15m
@@ -1303,6 +1327,10 @@ tests:
         values: "1+0x25"
       - series: 'cv_audit_signing_key_boot_failures_total{env="demo"}'
         values: "1+0x25"
+      - series: 'cv_auth_keyring_unavailable_state{env="demo"}'
+        values: "1+0x25"
+      - series: 'cv_auth_keyring_boot_failures_total{env="demo"}'
+        values: "1+0x25"
       - series: 'cv_keys_failing_policy{env="demo"}'
         values: "1+0x25"
       - series: 'cv_key_selfcheck_latch_state{env="demo"}'
@@ -1389,6 +1417,12 @@ tests:
         exp_alerts: []
       - eval_time: 20m
         alertname: ExpectedMetricMissingCvAuditSigningKeyBootFailuresTotal
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingCvAuthKeyringUnavailableState
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ExpectedMetricMissingCvAuthKeyringBootFailuresTotal
         exp_alerts: []
       - eval_time: 20m
         alertname: ExpectedMetricMissingCvKeysFailingPolicy

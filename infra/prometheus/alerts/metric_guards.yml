@@ -50,6 +50,26 @@ groups:
         annotations:
           summary: "Expected metric cv_audit_signing_key_unavailable_state is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      # #2152 (BQ-14): the auth keyring's page reads this gauge, at 0 from import.
+      - alert: ExpectedMetricMissingCvAuthKeyringUnavailableState
+        expr: absent(cv_auth_keyring_unavailable_state)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric cv_auth_keyring_unavailable_state is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      # #2152 (BQ-4): the keyring's boot-step ticket reads this counter, `rewrap` bound at 0.
+      - alert: ExpectedMetricMissingCvAuthKeyringBootFailuresTotal
+        expr: absent(cv_auth_keyring_boot_failures_total)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric cv_auth_keyring_boot_failures_total is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       # #889 S6b-2: the boot-step ticket's counter, both `step` values bound at 0 from import.
       - alert: ExpectedMetricMissingCvAuditSigningKeyBootFailuresTotal
         expr: absent(cv_audit_signing_key_boot_failures_total)
