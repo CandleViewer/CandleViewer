@@ -27,7 +27,6 @@ from typing import Any
 
 import pytest
 import structlog
-from pydantic import SecretStr
 
 from candleviewer.auth.totp import (
     base32_to_secret,
@@ -704,16 +703,15 @@ def _prepare(kind: str, run: Run, tmp: Path, patch: pytest.MonkeyPatch) -> tuple
     return str(run.dir), None
 
 
-KEY = SecretStr("k")
 #: Settings fields, or `env`, `dir` (a run directory kind) or `args` (the command); the reason.
 REFUSALS: dict[str, tuple[dict[str, Any], str]] = {
     "live": ({"environment": Environment.LIVE}, cli.LIVE),
     "testnet": ({"environment": Environment.TESTNET}, "CV_ENVIRONMENT=demo"),
     "live-feed": (
-        {"feed": FeedMode.LIVE, "bybit_api_key": KEY, "bybit_api_secret": KEY},
+        {"feed": FeedMode.LIVE},
         "CV_FEED",
     ),
-    "exchange-key": ({"bybit_api_key": KEY}, "CV_BYBIT_API_*"),
+    "exchange-key": ({"env": {"CV_BYBIT_API_KEY": "k"}}, "CV_BYBIT_API_*"),
     "undeclared-exchange-variable": ({"env": {"CV_BYBIT_API_OTHER": "x"}}, "CV_BYBIT_API_*"),
     "test-clock": ({"test_clock": True}, "CV_TEST_CLOCK"),
     "fixture-unset": ({"account_fixture": None}, cli.NOT_ARMED),

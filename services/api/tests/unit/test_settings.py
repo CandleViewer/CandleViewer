@@ -87,38 +87,27 @@ def test_settings_repr_does_not_redact_non_secret_fields() -> None:
     assert "environment=" in rendered
 
 
-def test_settings_feed_live_without_credentials_fails_fast(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_settings_feed_live_needs_no_exchange_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#2386: the public feed needs no key and `Settings` holds none (C-2.7, C-12.2)."""
     monkeypatch.setenv("CV_FEED", "live")
     monkeypatch.delenv("CV_BYBIT_API_KEY", raising=False)
     monkeypatch.delenv("CV_BYBIT_API_SECRET", raising=False)
-    with pytest.raises(ValidationError) as exc_info:
-        get_settings()
-    message = str(exc_info.value)
-    assert "CV_FEED=live" in message
-    assert "CV_BYBIT_API_KEY" in message
+    assert get_settings().feed == FeedMode.LIVE
 
 
-def test_settings_feed_live_error_never_echoes_credential_value(
+def test_settings_declares_no_exchange_key_field() -> None:
+    assert not [name for name in Settings.model_fields if "bybit_api" in name]
+
+
+def test_settings_feed_live_with_key_variables_never_holds_or_echoes_them(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CV_FEED", "live")
     monkeypatch.setenv("CV_BYBIT_API_KEY", "super-secret-value-should-not-leak")
-    monkeypatch.delenv("CV_BYBIT_API_SECRET", raising=False)
-    with pytest.raises(ValidationError) as exc_info:
-        get_settings()
-    assert "super-secret-value-should-not-leak" not in str(exc_info.value)
-
-
-def test_settings_feed_live_with_credentials_constructs(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("CV_FEED", "live")
-    monkeypatch.setenv("CV_BYBIT_API_KEY", "k")
     monkeypatch.setenv("CV_BYBIT_API_SECRET", "s")
     settings = get_settings()
-    assert settings.feed == FeedMode.LIVE
+    assert "super-secret-value-should-not-leak" not in repr(settings)
+    assert "super-secret-value-should-not-leak" not in settings.model_dump_json()
 
 
 def test_settings_feed_rate_hz_defaults_positive() -> None:

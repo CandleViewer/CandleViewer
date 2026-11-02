@@ -329,27 +329,31 @@ def is_serialised_origin(entry: str) -> bool:
     return entry == f"{parts.scheme}://{netloc}" + ("" if port is None else f":{port}")
 
 
-def _keyless_testnet_refusal(
-    switch: str,
-    environment: Environment | None,
-    bybit_api_key: SecretStr | None,
-    bybit_api_secret: SecretStr | None,
-) -> str | None:
+#: #2893 ruling 2's rider: every variable of this family counts, declared or not.
+_EXCHANGE_KEY_VARIABLE_PREFIX = "CV_BYBIT_API_"
+
+
+def _exchange_key_variable_set() -> bool:
+    """#2386: `Settings` declares no exchange key field (C-2.7, C-12.2: keys live only in the
+    envelope-encrypted secrets module), so the guards read only the *names* of the process
+    environment; a value is never read."""
+    return any(name.upper().startswith(_EXCHANGE_KEY_VARIABLE_PREFIX) for name in os.environ)
+
+
+def _keyless_testnet_refusal(switch: str, environment: Environment | None) -> str | None:
     """The one rule for every test or perf switch (#2086 `CV_TEST_CLOCK`, #2097
     `CV_AUTH_PERF_ENABLED`): why *switch* may not be on, or None on testnet with no exchange
-    key (`CV_BYBIT_API_KEY` and `CV_BYBIT_API_SECRET` both unset). The message names the
+    key (no `CV_BYBIT_API_*` variable set). The message names the
     switch and the rule only, never a value."""
     if environment is not Environment.TESTNET:
         return f"{switch} is refused unless CV_ENVIRONMENT=testnet"
-    if bybit_api_key is not None or bybit_api_secret is not None:
+    if _exchange_key_variable_set():
         return f"{switch} is refused while an exchange key (CV_BYBIT_API_*) is configured"
     return None
 
 
 #: #2893: a fixture scenario name: lowercase letters, digits and `_`, at most 64 characters.
 _ACCOUNT_FIXTURE_SCENARIO_RE = re.compile(r"[a-z0-9_]{1,64}")
-#: #2893 ruling 2's rider: every variable of this family counts, declared or not.
-_EXCHANGE_KEY_VARIABLE_PREFIX = "CV_BYBIT_API_"
 
 
 def _account_fixture_refusal(
@@ -357,8 +361,6 @@ def _account_fixture_refusal(
     environment: Environment | None,
     feed: FeedMode | None,
     test_clock: bool,
-    bybit_api_key: SecretStr | None,
-    bybit_api_secret: SecretStr | None,
 ) -> str | None:
     """#2893 rulings 2 and 10: why `CV_ACCOUNT_FIXTURE` may not be on, or None in dev/test: demo,
     the synthetic feed, no test clock (it needs testnet) and no `CV_BYBIT_API_*` variable at all.
@@ -374,11 +376,7 @@ def _account_fixture_refusal(
         return "CV_ACCOUNT_FIXTURE is refused unless CV_ENVIRONMENT=demo"
     if feed is not FeedMode.SYNTHETIC:
         return "CV_ACCOUNT_FIXTURE is refused unless CV_FEED=synthetic"
-    if (
-        bybit_api_key is not None
-        or bybit_api_secret is not None
-        or any(name.upper().startswith(_EXCHANGE_KEY_VARIABLE_PREFIX) for name in os.environ)
-    ):
+    if _exchange_key_variable_set():
         return "CV_ACCOUNT_FIXTURE is refused while any CV_BYBIT_API_* variable is set"
     if scenario is None:
         return "CV_ACCOUNT_FIXTURE is not set (CV_ACCOUNT_FIXTURE_DIR needs it)"
@@ -434,9 +432,6 @@ class Settings(BaseSettings):
     feed: FeedMode = FeedMode.SYNTHETIC
     feed_rate_hz: float = Field(default=2.0, gt=0.0)
     feed_sample_path: str = "packages/fixtures/raw/synthetic_sample.jsonl"
-
-    bybit_api_key: SecretStr | None = None
-    bybit_api_secret: SecretStr | None = None
 
     # E04-T03: private-bind-only `/metrics` listener (`CV_METRICS_ENABLED`,
     # `CV_METRICS_BIND`). Non-private hosts are refused at startup.
@@ -1152,9 +1147,7 @@ class Settings(BaseSettings):
 
     def test_clock_refusal(self) -> str | None:
         """#2086: why the server test clock may not run here, or None on a keyless testnet."""
-        return _keyless_testnet_refusal(
-            "CV_TEST_CLOCK", self.environment, self.bybit_api_key, self.bybit_api_secret
-        )
+        return _keyless_testnet_refusal("CV_TEST_CLOCK", self.environment)
 
     @field_validator("test_clock_file")
     @classmethod
@@ -1175,8 +1168,6 @@ class Settings(BaseSettings):
         refusal = _keyless_testnet_refusal(
             "CV_TEST_CLOCK",
             info.data.get("environment"),
-            info.data.get("bybit_api_key"),
-            info.data.get("bybit_api_secret"),
         )
         if refusal is not None:
             raise ValueError(refusal)
@@ -1196,9 +1187,7 @@ class Settings(BaseSettings):
     def auth_perf_refusal(self) -> str | None:
         """#2097: why `CV_AUTH_PERF_ENABLED` may not be on here, or None on a keyless testnet.
         The app checks this again at build time (`api.auth_perf.auth_perf_enabled`)."""
-        return _keyless_testnet_refusal(
-            "CV_AUTH_PERF_ENABLED", self.environment, self.bybit_api_key, self.bybit_api_secret
-        )
+        return _keyless_testnet_refusal("CV_AUTH_PERF_ENABLED", self.environment)
 
     @field_validator("auth_perf_enabled")
     @classmethod
@@ -1213,8 +1202,6 @@ class Settings(BaseSettings):
         refusal = _keyless_testnet_refusal(
             "CV_AUTH_PERF_ENABLED",
             info.data.get("environment"),
-            info.data.get("bybit_api_key"),
-            info.data.get("bybit_api_secret"),
         )
         if refusal is not None:
             raise ValueError(refusal)
@@ -1228,8 +1215,6 @@ class Settings(BaseSettings):
             self.environment,
             self.feed,
             self.test_clock,
-            self.bybit_api_key,
-            self.bybit_api_secret,
         )
 
     @field_validator("account_fixture_dir")
@@ -1255,8 +1240,6 @@ class Settings(BaseSettings):
             info.data.get("environment"),
             info.data.get("feed"),
             info.data.get("test_clock", False),
-            info.data.get("bybit_api_key"),
-            info.data.get("bybit_api_secret"),
         )
         if refusal is not None:
             raise ValueError(refusal)
@@ -1587,23 +1570,10 @@ class Settings(BaseSettings):
         return value
 
     def model_post_init(self, __context: object) -> None:
-        """Fail fast on `CV_FEED=live` without credentials (acceptance criterion 3).
+        """#2386: the public feed needs no key, so `CV_FEED=live` requires none.
 
-        A half-configured live feed must never start — this raises before any
-        module is constructed, with a message that names the missing env vars
-        and never echoes any credential material (C-12.6/C-12.9).
+        #2152 AC2: live refuses an env auth key (below), before any module starts.
         """
-        if self.feed is FeedMode.LIVE and (
-            self.bybit_api_key is None or self.bybit_api_secret is None
-        ):
-            raise _refusal(
-                "feed",
-                self.feed.value,
-                "CV_FEED=live requires CV_BYBIT_API_KEY and CV_BYBIT_API_SECRET to be "
-                "set; refusing to start half-configured (see "
-                "docs/plan/20-architecture.md Sec.7.3). Use CV_FEED=synthetic for local "
-                "development without exchange credentials.",
-            )
         # #2152 AC2: live generates its auth keyring inside M2, so an old env auth key refuses
         # the start before any module starts (`auth_key_env_forbidden`). Raised here, not in a
         # field validator, so the refusal carries a placeholder input and never the key itself.

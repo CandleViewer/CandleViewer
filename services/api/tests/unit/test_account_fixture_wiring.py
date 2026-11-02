@@ -21,7 +21,6 @@ from uuid import UUID
 import httpx
 import pytest
 from fastapi import FastAPI
-from pydantic import SecretStr
 from structlog.testing import capture_logs
 
 from candleviewer import account_fixture_wiring as wiring_module
@@ -327,16 +326,14 @@ def test_set_logs_a_boot_warning(tmp_path: Path) -> None:
     ]
 
 
-_KEYS = {"bybit_api_key": SecretStr("k"), "bybit_api_secret": SecretStr("s")}
 _SKIPPED_VALIDATION = pytest.mark.parametrize(
     ("fields", "reason"),
     [
         ({"environment": Environment.LIVE}, "unless CV_ENVIRONMENT=demo"),
         ({"environment": Environment.TESTNET}, "unless CV_ENVIRONMENT=demo"),
-        # `model_post_init` still runs: a live feed without both keys never constructs.
-        ({"feed": FeedMode.LIVE, **_KEYS}, "unless CV_FEED=synthetic"),
-        ({"bybit_api_key": _KEYS["bybit_api_key"]}, "while any CV_BYBIT_API_* variable"),
-        ({"bybit_api_secret": _KEYS["bybit_api_secret"]}, "while any CV_BYBIT_API_* variable"),
+        ({"feed": FeedMode.LIVE}, "unless CV_FEED=synthetic"),
+        ({"env": {"CV_BYBIT_API_KEY": "k"}}, "while any CV_BYBIT_API_* variable"),
+        ({"env": {"CV_BYBIT_API_SECRET": "s"}}, "while any CV_BYBIT_API_* variable"),
         ({"test_clock": True}, "while CV_TEST_CLOCK is on"),
         ({"account_fixture": "../x"}, "must be a scenario token"),
     ],
@@ -350,6 +347,9 @@ def test_the_loader_refuses_skipped_validation_before_importing_the_dev_package(
 ) -> None:
     """The shipped side enforces the gate itself, so it never depends on `cvdev` to refuse."""
     _forget_the_dev_package(monkeypatch)
+    fields = dict(fields)
+    for name, value in fields.pop("env", {}).items():
+        monkeypatch.setenv(name, value)
     settings = Settings.model_construct(**{"account_fixture": _SCENARIO, **fields})
 
     with pytest.raises(AccountFixtureRefused, match=re.escape(reason)):
@@ -360,8 +360,11 @@ def test_the_loader_refuses_skipped_validation_before_importing_the_dev_package(
 
 @_SKIPPED_VALIDATION
 def test_the_dev_package_rechecks_settings_that_skipped_validation(
-    fields: dict[str, Any], reason: str
+    monkeypatch: pytest.MonkeyPatch, fields: dict[str, Any], reason: str
 ) -> None:
+    fields = dict(fields)
+    for name, value in fields.pop("env", {}).items():
+        monkeypatch.setenv(name, value)
     settings = Settings.model_construct(**{"account_fixture": _SCENARIO, **fields})
 
     with pytest.raises(AccountFixtureRefused, match=re.escape(reason)):

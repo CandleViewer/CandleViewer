@@ -216,7 +216,6 @@ def _run_arg(kind: str, tmp: Path, run: Path, patch: pytest.MonkeyPatch) -> tupl
     return str(run), owner
 
 
-KEY, SECRET = SecretStr("k"), SecretStr("s")
 #: Settings fields, or `env` (set once the settings exist, as the gate reads it), `dir` (a run
 #: directory kind), `db` (the probe's name and whether it holds rows) or `command`; then the reason.
 REFUSALS: dict[str, tuple[dict[str, Any], str]] = {
@@ -224,10 +223,10 @@ REFUSALS: dict[str, tuple[dict[str, Any], str]] = {
     "live": ({"environment": Environment.LIVE, "auth_totp_key_hex": None}, cli.LIVE),
     "testnet": ({"environment": Environment.TESTNET}, "CV_ENVIRONMENT=demo"),
     "live-feed": (
-        {"feed": FeedMode.LIVE, "bybit_api_key": KEY, "bybit_api_secret": SECRET},
+        {"feed": FeedMode.LIVE},
         "CV_FEED=synthetic",
     ),
-    "exchange-key": ({"bybit_api_key": KEY}, "CV_BYBIT_API_*"),
+    "exchange-key": ({"env": {"CV_BYBIT_API_KEY": "k"}}, "CV_BYBIT_API_*"),
     "undeclared-exchange-variable": ({"env": {"CV_BYBIT_API_OTHER": "x"}}, "CV_BYBIT_API_*"),
     "test-clock": ({"test_clock": True}, "CV_TEST_CLOCK"),
     "fixture-unset": ({"account_fixture": None}, cli.NOT_ARMED),

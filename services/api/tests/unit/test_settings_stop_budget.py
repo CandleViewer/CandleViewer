@@ -251,15 +251,13 @@ def test_the_budget_and_the_drain_timeout_come_from_the_environment(
 def test_the_refusal_message_never_includes_a_secret_value() -> None:
     """The message names terms and numbers only, and `Settings` sets `hide_input_in_errors` (#2086),
     so pydantic appends no `input_value` of the raw input either."""
-    sentinels = ("sentinel-api-key", "sentinel-api-secret", "sentinel-dsn-pw", "sentinel-pepper")
+    sentinels = ("sentinel-dsn-pw", "sentinel-pepper")
     with pytest.raises(ValidationError) as exc_info:
         Settings.model_validate(
             {
                 "ws_shutdown_grace_ms": 60_000,
-                "bybit_api_key": sentinels[0],
-                "bybit_api_secret": sentinels[1],
-                "pg_dsn": f"postgresql+asyncpg://cv:{sentinels[2]}@db:5432/cv",
-                "auth_pepper": sentinels[3],
+                "pg_dsn": f"postgresql+asyncpg://cv:{sentinels[0]}@db:5432/cv",
+                "auth_pepper": sentinels[1],
             }
         )
     (error,) = exc_info.value.errors()

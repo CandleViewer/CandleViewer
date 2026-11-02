@@ -17,7 +17,6 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from pydantic import SecretStr
 from structlog.testing import capture_logs
 
 from candleviewer import app as app_module
@@ -63,8 +62,6 @@ def _gated(offset_file: Path) -> Settings:
         environment=Environment.TESTNET,
         test_clock=True,
         test_clock_file=str(offset_file),
-        bybit_api_key=None,
-        bybit_api_secret=None,
     )
 
 
@@ -270,15 +267,18 @@ def test_build_test_clock_logs_the_boot_line_without_reading_the_file(offset_fil
     [
         {"environment": Environment.LIVE},
         {"environment": Environment.DEMO},
-        {"environment": Environment.TESTNET, "bybit_api_key": SecretStr("k")},
-        {"environment": Environment.TESTNET, "bybit_api_secret": SecretStr("s")},
+        {"environment": Environment.TESTNET, "env": {"CV_BYBIT_API_KEY": "k"}},
+        {"environment": Environment.TESTNET, "env": {"CV_BYBIT_API_SECRET": "s"}},
         {"environment": Environment.TESTNET, "test_clock_file": None},
     ],
     ids=["live", "demo", "api-key", "api-secret", "no-file"],
 )
 def test_build_test_clock_refuses_settings_that_skipped_validation(
-    fields: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch, fields: dict[str, Any]
 ) -> None:
+    fields = dict(fields)
+    for name, value in fields.pop("env", {}).items():
+        monkeypatch.setenv(name, value)
     settings = Settings.model_construct(**{"test_clock": True, "test_clock_file": "/x", **fields})
 
     with pytest.raises(RuntimeError, match="CV_TEST_CLOCK"):
