@@ -267,7 +267,9 @@ class RuleStore(Protocol):
     """`get`, `put` and `all` read and write by id or whole (writes, the evaluator and the system
     reads). Every read that answers a caller takes the caller's `RuleReadScope` in the query:
     `scoped_page` (rows ordered by id, at most `limit`, after the id `after`, or the one id `only`),
-    `scoped_ids` and `name_taken` (the save's name check, G-14)."""
+    `scoped_ids` and `name_taken` (the save's name check, G-14). `count_owned_live` is the
+    stored-rule cap's count (G-16): the rules one user owns that are not deleted, readable or
+    not."""
 
     async def get(self, rule_id: str) -> RuleRow | None: ...
     async def put(self, row: RuleRow) -> None: ...
@@ -284,6 +286,7 @@ class RuleStore(Protocol):
     ) -> list[RuleRow]: ...
     async def scoped_ids(self, scope: RuleReadScope) -> frozenset[str]: ...
     async def name_taken(self, scope: RuleReadScope, name: str, exclude: str) -> bool: ...
+    async def count_owned_live(self, owner_user_id: str) -> int: ...
 
 
 class InMemoryRuleStore:
@@ -342,6 +345,10 @@ class InMemoryRuleStore:
             and (isinstance(scope, OwnerRead) or r.owner == scope.user_id)
             for r in self._rows.values()
         )
+
+    async def count_owned_live(self, owner_user_id: str) -> int:
+        """The rules `owner_user_id` owns that are not deleted, readable or not (G-16)."""
+        return sum(1 for r in self._rows.values() if r.owner == owner_user_id and not r.deleted)
 
 
 def _owner_field(owner: str) -> dict[str, str]:
@@ -954,9 +961,11 @@ class RulesManager:
         """A new rule at version 1, disabled. Past the authorisation checks, a user who holds
         `max_rules_per_user` rules that are not deleted, the Owner too, is refused `409 conflict`
         (`limit_reached`, the cap in the message, never a count): the count and the write it admits
-        run under one lock, so two creates at the cap never both pass (G-16, #4834). An import
-        lands here too, and is held to the same cap. A name in the reserved `sys.` namespace is
-        refused `403`, its refusal recorded (`op` `create`) as a rename's is."""
+        run under one lock, so two creates at the cap never both pass (G-16, #4834). The count is
+        the store's `count_owned_live`, the caller's own rules readable or not, never a read of
+        every rule (SR-051). An import lands here too, and is held to the same cap. A name in the
+        reserved `sys.` namespace is refused `403`, its refusal recorded (`op` `create`) as a
+        rename's is."""
         check_text_bound("note", notes)
         rid = str(uuid.uuid4())
         rule, h = self._validated({**ir, "mode": "disabled", "enabled": False}, rid)
@@ -969,8 +978,7 @@ class RulesManager:
             )
             raise RuleError(403, "system_rule_reserved", "The 'sys.' name prefix is reserved.")
         async with self._creating:
-            rows = await self._s.all()
-            held = sum(1 for r in rows if r.owner == actor.user_id and not r.deleted)
+            held = await self._s.count_owned_live(actor.user_id)
             if held >= self._max_rules:
                 full = stored_rules_message(self._max_rules)
                 raise RuleCapRefused(

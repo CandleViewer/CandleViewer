@@ -23,6 +23,7 @@ from candleviewer.rules.manager import (
     Actor,
     GrantRead,
     OwnerRead,
+    RuleCapRefused,
     RuleError,
     RuleReadScope,
     RuleRow,
@@ -589,6 +590,34 @@ async def test_the_name_lookup_reads_own_rules_or_every_live_rule_for_the_owner(
     assert await store.name_taken(own, gone.name, "") is False
     assert await store.name_taken(own, mine.name.upper(), "") is False  # the exact name
     assert await store.name_taken(OwnerRead(boss), theirs.name, "") is True
+
+
+async def test_the_stored_rule_cap_counts_the_callers_own_live_rules(pg_dsn: str) -> None:
+    """#4834 (G-16): the cap's count is the caller's own rules that are not deleted, readable or
+    not, the Owner role's as anyone's; never another user's rule and never a deleted one. The
+    manager refuses a create at the cap from that count and stores nothing."""
+    repo = SqlAlchemyRelationalRepository(pg_dsn, "rules-count-it")
+    store = PostgresRuleStore(repo)
+    boss = await _owner(repo)
+    with _mig._conn(pg_dsn) as c:
+        me, other = _mig._user(c), _mig._user(c)
+    for rule in (
+        _row(me, _refs_ir((str(uuid.uuid4()),))),  # names an account no grant holds: it counts
+        _row(me, _refs_ir()),
+        _row(me, _refs_ir(), deleted=True),
+        _row(other, _refs_ir()),
+        _row(boss, _refs_ir()),
+    ):
+        await store.put(rule)
+    assert await store.count_owned_live(me) == 2
+    assert await store.count_owned_live(other) == 1
+    assert await store.count_owned_live(boss) == 1  # the Owner role counts its own rules only
+    assert await store.count_owned_live(str(uuid.uuid4())) == 0
+    owner = Actor(boss, "s", frozenset({"rules:write"}), is_owner=True)
+    capped = RulesManager(store, default_registry(), max_rules_per_user=1)
+    with pytest.raises(RuleCapRefused):
+        await capped.create(_ir("1") | {"name": f"capped-{boss[:8]}"}, owner)
+    assert await store.count_owned_live(boss) == 1  # nothing stored
 
 
 async def test_a_point_read_outside_the_scope_reads_no_row(pg_dsn: str) -> None:

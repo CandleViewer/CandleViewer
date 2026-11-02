@@ -22,7 +22,9 @@ the caller to a live owner role (`_OWNER_PRED`, the accounts store's own); anyon
 the caller's own rules whose every version's `account_refs` lies within the request's grants. A
 version's `account_refs` is the set the generic walker (`collect_account_ids`) reads from its IR,
 the walker `RulesManager._visible` reads, written with the version; a version stored before the
-column existed holds NULL, which no grant scope admits until the fill writes it.
+column existed holds NULL, which no grant scope admits until the fill writes it. The stored-rule
+cap's count (G-16, #4834) is one statement for every role, by ownership alone (`_OWN_PRED`): the
+caller's own rules that are not deleted, readable or not, as 22 `createRule` counts them.
 """
 
 from __future__ import annotations
@@ -206,6 +208,14 @@ _NAME_OWN: Final = sa.text(
     "rl.owner_user_id = CAST(:caller AS uuid)"
     ")"
 )
+#: The stored-rule cap's count (G-16, #4834): the caller's own live rules, readable or not, for
+#: every role, the Owner's included. Its head, then `_OWN_PRED`, written out whole as one literal
+#: (unit-pinned equal to the two): no account set and no fill.
+_COUNT_HEAD: Final = "SELECT count(*) FROM rules rl WHERE rl.deleted_at IS NULL AND "
+_COUNT_OWN: Final = sa.text(
+    "SELECT count(*) FROM rules rl WHERE rl.deleted_at IS NULL AND "
+    "rl.owner_user_id = CAST(:caller AS uuid)"
+)
 #: The versions of one scoped page, by the page's rule ids.
 _VERSIONS_OF_PAGE: Final = sa.text(
     "SELECT id::text AS id, rule_id::text AS rule_id, version, ir, ir_hash::text AS ir_hash, "
@@ -241,11 +251,12 @@ _ARMED_ON = sa.text(
 )
 
 #: Every statement of this module by what it serves (unit-pinned, the accounts store's way): the
-#: Owner role's scoped reads, anyone else's, and the rest, which answer no caller's view (the
+#: Owner role's scoped reads, anyone else's (with the ownership reads: `_NAME_OWN`, and
+#: `_COUNT_OWN`, which the Owner role runs too), and the rest, which answer no caller's view (the
 #: writes, the reads by id or whole that writes and the evaluator take, a scoped page's versions,
 #: the fill and `PostgresArmedRules`).
 OWNER_STATEMENTS: Final = frozenset({_PAGE_OWNER, _IDS_OWNER, _NAME_OWNER})
-GRANT_STATEMENTS: Final = frozenset({_PAGE_GRANT, _IDS_GRANT, _NAME_OWN})
+GRANT_STATEMENTS: Final = frozenset({_PAGE_GRANT, _IDS_GRANT, _NAME_OWN, _COUNT_OWN})
 UNSCOPED_STATEMENTS: Final = frozenset(
     {
         _SELECT_RULE, _SELECT_RULES, _SELECT_VERSIONS_OF, _SELECT_VERSIONS, _LOCK, _UPSERT_RULE,
@@ -410,6 +421,16 @@ class PostgresRuleStore:
         }
         async with self._relational.unit_of_work() as uow:
             return bool((await uow.session.execute(stmt, params)).scalar_one())
+
+    async def count_owned_live(self, owner_user_id: str) -> int:
+        """How many rules `owner_user_id` owns that are not deleted, readable or not: the
+        stored-rule cap's count (G-16), one statement for every role. A user id that is not a UUID
+        owns no row and runs no statement."""
+        if not _is_uuid(owner_user_id):
+            return 0
+        async with self._relational.unit_of_work() as uow:
+            got = await uow.session.execute(_COUNT_OWN, {"caller": owner_user_id})
+            return int(got.scalar_one())
 
     async def _fill_account_refs(self) -> None:
         """Write `account_refs` for every version that holds none, from its stored IR with the

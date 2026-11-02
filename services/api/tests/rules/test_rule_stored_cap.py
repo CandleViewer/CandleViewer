@@ -30,6 +30,7 @@ from candleviewer.rules.manager import (
     RuleError,
     RuleRow,
     RulesManager,
+    read_scope,
 )
 from candleviewer.rules.vocabulary import default_registry
 from tests.contract._admin_support import SPEC
@@ -230,6 +231,46 @@ async def test_another_users_rules_never_count() -> None:
     await _seed(store, OTHER.user_id, 3)
     m = _manager(1, store)
     assert (await m.create(_ir(name="mine"), MANAGER))["name"] == "mine"
+
+
+async def test_the_in_memory_count_is_the_owners_live_rules_readable_or_not() -> None:
+    """The store's count for the cap (`count_owned_live`): a deleted rule and another owner's rule
+    never count, and the owner's rule naming an account outside their grants still does, where
+    SR-051's scoped read leaves it out."""
+    store = InMemoryRuleStore()
+    await _seed(store, MANAGER.user_id, 2)
+    await _seed(store, MANAGER.user_id, 3, deleted=True)
+    await _seed(store, OTHER.user_id, 4)
+    granted_c = Actor(MANAGER.user_id, "s2", frozenset(BASE), granted_accounts=frozenset({str(C)}))
+    await _manager(store=store).create({**_scoped(C), "name": "names C"}, granted_c)
+    assert await store.count_owned_live(MANAGER.user_id) == 3
+    assert len(await store.scoped_ids(read_scope(MANAGER))) == 2  # MANAGER holds A, not C
+    assert await store.count_owned_live(OTHER.user_id) == 4
+    assert await store.count_owned_live("nobody") == 0
+
+
+class _Counting(InMemoryRuleStore):
+    """Logs the cap's count and every read of the whole store."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.counted: list[str] = []
+        self.wholes = 0
+
+    async def count_owned_live(self, owner_user_id: str) -> int:
+        self.counted.append(owner_user_id)
+        return await super().count_owned_live(owner_user_id)
+
+    async def all(self) -> list[RuleRow]:
+        self.wholes += 1
+        return await super().all()
+
+
+async def test_a_create_counts_through_the_stores_count_of_the_callers_rules() -> None:
+    """One count of the caller's own rules, never a read of every rule (SR-051)."""
+    store = _Counting()
+    await _manager(store=store).create(_ir(name="counted"), MANAGER)
+    assert (store.counted, store.wholes) == ([MANAGER.user_id], 0)
 
 
 async def test_a_manager_at_the_cap_does_not_stop_the_owner_and_the_owner_counts_too() -> None:
