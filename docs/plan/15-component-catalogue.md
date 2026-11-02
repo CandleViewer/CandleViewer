@@ -835,11 +835,11 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 - **Tier**: Organism (trading-critical) · **Purpose**: persistent global chrome band declaring Demo vs Live — the single most safety-critical visual element in the app (`14-screens-catalogue.md` §0.5.1).
 - **Props**: `env: "demo"|"live"` · `onRequestSwitch`.
-- **A11y**: text `DEMO`/`LIVE` always rendered (never icon/colour alone), `role="status"` region so a screen-reader user re-entering the tab hears current env on demand (`aria-label="Trading environment: Live"`); switching triggers CMP-044 ConfirmDialog `variant="typed"` (must type environment name) per `05-accessibility-standard.md` no-accidental-live-switch requirement.
+- **A11y**: text `DEMO`/`LIVE` always rendered (never icon/colour alone), a button inside the TopBar environment slot's `role="status"` container, never itself `role="status"` (E38-D02 §3.1), so a screen-reader user re-entering the tab hears current env on demand (`aria-label="Trading environment: Live"`); switching triggers CMP-044 ConfirmDialog `variant="typed"` (must type environment name) per `05-accessibility-standard.md` no-accidental-live-switch requirement.
 - **Tokens**: `color.env.demo` (blue), `color.env.live` (red), `font.weight.bold`.
 - **Storybook**: Demo, Live, SwitchConfirmFlow.
 - **Tests**: unit, visual, axe, interaction test (typed-confirm gate), visual-regression snapshot both states at every theme.
-- **Hi-fi (E38-D02)**: E10-D03 §1.2's pill — word, weight (LIVE bold, DEMO medium), glyph, 2 px border, hue last; a button inside the `role="status"` slot (`aria-haspopup="dialog"`, `aria-expanded`, `aria-controls`; E38-D05 F-01), whose press opens the env popover (§3.4), the only entry to SCR-074; where the switch is T2 (S74-07, S74-08) CMP-079 RbacGate wraps the popover's action and the CMP-019 `lock` leads its label (E38-D02 §4.3); the word never underlined.
+- **Hi-fi (E38-D02)**: E10-D03 §1.2's pill — word, weight (LIVE bold, DEMO medium), glyph, 2 px border, hue last; a button inside the `role="status"` slot (`aria-haspopup="dialog"`, `aria-expanded`, `aria-controls`; E38-D05 F-01, if D05 lands as is), whose press opens the env popover (§3.4), the only entry to SCR-074; where the switch is T2 (S74-07, S74-08) CMP-079 RbacGate wraps the popover's action and the CMP-019 `lock` leads its label (E38-D02 §4.3); the word never underlined.
 
 ### CMP-075 EnvBadgeLocal
 

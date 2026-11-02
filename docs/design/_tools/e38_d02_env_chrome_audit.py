@@ -4,7 +4,8 @@ chrome SCR-075 (CMP-074, CMP-075, CMP-139).
 
 Standalone and offline. It reads the spec and the pins file from the working tree, every cited
 file AS TEXT with `git show` at the pinned base (`BASE`), except E38-D01, which is read at #5451's
-approved head (`D01_REF`) until it merges. Colour maths imports, as the merged E10-D03 tool does,
+approved head (`D01_REF`) until it merges, and `14` and `17`, read at `MAIN` (both moved on `main`
+after BASE: `14` by one line at :1226, `17` by 39 at :147; re-pinned by content). Colour maths imports, as the merged E10-D03 tool does,
 `packages/ui/tokens/tests/verify_tokens.py` (the token loader and resolver),
 `docs/design/_tools/contrast_check.py` (`contrast_ratio`) and
 `docs/research/_tools/cvd_simulate.py` (`simulate`, `delta_e76`, `JND_FLOOR`) from the working
@@ -13,7 +14,7 @@ tree, and never re-implements them. Default-deny: a gate that cannot read its in
 Gates (each FAIL led by its name):
   G-STATE     every SCR-074 / SCR-075 state the ticket and `14` name has a §0 frame row;
               §4.3 holds the rows S74-01 ... S74-08 in order, each named as `STATES` names it
-              (`14`:1777's four plus the dialogs' and the gate's), each with a Presentation, a
+              (`14`:1778's four plus the dialogs' and the gate's), each with a Presentation, a
               Focus · announcement and an Audit cell; and every item of the two `14` sign-off
               checklists appears verbatim in §11's map with a frame.
   G-TOKEN     every design token the spec names (`color.*`, `font.*`, `border.*`, `radius.*`,
@@ -35,20 +36,21 @@ Gates (each FAIL led by its name):
               the reason node at mount by `aria-describedby`, CMP-079, the CMP-019 `lock`, the
               hi-fi pins), every T2 row cites it, and A-3 names CMP-079 and the `lock`.
   G-RULED     the rulings' texts hold (comment 6577247518): the demo statement verbatim from
-              `14`:1787 with its em dash (BQ-10); DEMO `font.weight.medium` (BQ-07); the panel
+              `14`:1788 with its em dash (BQ-10); DEMO `font.weight.medium` (BQ-07); the panel
               LIVE `border.thick` rule present and the word never underlined (BQ-08); "LIVE
               since" outside any live region (BQ-11); the typed match exact and case-sensitive
               (BQ-14); to demo a click-confirm only (BQ-16); the audit on the 200 only, in §4.3's
               prose and in S74-05's Audit cell (BQ-24); and the orchestrator's read: the pill a
               button inside the `role="status"` slot, never itself a status, in §3.1 and §9; the
               exports name all three CVD simulations.
-  G-AROW      A-1 … A-9 are all present; every Old text, and A-8's row text, stands exactly once
+  G-AROW      A-1 … A-10 are all present; every Old text, and A-8's row text, stands exactly once
               in its target at the base and on the line the row cites; A-9's anchor is A-6's
               New text. Applied mode (PR 2): the targets in the working tree read either every
               A-row pending (each Old once, no New, no inserted line, A-8's row present) or every
               A-row applied (each New once and its Old gone; A-1 / A-2 the line right after their
               screen's sign-off checklist, A-3 after CMP-074's Tests line, A-4 after CMP-075's
-              As-built line, A-9 the row right after A-6's row; A-8's row gone), never a mix;
+              As-built line, A-9 the row right after A-6's row; A-3's and A-10's Old / New swapped;
+              A-8's row gone), never a mix;
               once §0 is drawn (G-DRAWN), every A-row must be applied.
   G-CITE      every cite in range and on a non-blank line at its base, and equal to the pins.
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
@@ -101,6 +103,7 @@ AROW_KEYS = (
 )  # the A-rows' targets, applied in PR 2
 BASE = "67fe8b5265810d9d7928bdf4b56e4911f16fce54"  # origin/main when written; re-pinned by content
 D01_REF = "4774b2f8cd7b67a1ee934fe88546568f7aa3e34c"  # #5451's approved head; re-pinned at merge
+MAIN = "201e19744e50acb526dd52d540bb7abe6247fb89"  # `main` for `14` / `17`: both moved after BASE
 TOKENS = ROOT / "packages" / "ui" / "tokens"
 CVD_PATH = ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py"
 CONTRAST_PATH = ROOT / "docs" / "design" / "_tools" / "contrast_check.py"
@@ -141,7 +144,7 @@ PATHS: dict[str, str] = {
     "E33D03": "docs/design/E33/E33-D03.md",
     "D01": "docs/design/research/E38-paper-parity.md",
 }
-REF_OF = {"D01": D01_REF}
+REF_OF = {"D01": D01_REF, "14": MAIN, "17": MAIN}  # `14` +1 at :1226, `17` +39 at :147
 CITE = re.compile(
     r"`(\d\d|E10D03|E10D04|E30D02|E30D04|E09D09|E15D03|E11D02|E29D03|E32D03|E33D03|D01)`"
     r":(\d+(?:–\d+)?(?:, :\d+(?:–\d+)?)*)"
@@ -177,7 +180,7 @@ DENY = (
 THEMES = ("dark", "light", "high-contrast")
 FLOOR = {"text": 4.5, "ui": 3.0}
 DEFICIENCIES = ("protanopia", "deuteranopia", "tritanopia")
-# §4.3's state rows, in order: `14`:1777's switching, switched, failed and not permitted, plus
+# §4.3's state rows, in order: `14`:1778's switching, switched, failed and not permitted, plus
 # the idle pill, the two dialogs and the blocked gate
 STATES = (
     "idle",
@@ -780,11 +783,11 @@ def g_t2_keys(t: Texts) -> list[str]:
 
 def g_ruled(t: Texts) -> list[str]:
     bad = []
-    if DEMO_STATEMENT not in at(t, "14").split("\n")[1786]:
-        bad.append("the demo statement is not on `14`:1787 at the base")
+    if DEMO_STATEMENT not in at(t, "14").split("\n")[1787]:
+        bad.append("the demo statement is not on `14`:1788 at its pin")
     n = t.spec.count(f'"{DEMO_STATEMENT}"')
     if n != 1 or "engine - REST" in t.spec:
-        bad.append("BQ-10: the demo statement is not verbatim from `14`:1787")
+        bad.append("BQ-10: the demo statement is not verbatim from `14`:1788")
     for what, must, never in RULED:
         if must not in t.spec:
             bad.append(f"{what}: {must[:50]!r} no longer stands")
@@ -812,8 +815,8 @@ def g_arow(t: Texts) -> list[str]:
     ]
     ids = [re.match(r"- \*\*(A-\d+),", ln) for ln in lines]
     got = [m[1] for m in ids if m]
-    if got != [f"A-{i}" for i in range(1, 10)]:
-        bad.append(f"the A-rows are {got}, not A-1 … A-9")
+    if got != [f"A-{i}" for i in range(1, 11)]:
+        bad.append(f"the A-rows are {got}, not A-1 … A-10")
     news: dict[str, list[str]] = {}
     for ln in lines:
         m = re.match(r"- \*\*(A-\d+),", ln)
@@ -899,8 +902,8 @@ def g_arow_applied(t: Texts, rows: dict[str, str]) -> list[str]:
             mark(aid, True, "")
         else:
             mark(aid, None, f"its line stands {n} times or not right after `{starts}`")
-    for aid in ("A-5", "A-6", "A-7"):
-        key = {"A-5": "E30D04", "A-6": "E30D04", "A-7": "E29D03"}[aid]
+    for aid in ("A-3", "A-5", "A-6", "A-7", "A-10"):
+        key = "15" if aid == "A-3" else "E29D03" if aid == "A-7" else "E30D04"
         text = t.heads.get(key, "")
         for old, new in re.findall(
             r'Old: "(.+?)"\. New: "(.+?)"(?:\.|$)', rows.get(aid, "")
@@ -1121,7 +1124,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-T2", "drop the not-permitted reason", set_cell("S74-07", 3, "T2 2a on Switch to LIVE")),
     ("G-T2", "S74-07 given `14`'s string", sub("`rbac.env`, \"Live trading isn't enabled for you.\"", "`rbac.env`, \"The owner hasn't enabled Live for your account.\"")),
     ("G-T2", "S74-07 given the key `rbac.permission`", sub("T2 2a `rbac.env`,", "T2 2a `rbac.permission`,")),
-    ("G-RULED", "the demo statement with a hyphen", sub("matching engine \u2014 REST order entry only, no private WS order entry.\" (`14`:1787)", "matching engine - REST order entry only, no private WS order entry.\" (`14`:1787)")),
+    ("G-RULED", "the demo statement with a hyphen", sub("matching engine \u2014 REST order entry only, no private WS order entry.\" (`14`:1788)", "matching engine - REST order entry only, no private WS order entry.\" (`14`:1788)")),
     ("G-RULED", "DEMO made regular", sub("DEMO `font.weight.medium` on CMP-074", "DEMO `font.weight.regular` on CMP-074")),
     ("G-RULED", "the panel LIVE rule dropped", sub("On panel badges LIVE keeps E15-D03 D-4's `border.thick` rule", "On panel badges LIVE drops E15-D03 D-4's `border.thick` rule")),
     ("G-RULED", "the word underlined", sub("the word itself is never underlined", "the word itself is underlined")),
@@ -1134,11 +1137,11 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-AROW", "A-9 dropped", lambda t: replace(t, spec="\n".join(ln for ln in t.spec.split("\n") if not ln.startswith("- **A-9,")))),
     ("G-T2", "draw the typed gate as T2", set_cell("S74-02", 3, "Continue T2 2a until the field equals `LIVE` (form validity)")),
     ("G-HOTKEY", "a KEYMAP command bound to the switch", lambda t: replace(t, memo={**t.memo, f"{BASE}:{KEYMAP_REL}": json.dumps({"commands": [{"id": "session.env_switch", "label": "Switch Demo/Live", "defaultBinding": "Ctrl+Shift+L"}]})})),
-    ("G-CITE", "re-point a `14` cite to an unpinned line", sub("(`14`:1767)", "(`14`:1766)")),
+    ("G-CITE", "re-point a `14` cite to an unpinned line", sub("(`14`:1768)", "(`14`:1767)")),
     ("G-HYGIENE", "write a closing keyword against #1003", sub("carries the closing line.", "carries the closing line. Closes #1003.")),
     ("G-HYGIENE", "put a deny word into the tool's own text", lambda t: replace(t, tool=t.tool + "\n# " + DENY[6] + "\n")),
     ("G-SCOPE", "touch `16` in the diff", lambda t: replace(t, changed=[*OWN_PATHS, PATHS["16"]])),
-    ("G-RULED", "S74-05's Audit cell moved to intent", sub("`session.environment_switched`, high, on the 200 (`14`:1779)", "`session.environment_switched`, high, on press (`14`:1779)")),
+    ("G-RULED", "S74-05's Audit cell moved to intent", sub("`session.environment_switched`, high, on the 200 (`14`:1780)", "`session.environment_switched`, high, on press (`14`:1780)")),
     ("G-T2", "the T2 anatomy drops the describedby link", sub("in the DOM at mount and linked by `aria-describedby`", "in the DOM at mount")),
     ("G-T2", "the T2 anatomy drops the hi-fi pins", sub("never `color.text.disabled`, never `opacity.disabled` on the label", "on the label")),
     ("G-T2", "S74-08 stops citing the T2 anatomy", sub("`E33D03`:317; the T2 anatomy below)", "`E33D03`:317)")),
@@ -1162,6 +1165,8 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-AROW", "A-4's line inserted twice", lambda t: replace(t, heads={**t.heads, "15": t.heads["15"].replace("the placements per host are E38-D02 §3.2 (PROPOSED).", "the placements per host are E38-D02 §3.2 (PROPOSED).\n- **Hi-fi (E38-D02)**: the same grammar as CMP-074 (2 px border on every host, and LIVE's `border.thick` rule on panel badges; a denser row variant is R-1, PROPOSED to the E10-D03 owner), `role=\"img\"` with a static label; the placements per host are E38-D02 §3.2 (PROPOSED).")})),
     ("G-AROW", "A-9's row dropped from E30-D04", lambda t: replace(t, heads={**t.heads, "E30D04": "\n".join(ln for ln in t.heads["E30D04"].split("\n") if not ln.startswith("| submit word"))})),
     ("G-AROW", "A-3 worded off by one character at HEAD", head_sub("15", "the word never underlined.", "the word never underlined")),
+    ("G-AROW", "A-3's A11y swap reverted at HEAD (half a row)", head_sub("15", "a button inside the TopBar environment slot's `role=\"status\"` container, never itself `role=\"status\"` (E38-D02 §3.1), so", "`role=\"status\"` region so")),
+    ("G-AROW", "A-10 reverted at HEAD (a mix)", head_sub("E30D04", "`radius.pill`, a 2 px border on the env pill (`border.thick`, E10-D03 §1.2) and 1 px on CMP-229, CMP-232 and CMP-130; the same grammar", "`radius.pill`, 1 px border; the same grammar")),
     ("G-AROW", "every A-row reverted while §0 is drawn", lambda t: replace(t, heads={k: show(t, BASE, PATHS[k]) or "" for k in AROW_KEYS})),
 )  # fmt: skip
 
