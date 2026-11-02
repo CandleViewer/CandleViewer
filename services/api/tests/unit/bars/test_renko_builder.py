@@ -109,10 +109,15 @@ def test_renko_with_wick_records_extremes_while_forming() -> None:
 
 def test_renko_wick_down_brick_and_forming_update() -> None:
     b = _renko(renko_wick=True)
-    ups = _feed(b, ["100", "100.4", "98.8"])
+    ups = _feed(b, ["100", "100.4"])
+    assert [u.kind for u in ups] == ["open"]  # 100.4 only extends the forming brick (#2022)
+    forming = b.forming()
+    assert forming is not None and forming.kind == "update" and not forming.bar.closed
+    assert (forming.bar.high, forming.bar.trade_count) == (D("100.4"), 2)  # the wick so far
+    ups += _feed(b, ["98.8"])
     (x,) = closes(ups)
     assert (x.open, x.close, x.high, x.low) == (D(100), D(99), D("100.4"), D("98.8"))
-    assert ups[0].kind == "open" and ups[1].kind == "update" and not ups[1].bar.closed
+    assert b.forming() is None  # the run closed: no brick is forming
 
 
 # --- Scenario: Time-based indicators are refused, not silently wrong -------------------------

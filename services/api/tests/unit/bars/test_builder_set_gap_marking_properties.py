@@ -50,7 +50,10 @@ def _first_index_after(spec: BarSpec, tape: list[TradeEvent], hole: int) -> int:
     builder = production_factory(lambda _s: TICK, renko_enabled=True)(spec, SYM)
     for t in tape[:hole]:
         builder.on_trade(t)
-    return builder.on_trade(tape[hole])[0].bar.index
+    ups = builder.on_trade(tape[hole])
+    taken = ups[0] if ups else builder.forming()  # a print that extends a bar emits nothing
+    assert taken is not None
+    return taken.bar.index
 
 
 async def _backlogged(
@@ -70,6 +73,7 @@ async def _backlogged(
             await asyncio.sleep(0)  # the gap task marks every builder before a print applies
             await asyncio.sleep(0)
         await settle(bus, s)
+        await s.sample()  # a flagged bar still forming goes out with the sample (#2022)
         await s.stop()
         return sorted({b.index for _, _, b in sink.bars if b.gap_before})
 

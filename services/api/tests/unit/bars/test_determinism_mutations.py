@@ -63,6 +63,11 @@ class Mutant:
     def on_clock(self, now_us: TsUs) -> Sequence[BarUpdate]:
         return self._out(self.inner.on_clock(now_us))
 
+    def forming(self) -> BarUpdate | None:
+        """The forming bar through the same defect as an emission (#2022)."""
+        f = self.inner.forming()
+        return None if f is None else self._out((f,))[-1]
+
     def snapshot(self) -> BuilderState:
         return self.inner.snapshot()
 

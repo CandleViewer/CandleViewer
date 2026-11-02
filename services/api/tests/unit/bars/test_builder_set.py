@@ -61,8 +61,11 @@ async def test_set_register_mid_stream_sees_only_later_trades(tmp_path: Path) ->
     for i in range(3, 5):
         await bus.publish(TOPIC, trade(T0 + i, qty="2", seq=i))
     await settle(bus, s)
+    await s.sample()  # the forming bar, as the 250 ms sampler routes it (#2022)
     vol = [u for u in sink.seen if u[0] == V5.spec_hash]
     assert [k for _, _, k, _, _ in vol] == ["open", "update"]  # 2 trades, 4 < 5 qty
+    sampled = [b for h, k, b in sink.bars if h == V5.spec_hash and k == "update"]
+    assert [b.volume for b in sampled] == [4]  # both trades, nothing before the register
     t3 = [u for u in sink.seen if u[0] == T3.spec_hash and u[2] == "close"]
     assert len(t3) == 1  # nothing dropped for the existing spec while registering
     await s.stop()
@@ -258,6 +261,9 @@ async def test_set_fanout_loop_allocates_nothing_per_spec(tmp_path: Path) -> Non
 
         def on_clock(self, now_us: int) -> tuple[()]:
             return ()
+
+        def forming(self) -> None:
+            return None
 
         def snapshot(self) -> BuilderState:
             return BuilderState(

@@ -12,7 +12,7 @@ from hypothesis import strategies as st
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
 from candleviewer.bars.time_builder import LATE_WINDOW_US, TimeBarBuilder
 from candleviewer.exchange.base.models import TradeEvent
-from tests.unit.bars._trades import SYM, final_bars, trade
+from tests.unit.bars._trades import SYM, final_bars, trade, with_forming
 
 T0 = 1_790_000_000_000_000  # µs, an arbitrary 2026 instant
 SPECS = st.sampled_from(
@@ -40,13 +40,14 @@ def tapes(draw: st.DrawFn) -> list[TradeEvent]:
 
 
 def run(spec: BarSpec, tape: list[TradeEvent], clock_every: int = 0) -> list[BarUpdate]:
+    """Every emission, then the bar still forming at the end (`forming()`, #2022)."""
     b = TimeBarBuilder(spec, SYM)
     out: list[BarUpdate] = []
     for i, t in enumerate(tape):
         out += b.on_trade(t)
         if clock_every and i % clock_every == 0:
             out += b.on_clock(t.ts_event)
-    return out
+    return with_forming(out, b)
 
 
 def applied(spec: BarSpec, tape: list[TradeEvent]) -> list[TradeEvent]:
@@ -154,7 +155,7 @@ def test_bi5_restore_snapshot_at_any_cut_matches_uninterrupted_run(
         out += resumed.on_trade(t)
         if i % 2 == 0:
             out += resumed.on_clock(t.ts_event)
-    assert out == whole
+    assert with_forming(out, resumed) == whole
     assert resumed.snapshot() == run_state(spec, tape)
 
 
@@ -172,13 +173,14 @@ def test_bi1_bulk_seeded_tape_conserves_volume() -> None:
     rng = random.Random(341)  # noqa: S311 - seeded test data, not crypto
     spec = BarSpec(kind="time", interval_ms=60_000)
     b = TimeBarBuilder(spec, SYM)
-    ts, total, out = T0, Decimal(0), []
+    ts, total = T0, Decimal(0)
+    out: list[BarUpdate] = []
     for i in range(200_000):
         ts += rng.randrange(0, 2_000_000)
         q = Decimal(rng.randrange(1, 10_000)) / 1000
         total += q
-        out.append(b.on_trade(trade(ts, Decimal(rng.randrange(9_000, 11_000)), q, "buy", i))[-1])
-    assert sum(b.volume for b in final_bars(out)) == total
+        out += b.on_trade(trade(ts, Decimal(rng.randrange(9_000, 11_000)), q, "buy", i))
+    assert sum(x.volume for x in final_bars(out, b)) == total
 
 
 def _reference(spec: BarSpec, kept: list[TradeEvent]) -> dict[int, tuple[Decimal, ...]]:

@@ -40,6 +40,7 @@ from tests.contract.test_market_bars_contract import _SERIES, _TAPE
 from tests.contract.test_market_e12_q04_contract import _alternative
 from tests.contract.ws import _harness as h
 from tests.contract.ws.test_ws_bars_contract import CH, _closed, _Rig, _script, _Series, _up
+from tests.unit.bars._trades import per_print
 
 _REPO: Final = Path(__file__).resolve().parents[5]
 if str(_REPO) not in sys.path:
@@ -77,9 +78,10 @@ _DEAD_ALLOWED: Final = {
 
 def _emissions(spec: BarSpec, start: int, stop: int) -> list[list[BarUpdate]]:
     """The real builder's non-empty emissions for the tape's trades `start` to `stop`, each one
-    source event; the trades before `start` are built and not published."""
+    source event, a forming-bar sample after each print (`per_print`, #2022); the trades before
+    `start` are built and not published."""
     builder: Any = (TimeBarBuilder if spec.kind == "time" else TickBarBuilder)(spec, "BTCUSDT")
-    out = [[*builder.on_trade(t), *builder.on_clock(t.ts_event)] for t in _TAPE[:stop]]
+    out = [per_print(builder, t, clock=True) for t in _TAPE[:stop]]
     return [emission for emission in out[start:] if emission]
 
 

@@ -33,7 +33,7 @@ def _build(spec: BarSpec) -> tuple[list[Bar], list[BarUpdate]]:
     out: list[BarUpdate] = []
     for t in _tape():
         out += b.on_trade(t)
-    return final_bars(out), out
+    return final_bars(out, b), out
 
 
 def _reference(n: int, rev: int) -> list[tuple[int, int, int, Decimal]]:

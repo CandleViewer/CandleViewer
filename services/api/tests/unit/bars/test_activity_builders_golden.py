@@ -37,7 +37,7 @@ def _build(spec: BarSpec) -> list[Bar]:
     out: list[BarUpdate] = []
     for t in _tape():
         out += b.on_trade(t)
-    return final_bars(out)
+    return final_bars(out, b)
 
 
 def _reference_volumes(threshold: Decimal) -> list[Decimal]:

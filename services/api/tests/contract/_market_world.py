@@ -110,7 +110,7 @@ def _bars(spec: BarSpec) -> list[Bar]:
     if spec.kind != "renko":
         return _build(spec)
     builder = RenkoBarBuilder(spec, SYMBOL, lambda _symbol: TICK)
-    return final_bars(u for t in _TAPE for u in builder.on_trade(t))
+    return final_bars((u for t in _TAPE for u in builder.on_trade(t)), builder)
 
 
 @cache

@@ -103,7 +103,7 @@ def test_a_window_of_a_built_series_never_serves_more_bars_than_its_estimate(
     tape = [trade(T0 + i, Decimal(p) / 10, Decimal(q) / 1000, "buy" if b else "sell", seq=i)
             for i, (p, q, b) in enumerate(raw)]  # fmt: skip
     builder = _FACTORY[spec.kind](spec)
-    bars = final_bars(u for t in tape for u in builder.on_trade(t))
+    bars = final_bars((u for t in tape for u in builder.on_trade(t)), builder)
     lo = data.draw(st.integers(0, len(tape)))
     hi = data.draw(st.integers(lo, len(tape)))
     served = [b for b in bars if T0 + lo <= b.open_time < T0 + hi]

@@ -38,7 +38,17 @@ CUT, PARK, END = 50, 80, 110
 def _bars(tape: list[TradeEvent]) -> list[Bar]:
     """The series a plain builder holds after `tape`: its closed bars, then the forming one."""
     builder = TimeBarBuilder(M1, SYM)
-    return final_bars([u for t in tape for u in builder.on_trade(t)])
+    return final_bars([u for t in tape for u in builder.on_trade(t)], builder)
+
+
+def _routed(tape: list[TradeEvent]) -> list[Bar]:
+    """The series the set has routed after replaying `tape` with no sample yet: its closed bars,
+    then the forming one as its `open` carried it (catch-up routes no sample, 24 §3.2, #2022)."""
+    builder = TimeBarBuilder(M1, SYM)
+    ups = [u for t in tape for u in builder.on_trade(t)]
+    opened = [u.bar for u in ups if u.kind == "open"][-1]
+    closed = [b for b in final_bars(ups) if b.closed]
+    return [*closed, opened]
 
 
 def _items(bars: list[Bar]) -> list[dict[str, Any]]:
@@ -145,7 +155,7 @@ async def test_a_close_emitted_while_register_awaits_is_in_the_store_so_in_the_f
     conn, tape = _Conn(rig), rig.tape.trades
     pending = await _subscribing(rig, conn)  # `register` is awaiting the tape, mid-replay
     held = rig.store.latest(SYM, M1.spec_hash, 1000)
-    assert held is not None and [*held.closed, held.forming] == _bars(tape[: PARK + 1])
+    assert held is not None and [*held.closed, held.forming] == _routed(tape[: PARK + 1])
     assert conn.out == []  # no `sub_ok`, so no `snap` yet
     rig.tape.release.set()
     async with asyncio.timeout(5):
@@ -153,7 +163,11 @@ async def test_a_close_emitted_while_register_awaits_is_in_the_store_so_in_the_f
     whole = _bars(tape)
     replayed = len(whole) - 1 - len(rig.rows)  # the closes the replay emitted
     assert replayed > RECENT_CLOSES, "retune CUT, PARK or END: the ring would hold them all"
-    assert [f["t"] for f in conn.out] == ["sub_ok", "snap"] and conn.bars(1) == _items(whole)
+    assert [f["t"] for f in conn.out] == ["sub_ok", "snap"]
+    assert conn.bars(1) == _items(_routed(tape))  # the forming bar as its `open` routed it
+    await rig.bset.sample()  # the first sample after the series joined: the whole forming bar
+    held = rig.store.latest(SYM, M1.spec_hash, 1000)
+    assert held is not None and [*held.closed, held.forming] == whole
 
 
 async def test_a_subscriber_attaching_mid_restore_waits_for_it_then_gets_the_whole_series(
@@ -172,6 +186,6 @@ async def test_a_subscriber_attaching_mid_restore_waits_for_it_then_gets_the_who
     rig.tape.release.set()
     async with asyncio.timeout(5):
         await asyncio.gather(pending, attaching)
-    whole = _items(_bars(tape))
+    whole = _items(_routed(tape))  # the forming bar as its `open` routed it: no sample yet
     assert [f["t"] for f in second.out] == ["sub_ok", "snap"] and second.bars(1) == whole
     assert first.bars(1) == whole

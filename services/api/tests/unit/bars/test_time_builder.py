@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 
 from candleviewer.bars.errors import BarsError, BarSpecError
-from candleviewer.bars.models import BarBuilder, BarSpec, BarUpdate
+from candleviewer.bars.models import Bar, BarBuilder, BarSpec, BarUpdate
 from candleviewer.bars.time_builder import (
     TimeBarBuilder,
     bars_late_trade_dropped_total,
@@ -22,6 +22,13 @@ H1_480 = BarSpec(kind="time", interval_ms=3_600_000, session_anchor_utc_min=480)
 
 def _b(spec: BarSpec = M1) -> TimeBarBuilder:
     return TimeBarBuilder(spec, SYM)
+
+
+def _forming(b: TimeBarBuilder) -> Bar:
+    """The open bar, read on demand: a trade that only extends it emits nothing (#2022)."""
+    u = b.forming()
+    assert u is not None and u.kind == "update" and not u.bar.closed
+    return u.bar
 
 
 def _dropped(reason: str) -> float:
@@ -108,7 +115,8 @@ def test_on_trade_reordered_trades_keep_open_close_in_event_order() -> None:
     b = _b()
     b.on_trade(trade(us("10:00:10"), px="100", seq=1))
     b.on_trade(trade(us("10:00:50"), px="101", seq=2))
-    bar = b.on_trade(trade(us("10:00:05"), px="97", seq=3))[0].bar
+    assert b.on_trade(trade(us("10:00:05"), px="97", seq=3)) == ()  # folded (#2022)
+    bar = _forming(b)
     assert (bar.open, bar.high, bar.low, bar.close) == tuple(
         map(Decimal, ("97", "101", "97", "101"))
     )
@@ -121,7 +129,8 @@ def test_on_trade_reordered_trades_keep_open_close_in_event_order() -> None:
 def test_on_trade_equal_timestamps_order_by_seq() -> None:
     b = _b()
     b.on_trade(trade(us("10:00:10"), px="100", seq=5))
-    bar = b.on_trade(trade(us("10:00:10"), px="99", seq=4))[0].bar
+    assert b.on_trade(trade(us("10:00:10"), px="99", seq=4)) == ()  # folded (#2022)
+    bar = _forming(b)
     assert (bar.open, bar.close) == (Decimal("99"), Decimal("100"))
 
 
@@ -153,8 +162,9 @@ def test_on_trade_late_into_empty_interval_is_dropped() -> None:
 def test_on_trade_out_of_order_inside_open_bar_is_applied() -> None:
     b = _b()
     b.on_trade(trade(us("10:00:30"), px="100"))
-    out = b.on_trade(trade(us("10:00:10"), px="99"))
-    assert out[0].kind == "update" and out[0].bar.trade_count == 2
+    assert b.on_trade(trade(us("10:00:10"), px="99")) == ()  # applied, nothing emitted (#2022)
+    forming = b.forming()
+    assert forming is not None and forming.kind == "update" and forming.bar.trade_count == 2
 
 
 # --- Scenario: Session anchor shifts the grid --------------------------------------------

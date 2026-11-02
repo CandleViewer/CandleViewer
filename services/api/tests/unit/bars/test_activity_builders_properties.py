@@ -10,7 +10,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from candleviewer.bars.activity_builders import TickBarBuilder, VolumeBarBuilder
-from candleviewer.bars.models import BarSpec, BarUpdate
+from candleviewer.bars.models import BarBuilder, BarSpec, BarUpdate
 from candleviewer.exchange.base.models import TradeEvent
 from tests.unit.bars._trades import SYM, final_bars, trade
 
@@ -43,18 +43,23 @@ def tapes(draw: st.DrawFn) -> list[TradeEvent]:
     return out
 
 
-def run(spec: BarSpec, tape: list[TradeEvent]) -> list[BarUpdate]:
+def run_builder(spec: BarSpec, tape: list[TradeEvent]) -> tuple[list[BarUpdate], BarBuilder]:
+    """Every emission over `tape`, and the builder (its `forming()` is the trailing bar)."""
     b = build(spec)
     out: list[BarUpdate] = []
     for t in tape:
         out += b.on_trade(t)
-    return out
+    return out, b
+
+
+def run(spec: BarSpec, tape: list[TradeEvent]) -> list[BarUpdate]:
+    return run_builder(spec, tape)[0]
 
 
 @settings(max_examples=150, deadline=None)
 @given(SPECS, tapes())
 def test_bar_invariants_bi1_to_bi6_hold(spec: BarSpec, tape: list[TradeEvent]) -> None:
-    bars = final_bars(run(spec, tape))
+    bars = final_bars(*run_builder(spec, tape))
     assert sum(b.volume for b in bars) == sum(t.qty for t in tape)  # BI-1
     assert [b.index for b in bars] == list(range(len(bars)))
     for b in bars:
@@ -88,7 +93,9 @@ def test_bi5_restore_at_any_cut_matches_uninterrupted(
     tail: list[BarUpdate] = []
     for t in tape[cut:]:
         tail += b.on_trade(t)
-    assert head + tail == run(spec, tape)
+    want, whole = run_builder(spec, tape)
+    assert head + tail == want
+    assert b.forming() == whole.forming()  # the forming bar too (#2022)
 
 
 @settings(max_examples=50, deadline=None)
@@ -109,6 +116,9 @@ def _bi1_volume_conserved(n_trades: int) -> None:
         t = trade(T0 + i, "100", q, "buy" if i & 1 else "sell", seq=i)
         for u in b.on_trade(t):
             vols[u.bar.index] = u.bar.volume
+    forming = b.forming()  # the trailing bar: a print that only extends it emits nothing
+    if forming is not None:
+        vols[forming.bar.index] = forming.bar.volume
     assert sum(vols.values()) == total
     assert max(vols.values()) <= Decimal("250")
 
