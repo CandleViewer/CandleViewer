@@ -1,0 +1,7686 @@
+{
+ "board": {
+  "name": "E47-D07 / 06 scr117-panel",
+  "w": 3280,
+  "h": 1000,
+  "x": 0,
+  "y": 4200,
+  "o": {
+   "fill": "color.surface.app",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "SCR-117∕announcements-default · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "SCR-117 scrolled to the Announcements FormSection",
+    "x": 80,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar (placeholder)",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · env badge",
+          "w": 56,
+          "h": 20,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · health chip",
+          "w": 120,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar, not this spec's: placeholders only"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "w": 1280,
+      "h": 704,
+      "kids": [
+       {
+        "t": "board",
+        "name": "NavRail (placeholder)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entry-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-6",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 63,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 64,
+        "h": 704
+       },
+       {
+        "t": "board",
+        "name": "CMP-086 SettingsNav",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "pad": "space.inset.sm",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entry-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 104,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry-2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 112,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry · Accessibility (current)",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs",
+           "padX": "space.inset.md",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Accessibility",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.link"
+           },
+           {
+            "t": "rect",
+            "name": "selected underline",
+            "w": 96,
+            "h": 2,
+            "o": {
+             "fill": "color.border.selected"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 36,
+          "note": "aria-current=\"page\"; E47-D05's PROPOSED SettingsNav entry (D05-A6)"
+         },
+         {
+          "t": "board",
+          "name": "entry-3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 96,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry-4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 104,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 207,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 208,
+        "h": 704
+       },
+       {
+        "t": "board",
+        "name": "main",
+        "o": {
+         "fill": "color.surface.app",
+         "clip": true
+        },
+        "w": 1008,
+        "h": 704,
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-065 FormSection · Announcements",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.md",
+           "pad": "space.inset.xl",
+           "fill": "color.surface.app"
+          },
+          "w": 1008,
+          "note": "after E47-D05's announcement controls (D05:201); §8.1 L402",
+          "x": 0,
+          "y": 0,
+          "kids": [
+           {
+            "t": "text",
+            "name": "h2",
+            "chars": "Announcements",
+            "typo": "type.ui.heading-sm",
+            "color": "color.text.primary",
+            "note": "h2 inside the FormSection's legend (`15`:743)"
+           },
+           {
+            "t": "board",
+            "name": "CMP-004 Toggle · Reduce announcements",
+            "o": {
+             "dir": "row",
+             "align": "start",
+             "gap": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "switch",
+              "o": {
+               "fill": "color.surface.hover",
+               "radius": "radius.badge",
+               "stroke": "color.border.strong",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "knob",
+                "w": 12,
+                "h": 12,
+                "o": {
+                 "fill": "color.text.secondary"
+                },
+                "x": 4,
+                "y": 4,
+                "abs": true
+               }
+              ],
+              "w": 38,
+              "h": 20,
+              "note": "role=\"switch\" aria-checked=\"false\""
+             },
+             {
+              "t": "board",
+              "name": "text",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Reduce announcements",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.primary"
+               },
+               {
+                "t": "text",
+                "name": "help",
+                "chars": "Read events only. Prices are not read.",
+                "typo": "type.ui.caption",
+                "color": "color.text.secondary"
+               }
+              ]
+             }
+            ],
+            "w": 960,
+            "note": "accessibility.reduce_announcements, PROPOSED (D07-G3; E47-S07 #1321's contract PR)"
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-default · dark/body/main/CMP-065 FormSection · Announcements",
+   "node": {
+    "t": "board",
+    "name": "the classes",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "w": 960,
+    "note": "accessibility.announce_classes, PROPOSED (D07-G3): one fieldset per §8.1 class",
+    "kids": [
+     {
+      "t": "board",
+      "name": "fieldset · Risk and safety + reason",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "fieldset · Risk and safety",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "legend cell",
+          "o": {
+           "dir": "row",
+           "align": "center"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "legend",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "lock",
+              "icon": "locked",
+              "color": "color.text.tertiary",
+              "size": "size.icon",
+              "note": "CMP-019 Icon lock, decorative=false, accessible name \"Not available\" (D09E09:207)"
+             },
+             {
+              "t": "text",
+              "name": "words",
+              "chars": "Risk and safety",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.tertiary"
+             }
+            ],
+            "note": "T2: lock + the full label in color.text.tertiary; never color.text.disabled, never opacity"
+           }
+          ],
+          "w": 220,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "CMP-006 RadioGroup",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.lg",
+           "fill": "color.surface.raised",
+           "stroke": "color.border.default",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-039 ring · normal",
+            "o": {
+             "stroke": "color.surface.canvas",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner",
+             "radius": "radius.control"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "band-2 · ring",
+              "o": {
+               "stroke": "color.focus.ring",
+               "strokeWidth": "border.focus",
+               "strokeAlign": "inner",
+               "radius": "radius.control"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "band-3 · halo",
+                "o": {
+                 "stroke": "color.surface.canvas",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner",
+                 "radius": "radius.control"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "radio · Assertive",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "gap": "space.inset.sm"
+                  },
+                  "kids": [
+                   {
+                    "t": "board",
+                    "name": "circle",
+                    "kids": [
+                     {
+                      "t": "ellipse",
+                      "name": "outline",
+                      "w": 16,
+                      "h": 16,
+                      "o": {
+                       "fill": "color.surface.canvas",
+                       "stroke": "color.border.default",
+                       "strokeWidth": "border.hairline",
+                       "strokeAlign": "inner"
+                      },
+                      "x": 0,
+                      "y": 0,
+                      "abs": true
+                     },
+                     {
+                      "t": "ellipse",
+                      "name": "dot",
+                      "w": 8,
+                      "h": 8,
+                      "o": {
+                       "fill": "color.text.tertiary"
+                      },
+                      "x": 4,
+                      "y": 4,
+                      "abs": true
+                     }
+                    ],
+                    "w": 16,
+                    "h": 16
+                   },
+                   {
+                    "t": "text",
+                    "name": "label",
+                    "chars": "Assertive",
+                    "typo": "type.ui.body",
+                    "color": "color.text.tertiary"
+                   }
+                  ],
+                  "h": 24,
+                  "note": "role=\"radio\" aria-checked=\"true\" aria-disabled=\"true\"",
+                  "w": 90,
+                  "x": 3,
+                  "y": 3
+                 }
+                ],
+                "w": 96,
+                "h": 30,
+                "x": 2,
+                "y": 2
+               }
+              ],
+              "w": 100,
+              "h": 34,
+              "x": 1,
+              "y": 1
+             }
+            ],
+            "w": 102,
+            "h": 36,
+            "note": "focus-visible; normal: ring 2 px, halo 1 px each side, offset 2 px (D04 §7.1 L235)"
+           },
+           {
+            "t": "board",
+            "name": "radio · Polite",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "circle",
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "outline",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "fill": "color.surface.canvas",
+                 "stroke": "color.border.default",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "x": 0,
+                "y": 0,
+                "abs": true
+               }
+              ],
+              "w": 16,
+              "h": 16
+             },
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Polite",
+              "typo": "type.ui.body",
+              "color": "color.text.tertiary"
+             }
+            ],
+            "h": 24,
+            "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+           }
+          ],
+          "h": 40,
+          "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108); T2: every radio aria-disabled, arrows move focus without checking (§8.2)"
+         }
+        ],
+        "w": 960,
+        "note": "CMP-065 fieldset, legend \"Risk and safety\"; T-11, T-13, T-15, T-17, T-22; default Assertive (§8.1 L408); CMP-079 RbacGate, rendering 2a"
+       },
+       {
+        "t": "board",
+        "name": "reason row",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padL": "space.inset.lg"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "reason · W-39",
+          "chars": "Safety announcements are always read at once.",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "note": "the T2 reason node (a11y.safety_fixed, PROPOSED), in the DOM at mount, linked by aria-describedby, color.text.secondary (§8.2)"
+         }
+        ],
+        "w": 960,
+        "h": 16
+       }
+      ],
+      "w": 960
+     },
+     {
+      "t": "board",
+      "name": "fieldset · Order fills",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "legend cell",
+        "o": {
+         "dir": "row",
+         "align": "center"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "legend",
+          "chars": "Order fills",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 220,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "CMP-006 RadioGroup",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.lg"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "radio · Assertive",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "circle",
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "outline",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "fill": "color.surface.canvas",
+               "stroke": "color.border.strong",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "x": 0,
+              "y": 0,
+              "abs": true
+             },
+             {
+              "t": "ellipse",
+              "name": "dot",
+              "w": 8,
+              "h": 8,
+              "o": {
+               "fill": "color.action.primary.default"
+              },
+              "x": 4,
+              "y": 4,
+              "abs": true
+             }
+            ],
+            "w": 16,
+            "h": 16
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Assertive",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24,
+          "note": "role=\"radio\" aria-checked=\"true\""
+         },
+         {
+          "t": "board",
+          "name": "radio · Polite",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "circle",
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "outline",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "fill": "color.surface.canvas",
+               "stroke": "color.border.strong",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "x": 0,
+              "y": 0,
+              "abs": true
+             }
+            ],
+            "w": 16,
+            "h": 16
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Polite",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24,
+          "note": "role=\"radio\" aria-checked=\"false\""
+         }
+        ],
+        "h": 28,
+        "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108)"
+       }
+      ],
+      "w": 960,
+      "note": "CMP-065 fieldset, legend \"Order fills\"; T-1, T-2; default Assertive (§8.1 L409)"
+     },
+     {
+      "t": "board",
+      "name": "fieldset · Order problems",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "legend cell",
+        "o": {
+         "dir": "row",
+         "align": "center"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "legend",
+          "chars": "Order problems",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 220,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "CMP-006 RadioGroup",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.lg"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "radio · Assertive",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "circle",
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "outline",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "fill": "color.surface.canvas",
+               "stroke": "color.border.strong",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "x": 0,
+              "y": 0,
+              "abs": true
+             },
+             {
+              "t": "ellipse",
+              "name": "dot",
+              "w": 8,
+              "h": 8,
+              "o": {
+               "fill": "color.action.primary.default"
+              },
+              "x": 4,
+              "y": 4,
+              "abs": true
+             }
+            ],
+            "w": 16,
+            "h": 16
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Assertive",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24,
+          "note": "role=\"radio\" aria-checked=\"true\""
+         },
+         {
+          "t": "board",
+          "name": "radio · Polite",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "circle",
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "outline",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "fill": "color.surface.canvas",
+               "stroke": "color.border.strong",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "x": 0,
+              "y": 0,
+              "abs": true
+             }
+            ],
+            "w": 16,
+            "h": 16
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Polite",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24,
+          "note": "role=\"radio\" aria-checked=\"false\""
+         }
+        ],
+        "h": 28,
+        "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108)"
+       }
+      ],
+      "w": 960,
+      "note": "CMP-065 fieldset, legend \"Order problems\"; T-3, T-4; default Assertive (§8.1 L410)"
+     }
+    ]
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-default · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Order updates",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Order updates",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Assertive",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Assertive",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.action.primary.default"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Off",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Off",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Order updates\"; T-5, T-6, T-7, T-8; default Polite (§8.1 L411)"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-default · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Safety recovered",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Safety recovered",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Assertive",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Assertive",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.action.primary.default"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Off",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Off",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Safety recovered\"; T-12, T-14, T-16; default Polite (§8.1 L412)"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-default · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Trade groups",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Trade groups",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Assertive",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.action.primary.default"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Assertive",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Off",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Off",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Trade groups\"; T-21; default Assertive (§8.1 L413)"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-default · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Rule actions",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Rule actions",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Assertive",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.action.primary.default"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Assertive",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Rule actions\"; T-19, T-20; default Assertive (§8.1 L414)"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-default · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Rule fires",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Rule fires",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Assertive",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.action.primary.default"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Assertive",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Rule fires\"; T-18; default Assertive (§8.1 L415)"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-default · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Connection changes",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Connection changes",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Assertive",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.action.primary.default"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Assertive",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Connection changes\"; T-23, T-24, T-49, T-50, T-54, T-55; default Assertive (§8.1 L416)"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-default · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Feed status",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Feed status",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Assertive",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Assertive",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.action.primary.default"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Off",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Off",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Feed status\"; T-25, T-26, T-51, T-52, T-53; default Polite (§8.1 L417)"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-default · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Trading environment",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Trading environment",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Assertive",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.action.primary.default"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Assertive",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Trading environment\"; T-28; default Assertive (§8.1 L418)"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-default · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Alerts",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Alerts",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Assertive",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Assertive",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.action.primary.default"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Off",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Off",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Alerts\"; T-29; default Polite (§8.1 L419)"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-default · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Prices and position",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Prices and position",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.action.primary.default"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Off",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Off",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Prices and position\"; T-30, T-31, T-32, T-33; default Polite (§8.1 L420)"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-default · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Whale prints",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Whale prints",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Off",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.action.primary.default"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Off",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Whale prints\"; T-36; default Off (§8.1 L421)"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-default · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Recorder",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Recorder",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.action.primary.default"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Off",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Off",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Recorder\"; T-43; default Polite (§8.1 L422)"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-default · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Countdowns",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Countdowns",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.action.primary.default"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Off",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Off",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Countdowns\"; T-45, T-46; default Polite (§8.1 L423)"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-default · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Your keys",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Your keys",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.action.primary.default"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Off",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Off",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Your keys\"; T-47, T-48; default Polite (§8.1 L424)"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-default · dark",
+   "node": {
+    "t": "board",
+    "name": "StatusBar (placeholder)",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · env word",
+      "w": 56,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 48
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-default · dark",
+   "node": {
+    "t": "board",
+    "name": "tag · synthetic data",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "Synthetic data · seed 1306 · BTCUSDT",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 16,
+    "y": 760,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-default · dark",
+   "node": {
+    "t": "board",
+    "name": "tag · T2 focus",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "Tab stop: the T2 group, focused on its checked radio (§8.2)",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 832,
+    "y": 112,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "SCR-117∕announcements-view-as · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "SCR-117 scrolled to the Announcements FormSection",
+    "x": 1440,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar (placeholder)",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · env badge",
+          "w": 56,
+          "h": 20,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · health chip",
+          "w": 120,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar, not this spec's: placeholders only"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "w": 1280,
+      "h": 704,
+      "kids": [
+       {
+        "t": "board",
+        "name": "NavRail (placeholder)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entry-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-6",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 63,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 64,
+        "h": 704
+       },
+       {
+        "t": "board",
+        "name": "CMP-086 SettingsNav",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "pad": "space.inset.sm",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entry-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 104,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry-2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 112,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry · Accessibility (current)",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs",
+           "padX": "space.inset.md",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Accessibility",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.link"
+           },
+           {
+            "t": "rect",
+            "name": "selected underline",
+            "w": 96,
+            "h": 2,
+            "o": {
+             "fill": "color.border.selected"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 36,
+          "note": "aria-current=\"page\"; E47-D05's PROPOSED SettingsNav entry (D05-A6)"
+         },
+         {
+          "t": "board",
+          "name": "entry-3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 96,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry-4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 104,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 207,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 208,
+        "h": 704
+       },
+       {
+        "t": "board",
+        "name": "main",
+        "o": {
+         "fill": "color.surface.app",
+         "clip": true
+        },
+        "w": 1008,
+        "h": 704,
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-065 FormSection · Announcements",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.md",
+           "pad": "space.inset.xl",
+           "fill": "color.surface.app"
+          },
+          "w": 1008,
+          "note": "after E47-D05's announcement controls (D05:201); §8.1 L402",
+          "x": 0,
+          "y": 0,
+          "kids": [
+           {
+            "t": "text",
+            "name": "h2",
+            "chars": "Announcements",
+            "typo": "type.ui.heading-sm",
+            "color": "color.text.primary",
+            "note": "h2 inside the FormSection's legend (`15`:743)"
+           },
+           {
+            "t": "board",
+            "name": "CMP-065 notice · view-as",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "glyph",
+              "icon": "locked",
+              "color": "color.text.secondary",
+              "size": "size.icon"
+             },
+             {
+              "t": "text",
+              "name": "words",
+              "chars": "Read-only while viewing as user_02.",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 960,
+            "h": 36,
+            "note": "rbac.view_as (D09E09:95); every gated control's aria-describedby points here (`15`:742)"
+           },
+           {
+            "t": "board",
+            "name": "CMP-004 Toggle · Reduce announcements",
+            "o": {
+             "dir": "row",
+             "align": "start",
+             "gap": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "switch",
+              "o": {
+               "fill": "color.surface.raised",
+               "radius": "radius.badge",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "knob",
+                "w": 12,
+                "h": 12,
+                "o": {
+                 "fill": "color.text.tertiary"
+                },
+                "x": 4,
+                "y": 4,
+                "abs": true
+               }
+              ],
+              "w": 38,
+              "h": 20,
+              "note": "role=\"switch\" aria-checked=\"false\" aria-disabled=\"true\""
+             },
+             {
+              "t": "board",
+              "name": "text",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.xs"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "label",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "icon",
+                  "name": "lock",
+                  "icon": "locked",
+                  "color": "color.text.tertiary",
+                  "size": "size.icon",
+                  "note": "CMP-019 Icon lock, decorative=false, accessible name \"Not available\" (D09E09:207)"
+                 },
+                 {
+                  "t": "text",
+                  "name": "words",
+                  "chars": "Reduce announcements",
+                  "typo": "type.ui.body-strong",
+                  "color": "color.text.tertiary"
+                 }
+                ],
+                "note": "T2: lock + the full label in color.text.tertiary; never color.text.disabled, never opacity"
+               },
+               {
+                "t": "text",
+                "name": "help",
+                "chars": "Read events only. Prices are not read.",
+                "typo": "type.ui.caption",
+                "color": "color.text.secondary"
+               }
+              ]
+             }
+            ],
+            "w": 960,
+            "note": "accessibility.reduce_announcements, PROPOSED (D07-G3; E47-S07 #1321's contract PR)"
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-view-as · dark/body/main/CMP-065 FormSection · Announcements",
+   "node": {
+    "t": "board",
+    "name": "the classes",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "w": 960,
+    "note": "accessibility.announce_classes, PROPOSED (D07-G3): one fieldset per §8.1 class",
+    "kids": [
+     {
+      "t": "board",
+      "name": "fieldset · Risk and safety + reason",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "fieldset · Risk and safety",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "legend cell",
+          "o": {
+           "dir": "row",
+           "align": "center"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "legend",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "lock",
+              "icon": "locked",
+              "color": "color.text.tertiary",
+              "size": "size.icon",
+              "note": "CMP-019 Icon lock, decorative=false, accessible name \"Not available\" (D09E09:207)"
+             },
+             {
+              "t": "text",
+              "name": "words",
+              "chars": "Risk and safety",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.tertiary"
+             }
+            ],
+            "note": "T2: lock + the full label in color.text.tertiary; never color.text.disabled, never opacity"
+           }
+          ],
+          "w": 220,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "CMP-006 RadioGroup",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.lg",
+           "fill": "color.surface.raised",
+           "stroke": "color.border.default",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "radio · Assertive",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "circle",
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "outline",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "fill": "color.surface.canvas",
+                 "stroke": "color.border.default",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "x": 0,
+                "y": 0,
+                "abs": true
+               },
+               {
+                "t": "ellipse",
+                "name": "dot",
+                "w": 8,
+                "h": 8,
+                "o": {
+                 "fill": "color.text.tertiary"
+                },
+                "x": 4,
+                "y": 4,
+                "abs": true
+               }
+              ],
+              "w": 16,
+              "h": 16
+             },
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Assertive",
+              "typo": "type.ui.body",
+              "color": "color.text.tertiary"
+             }
+            ],
+            "h": 24,
+            "note": "role=\"radio\" aria-checked=\"true\" aria-disabled=\"true\""
+           },
+           {
+            "t": "board",
+            "name": "radio · Polite",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "circle",
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "outline",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "fill": "color.surface.canvas",
+                 "stroke": "color.border.default",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "x": 0,
+                "y": 0,
+                "abs": true
+               }
+              ],
+              "w": 16,
+              "h": 16
+             },
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Polite",
+              "typo": "type.ui.body",
+              "color": "color.text.tertiary"
+             }
+            ],
+            "h": 24,
+            "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+           }
+          ],
+          "h": 28,
+          "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108); T2: every radio aria-disabled, arrows move focus without checking (§8.2)"
+         }
+        ],
+        "w": 960,
+        "note": "CMP-065 fieldset, legend \"Risk and safety\"; T-11, T-13, T-15, T-17, T-22; default Assertive (§8.1 L408); CMP-079 RbacGate, rendering 2a"
+       },
+       {
+        "t": "board",
+        "name": "reason row",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padL": "space.inset.lg"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "reason · W-39",
+          "chars": "Safety announcements are always read at once.",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "note": "the T2 reason node (a11y.safety_fixed, PROPOSED), in the DOM at mount, linked by aria-describedby, color.text.secondary (§8.2)"
+         }
+        ],
+        "w": 960,
+        "h": 16
+       }
+      ],
+      "w": 960
+     },
+     {
+      "t": "board",
+      "name": "fieldset · Order fills",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "legend cell",
+        "o": {
+         "dir": "row",
+         "align": "center"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "legend",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "lock",
+            "icon": "locked",
+            "color": "color.text.tertiary",
+            "size": "size.icon",
+            "note": "CMP-019 Icon lock, decorative=false, accessible name \"Not available\" (D09E09:207)"
+           },
+           {
+            "t": "text",
+            "name": "words",
+            "chars": "Order fills",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "note": "T2: lock + the full label in color.text.tertiary; never color.text.disabled, never opacity"
+         }
+        ],
+        "w": 220,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "CMP-006 RadioGroup",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.lg",
+         "fill": "color.surface.raised",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner",
+         "padX": "space.inset.sm",
+         "radius": "radius.control"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "radio · Assertive",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "circle",
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "outline",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "fill": "color.surface.canvas",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "x": 0,
+              "y": 0,
+              "abs": true
+             },
+             {
+              "t": "ellipse",
+              "name": "dot",
+              "w": 8,
+              "h": 8,
+              "o": {
+               "fill": "color.text.tertiary"
+              },
+              "x": 4,
+              "y": 4,
+              "abs": true
+             }
+            ],
+            "w": 16,
+            "h": 16
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Assertive",
+            "typo": "type.ui.body",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "h": 24,
+          "note": "role=\"radio\" aria-checked=\"true\" aria-disabled=\"true\""
+         },
+         {
+          "t": "board",
+          "name": "radio · Polite",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "circle",
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "outline",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "fill": "color.surface.canvas",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "x": 0,
+              "y": 0,
+              "abs": true
+             }
+            ],
+            "w": 16,
+            "h": 16
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Polite",
+            "typo": "type.ui.body",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "h": 24,
+          "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+         }
+        ],
+        "h": 28,
+        "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108); T2: every radio aria-disabled, arrows move focus without checking (§8.2)"
+       }
+      ],
+      "w": 960,
+      "note": "CMP-065 fieldset, legend \"Order fills\"; T-1, T-2; default Assertive (§8.1 L409); CMP-079 RbacGate, rendering 2a"
+     },
+     {
+      "t": "board",
+      "name": "fieldset · Order problems",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "legend cell",
+        "o": {
+         "dir": "row",
+         "align": "center"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "legend",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "lock",
+            "icon": "locked",
+            "color": "color.text.tertiary",
+            "size": "size.icon",
+            "note": "CMP-019 Icon lock, decorative=false, accessible name \"Not available\" (D09E09:207)"
+           },
+           {
+            "t": "text",
+            "name": "words",
+            "chars": "Order problems",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "note": "T2: lock + the full label in color.text.tertiary; never color.text.disabled, never opacity"
+         }
+        ],
+        "w": 220,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "CMP-006 RadioGroup",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.lg",
+         "fill": "color.surface.raised",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner",
+         "padX": "space.inset.sm",
+         "radius": "radius.control"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "radio · Assertive",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "circle",
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "outline",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "fill": "color.surface.canvas",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "x": 0,
+              "y": 0,
+              "abs": true
+             },
+             {
+              "t": "ellipse",
+              "name": "dot",
+              "w": 8,
+              "h": 8,
+              "o": {
+               "fill": "color.text.tertiary"
+              },
+              "x": 4,
+              "y": 4,
+              "abs": true
+             }
+            ],
+            "w": 16,
+            "h": 16
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Assertive",
+            "typo": "type.ui.body",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "h": 24,
+          "note": "role=\"radio\" aria-checked=\"true\" aria-disabled=\"true\""
+         },
+         {
+          "t": "board",
+          "name": "radio · Polite",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "circle",
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "outline",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "fill": "color.surface.canvas",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "x": 0,
+              "y": 0,
+              "abs": true
+             }
+            ],
+            "w": 16,
+            "h": 16
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Polite",
+            "typo": "type.ui.body",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "h": 24,
+          "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+         }
+        ],
+        "h": 28,
+        "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108); T2: every radio aria-disabled, arrows move focus without checking (§8.2)"
+       }
+      ],
+      "w": 960,
+      "note": "CMP-065 fieldset, legend \"Order problems\"; T-3, T-4; default Assertive (§8.1 L410); CMP-079 RbacGate, rendering 2a"
+     }
+    ]
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-view-as · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Order updates",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "legend",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "lock",
+          "icon": "locked",
+          "color": "color.text.tertiary",
+          "size": "size.icon",
+          "note": "CMP-019 Icon lock, decorative=false, accessible name \"Not available\" (D09E09:207)"
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Order updates",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "note": "T2: lock + the full label in color.text.tertiary; never color.text.disabled, never opacity"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg",
+       "fill": "color.surface.raised",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "padX": "space.inset.sm",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Assertive",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Assertive",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.text.tertiary"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\" aria-disabled=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Off",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Off",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108); T2: every radio aria-disabled, arrows move focus without checking (§8.2)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Order updates\"; T-5, T-6, T-7, T-8; default Polite (§8.1 L411); CMP-079 RbacGate, rendering 2a"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-view-as · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Safety recovered",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "legend",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "lock",
+          "icon": "locked",
+          "color": "color.text.tertiary",
+          "size": "size.icon",
+          "note": "CMP-019 Icon lock, decorative=false, accessible name \"Not available\" (D09E09:207)"
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Safety recovered",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "note": "T2: lock + the full label in color.text.tertiary; never color.text.disabled, never opacity"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg",
+       "fill": "color.surface.raised",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "padX": "space.inset.sm",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Assertive",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Assertive",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.text.tertiary"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\" aria-disabled=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Off",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Off",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108); T2: every radio aria-disabled, arrows move focus without checking (§8.2)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Safety recovered\"; T-12, T-14, T-16; default Polite (§8.1 L412); CMP-079 RbacGate, rendering 2a"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-view-as · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Trade groups",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "legend",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "lock",
+          "icon": "locked",
+          "color": "color.text.tertiary",
+          "size": "size.icon",
+          "note": "CMP-019 Icon lock, decorative=false, accessible name \"Not available\" (D09E09:207)"
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Trade groups",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "note": "T2: lock + the full label in color.text.tertiary; never color.text.disabled, never opacity"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg",
+       "fill": "color.surface.raised",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "padX": "space.inset.sm",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Assertive",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.text.tertiary"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Assertive",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\" aria-disabled=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Off",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Off",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108); T2: every radio aria-disabled, arrows move focus without checking (§8.2)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Trade groups\"; T-21; default Assertive (§8.1 L413); CMP-079 RbacGate, rendering 2a"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-view-as · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Rule actions",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "legend",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "lock",
+          "icon": "locked",
+          "color": "color.text.tertiary",
+          "size": "size.icon",
+          "note": "CMP-019 Icon lock, decorative=false, accessible name \"Not available\" (D09E09:207)"
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Rule actions",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "note": "T2: lock + the full label in color.text.tertiary; never color.text.disabled, never opacity"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg",
+       "fill": "color.surface.raised",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "padX": "space.inset.sm",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Assertive",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.text.tertiary"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Assertive",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\" aria-disabled=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108); T2: every radio aria-disabled, arrows move focus without checking (§8.2)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Rule actions\"; T-19, T-20; default Assertive (§8.1 L414); CMP-079 RbacGate, rendering 2a"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-view-as · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Rule fires",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "legend",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "lock",
+          "icon": "locked",
+          "color": "color.text.tertiary",
+          "size": "size.icon",
+          "note": "CMP-019 Icon lock, decorative=false, accessible name \"Not available\" (D09E09:207)"
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Rule fires",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "note": "T2: lock + the full label in color.text.tertiary; never color.text.disabled, never opacity"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg",
+       "fill": "color.surface.raised",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "padX": "space.inset.sm",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Assertive",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.text.tertiary"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Assertive",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\" aria-disabled=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108); T2: every radio aria-disabled, arrows move focus without checking (§8.2)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Rule fires\"; T-18; default Assertive (§8.1 L415); CMP-079 RbacGate, rendering 2a"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-view-as · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Connection changes",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "legend",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "lock",
+          "icon": "locked",
+          "color": "color.text.tertiary",
+          "size": "size.icon",
+          "note": "CMP-019 Icon lock, decorative=false, accessible name \"Not available\" (D09E09:207)"
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Connection changes",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "note": "T2: lock + the full label in color.text.tertiary; never color.text.disabled, never opacity"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg",
+       "fill": "color.surface.raised",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "padX": "space.inset.sm",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Assertive",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.text.tertiary"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Assertive",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\" aria-disabled=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108); T2: every radio aria-disabled, arrows move focus without checking (§8.2)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Connection changes\"; T-23, T-24, T-49, T-50, T-54, T-55; default Assertive (§8.1 L416); CMP-079 RbacGate, rendering 2a"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-view-as · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Feed status",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "legend",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "lock",
+          "icon": "locked",
+          "color": "color.text.tertiary",
+          "size": "size.icon",
+          "note": "CMP-019 Icon lock, decorative=false, accessible name \"Not available\" (D09E09:207)"
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Feed status",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "note": "T2: lock + the full label in color.text.tertiary; never color.text.disabled, never opacity"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg",
+       "fill": "color.surface.raised",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "padX": "space.inset.sm",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Assertive",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Assertive",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.text.tertiary"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\" aria-disabled=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Off",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Off",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108); T2: every radio aria-disabled, arrows move focus without checking (§8.2)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Feed status\"; T-25, T-26, T-51, T-52, T-53; default Polite (§8.1 L417); CMP-079 RbacGate, rendering 2a"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-view-as · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Trading environment",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "legend",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "lock",
+          "icon": "locked",
+          "color": "color.text.tertiary",
+          "size": "size.icon",
+          "note": "CMP-019 Icon lock, decorative=false, accessible name \"Not available\" (D09E09:207)"
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Trading environment",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "note": "T2: lock + the full label in color.text.tertiary; never color.text.disabled, never opacity"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg",
+       "fill": "color.surface.raised",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "padX": "space.inset.sm",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Assertive",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.text.tertiary"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Assertive",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\" aria-disabled=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108); T2: every radio aria-disabled, arrows move focus without checking (§8.2)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Trading environment\"; T-28; default Assertive (§8.1 L418); CMP-079 RbacGate, rendering 2a"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-view-as · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Alerts",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "legend",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "lock",
+          "icon": "locked",
+          "color": "color.text.tertiary",
+          "size": "size.icon",
+          "note": "CMP-019 Icon lock, decorative=false, accessible name \"Not available\" (D09E09:207)"
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Alerts",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "note": "T2: lock + the full label in color.text.tertiary; never color.text.disabled, never opacity"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg",
+       "fill": "color.surface.raised",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "padX": "space.inset.sm",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Assertive",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Assertive",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.text.tertiary"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\" aria-disabled=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Off",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Off",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108); T2: every radio aria-disabled, arrows move focus without checking (§8.2)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Alerts\"; T-29; default Polite (§8.1 L419); CMP-079 RbacGate, rendering 2a"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-view-as · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Prices and position",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "legend",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "lock",
+          "icon": "locked",
+          "color": "color.text.tertiary",
+          "size": "size.icon",
+          "note": "CMP-019 Icon lock, decorative=false, accessible name \"Not available\" (D09E09:207)"
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Prices and position",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "note": "T2: lock + the full label in color.text.tertiary; never color.text.disabled, never opacity"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg",
+       "fill": "color.surface.raised",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "padX": "space.inset.sm",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.text.tertiary"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\" aria-disabled=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Off",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Off",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108); T2: every radio aria-disabled, arrows move focus without checking (§8.2)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Prices and position\"; T-30, T-31, T-32, T-33; default Polite (§8.1 L420); CMP-079 RbacGate, rendering 2a"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-view-as · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Whale prints",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "legend",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "lock",
+          "icon": "locked",
+          "color": "color.text.tertiary",
+          "size": "size.icon",
+          "note": "CMP-019 Icon lock, decorative=false, accessible name \"Not available\" (D09E09:207)"
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Whale prints",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "note": "T2: lock + the full label in color.text.tertiary; never color.text.disabled, never opacity"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg",
+       "fill": "color.surface.raised",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "padX": "space.inset.sm",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Off",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.text.tertiary"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Off",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\" aria-disabled=\"true\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108); T2: every radio aria-disabled, arrows move focus without checking (§8.2)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Whale prints\"; T-36; default Off (§8.1 L421); CMP-079 RbacGate, rendering 2a"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-view-as · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Recorder",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "legend",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "lock",
+          "icon": "locked",
+          "color": "color.text.tertiary",
+          "size": "size.icon",
+          "note": "CMP-019 Icon lock, decorative=false, accessible name \"Not available\" (D09E09:207)"
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Recorder",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "note": "T2: lock + the full label in color.text.tertiary; never color.text.disabled, never opacity"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg",
+       "fill": "color.surface.raised",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "padX": "space.inset.sm",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.text.tertiary"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\" aria-disabled=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Off",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Off",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108); T2: every radio aria-disabled, arrows move focus without checking (§8.2)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Recorder\"; T-43; default Polite (§8.1 L422); CMP-079 RbacGate, rendering 2a"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-view-as · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Countdowns",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "legend",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "lock",
+          "icon": "locked",
+          "color": "color.text.tertiary",
+          "size": "size.icon",
+          "note": "CMP-019 Icon lock, decorative=false, accessible name \"Not available\" (D09E09:207)"
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Countdowns",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "note": "T2: lock + the full label in color.text.tertiary; never color.text.disabled, never opacity"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg",
+       "fill": "color.surface.raised",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "padX": "space.inset.sm",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.text.tertiary"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\" aria-disabled=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Off",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Off",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108); T2: every radio aria-disabled, arrows move focus without checking (§8.2)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Countdowns\"; T-45, T-46; default Polite (§8.1 L423); CMP-079 RbacGate, rendering 2a"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-view-as · dark/body/main/CMP-065 FormSection · Announcements/the classes",
+   "node": {
+    "t": "board",
+    "name": "fieldset · Your keys",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "legend cell",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "legend",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "lock",
+          "icon": "locked",
+          "color": "color.text.tertiary",
+          "size": "size.icon",
+          "note": "CMP-019 Icon lock, decorative=false, accessible name \"Not available\" (D09E09:207)"
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Your keys",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "note": "T2: lock + the full label in color.text.tertiary; never color.text.disabled, never opacity"
+       }
+      ],
+      "w": 220,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg",
+       "fill": "color.surface.raised",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "padX": "space.inset.sm",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Polite",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.text.tertiary"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Polite",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\" aria-disabled=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Off",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Off",
+          "typo": "type.ui.body",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\" aria-disabled=\"true\""
+       }
+      ],
+      "h": 28,
+      "note": "role=\"radiogroup\", roving tabindex, one Tab stop (`15`:108); T2: every radio aria-disabled, arrows move focus without checking (§8.2)"
+     }
+    ],
+    "w": 960,
+    "note": "CMP-065 fieldset, legend \"Your keys\"; T-47, T-48; default Polite (§8.1 L424); CMP-079 RbacGate, rendering 2a"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-view-as · dark",
+   "node": {
+    "t": "board",
+    "name": "StatusBar (placeholder)",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · env word",
+      "w": 56,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 48
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-view-as · dark",
+   "node": {
+    "t": "board",
+    "name": "tag · synthetic data",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "Synthetic data · seed 1306 · BTCUSDT",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 16,
+    "y": 760,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "SCR-117∕announcements-view-as · dark",
+   "node": {
+    "t": "board",
+    "name": "tag · view-as user",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "view-as user_02 (synthetic user)",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 872,
+    "y": 64,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 01",
+    "chars": "state: SCR-117/announcements-default · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 80,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 02",
+    "chars": "state: SCR-117/announcements-view-as · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 1440,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer · data",
+    "chars": "Data: seeded synthetic stream (seed 1306, BTCUSDT, tick 0.1), the §10 scripts; sample data, never a market capture (§0 L62); only the tick size is the recorded fixture's",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "x": 80,
+    "y": 904
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "E47-D07 / 06 scr117-panel",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Board",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§0 L71: §8: the Announcements panel, a fieldset per class, the T2 safety row and the view-as T2 state (§8.2), Reduce announcements",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Theme: dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Frames (hand-off §H L107): SCR-117/announcements-default · dark; SCR-117/announcements-view-as · dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "Export: docs/design/E47/img/E47-D07-06-scr117-panel.png",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "Data: seeded synthetic stream (seed 1306, BTCUSDT, tick 0.1), the §10 scripts; sample data, never a market capture (§0 L62); only the tick size is the recorded fixture's",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-6",
+        "chars": "Markers, tags, arrows and callouts in color.status.info.default are annotation, not product UI",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "SCR-117/announcements-default · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§8.1 L402: a CMP-004 Toggle \"Reduce announcements\" (help \"Read events only. Prices are not read.\"), then one CMP-065 fieldset per class (17) with a CMP-006 RadioGroup, the class default checked; the two keys are drawn PROPOSED (D07-G3, E47-S07 #1321's contract PR, BQ-8)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "§8.2 L428: \"Risk and safety\" is T2 — lock glyph leading the legend in color.text.tertiary, the reason W-39 under it in color.text.secondary, raised fill with a border.default hairline, every radio aria-disabled, still in the Tab order; never opacity.disabled or color.text.disabled",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "The contrast of both T2 tokens on color.surface.raised is E47-D03's measured figure (D03:159, :160), cited not restated (C-16.5)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "Space / Enter / Ctrl+Shift+M on the T2 group changes nothing and re-shows W-39 with one polite announcement, not again within 5 s (§8.2)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "SCR-117/announcements-view-as · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§8.1 L402: a CMP-004 Toggle \"Reduce announcements\" (help \"Read events only. Prices are not read.\"), then one CMP-065 fieldset per class (17) with a CMP-006 RadioGroup, the class default checked; the two keys are drawn PROPOSED (D07-G3, E47-S07 #1321's contract PR, BQ-8)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "§8.2 L428: \"Risk and safety\" is T2 — lock glyph leading the legend in color.text.tertiary, the reason W-39 under it in color.text.secondary, raised fill with a border.default hairline, every radio aria-disabled, still in the Tab order; never opacity.disabled or color.text.disabled",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "The contrast of both T2 tokens on color.surface.raised is E47-D03's measured figure (D03:159, :160), cited not restated (C-16.5)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "View-as: every control T2 with rbac.view_as (D09E09:95); one CMP-065 notice \"Read-only while viewing as {user}.\" with the synthetic user user_02",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E47-D07 announcements · board 06 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400,
+    "x": 2800,
+    "y": 80
+   }
+  }
+ ],
+ "export": "docs/design/E47/img/E47-D07-06-scr117-panel.png",
+ "notes": {
+  "sources": [
+   "spec docs/design/E47/E47-D07.md md5 78bc33e5, hand-off docs/design/E47/E47-D07-handoff.md md5 574b8489 (§0 L71; hand-off §H L107); scripts docs/design/E47/E47-D07-transcripts.json md5 6bf5c553 replayed through docs/design/_tools/e47_d07_announcement_audit.py md5 d6f86dbc; tick size packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a; ring geometry E47-D04 at 1ff5d8cb9 (§7.1 there)"
+  ],
+  "copy_keys": [
+   "W-39 (§7.2 L316, no source; PROPOSED state key a11y.safety_fixed): Safety announcements are always read at once."
+  ],
+  "copy_gaps": [],
+  "spec_gaps": [],
+  "fallbacks": [
+   "kit choice: numbered stop markers, tags, arrows and callouts are annotation overlays in color.status.info.default with color.text.inverse words, never product UI",
+   "fallback: border.control (E47-D03's D03-D5 / D03-D6, PROPOSED) is not a token yet: control boundaries bind border.hairline in dark and light",
+   "kit choice: the shell chrome (TopBar, NavRail, StatusBar), the other CMP-086 entries and the other SCR-117 sections drawn as neutral placeholders; only this spec's parts are drawn"
+  ],
+  "tokens": [
+   "type.ui.caption",
+   "color.text.inverse",
+   "space.inset.xs",
+   "radius.control",
+   "color.status.info.default",
+   "type.ui.heading-sm",
+   "color.text.primary",
+   "color.text.secondary",
+   "color.surface.hover",
+   "radius.badge",
+   "color.border.strong",
+   "border.hairline",
+   "type.ui.body-strong",
+   "space.stack.xs",
+   "space.inset.md",
+   "color.text.tertiary",
+   "size.icon",
+   "color.surface.canvas",
+   "color.border.default",
+   "type.ui.body",
+   "space.inset.sm",
+   "color.focus.ring",
+   "border.focus",
+   "space.inset.lg",
+   "color.surface.raised",
+   "color.action.primary.default",
+   "space.stack.md",
+   "space.inset.xl",
+   "color.surface.app",
+   "color.border.subtle",
+   "color.text.link",
+   "color.border.selected",
+   "radius.card",
+   "type.ui.label",
+   "space.stack.sm"
+  ],
+  "live_checks": [
+   "root 'E47-D07 / 06 scr117-panel' at (0, 4200): read back the name exactly after the first section call; size 3280 x 1000",
+   "after touchTexts + relayout: the annotation column (estimated 774 px) ends inside the root (h 1000); raise the root's h to its end + 80 if not",
+   "frame 'SCR-117∕announcements-default · dark': read back 1280 x 800 at (80, 80); clip on, no child spills",
+   "frame 'SCR-117∕announcements-view-as · dark': read back 1280 x 800 at (1440, 80); clip on, no child spills",
+   "export docs/design/E47/img/E47-D07-06-scr117-panel.png; record the board id and the PNG size in §0"
+  ],
+  "deviations": [],
+  "ambiguities": [
+   "Boards 06 / 07: §8.1's fixed row lists no options; the kit draws Assertive / Polite (the six's classes offer no Off, §8.1), Assertive checked",
+   "Boards 06 / 07: the fieldsets are drawn legend-beside-radios (220 px legend) so the seventeen fit the viewport; §8.3's stacking applies at 400 % zoom and 200 % text (not drawn, §0)",
+   "Board 06 view-as: §8.2 gives one notice for every gated control; the safety row keeps its own W-39 reason as well"
+  ]
+ }
+}

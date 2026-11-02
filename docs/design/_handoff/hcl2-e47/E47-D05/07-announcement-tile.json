@@ -1,0 +1,6249 @@
+{
+ "board": {
+  "name": "E47-D05 / 07 announcement-tile",
+  "w": 3280,
+  "h": 1880,
+  "x": 7000,
+  "y": 4200,
+  "o": {
+   "fill": "color.surface.app",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "tile∕announce-off · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "tile/announce-off · dark",
+    "x": 80,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar (placeholder)",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · env badge",
+          "w": 56,
+          "h": 20,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · health chip",
+          "w": 120,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar, not this spec's: placeholders only"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "w": 1280,
+      "h": 704,
+      "kids": [
+       {
+        "t": "board",
+        "name": "NavRail (placeholder)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entry-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-6",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 63,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 64,
+        "h": 704
+       },
+       {
+        "t": "board",
+        "name": "CMP-086 SettingsNav",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "pad": "space.inset.sm",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entry-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 104,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry-2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 112,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry · Accessibility (current)",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs",
+           "padX": "space.inset.md",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Accessibility",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.link"
+           },
+           {
+            "t": "rect",
+            "name": "selected underline",
+            "w": 96,
+            "h": 2,
+            "o": {
+             "fill": "color.border.selected"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 36,
+          "note": "aria-current=\"page\"; its own SettingsNav entry and sub-route (BQ-8, D05-A6, PROPOSED)"
+         },
+         {
+          "t": "board",
+          "name": "entry-3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 96,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry-4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 104,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 207,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 208,
+        "h": 704
+       },
+       {
+        "t": "board",
+        "name": "main",
+        "o": {
+         "fill": "color.surface.app",
+         "clip": true
+        },
+        "w": 1008,
+        "h": 704,
+        "kids": [
+         {
+          "t": "board",
+          "name": "SCR-117 content",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.lg",
+           "pad": "space.inset.xl",
+           "fill": "color.surface.app"
+          },
+          "w": 1008,
+          "note": "main: one column, max-width 60 rem (S07:33–34); DOM order = visual order",
+          "x": 0,
+          "y": 0,
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-065 FormSection · Announcements",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.md"
+            },
+            "w": 960,
+            "note": "fieldset, legend \"Announcements\"",
+            "kids": [
+             {
+              "t": "text",
+              "name": "h2",
+              "chars": "Announcements",
+              "typo": "type.ui.heading-sm",
+              "color": "color.text.primary",
+              "note": "h2 inside the fieldset's legend (`15`:743)"
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "tile∕announce-off · dark/body/main/SCR-117 content/CMP-065 FormSection · Announcements",
+   "node": {
+    "t": "board",
+    "name": "group",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.xl"
+    },
+    "w": 944,
+    "note": "the tile after the group's last row in the DOM, to its right at >= 1280 px (§2)",
+    "kids": [
+     {
+      "t": "board",
+      "name": "rows",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "option row · announce_prices",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Announce price updates",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 560
+         },
+         {
+          "t": "text",
+          "name": "description",
+          "chars": "Choose when a screen reader reads prices: not at all, only with the events listed under this choice, or also the latest price at the pace below. Order, risk, rule, connection and environment events are always read.",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 560
+         },
+         {
+          "t": "board",
+          "name": "CMP-006 RadioGroup",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.lg",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "radio · Off",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "circle",
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "outline",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "fill": "color.surface.canvas",
+                 "stroke": "color.border.strong",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "x": 0,
+                "y": 0,
+                "abs": true
+               },
+               {
+                "t": "ellipse",
+                "name": "dot",
+                "w": 8,
+                "h": 8,
+                "o": {
+                 "fill": "color.action.primary.default"
+                },
+                "x": 4,
+                "y": 4,
+                "abs": true
+               }
+              ],
+              "w": 16,
+              "h": 16
+             },
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Off",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 24,
+            "note": "role=\"radio\" aria-checked=\"true\""
+           },
+           {
+            "t": "board",
+            "name": "radio · On significant change",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "circle",
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "outline",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "fill": "color.surface.canvas",
+                 "stroke": "color.border.strong",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "x": 0,
+                "y": 0,
+                "abs": true
+               }
+              ],
+              "w": 16,
+              "h": 16
+             },
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "On significant change",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 24,
+            "note": "role=\"radio\" aria-checked=\"false\""
+           },
+           {
+            "t": "board",
+            "name": "radio · Always",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "circle",
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "outline",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "fill": "color.surface.canvas",
+                 "stroke": "color.border.strong",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "x": 0,
+                "y": 0,
+                "abs": true
+               }
+              ],
+              "w": 16,
+              "h": 16
+             },
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Always",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 24,
+            "note": "role=\"radio\" aria-checked=\"false\""
+           }
+          ],
+          "w": 560,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-069 InfoPanel · inline",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs",
+           "pad": "space.inset.md",
+           "fill": "color.surface.raised",
+           "radius": "radius.card"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "title",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "info",
+              "icon": "info",
+              "color": "color.text.secondary",
+              "size": "size.icon"
+             },
+             {
+              "t": "text",
+              "name": "words",
+              "chars": "What significant includes",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             }
+            ]
+           },
+           {
+            "t": "text",
+            "name": "class · order filled",
+            "chars": "• order filled",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary",
+            "w": 536
+           },
+           {
+            "t": "text",
+            "name": "class · order rejected",
+            "chars": "• order rejected",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary",
+            "w": 536
+           },
+           {
+            "t": "text",
+            "name": "class · position auto-flattened by risk engine",
+            "chars": "• position auto-flattened by risk engine",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary",
+            "w": 536
+           },
+           {
+            "t": "text",
+            "name": "class · rule triggered",
+            "chars": "• rule triggered",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary",
+            "w": 536
+           },
+           {
+            "t": "text",
+            "name": "class · WS disconnected∕reconnected",
+            "chars": "• WS disconnected/reconnected",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary",
+            "w": 536
+           },
+           {
+            "t": "text",
+            "name": "class · Demo∕Live environment switch confirmed",
+            "chars": "• Demo/Live environment switch confirmed",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary",
+            "w": 536
+           }
+          ],
+          "w": 560,
+          "note": "its own aria-describedby target after the row's description; never throttled (`05`:152)"
+         },
+         {
+          "t": "board",
+          "name": "changed",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "Changed",
+            "chars": "Changed",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary"
+           },
+           {
+            "t": "board",
+            "name": "button · Reset Announce price updates",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.xs",
+             "padX": "space.button.paddingX",
+             "radius": "radius.control",
+             "justify": "center",
+             "fill": "color.action.secondary.default",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Reset",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 62,
+            "h": 26,
+            "note": "CMP-001; accessible name \"Reset Announce price updates\" (W-24); activating it moves focus to the option's control (§10)"
+           }
+          ]
+         }
+        ],
+        "w": 560,
+        "note": "radiogroup: one Tab stop, arrows move"
+       },
+       {
+        "t": "board",
+        "name": "option row · verbosity",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Screen-reader verbosity for the tape",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 560
+         },
+         {
+          "t": "text",
+          "name": "description",
+          "chars": "Low reads only the events listed above, never each trade. Normal and High also read routine trades at the pace you set.",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 560
+         },
+         {
+          "t": "board",
+          "name": "CMP-006 RadioGroup",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.lg",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "radio · Low",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "circle",
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "outline",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "fill": "color.surface.canvas",
+                 "stroke": "color.border.strong",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "x": 0,
+                "y": 0,
+                "abs": true
+               }
+              ],
+              "w": 16,
+              "h": 16
+             },
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Low",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 24,
+            "note": "role=\"radio\" aria-checked=\"false\""
+           },
+           {
+            "t": "board",
+            "name": "radio · Normal",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "circle",
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "outline",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "fill": "color.surface.canvas",
+                 "stroke": "color.border.strong",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "x": 0,
+                "y": 0,
+                "abs": true
+               },
+               {
+                "t": "ellipse",
+                "name": "dot",
+                "w": 8,
+                "h": 8,
+                "o": {
+                 "fill": "color.action.primary.default"
+                },
+                "x": 4,
+                "y": 4,
+                "abs": true
+               }
+              ],
+              "w": 16,
+              "h": 16
+             },
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Normal",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 24,
+            "note": "role=\"radio\" aria-checked=\"true\""
+           },
+           {
+            "t": "board",
+            "name": "radio · High",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "circle",
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "outline",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "fill": "color.surface.canvas",
+                 "stroke": "color.border.strong",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "x": 0,
+                "y": 0,
+                "abs": true
+               }
+              ],
+              "w": 16,
+              "h": 16
+             },
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "High",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 24,
+            "note": "role=\"radio\" aria-checked=\"false\""
+           }
+          ],
+          "w": 560,
+          "h": 32
+         }
+        ],
+        "w": 560,
+        "note": "radiogroup: one Tab stop, arrows move"
+       },
+       {
+        "t": "board",
+        "name": "button · Reset this section",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "padX": "space.button.paddingX",
+         "radius": "radius.control",
+         "justify": "center",
+         "fill": "color.action.secondary.default",
+         "stroke": "color.border.strong",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reset this section",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 157,
+        "h": 26,
+        "note": "CMP-001 Button (secondary)"
+       }
+      ],
+      "w": 560
+     }
+    ]
+   }
+  },
+  {
+   "into": "tile∕announce-off · dark/body/main/SCR-117 content/CMP-065 FormSection · Announcements/group",
+   "node": {
+    "t": "board",
+    "name": "CMP-228 PreviewTile · announcements",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas",
+     "radius": "radius.card",
+     "stroke": "color.border.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "preview",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "burst",
+        "chars": "20 s BTCUSDT burst, 40 prints a second (800 prints)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 328
+       }
+      ],
+      "note": "the role=img part: the burst it reads (§7.3); role=\"img\" aria-label=\"Announcement preview: Off, verbosity Normal\"; its children presentational"
+     },
+     {
+      "t": "board",
+      "name": "button · Play sample",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.xs",
+       "padX": "space.button.paddingX",
+       "radius": "radius.control",
+       "justify": "center",
+       "fill": "color.action.secondary.default",
+       "stroke": "color.border.strong",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Play sample",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 106,
+      "h": 26,
+      "note": "CMP-001 Button (secondary)"
+     },
+     {
+      "t": "board",
+      "name": "ul · transcript",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "li 1",
+        "chars": "3.5 s  [order filled]",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "li 2",
+        "chars": "8.7 s  [order rejected]",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "li 3",
+        "chars": "13.8 s  [WS disconnected/reconnected]",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "note": "a plain list, never a live region; lines append at the end, focus never moves (§6.3)"
+     }
+    ],
+    "w": 360,
+    "h": 143,
+    "note": "role=\"group\" aria-label=\"Announcement preview: Off, verbosity Normal\"; never the only disclosure (R-1); the frame is the decorative color.border.default (§11)"
+   }
+  },
+  {
+   "into": "tile∕announce-off · dark/body/main/SCR-117 content",
+   "node": {
+    "t": "board",
+    "name": "CMP-065 FormSection · Interaction",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "h2",
+      "chars": "Interaction",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "note": "h2 inside the fieldset's legend (`15`:743)"
+     },
+     {
+      "t": "board",
+      "name": "group",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "rows",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.lg"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "option row · keyboard_only",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "switch",
+            "o": {
+             "fill": "color.surface.hover",
+             "radius": "radius.badge",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "knob",
+              "w": 12,
+              "h": 12,
+              "o": {
+               "fill": "color.text.secondary"
+              },
+              "x": 4,
+              "y": 4,
+              "abs": true
+             }
+            ],
+            "w": 38,
+            "h": 20,
+            "note": "role=\"switch\" aria-checked=\"false\"; Enter / Space toggles (`15`:87)"
+           },
+           {
+            "t": "board",
+            "name": "text",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Keyboard-only mode",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary",
+              "w": 510
+             },
+             {
+              "t": "text",
+              "name": "description",
+              "chars": "Drag handles stop responding to the mouse; each shows fields and step buttons you use from the keyboard instead. Orders still ask you to confirm.",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary",
+              "w": 510
+             }
+            ],
+            "w": 510
+           }
+          ],
+          "w": 560,
+          "note": "CMP-004 Toggle: role=\"switch\", its label visible"
+         },
+         {
+          "t": "board",
+          "name": "option row · larger_hit_targets",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "switch",
+            "o": {
+             "fill": "color.surface.hover",
+             "radius": "radius.badge",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "knob",
+              "w": 12,
+              "h": 12,
+              "o": {
+               "fill": "color.text.secondary"
+              },
+              "x": 4,
+              "y": 4,
+              "abs": true
+             }
+            ],
+            "w": 38,
+            "h": 20,
+            "note": "role=\"switch\" aria-checked=\"false\"; Enter / Space toggles (`15`:87)"
+           },
+           {
+            "t": "board",
+            "name": "text",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Larger click targets",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary",
+              "w": 510
+             },
+             {
+              "t": "text",
+              "name": "description",
+              "chars": "Buttons, ladder rows and other click targets grow to at least 44 pixels. They are never smaller than 24 pixels, even with this off.",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary",
+              "w": 510
+             }
+            ],
+            "w": 510
+           }
+          ],
+          "w": 560,
+          "note": "CMP-004 Toggle: role=\"switch\", its label visible"
+         }
+        ],
+        "w": 560
+       }
+      ],
+      "w": 560
+     }
+    ],
+    "w": 960,
+    "note": "fieldset, legend \"Interaction\""
+   }
+  },
+  {
+   "into": "tile∕announce-off · dark",
+   "node": {
+    "t": "board",
+    "name": "StatusBar (placeholder)",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · env word",
+      "w": 56,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 48
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "tile∕announce-significant · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "tile/announce-significant · dark",
+    "x": 1440,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar (placeholder)",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · env badge",
+          "w": 56,
+          "h": 20,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · health chip",
+          "w": 120,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar, not this spec's: placeholders only"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "w": 1280,
+      "h": 704,
+      "kids": [
+       {
+        "t": "board",
+        "name": "NavRail (placeholder)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entry-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-6",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 63,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 64,
+        "h": 704
+       },
+       {
+        "t": "board",
+        "name": "CMP-086 SettingsNav",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "pad": "space.inset.sm",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entry-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 104,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry-2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 112,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry · Accessibility (current)",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs",
+           "padX": "space.inset.md",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Accessibility",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.link"
+           },
+           {
+            "t": "rect",
+            "name": "selected underline",
+            "w": 96,
+            "h": 2,
+            "o": {
+             "fill": "color.border.selected"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 36,
+          "note": "aria-current=\"page\"; its own SettingsNav entry and sub-route (BQ-8, D05-A6, PROPOSED)"
+         },
+         {
+          "t": "board",
+          "name": "entry-3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 96,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry-4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 104,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 207,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 208,
+        "h": 704
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "tile∕announce-significant · dark/body",
+   "node": {
+    "t": "board",
+    "name": "main",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1008,
+    "h": 704,
+    "kids": [
+     {
+      "t": "board",
+      "name": "SCR-117 content",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.lg",
+       "pad": "space.inset.xl",
+       "fill": "color.surface.app"
+      },
+      "w": 1008,
+      "note": "main: one column, max-width 60 rem (S07:33–34); DOM order = visual order",
+      "x": 0,
+      "y": 0,
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-065 FormSection · Announcements",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.md"
+        },
+        "w": 960,
+        "note": "fieldset, legend \"Announcements\"",
+        "kids": [
+         {
+          "t": "text",
+          "name": "h2",
+          "chars": "Announcements",
+          "typo": "type.ui.heading-sm",
+          "color": "color.text.primary",
+          "note": "h2 inside the fieldset's legend (`15`:743)"
+         },
+         {
+          "t": "board",
+          "name": "group",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xl"
+          },
+          "w": 944,
+          "note": "the tile after the group's last row in the DOM, to its right at >= 1280 px (§2)",
+          "kids": [
+           {
+            "t": "board",
+            "name": "rows",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.lg"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "option row · announce_prices",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Announce price updates",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.primary",
+                "w": 560
+               },
+               {
+                "t": "text",
+                "name": "description",
+                "chars": "Choose when a screen reader reads prices: not at all, only with the events listed under this choice, or also the latest price at the pace below. Order, risk, rule, connection and environment events are always read.",
+                "typo": "type.ui.caption",
+                "color": "color.text.secondary",
+                "w": 560
+               },
+               {
+                "t": "board",
+                "name": "CMP-006 RadioGroup",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "gap": "space.inset.lg",
+                 "wrap": "wrap"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "radio · Off",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "gap": "space.inset.sm"
+                  },
+                  "kids": [
+                   {
+                    "t": "board",
+                    "name": "circle",
+                    "kids": [
+                     {
+                      "t": "ellipse",
+                      "name": "outline",
+                      "w": 16,
+                      "h": 16,
+                      "o": {
+                       "fill": "color.surface.canvas",
+                       "stroke": "color.border.strong",
+                       "strokeWidth": "border.hairline",
+                       "strokeAlign": "inner"
+                      },
+                      "x": 0,
+                      "y": 0,
+                      "abs": true
+                     }
+                    ],
+                    "w": 16,
+                    "h": 16
+                   },
+                   {
+                    "t": "text",
+                    "name": "label",
+                    "chars": "Off",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "h": 24,
+                  "note": "role=\"radio\" aria-checked=\"false\""
+                 },
+                 {
+                  "t": "board",
+                  "name": "radio · On significant change",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "gap": "space.inset.sm"
+                  },
+                  "kids": [
+                   {
+                    "t": "board",
+                    "name": "circle",
+                    "kids": [
+                     {
+                      "t": "ellipse",
+                      "name": "outline",
+                      "w": 16,
+                      "h": 16,
+                      "o": {
+                       "fill": "color.surface.canvas",
+                       "stroke": "color.border.strong",
+                       "strokeWidth": "border.hairline",
+                       "strokeAlign": "inner"
+                      },
+                      "x": 0,
+                      "y": 0,
+                      "abs": true
+                     },
+                     {
+                      "t": "ellipse",
+                      "name": "dot",
+                      "w": 8,
+                      "h": 8,
+                      "o": {
+                       "fill": "color.action.primary.default"
+                      },
+                      "x": 4,
+                      "y": 4,
+                      "abs": true
+                     }
+                    ],
+                    "w": 16,
+                    "h": 16
+                   },
+                   {
+                    "t": "text",
+                    "name": "label",
+                    "chars": "On significant change",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "h": 24,
+                  "note": "role=\"radio\" aria-checked=\"true\""
+                 },
+                 {
+                  "t": "board",
+                  "name": "radio · Always",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "gap": "space.inset.sm"
+                  },
+                  "kids": [
+                   {
+                    "t": "board",
+                    "name": "circle",
+                    "kids": [
+                     {
+                      "t": "ellipse",
+                      "name": "outline",
+                      "w": 16,
+                      "h": 16,
+                      "o": {
+                       "fill": "color.surface.canvas",
+                       "stroke": "color.border.strong",
+                       "strokeWidth": "border.hairline",
+                       "strokeAlign": "inner"
+                      },
+                      "x": 0,
+                      "y": 0,
+                      "abs": true
+                     }
+                    ],
+                    "w": 16,
+                    "h": 16
+                   },
+                   {
+                    "t": "text",
+                    "name": "label",
+                    "chars": "Always",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "h": 24,
+                  "note": "role=\"radio\" aria-checked=\"false\""
+                 }
+                ],
+                "w": 560,
+                "h": 32
+               },
+               {
+                "t": "board",
+                "name": "CMP-069 InfoPanel · inline",
+                "o": {
+                 "dir": "column",
+                 "align": "start",
+                 "gap": "space.stack.xs",
+                 "pad": "space.inset.md",
+                 "fill": "color.surface.raised",
+                 "radius": "radius.card"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "title",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "icon",
+                    "name": "info",
+                    "icon": "info",
+                    "color": "color.text.secondary",
+                    "size": "size.icon"
+                   },
+                   {
+                    "t": "text",
+                    "name": "words",
+                    "chars": "What significant includes",
+                    "typo": "type.ui.label",
+                    "color": "color.text.primary"
+                   }
+                  ]
+                 },
+                 {
+                  "t": "text",
+                  "name": "class · order filled",
+                  "chars": "• order filled",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.primary",
+                  "w": 536
+                 },
+                 {
+                  "t": "text",
+                  "name": "class · order rejected",
+                  "chars": "• order rejected",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.primary",
+                  "w": 536
+                 },
+                 {
+                  "t": "text",
+                  "name": "class · position auto-flattened by risk engine",
+                  "chars": "• position auto-flattened by risk engine",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.primary",
+                  "w": 536
+                 },
+                 {
+                  "t": "text",
+                  "name": "class · rule triggered",
+                  "chars": "• rule triggered",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.primary",
+                  "w": 536
+                 },
+                 {
+                  "t": "text",
+                  "name": "class · WS disconnected∕reconnected",
+                  "chars": "• WS disconnected/reconnected",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.primary",
+                  "w": 536
+                 },
+                 {
+                  "t": "text",
+                  "name": "class · Demo∕Live environment switch confirmed",
+                  "chars": "• Demo/Live environment switch confirmed",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.primary",
+                  "w": 536
+                 }
+                ],
+                "w": 560,
+                "note": "its own aria-describedby target after the row's description; never throttled (`05`:152)"
+               }
+              ],
+              "w": 560,
+              "note": "radiogroup: one Tab stop, arrows move"
+             },
+             {
+              "t": "board",
+              "name": "option row · verbosity",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Screen-reader verbosity for the tape",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.primary",
+                "w": 560
+               },
+               {
+                "t": "text",
+                "name": "description",
+                "chars": "Low reads only the events listed above, never each trade. Normal and High also read routine trades at the pace you set.",
+                "typo": "type.ui.caption",
+                "color": "color.text.secondary",
+                "w": 560
+               },
+               {
+                "t": "board",
+                "name": "CMP-006 RadioGroup",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "gap": "space.inset.lg",
+                 "wrap": "wrap"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "radio · Low",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "gap": "space.inset.sm"
+                  },
+                  "kids": [
+                   {
+                    "t": "board",
+                    "name": "circle",
+                    "kids": [
+                     {
+                      "t": "ellipse",
+                      "name": "outline",
+                      "w": 16,
+                      "h": 16,
+                      "o": {
+                       "fill": "color.surface.canvas",
+                       "stroke": "color.border.strong",
+                       "strokeWidth": "border.hairline",
+                       "strokeAlign": "inner"
+                      },
+                      "x": 0,
+                      "y": 0,
+                      "abs": true
+                     }
+                    ],
+                    "w": 16,
+                    "h": 16
+                   },
+                   {
+                    "t": "text",
+                    "name": "label",
+                    "chars": "Low",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "h": 24,
+                  "note": "role=\"radio\" aria-checked=\"false\""
+                 },
+                 {
+                  "t": "board",
+                  "name": "radio · Normal",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "gap": "space.inset.sm"
+                  },
+                  "kids": [
+                   {
+                    "t": "board",
+                    "name": "circle",
+                    "kids": [
+                     {
+                      "t": "ellipse",
+                      "name": "outline",
+                      "w": 16,
+                      "h": 16,
+                      "o": {
+                       "fill": "color.surface.canvas",
+                       "stroke": "color.border.strong",
+                       "strokeWidth": "border.hairline",
+                       "strokeAlign": "inner"
+                      },
+                      "x": 0,
+                      "y": 0,
+                      "abs": true
+                     },
+                     {
+                      "t": "ellipse",
+                      "name": "dot",
+                      "w": 8,
+                      "h": 8,
+                      "o": {
+                       "fill": "color.action.primary.default"
+                      },
+                      "x": 4,
+                      "y": 4,
+                      "abs": true
+                     }
+                    ],
+                    "w": 16,
+                    "h": 16
+                   },
+                   {
+                    "t": "text",
+                    "name": "label",
+                    "chars": "Normal",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "h": 24,
+                  "note": "role=\"radio\" aria-checked=\"true\""
+                 },
+                 {
+                  "t": "board",
+                  "name": "radio · High",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "gap": "space.inset.sm"
+                  },
+                  "kids": [
+                   {
+                    "t": "board",
+                    "name": "circle",
+                    "kids": [
+                     {
+                      "t": "ellipse",
+                      "name": "outline",
+                      "w": 16,
+                      "h": 16,
+                      "o": {
+                       "fill": "color.surface.canvas",
+                       "stroke": "color.border.strong",
+                       "strokeWidth": "border.hairline",
+                       "strokeAlign": "inner"
+                      },
+                      "x": 0,
+                      "y": 0,
+                      "abs": true
+                     }
+                    ],
+                    "w": 16,
+                    "h": 16
+                   },
+                   {
+                    "t": "text",
+                    "name": "label",
+                    "chars": "High",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "h": 24,
+                  "note": "role=\"radio\" aria-checked=\"false\""
+                 }
+                ],
+                "w": 560,
+                "h": 32
+               }
+              ],
+              "w": 560,
+              "note": "radiogroup: one Tab stop, arrows move"
+             }
+            ],
+            "w": 560
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "tile∕announce-significant · dark/body/main/SCR-117 content/CMP-065 FormSection · Announcements/group",
+   "node": {
+    "t": "board",
+    "name": "CMP-228 PreviewTile · announcements",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas",
+     "radius": "radius.card",
+     "stroke": "color.border.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "preview",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "burst",
+        "chars": "20 s BTCUSDT burst, 40 prints a second (800 prints)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 328
+       }
+      ],
+      "note": "the role=img part: the burst it reads (§7.3); role=\"img\" aria-label=\"Announcement preview: On significant change, verbosity Normal\"; its children presentational"
+     },
+     {
+      "t": "board",
+      "name": "CMP-039 ring · normal",
+      "o": {
+       "stroke": "color.surface.canvas",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "band-2 · ring",
+        "o": {
+         "stroke": "color.focus.ring",
+         "strokeWidth": "border.focus",
+         "strokeAlign": "inner",
+         "radius": "radius.control"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "band-3 · halo",
+          "o": {
+           "stroke": "color.surface.canvas",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "button · Play sample",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.xs",
+             "padX": "space.button.paddingX",
+             "radius": "radius.control",
+             "justify": "center",
+             "fill": "color.action.secondary.default",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Show all",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 84,
+            "h": 26,
+            "note": "CMP-001 Button (secondary)",
+            "x": 3,
+            "y": 3
+           }
+          ],
+          "w": 90,
+          "h": 32,
+          "x": 2,
+          "y": 2
+         }
+        ],
+        "w": 94,
+        "h": 36,
+        "x": 1,
+        "y": 1
+       }
+      ],
+      "w": 96,
+      "h": 38,
+      "note": "focus-visible; normal: ring 2 px, halo 1 px each side, offset 2 px (D04 §7.1 L235)"
+     },
+     {
+      "t": "board",
+      "name": "ul · transcript",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "li 1",
+        "chars": "3.5 s  [order filled]",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "li 2",
+        "chars": "8.7 s  [order rejected]",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "note": "a plain list, never a live region; lines append at the end, focus never moves (§6.3)"
+     }
+    ],
+    "w": 360,
+    "h": 138,
+    "note": "role=\"group\" aria-label=\"Announcement preview: On significant change, verbosity Normal\"; never the only disclosure (R-1); the frame is the decorative color.border.default (§11)"
+   }
+  },
+  {
+   "into": "tile∕announce-significant · dark/body/main/SCR-117 content",
+   "node": {
+    "t": "board",
+    "name": "CMP-065 FormSection · Interaction",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "h2",
+      "chars": "Interaction",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "note": "h2 inside the fieldset's legend (`15`:743)"
+     },
+     {
+      "t": "board",
+      "name": "group",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "rows",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.lg"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "option row · keyboard_only",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "switch",
+            "o": {
+             "fill": "color.surface.hover",
+             "radius": "radius.badge",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "knob",
+              "w": 12,
+              "h": 12,
+              "o": {
+               "fill": "color.text.secondary"
+              },
+              "x": 4,
+              "y": 4,
+              "abs": true
+             }
+            ],
+            "w": 38,
+            "h": 20,
+            "note": "role=\"switch\" aria-checked=\"false\"; Enter / Space toggles (`15`:87)"
+           },
+           {
+            "t": "board",
+            "name": "text",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Keyboard-only mode",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary",
+              "w": 510
+             },
+             {
+              "t": "text",
+              "name": "description",
+              "chars": "Drag handles stop responding to the mouse; each shows fields and step buttons you use from the keyboard instead. Orders still ask you to confirm.",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary",
+              "w": 510
+             }
+            ],
+            "w": 510
+           }
+          ],
+          "w": 560,
+          "note": "CMP-004 Toggle: role=\"switch\", its label visible"
+         },
+         {
+          "t": "board",
+          "name": "option row · larger_hit_targets",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "switch",
+            "o": {
+             "fill": "color.surface.hover",
+             "radius": "radius.badge",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "knob",
+              "w": 12,
+              "h": 12,
+              "o": {
+               "fill": "color.text.secondary"
+              },
+              "x": 4,
+              "y": 4,
+              "abs": true
+             }
+            ],
+            "w": 38,
+            "h": 20,
+            "note": "role=\"switch\" aria-checked=\"false\"; Enter / Space toggles (`15`:87)"
+           },
+           {
+            "t": "board",
+            "name": "text",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Larger click targets",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary",
+              "w": 510
+             },
+             {
+              "t": "text",
+              "name": "description",
+              "chars": "Buttons, ladder rows and other click targets grow to at least 44 pixels. They are never smaller than 24 pixels, even with this off.",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary",
+              "w": 510
+             }
+            ],
+            "w": 510
+           }
+          ],
+          "w": 560,
+          "note": "CMP-004 Toggle: role=\"switch\", its label visible"
+         }
+        ],
+        "w": 560
+       }
+      ],
+      "w": 560
+     }
+    ],
+    "w": 960,
+    "note": "fieldset, legend \"Interaction\""
+   }
+  },
+  {
+   "into": "tile∕announce-significant · dark",
+   "node": {
+    "t": "board",
+    "name": "StatusBar (placeholder)",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · env word",
+      "w": 56,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 48
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "tile∕announce-always · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "tile/announce-always · dark",
+    "x": 80,
+    "y": 960,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar (placeholder)",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · env badge",
+          "w": 56,
+          "h": 20,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · health chip",
+          "w": 120,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar, not this spec's: placeholders only"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "w": 1280,
+      "h": 704,
+      "kids": [
+       {
+        "t": "board",
+        "name": "NavRail (placeholder)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entry-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-6",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 63,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 64,
+        "h": 704
+       },
+       {
+        "t": "board",
+        "name": "CMP-086 SettingsNav",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "pad": "space.inset.sm",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entry-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 104,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry-2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 112,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry · Accessibility (current)",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs",
+           "padX": "space.inset.md",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Accessibility",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.link"
+           },
+           {
+            "t": "rect",
+            "name": "selected underline",
+            "w": 96,
+            "h": 2,
+            "o": {
+             "fill": "color.border.selected"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 36,
+          "note": "aria-current=\"page\"; its own SettingsNav entry and sub-route (BQ-8, D05-A6, PROPOSED)"
+         },
+         {
+          "t": "board",
+          "name": "entry-3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 96,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry-4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 104,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 207,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 208,
+        "h": 704
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "tile∕announce-always · dark/body",
+   "node": {
+    "t": "board",
+    "name": "main",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1008,
+    "h": 704,
+    "kids": [
+     {
+      "t": "board",
+      "name": "SCR-117 content",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.lg",
+       "pad": "space.inset.xl",
+       "fill": "color.surface.app"
+      },
+      "w": 1008,
+      "note": "main: one column, max-width 60 rem (S07:33–34); DOM order = visual order",
+      "x": 0,
+      "y": 0,
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-065 FormSection · Announcements",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.md"
+        },
+        "w": 960,
+        "note": "fieldset, legend \"Announcements\"",
+        "kids": [
+         {
+          "t": "text",
+          "name": "h2",
+          "chars": "Announcements",
+          "typo": "type.ui.heading-sm",
+          "color": "color.text.primary",
+          "note": "h2 inside the fieldset's legend (`15`:743)"
+         },
+         {
+          "t": "board",
+          "name": "group",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xl"
+          },
+          "w": 944,
+          "note": "the tile after the group's last row in the DOM, to its right at >= 1280 px (§2)",
+          "kids": [
+           {
+            "t": "board",
+            "name": "rows",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.lg"
+            },
+            "w": 560,
+            "kids": [
+             {
+              "t": "board",
+              "name": "option row · announce_prices",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Announce price updates",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.primary",
+                "w": 560
+               },
+               {
+                "t": "text",
+                "name": "description",
+                "chars": "Choose when a screen reader reads prices: not at all, only with the events listed under this choice, or also the latest price at the pace below. Order, risk, rule, connection and environment events are always read.",
+                "typo": "type.ui.caption",
+                "color": "color.text.secondary",
+                "w": 560
+               },
+               {
+                "t": "board",
+                "name": "CMP-006 RadioGroup",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "gap": "space.inset.lg",
+                 "wrap": "wrap"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "radio · Off",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "gap": "space.inset.sm"
+                  },
+                  "kids": [
+                   {
+                    "t": "board",
+                    "name": "circle",
+                    "kids": [
+                     {
+                      "t": "ellipse",
+                      "name": "outline",
+                      "w": 16,
+                      "h": 16,
+                      "o": {
+                       "fill": "color.surface.canvas",
+                       "stroke": "color.border.strong",
+                       "strokeWidth": "border.hairline",
+                       "strokeAlign": "inner"
+                      },
+                      "x": 0,
+                      "y": 0,
+                      "abs": true
+                     }
+                    ],
+                    "w": 16,
+                    "h": 16
+                   },
+                   {
+                    "t": "text",
+                    "name": "label",
+                    "chars": "Off",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "h": 24,
+                  "note": "role=\"radio\" aria-checked=\"false\""
+                 },
+                 {
+                  "t": "board",
+                  "name": "radio · On significant change",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "gap": "space.inset.sm"
+                  },
+                  "kids": [
+                   {
+                    "t": "board",
+                    "name": "circle",
+                    "kids": [
+                     {
+                      "t": "ellipse",
+                      "name": "outline",
+                      "w": 16,
+                      "h": 16,
+                      "o": {
+                       "fill": "color.surface.canvas",
+                       "stroke": "color.border.strong",
+                       "strokeWidth": "border.hairline",
+                       "strokeAlign": "inner"
+                      },
+                      "x": 0,
+                      "y": 0,
+                      "abs": true
+                     }
+                    ],
+                    "w": 16,
+                    "h": 16
+                   },
+                   {
+                    "t": "text",
+                    "name": "label",
+                    "chars": "On significant change",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "h": 24,
+                  "note": "role=\"radio\" aria-checked=\"false\""
+                 },
+                 {
+                  "t": "board",
+                  "name": "radio · Always",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "gap": "space.inset.sm"
+                  },
+                  "kids": [
+                   {
+                    "t": "board",
+                    "name": "circle",
+                    "kids": [
+                     {
+                      "t": "ellipse",
+                      "name": "outline",
+                      "w": 16,
+                      "h": 16,
+                      "o": {
+                       "fill": "color.surface.canvas",
+                       "stroke": "color.border.strong",
+                       "strokeWidth": "border.hairline",
+                       "strokeAlign": "inner"
+                      },
+                      "x": 0,
+                      "y": 0,
+                      "abs": true
+                     },
+                     {
+                      "t": "ellipse",
+                      "name": "dot",
+                      "w": 8,
+                      "h": 8,
+                      "o": {
+                       "fill": "color.action.primary.default"
+                      },
+                      "x": 4,
+                      "y": 4,
+                      "abs": true
+                     }
+                    ],
+                    "w": 16,
+                    "h": 16
+                   },
+                   {
+                    "t": "text",
+                    "name": "label",
+                    "chars": "Always",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "h": 24,
+                  "note": "role=\"radio\" aria-checked=\"true\""
+                 }
+                ],
+                "w": 560,
+                "h": 32
+               },
+               {
+                "t": "board",
+                "name": "CMP-069 InfoPanel · inline",
+                "o": {
+                 "dir": "column",
+                 "align": "start",
+                 "gap": "space.stack.xs",
+                 "pad": "space.inset.md",
+                 "fill": "color.surface.raised",
+                 "radius": "radius.card"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "title",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "icon",
+                    "name": "info",
+                    "icon": "info",
+                    "color": "color.text.secondary",
+                    "size": "size.icon"
+                   },
+                   {
+                    "t": "text",
+                    "name": "words",
+                    "chars": "What significant includes",
+                    "typo": "type.ui.label",
+                    "color": "color.text.primary"
+                   }
+                  ]
+                 },
+                 {
+                  "t": "text",
+                  "name": "class · order filled",
+                  "chars": "• order filled",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.primary",
+                  "w": 536
+                 },
+                 {
+                  "t": "text",
+                  "name": "class · order rejected",
+                  "chars": "• order rejected",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.primary",
+                  "w": 536
+                 },
+                 {
+                  "t": "text",
+                  "name": "class · position auto-flattened by risk engine",
+                  "chars": "• position auto-flattened by risk engine",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.primary",
+                  "w": 536
+                 },
+                 {
+                  "t": "text",
+                  "name": "class · rule triggered",
+                  "chars": "• rule triggered",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.primary",
+                  "w": 536
+                 },
+                 {
+                  "t": "text",
+                  "name": "class · WS disconnected∕reconnected",
+                  "chars": "• WS disconnected/reconnected",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.primary",
+                  "w": 536
+                 },
+                 {
+                  "t": "text",
+                  "name": "class · Demo∕Live environment switch confirmed",
+                  "chars": "• Demo/Live environment switch confirmed",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.primary",
+                  "w": 536
+                 }
+                ],
+                "w": 560,
+                "note": "its own aria-describedby target after the row's description; never throttled (`05`:152)"
+               },
+               {
+                "t": "board",
+                "name": "changed",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "gap": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "Changed",
+                  "chars": "Changed",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.secondary"
+                 },
+                 {
+                  "t": "board",
+                  "name": "button · Reset Announce price updates",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "gap": "space.inset.xs",
+                   "padX": "space.button.paddingX",
+                   "radius": "radius.control",
+                   "justify": "center",
+                   "fill": "color.action.secondary.default",
+                   "stroke": "color.border.strong",
+                   "strokeWidth": "border.hairline",
+                   "strokeAlign": "inner"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "label",
+                    "chars": "Reset",
+                    "typo": "type.ui.body-strong",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 62,
+                  "h": 26,
+                  "note": "CMP-001; accessible name \"Reset Announce price updates\" (W-24); activating it moves focus to the option's control (§10)"
+                 }
+                ]
+               }
+              ],
+              "w": 560,
+              "note": "radiogroup: one Tab stop, arrows move"
+             },
+             {
+              "t": "board",
+              "name": "option row · announce_throttle_s",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Price announcement pace",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.primary",
+                "w": 560
+               },
+               {
+                "t": "text",
+                "name": "description",
+                "chars": "How often the latest price of each field may be read. Prices in between are skipped, never queued.",
+                "typo": "type.ui.caption",
+                "color": "color.text.secondary",
+                "w": 560
+               },
+               {
+                "t": "board",
+                "name": "CMP-006 RadioGroup",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "gap": "space.inset.lg",
+                 "wrap": "wrap"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "radio · 1 s",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "gap": "space.inset.sm"
+                  },
+                  "kids": [
+                   {
+                    "t": "board",
+                    "name": "circle",
+                    "kids": [
+                     {
+                      "t": "ellipse",
+                      "name": "outline",
+                      "w": 16,
+                      "h": 16,
+                      "o": {
+                       "fill": "color.surface.canvas",
+                       "stroke": "color.border.strong",
+                       "strokeWidth": "border.hairline",
+                       "strokeAlign": "inner"
+                      },
+                      "x": 0,
+                      "y": 0,
+                      "abs": true
+                     }
+                    ],
+                    "w": 16,
+                    "h": 16
+                   },
+                   {
+                    "t": "text",
+                    "name": "label",
+                    "chars": "1 s",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "h": 24,
+                  "note": "role=\"radio\" aria-checked=\"false\""
+                 },
+                 {
+                  "t": "board",
+                  "name": "radio · 2 s",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "gap": "space.inset.sm"
+                  },
+                  "kids": [
+                   {
+                    "t": "board",
+                    "name": "circle",
+                    "kids": [
+                     {
+                      "t": "ellipse",
+                      "name": "outline",
+                      "w": 16,
+                      "h": 16,
+                      "o": {
+                       "fill": "color.surface.canvas",
+                       "stroke": "color.border.strong",
+                       "strokeWidth": "border.hairline",
+                       "strokeAlign": "inner"
+                      },
+                      "x": 0,
+                      "y": 0,
+                      "abs": true
+                     },
+                     {
+                      "t": "ellipse",
+                      "name": "dot",
+                      "w": 8,
+                      "h": 8,
+                      "o": {
+                       "fill": "color.action.primary.default"
+                      },
+                      "x": 4,
+                      "y": 4,
+                      "abs": true
+                     }
+                    ],
+                    "w": 16,
+                    "h": 16
+                   },
+                   {
+                    "t": "text",
+                    "name": "label",
+                    "chars": "2 s",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "h": 24,
+                  "note": "role=\"radio\" aria-checked=\"true\""
+                 },
+                 {
+                  "t": "board",
+                  "name": "radio · 5 s",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "gap": "space.inset.sm"
+                  },
+                  "kids": [
+                   {
+                    "t": "board",
+                    "name": "circle",
+                    "kids": [
+                     {
+                      "t": "ellipse",
+                      "name": "outline",
+                      "w": 16,
+                      "h": 16,
+                      "o": {
+                       "fill": "color.surface.canvas",
+                       "stroke": "color.border.strong",
+                       "strokeWidth": "border.hairline",
+                       "strokeAlign": "inner"
+                      },
+                      "x": 0,
+                      "y": 0,
+                      "abs": true
+                     }
+                    ],
+                    "w": 16,
+                    "h": 16
+                   },
+                   {
+                    "t": "text",
+                    "name": "label",
+                    "chars": "5 s",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "h": 24,
+                  "note": "role=\"radio\" aria-checked=\"false\""
+                 }
+                ],
+                "w": 560,
+                "h": 32
+               }
+              ],
+              "w": 560,
+              "note": "radiogroup: one Tab stop, arrows move"
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "tile∕announce-always · dark/body/main/SCR-117 content/CMP-065 FormSection · Announcements/group/rows",
+   "node": {
+    "t": "board",
+    "name": "option row · verbosity",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "Screen-reader verbosity for the tape",
+      "typo": "type.ui.body-strong",
+      "color": "color.text.primary",
+      "w": 560
+     },
+     {
+      "t": "text",
+      "name": "description",
+      "chars": "Low reads only the events listed above, never each trade. Normal and High also read routine trades at the pace you set.",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 560
+     },
+     {
+      "t": "board",
+      "name": "CMP-006 RadioGroup",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg",
+       "wrap": "wrap"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "radio · Low",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Low",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       },
+       {
+        "t": "board",
+        "name": "radio · Normal",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           },
+           {
+            "t": "ellipse",
+            "name": "dot",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.action.primary.default"
+            },
+            "x": 4,
+            "y": 4,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Normal",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "radio · High",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "circle",
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "outline",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "High",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "role=\"radio\" aria-checked=\"false\""
+       }
+      ],
+      "w": 560,
+      "h": 32
+     }
+    ],
+    "w": 560,
+    "note": "radiogroup: one Tab stop, arrows move"
+   }
+  },
+  {
+   "into": "tile∕announce-always · dark/body/main/SCR-117 content/CMP-065 FormSection · Announcements/group/rows",
+   "node": {
+    "t": "board",
+    "name": "button · Reset this section",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.xs",
+     "padX": "space.button.paddingX",
+     "radius": "radius.control",
+     "justify": "center",
+     "fill": "color.action.secondary.default",
+     "stroke": "color.border.strong",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "Reset this section",
+      "typo": "type.ui.body-strong",
+      "color": "color.text.primary"
+     }
+    ],
+    "w": 157,
+    "h": 26,
+    "note": "CMP-001 Button (secondary)"
+   }
+  },
+  {
+   "into": "tile∕announce-always · dark/body/main/SCR-117 content/CMP-065 FormSection · Announcements/group",
+   "node": {
+    "t": "board",
+    "name": "CMP-228 PreviewTile · announcements",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas",
+     "radius": "radius.card",
+     "stroke": "color.border.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "preview",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "burst",
+        "chars": "20 s BTCUSDT burst, 40 prints a second (800 prints)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 328
+       }
+      ],
+      "note": "the role=img part: the burst it reads (§7.3); role=\"img\" aria-label=\"Announcement preview: Always, verbosity Normal\"; its children presentational"
+     },
+     {
+      "t": "board",
+      "name": "button · Play sample",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.xs",
+       "padX": "space.button.paddingX",
+       "radius": "radius.control",
+       "justify": "center",
+       "fill": "color.action.secondary.default",
+       "stroke": "color.border.strong",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Play sample",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 106,
+      "h": 26,
+      "note": "CMP-001 Button (secondary)"
+     },
+     {
+      "t": "board",
+      "name": "ul · transcript",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "li 1",
+        "chars": "2.0 s  [latest price] BTCUSDT 64 250.6",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "li 2",
+        "chars": "3.5 s  [order filled]",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "li 3",
+        "chars": "4.0 s  [latest price] BTCUSDT 64 251.7",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "li 4",
+        "chars": "6.0 s  [latest price] BTCUSDT 64 251.4",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "li 5",
+        "chars": "8.0 s  [latest price] BTCUSDT 64 251.2",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "li 6",
+        "chars": "8.7 s  [order rejected]",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "li 7",
+        "chars": "10.0 s  [latest price] BTCUSDT 64 251.6",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "li 8",
+        "chars": "12.0 s  [latest price] BTCUSDT 64 252.5",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "li 9",
+        "chars": "13.8 s  [WS disconnected/reconnected]",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "li 10",
+        "chars": "14.0 s  [latest price] BTCUSDT 64 251.9",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "li 11",
+        "chars": "16.0 s  [latest price] BTCUSDT 64 251.6",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "li 12",
+        "chars": "18.0 s  [latest price] BTCUSDT 64 250.9",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "li 13",
+        "chars": "20.0 s  [latest price] BTCUSDT 64 250.2",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "note": "a plain list, never a live region; lines append at the end, focus never moves (§6.3)"
+     }
+    ],
+    "w": 360,
+    "h": 315,
+    "note": "role=\"group\" aria-label=\"Announcement preview: Always, verbosity Normal\"; never the only disclosure (R-1); the frame is the decorative color.border.default (§11)"
+   }
+  },
+  {
+   "into": "tile∕announce-always · dark/body/main/SCR-117 content",
+   "node": {
+    "t": "board",
+    "name": "CMP-065 FormSection · Interaction",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "h2",
+      "chars": "Interaction",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "note": "h2 inside the fieldset's legend (`15`:743)"
+     },
+     {
+      "t": "board",
+      "name": "group",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "rows",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.lg"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "option row · keyboard_only",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "switch",
+            "o": {
+             "fill": "color.surface.hover",
+             "radius": "radius.badge",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "knob",
+              "w": 12,
+              "h": 12,
+              "o": {
+               "fill": "color.text.secondary"
+              },
+              "x": 4,
+              "y": 4,
+              "abs": true
+             }
+            ],
+            "w": 38,
+            "h": 20,
+            "note": "role=\"switch\" aria-checked=\"false\"; Enter / Space toggles (`15`:87)"
+           },
+           {
+            "t": "board",
+            "name": "text",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Keyboard-only mode",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary",
+              "w": 510
+             },
+             {
+              "t": "text",
+              "name": "description",
+              "chars": "Drag handles stop responding to the mouse; each shows fields and step buttons you use from the keyboard instead. Orders still ask you to confirm.",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary",
+              "w": 510
+             }
+            ],
+            "w": 510
+           }
+          ],
+          "w": 560,
+          "note": "CMP-004 Toggle: role=\"switch\", its label visible"
+         },
+         {
+          "t": "board",
+          "name": "option row · larger_hit_targets",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "switch",
+            "o": {
+             "fill": "color.surface.hover",
+             "radius": "radius.badge",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "knob",
+              "w": 12,
+              "h": 12,
+              "o": {
+               "fill": "color.text.secondary"
+              },
+              "x": 4,
+              "y": 4,
+              "abs": true
+             }
+            ],
+            "w": 38,
+            "h": 20,
+            "note": "role=\"switch\" aria-checked=\"false\"; Enter / Space toggles (`15`:87)"
+           },
+           {
+            "t": "board",
+            "name": "text",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Larger click targets",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary",
+              "w": 510
+             },
+             {
+              "t": "text",
+              "name": "description",
+              "chars": "Buttons, ladder rows and other click targets grow to at least 44 pixels. They are never smaller than 24 pixels, even with this off.",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary",
+              "w": 510
+             }
+            ],
+            "w": 510
+           }
+          ],
+          "w": 560,
+          "note": "CMP-004 Toggle: role=\"switch\", its label visible"
+         }
+        ],
+        "w": 560
+       }
+      ],
+      "w": 560
+     }
+    ],
+    "w": 960,
+    "note": "fieldset, legend \"Interaction\""
+   }
+  },
+  {
+   "into": "tile∕announce-always · dark",
+   "node": {
+    "t": "board",
+    "name": "StatusBar (placeholder)",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · env word",
+      "w": 56,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 48
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "tile∕low-verbosity-sample · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "tile/low-verbosity-sample · dark",
+    "x": 1440,
+    "y": 960,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar (placeholder)",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · env badge",
+          "w": 56,
+          "h": 20,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · health chip",
+          "w": 120,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar, not this spec's: placeholders only"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "w": 1280,
+      "h": 704,
+      "kids": [
+       {
+        "t": "board",
+        "name": "NavRail (placeholder)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entry-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-6",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 63,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 64,
+        "h": 704
+       },
+       {
+        "t": "board",
+        "name": "CMP-086 SettingsNav",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "pad": "space.inset.sm",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entry-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 104,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry-2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 112,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry · Accessibility (current)",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs",
+           "padX": "space.inset.md",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Accessibility",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.link"
+           },
+           {
+            "t": "rect",
+            "name": "selected underline",
+            "w": 96,
+            "h": 2,
+            "o": {
+             "fill": "color.border.selected"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 36,
+          "note": "aria-current=\"page\"; its own SettingsNav entry and sub-route (BQ-8, D05-A6, PROPOSED)"
+         },
+         {
+          "t": "board",
+          "name": "entry-3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 96,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry-4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 104,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 207,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 208,
+        "h": 704
+       },
+       {
+        "t": "board",
+        "name": "main",
+        "o": {
+         "fill": "color.surface.app",
+         "clip": true
+        },
+        "w": 1008,
+        "h": 704,
+        "kids": [
+         {
+          "t": "board",
+          "name": "SCR-117 content",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.lg",
+           "pad": "space.inset.xl",
+           "fill": "color.surface.app"
+          },
+          "w": 1008,
+          "note": "main: one column, max-width 60 rem (S07:33–34); DOM order = visual order",
+          "x": 0,
+          "y": 0,
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-065 FormSection · Announcements",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.md"
+            },
+            "w": 960,
+            "note": "fieldset, legend \"Announcements\"",
+            "kids": [
+             {
+              "t": "text",
+              "name": "h2",
+              "chars": "Announcements",
+              "typo": "type.ui.heading-sm",
+              "color": "color.text.primary",
+              "note": "h2 inside the fieldset's legend (`15`:743)"
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "tile∕low-verbosity-sample · dark/body/main/SCR-117 content/CMP-065 FormSection · Announcements",
+   "node": {
+    "t": "board",
+    "name": "group",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.xl"
+    },
+    "w": 944,
+    "note": "the tile after the group's last row in the DOM, to its right at >= 1280 px (§2)",
+    "kids": [
+     {
+      "t": "board",
+      "name": "rows",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "option row · announce_prices",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Announce price updates",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 560
+         },
+         {
+          "t": "text",
+          "name": "description",
+          "chars": "Choose when a screen reader reads prices: not at all, only with the events listed under this choice, or also the latest price at the pace below. Order, risk, rule, connection and environment events are always read.",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 560
+         },
+         {
+          "t": "board",
+          "name": "CMP-006 RadioGroup",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.lg",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "radio · Off",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "circle",
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "outline",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "fill": "color.surface.canvas",
+                 "stroke": "color.border.strong",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "x": 0,
+                "y": 0,
+                "abs": true
+               }
+              ],
+              "w": 16,
+              "h": 16
+             },
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Off",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 24,
+            "note": "role=\"radio\" aria-checked=\"false\""
+           },
+           {
+            "t": "board",
+            "name": "radio · On significant change",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "circle",
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "outline",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "fill": "color.surface.canvas",
+                 "stroke": "color.border.strong",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "x": 0,
+                "y": 0,
+                "abs": true
+               },
+               {
+                "t": "ellipse",
+                "name": "dot",
+                "w": 8,
+                "h": 8,
+                "o": {
+                 "fill": "color.action.primary.default"
+                },
+                "x": 4,
+                "y": 4,
+                "abs": true
+               }
+              ],
+              "w": 16,
+              "h": 16
+             },
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "On significant change",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 24,
+            "note": "role=\"radio\" aria-checked=\"true\""
+           },
+           {
+            "t": "board",
+            "name": "radio · Always",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "circle",
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "outline",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "fill": "color.surface.canvas",
+                 "stroke": "color.border.strong",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "x": 0,
+                "y": 0,
+                "abs": true
+               }
+              ],
+              "w": 16,
+              "h": 16
+             },
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Always",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 24,
+            "note": "role=\"radio\" aria-checked=\"false\""
+           }
+          ],
+          "w": 560,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-069 InfoPanel · inline",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs",
+           "pad": "space.inset.md",
+           "fill": "color.surface.raised",
+           "radius": "radius.card"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "title",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "info",
+              "icon": "info",
+              "color": "color.text.secondary",
+              "size": "size.icon"
+             },
+             {
+              "t": "text",
+              "name": "words",
+              "chars": "What significant includes",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             }
+            ]
+           },
+           {
+            "t": "text",
+            "name": "class · order filled",
+            "chars": "• order filled",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary",
+            "w": 536
+           },
+           {
+            "t": "text",
+            "name": "class · order rejected",
+            "chars": "• order rejected",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary",
+            "w": 536
+           },
+           {
+            "t": "text",
+            "name": "class · position auto-flattened by risk engine",
+            "chars": "• position auto-flattened by risk engine",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary",
+            "w": 536
+           },
+           {
+            "t": "text",
+            "name": "class · rule triggered",
+            "chars": "• rule triggered",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary",
+            "w": 536
+           },
+           {
+            "t": "text",
+            "name": "class · WS disconnected∕reconnected",
+            "chars": "• WS disconnected/reconnected",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary",
+            "w": 536
+           },
+           {
+            "t": "text",
+            "name": "class · Demo∕Live environment switch confirmed",
+            "chars": "• Demo/Live environment switch confirmed",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary",
+            "w": 536
+           }
+          ],
+          "w": 560,
+          "note": "its own aria-describedby target after the row's description; never throttled (`05`:152)"
+         }
+        ],
+        "w": 560,
+        "note": "radiogroup: one Tab stop, arrows move"
+       },
+       {
+        "t": "board",
+        "name": "option row · verbosity",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Screen-reader verbosity for the tape",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 560
+         },
+         {
+          "t": "text",
+          "name": "description",
+          "chars": "Low reads only the events listed above, never each trade. Normal and High also read routine trades at the pace you set.",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 560
+         },
+         {
+          "t": "board",
+          "name": "CMP-006 RadioGroup",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.lg",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "radio · Low",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "circle",
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "outline",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "fill": "color.surface.canvas",
+                 "stroke": "color.border.strong",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "x": 0,
+                "y": 0,
+                "abs": true
+               },
+               {
+                "t": "ellipse",
+                "name": "dot",
+                "w": 8,
+                "h": 8,
+                "o": {
+                 "fill": "color.action.primary.default"
+                },
+                "x": 4,
+                "y": 4,
+                "abs": true
+               }
+              ],
+              "w": 16,
+              "h": 16
+             },
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Low",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 24,
+            "note": "role=\"radio\" aria-checked=\"true\""
+           },
+           {
+            "t": "board",
+            "name": "radio · Normal",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "circle",
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "outline",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "fill": "color.surface.canvas",
+                 "stroke": "color.border.strong",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "x": 0,
+                "y": 0,
+                "abs": true
+               }
+              ],
+              "w": 16,
+              "h": 16
+             },
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Normal",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 24,
+            "note": "role=\"radio\" aria-checked=\"false\""
+           },
+           {
+            "t": "board",
+            "name": "radio · High",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "circle",
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "outline",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "fill": "color.surface.canvas",
+                 "stroke": "color.border.strong",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "x": 0,
+                "y": 0,
+                "abs": true
+               }
+              ],
+              "w": 16,
+              "h": 16
+             },
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "High",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 24,
+            "note": "role=\"radio\" aria-checked=\"false\""
+           }
+          ],
+          "w": 560,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "changed",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "Changed",
+            "chars": "Changed",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary"
+           },
+           {
+            "t": "board",
+            "name": "button · Reset Screen-reader verbosity for the tape",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.xs",
+             "padX": "space.button.paddingX",
+             "radius": "radius.control",
+             "justify": "center",
+             "fill": "color.action.secondary.default",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Reset",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 62,
+            "h": 26,
+            "note": "CMP-001; accessible name \"Reset Screen-reader verbosity for the tape\" (W-24); activating it moves focus to the option's control (§10)"
+           }
+          ]
+         }
+        ],
+        "w": 560,
+        "note": "radiogroup: one Tab stop, arrows move"
+       },
+       {
+        "t": "board",
+        "name": "button · Reset this section",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "padX": "space.button.paddingX",
+         "radius": "radius.control",
+         "justify": "center",
+         "fill": "color.action.secondary.default",
+         "stroke": "color.border.strong",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reset this section",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 157,
+        "h": 26,
+        "note": "CMP-001 Button (secondary)"
+       }
+      ],
+      "w": 560
+     }
+    ]
+   }
+  },
+  {
+   "into": "tile∕low-verbosity-sample · dark/body/main/SCR-117 content/CMP-065 FormSection · Announcements/group",
+   "node": {
+    "t": "board",
+    "name": "CMP-228 PreviewTile · announcements",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas",
+     "radius": "radius.card",
+     "stroke": "color.border.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "preview",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "burst",
+        "chars": "20 s BTCUSDT burst, 40 prints a second (800 prints)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 328
+       }
+      ],
+      "note": "the role=img part: the burst it reads (§7.3); role=\"img\" aria-label=\"Announcement preview: On significant change, verbosity Low\"; its children presentational"
+     },
+     {
+      "t": "board",
+      "name": "button · Play sample",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.xs",
+       "padX": "space.button.paddingX",
+       "radius": "radius.control",
+       "justify": "center",
+       "fill": "color.action.secondary.default",
+       "stroke": "color.border.strong",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Play sample",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 106,
+      "h": 26,
+      "note": "CMP-001 Button (secondary)"
+     },
+     {
+      "t": "board",
+      "name": "ul · transcript",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "li 1",
+        "chars": "3.5 s  [order filled]",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "li 2",
+        "chars": "8.7 s  [order rejected]",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "li 3",
+        "chars": "13.8 s  [WS disconnected/reconnected]",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "note": "a plain list, never a live region; lines append at the end, focus never moves (§6.3)"
+     }
+    ],
+    "w": 360,
+    "h": 143,
+    "note": "role=\"group\" aria-label=\"Announcement preview: On significant change, verbosity Low\"; never the only disclosure (R-1); the frame is the decorative color.border.default (§11)"
+   }
+  },
+  {
+   "into": "tile∕low-verbosity-sample · dark/body/main/SCR-117 content",
+   "node": {
+    "t": "board",
+    "name": "CMP-065 FormSection · Interaction",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "h2",
+      "chars": "Interaction",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "note": "h2 inside the fieldset's legend (`15`:743)"
+     },
+     {
+      "t": "board",
+      "name": "group",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "rows",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.lg"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "option row · keyboard_only",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "switch",
+            "o": {
+             "fill": "color.surface.hover",
+             "radius": "radius.badge",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "knob",
+              "w": 12,
+              "h": 12,
+              "o": {
+               "fill": "color.text.secondary"
+              },
+              "x": 4,
+              "y": 4,
+              "abs": true
+             }
+            ],
+            "w": 38,
+            "h": 20,
+            "note": "role=\"switch\" aria-checked=\"false\"; Enter / Space toggles (`15`:87)"
+           },
+           {
+            "t": "board",
+            "name": "text",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Keyboard-only mode",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary",
+              "w": 510
+             },
+             {
+              "t": "text",
+              "name": "description",
+              "chars": "Drag handles stop responding to the mouse; each shows fields and step buttons you use from the keyboard instead. Orders still ask you to confirm.",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary",
+              "w": 510
+             }
+            ],
+            "w": 510
+           }
+          ],
+          "w": 560,
+          "note": "CMP-004 Toggle: role=\"switch\", its label visible"
+         },
+         {
+          "t": "board",
+          "name": "option row · larger_hit_targets",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "switch",
+            "o": {
+             "fill": "color.surface.hover",
+             "radius": "radius.badge",
+             "stroke": "color.border.strong",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "knob",
+              "w": 12,
+              "h": 12,
+              "o": {
+               "fill": "color.text.secondary"
+              },
+              "x": 4,
+              "y": 4,
+              "abs": true
+             }
+            ],
+            "w": 38,
+            "h": 20,
+            "note": "role=\"switch\" aria-checked=\"false\"; Enter / Space toggles (`15`:87)"
+           },
+           {
+            "t": "board",
+            "name": "text",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Larger click targets",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary",
+              "w": 510
+             },
+             {
+              "t": "text",
+              "name": "description",
+              "chars": "Buttons, ladder rows and other click targets grow to at least 44 pixels. They are never smaller than 24 pixels, even with this off.",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary",
+              "w": 510
+             }
+            ],
+            "w": 510
+           }
+          ],
+          "w": 560,
+          "note": "CMP-004 Toggle: role=\"switch\", its label visible"
+         }
+        ],
+        "w": 560
+       }
+      ],
+      "w": 560
+     }
+    ],
+    "w": 960,
+    "note": "fieldset, legend \"Interaction\""
+   }
+  },
+  {
+   "into": "tile∕low-verbosity-sample · dark",
+   "node": {
+    "t": "board",
+    "name": "StatusBar (placeholder)",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · env word",
+      "w": 56,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 48
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 01",
+    "chars": "state: tile/announce-off · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 80,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 02",
+    "chars": "state: tile/announce-significant · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 1440,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 03",
+    "chars": "state: tile/announce-always · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 80,
+    "y": 932
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 04",
+    "chars": "state: tile/low-verbosity-sample · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 1440,
+    "y": 932
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer · data",
+    "chars": "Data: seeded synthetic stream (seed 1304, BTCUSDT, tick 0.1); sample data, never a market capture (§0 L61); the tick size is the recorded fixture's",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "x": 80,
+    "y": 1784
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "E47-D05 / 07 announcement-tile",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Board",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§0 L71: §6.3, §7: off / significant / always, and the low-verbosity sample (T AC5)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Theme: dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Frames (hand-off §H L97): tile/announce-off · dark; tile/announce-significant · dark; tile/announce-always · dark; tile/low-verbosity-sample · dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "Export: docs/design/E47/img/E47-D05-07-announcement-tile.png",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "Data: seeded synthetic stream (seed 1304, BTCUSDT, tick 0.1); sample data, never a market capture (§0 L61); the tick size is the recorded fixture's",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-6",
+        "chars": "Markers, tags, fold lines and callouts in color.status.info.default are annotation, not product UI",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "tile/announce-off · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§7.1 L199: announce_prices Off governs the polite price reads only; the six classes of §7.2 are assertive, never throttled, and Off does not silence them (`05`:152): the sample keeps its three event lines",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "The burst (§7.3 L218): 20 s of BTCUSDT at 40 prints a second (800 prints, seed 1304); its three events: 3.5 s order filled; 8.7 s order rejected; 13.8 s WS disconnected/reconnected",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "The tile (§6.3 L189): a static list behind \"Play sample\", a plain ul, never a live region; played to the end here (lines append at the end, focus never moves)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "tile/announce-significant · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "On significant change (the default, \"On significant change\"): the events listed under the choice only (§4's description); the CMP-069 InfoPanel \"What significant includes\" names the 6 classes verbatim from `05`:152 (§7.2 L203)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Mid-play at second 10: the button reads \"Show all\" (W-27) and reveals the rest at once; the lines so far: 2 of 3",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Under reduced motion the list renders whole, no timed reveal (R-6)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-04",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "tile/announce-always · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Always with normal verbosity: the three events plus one [latest price] line per field per cadence (2 s, the default from `05`:151, PROPOSED D05-Q1): 13 lines over 20 s; each price is the last print at that second",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "The cadence row (announce_throttle_s, \"Price announcement pace\") is shown only when Always is chosen, inserted directly after the group, its value kept when hidden (§7.1)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "The words are E47-D07's: the tile shows each class in brackets until they exist (MODEL:91–94)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-05",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "tile/low-verbosity-sample · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "T AC5 (§7.3 L216): verbosity Low — the transcript holds exactly three lines, one per event, each named by its class, and none for a tick: 3.5 s [order filled]; 8.7 s [order rejected]; 13.8 s [WS disconnected/reconnected]",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Low reads only the events listed above, never each trade (§4's verbosity description)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E47-D05 SCR-117 · board 07 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400,
+    "x": 2800,
+    "y": 80
+   }
+  }
+ ],
+ "export": "docs/design/E47/img/E47-D05-07-announcement-tile.png",
+ "notes": {
+  "sources": [
+   "spec docs/design/E47/E47-D05.md md5 2352bde9, hand-off docs/design/E47/E47-D05-handoff.md md5 0b4d3568 (§0 L71; hand-off §H L97); shipped labels apps/web/src/features/a11y-preferences/AccessibilitySettingsScreen.tsx md5 797df795; tick size packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a; ring geometry E47-D04 at 1ff5d8cb9 (§7.1)"
+  ],
+  "copy_keys": [
+   "W-24 (§15 L307, PROPOSED): Reset",
+   "W-24 (§15 L307, PROPOSED): Changed",
+   "W-27 (§15 L310, PROPOSED, the announcement tile (§6.3)): Show all"
+  ],
+  "copy_gaps": [
+   "\"Reset this section\": §10 L248 and §12 name the button; §15 has no W-row for it",
+   "\"Play sample\": the announcement tile's button (§6.3 L189; W-27 \"Show all\" is its label while playing)",
+   "the tile's burst line \"20 s BTCUSDT burst, 40 prints a second\": §7.3 L218's figures, worded by the kit",
+   "the announcements tile's accessible name \"Announcement preview: Off, verbosity Normal\": §6 L179 asks for \"the configuration in words\" and gives no string (an aria-label, not drawn)",
+   "the announcements tile's accessible name \"Announcement preview: On significant change, verbosity Normal\": §6 L179 asks for \"the configuration in words\" and gives no string (an aria-label, not drawn)",
+   "the announcements tile's accessible name \"Announcement preview: Always, verbosity Normal\": §6 L179 asks for \"the configuration in words\" and gives no string (an aria-label, not drawn)",
+   "the announcements tile's accessible name \"Announcement preview: On significant change, verbosity Low\": §6 L179 asks for \"the configuration in words\" and gives no string (an aria-label, not drawn)",
+   "\"[latest price]\": the price lines' bracketed label (§7.3 L218: \"one latest-price line per field per cadence\"; the words are E47-D07's)"
+  ],
+  "spec_gaps": [],
+  "fallbacks": [
+   "fallback: border.control (E47-D03's D03-D5 / D03-D6, PROPOSED) is not a token yet: control boundaries bind border.hairline in dark and light and border.thick in high contrast",
+   "kit choice: the shell chrome (TopBar, NavRail, StatusBar) and the other CMP-086 entries drawn as neutral placeholders; only SCR-117's content, its SettingsNav entry and the reveal hosts' named parts are drawn"
+  ],
+  "tokens": [
+   "type.ui.caption",
+   "color.text.primary",
+   "color.text.secondary",
+   "size.icon",
+   "type.ui.label",
+   "space.inset.xs",
+   "space.stack.xs",
+   "space.inset.md",
+   "color.surface.raised",
+   "radius.card",
+   "color.action.primary.default",
+   "color.surface.canvas",
+   "color.border.strong",
+   "border.hairline",
+   "type.ui.body",
+   "space.inset.sm",
+   "space.inset.lg",
+   "type.ui.body-strong",
+   "space.button.paddingX",
+   "radius.control",
+   "color.action.secondary.default",
+   "type.num.sm",
+   "space.stack.md",
+   "color.border.default",
+   "type.ui.heading-sm",
+   "space.stack.lg",
+   "space.inset.xl",
+   "color.surface.hover",
+   "radius.badge",
+   "color.surface.app",
+   "color.border.subtle",
+   "color.text.link",
+   "color.border.selected",
+   "color.focus.ring",
+   "border.focus",
+   "color.text.tertiary",
+   "space.stack.sm"
+  ],
+  "live_checks": [
+   "root 'E47-D05 / 07 announcement-tile' at (7000, 4200): read back the name exactly after the first section call; size 3280 x 1880",
+   "after touchTexts + relayout: the annotation column (estimated 884 px) ends inside the root (h 1880); raise the root's h to its end + 80 if not",
+   "frame 'tile∕announce-off · dark': read back 1280 x 800 at (80, 80); clip on, no child spills",
+   "frame 'tile∕announce-significant · dark': read back 1280 x 800 at (1440, 80); clip on, no child spills",
+   "frame 'tile∕announce-always · dark': read back 1280 x 800 at (80, 960); clip on, no child spills",
+   "frame 'tile∕low-verbosity-sample · dark': read back 1280 x 800 at (1440, 960); clip on, no child spills",
+   "export docs/design/E47/img/E47-D05-07-announcement-tile.png; record the board id and the PNG size in §0"
+  ],
+  "deviations": [],
+  "ambiguities": [
+   "§2 L119 gives the five FormSections and their order but not which rows each holds: the kit groups §3's keys by their words — Motion: reduced_motion, disable_canvas_animation; Contrast and focus: increased_contrast, thick_focus_ring, always_show_focus_ring; Data views: always_show_tables; Announcements: announce_prices, announce_throttle_s, verbosity; Interaction: keyboard_only, larger_hit_targets (the tiles: motion, focus, table-alt and announcements after their group's last row, §6)",
+   "Board 07: §0's \"off / significant / always\" frames show the same three event lines under Off and On significant change — §7.1 reads Off and the cadence as governing the polite price reads only, and the seeded burst has no price line under either; they differ in the radio and the tile's name"
+  ]
+ }
+}

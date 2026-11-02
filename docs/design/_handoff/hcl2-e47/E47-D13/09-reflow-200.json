@@ -1,0 +1,5446 @@
+{
+ "board": {
+  "name": "E47-D13 / 09 reflow-200",
+  "w": 4640,
+  "h": 1048,
+  "x": 18000,
+  "y": 3200,
+  "o": {
+   "fill": "color.surface.app",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "reflow∕200 · dark",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "200 %: a 640 CSS px viewport; the page in two strips at 1:1 CSS px",
+    "x": 80,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "strip 1 · CSS y 0-800",
+      "o": {
+       "fill": "color.surface.app",
+       "clip": true
+      },
+      "w": 640,
+      "h": 800,
+      "x": 0,
+      "y": 0,
+      "kids": [
+       {
+        "t": "board",
+        "name": "page · SCR-119∕statement",
+        "o": {
+         "fill": "color.surface.app"
+        },
+        "w": 640,
+        "h": 4051,
+        "note": "route /accessibility; one main, one h1; a lazy chunk (§7.1)",
+        "x": 0,
+        "y": 0,
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-086 SettingsNav · collapsed above the content",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.raised",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Settings",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · current entry",
+            "w": 96,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 592,
+          "h": 31,
+          "note": "nav aria-label=\"Settings\", collapsed above the content; its items stay in the Tab order (§7.5)",
+          "x": 24,
+          "y": 24
+         },
+         {
+          "t": "board",
+          "name": "1 · h1 + status",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "h1",
+            "chars": "Accessibility statement",
+            "typo": "type.ui.heading-lg",
+            "color": "color.text.primary",
+            "w": 592,
+            "note": "h1 tabindex=\"-1\", focused once on arrival (§7.4); the document title is W-20"
+           },
+           {
+            "t": "text",
+            "name": "status · W-5",
+            "chars": "Partially conforms",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary",
+            "w": 592,
+            "note": "the status in words (R-9), the first text after the h1"
+           }
+          ],
+          "w": 592,
+          "x": 24,
+          "y": 67,
+          "h": 51
+         },
+         {
+          "t": "board",
+          "name": "2 · target + scope",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "W-4",
+            "chars": "CandleViewer aims to meet WCAG 2.2 Level AA.",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 592
+           },
+           {
+            "t": "text",
+            "name": "scope",
+            "chars": "Scope: the web app in its desktop shell.",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 592
+           }
+          ],
+          "w": 592,
+          "x": 24,
+          "y": 130,
+          "h": 41
+         },
+         {
+          "t": "text",
+          "name": "3 · version line · W-6",
+          "chars": "This statement applies to version 1.4.0, issued on 2 November 2026. Next review by 31 January 2027.",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 592,
+          "note": "type.ui.caption (§7.7); text, not a control",
+          "x": 24,
+          "y": 183
+         },
+         {
+          "t": "board",
+          "name": "4 · supported",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "h2",
+            "chars": "What is supported",
+            "typo": "type.ui.heading-md",
+            "color": "color.text.primary",
+            "w": 592,
+            "note": "h2"
+           },
+           {
+            "t": "text",
+            "name": "W-11",
+            "chars": "No criterion is claimed as supported yet: the evidence is still being produced.",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 592
+           }
+          ],
+          "w": 592,
+          "x": 24,
+          "y": 234,
+          "h": 50
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "reflow∕200 · dark/strip 1 · CSS y 0-800/page · SCR-119∕statement",
+   "node": {
+    "t": "board",
+    "name": "5 · known limitations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "h2",
+      "chars": "Known limitations",
+      "typo": "type.ui.heading-md",
+      "color": "color.text.primary",
+      "w": 592,
+      "note": "h2"
+     },
+     {
+      "t": "board",
+      "name": "CMP-049 table · Known limitations",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "header row",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "th · notice",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "start",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "What you notice",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 222,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · who",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "start",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Who it affects",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 159,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · instead",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "start",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "What to do instead",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 211,
+          "h": 24
+         }
+        ],
+        "w": 592,
+        "h": 24,
+        "note": "column headers, scope=\"col\""
+       },
+       {
+        "t": "rect",
+        "name": "header rule",
+        "w": 592,
+        "h": 1,
+        "o": {
+         "fill": "color.border.default"
+        }
+       },
+       {
+        "t": "board",
+        "name": "rows",
+        "o": {
+         "dir": "column",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "row 01 · A11Y-P-01",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.app"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "notice",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "start",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Clicking outside the identity check window moves the keyboard position to the page behind it. (2.4.3)",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 206
+             }
+            ],
+            "w": 222,
+            "h": 108
+           },
+           {
+            "t": "board",
+            "name": "who",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "start",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Keyboard and screen reader users lose their place and may type into the wrong area.",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 143
+             }
+            ],
+            "w": 159,
+            "h": 108
+           },
+           {
+            "t": "board",
+            "name": "instead",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "start",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Press Escape to close the window, then open it again from the same button.",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 195
+             }
+            ],
+            "w": 211,
+            "h": 108
+           }
+          ],
+          "w": 592,
+          "h": 108
+         },
+         {
+          "t": "board",
+          "name": "row 02 · A11Y-P-02",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.raised"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "notice",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "start",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "While signing in, at the two-factor step and after a password change, the keyboard position can jump back to the start of the page. (2.4.3)",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 206
+             }
+            ],
+            "w": 222,
+            "h": 128
+           },
+           {
+            "t": "board",
+            "name": "who",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "start",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Keyboard and screen reader users must find their place again, and nothing is read out.",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 143
+             }
+            ],
+            "w": 159,
+            "h": 128
+           },
+           {
+            "t": "board",
+            "name": "instead",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "start",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Press Tab once to reach the first field of the new step.",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 195
+             }
+            ],
+            "w": 211,
+            "h": 128
+           }
+          ],
+          "w": 592,
+          "h": 128
+         },
+         {
+          "t": "board",
+          "name": "row 03 · A11Y-P-05",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.app"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "notice",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "start",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Some messages on the sign-in and identity check screens are read out every second, or are not read out at all. (4.1.3)",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 206
+             }
+            ],
+            "w": 222,
+            "h": 108
+           },
+           {
+            "t": "board",
+            "name": "who",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "start",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Screen reader users hear a long run of repeats, or miss that a code was not sent.",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 143
+             }
+            ],
+            "w": 159,
+            "h": 108
+           },
+           {
+            "t": "board",
+            "name": "instead",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "start",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Read the message under the field with your screen reader's reading keys.",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 195
+             }
+            ],
+            "w": 211,
+            "h": 108
+           }
+          ],
+          "w": 592,
+          "h": 108
+         },
+         {
+          "t": "board",
+          "name": "row 04 · A11Y-P-06",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.raised"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "notice",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "start",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "At very high zoom the lock and identity check windows and one page do not fit, so some buttons are cut off. (1.4.10)",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 206
+             }
+            ],
+            "w": 222,
+            "h": 108
+           },
+           {
+            "t": "board",
+            "name": "who",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "start",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "People who zoom in a lot may not reach the Unlock or Confirm buttons.",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 143
+             }
+            ],
+            "w": 159,
+            "h": 108
+           },
+           {
+            "t": "board",
+            "name": "instead",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "start",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Zoom out one step, or use the in-app text size control instead.",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 195
+             }
+            ],
+            "w": 211,
+            "h": 108
+           }
+          ],
+          "w": 592,
+          "h": 108
+         }
+        ],
+        "w": 592,
+        "h": 980
+       }
+      ],
+      "w": 592,
+      "note": "static <table> (not grid), aria-labelledby its h2; three th scope=\"col\" (W-10)",
+      "h": 1013
+     }
+    ],
+    "w": 592,
+    "x": 24,
+    "y": 308,
+    "h": 1045
+   }
+  },
+  {
+   "into": "reflow∕200 · dark",
+   "node": {
+    "t": "board",
+    "name": "strip 2 · CSS y 800-1600",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 640,
+    "h": 800,
+    "x": 640,
+    "y": 0,
+    "kids": [
+     {
+      "t": "board",
+      "name": "page · SCR-119∕statement",
+      "o": {
+       "fill": "color.surface.app"
+      },
+      "w": 640,
+      "h": 4051,
+      "note": "route /accessibility; one main, one h1; a lazy chunk (§7.1)",
+      "x": 0,
+      "y": -800,
+      "kids": [
+       {
+        "t": "board",
+        "name": "5 · known limitations",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "spacer · 19 px cropped above",
+          "w": 592,
+          "h": 19
+         },
+         {
+          "t": "board",
+          "name": "CMP-049 table · Known limitations",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "spacer · 29 px cropped above",
+            "w": 592,
+            "h": 29
+           },
+           {
+            "t": "board",
+            "name": "rows",
+            "o": {
+             "dir": "column",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "spacer · 344 px cropped above",
+              "w": 592,
+              "h": 344
+             },
+             {
+              "t": "board",
+              "name": "row 04 · A11Y-P-06",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.raised"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "notice",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "At very high zoom the lock and identity check windows and one page do not fit, so some buttons are cut off. (1.4.10)",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 206
+                 }
+                ],
+                "w": 222,
+                "h": 108
+               },
+               {
+                "t": "board",
+                "name": "who",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "People who zoom in a lot may not reach the Unlock or Confirm buttons.",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 143
+                 }
+                ],
+                "w": 159,
+                "h": 108
+               },
+               {
+                "t": "board",
+                "name": "instead",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Zoom out one step, or use the in-app text size control instead.",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 195
+                 }
+                ],
+                "w": 211,
+                "h": 108
+               }
+              ],
+              "w": 592,
+              "h": 108
+             },
+             {
+              "t": "board",
+              "name": "row 05 · A11Y-F-0015",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.app"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "notice",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "When the connection comes back, the app does not say so. (4.1.3)",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 206
+                 }
+                ],
+                "w": 222,
+                "h": 108
+               },
+               {
+                "t": "board",
+                "name": "who",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Screen reader users hear that the connection dropped but not that it recovered.",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 143
+                 }
+                ],
+                "w": 159,
+                "h": 108
+               },
+               {
+                "t": "board",
+                "name": "instead",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Check the connection status in the status bar at the bottom of the window.",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 195
+                 }
+                ],
+                "w": 211,
+                "h": 108
+               }
+              ],
+              "w": 592,
+              "h": 108
+             },
+             {
+              "t": "board",
+              "name": "row 06 · A11Y-F-0018",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.raised"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "notice",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Two links on the appearance settings page are hard to read in the dark and high-contrast themes. (1.4.3)",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 206
+                 }
+                ],
+                "w": 222,
+                "h": 128
+               },
+               {
+                "t": "board",
+                "name": "who",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "People with low vision may not see the links to this statement and to the keyboard shortcuts.",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 143
+                 }
+                ],
+                "w": 159,
+                "h": 128
+               },
+               {
+                "t": "board",
+                "name": "instead",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Switch to the light theme, or move to the links with Tab.",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 195
+                 }
+                ],
+                "w": 211,
+                "h": 128
+               }
+              ],
+              "w": 592,
+              "h": 128
+             },
+             {
+              "t": "board",
+              "name": "row 07 · A11Y-F-0023",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.app"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "notice",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "The outline of the connection status chip is faint in every theme. (1.4.11)",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 206
+                 }
+                ],
+                "w": 222,
+                "h": 92
+               },
+               {
+                "t": "board",
+                "name": "who",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "People with low vision may not see where the chip starts and ends.",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 143
+                 }
+                ],
+                "w": 159,
+                "h": 92
+               },
+               {
+                "t": "board",
+                "name": "instead",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Read the chip's words, which name the connection state.",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 195
+                 }
+                ],
+                "w": 211,
+                "h": 92
+               }
+              ],
+              "w": 592,
+              "h": 92
+             },
+             {
+              "t": "board",
+              "name": "row 08 · A11Y-F-0024",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.raised"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "notice",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "The data age line changes colour as the data gets older, without changing its words. (1.4.1)",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 206
+                 }
+                ],
+                "w": 222,
+                "h": 108
+               },
+               {
+                "t": "board",
+                "name": "who",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "People who cannot tell the colours apart may miss that the data is getting old.",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 143
+                 }
+                ],
+                "w": 159,
+                "h": 108
+               },
+               {
+                "t": "board",
+                "name": "instead",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Read the age shown in the line, which counts the seconds.",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 195
+                 }
+                ],
+                "w": 211,
+                "h": 108
+               }
+              ],
+              "w": 592,
+              "h": 108
+             },
+             {
+              "t": "board",
+              "name": "row 09 · A11Y-F-0029",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.app"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "notice",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Some settings pages can only be reached from the navigation rail. (2.4.5)",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 206
+                 }
+                ],
+                "w": 222,
+                "h": 92
+               },
+               {
+                "t": "board",
+                "name": "who",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "People who prefer to search for a page have only one way in.",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 143
+                 }
+                ],
+                "w": 159,
+                "h": 92
+               },
+               {
+                "t": "board",
+                "name": "instead",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Use the navigation rail; every item in it can be reached with Tab.",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 195
+                 }
+                ],
+                "w": 211,
+                "h": 92
+               }
+              ],
+              "w": 592,
+              "h": 92
+             }
+            ],
+            "w": 592,
+            "h": 980
+           }
+          ],
+          "w": 592,
+          "note": "static <table> (not grid), aria-labelledby its h2; three th scope=\"col\" (W-10)",
+          "h": 1013
+         }
+        ],
+        "w": 592,
+        "x": 24,
+        "y": 308,
+        "h": 1045
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "reflow∕200 · dark/strip 2 · CSS y 800-1600/page · SCR-119∕statement",
+   "node": {
+    "t": "board",
+    "name": "6 · alternatives",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "h2",
+      "chars": "Alternatives",
+      "typo": "type.ui.heading-md",
+      "color": "color.text.primary",
+      "w": 592,
+      "note": "h2"
+     },
+     {
+      "t": "board",
+      "name": "list",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "alternative 1",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Show a data table in place of a chart or panel",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 266
+         },
+         {
+          "t": "board",
+          "name": "kbd · Alt+T",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.xs",
+           "radius": "radius.control",
+           "fill": "color.surface.raised",
+           "stroke": "color.border.default",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "keys",
+            "chars": "Alt+T",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 23,
+          "note": "one <kbd> element; its text joins the keys with \"+\""
+         }
+        ],
+        "w": 592,
+        "h": 40
+       },
+       {
+        "t": "board",
+        "name": "alternative 2",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Keyboard equivalents for every action",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 266
+         },
+         {
+          "t": "board",
+          "name": "link · SCR-013",
+          "o": {
+           "dir": "column",
+           "align": "start"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Keyboard shortcuts (SCR-013)",
+            "typo": "type.ui.body",
+            "color": "color.text.link"
+           },
+           {
+            "t": "rect",
+            "name": "underline",
+            "w": 206,
+            "h": 1,
+            "o": {
+             "fill": "color.text.link"
+            }
+           }
+          ],
+          "w": 206,
+          "h": 21,
+          "note": "CMP-021 Link: native <a>, underlined; a Tab stop"
+         }
+        ],
+        "w": 592,
+        "h": 40
+       },
+       {
+        "t": "board",
+        "name": "alternative 3",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "How much the screen reader announces",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 266
+         },
+         {
+          "t": "board",
+          "name": "link · SCR-117",
+          "o": {
+           "dir": "column",
+           "align": "start"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Accessibility settings (SCR-117)",
+            "typo": "type.ui.body",
+            "color": "color.text.link"
+           },
+           {
+            "t": "rect",
+            "name": "underline",
+            "w": 235,
+            "h": 1,
+            "o": {
+             "fill": "color.text.link"
+            }
+           }
+          ],
+          "w": 235,
+          "h": 21,
+          "note": "CMP-021 Link: native <a>, underlined; a Tab stop"
+         }
+        ],
+        "w": 592,
+        "h": 25
+       },
+       {
+        "t": "board",
+        "name": "alternative 4",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Make the text larger",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 266
+         },
+         {
+          "t": "board",
+          "name": "kbd · Ctrl+=",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.xs",
+           "radius": "radius.control",
+           "fill": "color.surface.raised",
+           "stroke": "color.border.default",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "keys",
+            "chars": "Ctrl+=",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 23,
+          "note": "one <kbd> element; its text joins the keys with \"+\""
+         },
+         {
+          "t": "text",
+          "name": "SCR-116",
+          "chars": "or the font size scale in Appearance & density settings (SCR-116)",
+          "typo": "type.ui.body",
+          "color": "color.text.secondary",
+          "w": 250
+         }
+        ],
+        "w": 592,
+        "h": 58
+       }
+      ],
+      "w": 592,
+      "h": 270
+     }
+    ],
+    "w": 592,
+    "note": "a list; the two links are the section's only Tab stops",
+    "x": 24,
+    "y": 1377,
+    "h": 302
+   }
+  },
+  {
+   "into": "reflow∕200 · dark",
+   "node": {
+    "t": "rect",
+    "name": "strip rule 1",
+    "w": 2,
+    "h": 800,
+    "o": {
+     "fill": "color.border.strong"
+    },
+    "x": 639,
+    "y": 0
+   }
+  },
+  {
+   "into": "reflow∕200 · dark",
+   "node": {
+    "t": "board",
+    "name": "tag · viewport",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "viewport 640 x 400 CSS px (the 1280 x 800 window at 200 %)",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 8,
+    "y": 404,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "reflow∕200 · dark",
+   "node": {
+    "t": "rect",
+    "name": "viewport edge",
+    "w": 640,
+    "h": 2,
+    "o": {
+     "fill": "color.status.info.default"
+    },
+    "x": 0,
+    "y": 400
+   }
+  },
+  {
+   "into": "reflow∕200 · dark",
+   "node": {
+    "t": "board",
+    "name": "tag · nav",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "CMP-086 nav collapsed above the content",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 330,
+    "y": 30,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "reflow∕320 · dark",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "320 CSS px (400 %): four strips of the page at 1:1 CSS px",
+    "x": 1440,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "strip 1 · CSS y 0-800",
+      "o": {
+       "fill": "color.surface.app",
+       "clip": true
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "page · SCR-119∕statement",
+        "o": {
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-086 SettingsNav · collapsed above the content",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.raised",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Settings",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · current entry",
+            "w": 96,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 288,
+          "h": 31,
+          "note": "nav aria-label=\"Settings\", collapsed above the content; its items stay in the Tab order (§7.5)",
+          "x": 16,
+          "y": 16
+         },
+         {
+          "t": "board",
+          "name": "1 · h1 + status",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "h1",
+            "chars": "Accessibility statement",
+            "typo": "type.ui.heading-lg",
+            "color": "color.text.primary",
+            "w": 288,
+            "note": "h1 tabindex=\"-1\", focused once on arrival (§7.4); the document title is W-20"
+           },
+           {
+            "t": "text",
+            "name": "status · W-5",
+            "chars": "Partially conforms",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary",
+            "w": 288,
+            "note": "the status in words (R-9), the first text after the h1"
+           }
+          ],
+          "w": 288,
+          "x": 16,
+          "y": 59,
+          "h": 51
+         },
+         {
+          "t": "board",
+          "name": "2 · target + scope",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "W-4",
+            "chars": "CandleViewer aims to meet WCAG 2.2 Level AA.",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 288
+           },
+           {
+            "t": "text",
+            "name": "scope",
+            "chars": "Scope: the web app in its desktop shell.",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 288
+           }
+          ],
+          "w": 288,
+          "x": 16,
+          "y": 122,
+          "h": 77
+         },
+         {
+          "t": "text",
+          "name": "3 · version line · W-6",
+          "chars": "This statement applies to version 1.4.0, issued on 2 November 2026. Next review by 31 January 2027.",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 288,
+          "note": "type.ui.caption (§7.7); text, not a control",
+          "x": 16,
+          "y": 211
+         },
+         {
+          "t": "board",
+          "name": "4 · supported",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "h2",
+            "chars": "What is supported",
+            "typo": "type.ui.heading-md",
+            "color": "color.text.primary",
+            "w": 288,
+            "note": "h2"
+           },
+           {
+            "t": "text",
+            "name": "W-11",
+            "chars": "No criterion is claimed as supported yet: the evidence is still being produced.",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 288
+           }
+          ],
+          "w": 288,
+          "x": 16,
+          "y": 275,
+          "h": 86
+         },
+         {
+          "t": "board",
+          "name": "5 · known limitations",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "h2",
+            "chars": "Known limitations",
+            "typo": "type.ui.heading-md",
+            "color": "color.text.primary",
+            "w": 288,
+            "note": "h2"
+           },
+           {
+            "t": "board",
+            "name": "CMP-049 table · Known limitations (stacked)",
+            "o": {
+             "dir": "column",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "row 01 · A11Y-P-01",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.sm",
+               "padY": "space.inset.sm",
+               "fill": "color.surface.app"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "pair · What you notice",
+                "o": {
+                 "dir": "column",
+                 "align": "start",
+                 "gap": "space.stack.xs",
+                 "padX": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "What you notice",
+                  "typo": "type.ui.label",
+                  "color": "color.text.secondary",
+                  "w": 272
+                 },
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Clicking outside the identity check window moves the keyboard position to the page behind it. (2.4.3)",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 272
+                 }
+                ],
+                "w": 288,
+                "h": 73
+               },
+               {
+                "t": "board",
+                "name": "pair · Who it affects",
+                "o": {
+                 "dir": "column",
+                 "align": "start",
+                 "gap": "space.stack.xs",
+                 "padX": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Who it affects",
+                  "typo": "type.ui.label",
+                  "color": "color.text.secondary",
+                  "w": 272
+                 },
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Keyboard and screen reader users lose their place and may type into the wrong area.",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 272
+                 }
+                ],
+                "w": 288,
+                "h": 73
+               },
+               {
+                "t": "board",
+                "name": "pair · What to do instead",
+                "o": {
+                 "dir": "column",
+                 "align": "start",
+                 "gap": "space.stack.xs",
+                 "padX": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "What to do instead",
+                  "typo": "type.ui.label",
+                  "color": "color.text.secondary",
+                  "w": 272
+                 },
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Press Escape to close the window, then open it again from the same button.",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 272
+                 }
+                ],
+                "w": 288,
+                "h": 73
+               }
+              ],
+              "w": 288,
+              "note": "stacked row: role=row kept, each value a cell tied to its columnheader (§7.5)",
+              "h": 251
+             },
+             {
+              "t": "board",
+              "name": "row 02 · A11Y-P-02",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.sm",
+               "padY": "space.inset.sm",
+               "fill": "color.surface.raised"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "pair · What you notice",
+                "o": {
+                 "dir": "column",
+                 "align": "start",
+                 "gap": "space.stack.xs",
+                 "padX": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "What you notice",
+                  "typo": "type.ui.label",
+                  "color": "color.text.secondary",
+                  "w": 272
+                 },
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "While signing in, at the two-factor step and after a password change, the keyboard position can jump back to the start of the page. (2.4.3)",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 272
+                 }
+                ],
+                "w": 288,
+                "h": 92
+               },
+               {
+                "t": "board",
+                "name": "pair · Who it affects",
+                "o": {
+                 "dir": "column",
+                 "align": "start",
+                 "gap": "space.stack.xs",
+                 "padX": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Who it affects",
+                  "typo": "type.ui.label",
+                  "color": "color.text.secondary",
+                  "w": 272
+                 },
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Keyboard and screen reader users must find their place again, and nothing is read out.",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary",
+                  "w": 272
+                 }
+                ],
+                "w": 288,
+                "h": 73
+               }
+              ],
+              "w": 288,
+              "note": "stacked row: role=row kept, each value a cell tied to its columnheader (§7.5)",
+              "h": 251
+             }
+            ],
+            "w": 288,
+            "note": "static table, aria-labelledby its h2; stacked at 320 CSS px",
+            "h": 2114
+           }
+          ],
+          "w": 288,
+          "x": 16,
+          "y": 385,
+          "h": 2145
+         }
+        ],
+        "w": 320,
+        "h": 11145,
+        "note": "route /accessibility; one main, one h1; a lazy chunk (§7.1)",
+        "x": 0,
+        "y": 0
+       }
+      ],
+      "w": 320,
+      "h": 800,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  {
+   "into": "reflow∕320 · dark",
+   "node": {
+    "t": "board",
+    "name": "strip 2 · CSS y 800-1600",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "page · SCR-119∕statement",
+      "o": {
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "5 · known limitations",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "spacer · 19 px cropped above",
+          "w": 288,
+          "h": 19
+         },
+         {
+          "t": "board",
+          "name": "CMP-049 table · Known limitations (stacked)",
+          "o": {
+           "dir": "column",
+           "align": "start"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "spacer · 251 px cropped above",
+            "w": 288,
+            "h": 251
+           },
+           {
+            "t": "board",
+            "name": "row 02 · A11Y-P-02",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.sm",
+             "padY": "space.inset.sm",
+             "fill": "color.surface.raised"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "spacer · 91 px cropped above",
+              "w": 288,
+              "h": 91
+             },
+             {
+              "t": "board",
+              "name": "pair · Who it affects",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.xs",
+               "padX": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "spacer · 14 px cropped above",
+                "w": 288,
+                "h": 14
+               },
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "Keyboard and screen reader users must find their place again, and nothing is read out.",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "w": 272
+               }
+              ],
+              "w": 288,
+              "h": 73
+             },
+             {
+              "t": "board",
+              "name": "pair · What to do instead",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.xs",
+               "padX": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "What to do instead",
+                "typo": "type.ui.label",
+                "color": "color.text.secondary",
+                "w": 272
+               },
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "Press Tab once to reach the first field of the new step.",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "w": 272
+               }
+              ],
+              "w": 288,
+              "h": 55
+             }
+            ],
+            "w": 288,
+            "note": "stacked row: role=row kept, each value a cell tied to its columnheader (§7.5)",
+            "h": 251
+           },
+           {
+            "t": "board",
+            "name": "row 03 · A11Y-P-05",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.sm",
+             "padY": "space.inset.sm",
+             "fill": "color.surface.app"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "pair · What you notice",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.xs",
+               "padX": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "What you notice",
+                "typo": "type.ui.label",
+                "color": "color.text.secondary",
+                "w": 272
+               },
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "Some messages on the sign-in and identity check screens are read out every second, or are not read out at all. (4.1.3)",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "w": 272
+               }
+              ],
+              "w": 288,
+              "h": 92
+             },
+             {
+              "t": "board",
+              "name": "pair · Who it affects",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.xs",
+               "padX": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Who it affects",
+                "typo": "type.ui.label",
+                "color": "color.text.secondary",
+                "w": 272
+               },
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "Screen reader users hear a long run of repeats, or miss that a code was not sent.",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "w": 272
+               }
+              ],
+              "w": 288,
+              "h": 73
+             },
+             {
+              "t": "board",
+              "name": "pair · What to do instead",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.xs",
+               "padX": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "What to do instead",
+                "typo": "type.ui.label",
+                "color": "color.text.secondary",
+                "w": 272
+               },
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "Read the message under the field with your screen reader's reading keys.",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "w": 272
+               }
+              ],
+              "w": 288,
+              "h": 55
+             }
+            ],
+            "w": 288,
+            "note": "stacked row: role=row kept, each value a cell tied to its columnheader (§7.5)",
+            "h": 251
+           },
+           {
+            "t": "board",
+            "name": "row 04 · A11Y-P-06",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.sm",
+             "padY": "space.inset.sm",
+             "fill": "color.surface.raised"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "pair · What you notice",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.xs",
+               "padX": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "What you notice",
+                "typo": "type.ui.label",
+                "color": "color.text.secondary",
+                "w": 272
+               },
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "At very high zoom the lock and identity check windows and one page do not fit, so some buttons are cut off. (1.4.10)",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "w": 272
+               }
+              ],
+              "w": 288,
+              "h": 92
+             },
+             {
+              "t": "board",
+              "name": "pair · Who it affects",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.xs",
+               "padX": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Who it affects",
+                "typo": "type.ui.label",
+                "color": "color.text.secondary",
+                "w": 272
+               },
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "People who zoom in a lot may not reach the Unlock or Confirm buttons.",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "w": 272
+               }
+              ],
+              "w": 288,
+              "h": 55
+             },
+             {
+              "t": "board",
+              "name": "pair · What to do instead",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.xs",
+               "padX": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "What to do instead",
+                "typo": "type.ui.label",
+                "color": "color.text.secondary",
+                "w": 272
+               },
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "Zoom out one step, or use the in-app text size control instead.",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "w": 272
+               }
+              ],
+              "w": 288,
+              "h": 55
+             }
+            ],
+            "w": 288,
+            "note": "stacked row: role=row kept, each value a cell tied to its columnheader (§7.5)",
+            "h": 233
+           },
+           {
+            "t": "board",
+            "name": "row 05 · A11Y-F-0015",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.sm",
+             "padY": "space.inset.sm",
+             "fill": "color.surface.app"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "pair · What you notice",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.xs",
+               "padX": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "What you notice",
+                "typo": "type.ui.label",
+                "color": "color.text.secondary",
+                "w": 272
+               },
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "When the connection comes back, the app does not say so. (4.1.3)",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "w": 272
+               }
+              ],
+              "w": 288,
+              "h": 55
+             },
+             {
+              "t": "board",
+              "name": "pair · Who it affects",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.xs",
+               "padX": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Who it affects",
+                "typo": "type.ui.label",
+                "color": "color.text.secondary",
+                "w": 272
+               },
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "Screen reader users hear that the connection dropped but not that it recovered.",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "w": 272
+               }
+              ],
+              "w": 288,
+              "h": 73
+             },
+             {
+              "t": "board",
+              "name": "pair · What to do instead",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.xs",
+               "padX": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "What to do instead",
+                "typo": "type.ui.label",
+                "color": "color.text.secondary",
+                "w": 272
+               },
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "Check the connection status in the status bar at the bottom of the window.",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "w": 272
+               }
+              ],
+              "w": 288,
+              "h": 73
+             }
+            ],
+            "w": 288,
+            "note": "stacked row: role=row kept, each value a cell tied to its columnheader (§7.5)",
+            "h": 233
+           }
+          ],
+          "w": 288,
+          "note": "static table, aria-labelledby its h2; stacked at 320 CSS px",
+          "h": 2114
+         }
+        ],
+        "w": 288,
+        "x": 16,
+        "y": 385,
+        "h": 2145
+       }
+      ],
+      "w": 320,
+      "h": 11145,
+      "note": "route /accessibility; one main, one h1; a lazy chunk (§7.1)",
+      "x": 0,
+      "y": -800
+     }
+    ],
+    "w": 320,
+    "h": 800,
+    "x": 320,
+    "y": 0
+   }
+  },
+  {
+   "into": "reflow∕320 · dark",
+   "node": {
+    "t": "rect",
+    "name": "strip rule 1",
+    "w": 2,
+    "h": 800,
+    "o": {
+     "fill": "color.border.strong"
+    },
+    "x": 319,
+    "y": 0
+   }
+  },
+  {
+   "into": "reflow∕320 · dark",
+   "node": {
+    "t": "board",
+    "name": "strip 3 · CSS y 2538-3338",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 320,
+    "h": 800,
+    "x": 640,
+    "y": 0,
+    "kids": [
+     {
+      "t": "board",
+      "name": "page · SCR-119∕statement",
+      "o": {
+       "fill": "color.surface.app"
+      },
+      "w": 320,
+      "h": 11145,
+      "note": "route /accessibility; one main, one h1; a lazy chunk (§7.1)",
+      "x": 0,
+      "y": -2538,
+      "kids": [
+       {
+        "t": "board",
+        "name": "6 · alternatives",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.md"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "h2",
+          "chars": "Alternatives",
+          "typo": "type.ui.heading-md",
+          "color": "color.text.primary",
+          "w": 288,
+          "note": "h2"
+         },
+         {
+          "t": "board",
+          "name": "list",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "alternative 1",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Show a data table in place of a chart or panel",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 288
+             },
+             {
+              "t": "board",
+              "name": "kbd · Alt+T",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "padX": "space.inset.xs",
+               "radius": "radius.control",
+               "fill": "color.surface.raised",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "keys",
+                "chars": "Alt+T",
+                "typo": "type.ui.body",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 23,
+              "note": "one <kbd> element; its text joins the keys with \"+\""
+             }
+            ],
+            "w": 288,
+            "h": 64
+           },
+           {
+            "t": "board",
+            "name": "alternative 2",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Keyboard equivalents for every action",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 288
+             },
+             {
+              "t": "board",
+              "name": "link · SCR-013",
+              "o": {
+               "dir": "column",
+               "align": "start"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Keyboard shortcuts (SCR-013)",
+                "typo": "type.ui.body",
+                "color": "color.text.link"
+               },
+               {
+                "t": "rect",
+                "name": "underline",
+                "w": 206,
+                "h": 1,
+                "o": {
+                 "fill": "color.text.link"
+                }
+               }
+              ],
+              "w": 206,
+              "h": 21,
+              "note": "CMP-021 Link: native <a>, underlined; a Tab stop"
+             }
+            ],
+            "w": 288,
+            "h": 44
+           },
+           {
+            "t": "board",
+            "name": "alternative 3",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "How much the screen reader announces",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 288
+             },
+             {
+              "t": "board",
+              "name": "link · SCR-117",
+              "o": {
+               "dir": "column",
+               "align": "start"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Accessibility settings (SCR-117)",
+                "typo": "type.ui.body",
+                "color": "color.text.link"
+               },
+               {
+                "t": "rect",
+                "name": "underline",
+                "w": 235,
+                "h": 1,
+                "o": {
+                 "fill": "color.text.link"
+                }
+               }
+              ],
+              "w": 235,
+              "h": 21,
+              "note": "CMP-021 Link: native <a>, underlined; a Tab stop"
+             }
+            ],
+            "w": 288,
+            "h": 44
+           },
+           {
+            "t": "board",
+            "name": "alternative 4",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Make the text larger",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 288
+             },
+             {
+              "t": "board",
+              "name": "kbd · Ctrl+=",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "padX": "space.inset.xs",
+               "radius": "radius.control",
+               "fill": "color.surface.raised",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "keys",
+                "chars": "Ctrl+=",
+                "typo": "type.ui.body",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 23,
+              "note": "one <kbd> element; its text joins the keys with \"+\""
+             },
+             {
+              "t": "text",
+              "name": "SCR-116",
+              "chars": "or the font size scale in Appearance & density settings (SCR-116)",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary",
+              "w": 288
+             }
+            ],
+            "w": 288,
+            "h": 86
+           },
+           {
+            "t": "board",
+            "name": "alternative 5",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Turn reduced motion on or off",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 288
+             },
+             {
+              "t": "board",
+              "name": "kbd · Ctrl+Shift+M",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "padX": "space.inset.xs",
+               "radius": "radius.control",
+               "fill": "color.surface.raised",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "keys",
+                "chars": "Ctrl+Shift+M",
+                "typo": "type.ui.body",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 23,
+              "note": "one <kbd> element; its text joins the keys with \"+\""
+             }
+            ],
+            "w": 288,
+            "h": 46
+           },
+           {
+            "t": "board",
+            "name": "alternative 6",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Turn the high-contrast theme on or off",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 288
+             },
+             {
+              "t": "board",
+              "name": "kbd · Ctrl+Shift+H",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "padX": "space.inset.xs",
+               "radius": "radius.control",
+               "fill": "color.surface.raised",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "keys",
+                "chars": "Ctrl+Shift+H",
+                "typo": "type.ui.body",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 23,
+              "note": "one <kbd> element; its text joins the keys with \"+\""
+             }
+            ],
+            "w": 288,
+            "h": 46
+           }
+          ],
+          "w": 288,
+          "h": 366
+         }
+        ],
+        "w": 288,
+        "note": "a list; the two links are the section's only Tab stops",
+        "x": 16,
+        "y": 2554,
+        "h": 397
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "reflow∕320 · dark/strip 3 · CSS y 2538-3338/page · SCR-119∕statement",
+   "node": {
+    "t": "board",
+    "name": "7 · all criteria",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "h2",
+      "chars": "All criteria",
+      "typo": "type.ui.heading-md",
+      "color": "color.text.primary",
+      "w": 288,
+      "note": "h2"
+     },
+     {
+      "t": "board",
+      "name": "CMP-049 table · All criteria (stacked)",
+      "o": {
+       "dir": "column",
+       "align": "start"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "row 01 · 1.1.1",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "pair · Criterion",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs",
+           "padX": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Criterion",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary",
+            "w": 272
+           },
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "1.1.1 Non-text Content",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 272
+           }
+          ],
+          "w": 288,
+          "h": 37
+         },
+         {
+          "t": "board",
+          "name": "pair · Level",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs",
+           "padX": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Level",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary",
+            "w": 272
+           },
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Level A",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 272
+           }
+          ],
+          "w": 288,
+          "h": 37
+         },
+         {
+          "t": "board",
+          "name": "pair · Conformance level",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs",
+           "padX": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Conformance level",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary",
+            "w": 272
+           },
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Partially Supports",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 272
+           }
+          ],
+          "w": 288,
+          "h": 37
+         }
+        ],
+        "w": 288,
+        "note": "stacked row: role=row kept, each value a cell tied to its columnheader (§7.5)",
+        "h": 142
+       },
+       {
+        "t": "board",
+        "name": "row 02 · 1.2.1",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "pair · Criterion",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs",
+           "padX": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Criterion",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary",
+            "w": 272
+           },
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "1.2.1 Audio-only and Video-only (Prerecorded)",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 272
+           }
+          ],
+          "w": 288,
+          "h": 55
+         },
+         {
+          "t": "board",
+          "name": "pair · Level",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs",
+           "padX": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Level",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary",
+            "w": 272
+           },
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Level A",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 272
+           }
+          ],
+          "w": 288,
+          "h": 37
+         },
+         {
+          "t": "board",
+          "name": "pair · Conformance level",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs",
+           "padX": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Conformance level",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary",
+            "w": 272
+           },
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Not Applicable",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 272
+           }
+          ],
+          "w": 288,
+          "h": 37
+         }
+        ],
+        "w": 288,
+        "note": "stacked row: role=row kept, each value a cell tied to its columnheader (§7.5)",
+        "h": 160
+       },
+       {
+        "t": "board",
+        "name": "row 03 · 1.2.2",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "pair · Criterion",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs",
+           "padX": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Criterion",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary",
+            "w": 272
+           },
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "1.2.2 Captions (Prerecorded)",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 272
+           }
+          ],
+          "w": 288,
+          "h": 37
+         }
+        ],
+        "w": 288,
+        "note": "stacked row: role=row kept, each value a cell tied to its columnheader (§7.5)",
+        "h": 142
+       }
+      ],
+      "w": 288,
+      "note": "static table, aria-labelledby its h2; stacked at 320 CSS px",
+      "h": 7891
+     }
+    ],
+    "w": 288,
+    "x": 16,
+    "y": 2975,
+    "h": 7922
+   }
+  },
+  {
+   "into": "reflow∕320 · dark",
+   "node": {
+    "t": "rect",
+    "name": "strip rule 2",
+    "w": 2,
+    "h": 800,
+    "o": {
+     "fill": "color.border.strong"
+    },
+    "x": 639,
+    "y": 0
+   }
+  },
+  {
+   "into": "reflow∕320 · dark",
+   "node": {
+    "t": "board",
+    "name": "strip 4 · CSS y 10345-11145",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 320,
+    "h": 800,
+    "x": 960,
+    "y": 0
+   }
+  },
+  {
+   "into": "reflow∕320 · dark/strip 4 · CSS y 10345-11145",
+   "node": {
+    "t": "board",
+    "name": "page · SCR-119∕statement",
+    "o": {
+     "fill": "color.surface.app"
+    },
+    "w": 320,
+    "h": 11145,
+    "note": "route /accessibility; one main, one h1; a lazy chunk (§7.1)",
+    "x": 0,
+    "y": -10345,
+    "kids": [
+     {
+      "t": "board",
+      "name": "7 · all criteria",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.md"
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "spacer · 19 px cropped above",
+        "w": 288,
+        "h": 19
+       },
+       {
+        "t": "board",
+        "name": "CMP-049 table · All criteria (stacked)",
+        "o": {
+         "dir": "column",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "spacer · 7304 px cropped above",
+          "w": 288,
+          "h": 7304
+         },
+         {
+          "t": "board",
+          "name": "row 52 · 3.3.7",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.sm",
+           "padY": "space.inset.sm",
+           "fill": "color.surface.raised"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "pair · Criterion",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs",
+             "padX": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "spacer · 14 px cropped above",
+              "w": 288,
+              "h": 14
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "3.3.7 Redundant Entry",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 272
+             }
+            ],
+            "w": 288,
+            "h": 37
+           },
+           {
+            "t": "board",
+            "name": "pair · Level",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs",
+             "padX": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Level",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary",
+              "w": 272
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Level A",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 272
+             }
+            ],
+            "w": 288,
+            "h": 37
+           },
+           {
+            "t": "board",
+            "name": "pair · Conformance level",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs",
+             "padX": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Conformance level",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary",
+              "w": 272
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Partially Supports",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 272
+             }
+            ],
+            "w": 288,
+            "h": 37
+           }
+          ],
+          "w": 288,
+          "note": "stacked row: role=row kept, each value a cell tied to its columnheader (§7.5)",
+          "h": 142
+         },
+         {
+          "t": "board",
+          "name": "row 53 · 3.3.8",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.sm",
+           "padY": "space.inset.sm",
+           "fill": "color.surface.app"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "pair · Criterion",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs",
+             "padX": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Criterion",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary",
+              "w": 272
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "3.3.8 Accessible Authentication (Minimum)",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 272
+             }
+            ],
+            "w": 288,
+            "h": 55
+           },
+           {
+            "t": "board",
+            "name": "pair · Level",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs",
+             "padX": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Level",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary",
+              "w": 272
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Level AA",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 272
+             }
+            ],
+            "w": 288,
+            "h": 37
+           },
+           {
+            "t": "board",
+            "name": "pair · Conformance level",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs",
+             "padX": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Conformance level",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary",
+              "w": 272
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Partially Supports",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 272
+             }
+            ],
+            "w": 288,
+            "h": 37
+           }
+          ],
+          "w": 288,
+          "note": "stacked row: role=row kept, each value a cell tied to its columnheader (§7.5)",
+          "h": 160
+         },
+         {
+          "t": "board",
+          "name": "row 54 · 4.1.2",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.sm",
+           "padY": "space.inset.sm",
+           "fill": "color.surface.raised"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "pair · Criterion",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs",
+             "padX": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Criterion",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary",
+              "w": 272
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "4.1.2 Name, Role, Value",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 272
+             }
+            ],
+            "w": 288,
+            "h": 37
+           },
+           {
+            "t": "board",
+            "name": "pair · Level",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs",
+             "padX": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Level",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary",
+              "w": 272
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Level A",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 272
+             }
+            ],
+            "w": 288,
+            "h": 37
+           },
+           {
+            "t": "board",
+            "name": "pair · Conformance level",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs",
+             "padX": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Conformance level",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary",
+              "w": 272
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Partially Supports",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 272
+             }
+            ],
+            "w": 288,
+            "h": 37
+           }
+          ],
+          "w": 288,
+          "note": "stacked row: role=row kept, each value a cell tied to its columnheader (§7.5)",
+          "h": 142
+         },
+         {
+          "t": "board",
+          "name": "row 55 · 4.1.3",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.sm",
+           "padY": "space.inset.sm",
+           "fill": "color.surface.app"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "pair · Criterion",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs",
+             "padX": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Criterion",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary",
+              "w": 272
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "4.1.3 Status Messages",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 272
+             }
+            ],
+            "w": 288,
+            "h": 37
+           },
+           {
+            "t": "board",
+            "name": "pair · Level",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs",
+             "padX": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Level",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary",
+              "w": 272
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Level AA",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 272
+             }
+            ],
+            "w": 288,
+            "h": 37
+           },
+           {
+            "t": "board",
+            "name": "pair · Conformance level",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs",
+             "padX": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Conformance level",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary",
+              "w": 272
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Does Not Support",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 272
+             }
+            ],
+            "w": 288,
+            "h": 37
+           }
+          ],
+          "w": 288,
+          "note": "stacked row: role=row kept, each value a cell tied to its columnheader (§7.5)",
+          "h": 142
+         }
+        ],
+        "w": 288,
+        "note": "static table, aria-labelledby its h2; stacked at 320 CSS px",
+        "h": 7891
+       }
+      ],
+      "w": 288,
+      "x": 16,
+      "y": 2975,
+      "h": 7922
+     },
+     {
+      "t": "board",
+      "name": "8 · report a problem",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "h2",
+        "chars": "Report an accessibility problem",
+        "typo": "type.ui.heading-md",
+        "color": "color.text.primary",
+        "w": 288,
+        "note": "h2"
+       },
+       {
+        "t": "board",
+        "name": "template · W-14",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "pad": "space.inset.md",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "line 1",
+          "chars": "Screen:",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 264
+         },
+         {
+          "t": "text",
+          "name": "line 2",
+          "chars": "What I tried:",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 264
+         },
+         {
+          "t": "text",
+          "name": "line 3",
+          "chars": "App version: 1.4.0",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 264
+         }
+        ],
+        "w": 288,
+        "note": "selectable static text with real line breaks; nothing personal (§9)",
+        "h": 87
+       },
+       {
+        "t": "board",
+        "name": "actions",
+        "o": {
+         "dir": "row",
+         "align": "start",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-033 CopyButton",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.button.paddingX",
+           "radius": "radius.control",
+           "stroke": "color.border.default",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "glyph",
+            "icon": "copy",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Copy problem report",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 184,
+          "h": 27,
+          "note": "native <button>, name = its label (W-13); state default; >= 24 x 24 (2.5.8)"
+         }
+        ],
+        "w": 288,
+        "h": 27
+       }
+      ],
+      "w": 288,
+      "x": 16,
+      "y": 10921,
+      "h": 157
+     }
+    ]
+   }
+  },
+  {
+   "into": "reflow∕320 · dark/strip 4 · CSS y 10345-11145/page · SCR-119∕statement",
+   "node": {
+    "t": "text",
+    "name": "CMP-207 BuildFooter",
+    "chars": "Version 1.4.0 · commit a1b2c3d · demo · built 2 November 2026",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "w": 288,
+    "note": "<footer>, plain text; the commit is selectable (`15` CMP-207)",
+    "x": 16,
+    "y": 11102
+   }
+  },
+  {
+   "into": "reflow∕320 · dark",
+   "node": {
+    "t": "rect",
+    "name": "strip rule 3",
+    "w": 2,
+    "h": 800,
+    "o": {
+     "fill": "color.border.strong"
+    },
+    "x": 959,
+    "y": 0
+   }
+  },
+  {
+   "into": "reflow∕320 · dark",
+   "node": {
+    "t": "board",
+    "name": "tag · strip 1",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "CSS y 0-800",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 8,
+    "y": 776,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "reflow∕320 · dark",
+   "node": {
+    "t": "board",
+    "name": "tag · strip 2",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "CSS y 800-1600",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 328,
+    "y": 776,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "reflow∕320 · dark",
+   "node": {
+    "t": "board",
+    "name": "tag · strip 3",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "CSS y 2538-3338",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 648,
+    "y": 776,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "reflow∕320 · dark",
+   "node": {
+    "t": "board",
+    "name": "tag · strip 4",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "CSS y 10345-11145",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 968,
+    "y": 776,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "reflow∕text-scale-max · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "text scale 150 % at 1280 x 800",
+    "x": 2800,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar (placeholder)",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · env badge",
+          "w": 56,
+          "h": 20,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · health chip",
+          "w": 120,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar, not this spec's: placeholders only"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "w": 1280,
+      "h": 704,
+      "kids": [
+       {
+        "t": "board",
+        "name": "NavRail (placeholder)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entry-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-6",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 63,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 64,
+        "h": 704
+       },
+       {
+        "t": "board",
+        "name": "CMP-086 SettingsNav · navigation Settings",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "pad": "space.inset.sm",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entry · Profile",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Profile",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry · Security",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Security",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry · Appearance",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Appearance",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry · Hotkeys",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Hotkeys",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry · Trading defaults",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Trading defaults",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry · Notifications",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Notifications",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry · Data & performance",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Data & performance",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry · Accessibility",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Accessibility",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry · Help & about",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "fill": "color.surface.selected"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Help & about",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 192,
+          "h": 28,
+          "note": "aria-current=\"page\""
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 207,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 208,
+        "h": 704,
+        "note": "nav aria-label=\"Settings\"; entries from `14` SCR-110 L2379"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "reflow∕text-scale-max · dark/body",
+   "node": {
+    "t": "board",
+    "name": "main · CMP-086 content",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "page · SCR-119∕statement",
+      "o": {
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "1 · h1 + status",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "h1",
+          "chars": "Accessibility statement",
+          "typo": "type.ui.display",
+          "color": "color.text.primary",
+          "w": 720,
+          "note": "h1 tabindex=\"-1\", focused once on arrival (§7.4); the document title is W-20"
+         },
+         {
+          "t": "text",
+          "name": "status · W-5",
+          "chars": "Partially conforms",
+          "typo": "type.ui.heading-lg",
+          "color": "color.text.primary",
+          "w": 720,
+          "note": "the status in words (R-9), the first text after the h1"
+         }
+        ],
+        "w": 960,
+        "x": 24,
+        "y": 24,
+        "h": 61
+       },
+       {
+        "t": "board",
+        "name": "2 · target + scope",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "W-4",
+          "chars": "CandleViewer aims to meet WCAG 2.2 Level AA.",
+          "typo": "type.ui.heading-lg",
+          "color": "color.text.primary",
+          "w": 720
+         },
+         {
+          "t": "text",
+          "name": "scope",
+          "chars": "Scope: the web app in its desktop shell.",
+          "typo": "type.ui.heading-lg",
+          "color": "color.text.primary",
+          "w": 720
+         }
+        ],
+        "w": 960,
+        "x": 24,
+        "y": 97,
+        "h": 52
+       },
+       {
+        "t": "text",
+        "name": "3 · version line · W-6",
+        "chars": "This statement applies to version 1.4.0, issued on 2 November 2026. Next review by 31 January 2027.",
+        "typo": "type.ui.heading-md",
+        "color": "color.text.secondary",
+        "w": 720,
+        "note": "type.ui.caption (§7.7); text, not a control",
+        "x": 24,
+        "y": 161
+       },
+       {
+        "t": "board",
+        "name": "4 · supported",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.md"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "h2",
+          "chars": "What is supported",
+          "typo": "type.ui.display",
+          "color": "color.text.primary",
+          "w": 960,
+          "note": "h2"
+         },
+         {
+          "t": "text",
+          "name": "W-11",
+          "chars": "No criterion is claimed as supported yet: the evidence is still being produced.",
+          "typo": "type.ui.heading-lg",
+          "color": "color.text.primary",
+          "w": 720
+         }
+        ],
+        "w": 960,
+        "x": 24,
+        "y": 224,
+        "h": 89
+       },
+       {
+        "t": "board",
+        "name": "5 · known limitations",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.md"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "h2",
+          "chars": "Known limitations",
+          "typo": "type.ui.display",
+          "color": "color.text.primary",
+          "w": 960,
+          "note": "h2"
+         },
+         {
+          "t": "board",
+          "name": "CMP-049 table · Known limitations",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header row",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.raised"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "th · notice",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "padX": "space.inset.sm",
+               "justify": "start",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "What you notice",
+                "typo": "type.ui.heading-lg",
+                "color": "color.text.secondary"
+               }
+              ],
+              "w": 360,
+              "h": 32
+             },
+             {
+              "t": "board",
+              "name": "th · who",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "padX": "space.inset.sm",
+               "justify": "start",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "Who it affects",
+                "typo": "type.ui.heading-lg",
+                "color": "color.text.secondary"
+               }
+              ],
+              "w": 259,
+              "h": 32
+             },
+             {
+              "t": "board",
+              "name": "th · instead",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "padX": "space.inset.sm",
+               "justify": "start",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "What to do instead",
+                "typo": "type.ui.heading-lg",
+                "color": "color.text.secondary"
+               }
+              ],
+              "w": 341,
+              "h": 32
+             }
+            ],
+            "w": 960,
+            "h": 32,
+            "note": "column headers, scope=\"col\""
+           },
+           {
+            "t": "rect",
+            "name": "header rule",
+            "w": 960,
+            "h": 1,
+            "o": {
+             "fill": "color.border.default"
+            }
+           },
+           {
+            "t": "board",
+            "name": "rows",
+            "o": {
+             "dir": "column",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "row 01 · A11Y-P-01",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.app"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "notice",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Clicking outside the identity check window moves the keyboard position to the page behind it. (2.4.3)",
+                  "typo": "type.ui.heading-lg",
+                  "color": "color.text.primary",
+                  "w": 344
+                 }
+                ],
+                "w": 360,
+                "h": 136
+               },
+               {
+                "t": "board",
+                "name": "who",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Keyboard and screen reader users lose their place and may type into the wrong area.",
+                  "typo": "type.ui.heading-lg",
+                  "color": "color.text.primary",
+                  "w": 243
+                 }
+                ],
+                "w": 259,
+                "h": 136
+               },
+               {
+                "t": "board",
+                "name": "instead",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Press Escape to close the window, then open it again from the same button.",
+                  "typo": "type.ui.heading-lg",
+                  "color": "color.text.primary",
+                  "w": 325
+                 }
+                ],
+                "w": 341,
+                "h": 136
+               }
+              ],
+              "w": 960,
+              "h": 136
+             },
+             {
+              "t": "board",
+              "name": "row 02 · A11Y-P-02",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.raised"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "notice",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "While signing in, at the two-factor step and after a password change, the keyboard position can jump back to the start of the page. (2.4.3)",
+                  "typo": "type.ui.heading-lg",
+                  "color": "color.text.primary",
+                  "w": 344
+                 }
+                ],
+                "w": 360,
+                "h": 136
+               },
+               {
+                "t": "board",
+                "name": "who",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Keyboard and screen reader users must find their place again, and nothing is read out.",
+                  "typo": "type.ui.heading-lg",
+                  "color": "color.text.primary",
+                  "w": 243
+                 }
+                ],
+                "w": 259,
+                "h": 136
+               },
+               {
+                "t": "board",
+                "name": "instead",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Press Tab once to reach the first field of the new step.",
+                  "typo": "type.ui.heading-lg",
+                  "color": "color.text.primary",
+                  "w": 325
+                 }
+                ],
+                "w": 341,
+                "h": 136
+               }
+              ],
+              "w": 960,
+              "h": 136
+             },
+             {
+              "t": "board",
+              "name": "row 03 · A11Y-P-05",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.app"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "notice",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Some messages on the sign-in and identity check screens are read out every second, or are not read out at all. (4.1.3)",
+                  "typo": "type.ui.heading-lg",
+                  "color": "color.text.primary",
+                  "w": 344
+                 }
+                ],
+                "w": 360,
+                "h": 112
+               },
+               {
+                "t": "board",
+                "name": "who",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Screen reader users hear a long run of repeats, or miss that a code was not sent.",
+                  "typo": "type.ui.heading-lg",
+                  "color": "color.text.primary",
+                  "w": 243
+                 }
+                ],
+                "w": 259,
+                "h": 112
+               },
+               {
+                "t": "board",
+                "name": "instead",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Read the message under the field with your screen reader's reading keys.",
+                  "typo": "type.ui.heading-lg",
+                  "color": "color.text.primary",
+                  "w": 325
+                 }
+                ],
+                "w": 341,
+                "h": 112
+               }
+              ],
+              "w": 960,
+              "h": 112
+             }
+            ],
+            "w": 960,
+            "h": 1104
+           }
+          ],
+          "w": 960,
+          "note": "static <table> (not grid), aria-labelledby its h2; three th scope=\"col\" (W-10)",
+          "h": 1145
+         }
+        ],
+        "w": 960,
+        "x": 24,
+        "y": 337,
+        "h": 1186
+       }
+      ],
+      "w": 1008,
+      "h": 4579,
+      "note": "route /accessibility; one main, one h1; a lazy chunk (§7.1)",
+      "x": 0,
+      "y": 0
+     }
+    ],
+    "w": 1008,
+    "h": 704,
+    "note": "<main>"
+   }
+  },
+  {
+   "into": "reflow∕text-scale-max · dark",
+   "node": {
+    "t": "board",
+    "name": "StatusBar (placeholder)",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · env word",
+      "w": 56,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 48
+   }
+  },
+  {
+   "into": "reflow∕text-scale-max · dark",
+   "node": {
+    "t": "board",
+    "name": "tag · text scale 150 % (the largest step, `14`",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "text scale 150 % (the largest step, `14` SCR-116 L2466)",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 919,
+    "y": 78,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "reflow∕text-scale-max · dark",
+   "node": {
+    "t": "board",
+    "name": "tag · the column reflows; the tables wrap; not",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "the column reflows; the tables wrap; nothing clipped",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 937,
+    "y": 391,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 01",
+    "chars": "state: reflow∕200",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 80,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 02",
+    "chars": "state: reflow∕320",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 1440,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 03",
+    "chars": "state: reflow∕text-scale-max",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 2800,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer · synthetic",
+    "chars": "Synthetic data: the statement's version 1.4.0, issued 2 November 2026, review by 31 January 2027, and the running app's version and build line are invented; the 55 rows and the 9 limitations are the dry run at 4c662fd5b (47-conformance-report.md, 47-limitations.json): dry run, not a conformance claim",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "x": 80,
+    "y": 904
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "E47-D13 / 09 reflow-200",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Board",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§0 L80: the page at 200 %, at 320 CSS px and at the largest text scale: nothing clipped (§7.5)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Theme: dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Frames (hand-off §H L99): reflow/200 · dark, reflow/320 · dark, reflow/text-scale-max · dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "Export: docs/design/E47/img/E47-D13-09-reflow-200.png",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "Every frame a 1280 x 800 window at compact density (§0 L68); markers, tags, outlines, redlines and callouts in color.status.info.default are annotation, not product UI",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-6",
+        "chars": "Read-only for every role and view-as; no control on this page is T2 or T3, so no T2 rendering is drawn (§7.8 L248; R-11 Read-only for everyone (§1.4 L127))",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-7",
+        "chars": "Synthetic data: the statement's version 1.4.0, issued 2 November 2026, review by 31 January 2027, and the running app's version and build line are invented; the 55 rows and the 9 limitations are the dry run at 4c662fd5b (47-conformance-report.md, 47-limitations.json): dry run, not a conformance claim",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "reflow∕200 · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§7.5 L225: at 200 % the single column reflows and nothing is clipped; the page scrolls only vertically; the tables keep their columns and wrap (stacking starts at 320 CSS px)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Page 4051 CSS px tall at 640 wide (estimated); strip 1 CSS y 0-800 (the first 400 px is the viewport), strip 2 CSS y 800-1600",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "The SettingsLayout nav collapses above the content per CMP-086, its items kept in the Tab order; the shell chrome at 640 CSS px is the shell's (not drawn)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "The sticky header is off at 200 % (§7.5)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "reflow∕320 · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§7.5 L225: at 320 CSS px both tables stack each row into label-value pairs (CMP-049's Reflow story) that keep their table semantics (table, row, columnheader and cell roles restored); the page scrolls only vertically",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Page 11145 CSS px tall at 320 wide (estimated); the strips show CSS y 0-800, 800-1600, 2538-3338, 10345-11145: the top, the stacked limitations, the alternatives and the stacked criteria, the end of the page",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Text spacing overrides (line height 1.5, paragraph 2x, letter 0.12 em, word 0.16 em) clip nothing (1.4.12): every cell and the template hug their text",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "The two links, the copy button and the skip link stay at least 24 x 24 CSS px (2.5.8)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-04",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "reflow∕text-scale-max · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§7.5 L225: at every in-app text scale the single column reflows and nothing is clipped; board 09 shows the largest step (150 % of 100, 112, 125, 150 %, `14` SCR-116)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Page 4579 px tall at 150 % (estimated); the sticky header is off above the default scale",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Text mapped to the token nearest 1.5 x (FALLBACKS type-150); the 05 text-scale keys are Ctrl+= ∕ Ctrl+-",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "Keyboard: Ctrl+= and Ctrl+- step the scale (`05`:77)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E47-D13 — Conformance statement · board 09 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400,
+    "x": 4160,
+    "y": 80
+   }
+  }
+ ],
+ "export": "docs/design/E47/img/E47-D13-09-reflow-200.png",
+ "notes": {
+  "sources": [
+   "at 91e9bde44: E47-D13.md md5 ae225937; E47-D13-handoff.md md5 715135bb; 47-conformance-report.md md5 807dc1d0; 47-limitations.json md5 f609cce7; 14-screens-catalogue.md md5 1ca28890 (§0 L80; §H L99)"
+  ],
+  "copy_keys": [
+   "W-1 (§11 L284, verbatim (the shipped link))",
+   "W-5 (§11 L288, PROPOSED, the status (R-9))",
+   "W-4 (§11 L287, PROPOSED, the target)",
+   "W-6 (§11 L289, PROPOSED, the version line)",
+   "W-11 (§11 L294, PROPOSED, no Supports rows)",
+   "W-9 (§11 L292, PROPOSED, a heading)",
+   "W-10 (§11 L293, PROPOSED, three th column headers)",
+   "W-3 (§11 L286, verbatim (the shipped link))",
+   "W-19 (§11 L302, PROPOSED, the verbosity link)",
+   "W-14 (§11 L297, PROPOSED, the template: three lines, copied with line breaks)",
+   "W-13 (§11 L296, PROPOSED, the CMP-033 label)",
+   "W-12 (§11 L295, PROPOSED, a heading)"
+  ],
+  "copy_gaps": [
+   "h1 \"Accessibility statement\": W-1 (§11 L284), the shipped link's words, as the page title (§7.2 item 1 L208)",
+   "\"Scope: the web app in its desktop shell.\": §7.2 item 2 L209 (no W-string)",
+   "h2 \"What is supported\": the section name in §7.2 item 4 L211 (§11 has no heading string for it)",
+   "h2 \"Alternatives\": the section name in §7.2 item 6 L213 (§11 has no heading string for it)",
+   "\"Show a data table in place of a chart or panel\" before Alt+T: §7.2 item 6 L213 with `05`'s keyboard table (no W-string)",
+   "\"Make the text larger\" before Ctrl+=: §7.2 item 6 L213 with `05`'s keyboard table (no W-string)",
+   "\"Turn reduced motion on or off\" before Ctrl+Shift+M: §7.2 item 6 L213 with `05`'s keyboard table (no W-string)",
+   "\"Turn the high-contrast theme on or off\" before Ctrl+Shift+H: §7.2 item 6 L213 with `05`'s keyboard table (no W-string)",
+   "\"Keyboard equivalents for every action\" before its link: §7.2 item 6 L213 (no W-string)",
+   "\"How much the screen reader announces\" before its link: §7.2 item 6 L213 (no W-string)",
+   "\"or the font size scale in Appearance & density settings (SCR-116)\": §7.2 item 6 L213 (\"beside Ctrl+= the page names the SCR-116 text-scale control\"; `14` SCR-116 L2466 names it \"font size scale\")",
+   "h2 \"All criteria\": the section name in §7.2 item 7 L214 (§11 has no heading string for it)",
+   "column headers \"Criterion\", \"Level\", \"Conformance level\": §2.2 L135 and §7.2 item 7 L214 (no W-string)",
+   "CMP-207 BuildFooter line: version, commit, environment and build time (`15` CMP-207); format and values synthetic"
+  ],
+  "g_rows": [],
+  "spec_gaps": [],
+  "fallbacks": [
+   "kit choice: the shell chrome around SettingsLayout (wordmark, pickers, health chip, rail glyphs, StatusBar items) and every SCR-117 / SCR-119 item this spec does not word are neutral placeholders; only what E47-D13 names is drawn with words",
+   "kit choice: the kbd chip is color.surface.raised with a border.hairline color.border.default edge, radius.control, its keys as text (§7.6: the edge is decoration, the key text identifies it)",
+   "fallback: a text node has no underline; the link underline (`15`:258 block, §7.6) is a 1 px color.text.link rule under the link text",
+   "kit choice: numbered stops, tags, outlines, redlines and callouts in color.status.info.default on color.text.inverse are annotation, never product UI",
+   "kit choice: a zoomed page is drawn at 1:1 CSS px in strips (the E47-D03 kit's zoom frame): 200 % is a 640 CSS px viewport, 400 % a 320 CSS px one; each strip names its CSS y range",
+   "fallback: no type token at 150 %: each role maps to the token nearest 1.5 x (caption -> heading-md, body -> heading-lg, heading-md / heading-lg -> display), as the E47-D03 kit does",
+   "kit choice: compact density (§0) at 24 px controls and rows (size.control.compact, size.row.compact)"
+  ],
+  "tokens": [
+   "type.ui.label",
+   "color.text.secondary",
+   "radius.control",
+   "color.surface.hover",
+   "space.inset.sm",
+   "color.surface.raised",
+   "type.ui.heading-lg",
+   "color.text.primary",
+   "type.ui.body-strong",
+   "space.stack.sm",
+   "type.ui.body",
+   "space.stack.xs",
+   "type.ui.caption",
+   "type.ui.heading-md",
+   "space.stack.md",
+   "space.inset.xs",
+   "color.surface.app",
+   "color.border.default",
+   "border.hairline",
+   "color.text.link",
+   "space.inset.md",
+   "size.icon",
+   "space.button.paddingX",
+   "color.text.inverse",
+   "color.status.info.default",
+   "color.border.strong",
+   "type.ui.display",
+   "color.border.subtle",
+   "color.surface.selected",
+   "space.inset.lg",
+   "type.ui.heading-sm",
+   "color.text.tertiary",
+   "color.surface.canvas"
+  ],
+  "live_checks": [
+   "root 'E47-D13 / 09 reflow-200' at (18000, 3200): read back the name exactly after the first section call; size 4640 x 1048",
+   "after touchTexts + relayout: the annotation column (estimated 882 px) ends inside the root (h 1048); set the root's h to max(column end, footer end) + 80",
+   "frame 'reflow∕200 · dark': read back 1280 x 800 at (80, 80); clip on, no child spills",
+   "frame 'reflow∕320 · dark': read back 1280 x 800 at (1440, 80); clip on, no child spills",
+   "frame 'reflow∕text-scale-max · dark': read back 1280 x 800 at (2800, 80); clip on, no child spills",
+   "export docs/design/E47/img/E47-D13-09-reflow-200.png: every frame is 1280 x 800; record the board id and the PNG size"
+  ],
+  "deviations": [],
+  "ambiguities": []
+ }
+}

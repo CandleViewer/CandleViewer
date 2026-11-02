@@ -1,0 +1,2646 @@
+{
+ "board": {
+  "name": "E47-D06 / 07 parity-oracle",
+  "w": 1920,
+  "h": 1000,
+  "x": 7000,
+  "y": 4200,
+  "o": {
+   "fill": "color.surface.app",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "parity∕footprint-bar · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.canvas",
+     "pad": "space.inset.lg",
+     "gap": "space.stack.md",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "x": 80,
+    "y": 80,
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "The parity oracle, AC2's footprint bar (§9 L289): one datum, one value, in the canvas, the mirror label, the table row and the oracle row",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 1248
+     },
+     {
+      "t": "board",
+      "name": "trace",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.lg"
+      },
+      "w": 1248,
+      "h": 260,
+      "kids": [
+       {
+        "t": "board",
+        "name": "canvas · footprint bar",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "pad": "space.inset.sm",
+         "fill": "color.surface.sunken"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "head",
+          "chars": "On the canvas: the 13:42 footprint bar (CMP-182, role=\"img\")",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 284
+         },
+         {
+          "t": "board",
+          "name": "level 64,099.5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "price",
+            "chars": "64,099.5",
+            "typo": "type.num.sm",
+            "color": "color.axis.text",
+            "w": 64
+           },
+           {
+            "t": "board",
+            "name": "cell",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "bid",
+              "chars": "0.064",
+              "typo": "type.num.sm",
+              "color": "color.footprint.bid"
+             },
+             {
+              "t": "text",
+              "name": "x",
+              "chars": "×",
+              "typo": "type.num.sm",
+              "color": "color.text.tertiary"
+             },
+             {
+              "t": "text",
+              "name": "ask",
+              "chars": "0.000",
+              "typo": "type.num.sm",
+              "color": "color.footprint.ask"
+             }
+            ],
+            "w": 140,
+            "h": 28
+           }
+          ],
+          "w": 300,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "level 64,099.0",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "price",
+            "chars": "64,099.0",
+            "typo": "type.num.sm",
+            "color": "color.axis.text",
+            "w": 64
+           },
+           {
+            "t": "board",
+            "name": "cell",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "bid",
+              "chars": "0.815",
+              "typo": "type.num.sm",
+              "color": "color.footprint.bid"
+             },
+             {
+              "t": "text",
+              "name": "x",
+              "chars": "×",
+              "typo": "type.num.sm",
+              "color": "color.text.tertiary"
+             },
+             {
+              "t": "text",
+              "name": "ask",
+              "chars": "1.938",
+              "typo": "type.num.sm",
+              "color": "color.footprint.ask"
+             }
+            ],
+            "w": 140,
+            "h": 28
+           }
+          ],
+          "w": 300,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "level 64,098.5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "price",
+            "chars": "64,098.5",
+            "typo": "type.num.sm",
+            "color": "color.axis.text",
+            "w": 64
+           },
+           {
+            "t": "board",
+            "name": "cell",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "bid",
+              "chars": "5.198",
+              "typo": "type.num.sm",
+              "color": "color.footprint.bid"
+             },
+             {
+              "t": "text",
+              "name": "x",
+              "chars": "×",
+              "typo": "type.num.sm",
+              "color": "color.text.tertiary"
+             },
+             {
+              "t": "text",
+              "name": "ask",
+              "chars": "2.834",
+              "typo": "type.num.sm",
+              "color": "color.footprint.ask"
+             }
+            ],
+            "w": 140,
+            "h": 28
+           }
+          ],
+          "w": 300,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "level 64,098.0",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "price",
+            "chars": "64,098.0",
+            "typo": "type.num.sm",
+            "color": "color.axis.text",
+            "w": 64
+           },
+           {
+            "t": "board",
+            "name": "cell",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "justify": "center",
+             "stroke": "color.footprint.imbalance",
+             "strokeWidth": "border.thick",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "bid",
+              "chars": "2.974",
+              "typo": "type.num.sm",
+              "color": "color.footprint.bid"
+             },
+             {
+              "t": "text",
+              "name": "x",
+              "chars": "×",
+              "typo": "type.num.sm",
+              "color": "color.text.tertiary"
+             },
+             {
+              "t": "text",
+              "name": "ask",
+              "chars": "19.399",
+              "typo": "type.num.sm",
+              "color": "color.footprint.ask"
+             }
+            ],
+            "w": 140,
+            "h": 28,
+            "note": "imbalance outline + estimated hatch (canvas)"
+           },
+           {
+            "t": "board",
+            "name": "CMP-227 marker",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.xs",
+             "radius": "radius.badge",
+             "stroke": "color.text.secondary",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "(estimated)",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 18
+           }
+          ],
+          "w": 300,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "level 64,097.5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "price",
+            "chars": "64,097.5",
+            "typo": "type.num.sm",
+            "color": "color.axis.text",
+            "w": 64
+           },
+           {
+            "t": "board",
+            "name": "cell",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "bid",
+              "chars": "1.769",
+              "typo": "type.num.sm",
+              "color": "color.footprint.bid"
+             },
+             {
+              "t": "text",
+              "name": "x",
+              "chars": "×",
+              "typo": "type.num.sm",
+              "color": "color.text.tertiary"
+             },
+             {
+              "t": "text",
+              "name": "ask",
+              "chars": "0.840",
+              "typo": "type.num.sm",
+              "color": "color.footprint.ask"
+             }
+            ],
+            "w": 140,
+            "h": 28
+           }
+          ],
+          "w": 300,
+          "h": 28
+         }
+        ],
+        "w": 300
+       },
+       {
+        "t": "board",
+        "name": "mirror",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm",
+         "pad": "space.inset.sm",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "head",
+          "chars": "Mirror: the Enter detail's level node (aria-label)",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 284
+         },
+         {
+          "t": "text",
+          "name": "name",
+          "chars": "\"64,098.0. Bid 2.974, ask 19.399, delta +16.425. Ask-stacked. Estimated, Iceberg\"",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 284
+         },
+         {
+          "t": "text",
+          "name": "slot 1",
+          "chars": "1. unit: 64,098.0",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 284
+         },
+         {
+          "t": "text",
+          "name": "slot 2",
+          "chars": "2. values: Bid 2.974, ask 19.399, delta +16.425",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 284
+         },
+         {
+          "t": "text",
+          "name": "slot 3",
+          "chars": "3. flags: Ask-stacked",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 284
+         },
+         {
+          "t": "text",
+          "name": "slot 4",
+          "chars": "4. Estimated, display name: Estimated, Iceberg",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 284
+         }
+        ],
+        "w": 300
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "parity∕footprint-bar · dark/trace",
+   "node": {
+    "t": "board",
+    "name": "table · footprint levels",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs",
+     "pad": "space.inset.sm",
+     "fill": "color.surface.canvas"
+    },
+    "w": 616,
+    "kids": [
+     {
+      "t": "text",
+      "name": "head",
+      "chars": "Table: the level sub-table of bar 13:42 (`05`'s set, D04E11:243–248)",
+      "typo": "type.ui.label",
+      "color": "color.text.secondary",
+      "w": 584
+     },
+     {
+      "t": "board",
+      "name": "header row",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "th · Price",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "gap": "space.inset.xs",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Price",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "icon",
+          "name": "sort",
+          "icon": "arrow-down",
+          "color": "color.text.primary",
+          "size": "size.icon.sm"
+         }
+        ],
+        "w": 88,
+        "h": 24,
+        "note": "aria-sort=\"descending\"; the row header column"
+       },
+       {
+        "t": "board",
+        "name": "th · Bid vol",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "gap": "space.inset.xs",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Bid vol",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 80,
+        "h": 24,
+        "note": "aria-sort=\"none\""
+       },
+       {
+        "t": "board",
+        "name": "th · Ask vol",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "gap": "space.inset.xs",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Ask vol",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 80,
+        "h": 24,
+        "note": "aria-sort=\"none\""
+       },
+       {
+        "t": "board",
+        "name": "th · Delta",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "gap": "space.inset.xs",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Delta",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 80,
+        "h": 24,
+        "note": "aria-sort=\"none\""
+       },
+       {
+        "t": "board",
+        "name": "th · Imbalance flag",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "gap": "space.inset.xs",
+         "justify": "start"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Imbalance flag",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 112,
+        "h": 24,
+        "note": "aria-sort=\"none\""
+       },
+       {
+        "t": "board",
+        "name": "th · Estimated badge",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "gap": "space.inset.xs",
+         "justify": "start"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Estimated badge",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 160,
+        "h": 24,
+        "note": "filter-only, not sortable"
+       }
+      ],
+      "w": 600,
+      "h": 24,
+      "note": "sticky header; <th scope=\"col\">"
+     },
+     {
+      "t": "board",
+      "name": "row 01",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "th · Price",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "64,099.5",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 88,
+        "h": 24,
+        "note": "<th scope=\"row\">"
+       },
+       {
+        "t": "board",
+        "name": "td · Bid vol",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0.064",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 80,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Ask vol",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0.000",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 80,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Delta",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "−0.064",
+          "typo": "type.num.base",
+          "color": "color.sell.default"
+         }
+        ],
+        "w": 80,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Imbalance flag",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Bid-stacked",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 112,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Estimated badge",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "—",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 160,
+        "h": 24
+       }
+      ],
+      "w": 600,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "row 02",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "th · Price",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "64,099.0",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 88,
+        "h": 24,
+        "note": "<th scope=\"row\">"
+       },
+       {
+        "t": "board",
+        "name": "td · Bid vol",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0.815",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 80,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Ask vol",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "1.938",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 80,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Delta",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "+1.123",
+          "typo": "type.num.base",
+          "color": "color.buy.default"
+         }
+        ],
+        "w": 80,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Imbalance flag",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "—",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 112,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Estimated badge",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "—",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 160,
+        "h": 24
+       }
+      ],
+      "w": 600,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "row 03",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "th · Price",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "64,098.5",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 88,
+        "h": 24,
+        "note": "<th scope=\"row\">"
+       },
+       {
+        "t": "board",
+        "name": "td · Bid vol",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "5.198",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 80,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Ask vol",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "2.834",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 80,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Delta",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "−2.364",
+          "typo": "type.num.base",
+          "color": "color.sell.default"
+         }
+        ],
+        "w": 80,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Imbalance flag",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "—",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 112,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Estimated badge",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "—",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 160,
+        "h": 24
+       }
+      ],
+      "w": 600,
+      "h": 24
+     }
+    ]
+   }
+  },
+  {
+   "into": "parity∕footprint-bar · dark/trace/table · footprint levels",
+   "node": {
+    "t": "board",
+    "name": "row 04",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.selected"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,098.0",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 88,
+      "h": 24,
+      "note": "<th scope=\"row\">"
+     },
+     {
+      "t": "board",
+      "name": "td · Bid vol",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "2.974",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask vol",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "19.399",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Delta",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "+16.425",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Imbalance flag",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "Ask-stacked",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 112,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Estimated badge",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "Estimated, Iceberg",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 160,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "CMP-039 ring · inset (focus)",
+      "o": {
+       "stroke": "color.surface.canvas",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "band-2 · ring",
+        "o": {
+         "stroke": "color.focus.ring",
+         "strokeWidth": "border.focus",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "band-3 · halo",
+          "o": {
+           "stroke": "color.surface.canvas",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "w": 594,
+          "h": 18,
+          "x": 2,
+          "y": 2
+         }
+        ],
+        "w": 598,
+        "h": 22,
+        "x": 1,
+        "y": 1
+       }
+      ],
+      "w": 600,
+      "h": 24,
+      "x": 0,
+      "y": 0,
+      "abs": true,
+      "note": "CMP-039 inset: drawn inside the row (E47-D04 §7.1)"
+     }
+    ],
+    "w": 600,
+    "h": 24,
+    "note": "aria-current=\"true\"; the grid's one stop (roving), focus here"
+   }
+  },
+  {
+   "into": "parity∕footprint-bar · dark/trace/table · footprint levels",
+   "node": {
+    "t": "board",
+    "name": "row 05",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,097.5",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 88,
+      "h": 24,
+      "note": "<th scope=\"row\">"
+     },
+     {
+      "t": "board",
+      "name": "td · Bid vol",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.769",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask vol",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "0.840",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Delta",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "−0.929",
+        "typo": "type.num.base",
+        "color": "color.sell.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Imbalance flag",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 112,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Estimated badge",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 160,
+      "h": 24
+     }
+    ],
+    "w": 600,
+    "h": 24
+   }
+  },
+  {
+   "into": "parity∕footprint-bar · dark",
+   "node": {
+    "t": "board",
+    "name": "oracle P-1 … P-5",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "w": 1248,
+    "kids": [
+     {
+      "t": "board",
+      "name": "header row",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "th · P",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "P",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 32
+         }
+        ],
+        "w": 48,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th · On the canvas",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "On the canvas",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 184
+         }
+        ],
+        "w": 200,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th · Mirror field",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Mirror field",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 184
+         }
+        ],
+        "w": 200,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th · Table column",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Table column",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 136
+         }
+        ],
+        "w": 152,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th · Label slot",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Label slot",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 160
+         }
+        ],
+        "w": 176,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th · Source",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Source",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 184
+         }
+        ],
+        "w": 200,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th · Fixture value: mirror = table",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Fixture value: mirror = table",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 256
+         }
+        ],
+        "w": 272,
+        "h": 24
+       }
+      ],
+      "w": 1248,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "row 01",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "stroke": "color.border.subtle",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "td · P",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "P-1",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 32
+         }
+        ],
+        "w": 48,
+        "h": 21
+       },
+       {
+        "t": "board",
+        "name": "td · On the canvas",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "cell bid volume",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 184
+         }
+        ],
+        "w": 200,
+        "h": 21
+       },
+       {
+        "t": "board",
+        "name": "td · Mirror field",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Enter detail: bid",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 184
+         }
+        ],
+        "w": 200,
+        "h": 21
+       },
+       {
+        "t": "board",
+        "name": "td · Table column",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Bid vol",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 136
+         }
+        ],
+        "w": 152,
+        "h": 21
+       },
+       {
+        "t": "board",
+        "name": "td · Label slot",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "values",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 160
+         }
+        ],
+        "w": 176,
+        "h": 21
+       },
+       {
+        "t": "board",
+        "name": "td · Source",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "A11yCells.bid",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 184
+         }
+        ],
+        "w": 200,
+        "h": 21
+       },
+       {
+        "t": "board",
+        "name": "td · Fixture value: mirror = table",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "2.974 = 2.974",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 256
+         }
+        ],
+        "w": 272,
+        "h": 21
+       }
+      ],
+      "w": 1248,
+      "h": 21
+     },
+     {
+      "t": "board",
+      "name": "row 02",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "stroke": "color.border.subtle",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "td · P",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "P-2",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 32
+         }
+        ],
+        "w": 48,
+        "h": 21
+       },
+       {
+        "t": "board",
+        "name": "td · On the canvas",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "cell ask volume",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 184
+         }
+        ],
+        "w": 200,
+        "h": 21
+       },
+       {
+        "t": "board",
+        "name": "td · Mirror field",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Enter detail: ask",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 184
+         }
+        ],
+        "w": 200,
+        "h": 21
+       },
+       {
+        "t": "board",
+        "name": "td · Table column",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Ask vol",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 136
+         }
+        ],
+        "w": 152,
+        "h": 21
+       },
+       {
+        "t": "board",
+        "name": "td · Label slot",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "values",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 160
+         }
+        ],
+        "w": 176,
+        "h": 21
+       },
+       {
+        "t": "board",
+        "name": "td · Source",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "A11yCells.ask",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 184
+         }
+        ],
+        "w": 200,
+        "h": 21
+       },
+       {
+        "t": "board",
+        "name": "td · Fixture value: mirror = table",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "19.399 = 19.399",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 256
+         }
+        ],
+        "w": 272,
+        "h": 21
+       }
+      ],
+      "w": 1248,
+      "h": 21
+     }
+    ]
+   }
+  },
+  {
+   "into": "parity∕footprint-bar · dark/oracle P-1 … P-5",
+   "node": {
+    "t": "board",
+    "name": "row 03",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "stroke": "color.border.subtle",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "td · P",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "P-3",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 32
+       }
+      ],
+      "w": 48,
+      "h": 21
+     },
+     {
+      "t": "board",
+      "name": "td · On the canvas",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "cell delta, colour + glyph",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ],
+      "w": 200,
+      "h": 21
+     },
+     {
+      "t": "board",
+      "name": "td · Mirror field",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "Enter detail: delta, +/−",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ],
+      "w": 200,
+      "h": 21
+     },
+     {
+      "t": "board",
+      "name": "td · Table column",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "Delta",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ],
+      "w": 152,
+      "h": 21
+     },
+     {
+      "t": "board",
+      "name": "td · Label slot",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "values, signed text",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ],
+      "w": 176,
+      "h": 21
+     },
+     {
+      "t": "board",
+      "name": "td · Source",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "derived ask − bid",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ],
+      "w": 200,
+      "h": 21
+     },
+     {
+      "t": "board",
+      "name": "td · Fixture value: mirror = table",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "+16.425 = +16.425",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 256
+       }
+      ],
+      "w": 272,
+      "h": 21
+     }
+    ],
+    "w": 1248,
+    "h": 21
+   }
+  },
+  {
+   "into": "parity∕footprint-bar · dark/oracle P-1 … P-5",
+   "node": {
+    "t": "board",
+    "name": "row 04",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "stroke": "color.border.subtle",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "td · P",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "P-4",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 32
+       }
+      ],
+      "w": 48,
+      "h": 21
+     },
+     {
+      "t": "board",
+      "name": "td · On the canvas",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "imbalance outline + hatch",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ],
+      "w": 200,
+      "h": 21
+     },
+     {
+      "t": "board",
+      "name": "td · Mirror field",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "Enter detail: flag word",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ],
+      "w": 200,
+      "h": 21
+     },
+     {
+      "t": "board",
+      "name": "td · Table column",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "Imbalance flag",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ],
+      "w": 152,
+      "h": 21
+     },
+     {
+      "t": "board",
+      "name": "td · Label slot",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "flags",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ],
+      "w": 176,
+      "h": 21
+     },
+     {
+      "t": "board",
+      "name": "td · Source",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "A11yCells.imbalance",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ],
+      "w": 200,
+      "h": 21
+     },
+     {
+      "t": "board",
+      "name": "td · Fixture value: mirror = table",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "Ask-stacked = Ask-stacked",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 256
+       }
+      ],
+      "w": 272,
+      "h": 21
+     }
+    ],
+    "w": 1248,
+    "h": 21
+   }
+  },
+  {
+   "into": "parity∕footprint-bar · dark/oracle P-1 … P-5",
+   "node": {
+    "t": "board",
+    "name": "row 05",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "stroke": "color.border.subtle",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "td · P",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "P-5",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 32
+       }
+      ],
+      "w": 48,
+      "h": 21
+     },
+     {
+      "t": "board",
+      "name": "td · On the canvas",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "estimated hatch + badge",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ],
+      "w": 200,
+      "h": 21
+     },
+     {
+      "t": "board",
+      "name": "td · Mirror field",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "Enter detail: estimated",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ],
+      "w": 200,
+      "h": 21
+     },
+     {
+      "t": "board",
+      "name": "td · Table column",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "Estimated badge",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ],
+      "w": 152,
+      "h": 21
+     },
+     {
+      "t": "board",
+      "name": "td · Label slot",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "Estimated, display name",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ],
+      "w": 176,
+      "h": 21
+     },
+     {
+      "t": "board",
+      "name": "td · Source",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "A11yCells.estimated",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ],
+      "w": 200,
+      "h": 21
+     },
+     {
+      "t": "board",
+      "name": "td · Fixture value: mirror = table",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "Estimated, Iceberg = Estimated, Iceberg",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 256
+       }
+      ],
+      "w": 272,
+      "h": 21
+     }
+    ],
+    "w": 1248,
+    "h": 21
+   }
+  },
+  {
+   "into": "parity∕footprint-bar · dark",
+   "node": {
+    "t": "text",
+    "name": "foot",
+    "chars": "QA-1 (hand-off §G): bid, ask, delta with + / −, the flag word and \"Estimated, {display name}\" equal in the label and the table; the other 14 oracle rows are text (§9)",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "w": 1248
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 01",
+    "chars": "state: parity/footprint-bar · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 80,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer · data",
+    "chars": "Data: seeded synthetic stream (seed 1305, BTCUSDT, 1m bars); sample data, never a market capture (§0 L63); only the tick size (0.1) is the recorded fixture's (hand-off §I L111)",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "x": 80,
+    "y": 904
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "E47-D06 / 07 parity-oracle",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Board",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§0 L73: §9 as a sheet: AC2's footprint bar traced from the canvas to the mirror label, the table row and the oracle row",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Theme: dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Frames (hand-off §I L111): parity/footprint-bar · dark (each 1280 x 800, compact)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "Export: docs/design/E47/img/E47-D06-07-parity-oracle.png",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "Data: seeded synthetic stream (seed 1305, BTCUSDT, 1m bars); sample data, never a market capture (§0 L63); only the tick size (0.1) is the recorded fixture's (hand-off §I L111)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-6",
+        "chars": "Markers, tags, brackets and callouts in color.status.info.default are annotation, not product UI",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "parity/footprint-bar · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Bar 13:42, level 64,098.0 (5 levels of 5 ticks): imbalanced and estimated (QA-1)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Name grammar (§5): {unit}. {values}. {flags as words}. {Estimated, display name}",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E47-D06 — Canvas accessibility · board 07 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400,
+    "x": 1440,
+    "y": 80
+   }
+  }
+ ],
+ "export": "docs/design/E47/img/E47-D06-07-parity-oracle.png",
+ "notes": {
+  "sources": [
+   "spec docs/design/E47/E47-D06.md md5 d9cdedd6, hand-off docs/design/E47/E47-D06-handoff.md md5 d9a47687 (§0 L73; hand-off §I L111); T2 reason templates docs/design/E09/E09-D09.md md5 20c5d5f4; tick size packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a; ring geometry E47-D04 at 1ff5d8cb9 (§7.1)"
+  ],
+  "copy_keys": [],
+  "copy_gaps": [],
+  "spec_gaps": [],
+  "fallbacks": [
+   "kit choice: the canvas surfaces are drawn as simplified synthetic plots (bodies, wicks, bars, bubbles) from the seeded stream; their own visual design is their tickets', not this spec's",
+   "size.icon.sm (12 px) is a Tier-1 primitive (validator WARN)"
+  ],
+  "tokens": [
+   "type.ui.heading-sm",
+   "color.text.primary",
+   "type.num.sm",
+   "color.axis.text",
+   "color.footprint.bid",
+   "color.text.tertiary",
+   "color.footprint.ask",
+   "space.inset.xs",
+   "space.inset.sm",
+   "color.footprint.imbalance",
+   "border.thick",
+   "type.ui.caption",
+   "radius.badge",
+   "color.text.secondary",
+   "border.hairline",
+   "type.ui.label",
+   "space.stack.xs",
+   "color.surface.sunken",
+   "type.ui.body-strong",
+   "space.stack.sm",
+   "color.surface.raised",
+   "size.icon.sm",
+   "type.num.base",
+   "color.sell.default",
+   "type.ui.body",
+   "color.buy.default",
+   "color.surface.selected",
+   "color.surface.canvas",
+   "color.focus.ring",
+   "border.focus",
+   "space.inset.lg",
+   "color.border.subtle",
+   "space.stack.md"
+  ],
+  "live_checks": [
+   "root 'E47-D06 / 07 parity-oracle' at (7000, 4200): read back the name exactly after the first section call; size 1920 x 1000",
+   "after touchTexts + relayout: the annotation column (estimated 371 px) ends inside the root (h 1000); raise the root's h to its end + 80 if not",
+   "frame 'parity∕footprint-bar · dark': read back 1280 x 800 at (80, 80); clip on, no child spills",
+   "export docs/design/E47/img/E47-D06-07-parity-oracle.png; record the board id and the PNG size in §0"
+  ],
+  "deviations": [],
+  "ambiguities": [
+   "the estimated level's reason is CMP-227's display name \"Iceberg\" (`iceberg`, a `05`:169 token; R-5); the values slot names each value (\"bid …, ask …, delta …\")",
+   "the imbalance flag reads ask ≥ 3 × bid at one level (`05`'s 300 % example); the diagonal comparison is E18's"
+  ]
+ }
+}

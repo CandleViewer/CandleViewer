@@ -1,0 +1,1087 @@
+{
+ "board": {
+  "name": "E47-D08 / 08 override-vs-os",
+  "w": 1920,
+  "h": 1000,
+  "x": 14000,
+  "y": 4200,
+  "o": {
+   "fill": "color.surface.app",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "override∕os-reduce-off · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "§9: OS reduce, the override Off",
+    "x": 80,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · env badge",
+          "w": 56,
+          "h": 20,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar (E10): placeholders except the parts this board draws"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "w": 1280,
+      "h": 728,
+      "kids": [
+       {
+        "t": "board",
+        "name": "NavRail",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entry-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 40,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 40,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 40,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 40,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 40,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-6",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 40,
+          "h": 32
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 728,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 55,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 56,
+        "h": 728
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "override∕os-reduce-off · dark/body",
+   "node": {
+    "t": "board",
+    "name": "main",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "workspace",
+      "o": {
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "SCR-117 page",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.lg",
+         "pad": "space.inset.xl"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "h1",
+          "chars": "Accessibility",
+          "typo": "type.ui.heading-lg",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "text",
+          "name": "h2",
+          "chars": "Motion",
+          "typo": "type.ui.heading-sm",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "board",
+          "name": "option row · reduced_motion",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Reduced motion",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "description",
+            "chars": "Panels open and close without sliding, heatmap trails stop fading, prices stop flashing and the chart stops gliding after you pan.",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary",
+            "w": 560
+           },
+           {
+            "t": "board",
+            "name": "CMP-006 RadioGroup",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.lg"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "radio · Follow my system",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "circle",
+                "kids": [
+                 {
+                  "t": "ellipse",
+                  "name": "outline",
+                  "w": 16,
+                  "h": 16,
+                  "o": {
+                   "fill": "color.surface.canvas",
+                   "stroke": "color.border.strong",
+                   "strokeWidth": "border.hairline",
+                   "strokeAlign": "inner"
+                  },
+                  "x": 0,
+                  "y": 0,
+                  "abs": true
+                 }
+                ],
+                "w": 16,
+                "h": 16
+               },
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Follow my system",
+                "typo": "type.ui.body",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 24,
+              "note": "role=\"radio\" aria-checked=\"false\""
+             },
+             {
+              "t": "board",
+              "name": "radio · On",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "circle",
+                "kids": [
+                 {
+                  "t": "ellipse",
+                  "name": "outline",
+                  "w": 16,
+                  "h": 16,
+                  "o": {
+                   "fill": "color.surface.canvas",
+                   "stroke": "color.border.strong",
+                   "strokeWidth": "border.hairline",
+                   "strokeAlign": "inner"
+                  },
+                  "x": 0,
+                  "y": 0,
+                  "abs": true
+                 }
+                ],
+                "w": 16,
+                "h": 16
+               },
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "On",
+                "typo": "type.ui.body",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 24,
+              "note": "role=\"radio\" aria-checked=\"false\""
+             },
+             {
+              "t": "board",
+              "name": "radio · Off",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "circle",
+                "kids": [
+                 {
+                  "t": "ellipse",
+                  "name": "outline",
+                  "w": 16,
+                  "h": 16,
+                  "o": {
+                   "fill": "color.surface.canvas",
+                   "stroke": "color.border.strong",
+                   "strokeWidth": "border.hairline",
+                   "strokeAlign": "inner"
+                  },
+                  "x": 0,
+                  "y": 0,
+                  "abs": true
+                 },
+                 {
+                  "t": "ellipse",
+                  "name": "dot",
+                  "w": 8,
+                  "h": 8,
+                  "o": {
+                   "fill": "color.action.primary.default"
+                  },
+                  "x": 4,
+                  "y": 4,
+                  "abs": true
+                 }
+                ],
+                "w": 16,
+                "h": 16
+               },
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Off",
+                "typo": "type.ui.body",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 24,
+              "note": "role=\"radio\" aria-checked=\"true\""
+             }
+            ],
+            "h": 32,
+            "note": "radiogroup: one Tab stop (E47-D05 §5.1); Off is the explicit choice"
+           },
+           {
+            "t": "text",
+            "name": "Effective line",
+            "chars": "Effective: Off, your choice",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary",
+            "w": 560,
+            "note": "in the row's aria-describedby; not a live region (E47-D05 §5.1)"
+           }
+          ],
+          "w": 560,
+          "note": "E47-D05 §4 L147 at 3987edc89"
+         },
+         {
+          "t": "board",
+          "name": "option row · disable_canvas_animation",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "label + switch",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.lg"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Disable canvas animation",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "board",
+              "name": "switch",
+              "o": {
+               "fill": "color.surface.hover",
+               "radius": "radius.badge",
+               "stroke": "color.border.strong",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "knob",
+                "w": 12,
+                "h": 12,
+                "o": {
+                 "fill": "color.text.secondary"
+                },
+                "x": 4,
+                "y": 4,
+                "abs": true
+               }
+              ],
+              "w": 38,
+              "h": 20,
+              "note": "role=\"switch\" aria-checked=\"false\""
+             }
+            ],
+            "h": 24
+           },
+           {
+            "t": "text",
+            "name": "description",
+            "chars": "Heatmap trails stop fading and change instantly; the chart stops easing when it pans; price cells stop flashing. The rest of the app keeps its motion.",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary",
+            "w": 560
+           }
+          ],
+          "w": 560,
+          "note": "E47-D05 §4 L149; off, so the tier is full (§2)"
+         }
+        ],
+        "w": 640,
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "tag · OS signal",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.xs",
+         "radius": "radius.control",
+         "fill": "color.status.info.default"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "OS: prefers-reduced-motion: reduce",
+          "typo": "type.ui.caption",
+          "color": "color.text.inverse"
+         }
+        ],
+        "h": 16,
+        "x": 680,
+        "y": 24,
+        "abs": true,
+        "note": "annotation tag (not product UI)"
+       },
+       {
+        "t": "board",
+        "name": "tag · hotkey",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.xs",
+         "radius": "radius.control",
+         "fill": "color.status.info.default"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Ctrl+Shift+M pressed: explicit choice Off, persisted",
+          "typo": "type.ui.caption",
+          "color": "color.text.inverse"
+         }
+        ],
+        "h": 16,
+        "x": 680,
+        "y": 48,
+        "abs": true,
+        "note": "annotation tag (not product UI)"
+       },
+       {
+        "t": "board",
+        "name": "callout · announcement",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "pad": "space.inset.sm",
+         "fill": "color.surface.overlay",
+         "radius": "radius.control",
+         "stroke": "color.status.info.default",
+         "strokeWidth": "border.thick",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "Polite, once, no toast: \"Reduced motion off\" (W-2)",
+          "typo": "type.ui.label",
+          "color": "color.text.primary",
+          "w": 344
+         },
+         {
+          "t": "text",
+          "name": "line-2",
+          "chars": "The words stay as RULED (BQ-9 overridden; §9 L274); no \"overriding your system setting\" clause (D08-C13)",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 344
+         }
+        ],
+        "w": 360,
+        "x": 680,
+        "y": 80,
+        "abs": true,
+        "note": "annotation callout (not product UI)"
+       },
+       {
+        "t": "board",
+        "name": "callout · effective",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "pad": "space.inset.sm",
+         "fill": "color.surface.overlay",
+         "radius": "radius.control",
+         "stroke": "color.status.info.default",
+         "strokeWidth": "border.thick",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "SCR-117's Effective line: \"Effective: Off, your choice\"",
+          "typo": "type.ui.label",
+          "color": "color.text.primary",
+          "w": 344
+         },
+         {
+          "t": "text",
+          "name": "line-2",
+          "chars": "The lasting statement of the override (W-3 \"Effective: On, your choice\" is the On fill of the same template, E47-D05 L296)",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 344
+         }
+        ],
+        "w": 360,
+        "x": 680,
+        "y": 200,
+        "abs": true,
+        "note": "annotation callout (not product UI)"
+       },
+       {
+        "t": "board",
+        "name": "callout · tier",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "pad": "space.inset.sm",
+         "fill": "color.surface.overlay",
+         "radius": "radius.control",
+         "stroke": "color.status.info.default",
+         "strokeWidth": "border.thick",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "Effective tier full: data-motion safe; engine flags animate, heatmapFade, inertia, flashOnTick on (§2 L129)",
+          "typo": "type.ui.label",
+          "color": "color.text.primary",
+          "w": 344
+         },
+         {
+          "t": "text",
+          "name": "line-2",
+          "chars": "The budget of §4 still binds (R-1)",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 344
+         }
+        ],
+        "w": 360,
+        "x": 680,
+        "y": 320,
+        "abs": true,
+        "note": "annotation callout (not product UI)"
+       }
+      ],
+      "w": 1224,
+      "h": 728,
+      "x": 0,
+      "y": 0
+     }
+    ],
+    "w": 1224,
+    "h": 728
+   }
+  },
+  {
+   "into": "override∕os-reduce-off · dark",
+   "node": {
+    "t": "board",
+    "name": "StatusBar",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · env word",
+      "w": 56,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 24
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 01",
+    "chars": "state: override/os-reduce-off · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 80,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer · data",
+    "chars": "Data: synthetic, never a venue payload: the TICKS `burst` preset (seed 1, 40 Hz, 200 ticks from a start of 65000.00); sample data only",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "x": 80,
+    "y": 904
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "E47-D08 / 08 override-vs-os",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Board",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§0 L78: §9: OS reduce with the override off; the W-2 announcement and SCR-117's Effective line",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Theme: dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Frames (hand-off §H L99): override/os-reduce-off · dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "Export: docs/design/E47/img/E47-D08-08-override-vs-os.png",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "Every frame a 1280 × 800 window, compact density (§0 L67)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-6",
+        "chars": "Data: synthetic, never a venue payload: the TICKS `burst` preset (seed 1, 40 Hz, 200 ticks from a start of 65000.00); sample data only",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-7",
+        "chars": "Markers, tags, shading, outlines and callouts in color.status.info.default are annotation, not product UI",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-8",
+        "chars": "The motion preview tile (I-41) and SCR-117's other sections are not drawn here (E47-D05's boards draw them)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "override/os-reduce-off · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§9 L274: the latest explicit choice wins over the OS in both directions; Ctrl+Shift+M persists and announces once, politely (W-1 / W-2)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "State: OS reduce on, choice Off → full motion; announcement \"Reduced motion off\"",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Effective line \"Effective: Off, your choice\": E47-D05 §5.1's template (L163) filled Off / your choice",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "SCR-117 strings at E47-D05 3987edc89: h1 L119, section Motion L119, rows §4",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E47-D08 — Motion · board 08 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400,
+    "x": 1440,
+    "y": 80
+   }
+  }
+ ],
+ "export": "docs/design/E47/img/E47-D08-08-override-vs-os.png",
+ "notes": {
+  "sources": [
+   "spec docs/design/E47/E47-D08.md md5 6c50afbb, hand-off docs/design/E47/E47-D08-handoff.md md5 dc1307c8 (§0 L78; hand-off §H L99); TICKS packages/fixtures/src/synthetic-ticks.mjs md5 64c3ede9; ring geometry E47-D04 at 1ff5d8cb9 (§7.1); SCR-117 strings E47-D05 at 3987edc89"
+  ],
+  "copy_keys": [
+   "W-2 (§15 L323, verbatim (RULED; BQ-9)): Reduced motion off",
+   "W-3 (§15 L324, verbatim (D05 W-13; SCR-117)): Effective: On, your choice"
+  ],
+  "copy_gaps": [],
+  "spec_gaps": [],
+  "fallbacks": [
+   "kit choice: numbered markers, tags, window shading, outlines and callouts are annotation overlays in color.status.info.default (or its subtle tint) with color.text.inverse words, never product UI",
+   "kit choice: the shell chrome (TopBar, NavRail, StatusBar) and panels outside the board's subject are neutral placeholders; only the surfaces a board draws are drawn"
+  ],
+  "tokens": [
+   "type.ui.heading-lg",
+   "color.text.primary",
+   "type.ui.heading-sm",
+   "color.surface.canvas",
+   "color.border.strong",
+   "border.hairline",
+   "type.ui.body",
+   "space.inset.sm",
+   "color.action.primary.default",
+   "space.inset.lg",
+   "type.ui.body-strong",
+   "type.ui.caption",
+   "color.text.secondary",
+   "space.stack.xs",
+   "color.surface.hover",
+   "radius.badge",
+   "space.stack.lg",
+   "space.inset.xl",
+   "color.text.inverse",
+   "space.inset.xs",
+   "radius.control",
+   "color.status.info.default",
+   "type.ui.label",
+   "color.surface.overlay",
+   "border.thick",
+   "color.surface.app",
+   "color.border.subtle",
+   "space.inset.md",
+   "color.text.tertiary",
+   "space.stack.sm"
+  ],
+  "live_checks": [
+   "root 'E47-D08 / 08 override-vs-os' at (14000, 4200): read back the name exactly after the first section call; size 1920 x 1000",
+   "after touchTexts + relayout: the annotation column (estimated 453 px) ends inside the root (h 1000); raise the root's h to its end + 80 if not",
+   "frame 'override∕os-reduce-off · dark': read back 1280 x 800 at (80, 80); clip on, no child spills",
+   "export docs/design/E47/img/E47-D08-08-override-vs-os.png under the dark set; record the board id and the PNG size in §0"
+  ],
+  "deviations": [],
+  "ambiguities": [
+   "A-2: §0 L78 asks for SCR-117's Effective line with the override off; §15's W-3 is the On fill; the board draws the Off fill of the same E47-D05 template (\"Effective: Off, your choice\")"
+  ]
+ }
+}

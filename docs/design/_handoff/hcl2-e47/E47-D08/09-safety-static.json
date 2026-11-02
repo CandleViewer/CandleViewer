@@ -1,0 +1,6331 @@
+{
+ "board": {
+  "name": "E47-D08 / 09 safety-static",
+  "w": 3280,
+  "h": 1000,
+  "x": 21000,
+  "y": 4200,
+  "o": {
+   "fill": "color.surface.app",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "safety∕reduced · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "§11 under reduce",
+    "x": 80,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-075 EnvBadgeLocal · LIVE",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.badge",
+           "stroke": "color.env.live",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "env glyph",
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "ring",
+              "w": 12,
+              "h": 12,
+              "o": {
+               "stroke": "color.env.live",
+               "strokeWidth": "border.thick",
+               "strokeAlign": "inner"
+              },
+              "x": 0,
+              "y": 0
+             },
+             {
+              "t": "ellipse",
+              "name": "dot",
+              "w": 6,
+              "h": 6,
+              "o": {
+               "fill": "color.env.live"
+              },
+              "x": 3,
+              "y": 3
+             }
+            ],
+            "w": 12,
+            "h": 12
+           },
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "LIVE",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 22,
+          "note": "role=\"img\" named \"Trading environment: Live\"; static in every tier (I-25, §11)"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-211 status · engaged",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.badge",
+           "fill": "color.status.danger.subtle",
+           "stroke": "color.status.danger.strong",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "glyph",
+            "icon": "danger",
+            "color": "color.status.danger.strong",
+            "size": "size.icon"
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Kill switch: engaged · 1 account",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 20,
+          "note": "role=\"status\"; KillSwitchEngaged (`15`:2754); static"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar (E10): placeholders except the parts this board draws"
+     }
+    ]
+   }
+  },
+  {
+   "into": "safety∕reduced · dark",
+   "node": {
+    "t": "board",
+    "name": "body",
+    "o": {
+     "dir": "row",
+     "align": "start"
+    },
+    "w": 1280,
+    "h": 728,
+    "kids": [
+     {
+      "t": "board",
+      "name": "NavRail",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.inset.xs",
+       "padY": "space.inset.sm",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "entry-1",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-2",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-3",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-4",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-5",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-6",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1,
+        "h": 728,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 55,
+        "y": 0,
+        "abs": true
+       }
+      ],
+      "w": 56,
+      "h": 728
+     },
+     {
+      "t": "board",
+      "name": "main",
+      "o": {
+       "fill": "color.surface.app",
+       "clip": true
+      },
+      "w": 1224,
+      "h": 728,
+      "kids": [
+       {
+        "t": "board",
+        "name": "workspace",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.md"
+        },
+        "w": 1224,
+        "h": 728,
+        "x": 0,
+        "y": 0,
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-074 EnvBanner · LIVE",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm",
+           "padX": "space.inset.lg",
+           "fill": "color.surface.raised",
+           "stroke": "color.env.live",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "env glyph",
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "ring",
+              "w": 12,
+              "h": 12,
+              "o": {
+               "stroke": "color.env.live",
+               "strokeWidth": "border.thick",
+               "strokeAlign": "inner"
+              },
+              "x": 0,
+              "y": 0
+             },
+             {
+              "t": "ellipse",
+              "name": "dot",
+              "w": 6,
+              "h": 6,
+              "o": {
+               "fill": "color.env.live"
+              },
+              "x": 3,
+              "y": 3
+             }
+            ],
+            "w": 12,
+            "h": 12
+           },
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "LIVE",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "what",
+            "chars": "Trading environment: Live",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 1224,
+          "h": 32,
+          "note": "role=\"status\"; the word always rendered (`15` CMP-074); static in every tier (§11)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-117 RiskLockoutBanner · FROZEN",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm",
+           "padX": "space.inset.lg",
+           "fill": "color.status.danger.subtle",
+           "stroke": "color.status.danger.strong",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "lock",
+            "icon": "locked",
+            "color": "color.text.primary",
+            "size": "size.icon",
+            "note": "CMP-019 Icon lock"
+           },
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "FROZEN",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "reason",
+            "chars": "until the owner releases it; no clock will clear it",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 1224,
+          "h": 36,
+          "note": "named role=\"region\"; appears as a cut; never dismissible while it holds (`15` CMP-117)"
+         },
+         {
+          "t": "board",
+          "name": "pad",
+          "w": 1224,
+          "h": 232,
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-080 panel · chart BTCUSDT",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.subtle",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner",
+             "clip": true
+            },
+            "w": 1192,
+            "h": 232,
+            "x": 16,
+            "y": 0,
+            "kids": [
+             {
+              "t": "board",
+              "name": "header",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "padX": "space.inset.sm",
+               "justify": "space-between",
+               "fill": "color.surface.raised"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "h2",
+                "chars": "Chart · BTCUSDT",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.primary"
+               },
+               {
+                "t": "board",
+                "name": "tools",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "gap": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "rect",
+                  "name": "placeholder · tool",
+                  "w": 16,
+                  "h": 16,
+                  "o": {
+                   "radius": "radius.control",
+                   "fill": "color.surface.hover"
+                  }
+                 }
+                ],
+                "h": 28
+               }
+              ],
+              "w": 1192,
+              "h": 28
+             },
+             {
+              "t": "board",
+              "name": "tools + plot",
+              "o": {
+               "dir": "column",
+               "align": "start"
+              },
+              "w": 1192,
+              "h": 204,
+              "kids": [
+               {
+                "t": "board",
+                "name": "chart tools",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "fill": "color.surface.raised"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "arm toggle + reason",
+                  "o": {
+                   "dir": "column",
+                   "align": "start",
+                   "gap": "space.stack.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "board",
+                    "name": "CMP-229 ArmToggle · read-only (T2)",
+                    "o": {
+                     "dir": "row",
+                     "align": "center",
+                     "gap": "space.inset.xs",
+                     "padX": "space.inset.sm",
+                     "radius": "radius.control",
+                     "fill": "color.surface.raised",
+                     "stroke": "color.border.default",
+                     "strokeWidth": "border.hairline",
+                     "strokeAlign": "inner"
+                    },
+                    "kids": [
+                     {
+                      "t": "icon",
+                      "name": "lock",
+                      "icon": "locked",
+                      "color": "color.text.tertiary",
+                      "size": "size.icon",
+                      "note": "CMP-019 Icon lock, decorative=false, name \"Not available\""
+                     },
+                     {
+                      "t": "text",
+                      "name": "label",
+                      "chars": "LOCKED · Main · 0.010 BTC",
+                      "typo": "type.ui.label",
+                      "color": "color.text.tertiary"
+                     }
+                    ],
+                    "h": 24,
+                    "note": "aria-pressed switch \"Chart trading: locked\", aria-disabled=\"true\" (never disabled), in the Tab order; CMP-079 RbacGate rendering 2a; never opacity.disabled (§12)"
+                   },
+                   {
+                    "t": "text",
+                    "name": "reason · W-12",
+                    "chars": "Your role can't place orders.",
+                    "typo": "type.ui.caption",
+                    "color": "color.text.secondary",
+                    "note": "the reason node in the DOM at mount, aria-describedby; color.text.secondary (§12)"
+                   }
+                  ]
+                 }
+                ],
+                "w": 1192,
+                "h": 40
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot",
+   "node": {
+    "t": "board",
+    "name": "plot",
+    "o": {
+     "fill": "color.surface.canvas",
+     "clip": true
+    },
+    "w": 1192,
+    "h": 164,
+    "note": "BTCUSDT candles of 100 ms from the TICKS burst (synthetic)",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "grid · mid",
+      "w": 1120,
+      "h": 1,
+      "o": {
+       "fill": "color.grid.line"
+      },
+      "x": 8,
+      "y": 74
+     },
+     {
+      "t": "rect",
+      "name": "wick 0",
+      "w": 1,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 18,
+      "y": 105
+     },
+     {
+      "t": "rect",
+      "name": "body 0",
+      "w": 20,
+      "h": 2,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 8,
+      "y": 109
+     },
+     {
+      "t": "rect",
+      "name": "wick 100",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 40,
+      "y": 105
+     },
+     {
+      "t": "rect",
+      "name": "body 100",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 30,
+      "y": 109
+     },
+     {
+      "t": "rect",
+      "name": "wick 200",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 62,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "body 200",
+      "w": 20,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 52,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "wick 300",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 85,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "body 300",
+      "w": 20,
+      "h": 3,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 75,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "wick 400",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 107,
+      "y": 113
+     },
+     {
+      "t": "rect",
+      "name": "body 400",
+      "w": 20,
+      "h": 3,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 97,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "wick 500",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 129,
+      "y": 105
+     },
+     {
+      "t": "rect",
+      "name": "body 500",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 119,
+      "y": 109
+     },
+     {
+      "t": "rect",
+      "name": "wick 600",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 151,
+      "y": 109
+     },
+     {
+      "t": "rect",
+      "name": "body 600",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 141,
+      "y": 109
+     },
+     {
+      "t": "rect",
+      "name": "wick 700",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 174,
+      "y": 113
+     },
+     {
+      "t": "rect",
+      "name": "body 700",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 164,
+      "y": 113
+     },
+     {
+      "t": "rect",
+      "name": "wick 800",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 196,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "body 800",
+      "w": 20,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 186,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "wick 900",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 218,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "body 900",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 208,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "wick 1000",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 240,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "body 1000",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 230,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "wick 1100",
+      "w": 1,
+      "h": 11,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 263,
+      "y": 113
+     },
+     {
+      "t": "rect",
+      "name": "body 1100",
+      "w": 20,
+      "h": 11,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 253,
+      "y": 113
+     },
+     {
+      "t": "rect",
+      "name": "wick 1200",
+      "w": 1,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 285,
+      "y": 113
+     },
+     {
+      "t": "rect",
+      "name": "body 1200",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 275,
+      "y": 113
+     },
+     {
+      "t": "rect",
+      "name": "wick 1300",
+      "w": 1,
+      "h": 3,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 307,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "body 1300",
+      "w": 20,
+      "h": 3,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 297,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "wick 1400",
+      "w": 1,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 329,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "body 1400",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 319,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "wick 1500",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 352,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "body 1500",
+      "w": 20,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 342,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "wick 1600",
+      "w": 1,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 374,
+      "y": 113
+     },
+     {
+      "t": "rect",
+      "name": "body 1600",
+      "w": 20,
+      "h": 2,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 364,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "wick 1700",
+      "w": 1,
+      "h": 3,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 396,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "body 1700",
+      "w": 20,
+      "h": 3,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 386,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "wick 1800",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 418,
+      "y": 113
+     },
+     {
+      "t": "rect",
+      "name": "body 1800",
+      "w": 20,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 408,
+      "y": 113
+     },
+     {
+      "t": "rect",
+      "name": "wick 1900",
+      "w": 1,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 441,
+      "y": 105
+     },
+     {
+      "t": "rect",
+      "name": "body 1900",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 431,
+      "y": 105
+     },
+     {
+      "t": "rect",
+      "name": "wick 2000",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 463,
+      "y": 109
+     },
+     {
+      "t": "rect",
+      "name": "body 2000",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 453,
+      "y": 109
+     },
+     {
+      "t": "rect",
+      "name": "wick 2100",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 485,
+      "y": 105
+     },
+     {
+      "t": "rect",
+      "name": "body 2100",
+      "w": 20,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 475,
+      "y": 105
+     },
+     {
+      "t": "rect",
+      "name": "wick 2200",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 507,
+      "y": 93
+     },
+     {
+      "t": "rect",
+      "name": "body 2200",
+      "w": 20,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 497,
+      "y": 93
+     },
+     {
+      "t": "rect",
+      "name": "wick 2300",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 530,
+      "y": 93
+     },
+     {
+      "t": "rect",
+      "name": "body 2300",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 520,
+      "y": 93
+     },
+     {
+      "t": "rect",
+      "name": "wick 2400",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 552,
+      "y": 82
+     },
+     {
+      "t": "rect",
+      "name": "body 2400",
+      "w": 20,
+      "h": 3,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 542,
+      "y": 86
+     },
+     {
+      "t": "rect",
+      "name": "wick 2500",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 574,
+      "y": 86
+     },
+     {
+      "t": "rect",
+      "name": "body 2500",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 564,
+      "y": 89
+     },
+     {
+      "t": "rect",
+      "name": "wick 2600",
+      "w": 1,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 596,
+      "y": 89
+     },
+     {
+      "t": "rect",
+      "name": "body 2600",
+      "w": 20,
+      "h": 2,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 586,
+      "y": 89
+     },
+     {
+      "t": "rect",
+      "name": "wick 2700",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 618,
+      "y": 82
+     },
+     {
+      "t": "rect",
+      "name": "body 2700",
+      "w": 20,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 608,
+      "y": 82
+     },
+     {
+      "t": "rect",
+      "name": "wick 2800",
+      "w": 1,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 641,
+      "y": 74
+     },
+     {
+      "t": "rect",
+      "name": "body 2800",
+      "w": 20,
+      "h": 2,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 631,
+      "y": 78
+     },
+     {
+      "t": "rect",
+      "name": "wick 2900",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 663,
+      "y": 70
+     },
+     {
+      "t": "rect",
+      "name": "body 2900",
+      "w": 20,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 653,
+      "y": 70
+     },
+     {
+      "t": "rect",
+      "name": "wick 3000",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 685,
+      "y": 70
+     },
+     {
+      "t": "rect",
+      "name": "body 3000",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 675,
+      "y": 70
+     },
+     {
+      "t": "rect",
+      "name": "wick 3100",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 707,
+      "y": 66
+     },
+     {
+      "t": "rect",
+      "name": "body 3100",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 697,
+      "y": 66
+     },
+     {
+      "t": "rect",
+      "name": "wick 3200",
+      "w": 1,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 730,
+      "y": 66
+     },
+     {
+      "t": "rect",
+      "name": "body 3200",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 720,
+      "y": 66
+     },
+     {
+      "t": "rect",
+      "name": "wick 3300",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 752,
+      "y": 66
+     },
+     {
+      "t": "rect",
+      "name": "body 3300",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 742,
+      "y": 66
+     },
+     {
+      "t": "rect",
+      "name": "wick 3400",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 774,
+      "y": 55
+     },
+     {
+      "t": "rect",
+      "name": "body 3400",
+      "w": 20,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 764,
+      "y": 55
+     },
+     {
+      "t": "rect",
+      "name": "wick 3500",
+      "w": 1,
+      "h": 12,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 796,
+      "y": 43
+     },
+     {
+      "t": "rect",
+      "name": "body 3500",
+      "w": 20,
+      "h": 12,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 786,
+      "y": 43
+     },
+     {
+      "t": "rect",
+      "name": "wick 3600",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 819,
+      "y": 35
+     },
+     {
+      "t": "rect",
+      "name": "body 3600",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 809,
+      "y": 35
+     },
+     {
+      "t": "rect",
+      "name": "wick 3700",
+      "w": 1,
+      "h": 3,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 841,
+      "y": 28
+     },
+     {
+      "t": "rect",
+      "name": "body 3700",
+      "w": 20,
+      "h": 3,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 831,
+      "y": 28
+     },
+     {
+      "t": "rect",
+      "name": "wick 3800",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 863,
+      "y": 31
+     },
+     {
+      "t": "rect",
+      "name": "body 3800",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 853,
+      "y": 31
+     },
+     {
+      "t": "rect",
+      "name": "wick 3900",
+      "w": 1,
+      "h": 12,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 885,
+      "y": 31
+     },
+     {
+      "t": "rect",
+      "name": "body 3900",
+      "w": 20,
+      "h": 12,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 875,
+      "y": 31
+     }
+    ]
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "wick 4000",
+    "w": 1,
+    "h": 8,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 908,
+    "y": 35
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "body 4000",
+    "w": 20,
+    "h": 4,
+    "o": {
+     "fill": "color.candle.down"
+    },
+    "x": 898,
+    "y": 39
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "wick 4100",
+    "w": 1,
+    "h": 4,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 930,
+    "y": 35
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "body 4100",
+    "w": 20,
+    "h": 2,
+    "o": {
+     "fill": "color.candle.up"
+    },
+    "x": 920,
+    "y": 39
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "wick 4200",
+    "w": 1,
+    "h": 8,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 952,
+    "y": 35
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "body 4200",
+    "w": 20,
+    "h": 4,
+    "o": {
+     "fill": "color.candle.up"
+    },
+    "x": 942,
+    "y": 39
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "wick 4300",
+    "w": 1,
+    "h": 8,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 974,
+    "y": 35
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "body 4300",
+    "w": 20,
+    "h": 8,
+    "o": {
+     "fill": "color.candle.down"
+    },
+    "x": 964,
+    "y": 35
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "wick 4400",
+    "w": 1,
+    "h": 8,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 997,
+    "y": 39
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "body 4400",
+    "w": 20,
+    "h": 8,
+    "o": {
+     "fill": "color.candle.up"
+    },
+    "x": 987,
+    "y": 39
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "wick 4500",
+    "w": 1,
+    "h": 4,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 1019,
+    "y": 35
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "body 4500",
+    "w": 20,
+    "h": 4,
+    "o": {
+     "fill": "color.candle.down"
+    },
+    "x": 1009,
+    "y": 35
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "wick 4600",
+    "w": 1,
+    "h": 4,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 1041,
+    "y": 35
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "body 4600",
+    "w": 20,
+    "h": 2,
+    "o": {
+     "fill": "color.candle.up"
+    },
+    "x": 1031,
+    "y": 35
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "wick 4700",
+    "w": 1,
+    "h": 3,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 1063,
+    "y": 28
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "body 4700",
+    "w": 20,
+    "h": 3,
+    "o": {
+     "fill": "color.candle.up"
+    },
+    "x": 1053,
+    "y": 28
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "wick 4800",
+    "w": 1,
+    "h": 3,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 1086,
+    "y": 28
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "body 4800",
+    "w": 20,
+    "h": 3,
+    "o": {
+     "fill": "color.candle.up"
+    },
+    "x": 1076,
+    "y": 28
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "wick 4900",
+    "w": 1,
+    "h": 4,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 1108,
+    "y": 20
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "body 4900",
+    "w": 20,
+    "h": 4,
+    "o": {
+     "fill": "color.candle.up"
+    },
+    "x": 1098,
+    "y": 20
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "text",
+    "name": "axis 6500022",
+    "chars": "65,000.22",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 1128,
+    "y": 13
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "text",
+    "name": "axis 6500008",
+    "chars": "65,000.08",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 1128,
+    "y": 67
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "text",
+    "name": "axis 6499994",
+    "chars": "64,999.94",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 1128,
+    "y": 121
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace",
+   "node": {
+    "t": "board",
+    "name": "table pad",
+    "w": 1224,
+    "h": 330,
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-049 grid · §11",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "w": 1152,
+      "note": "annotation table (the spec's §11), not product UI",
+      "x": 16,
+      "y": 0,
+      "kids": [
+       {
+        "t": "text",
+        "name": "caption",
+        "chars": "§11 (L294): every signal static in every tier and theme",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 1152
+       },
+       {
+        "t": "board",
+        "name": "header row",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "fill": "color.surface.canvas"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "th · sig",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "start",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Signal",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 200,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · cmp",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "start",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Component",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 152,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · car",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "start",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Static carrier",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 520,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · red",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "start",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Reduce and hc",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 184,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · fl",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "start",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Flashes",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 96,
+          "h": 24
+         }
+        ],
+        "w": 1152,
+        "h": 24,
+        "note": "column headers, scope=\"col\""
+       },
+       {
+        "t": "rect",
+        "name": "header rule",
+        "w": 1152,
+        "h": 1,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/table pad/CMP-049 grid · §11",
+   "node": {
+    "t": "board",
+    "name": "rows",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "w": 1152,
+    "h": 276,
+    "kids": [
+     {
+      "t": "board",
+      "name": "row 1",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "sig",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Live environment banner",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 200,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "cmp",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "CMP-074 (15:833)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 152,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "car",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "the env glyph and the word LIVE or DEMO",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 520,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "red",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "identical",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 184,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "fl",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "never",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 28
+       }
+      ],
+      "w": 1152,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "row 2",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "sig",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Environment badge",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 200,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "cmp",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "CMP-075 (15:842)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 152,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "car",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "word, weight, glyph shape, 2 px border (E11D06:337)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 520,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "red",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "identical",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 184,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "fl",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "never",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 28
+       }
+      ],
+      "w": 1152,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "row 3",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "sig",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Freeze / lockout / kill switch",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 184
+         }
+        ],
+        "w": 200,
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "cmp",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "CMP-117 (15:1416)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 152,
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "car",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "the lock glyph and the word FROZEN or LOCKED with its reason",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 520,
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "red",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "identical; a cut on appearance",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 168
+         }
+        ],
+        "w": 184,
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "fl",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "never",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 48
+       }
+      ],
+      "w": 1152,
+      "h": 48
+     },
+     {
+      "t": "board",
+      "name": "row 4",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "sig",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Arm state",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 200,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "cmp",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "CMP-229 (15:2952)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 152,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "car",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "the lock glyph and LOCKED, or ARMED with its timer; T2 per §12",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 520,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "red",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "identical",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 184,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "fl",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "never",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 28
+       }
+      ],
+      "w": 1152,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "row 5",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "sig",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Kill switch and armed-rule count",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 184
+         }
+        ],
+        "w": 200,
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "cmp",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "CMP-208 (15:2715)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 152,
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "car",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "the kill-switch glyph and its word; the count as text",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 520,
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "red",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "identical",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 184,
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "fl",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "never",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 48
+       }
+      ],
+      "w": 1152,
+      "h": 48
+     }
+    ]
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/table pad/CMP-049 grid · §11/rows",
+   "node": {
+    "t": "board",
+    "name": "row 6",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "sig",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "Kill switch engaged (control)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ],
+      "w": 200,
+      "h": 48
+     },
+     {
+      "t": "board",
+      "name": "cmp",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "CMP-211 (15:2754)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 152,
+      "h": 48
+     },
+     {
+      "t": "board",
+      "name": "car",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "KillSwitchEngaged: the status word \"Kill switch: engaged\" (E10D03:79, :351) and the count",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 504
+       }
+      ],
+      "w": 520,
+      "h": 48
+     },
+     {
+      "t": "board",
+      "name": "red",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "identical",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 184,
+      "h": 48
+     },
+     {
+      "t": "board",
+      "name": "fl",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "never",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 48
+     }
+    ],
+    "w": 1152,
+    "h": 48
+   }
+  },
+  {
+   "into": "safety∕reduced · dark/body/main/workspace/table pad/CMP-049 grid · §11/rows",
+   "node": {
+    "t": "board",
+    "name": "row 7",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "sig",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "Replay frame and chip",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 200,
+      "h": 48
+     },
+     {
+      "t": "board",
+      "name": "cmp",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "SCR-030 (E11D06:338)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ],
+      "w": 152,
+      "h": 48
+     },
+     {
+      "t": "board",
+      "name": "car",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "the 4 px frame and the REPLAY hh:mm:ss chip",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 520,
+      "h": 48
+     },
+     {
+      "t": "board",
+      "name": "red",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "identical",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 184,
+      "h": 48
+     },
+     {
+      "t": "board",
+      "name": "fl",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "never",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 48
+     }
+    ],
+    "w": 1152,
+    "h": 48
+   }
+  },
+  {
+   "into": "safety∕reduced · dark",
+   "node": {
+    "t": "board",
+    "name": "StatusBar",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-208 kill switch",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "icon",
+        "name": "kill-switch glyph",
+        "icon": "danger",
+        "color": "color.status.danger.strong",
+        "size": "size.icon"
+       },
+       {
+        "t": "text",
+        "name": "word",
+        "chars": "Kill switch: engaged",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "h": 20,
+      "note": "the kill-switch glyph and its word (§11)"
+     },
+     {
+      "t": "text",
+      "name": "armed rules",
+      "chars": "Armed rules: 2",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "note": "the count as text (§11)"
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 24
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "safety∕reduced · hc",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "§11 under reduce",
+    "x": 1440,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-075 EnvBadgeLocal · LIVE",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.badge",
+           "stroke": "color.env.live",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "env glyph",
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "ring",
+              "w": 12,
+              "h": 12,
+              "o": {
+               "stroke": "color.env.live",
+               "strokeWidth": "border.thick",
+               "strokeAlign": "inner"
+              },
+              "x": 0,
+              "y": 0
+             },
+             {
+              "t": "ellipse",
+              "name": "dot",
+              "w": 6,
+              "h": 6,
+              "o": {
+               "fill": "color.env.live"
+              },
+              "x": 3,
+              "y": 3
+             }
+            ],
+            "w": 12,
+            "h": 12
+           },
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "LIVE",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 22,
+          "note": "role=\"img\" named \"Trading environment: Live\"; static in every tier (I-25, §11)"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-211 status · engaged",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.badge",
+           "fill": "color.status.danger.subtle",
+           "stroke": "color.status.danger.strong",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "glyph",
+            "icon": "danger",
+            "color": "color.status.danger.strong",
+            "size": "size.icon"
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Kill switch: engaged · 1 account",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 20,
+          "note": "role=\"status\"; KillSwitchEngaged (`15`:2754); static"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar (E10): placeholders except the parts this board draws"
+     }
+    ]
+   }
+  },
+  {
+   "into": "safety∕reduced · hc",
+   "node": {
+    "t": "board",
+    "name": "body",
+    "o": {
+     "dir": "row",
+     "align": "start"
+    },
+    "w": 1280,
+    "h": 728,
+    "kids": [
+     {
+      "t": "board",
+      "name": "NavRail",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.inset.xs",
+       "padY": "space.inset.sm",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "entry-1",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-2",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-3",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-4",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-5",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-6",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1,
+        "h": 728,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 55,
+        "y": 0,
+        "abs": true
+       }
+      ],
+      "w": 56,
+      "h": 728
+     },
+     {
+      "t": "board",
+      "name": "main",
+      "o": {
+       "fill": "color.surface.app",
+       "clip": true
+      },
+      "w": 1224,
+      "h": 728,
+      "kids": [
+       {
+        "t": "board",
+        "name": "workspace",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.md"
+        },
+        "w": 1224,
+        "h": 728,
+        "x": 0,
+        "y": 0,
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-074 EnvBanner · LIVE",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm",
+           "padX": "space.inset.lg",
+           "fill": "color.surface.raised",
+           "stroke": "color.env.live",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "env glyph",
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "ring",
+              "w": 12,
+              "h": 12,
+              "o": {
+               "stroke": "color.env.live",
+               "strokeWidth": "border.thick",
+               "strokeAlign": "inner"
+              },
+              "x": 0,
+              "y": 0
+             },
+             {
+              "t": "ellipse",
+              "name": "dot",
+              "w": 6,
+              "h": 6,
+              "o": {
+               "fill": "color.env.live"
+              },
+              "x": 3,
+              "y": 3
+             }
+            ],
+            "w": 12,
+            "h": 12
+           },
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "LIVE",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "what",
+            "chars": "Trading environment: Live",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 1224,
+          "h": 32,
+          "note": "role=\"status\"; the word always rendered (`15` CMP-074); static in every tier (§11)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-117 RiskLockoutBanner · FROZEN",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm",
+           "padX": "space.inset.lg",
+           "fill": "color.status.danger.subtle",
+           "stroke": "color.status.danger.strong",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "lock",
+            "icon": "locked",
+            "color": "color.text.primary",
+            "size": "size.icon",
+            "note": "CMP-019 Icon lock"
+           },
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "FROZEN",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "reason",
+            "chars": "until the owner releases it; no clock will clear it",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 1224,
+          "h": 36,
+          "note": "named role=\"region\"; appears as a cut; never dismissible while it holds (`15` CMP-117)"
+         },
+         {
+          "t": "board",
+          "name": "pad",
+          "w": 1224,
+          "h": 232,
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-080 panel · chart BTCUSDT",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.canvas",
+             "stroke": "color.border.subtle",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner",
+             "clip": true
+            },
+            "w": 1192,
+            "h": 232,
+            "x": 16,
+            "y": 0,
+            "kids": [
+             {
+              "t": "board",
+              "name": "header",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "padX": "space.inset.sm",
+               "justify": "space-between",
+               "fill": "color.surface.raised"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "h2",
+                "chars": "Chart · BTCUSDT",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.primary"
+               },
+               {
+                "t": "board",
+                "name": "tools",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "gap": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "rect",
+                  "name": "placeholder · tool",
+                  "w": 16,
+                  "h": 16,
+                  "o": {
+                   "radius": "radius.control",
+                   "fill": "color.surface.hover"
+                  }
+                 }
+                ],
+                "h": 28
+               }
+              ],
+              "w": 1192,
+              "h": 28
+             },
+             {
+              "t": "board",
+              "name": "tools + plot",
+              "o": {
+               "dir": "column",
+               "align": "start"
+              },
+              "w": 1192,
+              "h": 204,
+              "kids": [
+               {
+                "t": "board",
+                "name": "chart tools",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "fill": "color.surface.raised"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "arm toggle + reason",
+                  "o": {
+                   "dir": "column",
+                   "align": "start",
+                   "gap": "space.stack.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "board",
+                    "name": "CMP-229 ArmToggle · read-only (T2)",
+                    "o": {
+                     "dir": "row",
+                     "align": "center",
+                     "gap": "space.inset.xs",
+                     "padX": "space.inset.sm",
+                     "radius": "radius.control",
+                     "fill": "color.surface.raised",
+                     "stroke": "color.border.default",
+                     "strokeWidth": "border.hairline",
+                     "strokeAlign": "inner"
+                    },
+                    "kids": [
+                     {
+                      "t": "icon",
+                      "name": "lock",
+                      "icon": "locked",
+                      "color": "color.text.tertiary",
+                      "size": "size.icon",
+                      "note": "CMP-019 Icon lock, decorative=false, name \"Not available\""
+                     },
+                     {
+                      "t": "text",
+                      "name": "label",
+                      "chars": "LOCKED · Main · 0.010 BTC",
+                      "typo": "type.ui.label",
+                      "color": "color.text.tertiary"
+                     }
+                    ],
+                    "h": 24,
+                    "note": "aria-pressed switch \"Chart trading: locked\", aria-disabled=\"true\" (never disabled), in the Tab order; CMP-079 RbacGate rendering 2a; never opacity.disabled (§12)"
+                   },
+                   {
+                    "t": "text",
+                    "name": "reason · W-12",
+                    "chars": "Your role can't place orders.",
+                    "typo": "type.ui.caption",
+                    "color": "color.text.secondary",
+                    "note": "the reason node in the DOM at mount, aria-describedby; color.text.secondary (§12)"
+                   }
+                  ]
+                 }
+                ],
+                "w": 1192,
+                "h": 40
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot",
+   "node": {
+    "t": "board",
+    "name": "plot",
+    "o": {
+     "fill": "color.surface.canvas",
+     "clip": true
+    },
+    "w": 1192,
+    "h": 164,
+    "note": "BTCUSDT candles of 100 ms from the TICKS burst (synthetic)",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "grid · mid",
+      "w": 1120,
+      "h": 1,
+      "o": {
+       "fill": "color.grid.line"
+      },
+      "x": 8,
+      "y": 74
+     },
+     {
+      "t": "rect",
+      "name": "wick 0",
+      "w": 1,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 18,
+      "y": 105
+     },
+     {
+      "t": "rect",
+      "name": "body 0",
+      "w": 20,
+      "h": 2,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 8,
+      "y": 109
+     },
+     {
+      "t": "rect",
+      "name": "wick 100",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 40,
+      "y": 105
+     },
+     {
+      "t": "rect",
+      "name": "body 100",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 30,
+      "y": 109
+     },
+     {
+      "t": "rect",
+      "name": "wick 200",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 62,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "body 200",
+      "w": 20,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 52,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "wick 300",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 85,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "body 300",
+      "w": 20,
+      "h": 3,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 75,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "wick 400",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 107,
+      "y": 113
+     },
+     {
+      "t": "rect",
+      "name": "body 400",
+      "w": 20,
+      "h": 3,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 97,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "wick 500",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 129,
+      "y": 105
+     },
+     {
+      "t": "rect",
+      "name": "body 500",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 119,
+      "y": 109
+     },
+     {
+      "t": "rect",
+      "name": "wick 600",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 151,
+      "y": 109
+     },
+     {
+      "t": "rect",
+      "name": "body 600",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 141,
+      "y": 109
+     },
+     {
+      "t": "rect",
+      "name": "wick 700",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 174,
+      "y": 113
+     },
+     {
+      "t": "rect",
+      "name": "body 700",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 164,
+      "y": 113
+     },
+     {
+      "t": "rect",
+      "name": "wick 800",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 196,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "body 800",
+      "w": 20,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 186,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "wick 900",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 218,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "body 900",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 208,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "wick 1000",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 240,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "body 1000",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 230,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "wick 1100",
+      "w": 1,
+      "h": 11,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 263,
+      "y": 113
+     },
+     {
+      "t": "rect",
+      "name": "body 1100",
+      "w": 20,
+      "h": 11,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 253,
+      "y": 113
+     },
+     {
+      "t": "rect",
+      "name": "wick 1200",
+      "w": 1,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 285,
+      "y": 113
+     },
+     {
+      "t": "rect",
+      "name": "body 1200",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 275,
+      "y": 113
+     },
+     {
+      "t": "rect",
+      "name": "wick 1300",
+      "w": 1,
+      "h": 3,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 307,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "body 1300",
+      "w": 20,
+      "h": 3,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 297,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "wick 1400",
+      "w": 1,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 329,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "body 1400",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 319,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "wick 1500",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 352,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "body 1500",
+      "w": 20,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 342,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "wick 1600",
+      "w": 1,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 374,
+      "y": 113
+     },
+     {
+      "t": "rect",
+      "name": "body 1600",
+      "w": 20,
+      "h": 2,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 364,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "wick 1700",
+      "w": 1,
+      "h": 3,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 396,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "body 1700",
+      "w": 20,
+      "h": 3,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 386,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "wick 1800",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 418,
+      "y": 113
+     },
+     {
+      "t": "rect",
+      "name": "body 1800",
+      "w": 20,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 408,
+      "y": 113
+     },
+     {
+      "t": "rect",
+      "name": "wick 1900",
+      "w": 1,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 441,
+      "y": 105
+     },
+     {
+      "t": "rect",
+      "name": "body 1900",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 431,
+      "y": 105
+     },
+     {
+      "t": "rect",
+      "name": "wick 2000",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 463,
+      "y": 109
+     },
+     {
+      "t": "rect",
+      "name": "body 2000",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 453,
+      "y": 109
+     },
+     {
+      "t": "rect",
+      "name": "wick 2100",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 485,
+      "y": 105
+     },
+     {
+      "t": "rect",
+      "name": "body 2100",
+      "w": 20,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 475,
+      "y": 105
+     },
+     {
+      "t": "rect",
+      "name": "wick 2200",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 507,
+      "y": 93
+     },
+     {
+      "t": "rect",
+      "name": "body 2200",
+      "w": 20,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 497,
+      "y": 93
+     },
+     {
+      "t": "rect",
+      "name": "wick 2300",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 530,
+      "y": 93
+     },
+     {
+      "t": "rect",
+      "name": "body 2300",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 520,
+      "y": 93
+     },
+     {
+      "t": "rect",
+      "name": "wick 2400",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 552,
+      "y": 82
+     },
+     {
+      "t": "rect",
+      "name": "body 2400",
+      "w": 20,
+      "h": 3,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 542,
+      "y": 86
+     },
+     {
+      "t": "rect",
+      "name": "wick 2500",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 574,
+      "y": 86
+     },
+     {
+      "t": "rect",
+      "name": "body 2500",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 564,
+      "y": 89
+     },
+     {
+      "t": "rect",
+      "name": "wick 2600",
+      "w": 1,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 596,
+      "y": 89
+     },
+     {
+      "t": "rect",
+      "name": "body 2600",
+      "w": 20,
+      "h": 2,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 586,
+      "y": 89
+     },
+     {
+      "t": "rect",
+      "name": "wick 2700",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 618,
+      "y": 82
+     },
+     {
+      "t": "rect",
+      "name": "body 2700",
+      "w": 20,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 608,
+      "y": 82
+     },
+     {
+      "t": "rect",
+      "name": "wick 2800",
+      "w": 1,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 641,
+      "y": 74
+     },
+     {
+      "t": "rect",
+      "name": "body 2800",
+      "w": 20,
+      "h": 2,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 631,
+      "y": 78
+     },
+     {
+      "t": "rect",
+      "name": "wick 2900",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 663,
+      "y": 70
+     },
+     {
+      "t": "rect",
+      "name": "body 2900",
+      "w": 20,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 653,
+      "y": 70
+     },
+     {
+      "t": "rect",
+      "name": "wick 3000",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 685,
+      "y": 70
+     },
+     {
+      "t": "rect",
+      "name": "body 3000",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 675,
+      "y": 70
+     },
+     {
+      "t": "rect",
+      "name": "wick 3100",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 707,
+      "y": 66
+     },
+     {
+      "t": "rect",
+      "name": "body 3100",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 697,
+      "y": 66
+     },
+     {
+      "t": "rect",
+      "name": "wick 3200",
+      "w": 1,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 730,
+      "y": 66
+     },
+     {
+      "t": "rect",
+      "name": "body 3200",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 720,
+      "y": 66
+     },
+     {
+      "t": "rect",
+      "name": "wick 3300",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 752,
+      "y": 66
+     },
+     {
+      "t": "rect",
+      "name": "body 3300",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 742,
+      "y": 66
+     },
+     {
+      "t": "rect",
+      "name": "wick 3400",
+      "w": 1,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 774,
+      "y": 55
+     },
+     {
+      "t": "rect",
+      "name": "body 3400",
+      "w": 20,
+      "h": 7,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 764,
+      "y": 55
+     },
+     {
+      "t": "rect",
+      "name": "wick 3500",
+      "w": 1,
+      "h": 12,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 796,
+      "y": 43
+     },
+     {
+      "t": "rect",
+      "name": "body 3500",
+      "w": 20,
+      "h": 12,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 786,
+      "y": 43
+     },
+     {
+      "t": "rect",
+      "name": "wick 3600",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 819,
+      "y": 35
+     },
+     {
+      "t": "rect",
+      "name": "body 3600",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 809,
+      "y": 35
+     },
+     {
+      "t": "rect",
+      "name": "wick 3700",
+      "w": 1,
+      "h": 3,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 841,
+      "y": 28
+     },
+     {
+      "t": "rect",
+      "name": "body 3700",
+      "w": 20,
+      "h": 3,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 831,
+      "y": 28
+     },
+     {
+      "t": "rect",
+      "name": "wick 3800",
+      "w": 1,
+      "h": 8,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 863,
+      "y": 31
+     },
+     {
+      "t": "rect",
+      "name": "body 3800",
+      "w": 20,
+      "h": 4,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 853,
+      "y": 31
+     },
+     {
+      "t": "rect",
+      "name": "wick 3900",
+      "w": 1,
+      "h": 12,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 885,
+      "y": 31
+     },
+     {
+      "t": "rect",
+      "name": "body 3900",
+      "w": 20,
+      "h": 12,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 875,
+      "y": 31
+     }
+    ]
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "wick 4000",
+    "w": 1,
+    "h": 8,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 908,
+    "y": 35
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "body 4000",
+    "w": 20,
+    "h": 4,
+    "o": {
+     "fill": "color.candle.down"
+    },
+    "x": 898,
+    "y": 39
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "wick 4100",
+    "w": 1,
+    "h": 4,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 930,
+    "y": 35
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "body 4100",
+    "w": 20,
+    "h": 2,
+    "o": {
+     "fill": "color.candle.up"
+    },
+    "x": 920,
+    "y": 39
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "wick 4200",
+    "w": 1,
+    "h": 8,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 952,
+    "y": 35
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "body 4200",
+    "w": 20,
+    "h": 4,
+    "o": {
+     "fill": "color.candle.up"
+    },
+    "x": 942,
+    "y": 39
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "wick 4300",
+    "w": 1,
+    "h": 8,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 974,
+    "y": 35
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "body 4300",
+    "w": 20,
+    "h": 8,
+    "o": {
+     "fill": "color.candle.down"
+    },
+    "x": 964,
+    "y": 35
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "wick 4400",
+    "w": 1,
+    "h": 8,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 997,
+    "y": 39
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "body 4400",
+    "w": 20,
+    "h": 8,
+    "o": {
+     "fill": "color.candle.up"
+    },
+    "x": 987,
+    "y": 39
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "wick 4500",
+    "w": 1,
+    "h": 4,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 1019,
+    "y": 35
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "body 4500",
+    "w": 20,
+    "h": 4,
+    "o": {
+     "fill": "color.candle.down"
+    },
+    "x": 1009,
+    "y": 35
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "wick 4600",
+    "w": 1,
+    "h": 4,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 1041,
+    "y": 35
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "body 4600",
+    "w": 20,
+    "h": 2,
+    "o": {
+     "fill": "color.candle.up"
+    },
+    "x": 1031,
+    "y": 35
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "wick 4700",
+    "w": 1,
+    "h": 3,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 1063,
+    "y": 28
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "body 4700",
+    "w": 20,
+    "h": 3,
+    "o": {
+     "fill": "color.candle.up"
+    },
+    "x": 1053,
+    "y": 28
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "wick 4800",
+    "w": 1,
+    "h": 3,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 1086,
+    "y": 28
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "body 4800",
+    "w": 20,
+    "h": 3,
+    "o": {
+     "fill": "color.candle.up"
+    },
+    "x": 1076,
+    "y": 28
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "wick 4900",
+    "w": 1,
+    "h": 4,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 1108,
+    "y": 20
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "rect",
+    "name": "body 4900",
+    "w": 20,
+    "h": 4,
+    "o": {
+     "fill": "color.candle.up"
+    },
+    "x": 1098,
+    "y": 20
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "text",
+    "name": "axis 6500022",
+    "chars": "65,000.22",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 1128,
+    "y": 13
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "text",
+    "name": "axis 6500008",
+    "chars": "65,000.08",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 1128,
+    "y": 67
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/pad/CMP-080 panel · chart BTCUSDT/tools + plot/plot",
+   "node": {
+    "t": "text",
+    "name": "axis 6499994",
+    "chars": "64,999.94",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 1128,
+    "y": 121
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace",
+   "node": {
+    "t": "board",
+    "name": "table pad",
+    "w": 1224,
+    "h": 330,
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-049 grid · §11",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "w": 1152,
+      "note": "annotation table (the spec's §11), not product UI",
+      "x": 16,
+      "y": 0,
+      "kids": [
+       {
+        "t": "text",
+        "name": "caption",
+        "chars": "§11 (L294): every signal static in every tier and theme",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 1152
+       },
+       {
+        "t": "board",
+        "name": "header row",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "fill": "color.surface.canvas"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "th · sig",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "start",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Signal",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 200,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · cmp",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "start",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Component",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 152,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · car",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "start",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Static carrier",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 520,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · red",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "start",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Reduce and hc",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 184,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · fl",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "start",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Flashes",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 96,
+          "h": 24
+         }
+        ],
+        "w": 1152,
+        "h": 24,
+        "note": "column headers, scope=\"col\""
+       },
+       {
+        "t": "rect",
+        "name": "header rule",
+        "w": 1152,
+        "h": 1,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/table pad/CMP-049 grid · §11",
+   "node": {
+    "t": "board",
+    "name": "rows",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "w": 1152,
+    "h": 276,
+    "kids": [
+     {
+      "t": "board",
+      "name": "row 1",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "sig",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Live environment banner",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 200,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "cmp",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "CMP-074 (15:833)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 152,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "car",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "the env glyph and the word LIVE or DEMO",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 520,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "red",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "identical",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 184,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "fl",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "never",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 28
+       }
+      ],
+      "w": 1152,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "row 2",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "sig",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Environment badge",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 200,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "cmp",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "CMP-075 (15:842)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 152,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "car",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "word, weight, glyph shape, 2 px border (E11D06:337)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 520,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "red",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "identical",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 184,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "fl",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "never",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 28
+       }
+      ],
+      "w": 1152,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "row 3",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "sig",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Freeze / lockout / kill switch",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 184
+         }
+        ],
+        "w": 200,
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "cmp",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "CMP-117 (15:1416)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 152,
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "car",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "the lock glyph and the word FROZEN or LOCKED with its reason",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 520,
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "red",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "identical; a cut on appearance",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 168
+         }
+        ],
+        "w": 184,
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "fl",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "never",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 48
+       }
+      ],
+      "w": 1152,
+      "h": 48
+     },
+     {
+      "t": "board",
+      "name": "row 4",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "sig",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Arm state",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 200,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "cmp",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "CMP-229 (15:2952)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 152,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "car",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "the lock glyph and LOCKED, or ARMED with its timer; T2 per §12",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 520,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "red",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "identical",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 184,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "fl",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "never",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 28
+       }
+      ],
+      "w": 1152,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "row 5",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "sig",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Kill switch and armed-rule count",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 184
+         }
+        ],
+        "w": 200,
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "cmp",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "CMP-208 (15:2715)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 152,
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "car",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "the kill-switch glyph and its word; the count as text",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 520,
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "red",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "identical",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 184,
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "fl",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "never",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 48
+       }
+      ],
+      "w": 1152,
+      "h": 48
+     }
+    ]
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/table pad/CMP-049 grid · §11/rows",
+   "node": {
+    "t": "board",
+    "name": "row 6",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "sig",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "Kill switch engaged (control)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ],
+      "w": 200,
+      "h": 48
+     },
+     {
+      "t": "board",
+      "name": "cmp",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "CMP-211 (15:2754)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 152,
+      "h": 48
+     },
+     {
+      "t": "board",
+      "name": "car",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "KillSwitchEngaged: the status word \"Kill switch: engaged\" (E10D03:79, :351) and the count",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 504
+       }
+      ],
+      "w": 520,
+      "h": 48
+     },
+     {
+      "t": "board",
+      "name": "red",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "identical",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 184,
+      "h": 48
+     },
+     {
+      "t": "board",
+      "name": "fl",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "never",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 48
+     }
+    ],
+    "w": 1152,
+    "h": 48
+   }
+  },
+  {
+   "into": "safety∕reduced · hc/body/main/workspace/table pad/CMP-049 grid · §11/rows",
+   "node": {
+    "t": "board",
+    "name": "row 7",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "sig",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "Replay frame and chip",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 200,
+      "h": 48
+     },
+     {
+      "t": "board",
+      "name": "cmp",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "SCR-030 (E11D06:338)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ],
+      "w": 152,
+      "h": 48
+     },
+     {
+      "t": "board",
+      "name": "car",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "the 4 px frame and the REPLAY hh:mm:ss chip",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 520,
+      "h": 48
+     },
+     {
+      "t": "board",
+      "name": "red",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "identical",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 184,
+      "h": 48
+     },
+     {
+      "t": "board",
+      "name": "fl",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "never",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 48
+     }
+    ],
+    "w": 1152,
+    "h": 48
+   }
+  },
+  {
+   "into": "safety∕reduced · hc",
+   "node": {
+    "t": "board",
+    "name": "StatusBar",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-208 kill switch",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "icon",
+        "name": "kill-switch glyph",
+        "icon": "danger",
+        "color": "color.status.danger.strong",
+        "size": "size.icon"
+       },
+       {
+        "t": "text",
+        "name": "word",
+        "chars": "Kill switch: engaged",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "h": 20,
+      "note": "the kill-switch glyph and its word (§11)"
+     },
+     {
+      "t": "text",
+      "name": "armed rules",
+      "chars": "Armed rules: 2",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "note": "the count as text (§11)"
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 24
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 01",
+    "chars": "state: safety/reduced · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 80,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 02",
+    "chars": "state: safety/reduced · hc",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 1440,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer · data",
+    "chars": "Data: synthetic, never a venue payload: the TICKS `burst` preset (seed 1, 40 Hz, 200 ticks from a start of 65000.00); sample data only",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "x": 80,
+    "y": 904
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "E47-D08 / 09 safety-static",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Board",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§0 L79: §11: env banner and badge, freeze banner, arm toggle (T2 inset, §12) and status-bar counts under reduce; hc twin",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Theme: dark; its high contrast twin is a second frame (§0 L82), token-bound: the board is exported again under the high contrast set to docs/design/E47/img/E47-D08-09-safety-static-high-contrast.png",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Frames (hand-off §H L99): safety/reduced · dark; safety/reduced · hc",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "Export: docs/design/E47/img/E47-D08-09-safety-static.png",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "Every frame a 1280 × 800 window, compact density (§0 L67)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-6",
+        "chars": "Data: synthetic, never a venue payload: the TICKS `burst` preset (seed 1, 40 Hz, 200 ticks from a start of 65000.00); sample data only",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-7",
+        "chars": "Markers, tags, shading, outlines and callouts in color.status.info.default are annotation, not product UI",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-8",
+        "chars": "The replay frame and chip (§11's last row) are drawn on board 07",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "safety/reduced · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Reduced motion effective; theme dark: every signal reads by icon and word, nothing moves (R-7; §11 L294)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "T2 (§12 L306): lock + the full label in color.text.tertiary on a raised fill, reason \"Your role can't place orders.\" (W-12 with its {verb}) in color.text.secondary; aria-disabled, never opacity.disabled",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Words: \"Kill switch: engaged · 1 account\" E10-D03 L351; FROZEN reason `15` L1420; the pill template `15` L2957 filled Main / 0.010 / BTC (synthetic)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "safety/reduced · hc",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "High-contrast twin: the same nodes and words; evidence in the second export docs/design/E47/img/E47-D08-09-safety-static-high-contrast.png; drawn in D03's high-contrast theme (forced colours are board 10's)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Reduced motion effective; theme high contrast: every signal reads by icon and word, nothing moves (R-7; §11 L294)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E47-D08 — Motion · board 09 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400,
+    "x": 2800,
+    "y": 80
+   }
+  }
+ ],
+ "export": "docs/design/E47/img/E47-D08-09-safety-static.png",
+ "notes": {
+  "sources": [
+   "spec docs/design/E47/E47-D08.md md5 6c50afbb, hand-off docs/design/E47/E47-D08-handoff.md md5 dc1307c8 (§0 L79; hand-off §H L99); TICKS packages/fixtures/src/synthetic-ticks.mjs md5 64c3ede9; ring geometry E47-D04 at 1ff5d8cb9 (§7.1); SCR-117 strings E47-D05 at 3987edc89"
+  ],
+  "copy_keys": [],
+  "copy_gaps": [
+   "CMP-208's words \"Kill switch: engaged\" and \"Armed rules: 2\" are kit labels: §11 names \"the kill-switch glyph and its word; the count as text\" without the words",
+   "CMP-117's banner reads FROZEN + `15` L1420's open-ended line as its reason (§11 gives no reason text)"
+  ],
+  "spec_gaps": [],
+  "fallbacks": [
+   "kit choice: the shell chrome (TopBar, NavRail, StatusBar) and panels outside the board's subject are neutral placeholders; only the surfaces a board draws are drawn",
+   "fallback: the environment glyph (CMP-074 / CMP-075) drawn as a filled ellipse in color.env.live inside a ring (no env icon in the local set)"
+  ],
+  "tokens": [
+   "color.grid.line",
+   "color.candle.wick",
+   "color.candle.up",
+   "color.candle.down",
+   "type.num.sm",
+   "color.axis.text",
+   "color.surface.canvas",
+   "color.text.tertiary",
+   "size.icon",
+   "type.ui.label",
+   "space.inset.xs",
+   "space.inset.sm",
+   "radius.control",
+   "color.surface.raised",
+   "color.border.default",
+   "border.hairline",
+   "type.ui.caption",
+   "color.text.secondary",
+   "space.stack.xs",
+   "type.ui.body-strong",
+   "color.text.primary",
+   "color.surface.hover",
+   "color.border.subtle",
+   "color.env.live",
+   "border.thick",
+   "space.inset.lg",
+   "type.ui.body",
+   "color.status.danger.subtle",
+   "color.status.danger.strong",
+   "space.stack.md",
+   "radius.badge",
+   "space.inset.md",
+   "color.surface.app",
+   "type.ui.heading-sm",
+   "space.stack.sm"
+  ],
+  "live_checks": [
+   "root 'E47-D08 / 09 safety-static' at (21000, 4200): read back the name exactly after the first section call; size 3280 x 1000",
+   "after touchTexts + relayout: the annotation column (estimated 638 px) ends inside the root (h 1000); raise the root's h to its end + 80 if not",
+   "frame 'safety∕reduced · dark': read back 1280 x 800 at (80, 80); clip on, no child spills",
+   "frame 'safety∕reduced · hc': read back 1280 x 800 at (1440, 80); clip on, no child spills",
+   "export docs/design/E47/img/E47-D08-09-safety-static.png under the dark set; record the board id and the PNG size in §0",
+   "twin: activate the high contrast token set, read back one bound fill (color.surface.canvas) as its high contrast value, export the board again to docs/design/E47/img/E47-D08-09-safety-static-high-contrast.png (frame 'safety∕reduced · hc' is the evidence there, the dark frame in the first export), then restore the dark set"
+  ],
+  "deviations": [],
+  "ambiguities": [
+   "A-1: §0 L79 plans a dark and a high contrast frame on one board while the token set is file-wide: read as one token-bound board exported twice (dark, then high contrast to docs/design/E47/img/E47-D08-09-safety-static-high-contrast.png); the export name adds the theme word to §0 L67's NN-<slug> pattern"
+  ]
+ }
+}

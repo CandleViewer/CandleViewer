@@ -1,0 +1,5160 @@
+{
+ "board": {
+  "name": "E47-D08 / 04 price-cell-modes",
+  "w": 4640,
+  "h": 1000,
+  "x": 21000,
+  "y": 0,
+  "o": {
+   "fill": "color.surface.app",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "value-flash∕safe · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "I-5 in mode safe",
+    "x": 80,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · env badge",
+          "w": 56,
+          "h": 20,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar (E10): placeholders except the parts this board draws"
+     }
+    ]
+   }
+  },
+  {
+   "into": "value-flash∕safe · dark",
+   "node": {
+    "t": "board",
+    "name": "body",
+    "o": {
+     "dir": "row",
+     "align": "start"
+    },
+    "w": 1280,
+    "h": 728,
+    "kids": [
+     {
+      "t": "board",
+      "name": "NavRail",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.inset.xs",
+       "padY": "space.inset.sm",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "entry-1",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-2",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-3",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-4",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-5",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-6",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1,
+        "h": 728,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 55,
+        "y": 0,
+        "abs": true
+       }
+      ],
+      "w": 56,
+      "h": 728
+     },
+     {
+      "t": "board",
+      "name": "main",
+      "o": {
+       "fill": "color.surface.app",
+       "clip": true
+      },
+      "w": 1224,
+      "h": 728,
+      "kids": [
+       {
+        "t": "board",
+        "name": "workspace",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.md",
+         "pad": "space.inset.lg"
+        },
+        "w": 1224,
+        "h": 728,
+        "x": 0,
+        "y": 0,
+        "kids": [
+         {
+          "t": "text",
+          "name": "mode",
+          "chars": "data-motion safe: the overlay, starts held to FR-1",
+          "typo": "type.ui.heading-sm",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "board",
+          "name": "CMP-080 panel · watchlist",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.canvas",
+           "stroke": "color.border.subtle",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "clip": true
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "space-between",
+             "fill": "color.surface.raised"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "h2",
+              "chars": "Watchlist",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "board",
+              "name": "tools",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · tool",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "h": 28
+             }
+            ],
+            "w": 304,
+            "h": 28
+           },
+           {
+            "t": "board",
+            "name": "CMP-049 grid · watchlist",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header row",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.canvas"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "th · sym",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Symbol",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.secondary"
+                 }
+                ],
+                "w": 80,
+                "h": 24
+               },
+               {
+                "t": "board",
+                "name": "th · last",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "end",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Last",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.secondary"
+                 }
+                ],
+                "w": 112,
+                "h": 24
+               },
+               {
+                "t": "board",
+                "name": "th · chg",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "end",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Change",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.secondary"
+                 }
+                ],
+                "w": 112,
+                "h": 24
+               }
+              ],
+              "w": 304,
+              "h": 24,
+              "note": "column headers, scope=\"col\""
+             },
+             {
+              "t": "rect",
+              "name": "header rule",
+              "w": 304,
+              "h": 1,
+              "o": {
+               "fill": "color.border.default"
+              }
+             },
+             {
+              "t": "board",
+              "name": "rows",
+              "o": {
+               "dir": "column",
+               "align": "start"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "row 1",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "fill": "color.surface.canvas"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "sym",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "start",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "value",
+                    "chars": "BTCUSDT",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 80,
+                  "h": 24
+                 },
+                 {
+                  "t": "board",
+                  "name": "last",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "end",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "rect",
+                    "name": "I-5 overlay · peak",
+                    "w": 112,
+                    "h": 24,
+                    "o": {
+                     "fill": "color.sell.subtle"
+                    },
+                    "x": 0,
+                    "y": 0,
+                    "abs": true,
+                    "note": "overlay opacity 0.25 → 0 in color.sell.default (§3 I-5): peak"
+                   },
+                   {
+                    "t": "text",
+                    "name": "value",
+                    "chars": "64,999.95",
+                    "typo": "type.num.base",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 112,
+                  "h": 24
+                 },
+                 {
+                  "t": "board",
+                  "name": "chg",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "end",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "glyph down",
+                    "chars": "▼",
+                    "typo": "type.num.base",
+                    "color": "color.sell.default"
+                   },
+                   {
+                    "t": "text",
+                    "name": "sign",
+                    "chars": "−0.01",
+                    "typo": "type.num.base",
+                    "color": "color.sell.default"
+                   }
+                  ],
+                  "w": 112,
+                  "h": 24
+                 }
+                ],
+                "w": 304,
+                "h": 24
+               },
+               {
+                "t": "board",
+                "name": "row 2",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "fill": "color.surface.raised"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "sym",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "start",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "value",
+                    "chars": "ETHUSDT",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 80,
+                  "h": 24
+                 },
+                 {
+                  "t": "board",
+                  "name": "last",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "end",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "value",
+                    "chars": "3,480.06",
+                    "typo": "type.num.base",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 112,
+                  "h": 24
+                 },
+                 {
+                  "t": "board",
+                  "name": "chg",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "end",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "glyph up",
+                    "chars": "▲",
+                    "typo": "type.num.base",
+                    "color": "color.buy.default"
+                   },
+                   {
+                    "t": "text",
+                    "name": "sign",
+                    "chars": "+0.01",
+                    "typo": "type.num.base",
+                    "color": "color.buy.default"
+                   }
+                  ],
+                  "w": 112,
+                  "h": 24
+                 }
+                ],
+                "w": 304,
+                "h": 24
+               },
+               {
+                "t": "board",
+                "name": "row 3",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "fill": "color.surface.canvas"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "sym",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "start",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "value",
+                    "chars": "SOLUSDT",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 80,
+                  "h": 24
+                 },
+                 {
+                  "t": "board",
+                  "name": "last",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "end",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "value",
+                    "chars": "181.92",
+                    "typo": "type.num.base",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 112,
+                  "h": 24
+                 },
+                 {
+                  "t": "board",
+                  "name": "chg",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "end",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "glyph down",
+                    "chars": "▼",
+                    "typo": "type.num.base",
+                    "color": "color.sell.default"
+                   },
+                   {
+                    "t": "text",
+                    "name": "sign",
+                    "chars": "−0.01",
+                    "typo": "type.num.base",
+                    "color": "color.sell.default"
+                   }
+                  ],
+                  "w": 112,
+                  "h": 24
+                 }
+                ],
+                "w": 304,
+                "h": 24
+               }
+              ],
+              "w": 304,
+              "h": 72
+             }
+            ],
+            "w": 304,
+            "note": "CMP-161 WatchlistRow ×3: the I-5 carrier (overlay, or the glyph and the sign)",
+            "h": 100
+           }
+          ],
+          "w": 304,
+          "h": 128
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "value-flash∕safe · dark/body/main/workspace",
+   "node": {
+    "t": "board",
+    "name": "evidence",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "w": 1180,
+    "kids": [
+     {
+      "t": "board",
+      "name": "snapshot 1",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "t = 1 000 ms · peak: overlay opacity 0.25",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "board",
+        "name": "CMP-049 grid · one row",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "header row",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.canvas"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "th · sym",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "start",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Symbol",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary"
+             }
+            ],
+            "w": 80,
+            "h": 24
+           },
+           {
+            "t": "board",
+            "name": "th · last",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "end",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Last",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary"
+             }
+            ],
+            "w": 112,
+            "h": 24
+           },
+           {
+            "t": "board",
+            "name": "th · chg",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "end",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Change",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary"
+             }
+            ],
+            "w": 112,
+            "h": 24
+           }
+          ],
+          "w": 304,
+          "h": 24,
+          "note": "column headers, scope=\"col\""
+         },
+         {
+          "t": "rect",
+          "name": "header rule",
+          "w": 304,
+          "h": 1,
+          "o": {
+           "fill": "color.border.default"
+          }
+         },
+         {
+          "t": "board",
+          "name": "rows",
+          "o": {
+           "dir": "column",
+           "align": "start"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "row 1",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.canvas"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "sym",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "padX": "space.inset.sm",
+               "justify": "start",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "BTCUSDT",
+                "typo": "type.ui.body",
+                "color": "color.text.primary"
+               }
+              ],
+              "w": 80,
+              "h": 24
+             },
+             {
+              "t": "board",
+              "name": "last",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "padX": "space.inset.sm",
+               "justify": "end",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "I-5 overlay · peak",
+                "w": 112,
+                "h": 24,
+                "o": {
+                 "fill": "color.sell.subtle"
+                },
+                "x": 0,
+                "y": 0,
+                "abs": true,
+                "note": "overlay opacity 0.25 → 0 in color.sell.default (§3 I-5): peak"
+               },
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "64,999.95",
+                "typo": "type.num.base",
+                "color": "color.text.primary"
+               }
+              ],
+              "w": 112,
+              "h": 24
+             },
+             {
+              "t": "board",
+              "name": "chg",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "padX": "space.inset.sm",
+               "justify": "end",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "glyph down",
+                "chars": "▼",
+                "typo": "type.num.base",
+                "color": "color.sell.default"
+               },
+               {
+                "t": "text",
+                "name": "sign",
+                "chars": "−0.01",
+                "typo": "type.num.base",
+                "color": "color.sell.default"
+               }
+              ],
+              "w": 112,
+              "h": 24
+             }
+            ],
+            "w": 304,
+            "h": 24
+           }
+          ],
+          "w": 304,
+          "h": 24
+         }
+        ],
+        "w": 304
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "snapshot 2",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "mid-decay: motion.duration.fast · motion.easing.accelerate",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "board",
+        "name": "CMP-049 grid · one row",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "header row",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.canvas"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "th · sym",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "start",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Symbol",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary"
+             }
+            ],
+            "w": 80,
+            "h": 24
+           },
+           {
+            "t": "board",
+            "name": "th · last",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "end",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Last",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary"
+             }
+            ],
+            "w": 112,
+            "h": 24
+           },
+           {
+            "t": "board",
+            "name": "th · chg",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "end",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Change",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary"
+             }
+            ],
+            "w": 112,
+            "h": 24
+           }
+          ],
+          "w": 304,
+          "h": 24,
+          "note": "column headers, scope=\"col\""
+         },
+         {
+          "t": "rect",
+          "name": "header rule",
+          "w": 304,
+          "h": 1,
+          "o": {
+           "fill": "color.border.default"
+          }
+         },
+         {
+          "t": "board",
+          "name": "rows",
+          "o": {
+           "dir": "column",
+           "align": "start"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "row 1",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.canvas"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "sym",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "padX": "space.inset.sm",
+               "justify": "start",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "BTCUSDT",
+                "typo": "type.ui.body",
+                "color": "color.text.primary"
+               }
+              ],
+              "w": 80,
+              "h": 24
+             },
+             {
+              "t": "board",
+              "name": "last",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "padX": "space.inset.sm",
+               "justify": "end",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "I-5 overlay · mid",
+                "w": 112,
+                "h": 24,
+                "o": {
+                 "fill": "color.sell.subtle",
+                 "opacity": "opacity.muted"
+                },
+                "x": 0,
+                "y": 0,
+                "abs": true,
+                "note": "overlay opacity 0.25 → 0 in color.sell.default (§3 I-5): mid"
+               },
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "64,999.95",
+                "typo": "type.num.base",
+                "color": "color.text.primary"
+               }
+              ],
+              "w": 112,
+              "h": 24
+             },
+             {
+              "t": "board",
+              "name": "chg",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "padX": "space.inset.sm",
+               "justify": "end",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "glyph down",
+                "chars": "▼",
+                "typo": "type.num.base",
+                "color": "color.sell.default"
+               },
+               {
+                "t": "text",
+                "name": "sign",
+                "chars": "−0.01",
+                "typo": "type.num.base",
+                "color": "color.sell.default"
+               }
+              ],
+              "w": 112,
+              "h": 24
+             }
+            ],
+            "w": 304,
+            "h": 24
+           }
+          ],
+          "w": 304,
+          "h": 24
+         }
+        ],
+        "w": 304
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "snapshot 3",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "end: the overlay at 0; the value stays",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "board",
+        "name": "CMP-049 grid · one row",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "header row",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.canvas"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "th · sym",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "start",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Symbol",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary"
+             }
+            ],
+            "w": 80,
+            "h": 24
+           },
+           {
+            "t": "board",
+            "name": "th · last",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "end",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Last",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary"
+             }
+            ],
+            "w": 112,
+            "h": 24
+           },
+           {
+            "t": "board",
+            "name": "th · chg",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "end",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Change",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary"
+             }
+            ],
+            "w": 112,
+            "h": 24
+           }
+          ],
+          "w": 304,
+          "h": 24,
+          "note": "column headers, scope=\"col\""
+         },
+         {
+          "t": "rect",
+          "name": "header rule",
+          "w": 304,
+          "h": 1,
+          "o": {
+           "fill": "color.border.default"
+          }
+         },
+         {
+          "t": "board",
+          "name": "rows",
+          "o": {
+           "dir": "column",
+           "align": "start"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "row 1",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.canvas"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "sym",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "padX": "space.inset.sm",
+               "justify": "start",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "BTCUSDT",
+                "typo": "type.ui.body",
+                "color": "color.text.primary"
+               }
+              ],
+              "w": 80,
+              "h": 24
+             },
+             {
+              "t": "board",
+              "name": "last",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "padX": "space.inset.sm",
+               "justify": "end",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "64,999.95",
+                "typo": "type.num.base",
+                "color": "color.text.primary"
+               }
+              ],
+              "w": 112,
+              "h": 24
+             },
+             {
+              "t": "board",
+              "name": "chg",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "padX": "space.inset.sm",
+               "justify": "end",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "glyph down",
+                "chars": "▼",
+                "typo": "type.num.base",
+                "color": "color.sell.default"
+               },
+               {
+                "t": "text",
+                "name": "sign",
+                "chars": "−0.01",
+                "typo": "type.num.base",
+                "color": "color.sell.default"
+               }
+              ],
+              "w": 112,
+              "h": 24
+             }
+            ],
+            "w": 304,
+            "h": 24
+           }
+          ],
+          "w": 304,
+          "h": 24
+         }
+        ],
+        "w": 304
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "value-flash∕safe · dark/body/main/workspace/evidence",
+   "node": {
+    "t": "text",
+    "name": "lane label",
+    "chars": "Overlay starts on this cell, held to FR-1 (500 ms): 4 in 0–2 000 ms, max 2 per window",
+    "typo": "type.ui.label",
+    "color": "color.text.primary"
+   }
+  },
+  {
+   "into": "value-flash∕safe · dark/body/main/workspace/evidence",
+   "node": {
+    "t": "board",
+    "name": "lane · starts",
+    "kids": [
+     {
+      "t": "board",
+      "name": "windows",
+      "kids": [
+       {
+        "t": "rect",
+        "name": "window 1 · shade",
+        "w": 480,
+        "h": 64,
+        "o": {
+         "fill": "color.status.info.subtle"
+        },
+        "x": 200,
+        "y": 0,
+        "note": "annotation: a half-open 1 000 ms window"
+       },
+       {
+        "t": "text",
+        "name": "window 1 · label",
+        "chars": "window [0, 1 000) ms",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "x": 204,
+        "y": 2
+       },
+       {
+        "t": "text",
+        "name": "window 2 · label",
+        "chars": "window [1 000, 2 000) ms",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "x": 684,
+        "y": 2
+       }
+      ],
+      "w": 1160,
+      "h": 64,
+      "x": 0,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "start 0",
+      "w": 4,
+      "h": 32,
+      "o": {
+       "fill": "color.buy.default"
+      },
+      "x": 200,
+      "y": 24
+     },
+     {
+      "t": "rect",
+      "name": "start 500",
+      "w": 4,
+      "h": 32,
+      "o": {
+       "fill": "color.buy.default"
+      },
+      "x": 440,
+      "y": 24
+     },
+     {
+      "t": "rect",
+      "name": "start 1000",
+      "w": 4,
+      "h": 32,
+      "o": {
+       "fill": "color.buy.default"
+      },
+      "x": 680,
+      "y": 24
+     },
+     {
+      "t": "rect",
+      "name": "start 1500",
+      "w": 4,
+      "h": 32,
+      "o": {
+       "fill": "color.buy.default"
+      },
+      "x": 920,
+      "y": 24
+     },
+     {
+      "t": "board",
+      "name": "axis",
+      "kids": [
+       {
+        "t": "rect",
+        "name": "axis · line",
+        "w": 960,
+        "h": 1,
+        "o": {
+         "fill": "color.border.default"
+        },
+        "x": 200,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "axis · tick 0",
+        "w": 1,
+        "h": 6,
+        "o": {
+         "fill": "color.axis.text"
+        },
+        "x": 200,
+        "y": 0
+       },
+       {
+        "t": "text",
+        "name": "axis · label 0",
+        "chars": "0",
+        "typo": "type.ui.caption",
+        "color": "color.axis.text",
+        "x": 196,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "axis · tick 250",
+        "w": 1,
+        "h": 6,
+        "o": {
+         "fill": "color.axis.text"
+        },
+        "x": 320,
+        "y": 0
+       },
+       {
+        "t": "text",
+        "name": "axis · label 250",
+        "chars": "250",
+        "typo": "type.ui.caption",
+        "color": "color.axis.text",
+        "x": 316,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "axis · tick 500",
+        "w": 1,
+        "h": 6,
+        "o": {
+         "fill": "color.axis.text"
+        },
+        "x": 440,
+        "y": 0
+       },
+       {
+        "t": "text",
+        "name": "axis · label 500",
+        "chars": "500",
+        "typo": "type.ui.caption",
+        "color": "color.axis.text",
+        "x": 436,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "axis · tick 750",
+        "w": 1,
+        "h": 6,
+        "o": {
+         "fill": "color.axis.text"
+        },
+        "x": 560,
+        "y": 0
+       },
+       {
+        "t": "text",
+        "name": "axis · label 750",
+        "chars": "750",
+        "typo": "type.ui.caption",
+        "color": "color.axis.text",
+        "x": 556,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "axis · tick 1000",
+        "w": 1,
+        "h": 6,
+        "o": {
+         "fill": "color.axis.text"
+        },
+        "x": 680,
+        "y": 0
+       },
+       {
+        "t": "text",
+        "name": "axis · label 1000",
+        "chars": "1 000",
+        "typo": "type.ui.caption",
+        "color": "color.axis.text",
+        "x": 676,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "axis · tick 1250",
+        "w": 1,
+        "h": 6,
+        "o": {
+         "fill": "color.axis.text"
+        },
+        "x": 800,
+        "y": 0
+       },
+       {
+        "t": "text",
+        "name": "axis · label 1250",
+        "chars": "1 250",
+        "typo": "type.ui.caption",
+        "color": "color.axis.text",
+        "x": 796,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "axis · tick 1500",
+        "w": 1,
+        "h": 6,
+        "o": {
+         "fill": "color.axis.text"
+        },
+        "x": 920,
+        "y": 0
+       },
+       {
+        "t": "text",
+        "name": "axis · label 1500",
+        "chars": "1 500",
+        "typo": "type.ui.caption",
+        "color": "color.axis.text",
+        "x": 916,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "axis · tick 1750",
+        "w": 1,
+        "h": 6,
+        "o": {
+         "fill": "color.axis.text"
+        },
+        "x": 1040,
+        "y": 0
+       },
+       {
+        "t": "text",
+        "name": "axis · label 1750",
+        "chars": "1 750",
+        "typo": "type.ui.caption",
+        "color": "color.axis.text",
+        "x": 1036,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "axis · tick 2000",
+        "w": 1,
+        "h": 6,
+        "o": {
+         "fill": "color.axis.text"
+        },
+        "x": 1160,
+        "y": 0
+       },
+       {
+        "t": "text",
+        "name": "axis · label 2000",
+        "chars": "2 000 ms",
+        "typo": "type.ui.caption",
+        "color": "color.axis.text",
+        "x": 1111,
+        "y": 8
+       }
+      ],
+      "w": 1168,
+      "h": 24,
+      "x": 0,
+      "y": 64
+     }
+    ],
+    "w": 1180,
+    "h": 96
+   }
+  },
+  {
+   "into": "value-flash∕safe · dark",
+   "node": {
+    "t": "board",
+    "name": "StatusBar",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · env word",
+      "w": 56,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 24
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "value-flash∕reduce · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "I-5 in mode reduce",
+    "x": 1440,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · env badge",
+          "w": 56,
+          "h": 20,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar (E10): placeholders except the parts this board draws"
+     }
+    ]
+   }
+  },
+  {
+   "into": "value-flash∕reduce · dark",
+   "node": {
+    "t": "board",
+    "name": "body",
+    "o": {
+     "dir": "row",
+     "align": "start"
+    },
+    "w": 1280,
+    "h": 728,
+    "kids": [
+     {
+      "t": "board",
+      "name": "NavRail",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.inset.xs",
+       "padY": "space.inset.sm",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "entry-1",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-2",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-3",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-4",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-5",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-6",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1,
+        "h": 728,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 55,
+        "y": 0,
+        "abs": true
+       }
+      ],
+      "w": 56,
+      "h": 728
+     },
+     {
+      "t": "board",
+      "name": "main",
+      "o": {
+       "fill": "color.surface.app",
+       "clip": true
+      },
+      "w": 1224,
+      "h": 728,
+      "kids": [
+       {
+        "t": "board",
+        "name": "workspace",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.md",
+         "pad": "space.inset.lg"
+        },
+        "w": 1224,
+        "h": 728,
+        "x": 0,
+        "y": 0,
+        "kids": [
+         {
+          "t": "text",
+          "name": "mode",
+          "chars": "data-motion reduce: no overlay; the glyph and the sign carry the change",
+          "typo": "type.ui.heading-sm",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "board",
+          "name": "CMP-080 panel · watchlist",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.canvas",
+           "stroke": "color.border.subtle",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "clip": true
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "space-between",
+             "fill": "color.surface.raised"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "h2",
+              "chars": "Watchlist",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "board",
+              "name": "tools",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · tool",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "h": 28
+             }
+            ],
+            "w": 304,
+            "h": 28
+           },
+           {
+            "t": "board",
+            "name": "CMP-049 grid · watchlist",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header row",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.canvas"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "th · sym",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Symbol",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.secondary"
+                 }
+                ],
+                "w": 80,
+                "h": 24
+               },
+               {
+                "t": "board",
+                "name": "th · last",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "end",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Last",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.secondary"
+                 }
+                ],
+                "w": 112,
+                "h": 24
+               },
+               {
+                "t": "board",
+                "name": "th · chg",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "end",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Change",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.secondary"
+                 }
+                ],
+                "w": 112,
+                "h": 24
+               }
+              ],
+              "w": 304,
+              "h": 24,
+              "note": "column headers, scope=\"col\""
+             },
+             {
+              "t": "rect",
+              "name": "header rule",
+              "w": 304,
+              "h": 1,
+              "o": {
+               "fill": "color.border.default"
+              }
+             },
+             {
+              "t": "board",
+              "name": "rows",
+              "o": {
+               "dir": "column",
+               "align": "start"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "row 1",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "fill": "color.surface.canvas"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "sym",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "start",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "value",
+                    "chars": "BTCUSDT",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 80,
+                  "h": 24
+                 },
+                 {
+                  "t": "board",
+                  "name": "last",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "end",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "value",
+                    "chars": "64,999.95",
+                    "typo": "type.num.base",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 112,
+                  "h": 24
+                 },
+                 {
+                  "t": "board",
+                  "name": "chg",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "end",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "glyph down",
+                    "chars": "▼",
+                    "typo": "type.num.base",
+                    "color": "color.sell.default"
+                   },
+                   {
+                    "t": "text",
+                    "name": "sign",
+                    "chars": "−0.01",
+                    "typo": "type.num.base",
+                    "color": "color.sell.default"
+                   }
+                  ],
+                  "w": 112,
+                  "h": 24
+                 }
+                ],
+                "w": 304,
+                "h": 24
+               },
+               {
+                "t": "board",
+                "name": "row 2",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "fill": "color.surface.raised"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "sym",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "start",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "value",
+                    "chars": "ETHUSDT",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 80,
+                  "h": 24
+                 },
+                 {
+                  "t": "board",
+                  "name": "last",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "end",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "value",
+                    "chars": "3,480.06",
+                    "typo": "type.num.base",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 112,
+                  "h": 24
+                 },
+                 {
+                  "t": "board",
+                  "name": "chg",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "end",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "glyph up",
+                    "chars": "▲",
+                    "typo": "type.num.base",
+                    "color": "color.buy.default"
+                   },
+                   {
+                    "t": "text",
+                    "name": "sign",
+                    "chars": "+0.01",
+                    "typo": "type.num.base",
+                    "color": "color.buy.default"
+                   }
+                  ],
+                  "w": 112,
+                  "h": 24
+                 }
+                ],
+                "w": 304,
+                "h": 24
+               },
+               {
+                "t": "board",
+                "name": "row 3",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "fill": "color.surface.canvas"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "sym",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "start",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "value",
+                    "chars": "SOLUSDT",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 80,
+                  "h": 24
+                 },
+                 {
+                  "t": "board",
+                  "name": "last",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "end",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "value",
+                    "chars": "181.92",
+                    "typo": "type.num.base",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 112,
+                  "h": 24
+                 },
+                 {
+                  "t": "board",
+                  "name": "chg",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "end",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "glyph down",
+                    "chars": "▼",
+                    "typo": "type.num.base",
+                    "color": "color.sell.default"
+                   },
+                   {
+                    "t": "text",
+                    "name": "sign",
+                    "chars": "−0.01",
+                    "typo": "type.num.base",
+                    "color": "color.sell.default"
+                   }
+                  ],
+                  "w": 112,
+                  "h": 24
+                 }
+                ],
+                "w": 304,
+                "h": 24
+               }
+              ],
+              "w": 304,
+              "h": 72
+             }
+            ],
+            "w": 304,
+            "note": "CMP-161 WatchlistRow ×3: the I-5 carrier (overlay, or the glyph and the sign)",
+            "h": 100
+           }
+          ],
+          "w": 304,
+          "h": 128
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "value-flash∕reduce · dark/body/main/workspace",
+   "node": {
+    "t": "board",
+    "name": "evidence",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "lane label",
+      "chars": "Under reduce the glyph's direction changes at most once per FR-1 (500 ms): 36 direction changes in the data, 4 drawn, max 2 per window",
+      "typo": "type.ui.label",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "board",
+      "name": "lanes · glyph",
+      "kids": [
+       {
+        "t": "board",
+        "name": "windows",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "window 1 · shade",
+          "w": 480,
+          "h": 120,
+          "o": {
+           "fill": "color.status.info.subtle"
+          },
+          "x": 200,
+          "y": 0,
+          "note": "annotation: a half-open 1 000 ms window"
+         },
+         {
+          "t": "text",
+          "name": "window 1 · label",
+          "chars": "window [0, 1 000) ms",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "x": 204,
+          "y": 2
+         },
+         {
+          "t": "text",
+          "name": "window 2 · label",
+          "chars": "window [1 000, 2 000) ms",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "x": 684,
+          "y": 2
+         }
+        ],
+        "w": 1160,
+        "h": 120,
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "text",
+        "name": "lane 1 label",
+        "chars": "data direction",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "x": 0,
+        "y": 28
+       },
+       {
+        "t": "text",
+        "name": "data 0",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.sell.default",
+        "x": 196,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 25",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.buy.default",
+        "x": 208,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 50",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.sell.default",
+        "x": 220,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 125",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.buy.default",
+        "x": 256,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 150",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.sell.default",
+        "x": 268,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 300",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.buy.default",
+        "x": 340,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 325",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.sell.default",
+        "x": 352,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 350",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.buy.default",
+        "x": 364,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 400",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.sell.default",
+        "x": 388,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 425",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.buy.default",
+        "x": 400,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 475",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.sell.default",
+        "x": 424,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 500",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.buy.default",
+        "x": 436,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 575",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.sell.default",
+        "x": 472,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 650",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.buy.default",
+        "x": 508,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 700",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.sell.default",
+        "x": 532,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 775",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.buy.default",
+        "x": 568,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 800",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.sell.default",
+        "x": 580,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 900",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.buy.default",
+        "x": 628,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 925",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.sell.default",
+        "x": 640,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 950",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.buy.default",
+        "x": 652,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1000",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.sell.default",
+        "x": 676,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1025",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.buy.default",
+        "x": 688,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1075",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.sell.default",
+        "x": 712,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1125",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.buy.default",
+        "x": 736,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1200",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.sell.default",
+        "x": 772,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1250",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.buy.default",
+        "x": 796,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1300",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.sell.default",
+        "x": 820,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1350",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.buy.default",
+        "x": 844,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1375",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.sell.default",
+        "x": 856,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1550",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.buy.default",
+        "x": 940,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1675",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.sell.default",
+        "x": 1000,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1750",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.buy.default",
+        "x": 1036,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1775",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.sell.default",
+        "x": 1048,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1825",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.buy.default",
+        "x": 1072,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1950",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.sell.default",
+        "x": 1132,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1975",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.buy.default",
+        "x": 1144,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "lane 2 label",
+        "chars": "glyph drawn (held)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "x": 0,
+        "y": 76
+       },
+       {
+        "t": "text",
+        "name": "drawn 0",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.sell.default",
+        "x": 196,
+        "y": 74
+       },
+       {
+        "t": "text",
+        "name": "drawn 500",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.buy.default",
+        "x": 436,
+        "y": 74
+       },
+       {
+        "t": "text",
+        "name": "drawn 1000",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.sell.default",
+        "x": 676,
+        "y": 74
+       },
+       {
+        "t": "text",
+        "name": "drawn 1550",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.buy.default",
+        "x": 940,
+        "y": 74
+       },
+       {
+        "t": "board",
+        "name": "axis",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "axis · line",
+          "w": 960,
+          "h": 1,
+          "o": {
+           "fill": "color.border.default"
+          },
+          "x": 200,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 0",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 200,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 0",
+          "chars": "0",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 196,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 250",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 320,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 250",
+          "chars": "250",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 316,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 500",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 440,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 500",
+          "chars": "500",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 436,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 750",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 560,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 750",
+          "chars": "750",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 556,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 1000",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 680,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 1000",
+          "chars": "1 000",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 676,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 1250",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 800,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 1250",
+          "chars": "1 250",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 796,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 1500",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 920,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 1500",
+          "chars": "1 500",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 916,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 1750",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 1040,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 1750",
+          "chars": "1 750",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 1036,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 2000",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 1160,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 2000",
+          "chars": "2 000 ms",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 1111,
+          "y": 8
+         }
+        ],
+        "w": 1168,
+        "h": 24,
+        "x": 0,
+        "y": 120
+       }
+      ],
+      "w": 1180,
+      "h": 152
+     }
+    ],
+    "w": 1180
+   }
+  },
+  {
+   "into": "value-flash∕reduce · dark",
+   "node": {
+    "t": "board",
+    "name": "StatusBar",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · env word",
+      "w": 56,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 24
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "value-flash∕forced · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "I-5 in mode forced",
+    "x": 2800,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · env badge",
+          "w": 56,
+          "h": 20,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar (E10): placeholders except the parts this board draws"
+     }
+    ]
+   }
+  },
+  {
+   "into": "value-flash∕forced · dark",
+   "node": {
+    "t": "board",
+    "name": "body",
+    "o": {
+     "dir": "row",
+     "align": "start"
+    },
+    "w": 1280,
+    "h": 728,
+    "kids": [
+     {
+      "t": "board",
+      "name": "NavRail",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.inset.xs",
+       "padY": "space.inset.sm",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "entry-1",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-2",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-3",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-4",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-5",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-6",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1,
+        "h": 728,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 55,
+        "y": 0,
+        "abs": true
+       }
+      ],
+      "w": 56,
+      "h": 728
+     },
+     {
+      "t": "board",
+      "name": "main",
+      "o": {
+       "fill": "color.surface.app",
+       "clip": true
+      },
+      "w": 1224,
+      "h": 728,
+      "kids": [
+       {
+        "t": "board",
+        "name": "workspace",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.md",
+         "pad": "space.inset.lg"
+        },
+        "w": 1224,
+        "h": 728,
+        "x": 0,
+        "y": 0,
+        "kids": [
+         {
+          "t": "text",
+          "name": "mode",
+          "chars": "reduce + forced-colors: active — glyph and sign in CanvasText",
+          "typo": "type.ui.heading-sm",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "board",
+          "name": "chip · system colours: text CanvasText ",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.badge",
+           "fill": "color.surface.raised",
+           "stroke": "color.border.strong",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "system colours: text CanvasText on Canvas (D03:478–480)",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 20
+         },
+         {
+          "t": "board",
+          "name": "CMP-080 panel · watchlist",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.canvas",
+           "stroke": "color.border.subtle",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "clip": true
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "space-between",
+             "fill": "color.surface.raised"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "h2",
+              "chars": "Watchlist",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "board",
+              "name": "tools",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · tool",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "h": 28
+             }
+            ],
+            "w": 304,
+            "h": 28
+           },
+           {
+            "t": "board",
+            "name": "CMP-049 grid · watchlist",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header row",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.canvas"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "th · sym",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "start",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Symbol",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.secondary"
+                 }
+                ],
+                "w": 80,
+                "h": 24
+               },
+               {
+                "t": "board",
+                "name": "th · last",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "end",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Last",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.secondary"
+                 }
+                ],
+                "w": 112,
+                "h": 24
+               },
+               {
+                "t": "board",
+                "name": "th · chg",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.sm",
+                 "justify": "end",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Change",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.secondary"
+                 }
+                ],
+                "w": 112,
+                "h": 24
+               }
+              ],
+              "w": 304,
+              "h": 24,
+              "note": "column headers, scope=\"col\""
+             },
+             {
+              "t": "rect",
+              "name": "header rule",
+              "w": 304,
+              "h": 1,
+              "o": {
+               "fill": "color.border.default"
+              }
+             },
+             {
+              "t": "board",
+              "name": "rows",
+              "o": {
+               "dir": "column",
+               "align": "start"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "row 1",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "fill": "color.surface.canvas"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "sym",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "start",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "value",
+                    "chars": "BTCUSDT",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 80,
+                  "h": 24
+                 },
+                 {
+                  "t": "board",
+                  "name": "last",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "end",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "value",
+                    "chars": "64,999.95",
+                    "typo": "type.num.base",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 112,
+                  "h": 24
+                 },
+                 {
+                  "t": "board",
+                  "name": "chg",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "end",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "glyph down",
+                    "chars": "▼",
+                    "typo": "type.num.base",
+                    "color": "color.text.primary"
+                   },
+                   {
+                    "t": "text",
+                    "name": "sign",
+                    "chars": "−0.01",
+                    "typo": "type.num.base",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 112,
+                  "h": 24
+                 }
+                ],
+                "w": 304,
+                "h": 24
+               },
+               {
+                "t": "board",
+                "name": "row 2",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "fill": "color.surface.raised"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "sym",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "start",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "value",
+                    "chars": "ETHUSDT",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 80,
+                  "h": 24
+                 },
+                 {
+                  "t": "board",
+                  "name": "last",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "end",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "value",
+                    "chars": "3,480.06",
+                    "typo": "type.num.base",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 112,
+                  "h": 24
+                 },
+                 {
+                  "t": "board",
+                  "name": "chg",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "end",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "glyph up",
+                    "chars": "▲",
+                    "typo": "type.num.base",
+                    "color": "color.text.primary"
+                   },
+                   {
+                    "t": "text",
+                    "name": "sign",
+                    "chars": "+0.01",
+                    "typo": "type.num.base",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 112,
+                  "h": 24
+                 }
+                ],
+                "w": 304,
+                "h": 24
+               },
+               {
+                "t": "board",
+                "name": "row 3",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "fill": "color.surface.canvas"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "sym",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "start",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "value",
+                    "chars": "SOLUSDT",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 80,
+                  "h": 24
+                 },
+                 {
+                  "t": "board",
+                  "name": "last",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "end",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "value",
+                    "chars": "181.92",
+                    "typo": "type.num.base",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 112,
+                  "h": 24
+                 },
+                 {
+                  "t": "board",
+                  "name": "chg",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "padX": "space.inset.sm",
+                   "justify": "end",
+                   "gap": "space.inset.xs"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "glyph down",
+                    "chars": "▼",
+                    "typo": "type.num.base",
+                    "color": "color.text.primary"
+                   },
+                   {
+                    "t": "text",
+                    "name": "sign",
+                    "chars": "−0.01",
+                    "typo": "type.num.base",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "w": 112,
+                  "h": 24
+                 }
+                ],
+                "w": 304,
+                "h": 24
+               }
+              ],
+              "w": 304,
+              "h": 72
+             }
+            ],
+            "w": 304,
+            "note": "CMP-161 WatchlistRow ×3: the I-5 carrier (overlay, or the glyph and the sign)",
+            "h": 100
+           }
+          ],
+          "w": 304,
+          "h": 128
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "value-flash∕forced · dark/body/main/workspace",
+   "node": {
+    "t": "board",
+    "name": "evidence",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "lane label",
+      "chars": "Under reduce the glyph's direction changes at most once per FR-1 (500 ms): 36 direction changes in the data, 4 drawn, max 2 per window",
+      "typo": "type.ui.label",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "board",
+      "name": "lanes · glyph",
+      "kids": [
+       {
+        "t": "board",
+        "name": "windows",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "window 1 · shade",
+          "w": 480,
+          "h": 120,
+          "o": {
+           "fill": "color.status.info.subtle"
+          },
+          "x": 200,
+          "y": 0,
+          "note": "annotation: a half-open 1 000 ms window"
+         },
+         {
+          "t": "text",
+          "name": "window 1 · label",
+          "chars": "window [0, 1 000) ms",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "x": 204,
+          "y": 2
+         },
+         {
+          "t": "text",
+          "name": "window 2 · label",
+          "chars": "window [1 000, 2 000) ms",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "x": 684,
+          "y": 2
+         }
+        ],
+        "w": 1160,
+        "h": 120,
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "text",
+        "name": "lane 1 label",
+        "chars": "data direction",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "x": 0,
+        "y": 28
+       },
+       {
+        "t": "text",
+        "name": "data 0",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 196,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 25",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 208,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 50",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 220,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 125",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 256,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 150",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 268,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 300",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 340,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 325",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 352,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 350",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 364,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 400",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 388,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 425",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 400,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 475",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 424,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 500",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 436,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 575",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 472,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 650",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 508,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 700",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 532,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 775",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 568,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 800",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 580,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 900",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 628,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 925",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 640,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 950",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 652,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1000",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 676,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1025",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 688,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1075",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 712,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1125",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 736,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1200",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 772,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1250",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 796,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1300",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 820,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1350",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 844,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1375",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 856,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1550",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 940,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1675",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 1000,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1750",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 1036,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1775",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 1048,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1825",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 1072,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1950",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 1132,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "data 1975",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 1144,
+        "y": 26
+       },
+       {
+        "t": "text",
+        "name": "lane 2 label",
+        "chars": "glyph drawn (held)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "x": 0,
+        "y": 76
+       },
+       {
+        "t": "text",
+        "name": "drawn 0",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 196,
+        "y": 74
+       },
+       {
+        "t": "text",
+        "name": "drawn 500",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 436,
+        "y": 74
+       },
+       {
+        "t": "text",
+        "name": "drawn 1000",
+        "chars": "▼",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 676,
+        "y": 74
+       },
+       {
+        "t": "text",
+        "name": "drawn 1550",
+        "chars": "▲",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 940,
+        "y": 74
+       },
+       {
+        "t": "board",
+        "name": "axis",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "axis · line",
+          "w": 960,
+          "h": 1,
+          "o": {
+           "fill": "color.border.default"
+          },
+          "x": 200,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 0",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 200,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 0",
+          "chars": "0",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 196,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 250",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 320,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 250",
+          "chars": "250",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 316,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 500",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 440,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 500",
+          "chars": "500",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 436,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 750",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 560,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 750",
+          "chars": "750",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 556,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 1000",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 680,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 1000",
+          "chars": "1 000",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 676,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 1250",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 800,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 1250",
+          "chars": "1 250",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 796,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 1500",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 920,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 1500",
+          "chars": "1 500",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 916,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 1750",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 1040,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 1750",
+          "chars": "1 750",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 1036,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 2000",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 1160,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 2000",
+          "chars": "2 000 ms",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 1111,
+          "y": 8
+         }
+        ],
+        "w": 1168,
+        "h": 24,
+        "x": 0,
+        "y": 120
+       }
+      ],
+      "w": 1180,
+      "h": 152
+     }
+    ],
+    "w": 1180
+   }
+  },
+  {
+   "into": "value-flash∕forced · dark",
+   "node": {
+    "t": "board",
+    "name": "StatusBar",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · env word",
+      "w": 56,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 24
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 01",
+    "chars": "state: value-flash/safe · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 80,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 02",
+    "chars": "state: value-flash/reduce · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 1440,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 03",
+    "chars": "state: value-flash/forced · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 2800,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer · data",
+    "chars": "Data: synthetic, never a venue payload: the TICKS `burst` preset (seed 1, 40 Hz, 200 ticks from a start of 65000.00); sample data only",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "x": 80,
+    "y": 904
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "E47-D08 / 04 price-cell-modes",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Board",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§0 L74: I-5 safe (peak and decay), reduce (glyph and sign only) and forced colours (glyph and sign in CanvasText)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Theme: dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Frames (hand-off §H L99): value-flash/safe · dark; value-flash/reduce · dark; value-flash/forced · dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "Export: docs/design/E47/img/E47-D08-04-price-cell-modes.png",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "Every frame a 1280 × 800 window, compact density (§0 L67)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-6",
+        "chars": "Data: synthetic, never a venue payload: the TICKS `burst` preset (seed 1, 40 Hz, 200 ticks from a start of 65000.00); sample data only",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-7",
+        "chars": "Markers, tags, shading, outlines and callouts in color.status.info.default are annotation, not product UI",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-8",
+        "chars": "The focused symbol BTCUSDT is a kit label: TICKS names no instrument; the other rows are the same generator on other seeds and synthetic anchors",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-9",
+        "chars": "Only the focused row's flash is drawn; the other rows' cells are between their own starts at this instant",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "value-flash/safe · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§3 I-5 (L145): overlay opacity 0.25 → 0 in color.buy.default / color.sell.default; motion.duration.fast · motion.easing.accelerate",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Snapshots of the BTCUSDT row at 1 000 ms: peak, mid-decay, end (FALLBACKS flash-peak)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Starts admitted at FR-1: 0, 500, 1 000, 1 500 ms (k.SIM; §4.4 'one cell' max 2)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "value-flash/reduce · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§5 L241: a change of direction at most once per FR-1 per cell; the sign and digits update at once",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "I-5 reduced (L145): none: the overlay never applied; glyph and sign carry it (§5)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "At 1 000 ms the BTCUSDT glyph shows ▼ (held) while the sign reads −0.01 and the last 64,999.95",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-04",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "value-flash/forced · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§10 L283: safe + forced colours: glyph and sign in CanvasText, held; the glyph changes shape, not luminance, so it is not a flash (§5 L245)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "§5 L241: a change of direction at most once per FR-1 per cell; the sign and digits update at once",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "I-5 reduced (L145): none: the overlay never applied; glyph and sign carry it (§5)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "At 1 000 ms the BTCUSDT glyph shows ▼ (held) while the sign reads −0.01 and the last 64,999.95",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E47-D08 — Motion · board 04 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400,
+    "x": 4160,
+    "y": 80
+   }
+  }
+ ],
+ "export": "docs/design/E47/img/E47-D08-04-price-cell-modes.png",
+ "notes": {
+  "sources": [
+   "spec docs/design/E47/E47-D08.md md5 6c50afbb, hand-off docs/design/E47/E47-D08-handoff.md md5 dc1307c8 (§0 L74; hand-off §H L99); TICKS packages/fixtures/src/synthetic-ticks.mjs md5 64c3ede9; ring geometry E47-D04 at 1ff5d8cb9 (§7.1); SCR-117 strings E47-D05 at 3987edc89"
+  ],
+  "copy_keys": [],
+  "copy_gaps": [],
+  "spec_gaps": [],
+  "fallbacks": [
+   "fallback: the value-flash overlay's peak (opacity 0.25 of color.buy.default / color.sell.default, §3 I-5) has no opacity token: drawn as color.buy.subtle / color.sell.subtle over the cell, its mid-decay as the same tint at opacity.muted, labelled with the spec's values",
+   "fallback: the direction glyphs ▲ / ▼ drawn as text characters (E05-D03 MR-3's glyph and sign); the liquidation glyph as the local warning icon",
+   "kit choice: the shell chrome (TopBar, NavRail, StatusBar) and panels outside the board's subject are neutral placeholders; only the surfaces a board draws are drawn",
+   "kit choice: numbered markers, tags, window shading, outlines and callouts are annotation overlays in color.status.info.default (or its subtle tint) with color.text.inverse words, never product UI",
+   "kit choice: time axes and ms ticks are annotation (color.axis.text on a hairline), not product UI",
+   "fallback: system colours (CanvasText, Canvas, Highlight, ButtonBorder) are not tokens: under forced colours they are drawn token-bound as color.text.primary / color.surface.app / color.focus.ring / color.border.strong with the system colour's name written beside them"
+  ],
+  "tokens": [
+   "type.num.base",
+   "color.text.primary",
+   "color.sell.subtle",
+   "color.sell.default",
+   "type.ui.body",
+   "space.inset.sm",
+   "space.inset.xs",
+   "color.surface.canvas",
+   "color.buy.default",
+   "color.surface.raised",
+   "type.ui.caption",
+   "color.text.secondary",
+   "color.border.default",
+   "space.stack.xs",
+   "type.ui.body-strong",
+   "radius.control",
+   "color.surface.hover",
+   "color.border.subtle",
+   "border.hairline",
+   "opacity.muted",
+   "color.status.info.subtle",
+   "color.axis.text",
+   "type.ui.label",
+   "space.stack.sm",
+   "type.ui.heading-sm",
+   "space.stack.md",
+   "space.inset.lg",
+   "color.surface.app",
+   "space.inset.md",
+   "type.num.sm",
+   "radius.badge",
+   "color.border.strong",
+   "color.text.tertiary"
+  ],
+  "live_checks": [
+   "root 'E47-D08 / 04 price-cell-modes' at (21000, 0): read back the name exactly after the first section call; size 4640 x 1000",
+   "after touchTexts + relayout: the annotation column (estimated 750 px) ends inside the root (h 1000); raise the root's h to its end + 80 if not",
+   "frame 'value-flash∕safe · dark': read back 1280 x 800 at (80, 80); clip on, no child spills",
+   "frame 'value-flash∕reduce · dark': read back 1280 x 800 at (1440, 80); clip on, no child spills",
+   "frame 'value-flash∕forced · dark': read back 1280 x 800 at (2800, 80); clip on, no child spills",
+   "export docs/design/E47/img/E47-D08-04-price-cell-modes.png under the dark set; record the board id and the PNG size in §0"
+  ],
+  "deviations": [],
+  "ambiguities": []
+ }
+}

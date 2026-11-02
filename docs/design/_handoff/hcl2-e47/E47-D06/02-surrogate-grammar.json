@@ -1,0 +1,6678 @@
+{
+ "board": {
+  "name": "E47-D06 / 02 surrogate-grammar",
+  "w": 4640,
+  "h": 1000,
+  "x": 7000,
+  "y": 0,
+  "o": {
+   "fill": "color.surface.app",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "grammar∕cursor-window · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "x": 80,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar (placeholder)",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · env badge",
+          "w": 56,
+          "h": 20,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · health chip",
+          "w": 120,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar, not this spec's: placeholders only"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "w": 1280,
+      "h": 704,
+      "kids": [
+       {
+        "t": "board",
+        "name": "NavRail (placeholder)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entry-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-6",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 63,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 64,
+        "h": 704
+       },
+       {
+        "t": "board",
+        "name": "dock",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.sm",
+         "pad": "space.inset.sm",
+         "fill": "color.surface.app",
+         "clip": true
+        },
+        "w": 1216,
+        "h": 704,
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-080 DockPanel · chart (SCR-030)",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.canvas",
+           "stroke": "color.border.default",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.card",
+           "clip": true
+          },
+          "w": 772,
+          "h": 688,
+          "kids": [
+           {
+            "t": "board",
+            "name": "panel header",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.sm",
+             "fill": "color.surface.raised"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "title",
+              "chars": "Chart",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "text",
+              "name": "symbol",
+              "chars": "BTCUSDT",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary"
+             },
+             {
+              "t": "board",
+              "name": "CMP-003 SegmentedControl · Chart │ Table",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "segment · Chart",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "fill": "color.surface.selected",
+                 "stroke": "color.border.default",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner",
+                 "radius": "radius.control",
+                 "padX": "space.inset.sm",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "icon",
+                  "name": "check",
+                  "icon": "check",
+                  "color": "color.text.primary",
+                  "size": "size.icon.sm"
+                 },
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Chart",
+                  "typo": "type.ui.label",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 24,
+                "note": "aria-pressed=\"true\""
+               },
+               {
+                "t": "board",
+                "name": "segment · Table",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "fill": "color.surface.raised",
+                 "stroke": "color.border.default",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner",
+                 "radius": "radius.control",
+                 "padX": "space.inset.sm",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Table",
+                  "typo": "type.ui.label",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 24,
+                "note": "aria-pressed=\"false\""
+               },
+               {
+                "t": "board",
+                "name": "CMP-022 Kbd · Alt+T",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.xs",
+                 "radius": "radius.control",
+                 "stroke": "color.border.default",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "key",
+                  "chars": "Alt+T",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.secondary"
+                 }
+                ],
+                "h": 18
+               }
+              ],
+              "h": 24,
+              "note": "the equal-status entry in the panel header, every role (§7, R-8); Alt+T toggles in this panel's context (D06-A16); manual activation"
+             },
+             {
+              "t": "board",
+              "name": "chips",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.xs",
+               "justify": "end"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "feed chip · Live",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "stroke": "color.border.default",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner",
+                 "radius": "radius.badge",
+                 "padX": "space.inset.sm",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "icon",
+                  "name": "glyph",
+                  "icon": "check",
+                  "color": "color.text.secondary",
+                  "size": "size.icon.sm"
+                 },
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Live",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 20,
+                "note": "the panel's feed chip (E17-D01's states; the word is the signal, never colour alone)"
+               }
+              ],
+              "h": 20
+             }
+            ],
+            "w": 772,
+            "h": 32
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "grammar∕cursor-window · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)",
+   "node": {
+    "t": "board",
+    "name": "CMP-180 ChartRoot canvas",
+    "o": {
+     "fill": "color.surface.canvas",
+     "clip": true
+    },
+    "w": 772,
+    "h": 656,
+    "note": "canvas role=\"img\" (L-1); 40 synthetic bars 13:20 to 13:59; axis labels at quarter steps of the drawn range",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "wick 13:20",
+      "w": 1,
+      "h": 48,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 5,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "body 13:20",
+      "w": 11,
+      "h": 16,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 0,
+      "y": 128
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:21",
+      "w": 1,
+      "h": 100,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 23,
+      "y": 133
+     },
+     {
+      "t": "rect",
+      "name": "body 13:21",
+      "w": 11,
+      "h": 90,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 18,
+      "y": 133
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:22",
+      "w": 1,
+      "h": 69,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 40,
+      "y": 138
+     },
+     {
+      "t": "rect",
+      "name": "body 13:22",
+      "w": 11,
+      "h": 42,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 35,
+      "y": 165
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:23",
+      "w": 1,
+      "h": 42,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 58,
+      "y": 133
+     },
+     {
+      "t": "rect",
+      "name": "body 13:23",
+      "w": 11,
+      "h": 16,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 53,
+      "y": 159
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:24",
+      "w": 1,
+      "h": 53,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 76,
+      "y": 138
+     },
+     {
+      "t": "rect",
+      "name": "body 13:24",
+      "w": 11,
+      "h": 11,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 71,
+      "y": 170
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:25",
+      "w": 1,
+      "h": 111,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 93,
+      "y": 138
+     },
+     {
+      "t": "rect",
+      "name": "body 13:25",
+      "w": 11,
+      "h": 43,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 88,
+      "y": 138
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:26",
+      "w": 1,
+      "h": 116,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 111,
+      "y": 112
+     },
+     {
+      "t": "rect",
+      "name": "body 13:26",
+      "w": 11,
+      "h": 26,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 106,
+      "y": 128
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:27",
+      "w": 1,
+      "h": 58,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 129,
+      "y": 80
+     },
+     {
+      "t": "rect",
+      "name": "body 13:27",
+      "w": 11,
+      "h": 58,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 124,
+      "y": 80
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:28",
+      "w": 1,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 147,
+      "y": 86
+     },
+     {
+      "t": "rect",
+      "name": "body 13:28",
+      "w": 11,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 142,
+      "y": 86
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:29",
+      "w": 1,
+      "h": 90,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 164,
+      "y": 75
+     },
+     {
+      "t": "rect",
+      "name": "body 13:29",
+      "w": 11,
+      "h": 48,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 159,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:30",
+      "w": 1,
+      "h": 116,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 182,
+      "y": 96
+     },
+     {
+      "t": "rect",
+      "name": "body 13:30",
+      "w": 11,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 177,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:31",
+      "w": 1,
+      "h": 106,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 200,
+      "y": 96
+     },
+     {
+      "t": "rect",
+      "name": "body 13:31",
+      "w": 11,
+      "h": 106,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 195,
+      "y": 96
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:32",
+      "w": 1,
+      "h": 126,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 217,
+      "y": 33
+     },
+     {
+      "t": "rect",
+      "name": "body 13:32",
+      "w": 11,
+      "h": 69,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 212,
+      "y": 80
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:33",
+      "w": 1,
+      "h": 95,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 235,
+      "y": 107
+     },
+     {
+      "t": "rect",
+      "name": "body 13:33",
+      "w": 11,
+      "h": 53,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 230,
+      "y": 149
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:34",
+      "w": 1,
+      "h": 89,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 253,
+      "y": 202
+     },
+     {
+      "t": "rect",
+      "name": "body 13:34",
+      "w": 11,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 248,
+      "y": 202
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:35",
+      "w": 1,
+      "h": 68,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 271,
+      "y": 286
+     },
+     {
+      "t": "rect",
+      "name": "body 13:35",
+      "w": 11,
+      "h": 42,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 266,
+      "y": 286
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:36",
+      "w": 1,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 288,
+      "y": 238
+     },
+     {
+      "t": "rect",
+      "name": "body 13:36",
+      "w": 11,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 283,
+      "y": 238
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:37",
+      "w": 1,
+      "h": 52,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 306,
+      "y": 244
+     },
+     {
+      "t": "rect",
+      "name": "body 13:37",
+      "w": 11,
+      "h": 42,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 301,
+      "y": 244
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:38",
+      "w": 1,
+      "h": 74,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 324,
+      "y": 265
+     },
+     {
+      "t": "rect",
+      "name": "body 13:38",
+      "w": 11,
+      "h": 43,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 319,
+      "y": 296
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:39",
+      "w": 1,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 341,
+      "y": 328
+     },
+     {
+      "t": "rect",
+      "name": "body 13:39",
+      "w": 11,
+      "h": 47,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 336,
+      "y": 328
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:40",
+      "w": 1,
+      "h": 74,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 359,
+      "y": 375
+     },
+     {
+      "t": "rect",
+      "name": "body 13:40",
+      "w": 11,
+      "h": 32,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 354,
+      "y": 375
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:41",
+      "w": 1,
+      "h": 94,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 377,
+      "y": 418
+     },
+     {
+      "t": "rect",
+      "name": "body 13:41",
+      "w": 11,
+      "h": 73,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 372,
+      "y": 418
+     },
+     {
+      "t": "rect",
+      "name": "cursor column",
+      "w": 18,
+      "h": 656,
+      "o": {
+       "opacity": "opacity.muted",
+       "fill": "color.crosshair"
+      },
+      "x": 389,
+      "y": 0,
+      "note": "the selected cursor's column (D07E11:139: the plot stop's focus mark)"
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:42",
+      "w": 1,
+      "h": 95,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 394,
+      "y": 491
+     },
+     {
+      "t": "rect",
+      "name": "body 13:42",
+      "w": 11,
+      "h": 63,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 389,
+      "y": 491
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:43",
+      "w": 1,
+      "h": 105,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 412,
+      "y": 518
+     },
+     {
+      "t": "rect",
+      "name": "body 13:43",
+      "w": 11,
+      "h": 11,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 407,
+      "y": 554
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:44",
+      "w": 1,
+      "h": 100,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 430,
+      "y": 507
+     },
+     {
+      "t": "rect",
+      "name": "body 13:44",
+      "w": 11,
+      "h": 42,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 425,
+      "y": 507
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:45",
+      "w": 1,
+      "h": 63,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 447,
+      "y": 444
+     },
+     {
+      "t": "rect",
+      "name": "body 13:45",
+      "w": 11,
+      "h": 47,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 442,
+      "y": 444
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:46",
+      "w": 1,
+      "h": 110,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 465,
+      "y": 339
+     },
+     {
+      "t": "rect",
+      "name": "body 13:46",
+      "w": 11,
+      "h": 110,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 460,
+      "y": 339
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:47",
+      "w": 1,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 483,
+      "y": 275
+     },
+     {
+      "t": "rect",
+      "name": "body 13:47",
+      "w": 11,
+      "h": 15,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 478,
+      "y": 339
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:48",
+      "w": 1,
+      "h": 57,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 501,
+      "y": 339
+     },
+     {
+      "t": "rect",
+      "name": "body 13:48",
+      "w": 11,
+      "h": 16,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 496,
+      "y": 365
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:49",
+      "w": 1,
+      "h": 64,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 518,
+      "y": 317
+     },
+     {
+      "t": "rect",
+      "name": "body 13:49",
+      "w": 11,
+      "h": 53,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 513,
+      "y": 328
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:50",
+      "w": 1,
+      "h": 64,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 536,
+      "y": 296
+     },
+     {
+      "t": "rect",
+      "name": "body 13:50",
+      "w": 11,
+      "h": 10,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 531,
+      "y": 302
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:51",
+      "w": 1,
+      "h": 69,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 554,
+      "y": 233
+     },
+     {
+      "t": "rect",
+      "name": "body 13:51",
+      "w": 11,
+      "h": 42,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 549,
+      "y": 249
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:52",
+      "w": 1,
+      "h": 100,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 571,
+      "y": 244
+     },
+     {
+      "t": "rect",
+      "name": "body 13:52",
+      "w": 11,
+      "h": 53,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 566,
+      "y": 254
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:53",
+      "w": 1,
+      "h": 137,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 589,
+      "y": 275
+     },
+     {
+      "t": "rect",
+      "name": "body 13:53",
+      "w": 11,
+      "h": 84,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 584,
+      "y": 307
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:54",
+      "w": 1,
+      "h": 58,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 607,
+      "y": 365
+     },
+     {
+      "t": "rect",
+      "name": "body 13:54",
+      "w": 11,
+      "h": 21,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 602,
+      "y": 386
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:55",
+      "w": 1,
+      "h": 73,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 625,
+      "y": 402
+     },
+     {
+      "t": "rect",
+      "name": "body 13:55",
+      "w": 11,
+      "h": 2,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 620,
+      "y": 423
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:56",
+      "w": 1,
+      "h": 74,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 642,
+      "y": 354
+     },
+     {
+      "t": "rect",
+      "name": "body 13:56",
+      "w": 11,
+      "h": 37,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 637,
+      "y": 370
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:57",
+      "w": 1,
+      "h": 69,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 660,
+      "y": 354
+     },
+     {
+      "t": "rect",
+      "name": "body 13:57",
+      "w": 11,
+      "h": 32,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 655,
+      "y": 370
+     }
+    ]
+   }
+  },
+  {
+   "into": "grammar∕cursor-window · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "rect",
+    "name": "wick 13:58",
+    "w": 1,
+    "h": 43,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 678,
+    "y": 375
+   }
+  },
+  {
+   "into": "grammar∕cursor-window · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "rect",
+    "name": "body 13:58",
+    "w": 11,
+    "h": 5,
+    "o": {
+     "fill": "color.candle.up"
+    },
+    "x": 673,
+    "y": 407
+   }
+  },
+  {
+   "into": "grammar∕cursor-window · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "rect",
+    "name": "wick 13:59",
+    "w": 1,
+    "h": 69,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 695,
+    "y": 375
+   }
+  },
+  {
+   "into": "grammar∕cursor-window · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "rect",
+    "name": "body 13:59",
+    "w": 11,
+    "h": 11,
+    "o": {
+     "fill": "color.candle.up"
+    },
+    "x": 690,
+    "y": 396
+   }
+  },
+  {
+   "into": "grammar∕cursor-window · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "text",
+    "name": "axis 1",
+    "chars": "64,096.6",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 714,
+    "y": 637
+   }
+  },
+  {
+   "into": "grammar∕cursor-window · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "text",
+    "name": "axis 2",
+    "chars": "64,099.6",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 714,
+    "y": 479
+   }
+  },
+  {
+   "into": "grammar∕cursor-window · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "text",
+    "name": "axis 3",
+    "chars": "64,102.6",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 714,
+    "y": 321
+   }
+  },
+  {
+   "into": "grammar∕cursor-window · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "text",
+    "name": "axis 4",
+    "chars": "64,105.6",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 714,
+    "y": 163
+   }
+  },
+  {
+   "into": "grammar∕cursor-window · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "text",
+    "name": "axis 5",
+    "chars": "64,108.6",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 714,
+    "y": 5
+   }
+  },
+  {
+   "into": "grammar∕cursor-window · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "CMP-039 ring · plot stop",
+    "o": {
+     "stroke": "color.surface.canvas",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "band-2 · ring",
+      "o": {
+       "stroke": "color.focus.ring",
+       "strokeWidth": "border.focus",
+       "strokeAlign": "inner"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "band-3 · halo",
+        "o": {
+         "stroke": "color.surface.canvas",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "w": 766,
+        "h": 650,
+        "x": 2,
+        "y": 2
+       }
+      ],
+      "w": 770,
+      "h": 654,
+      "x": 1,
+      "y": 1
+     }
+    ],
+    "w": 772,
+    "h": 656,
+    "x": 0,
+    "y": 0,
+    "abs": true,
+    "note": "CMP-039 inset: drawn inside the row (E47-D04 §7.1)"
+   }
+  },
+  {
+   "into": "grammar∕cursor-window · dark",
+   "node": {
+    "t": "board",
+    "name": "StatusBar (placeholder)",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · env word",
+      "w": 56,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 48
+   }
+  },
+  {
+   "into": "grammar∕cursor-window · dark",
+   "node": {
+    "t": "board",
+    "name": "callout · mirror (hidden)",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs",
+     "pad": "space.inset.sm",
+     "fill": "color.surface.overlay",
+     "radius": "radius.control",
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.thick",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "line-1",
+      "chars": "The mirror: a windowed hidden table (clip-path, never display:none, R-4); aria-rowcount 601; rows 401 to 600 of 600 materialised (200, the window's cap, §4)",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-2",
+      "chars": "aria-rowindex 582: \"13:40. Open 64,101.7, high 64,101.7, low 64,100.3, close 64,101.1, volume 11.162, delta +1.274\"",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-3",
+      "chars": "aria-rowindex 583: \"13:41. Open 64,100.9, high 64,100.9, low 64,099.1, close 64,099.5, volume 16.367, delta +2.537\"",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-4",
+      "chars": "aria-rowindex 584: \"13:42. Open 64,099.5, high 64,099.5, low 64,097.7, close 64,098.3, volume 35.831, delta +14.191\" — aria-current",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-5",
+      "chars": "aria-rowindex 585: \"13:43. Open 64,098.1, high 64,099.0, low 64,097.0, close 64,098.3, volume 23.794, delta −4.568\"",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-6",
+      "chars": "aria-rowindex 586: \"13:44. Open 64,098.4, high 64,099.2, low 64,097.3, close 64,099.2, volume 19.009, delta +5.647\"",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-7",
+      "chars": "The window follows the cursor, never the pixels (§3.1)",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     }
+    ],
+    "w": 400,
+    "x": 860,
+    "y": 56,
+    "abs": true,
+    "note": "annotation callout (not product UI)"
+   }
+  },
+  {
+   "into": "grammar∕cursor-window · dark",
+   "node": {
+    "t": "board",
+    "name": "callout · Enter detail",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs",
+     "pad": "space.inset.sm",
+     "fill": "color.surface.overlay",
+     "radius": "radius.control",
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.thick",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "line-1",
+      "chars": "Enter: the cursor bar's footprint levels (5 nodes; the cap is 40, §4); Esc returns to the plot stop at the same bar",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-2",
+      "chars": "\"64,099.5. Bid 0.064, ask 0.000, delta −0.064. Bid-stacked\"",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-3",
+      "chars": "\"64,099.0. Bid 0.815, ask 1.938, delta +1.123\"",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-4",
+      "chars": "\"64,098.5. Bid 5.198, ask 2.834, delta −2.364\"",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-5",
+      "chars": "\"64,098.0. Bid 2.974, ask 19.399, delta +16.425. Ask-stacked. Estimated, Iceberg\"",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-6",
+      "chars": "\"64,097.5. Bid 1.769, ask 0.840, delta −0.929\"",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     }
+    ],
+    "w": 400,
+    "x": 860,
+    "y": 356,
+    "abs": true,
+    "note": "annotation callout (not product UI)"
+   }
+  },
+  {
+   "into": "grammar∕cursor-window · dark",
+   "node": {
+    "t": "board",
+    "name": "callout · canvas label",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs",
+     "pad": "space.inset.sm",
+     "fill": "color.surface.overlay",
+     "radius": "radius.control",
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.thick",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "line-1",
+      "chars": "Layer 4: role=\"img\", \"BTCUSDT 1m, 40 bars visible, last close 64,101.3, delta −1.658\" (L-1)",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-2",
+      "chars": "One Tab stop: the plot stop (ring), the cursor column its focus mark",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     }
+    ],
+    "w": 400,
+    "x": 860,
+    "y": 616,
+    "abs": true,
+    "note": "annotation callout (not product UI)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "grammar∕sparse-set · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "x": 1440,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar (placeholder)",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · env badge",
+          "w": 56,
+          "h": 20,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · health chip",
+          "w": 120,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar, not this spec's: placeholders only"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "w": 1280,
+      "h": 704,
+      "kids": [
+       {
+        "t": "board",
+        "name": "NavRail (placeholder)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entry-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-6",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 63,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 64,
+        "h": 704
+       },
+       {
+        "t": "board",
+        "name": "dock",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.sm",
+         "pad": "space.inset.sm",
+         "fill": "color.surface.app",
+         "clip": true
+        },
+        "w": 1216,
+        "h": 704,
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-080 DockPanel · chart (SCR-030)",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.canvas",
+           "stroke": "color.border.default",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.card",
+           "clip": true
+          },
+          "w": 772,
+          "h": 688,
+          "kids": [
+           {
+            "t": "board",
+            "name": "panel header",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.sm",
+             "fill": "color.surface.raised"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "title",
+              "chars": "Chart",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "text",
+              "name": "symbol",
+              "chars": "BTCUSDT",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary"
+             },
+             {
+              "t": "board",
+              "name": "CMP-003 SegmentedControl · Chart │ Table",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "segment · Chart",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "fill": "color.surface.selected",
+                 "stroke": "color.border.default",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner",
+                 "radius": "radius.control",
+                 "padX": "space.inset.sm",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "icon",
+                  "name": "check",
+                  "icon": "check",
+                  "color": "color.text.primary",
+                  "size": "size.icon.sm"
+                 },
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Chart",
+                  "typo": "type.ui.label",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 24,
+                "note": "aria-pressed=\"true\""
+               },
+               {
+                "t": "board",
+                "name": "segment · Table",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "fill": "color.surface.raised",
+                 "stroke": "color.border.default",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner",
+                 "radius": "radius.control",
+                 "padX": "space.inset.sm",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Table",
+                  "typo": "type.ui.label",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 24,
+                "note": "aria-pressed=\"false\""
+               },
+               {
+                "t": "board",
+                "name": "CMP-022 Kbd · Alt+T",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.xs",
+                 "radius": "radius.control",
+                 "stroke": "color.border.default",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "key",
+                  "chars": "Alt+T",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.secondary"
+                 }
+                ],
+                "h": 18
+               }
+              ],
+              "h": 24,
+              "note": "the equal-status entry in the panel header, every role (§7, R-8); Alt+T toggles in this panel's context (D06-A16); manual activation"
+             },
+             {
+              "t": "board",
+              "name": "chips",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.xs",
+               "justify": "end"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "feed chip · Live",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "stroke": "color.border.default",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner",
+                 "radius": "radius.badge",
+                 "padX": "space.inset.sm",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "icon",
+                  "name": "glyph",
+                  "icon": "check",
+                  "color": "color.text.secondary",
+                  "size": "size.icon.sm"
+                 },
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Live",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 20,
+                "note": "the panel's feed chip (E17-D01's states; the word is the signal, never colour alone)"
+               }
+              ],
+              "h": 20
+             }
+            ],
+            "w": 772,
+            "h": 32
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)",
+   "node": {
+    "t": "board",
+    "name": "CMP-180 ChartRoot canvas",
+    "o": {
+     "fill": "color.surface.canvas",
+     "clip": true
+    },
+    "w": 772,
+    "h": 656,
+    "note": "canvas role=\"img\" (L-1); 40 synthetic bars 13:20 to 13:59; axis labels at quarter steps of the drawn range",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "wick 13:20",
+      "w": 1,
+      "h": 48,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 5,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "body 13:20",
+      "w": 11,
+      "h": 16,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 0,
+      "y": 128
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:21",
+      "w": 1,
+      "h": 100,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 23,
+      "y": 133
+     },
+     {
+      "t": "rect",
+      "name": "body 13:21",
+      "w": 11,
+      "h": 90,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 18,
+      "y": 133
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:22",
+      "w": 1,
+      "h": 69,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 40,
+      "y": 138
+     },
+     {
+      "t": "rect",
+      "name": "body 13:22",
+      "w": 11,
+      "h": 42,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 35,
+      "y": 165
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:23",
+      "w": 1,
+      "h": 42,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 58,
+      "y": 133
+     },
+     {
+      "t": "rect",
+      "name": "body 13:23",
+      "w": 11,
+      "h": 16,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 53,
+      "y": 159
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:24",
+      "w": 1,
+      "h": 53,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 76,
+      "y": 138
+     },
+     {
+      "t": "rect",
+      "name": "body 13:24",
+      "w": 11,
+      "h": 11,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 71,
+      "y": 170
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:25",
+      "w": 1,
+      "h": 111,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 93,
+      "y": 138
+     },
+     {
+      "t": "rect",
+      "name": "body 13:25",
+      "w": 11,
+      "h": 43,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 88,
+      "y": 138
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:26",
+      "w": 1,
+      "h": 116,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 111,
+      "y": 112
+     },
+     {
+      "t": "rect",
+      "name": "body 13:26",
+      "w": 11,
+      "h": 26,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 106,
+      "y": 128
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:27",
+      "w": 1,
+      "h": 58,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 129,
+      "y": 80
+     },
+     {
+      "t": "rect",
+      "name": "body 13:27",
+      "w": 11,
+      "h": 58,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 124,
+      "y": 80
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:28",
+      "w": 1,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 147,
+      "y": 86
+     },
+     {
+      "t": "rect",
+      "name": "body 13:28",
+      "w": 11,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 142,
+      "y": 86
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:29",
+      "w": 1,
+      "h": 90,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 164,
+      "y": 75
+     },
+     {
+      "t": "rect",
+      "name": "body 13:29",
+      "w": 11,
+      "h": 48,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 159,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:30",
+      "w": 1,
+      "h": 116,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 182,
+      "y": 96
+     },
+     {
+      "t": "rect",
+      "name": "body 13:30",
+      "w": 11,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 177,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:31",
+      "w": 1,
+      "h": 106,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 200,
+      "y": 96
+     },
+     {
+      "t": "rect",
+      "name": "body 13:31",
+      "w": 11,
+      "h": 106,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 195,
+      "y": 96
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:32",
+      "w": 1,
+      "h": 126,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 217,
+      "y": 33
+     },
+     {
+      "t": "rect",
+      "name": "body 13:32",
+      "w": 11,
+      "h": 69,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 212,
+      "y": 80
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:33",
+      "w": 1,
+      "h": 95,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 235,
+      "y": 107
+     },
+     {
+      "t": "rect",
+      "name": "body 13:33",
+      "w": 11,
+      "h": 53,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 230,
+      "y": 149
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:34",
+      "w": 1,
+      "h": 89,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 253,
+      "y": 202
+     },
+     {
+      "t": "rect",
+      "name": "body 13:34",
+      "w": 11,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 248,
+      "y": 202
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:35",
+      "w": 1,
+      "h": 68,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 271,
+      "y": 286
+     },
+     {
+      "t": "rect",
+      "name": "body 13:35",
+      "w": 11,
+      "h": 42,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 266,
+      "y": 286
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:36",
+      "w": 1,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 288,
+      "y": 238
+     },
+     {
+      "t": "rect",
+      "name": "body 13:36",
+      "w": 11,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 283,
+      "y": 238
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:37",
+      "w": 1,
+      "h": 52,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 306,
+      "y": 244
+     },
+     {
+      "t": "rect",
+      "name": "body 13:37",
+      "w": 11,
+      "h": 42,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 301,
+      "y": 244
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:38",
+      "w": 1,
+      "h": 74,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 324,
+      "y": 265
+     },
+     {
+      "t": "rect",
+      "name": "body 13:38",
+      "w": 11,
+      "h": 43,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 319,
+      "y": 296
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:39",
+      "w": 1,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 341,
+      "y": 328
+     },
+     {
+      "t": "rect",
+      "name": "body 13:39",
+      "w": 11,
+      "h": 47,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 336,
+      "y": 328
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:40",
+      "w": 1,
+      "h": 74,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 359,
+      "y": 375
+     },
+     {
+      "t": "rect",
+      "name": "body 13:40",
+      "w": 11,
+      "h": 32,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 354,
+      "y": 375
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:41",
+      "w": 1,
+      "h": 94,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 377,
+      "y": 418
+     },
+     {
+      "t": "rect",
+      "name": "body 13:41",
+      "w": 11,
+      "h": 73,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 372,
+      "y": 418
+     },
+     {
+      "t": "rect",
+      "name": "cursor column",
+      "w": 18,
+      "h": 656,
+      "o": {
+       "opacity": "opacity.muted",
+       "fill": "color.crosshair"
+      },
+      "x": 389,
+      "y": 0,
+      "note": "the selected cursor's column (D07E11:139: the plot stop's focus mark)"
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:42",
+      "w": 1,
+      "h": 95,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 394,
+      "y": 491
+     },
+     {
+      "t": "rect",
+      "name": "body 13:42",
+      "w": 11,
+      "h": 63,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 389,
+      "y": 491
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:43",
+      "w": 1,
+      "h": 105,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 412,
+      "y": 518
+     },
+     {
+      "t": "rect",
+      "name": "body 13:43",
+      "w": 11,
+      "h": 11,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 407,
+      "y": 554
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:44",
+      "w": 1,
+      "h": 100,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 430,
+      "y": 507
+     },
+     {
+      "t": "rect",
+      "name": "body 13:44",
+      "w": 11,
+      "h": 42,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 425,
+      "y": 507
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:45",
+      "w": 1,
+      "h": 63,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 447,
+      "y": 444
+     },
+     {
+      "t": "rect",
+      "name": "body 13:45",
+      "w": 11,
+      "h": 47,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 442,
+      "y": 444
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:46",
+      "w": 1,
+      "h": 110,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 465,
+      "y": 339
+     },
+     {
+      "t": "rect",
+      "name": "body 13:46",
+      "w": 11,
+      "h": 110,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 460,
+      "y": 339
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:47",
+      "w": 1,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 483,
+      "y": 275
+     },
+     {
+      "t": "rect",
+      "name": "body 13:47",
+      "w": 11,
+      "h": 15,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 478,
+      "y": 339
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:48",
+      "w": 1,
+      "h": 57,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 501,
+      "y": 339
+     },
+     {
+      "t": "rect",
+      "name": "body 13:48",
+      "w": 11,
+      "h": 16,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 496,
+      "y": 365
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:49",
+      "w": 1,
+      "h": 64,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 518,
+      "y": 317
+     },
+     {
+      "t": "rect",
+      "name": "body 13:49",
+      "w": 11,
+      "h": 53,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 513,
+      "y": 328
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:50",
+      "w": 1,
+      "h": 64,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 536,
+      "y": 296
+     },
+     {
+      "t": "rect",
+      "name": "body 13:50",
+      "w": 11,
+      "h": 10,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 531,
+      "y": 302
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:51",
+      "w": 1,
+      "h": 69,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 554,
+      "y": 233
+     },
+     {
+      "t": "rect",
+      "name": "body 13:51",
+      "w": 11,
+      "h": 42,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 549,
+      "y": 249
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:52",
+      "w": 1,
+      "h": 100,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 571,
+      "y": 244
+     },
+     {
+      "t": "rect",
+      "name": "body 13:52",
+      "w": 11,
+      "h": 53,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 566,
+      "y": 254
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:53",
+      "w": 1,
+      "h": 137,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 589,
+      "y": 275
+     },
+     {
+      "t": "rect",
+      "name": "body 13:53",
+      "w": 11,
+      "h": 84,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 584,
+      "y": 307
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:54",
+      "w": 1,
+      "h": 58,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 607,
+      "y": 365
+     },
+     {
+      "t": "rect",
+      "name": "body 13:54",
+      "w": 11,
+      "h": 21,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 602,
+      "y": 386
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:55",
+      "w": 1,
+      "h": 73,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 625,
+      "y": 402
+     },
+     {
+      "t": "rect",
+      "name": "body 13:55",
+      "w": 11,
+      "h": 2,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 620,
+      "y": 423
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:56",
+      "w": 1,
+      "h": 74,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 642,
+      "y": 354
+     },
+     {
+      "t": "rect",
+      "name": "body 13:56",
+      "w": 11,
+      "h": 37,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 637,
+      "y": 370
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:57",
+      "w": 1,
+      "h": 69,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 660,
+      "y": 354
+     },
+     {
+      "t": "rect",
+      "name": "body 13:57",
+      "w": 11,
+      "h": 32,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 655,
+      "y": 370
+     }
+    ]
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "rect",
+    "name": "wick 13:58",
+    "w": 1,
+    "h": 43,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 678,
+    "y": 375
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "rect",
+    "name": "body 13:58",
+    "w": 11,
+    "h": 5,
+    "o": {
+     "fill": "color.candle.up"
+    },
+    "x": 673,
+    "y": 407
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "rect",
+    "name": "wick 13:59",
+    "w": 1,
+    "h": 69,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 695,
+    "y": 375
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "rect",
+    "name": "body 13:59",
+    "w": 11,
+    "h": 11,
+    "o": {
+     "fill": "color.candle.up"
+    },
+    "x": 690,
+    "y": 396
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "text",
+    "name": "axis 1",
+    "chars": "64,096.6",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 714,
+    "y": 637
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "text",
+    "name": "axis 2",
+    "chars": "64,099.6",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 714,
+    "y": 479
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "text",
+    "name": "axis 3",
+    "chars": "64,102.6",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 714,
+    "y": 321
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "text",
+    "name": "axis 4",
+    "chars": "64,105.6",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 714,
+    "y": 163
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "text",
+    "name": "axis 5",
+    "chars": "64,108.6",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 714,
+    "y": 5
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:26:04",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.down",
+     "opacity": "opacity.muted"
+    },
+    "x": 101,
+    "y": 175,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:28:10",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.up",
+     "opacity": "opacity.muted"
+    },
+    "x": 139,
+    "y": 80,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:29:50",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.down",
+     "opacity": "opacity.muted"
+    },
+    "x": 168,
+    "y": 96,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:32:05",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.down",
+     "opacity": "opacity.muted"
+    },
+    "x": 208,
+    "y": 27,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:32:25",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.up",
+     "opacity": "opacity.muted"
+    },
+    "x": 214,
+    "y": 96,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:33:03",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.down",
+     "opacity": "opacity.muted"
+    },
+    "x": 225,
+    "y": 143,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:34:02",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.up",
+     "opacity": "opacity.muted"
+    },
+    "x": 242,
+    "y": 201,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:34:27",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.down",
+     "opacity": "opacity.muted"
+    },
+    "x": 250,
+    "y": 243,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:34:38",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.down",
+     "opacity": "opacity.muted"
+    },
+    "x": 253,
+    "y": 232,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:39:03",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.up",
+     "opacity": "opacity.muted"
+    },
+    "x": 331,
+    "y": 322,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:41:28",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.up",
+     "opacity": "opacity.muted"
+    },
+    "x": 374,
+    "y": 459,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:42:59",
+    "w": 28,
+    "h": 28,
+    "o": {
+     "fill": "color.candle.up",
+     "opacity": "opacity.muted"
+    },
+    "x": 393,
+    "y": 540,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:43:23",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.up",
+     "opacity": "opacity.muted"
+    },
+    "x": 408,
+    "y": 601,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:44:41",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.up",
+     "opacity": "opacity.muted"
+    },
+    "x": 431,
+    "y": 527,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:48:02",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.down",
+     "opacity": "opacity.muted"
+    },
+    "x": 490,
+    "y": 354,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:48:55",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.down",
+     "opacity": "opacity.muted"
+    },
+    "x": 506,
+    "y": 364,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:56:28",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.down",
+     "opacity": "opacity.muted"
+    },
+    "x": 639,
+    "y": 369,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:59:59",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.down",
+     "opacity": "opacity.muted"
+    },
+    "x": 702,
+    "y": 390,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:26:04",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big sell. 57,695 USDT, 64,105.4, 13:26:04\"",
+    "x": 95,
+    "y": 169
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:28:10",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big buy. 57,504 USDT, 64,107.2, 13:28:10\"",
+    "x": 133,
+    "y": 74
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:29:50",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big sell. 57,696 USDT, 64,106.9, 13:29:50\"",
+    "x": 162,
+    "y": 90
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:32:05",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big sell. 57,569 USDT, 64,108.2, 13:32:05\"",
+    "x": 202,
+    "y": 21
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:32:25",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big buy. 57,247 USDT, 64,106.9, 13:32:25\"",
+    "x": 208,
+    "y": 90
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:33:03",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big sell. 57,567 USDT, 64,106.0, 13:33:03\"",
+    "x": 219,
+    "y": 137
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:34:02",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big buy. 57,246 USDT, 64,104.9, 13:34:02\"",
+    "x": 236,
+    "y": 195
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:34:27",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big sell. 57,309 USDT, 64,104.1, 13:34:27\"",
+    "x": 244,
+    "y": 237
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:34:38",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big sell. 57,437 USDT, 64,104.3, 13:34:38\"",
+    "x": 247,
+    "y": 226
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:39:03",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big buy. 57,308 USDT, 64,102.6, 13:39:03\"",
+    "x": 325,
+    "y": 316
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:41:28",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big buy. 57,690 USDT, 64,100.0, 13:41:28\"",
+    "x": 368,
+    "y": 453
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "CMP-039 ring · normal",
+    "o": {
+     "stroke": "color.surface.canvas",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "band-2 · ring",
+      "o": {
+       "stroke": "color.focus.ring",
+       "strokeWidth": "border.focus",
+       "strokeAlign": "inner"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "band-3 · halo",
+        "o": {
+         "stroke": "color.surface.canvas",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "surrogate 13:42:59",
+          "o": {
+           "stroke": "color.status.info.default",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "w": 28,
+          "h": 28,
+          "note": "button surrogate (hidden), 28 x 28 CSS px, aligned to the bubble (R-4); aria-label \"Big buy. 1,008,266 USDT, 64,098.3, 13:42:59. Cluster of 21. Estimated, Trade cluster\"",
+          "x": 3,
+          "y": 3
+         }
+        ],
+        "w": 34,
+        "h": 34,
+        "x": 2,
+        "y": 2
+       }
+      ],
+      "w": 38,
+      "h": 38,
+      "x": 1,
+      "y": 1
+     }
+    ],
+    "w": 40,
+    "h": 40,
+    "note": "focus-visible; normal: ring 2 px, halo 1 px each side, offset 2 px (D04 §7.1 L235)",
+    "x": 387,
+    "y": 534
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:43:23",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big buy. 57,431 USDT, 64,097.3, 13:43:23\"",
+    "x": 402,
+    "y": 595
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:44:41",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big buy. 57,497 USDT, 64,098.7, 13:44:41\"",
+    "x": 425,
+    "y": 521
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:48:02",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big sell. 57,307 USDT, 64,102.0, 13:48:02\"",
+    "x": 484,
+    "y": 348
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:48:55",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big sell. 57,563 USDT, 64,101.8, 13:48:55\"",
+    "x": 500,
+    "y": 358
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:56:28",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big sell. 57,499 USDT, 64,101.7, 13:56:28\"",
+    "x": 633,
+    "y": 363
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:59:59",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big sell. 57,563 USDT, 64,101.3, 13:59:59\"",
+    "x": 696,
+    "y": 384
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark",
+   "node": {
+    "t": "board",
+    "name": "StatusBar (placeholder)",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · env word",
+      "w": 56,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 48
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark",
+   "node": {
+    "t": "board",
+    "name": "callout · the set",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs",
+     "pad": "space.inset.sm",
+     "fill": "color.surface.overlay",
+     "radius": "radius.control",
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.thick",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "line-1",
+      "chars": "One roving group of button surrogates after the plot stop; 18 items intersect the visible range (cap 200, PROPOSED, §4); aria-setsize 211 (the full count)",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-2",
+      "chars": "posinset 194: \"Big sell. 57,695 USDT, 64,105.4, 13:26:04\"",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-3",
+      "chars": "posinset 195: \"Big buy. 57,504 USDT, 64,107.2, 13:28:10\"",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-4",
+      "chars": "posinset 196: \"Big sell. 57,696 USDT, 64,106.9, 13:29:50\"",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-5",
+      "chars": "posinset 197: \"Big sell. 57,569 USDT, 64,108.2, 13:32:05\"",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-6",
+      "chars": "…",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-7",
+      "chars": "Focused: posinset 205: \"Big buy. 1,008,266 USDT, 64,098.3, 13:42:59. Cluster of 21. Estimated, Trade cluster\"",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-8",
+      "chars": "Arrows move within the set, Home / End reach its ends, Tab leaves it; a window change never moves focus (§3.2)",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     }
+    ],
+    "w": 400,
+    "x": 860,
+    "y": 56,
+    "abs": true,
+    "note": "annotation callout (not product UI)"
+   }
+  },
+  {
+   "into": "grammar∕sparse-set · dark",
+   "node": {
+    "t": "board",
+    "name": "callout · names",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs",
+     "pad": "space.inset.sm",
+     "fill": "color.surface.overlay",
+     "radius": "radius.control",
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.thick",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "line-1",
+      "chars": "N-8: {unit}. {values}. {flags}. {Estimated, display name}; a cluster carries \"Cluster of n\" and \"Estimated, Trade cluster\" (CMP-227's display name)",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 384
+     }
+    ],
+    "w": 400,
+    "x": 860,
+    "y": 476,
+    "abs": true,
+    "note": "annotation callout (not product UI)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "grammar∕targets · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "x": 2800,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar (placeholder)",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · env badge",
+          "w": 56,
+          "h": 20,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · health chip",
+          "w": 120,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar, not this spec's: placeholders only"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "w": 1280,
+      "h": 704,
+      "kids": [
+       {
+        "t": "board",
+        "name": "NavRail (placeholder)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entry-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-6",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 63,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 64,
+        "h": 704
+       },
+       {
+        "t": "board",
+        "name": "dock",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.sm",
+         "pad": "space.inset.sm",
+         "fill": "color.surface.app",
+         "clip": true
+        },
+        "w": 1216,
+        "h": 704,
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-080 DockPanel · chart (SCR-030)",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.canvas",
+           "stroke": "color.border.default",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.card",
+           "clip": true
+          },
+          "w": 772,
+          "h": 688,
+          "kids": [
+           {
+            "t": "board",
+            "name": "panel header",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.sm",
+             "fill": "color.surface.raised"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "title",
+              "chars": "Chart",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "text",
+              "name": "symbol",
+              "chars": "BTCUSDT",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary"
+             },
+             {
+              "t": "board",
+              "name": "CMP-003 SegmentedControl · Chart │ Table",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "segment · Chart",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "fill": "color.surface.selected",
+                 "stroke": "color.border.default",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner",
+                 "radius": "radius.control",
+                 "padX": "space.inset.sm",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "icon",
+                  "name": "check",
+                  "icon": "check",
+                  "color": "color.text.primary",
+                  "size": "size.icon.sm"
+                 },
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Chart",
+                  "typo": "type.ui.label",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 24,
+                "note": "aria-pressed=\"true\""
+               },
+               {
+                "t": "board",
+                "name": "segment · Table",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "fill": "color.surface.raised",
+                 "stroke": "color.border.default",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner",
+                 "radius": "radius.control",
+                 "padX": "space.inset.sm",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Table",
+                  "typo": "type.ui.label",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 24,
+                "note": "aria-pressed=\"false\""
+               },
+               {
+                "t": "board",
+                "name": "CMP-022 Kbd · Alt+T",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "padX": "space.inset.xs",
+                 "radius": "radius.control",
+                 "stroke": "color.border.default",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "key",
+                  "chars": "Alt+T",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.secondary"
+                 }
+                ],
+                "h": 18
+               }
+              ],
+              "h": 24,
+              "note": "the equal-status entry in the panel header, every role (§7, R-8); Alt+T toggles in this panel's context (D06-A16); manual activation"
+             },
+             {
+              "t": "board",
+              "name": "chips",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.xs",
+               "justify": "end"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "feed chip · Live",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "stroke": "color.border.default",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner",
+                 "radius": "radius.badge",
+                 "padX": "space.inset.sm",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "icon",
+                  "name": "glyph",
+                  "icon": "check",
+                  "color": "color.text.secondary",
+                  "size": "size.icon.sm"
+                 },
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Live",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 20,
+                "note": "the panel's feed chip (E17-D01's states; the word is the signal, never colour alone)"
+               }
+              ],
+              "h": 20
+             }
+            ],
+            "w": 772,
+            "h": 32
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)",
+   "node": {
+    "t": "board",
+    "name": "CMP-180 ChartRoot canvas",
+    "o": {
+     "fill": "color.surface.canvas",
+     "clip": true
+    },
+    "w": 772,
+    "h": 656,
+    "note": "canvas role=\"img\" (L-1); 40 synthetic bars 13:20 to 13:59; axis labels at quarter steps of the drawn range",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "wick 13:20",
+      "w": 1,
+      "h": 48,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 5,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "body 13:20",
+      "w": 11,
+      "h": 16,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 0,
+      "y": 128
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:21",
+      "w": 1,
+      "h": 100,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 23,
+      "y": 133
+     },
+     {
+      "t": "rect",
+      "name": "body 13:21",
+      "w": 11,
+      "h": 90,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 18,
+      "y": 133
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:22",
+      "w": 1,
+      "h": 69,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 40,
+      "y": 138
+     },
+     {
+      "t": "rect",
+      "name": "body 13:22",
+      "w": 11,
+      "h": 42,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 35,
+      "y": 165
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:23",
+      "w": 1,
+      "h": 42,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 58,
+      "y": 133
+     },
+     {
+      "t": "rect",
+      "name": "body 13:23",
+      "w": 11,
+      "h": 16,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 53,
+      "y": 159
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:24",
+      "w": 1,
+      "h": 53,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 76,
+      "y": 138
+     },
+     {
+      "t": "rect",
+      "name": "body 13:24",
+      "w": 11,
+      "h": 11,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 71,
+      "y": 170
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:25",
+      "w": 1,
+      "h": 111,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 93,
+      "y": 138
+     },
+     {
+      "t": "rect",
+      "name": "body 13:25",
+      "w": 11,
+      "h": 43,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 88,
+      "y": 138
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:26",
+      "w": 1,
+      "h": 116,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 111,
+      "y": 112
+     },
+     {
+      "t": "rect",
+      "name": "body 13:26",
+      "w": 11,
+      "h": 26,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 106,
+      "y": 128
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:27",
+      "w": 1,
+      "h": 58,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 129,
+      "y": 80
+     },
+     {
+      "t": "rect",
+      "name": "body 13:27",
+      "w": 11,
+      "h": 58,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 124,
+      "y": 80
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:28",
+      "w": 1,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 147,
+      "y": 86
+     },
+     {
+      "t": "rect",
+      "name": "body 13:28",
+      "w": 11,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 142,
+      "y": 86
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:29",
+      "w": 1,
+      "h": 90,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 164,
+      "y": 75
+     },
+     {
+      "t": "rect",
+      "name": "body 13:29",
+      "w": 11,
+      "h": 48,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 159,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:30",
+      "w": 1,
+      "h": 116,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 182,
+      "y": 96
+     },
+     {
+      "t": "rect",
+      "name": "body 13:30",
+      "w": 11,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 177,
+      "y": 117
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:31",
+      "w": 1,
+      "h": 106,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 200,
+      "y": 96
+     },
+     {
+      "t": "rect",
+      "name": "body 13:31",
+      "w": 11,
+      "h": 106,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 195,
+      "y": 96
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:32",
+      "w": 1,
+      "h": 126,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 217,
+      "y": 33
+     },
+     {
+      "t": "rect",
+      "name": "body 13:32",
+      "w": 11,
+      "h": 69,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 212,
+      "y": 80
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:33",
+      "w": 1,
+      "h": 95,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 235,
+      "y": 107
+     },
+     {
+      "t": "rect",
+      "name": "body 13:33",
+      "w": 11,
+      "h": 53,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 230,
+      "y": 149
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:34",
+      "w": 1,
+      "h": 89,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 253,
+      "y": 202
+     },
+     {
+      "t": "rect",
+      "name": "body 13:34",
+      "w": 11,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 248,
+      "y": 202
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:35",
+      "w": 1,
+      "h": 68,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 271,
+      "y": 286
+     },
+     {
+      "t": "rect",
+      "name": "body 13:35",
+      "w": 11,
+      "h": 42,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 266,
+      "y": 286
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:36",
+      "w": 1,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 288,
+      "y": 238
+     },
+     {
+      "t": "rect",
+      "name": "body 13:36",
+      "w": 11,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 283,
+      "y": 238
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:37",
+      "w": 1,
+      "h": 52,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 306,
+      "y": 244
+     },
+     {
+      "t": "rect",
+      "name": "body 13:37",
+      "w": 11,
+      "h": 42,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 301,
+      "y": 244
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:38",
+      "w": 1,
+      "h": 74,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 324,
+      "y": 265
+     },
+     {
+      "t": "rect",
+      "name": "body 13:38",
+      "w": 11,
+      "h": 43,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 319,
+      "y": 296
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:39",
+      "w": 1,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 341,
+      "y": 328
+     },
+     {
+      "t": "rect",
+      "name": "body 13:39",
+      "w": 11,
+      "h": 47,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 336,
+      "y": 328
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:40",
+      "w": 1,
+      "h": 74,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 359,
+      "y": 375
+     },
+     {
+      "t": "rect",
+      "name": "body 13:40",
+      "w": 11,
+      "h": 32,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 354,
+      "y": 375
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:41",
+      "w": 1,
+      "h": 94,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 377,
+      "y": 418
+     },
+     {
+      "t": "rect",
+      "name": "body 13:41",
+      "w": 11,
+      "h": 73,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 372,
+      "y": 418
+     },
+     {
+      "t": "rect",
+      "name": "cursor column",
+      "w": 18,
+      "h": 656,
+      "o": {
+       "opacity": "opacity.muted",
+       "fill": "color.crosshair"
+      },
+      "x": 389,
+      "y": 0,
+      "note": "the selected cursor's column (D07E11:139: the plot stop's focus mark)"
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:42",
+      "w": 1,
+      "h": 95,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 394,
+      "y": 491
+     },
+     {
+      "t": "rect",
+      "name": "body 13:42",
+      "w": 11,
+      "h": 63,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 389,
+      "y": 491
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:43",
+      "w": 1,
+      "h": 105,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 412,
+      "y": 518
+     },
+     {
+      "t": "rect",
+      "name": "body 13:43",
+      "w": 11,
+      "h": 11,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 407,
+      "y": 554
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:44",
+      "w": 1,
+      "h": 100,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 430,
+      "y": 507
+     },
+     {
+      "t": "rect",
+      "name": "body 13:44",
+      "w": 11,
+      "h": 42,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 425,
+      "y": 507
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:45",
+      "w": 1,
+      "h": 63,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 447,
+      "y": 444
+     },
+     {
+      "t": "rect",
+      "name": "body 13:45",
+      "w": 11,
+      "h": 47,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 442,
+      "y": 444
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:46",
+      "w": 1,
+      "h": 110,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 465,
+      "y": 339
+     },
+     {
+      "t": "rect",
+      "name": "body 13:46",
+      "w": 11,
+      "h": 110,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 460,
+      "y": 339
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:47",
+      "w": 1,
+      "h": 79,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 483,
+      "y": 275
+     },
+     {
+      "t": "rect",
+      "name": "body 13:47",
+      "w": 11,
+      "h": 15,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 478,
+      "y": 339
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:48",
+      "w": 1,
+      "h": 57,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 501,
+      "y": 339
+     },
+     {
+      "t": "rect",
+      "name": "body 13:48",
+      "w": 11,
+      "h": 16,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 496,
+      "y": 365
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:49",
+      "w": 1,
+      "h": 64,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 518,
+      "y": 317
+     },
+     {
+      "t": "rect",
+      "name": "body 13:49",
+      "w": 11,
+      "h": 53,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 513,
+      "y": 328
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:50",
+      "w": 1,
+      "h": 64,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 536,
+      "y": 296
+     },
+     {
+      "t": "rect",
+      "name": "body 13:50",
+      "w": 11,
+      "h": 10,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 531,
+      "y": 302
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:51",
+      "w": 1,
+      "h": 69,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 554,
+      "y": 233
+     },
+     {
+      "t": "rect",
+      "name": "body 13:51",
+      "w": 11,
+      "h": 42,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 549,
+      "y": 249
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:52",
+      "w": 1,
+      "h": 100,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 571,
+      "y": 244
+     },
+     {
+      "t": "rect",
+      "name": "body 13:52",
+      "w": 11,
+      "h": 53,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 566,
+      "y": 254
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:53",
+      "w": 1,
+      "h": 137,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 589,
+      "y": 275
+     },
+     {
+      "t": "rect",
+      "name": "body 13:53",
+      "w": 11,
+      "h": 84,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 584,
+      "y": 307
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:54",
+      "w": 1,
+      "h": 58,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 607,
+      "y": 365
+     },
+     {
+      "t": "rect",
+      "name": "body 13:54",
+      "w": 11,
+      "h": 21,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 602,
+      "y": 386
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:55",
+      "w": 1,
+      "h": 73,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 625,
+      "y": 402
+     },
+     {
+      "t": "rect",
+      "name": "body 13:55",
+      "w": 11,
+      "h": 2,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 620,
+      "y": 423
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:56",
+      "w": 1,
+      "h": 74,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 642,
+      "y": 354
+     },
+     {
+      "t": "rect",
+      "name": "body 13:56",
+      "w": 11,
+      "h": 37,
+      "o": {
+       "fill": "color.candle.up"
+      },
+      "x": 637,
+      "y": 370
+     },
+     {
+      "t": "rect",
+      "name": "wick 13:57",
+      "w": 1,
+      "h": 69,
+      "o": {
+       "fill": "color.candle.wick"
+      },
+      "x": 660,
+      "y": 354
+     },
+     {
+      "t": "rect",
+      "name": "body 13:57",
+      "w": 11,
+      "h": 32,
+      "o": {
+       "fill": "color.candle.down"
+      },
+      "x": 655,
+      "y": 370
+     }
+    ]
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "rect",
+    "name": "wick 13:58",
+    "w": 1,
+    "h": 43,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 678,
+    "y": 375
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "rect",
+    "name": "body 13:58",
+    "w": 11,
+    "h": 5,
+    "o": {
+     "fill": "color.candle.up"
+    },
+    "x": 673,
+    "y": 407
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "rect",
+    "name": "wick 13:59",
+    "w": 1,
+    "h": 69,
+    "o": {
+     "fill": "color.candle.wick"
+    },
+    "x": 695,
+    "y": 375
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "rect",
+    "name": "body 13:59",
+    "w": 11,
+    "h": 11,
+    "o": {
+     "fill": "color.candle.up"
+    },
+    "x": 690,
+    "y": 396
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "text",
+    "name": "axis 1",
+    "chars": "64,096.6",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 714,
+    "y": 637
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "text",
+    "name": "axis 2",
+    "chars": "64,099.6",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 714,
+    "y": 479
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "text",
+    "name": "axis 3",
+    "chars": "64,102.6",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 714,
+    "y": 321
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "text",
+    "name": "axis 4",
+    "chars": "64,105.6",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 714,
+    "y": 163
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "text",
+    "name": "axis 5",
+    "chars": "64,108.6",
+    "typo": "type.num.sm",
+    "color": "color.axis.text",
+    "x": 714,
+    "y": 5
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:26:04",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.down",
+     "opacity": "opacity.muted"
+    },
+    "x": 101,
+    "y": 175,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:28:10",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.up",
+     "opacity": "opacity.muted"
+    },
+    "x": 139,
+    "y": 80,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:29:50",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.down",
+     "opacity": "opacity.muted"
+    },
+    "x": 168,
+    "y": 96,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:32:05",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.down",
+     "opacity": "opacity.muted"
+    },
+    "x": 208,
+    "y": 27,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:32:25",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.up",
+     "opacity": "opacity.muted"
+    },
+    "x": 214,
+    "y": 96,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:33:03",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.down",
+     "opacity": "opacity.muted"
+    },
+    "x": 225,
+    "y": 143,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:34:02",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.up",
+     "opacity": "opacity.muted"
+    },
+    "x": 242,
+    "y": 201,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:34:27",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.down",
+     "opacity": "opacity.muted"
+    },
+    "x": 250,
+    "y": 243,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:34:38",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.down",
+     "opacity": "opacity.muted"
+    },
+    "x": 253,
+    "y": 232,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:39:03",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.up",
+     "opacity": "opacity.muted"
+    },
+    "x": 331,
+    "y": 322,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:41:28",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.up",
+     "opacity": "opacity.muted"
+    },
+    "x": 374,
+    "y": 459,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:42:59",
+    "w": 28,
+    "h": 28,
+    "o": {
+     "fill": "color.candle.up",
+     "opacity": "opacity.muted"
+    },
+    "x": 393,
+    "y": 540,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:43:23",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.up",
+     "opacity": "opacity.muted"
+    },
+    "x": 408,
+    "y": 601,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:44:41",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.up",
+     "opacity": "opacity.muted"
+    },
+    "x": 431,
+    "y": 527,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:48:02",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.down",
+     "opacity": "opacity.muted"
+    },
+    "x": 490,
+    "y": 354,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:48:55",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.down",
+     "opacity": "opacity.muted"
+    },
+    "x": 506,
+    "y": 364,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:56:28",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.down",
+     "opacity": "opacity.muted"
+    },
+    "x": 639,
+    "y": 369,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "ellipse",
+    "name": "bubble 13:59:59",
+    "w": 12,
+    "h": 12,
+    "o": {
+     "fill": "color.candle.down",
+     "opacity": "opacity.muted"
+    },
+    "x": 702,
+    "y": 390,
+    "note": "CMP-112 (synthetic size encoding, kit choice)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:26:04",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big sell. 57,695 USDT, 64,105.4, 13:26:04\"",
+    "x": 95,
+    "y": 169
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:28:10",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big buy. 57,504 USDT, 64,107.2, 13:28:10\"",
+    "x": 133,
+    "y": 74
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:29:50",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big sell. 57,696 USDT, 64,106.9, 13:29:50\"",
+    "x": 162,
+    "y": 90
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:32:05",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big sell. 57,569 USDT, 64,108.2, 13:32:05\"",
+    "x": 202,
+    "y": 21
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:32:25",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big buy. 57,247 USDT, 64,106.9, 13:32:25\"",
+    "x": 208,
+    "y": 90
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:33:03",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big sell. 57,567 USDT, 64,106.0, 13:33:03\"",
+    "x": 219,
+    "y": 137
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:34:02",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big buy. 57,246 USDT, 64,104.9, 13:34:02\"",
+    "x": 236,
+    "y": 195
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:34:27",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big sell. 57,309 USDT, 64,104.1, 13:34:27\"",
+    "x": 244,
+    "y": 237
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:34:38",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big sell. 57,437 USDT, 64,104.3, 13:34:38\"",
+    "x": 247,
+    "y": 226
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:39:03",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big buy. 57,308 USDT, 64,102.6, 13:39:03\"",
+    "x": 325,
+    "y": 316
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:41:28",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big buy. 57,690 USDT, 64,100.0, 13:41:28\"",
+    "x": 368,
+    "y": 453
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:42:59",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 28,
+    "h": 28,
+    "note": "button surrogate (hidden), 28 x 28 CSS px, aligned to the bubble (R-4); aria-label \"Big buy. 1,008,266 USDT, 64,098.3, 13:42:59. Cluster of 21. Estimated, Trade cluster\"",
+    "x": 393,
+    "y": 540
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:43:23",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big buy. 57,431 USDT, 64,097.3, 13:43:23\"",
+    "x": 402,
+    "y": 595
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:44:41",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big buy. 57,497 USDT, 64,098.7, 13:44:41\"",
+    "x": 425,
+    "y": 521
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:48:02",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big sell. 57,307 USDT, 64,102.0, 13:48:02\"",
+    "x": 484,
+    "y": 348
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:48:55",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big sell. 57,563 USDT, 64,101.8, 13:48:55\"",
+    "x": 500,
+    "y": 358
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:56:28",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big sell. 57,499 USDT, 64,101.7, 13:56:28\"",
+    "x": 633,
+    "y": 363
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "surrogate 13:59:59",
+    "o": {
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "w": 24,
+    "h": 24,
+    "note": "button surrogate (hidden), 24 x 24 CSS px, aligned to the bubble (R-4); aria-label \"Big sell. 57,563 USDT, 64,101.3, 13:59:59\"",
+    "x": 696,
+    "y": 384
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "tag · 24 x 24",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "24 x 24",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 123,
+    "y": 169,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "tag · overlap: the later anchor wins",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "overlap: the later anchor wins",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 275,
+    "y": 244,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark/body/dock/CMP-080 DockPanel · chart (SCR-030)/CMP-180 ChartRoot canvas",
+   "node": {
+    "t": "board",
+    "name": "CMP-039 ring · plot stop",
+    "o": {
+     "stroke": "color.surface.canvas",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "band-2 · ring",
+      "o": {
+       "stroke": "color.focus.ring",
+       "strokeWidth": "border.focus",
+       "strokeAlign": "inner"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "band-3 · halo",
+        "o": {
+         "stroke": "color.surface.canvas",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "w": 766,
+        "h": 650,
+        "x": 2,
+        "y": 2
+       }
+      ],
+      "w": 770,
+      "h": 654,
+      "x": 1,
+      "y": 1
+     }
+    ],
+    "w": 772,
+    "h": 656,
+    "x": 0,
+    "y": 0,
+    "abs": true,
+    "note": "CMP-039 inset: drawn inside the row (E47-D04 §7.1)"
+   }
+  },
+  {
+   "into": "grammar∕targets · dark",
+   "node": {
+    "t": "board",
+    "name": "StatusBar (placeholder)",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · env word",
+      "w": 56,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 48
+   }
+  },
+  {
+   "into": "grammar∕targets · dark",
+   "node": {
+    "t": "board",
+    "name": "callout · targets",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs",
+     "pad": "space.inset.sm",
+     "fill": "color.surface.overlay",
+     "radius": "radius.control",
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.thick",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "line-1",
+      "chars": "Every pointer-reachable surrogate is aligned to its target and at least 24 x 24 CSS px (`05`:100, R-4): 17 of 18 bubbles draw smaller and their surrogates grow into the gutter, never over another target",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-2",
+      "chars": "Overlap (13:34:27 / 13:34:38): the focused target wins, else the later anchor (13:34:38) (§3.3)",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     },
+     {
+      "t": "text",
+      "name": "line-3",
+      "chars": "The plot stop is sized to the plot; its focus-visible mark is the cursor column (D07E11:139); CMP-039 is the only ring",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 384
+     }
+    ],
+    "w": 400,
+    "x": 860,
+    "y": 56,
+    "abs": true,
+    "note": "annotation callout (not product UI)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 01",
+    "chars": "state: grammar/cursor-window · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 80,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 02",
+    "chars": "state: grammar/sparse-set · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 1440,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 03",
+    "chars": "state: grammar/targets · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 2800,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer · data",
+    "chars": "Data: seeded synthetic stream (seed 1305, BTCUSDT, 1m bars); sample data, never a market capture (§0 L63); only the tick size (0.1) is the recorded fixture's (hand-off §I L111)",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "x": 80,
+    "y": 904
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "E47-D06 / 02 surrogate-grammar",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Board",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§0 L68: §3: the cursor window over a chart, the sparse set over bubbles, the 24 px target overlay and the overlap rule",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Theme: dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Frames (hand-off §I L111): grammar/cursor-window · dark; grammar/sparse-set · dark; grammar/targets · dark (each 1280 x 800, compact)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "Export: docs/design/E47/img/E47-D06-02-surrogate-grammar.png",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "Data: seeded synthetic stream (seed 1305, BTCUSDT, 1m bars); sample data, never a market capture (§0 L63); only the tick size (0.1) is the recorded fixture's (hand-off §I L111)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-6",
+        "chars": "Markers, tags, brackets and callouts in color.status.info.default are annotation, not product UI",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "grammar/cursor-window · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§3.1 L149: the cursor-window grammar (R-3); the cursor on 13:42",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "The mirror rows read N-1 (§5 L189); slots joined by \". \", values by \", \"",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "grammar/sparse-set · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§3.2 L153: the sparse-set grammar over CMP-112 (IV-8); posinset in time-then-price order over all 211 big trades of the loaded series",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-04",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "grammar/targets · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§3.3 L157: size and alignment (R-4); dashed squares are the hidden surrogates' bounds (annotation)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E47-D06 — Canvas accessibility · board 02 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400,
+    "x": 4160,
+    "y": 80
+   }
+  }
+ ],
+ "export": "docs/design/E47/img/E47-D06-02-surrogate-grammar.png",
+ "notes": {
+  "sources": [
+   "spec docs/design/E47/E47-D06.md md5 d9cdedd6, hand-off docs/design/E47/E47-D06-handoff.md md5 d9a47687 (§0 L68; hand-off §I L111); T2 reason templates docs/design/E09/E09-D09.md md5 20c5d5f4; tick size packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a; ring geometry E47-D04 at 1ff5d8cb9 (§7.1)"
+  ],
+  "copy_keys": [],
+  "copy_gaps": [
+   "the hidden table's and the set's group names are not in §13 (E47-D07 words them)"
+  ],
+  "spec_gaps": [],
+  "fallbacks": [
+   "kit choice: the canvas surfaces are drawn as simplified synthetic plots (bodies, wicks, bars, bubbles) from the seeded stream; their own visual design is their tickets', not this spec's",
+   "size.icon.sm (12 px) is a Tier-1 primitive (validator WARN)",
+   "kit choice: numbered markers, tags, brackets and callouts are annotation overlays in color.status.info.default with color.text.inverse words, never product UI",
+   "kit choice: the shell chrome (TopBar, NavRail, StatusBar) drawn as neutral placeholders (the E47-D03 kit's SCR-116 chrome); only the panels this spec designs carry words",
+   "kit choice: a hidden layer (the mirror table, a surrogate's bounds, an aria-describedby link) is drawn as an annotation callout or a dashed-outline overlay in color.status.info.default; it has no pixels in the product (clip-path, R-4)"
+  ],
+  "tokens": [
+   "color.surface.canvas",
+   "border.hairline",
+   "color.focus.ring",
+   "border.focus",
+   "color.candle.wick",
+   "color.candle.up",
+   "color.candle.down",
+   "opacity.muted",
+   "color.crosshair",
+   "type.num.sm",
+   "color.axis.text",
+   "color.text.secondary",
+   "size.icon.sm",
+   "type.ui.caption",
+   "color.text.primary",
+   "color.border.default",
+   "radius.badge",
+   "space.inset.sm",
+   "space.inset.xs",
+   "type.ui.body-strong",
+   "type.ui.label",
+   "color.surface.selected",
+   "radius.control",
+   "color.surface.raised",
+   "radius.card",
+   "space.stack.xs",
+   "color.surface.overlay",
+   "color.status.info.default",
+   "border.thick",
+   "color.surface.app",
+   "color.surface.hover",
+   "color.border.subtle",
+   "space.inset.md",
+   "space.inset.lg",
+   "color.text.inverse",
+   "type.ui.heading-sm",
+   "color.text.tertiary",
+   "space.stack.sm"
+  ],
+  "live_checks": [
+   "surrogate squares: set their stroke to dashed (post-step) so they read as annotation bounds",
+   "root 'E47-D06 / 02 surrogate-grammar' at (7000, 0): read back the name exactly after the first section call; size 4640 x 1000",
+   "after touchTexts + relayout: the annotation column (estimated 503 px) ends inside the root (h 1000); raise the root's h to its end + 80 if not",
+   "frame 'grammar∕cursor-window · dark': read back 1280 x 800 at (80, 80); clip on, no child spills",
+   "frame 'grammar∕sparse-set · dark': read back 1280 x 800 at (1440, 80); clip on, no child spills",
+   "frame 'grammar∕targets · dark': read back 1280 x 800 at (2800, 80); clip on, no child spills",
+   "export docs/design/E47/img/E47-D06-02-surrogate-grammar.png; record the board id and the PNG size in §0"
+  ],
+  "deviations": [],
+  "ambiguities": [
+   "a single big print carries no estimated slot; a cluster carries \"Estimated, Trade cluster\" (CMP-112 names a cluster \"…, estimated\", `15`:1326; CMP-227's display name for trade_cluster)",
+   "the big-trade threshold is the loaded series' 99th size percentile (0.893 BTC, kit choice); the bubble radius 4 + sqrt(notional / 10,000) px is a kit encoding"
+  ]
+ }
+}

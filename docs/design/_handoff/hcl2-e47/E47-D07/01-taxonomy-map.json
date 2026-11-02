@@ -1,0 +1,2096 @@
+{
+ "board": {
+  "name": "E47-D07 / 01 taxonomy-map",
+  "w": 1920,
+  "h": 1000,
+  "x": 0,
+  "y": 0,
+  "o": {
+   "fill": "color.surface.app",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "taxonomy∕map · dark",
+    "o": {
+     "fill": "color.surface.canvas",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "taxonomy/map",
+    "x": 80,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "class · significant-assertive",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.status.danger.subtle",
+       "radius": "radius.control",
+       "clip": true
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "stripe",
+        "w": 4,
+        "h": 88,
+        "o": {
+         "fill": "color.status.danger.strong"
+        }
+       },
+       {
+        "t": "board",
+        "name": "content",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "name",
+          "chars": "significant-assertive · 22 rows",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "schedule",
+          "chars": "at once, queued by rank, alone, in full, once (§5.1); never throttled (05:152)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         }
+        ],
+        "w": 236,
+        "h": 88
+       }
+      ],
+      "w": 240,
+      "h": 88,
+      "note": "§3.1 L136: region the pair's assertive region",
+      "x": 24,
+      "y": 24
+     },
+     {
+      "t": "board",
+      "name": "class · status-polite",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.status.info.subtle",
+       "radius": "radius.control",
+       "clip": true
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "stripe",
+        "w": 4,
+        "h": 88,
+        "o": {
+         "fill": "color.status.info.strong"
+        }
+       },
+       {
+        "t": "board",
+        "name": "content",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "name",
+          "chars": "status-polite · 16 rows",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "schedule",
+          "chars": "once per state change, at most one per 5 s per region (D17:249), latest wins",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         }
+        ],
+        "w": 236,
+        "h": 88
+       }
+      ],
+      "w": 240,
+      "h": 88,
+      "note": "§3.1 L137: region the pair's polite region, or the local status §2 names",
+      "x": 272,
+      "y": 24
+     },
+     {
+      "t": "board",
+      "name": "class · ambient-polite",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.neutral.subtle",
+       "radius": "radius.control",
+       "clip": true
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "stripe",
+        "w": 4,
+        "h": 88,
+        "o": {
+         "fill": "color.neutral.default"
+        }
+       },
+       {
+        "t": "board",
+        "name": "content",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "name",
+          "chars": "ambient-polite · 5 rows",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "schedule",
+          "chars": "one composite per cadence, latest value per field, fixed order (§6.1; 05:151)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         }
+        ],
+        "w": 236,
+        "h": 88
+       }
+      ],
+      "w": 240,
+      "h": 88,
+      "note": "§3.1 L138: region the pair's polite region",
+      "x": 520,
+      "y": 24
+     },
+     {
+      "t": "board",
+      "name": "class · echo-polite",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.selected",
+       "radius": "radius.control",
+       "clip": true
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "stripe",
+        "w": 4,
+        "h": 88,
+        "o": {
+         "fill": "color.border.selected"
+        }
+       },
+       {
+        "t": "board",
+        "name": "content",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "name",
+          "chars": "echo-polite · 2 rows",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "schedule",
+          "chars": "the user's own keys: E06-D03 D5 and E47-D04 R-8 (§6.3), outside the cadence",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         }
+        ],
+        "w": 236,
+        "h": 88
+       }
+      ],
+      "w": 240,
+      "h": 88,
+      "note": "§3.1 L139: region the control's own region",
+      "x": 768,
+      "y": 24
+     },
+     {
+      "t": "board",
+      "name": "class · silent",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.sunken",
+       "radius": "radius.control",
+       "clip": true
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "stripe",
+        "w": 4,
+        "h": 88,
+        "o": {
+         "fill": "color.border.subtle"
+        }
+       },
+       {
+        "t": "board",
+        "name": "content",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "name",
+          "chars": "silent · 10 rows",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "schedule",
+          "chars": "never narrated; the value is read where the row says (§4)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         }
+        ],
+        "w": 236,
+        "h": 88
+       }
+      ],
+      "w": 240,
+      "h": 88,
+      "note": "§3.1 L140: region none",
+      "x": 1016,
+      "y": 24
+     },
+     {
+      "t": "text",
+      "name": "ranks",
+      "chars": "§5.1 L233, spoken first to last — rank 1: the auto-flatten · rank 2: the other safety rows (kill switch, native-SL failure, lockout, unwind incomplete) · rank 3: execution (fills, rejects, unknown, trade groups, rule actions) · rank 4: connectivity and environment; local: a reply at its control (§2)",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 1232,
+      "x": 24,
+      "y": 120
+     },
+     {
+      "t": "board",
+      "name": "group · Risk and safety",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.status.danger.subtle",
+       "radius": "radius.control",
+       "clip": true
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "stripe",
+        "w": 4,
+        "h": 174,
+        "o": {
+         "fill": "color.status.danger.strong"
+        }
+       },
+       {
+        "t": "board",
+        "name": "content",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Risk and safety · Assertive",
+          "typo": "type.ui.label",
+          "color": "color.text.primary",
+          "w": 282
+         },
+         {
+          "t": "text",
+          "name": "row · T-11",
+          "chars": "T-11 · rank 2 · a position without a native stop, the watchdog's critical",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 282,
+          "note": "§4 L183: significant-assertive; surface CMP-117; CMP-045 persistent toast; CMP-060; words W-7"
+         },
+         {
+          "t": "text",
+          "name": "row · T-13",
+          "chars": "T-13 · rank 2 · a risk lockout entered, LockoutState",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 282,
+          "note": "§4 L185: significant-assertive; surface CMP-117; CMP-045 persistent toast; CMP-060; words W-8"
+         },
+         {
+          "t": "text",
+          "name": "row · T-15",
+          "chars": "T-15 · rank 2 · the kill switch engaged, KillSwitchState",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 282,
+          "note": "§4 L187: significant-assertive; surface CMP-117; CMP-045 persistent toast; CMP-060; words W-6"
+         },
+         {
+          "t": "text",
+          "name": "row · T-17",
+          "chars": "T-17 · rank 1 · a position auto-flattened by the risk engine",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 282,
+          "note": "§4 L189: significant-assertive; surface the alertdialog (§9); CMP-045 persistent toast; CMP-060 row; words W-5, W-40, W-41"
+         },
+         {
+          "t": "text",
+          "name": "row · T-22",
+          "chars": "T-22 · rank 2 · a trade-group unwind incomplete",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 282,
+          "note": "§4 L194: significant-assertive; surface CMP-045 persistent toast; CMP-060 row; words W-9"
+         }
+        ],
+        "w": 298,
+        "h": 174
+       }
+      ],
+      "w": 302,
+      "h": 174,
+      "note": "default Assertive · fixed: T2 per §8.2 (§8.1 L408)",
+      "x": 24,
+      "y": 158
+     },
+     {
+      "t": "board",
+      "name": "group · Order fills",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.status.danger.subtle",
+       "radius": "radius.control",
+       "clip": true
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "stripe",
+        "w": 4,
+        "h": 57,
+        "o": {
+         "fill": "color.status.danger.strong"
+        }
+       },
+       {
+        "t": "board",
+        "name": "content",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Order fills · Assertive · rank 3",
+          "typo": "type.ui.label",
+          "color": "color.text.primary",
+          "w": 282
+         },
+         {
+          "t": "text",
+          "name": "row · T-1",
+          "chars": "T-1 · order Filled",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 282,
+          "note": "§4 L173: significant-assertive; surface CMP-045 toast; CMP-060 row; words W-1"
+         },
+         {
+          "t": "text",
+          "name": "row · T-2",
+          "chars": "T-2 · order PartiallyFilled, cumulative",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 282,
+          "note": "§4 L174: significant-assertive; surface CMP-045 toast; CMP-060 row; words W-2"
+         }
+        ],
+        "w": 298,
+        "h": 57
+       }
+      ],
+      "w": 302,
+      "h": 57,
+      "note": "default Assertive · Assertive / Polite (§8.1 L409)",
+      "x": 334,
+      "y": 158
+     }
+    ]
+   }
+  },
+  {
+   "into": "taxonomy∕map · dark",
+   "node": {
+    "t": "board",
+    "name": "group · Order problems",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "fill": "color.status.danger.subtle",
+     "radius": "radius.control",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "stripe",
+      "w": 4,
+      "h": 57,
+      "o": {
+       "fill": "color.status.danger.strong"
+      }
+     },
+     {
+      "t": "board",
+      "name": "content",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Order problems · Assertive · rank 3",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 282
+       },
+       {
+        "t": "text",
+        "name": "row · T-3",
+        "chars": "T-3 · order Rejected, reject_code mapped",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L175: significant-assertive; surface CMP-045 toast; CMP-060 row; words W-3"
+       },
+       {
+        "t": "text",
+        "name": "row · T-4",
+        "chars": "T-4 · order Unknown, Held or Quarantined",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L176: significant-assertive; surface CMP-045 toast; CMP-060 row; words W-4"
+       }
+      ],
+      "w": 298,
+      "h": 57
+     }
+    ],
+    "w": 302,
+    "h": 57,
+    "note": "default Assertive · Assertive / Polite (§8.1 L410)",
+    "x": 644,
+    "y": 158
+   }
+  },
+  {
+   "into": "taxonomy∕map · dark",
+   "node": {
+    "t": "board",
+    "name": "group · Order updates",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "fill": "color.status.info.subtle",
+     "radius": "radius.control",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "stripe",
+      "w": 4,
+      "h": 91,
+      "o": {
+       "fill": "color.status.info.strong"
+      }
+     },
+     {
+      "t": "board",
+      "name": "content",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Order updates · Polite",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 282
+       },
+       {
+        "t": "text",
+        "name": "row · T-5",
+        "chars": "T-5 · order Submitted, the exchange's ack",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L177: status-polite; surface the order row; words W-17"
+       },
+       {
+        "t": "text",
+        "name": "row · T-6",
+        "chars": "T-6 · order Cancelled",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L178: status-polite; surface the order row; words W-18"
+       },
+       {
+        "t": "text",
+        "name": "row · T-7",
+        "chars": "T-7 · order Expired",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L179: status-polite; surface the order row; words W-19"
+       },
+       {
+        "t": "text",
+        "name": "row · T-8",
+        "chars": "T-8 · order Triggered",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L180: status-polite; surface the order row; words W-20"
+       }
+      ],
+      "w": 298,
+      "h": 91
+     }
+    ],
+    "w": 302,
+    "h": 91,
+    "note": "default Polite · Assertive / Polite / Off (§8.1 L411)",
+    "x": 954,
+    "y": 158
+   }
+  },
+  {
+   "into": "taxonomy∕map · dark",
+   "node": {
+    "t": "board",
+    "name": "group · Safety recovered",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "fill": "color.status.info.subtle",
+     "radius": "radius.control",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "stripe",
+      "w": 4,
+      "h": 87,
+      "o": {
+       "fill": "color.status.info.strong"
+      }
+     },
+     {
+      "t": "board",
+      "name": "content",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Safety recovered · Polite",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 282
+       },
+       {
+        "t": "text",
+        "name": "row · T-12",
+        "chars": "T-12 · the stop attached, the position protected again",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L184: status-polite; surface CMP-117; words W-25"
+       },
+       {
+        "t": "text",
+        "name": "row · T-14",
+        "chars": "T-14 · the lockout released",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L186: status-polite; surface CMP-117; words W-26"
+       },
+       {
+        "t": "text",
+        "name": "row · T-16",
+        "chars": "T-16 · the kill switch released",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L188: status-polite; surface CMP-117; words W-26"
+       }
+      ],
+      "w": 298,
+      "h": 87
+     }
+    ],
+    "w": 302,
+    "h": 87,
+    "note": "default Polite · Assertive / Polite / Off (§8.1 L412)",
+    "x": 334,
+    "y": 223
+   }
+  },
+  {
+   "into": "taxonomy∕map · dark",
+   "node": {
+    "t": "board",
+    "name": "group · Trade groups",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "fill": "color.status.danger.subtle",
+     "radius": "radius.control",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "stripe",
+      "w": 4,
+      "h": 53,
+      "o": {
+       "fill": "color.status.danger.strong"
+      }
+     },
+     {
+      "t": "board",
+      "name": "content",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Trade groups · Assertive · rank 3",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 282
+       },
+       {
+        "t": "text",
+        "name": "row · T-21",
+        "chars": "T-21 · a trade group with failed legs, one per group state",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L193: significant-assertive; surface CMP-045 toast; CMP-060 row; words W-10"
+       }
+      ],
+      "w": 298,
+      "h": 53
+     }
+    ],
+    "w": 302,
+    "h": 53,
+    "note": "default Assertive · Assertive / Polite / Off (§8.1 L413)",
+    "x": 644,
+    "y": 223
+   }
+  },
+  {
+   "into": "taxonomy∕map · dark",
+   "node": {
+    "t": "board",
+    "name": "group · Rule actions",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "fill": "color.status.danger.subtle",
+     "radius": "radius.control",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "stripe",
+      "w": 4,
+      "h": 57,
+      "o": {
+       "fill": "color.status.danger.strong"
+      }
+     },
+     {
+      "t": "board",
+      "name": "content",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Rule actions · Assertive · rank 3",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 282
+       },
+       {
+        "t": "text",
+        "name": "row · T-19",
+        "chars": "T-19 · a rule action sent on a live account",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L191: significant-assertive; surface CMP-045 toast; CMP-060 row; words W-11"
+       },
+       {
+        "t": "text",
+        "name": "row · T-20",
+        "chars": "T-20 · a rule stopped after errors",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L192: significant-assertive; surface CMP-045 toast; CMP-060 row; words W-12"
+       }
+      ],
+      "w": 298,
+      "h": 57
+     }
+    ],
+    "w": 302,
+    "h": 57,
+    "note": "default Assertive · Assertive / Polite (§8.1 L414)",
+    "x": 954,
+    "y": 257
+   }
+  },
+  {
+   "into": "taxonomy∕map · dark",
+   "node": {
+    "t": "board",
+    "name": "group · Rule fires",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "fill": "color.status.danger.subtle",
+     "radius": "radius.control",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "stripe",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.status.danger.strong"
+      }
+     },
+     {
+      "t": "board",
+      "name": "content",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Rule fires · Assertive · rank 3",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 282
+       },
+       {
+        "t": "text",
+        "name": "row · T-18",
+        "chars": "T-18 · a rule fired with no live order",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L190: significant-assertive; surface CMP-045 toast; CMP-060 row; words W-21"
+       }
+      ],
+      "w": 298,
+      "h": 40
+     }
+    ],
+    "w": 302,
+    "h": 40,
+    "note": "default Assertive · Assertive / Polite (§8.1 L415)",
+    "x": 644,
+    "y": 284
+   }
+  },
+  {
+   "into": "taxonomy∕map · dark",
+   "node": {
+    "t": "board",
+    "name": "group · Connection changes",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "fill": "color.status.danger.subtle",
+     "radius": "radius.control",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "stripe",
+      "w": 4,
+      "h": 192,
+      "o": {
+       "fill": "color.status.danger.strong"
+      }
+     },
+     {
+      "t": "board",
+      "name": "content",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Connection changes · Assertive · rank 4",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 282
+       },
+       {
+        "t": "text",
+        "name": "row · T-23",
+        "chars": "T-23 · the connection Disconnected, once per episode",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L195: significant-assertive; surface CMP-077; CMP-045 toast; CMP-060 row; words W-13"
+       },
+       {
+        "t": "text",
+        "name": "row · T-24",
+        "chars": "T-24 · the connection recovered",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L196: significant-assertive; surface CMP-077; CMP-045 toast; CMP-060 row; words W-14"
+       },
+       {
+        "t": "text",
+        "name": "row · T-49",
+        "chars": "T-49 · order entry Read-only, or its reason changes",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L221: significant-assertive; surface CMP-077 read-only; CMP-045 toast; CMP-060 row; words E17-D02's template (D17:254)"
+       },
+       {
+        "t": "text",
+        "name": "row · T-50",
+        "chars": "T-50 · Stale ≥ T2 entered, once per episode, open-position symbols first",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L222: significant-assertive; surface CMP-078; CMP-045 toast; CMP-060 row; words W-42"
+       },
+       {
+        "t": "text",
+        "name": "row · T-54",
+        "chars": "T-54 · retry stopped: offline with cause fatal, or session ended",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L226: significant-assertive; surface CMP-077; CMP-045 toast; CMP-060 row; words W-46"
+       },
+       {
+        "t": "text",
+        "name": "row · T-55",
+        "chars": "T-55 · a CMP-092 blocking row, once per issue entry",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L227: significant-assertive; surface CMP-092 row; CMP-045 toast; CMP-060 row; words W-47"
+       }
+      ],
+      "w": 298,
+      "h": 192
+     }
+    ],
+    "w": 302,
+    "h": 192,
+    "note": "default Assertive · Assertive / Polite (§8.1 L416)",
+    "x": 334,
+    "y": 318
+   }
+  },
+  {
+   "into": "taxonomy∕map · dark",
+   "node": {
+    "t": "board",
+    "name": "group · Feed status",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "fill": "color.status.info.subtle",
+     "radius": "radius.control",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "stripe",
+      "w": 4,
+      "h": 135,
+      "o": {
+       "fill": "color.status.info.strong"
+      }
+     },
+     {
+      "t": "board",
+      "name": "content",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Feed status · Polite",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 282
+       },
+       {
+        "t": "text",
+        "name": "row · T-25",
+        "chars": "T-25 · the connection flapping, once",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L197: status-polite; surface CMP-077; words W-23"
+       },
+       {
+        "t": "text",
+        "name": "row · T-26",
+        "chars": "T-26 · a feed Stale < T2, Stale (server), resyncing or delayed",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L198: status-polite; surface the panel's role=\"status\"; words W-24"
+       },
+       {
+        "t": "text",
+        "name": "row · T-51",
+        "chars": "T-51 · a topic revoked, once per topic",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L223: status-polite; surface the panel's role=\"status\"; words W-43"
+       },
+       {
+        "t": "text",
+        "name": "row · T-52",
+        "chars": "T-52 · a hotkey or ladder key refused in a blocked state",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L224: status-polite; surface the ticket's or ladder's role=\"status\"; words W-44"
+       },
+       {
+        "t": "text",
+        "name": "row · T-53",
+        "chars": "T-53 · one-click auto-disarm",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L225: status-polite; surface CMP-229 role=\"status\"; words W-45"
+       }
+      ],
+      "w": 298,
+      "h": 135
+     }
+    ],
+    "w": 302,
+    "h": 135,
+    "note": "default Polite · Assertive / Polite / Off (§8.1 L417)",
+    "x": 954,
+    "y": 322
+   }
+  },
+  {
+   "into": "taxonomy∕map · dark",
+   "node": {
+    "t": "board",
+    "name": "group · Trading environment",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "fill": "color.status.danger.subtle",
+     "radius": "radius.control",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "stripe",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.status.danger.strong"
+      }
+     },
+     {
+      "t": "board",
+      "name": "content",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Trading environment · Assertive · rank 4",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 282
+       },
+       {
+        "t": "text",
+        "name": "row · T-28",
+        "chars": "T-28 · the Demo / Live switch confirmed",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L200: significant-assertive; surface CMP-074; CMP-045 toast; CMP-060 row; words W-15, W-16"
+       }
+      ],
+      "w": 298,
+      "h": 40
+     }
+    ],
+    "w": 302,
+    "h": 40,
+    "note": "default Assertive · Assertive / Polite (§8.1 L418)",
+    "x": 644,
+    "y": 332
+   }
+  },
+  {
+   "into": "taxonomy∕map · dark",
+   "node": {
+    "t": "board",
+    "name": "group · Alerts",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "fill": "color.status.info.subtle",
+     "radius": "radius.control",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "stripe",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.status.info.strong"
+      }
+     },
+     {
+      "t": "board",
+      "name": "content",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Alerts · Polite",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 282
+       },
+       {
+        "t": "text",
+        "name": "row · T-29",
+        "chars": "T-29 · a user alert fired",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L201: status-polite; surface CMP-045 toast; CMP-060 row; words W-22"
+       }
+      ],
+      "w": 298,
+      "h": 40
+     }
+    ],
+    "w": 302,
+    "h": 40,
+    "note": "default Polite · Assertive / Polite / Off (§8.1 L419)",
+    "x": 24,
+    "y": 340
+   }
+  },
+  {
+   "into": "taxonomy∕map · dark",
+   "node": {
+    "t": "board",
+    "name": "group · Prices and position",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "fill": "color.neutral.subtle",
+     "radius": "radius.control",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "stripe",
+      "w": 4,
+      "h": 118,
+      "o": {
+       "fill": "color.neutral.default"
+      }
+     },
+     {
+      "t": "board",
+      "name": "content",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Prices and position · Polite",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 282
+       },
+       {
+        "t": "text",
+        "name": "row · T-30",
+        "chars": "T-30 · best bid and ask of the active symbol",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L202: ambient-polite; surface the ambient writer; words W-28"
+       },
+       {
+        "t": "text",
+        "name": "row · T-31",
+        "chars": "T-31 · mark price of the active symbol",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L203: ambient-polite; surface the ambient writer; words W-29"
+       },
+       {
+        "t": "text",
+        "name": "row · T-32",
+        "chars": "T-32 · unrealised P&L of the active symbol's position",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L204: ambient-polite; surface the ambient writer; words W-30"
+       },
+       {
+        "t": "text",
+        "name": "row · T-33",
+        "chars": "T-33 · the CVD value when a CVD panel is shown",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L205: ambient-polite; surface the ambient writer; words W-31"
+       }
+      ],
+      "w": 298,
+      "h": 118
+     }
+    ],
+    "w": 302,
+    "h": 118,
+    "note": "default Polite · Polite / Off (§8.1 L420)",
+    "x": 644,
+    "y": 380
+   }
+  },
+  {
+   "into": "taxonomy∕map · dark",
+   "node": {
+    "t": "board",
+    "name": "group · Whale prints",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "fill": "color.neutral.subtle",
+     "radius": "radius.control",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "stripe",
+      "w": 4,
+      "h": 53,
+      "o": {
+       "fill": "color.neutral.default"
+      }
+     },
+     {
+      "t": "board",
+      "name": "content",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Whale prints · Off",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 282
+       },
+       {
+        "t": "text",
+        "name": "row · T-36",
+        "chars": "T-36 · a whale print, opt-in, the latest per cadence",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L208: ambient-polite; surface the ambient writer; words W-33"
+       }
+      ],
+      "w": 298,
+      "h": 53
+     }
+    ],
+    "w": 302,
+    "h": 53,
+    "note": "default Off · Polite / Off (opt-in) (§8.1 L421)",
+    "x": 24,
+    "y": 388
+   }
+  },
+  {
+   "into": "taxonomy∕map · dark",
+   "node": {
+    "t": "board",
+    "name": "group · Recorder",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "fill": "color.status.info.subtle",
+     "radius": "radius.control",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "stripe",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.status.info.strong"
+      }
+     },
+     {
+      "t": "board",
+      "name": "content",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Recorder · Polite",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 282
+       },
+       {
+        "t": "text",
+        "name": "row · T-43",
+        "chars": "T-43 · the recorder's state",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L215: status-polite; surface the recorder chip; words W-38"
+       }
+      ],
+      "w": 298,
+      "h": 40
+     }
+    ],
+    "w": 302,
+    "h": 40,
+    "note": "default Polite · Polite / Off (§8.1 L422)",
+    "x": 24,
+    "y": 449
+   }
+  },
+  {
+   "into": "taxonomy∕map · dark",
+   "node": {
+    "t": "board",
+    "name": "group · Countdowns",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "fill": "color.status.info.subtle",
+     "radius": "radius.control",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "stripe",
+      "w": 4,
+      "h": 83,
+      "o": {
+       "fill": "color.status.info.strong"
+      }
+     },
+     {
+      "t": "board",
+      "name": "content",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Countdowns · Polite",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 282
+       },
+       {
+        "t": "text",
+        "name": "row · T-45",
+        "chars": "T-45 · a secret field's auto-hide countdown, at its marks",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L217: status-polite; surface the field's own status; words W-37"
+       },
+       {
+        "t": "text",
+        "name": "row · T-46",
+        "chars": "T-46 · a lockout, rate-limit or grace countdown: marks and end",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L218: status-polite; surface the form's own status; words W-34, W-35"
+       }
+      ],
+      "w": 298,
+      "h": 83
+     }
+    ],
+    "w": 302,
+    "h": 83,
+    "note": "default Polite · Polite / Off (§8.1 L423)",
+    "x": 954,
+    "y": 465
+   }
+  },
+  {
+   "into": "taxonomy∕map · dark",
+   "node": {
+    "t": "board",
+    "name": "group · Your keys",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "fill": "color.surface.selected",
+     "radius": "radius.control",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "stripe",
+      "w": 4,
+      "h": 57,
+      "o": {
+       "fill": "color.border.selected"
+      }
+     },
+     {
+      "t": "board",
+      "name": "content",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Your keys · Polite",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 282
+       },
+       {
+        "t": "text",
+        "name": "row · T-47",
+        "chars": "T-47 · keyboard cursor and adjustment echoes",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L219: echo-polite; surface the control; words D09 W-5"
+       },
+       {
+        "t": "text",
+        "name": "row · T-48",
+        "chars": "T-48 · focus moves after live data",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L220: echo-polite; surface the grid; words D04 W-4"
+       }
+      ],
+      "w": 298,
+      "h": 57
+     }
+    ],
+    "w": 302,
+    "h": 57,
+    "note": "default Polite · Polite / Off (§8.1 L424)",
+    "x": 24,
+    "y": 497
+   }
+  },
+  {
+   "into": "taxonomy∕map · dark",
+   "node": {
+    "t": "board",
+    "name": "group · Local replies (no panel class)",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "fill": "color.status.danger.subtle",
+     "radius": "radius.control",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "stripe",
+      "w": 4,
+      "h": 71,
+      "o": {
+       "fill": "color.status.danger.strong"
+      }
+     },
+     {
+      "t": "board",
+      "name": "content",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Local replies (no panel class) · rank local",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 282
+       },
+       {
+        "t": "text",
+        "name": "row · T-9",
+        "chars": "T-9 · the order-entry gate's refusal reason",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L181: significant-assertive; surface the ticket's own role=\"alert\"; CMP-060 row; words W-27"
+       },
+       {
+        "t": "text",
+        "name": "row · T-10",
+        "chars": "T-10 · a risk refusal RiskRefusal",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L182: significant-assertive; surface the ticket's own role=\"alert\"; CMP-060 row; words W-27"
+       }
+      ],
+      "w": 298,
+      "h": 71
+     }
+    ],
+    "w": 302,
+    "h": 71,
+    "note": "the ticket's own role=\"alert\"; the CMP-060 row only (§2, R-8)",
+    "x": 644,
+    "y": 506
+   }
+  },
+  {
+   "into": "taxonomy∕map · dark",
+   "node": {
+    "t": "board",
+    "name": "group · Silent (never narrated)",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "fill": "color.surface.sunken",
+     "radius": "radius.control",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "stripe",
+      "w": 4,
+      "h": 247,
+      "o": {
+       "fill": "color.border.subtle"
+      }
+     },
+     {
+      "t": "board",
+      "name": "content",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Silent (never narrated)",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 282
+       },
+       {
+        "t": "text",
+        "name": "row · T-27",
+        "chars": "T-27 · latency, attempt counters and ages",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L199: silent; surface CMP-076; words —"
+       },
+       {
+        "t": "text",
+        "name": "row · T-34",
+        "chars": "T-34 · a position size change from the user's own fill",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L206: silent; surface the positions panel; words —"
+       },
+       {
+        "t": "text",
+        "name": "row · T-35",
+        "chars": "T-35 · the tape as a whole: no summary is read",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L207: silent; surface SCR-053; words —"
+       },
+       {
+        "t": "text",
+        "name": "row · T-37",
+        "chars": "T-37 · each trade print",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L209: silent; surface SCR-053; words —"
+       },
+       {
+        "t": "text",
+        "name": "row · T-38",
+        "chars": "T-38 · book deltas and heatmap cell decay",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L210: silent; surface SCR-050; words —"
+       },
+       {
+        "t": "text",
+        "name": "row · T-39",
+        "chars": "T-39 · bubble spawns",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L211: silent; surface SCR-053; words —"
+       },
+       {
+        "t": "text",
+        "name": "row · T-40",
+        "chars": "T-40 · bars forming and chart redraws",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L212: silent; surface the chart; words —"
+       },
+       {
+        "t": "text",
+        "name": "row · T-41",
+        "chars": "T-41 · liquidations, open interest and funding",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L213: silent; surface SCR-054; words —"
+       },
+       {
+        "t": "text",
+        "name": "row · T-42",
+        "chars": "T-42 · wallet and balance changes",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L214: silent; surface the account panel; words —"
+       },
+       {
+        "t": "text",
+        "name": "row · T-44",
+        "chars": "T-44 · key values, masked fields, TOTP and recovery codes",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 282,
+        "note": "§4 L216: silent; surface the secret field; words —"
+       }
+      ],
+      "w": 298,
+      "h": 247
+     }
+    ],
+    "w": 302,
+    "h": 247,
+    "note": "read where §4's last column says",
+    "x": 334,
+    "y": 518
+   }
+  },
+  {
+   "into": "taxonomy∕map · dark",
+   "node": {
+    "t": "board",
+    "name": "tag · synthetic data",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "Synthetic data · seed 1306 · BTCUSDT",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 24,
+    "y": 772,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 01",
+    "chars": "state: taxonomy/map · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 80,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer · data",
+    "chars": "Data: seeded synthetic stream (seed 1306, BTCUSDT, tick 0.1), the §10 scripts; sample data, never a market capture (§0 L62); only the tick size is the recorded fixture's",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "x": 80,
+    "y": 904
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "E47-D07 / 01 taxonomy-map",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Board",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§0 L66: §3, §4: the five classes, the ranks and every T-row grouped by panel class",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Theme: dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Frames (hand-off §H L107): taxonomy/map · dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "Export: docs/design/E47/img/E47-D07-01-taxonomy-map.png",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "Data: seeded synthetic stream (seed 1306, BTCUSDT, tick 0.1), the §10 scripts; sample data, never a market capture (§0 L62); only the tick size is the recorded fixture's",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-6",
+        "chars": "Markers, tags, arrows and callouts in color.status.info.default are annotation, not product UI",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "taxonomy/map · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Every T-row of §4 (L167) appears once: 55 rows, 22 significant-assertive, 10 silent, the rest polite; one class per row (BQ-2, T AC1)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Grouped by the SCR-117 panel class of §8.1 (L402): 17 classes, then the local replies T-9 / T-10 (no panel class, R-1) and the silent rows",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "The five classes and their schedules are §3.1's table (L132); ranks are §5.1's (L233)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "The assertive set (§3.2, 16 entries): `05`:152's six verbatim, the fixed safety group (the Risk and safety card) and the other PROPOSED rows (D07-C16)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "Each line: T-id · §4's event words without their source cite; the rank is in the card title, or on each line where a card mixes ranks (Risk and safety: 1 and 2)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E47-D07 announcements · board 01 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400,
+    "x": 1440,
+    "y": 80
+   }
+  }
+ ],
+ "export": "docs/design/E47/img/E47-D07-01-taxonomy-map.png",
+ "notes": {
+  "sources": [
+   "spec docs/design/E47/E47-D07.md md5 78bc33e5, hand-off docs/design/E47/E47-D07-handoff.md md5 574b8489 (§0 L66; hand-off §H L107); scripts docs/design/E47/E47-D07-transcripts.json md5 6bf5c553 replayed through docs/design/_tools/e47_d07_announcement_audit.py md5 d6f86dbc; tick size packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a; ring geometry E47-D04 at 1ff5d8cb9 (§7.1 there)"
+  ],
+  "copy_keys": [],
+  "copy_gaps": [],
+  "spec_gaps": [],
+  "fallbacks": [
+   "kit choice: class tones (assertive danger, status info, ambient neutral, echo selected, silent sunken) are a stripe plus a subtle fill; the class word is always written, so colour is never the only signal (1.4.1)",
+   "kit choice: numbered stop markers, tags, arrows and callouts are annotation overlays in color.status.info.default with color.text.inverse words, never product UI",
+   "kit choice: a diagram board (map, regions, timeline, matrix, anatomy) is a 1280 x 800 specimen frame on color.surface.canvas; its boxes, lanes and bars are annotation drawing, not product UI"
+  ],
+  "tokens": [
+   "type.ui.body-strong",
+   "color.text.primary",
+   "type.ui.caption",
+   "color.text.secondary",
+   "space.stack.xs",
+   "space.inset.sm",
+   "space.inset.xs",
+   "color.status.danger.strong",
+   "color.status.danger.subtle",
+   "radius.control",
+   "color.status.info.strong",
+   "color.status.info.subtle",
+   "color.neutral.default",
+   "color.neutral.subtle",
+   "color.border.selected",
+   "color.surface.selected",
+   "color.border.subtle",
+   "color.surface.sunken",
+   "type.ui.label",
+   "color.text.inverse",
+   "color.status.info.default",
+   "color.surface.canvas",
+   "type.ui.heading-sm",
+   "color.text.tertiary",
+   "space.stack.sm",
+   "space.inset.lg"
+  ],
+  "live_checks": [
+   "root 'E47-D07 / 01 taxonomy-map' at (0, 0): read back the name exactly after the first section call; size 1920 x 1000",
+   "after touchTexts + relayout: the annotation column (estimated 476 px) ends inside the root (h 1000); raise the root's h to its end + 80 if not",
+   "frame 'taxonomy∕map · dark': read back 1280 x 800 at (80, 80); clip on, no child spills",
+   "export docs/design/E47/img/E47-D07-01-taxonomy-map.png; record the board id and the PNG size in §0"
+  ],
+  "deviations": [],
+  "ambiguities": [
+   "Board 01: §4's event cells carry a trailing source cite in parentheses; the map drops it (the cite is in each line's note) so a line fits a column"
+  ]
+ }
+}

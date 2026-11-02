@@ -1,0 +1,5763 @@
+{
+ "board": {
+  "name": "E47-D08 / 02 budget-timeline",
+  "w": 3280,
+  "h": 1000,
+  "x": 7000,
+  "y": 0,
+  "o": {
+   "fill": "color.surface.app",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "budget∕requests · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.canvas",
+     "clip": true,
+     "pad": "space.inset.xl",
+     "gap": "space.stack.md"
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "§4.4; the requests and each source alone",
+    "x": 80,
+    "y": 80,
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "§4.4 · the TICKS burst at 40 Hz on one FR-2 region (341 × 256 px): requests and starts per source  0–2 000 ms of 5 000",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 1232
+     },
+     {
+      "t": "text",
+      "name": "key",
+      "chars": "Short grey marks: a request (every tick changes in the worst direction; the heatmap every 100 ms). Tall marks: a start the source admits by its own rule. Shaded: the half-open 1 000 ms windows. In the sum lane, starts at the same ms sit side by side, 6 px apart, in FR-9's order.",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 1232
+     },
+     {
+      "t": "board",
+      "name": "timeline",
+      "w": 1232,
+      "h": 532,
+      "kids": [
+       {
+        "t": "board",
+        "name": "windows",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "window 1 · shade",
+          "w": 520,
+          "h": 500,
+          "o": {
+           "fill": "color.status.info.subtle"
+          },
+          "x": 184,
+          "y": 0,
+          "note": "annotation: a half-open 1 000 ms window"
+         },
+         {
+          "t": "text",
+          "name": "window 1 · label",
+          "chars": "window [0, 1 000) ms",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "x": 188,
+          "y": 2
+         },
+         {
+          "t": "text",
+          "name": "window 2 · label",
+          "chars": "window [1 000, 2 000) ms",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "x": 708,
+          "y": 2
+         }
+        ],
+        "w": 1224,
+        "h": 500,
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "lane 1 · label",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "I-5 value flash, one cell",
+          "typo": "type.ui.label",
+          "color": "color.text.primary",
+          "w": 168
+         },
+         {
+          "t": "text",
+          "name": "line 1",
+          "chars": "80 requests; alone (FR-1) max 2 starts in any window (§4.4 L222: 2)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 168
+         }
+        ],
+        "w": 168,
+        "x": 0,
+        "y": 40
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 1 · requests",
+    "w": 1232,
+    "h": 14,
+    "x": 0,
+    "y": 48,
+    "kids": [
+     {
+      "t": "rect",
+      "name": "lane 1 · request 0",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 184,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 25",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 197,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 50",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 210,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 75",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 223,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 100",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 236,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 125",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 249,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 150",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 262,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 175",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 275,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 200",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 288,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 225",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 301,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 250",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 314,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 275",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 327,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 300",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 340,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 325",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 353,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 350",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 366,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 375",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 379,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 400",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 392,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 425",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 405,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 450",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 418,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 475",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 431,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 500",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 444,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 525",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 457,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 550",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 470,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 575",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 483,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 600",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 496,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 625",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 509,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 650",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 522,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 675",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 535,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 700",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 548,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 725",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 561,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 750",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 574,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 775",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 587,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 800",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 600,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 825",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 613,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 850",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 626,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 875",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 639,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 900",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 652,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 925",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 665,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 950",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 678,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 975",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 691,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1000",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 704,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1025",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 717,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1050",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 730,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1075",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 743,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1100",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 756,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1125",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 769,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1150",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 782,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1175",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 795,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1200",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 808,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1225",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 821,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1250",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 834,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1275",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 847,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1300",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 860,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1325",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 873,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1350",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 886,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1375",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 899,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1400",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 912,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1425",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 925,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1450",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 938,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1475",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 951,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1500",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 964,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1525",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 977,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1550",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 990,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1575",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1003,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1600",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1016,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1625",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1029,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1650",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1042,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1675",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1055,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1700",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1068,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · request 1725",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1081,
+      "y": 0
+     }
+    ]
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline/lane 1 · requests",
+   "node": {
+    "t": "rect",
+    "name": "lane 1 · request 1750",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1094,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline/lane 1 · requests",
+   "node": {
+    "t": "rect",
+    "name": "lane 1 · request 1775",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1107,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline/lane 1 · requests",
+   "node": {
+    "t": "rect",
+    "name": "lane 1 · request 1800",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1120,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline/lane 1 · requests",
+   "node": {
+    "t": "rect",
+    "name": "lane 1 · request 1825",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1133,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline/lane 1 · requests",
+   "node": {
+    "t": "rect",
+    "name": "lane 1 · request 1850",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1146,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline/lane 1 · requests",
+   "node": {
+    "t": "rect",
+    "name": "lane 1 · request 1875",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1159,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline/lane 1 · requests",
+   "node": {
+    "t": "rect",
+    "name": "lane 1 · request 1900",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1172,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline/lane 1 · requests",
+   "node": {
+    "t": "rect",
+    "name": "lane 1 · request 1925",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1185,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline/lane 1 · requests",
+   "node": {
+    "t": "rect",
+    "name": "lane 1 · request 1950",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1198,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline/lane 1 · requests",
+   "node": {
+    "t": "rect",
+    "name": "lane 1 · request 1975",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1211,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 1 · starts",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "lane 1 · start 0",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.buy.default"
+      },
+      "x": 184,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · start 500",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.buy.default"
+      },
+      "x": 444,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · start 1000",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.buy.default"
+      },
+      "x": 704,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · start 1500",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.buy.default"
+      },
+      "x": 964,
+      "y": 0
+     }
+    ],
+    "w": 1232,
+    "h": 40,
+    "x": 0,
+    "y": 68
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 2 · label",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "I-24 liquidation flash, one panel",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 168
+     },
+     {
+      "t": "text",
+      "name": "line 1",
+      "chars": "80 requests; alone (FR-5) max 1 starts in any window (§4.4 L223: 1)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 168
+     }
+    ],
+    "w": 168,
+    "x": 0,
+    "y": 132
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 2 · requests",
+    "w": 1232,
+    "h": 14,
+    "x": 0,
+    "y": 140,
+    "kids": [
+     {
+      "t": "rect",
+      "name": "lane 2 · request 0",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 184,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 25",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 197,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 50",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 210,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 75",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 223,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 100",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 236,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 125",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 249,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 150",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 262,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 175",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 275,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 200",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 288,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 225",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 301,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 250",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 314,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 275",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 327,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 300",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 340,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 325",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 353,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 350",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 366,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 375",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 379,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 400",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 392,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 425",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 405,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 450",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 418,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 475",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 431,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 500",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 444,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 525",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 457,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 550",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 470,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 575",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 483,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 600",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 496,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 625",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 509,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 650",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 522,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 675",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 535,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 700",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 548,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 725",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 561,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 750",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 574,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 775",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 587,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 800",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 600,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 825",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 613,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 850",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 626,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 875",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 639,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 900",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 652,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 925",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 665,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 950",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 678,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 975",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 691,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1000",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 704,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1025",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 717,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1050",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 730,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1075",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 743,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1100",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 756,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1125",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 769,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1150",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 782,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1175",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 795,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1200",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 808,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1225",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 821,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1250",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 834,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1275",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 847,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1300",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 860,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1325",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 873,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1350",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 886,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1375",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 899,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1400",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 912,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1425",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 925,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1450",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 938,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1475",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 951,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1500",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 964,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1525",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 977,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1550",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 990,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1575",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1003,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1600",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1016,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1625",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1029,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1650",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1042,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1675",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1055,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1700",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1068,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · request 1725",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1081,
+      "y": 0
+     }
+    ]
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline/lane 2 · requests",
+   "node": {
+    "t": "rect",
+    "name": "lane 2 · request 1750",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1094,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline/lane 2 · requests",
+   "node": {
+    "t": "rect",
+    "name": "lane 2 · request 1775",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1107,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline/lane 2 · requests",
+   "node": {
+    "t": "rect",
+    "name": "lane 2 · request 1800",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1120,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline/lane 2 · requests",
+   "node": {
+    "t": "rect",
+    "name": "lane 2 · request 1825",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1133,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline/lane 2 · requests",
+   "node": {
+    "t": "rect",
+    "name": "lane 2 · request 1850",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1146,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline/lane 2 · requests",
+   "node": {
+    "t": "rect",
+    "name": "lane 2 · request 1875",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1159,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline/lane 2 · requests",
+   "node": {
+    "t": "rect",
+    "name": "lane 2 · request 1900",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1172,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline/lane 2 · requests",
+   "node": {
+    "t": "rect",
+    "name": "lane 2 · request 1925",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1185,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline/lane 2 · requests",
+   "node": {
+    "t": "rect",
+    "name": "lane 2 · request 1950",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1198,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline/lane 2 · requests",
+   "node": {
+    "t": "rect",
+    "name": "lane 2 · request 1975",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1211,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 2 · starts",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "lane 2 · start 0",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.status.warning.strong"
+      },
+      "x": 184,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · start 1000",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.status.warning.strong"
+      },
+      "x": 704,
+      "y": 0
+     }
+    ],
+    "w": 1232,
+    "h": 40,
+    "x": 0,
+    "y": 160
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 3 · label",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "I-21 heatmap live-column cell",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 168
+     },
+     {
+      "t": "text",
+      "name": "line 1",
+      "chars": "20 requests; alone (FR-6) max 2 starts in any window (§4.4 L224: 2)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 168
+     }
+    ],
+    "w": 168,
+    "x": 0,
+    "y": 224
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 3 · requests",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "lane 3 · request 0",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 184,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · request 100",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 236,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · request 200",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 288,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · request 300",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 340,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · request 400",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 392,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · request 500",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 444,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · request 600",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 496,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · request 700",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 548,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · request 800",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 600,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · request 900",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 652,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · request 1000",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 704,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · request 1100",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 756,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · request 1200",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 808,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · request 1300",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 860,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · request 1400",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 912,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · request 1500",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 964,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · request 1600",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1016,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · request 1700",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1068,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · request 1800",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1120,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · request 1900",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1172,
+      "y": 0
+     }
+    ],
+    "w": 1232,
+    "h": 14,
+    "x": 0,
+    "y": 232
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 3 · starts",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "lane 3 · start 0",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.heatmap.bid.5"
+      },
+      "x": 184,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · start 500",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.heatmap.bid.5"
+      },
+      "x": 444,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · start 1000",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.heatmap.bid.5"
+      },
+      "x": 704,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · start 1500",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.heatmap.bid.5"
+      },
+      "x": 964,
+      "y": 0
+     }
+    ],
+    "w": 1232,
+    "h": 40,
+    "x": 0,
+    "y": 252
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 4 · label",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "I-22 big-trade bubble",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 168
+     },
+     {
+      "t": "text",
+      "name": "line 1",
+      "chars": "no request: no flash (§4.2 L207)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 168
+     },
+     {
+      "t": "text",
+      "name": "line 2",
+      "chars": "max 0 starts (§4.4 L225)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 168
+     }
+    ],
+    "w": 168,
+    "x": 0,
+    "y": 316
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 5 · label",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "all four, no arbiter",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 168
+     },
+     {
+      "t": "text",
+      "name": "line 1",
+      "chars": "max 5 starts in a window ≥ FR-7 (3): fails the gate; why FR-3 exists (§4.4)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 168
+     }
+    ],
+    "w": 168,
+    "x": 0,
+    "y": 408
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 5 · liq starts",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "lane 5 · liq start 0",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.status.warning.strong"
+      },
+      "x": 184,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 5 · liq start 1000",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.status.warning.strong"
+      },
+      "x": 704,
+      "y": 0
+     }
+    ],
+    "w": 1232,
+    "h": 40,
+    "x": 0,
+    "y": 436
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 5 · price starts",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "lane 5 · price start 0",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.buy.default"
+      },
+      "x": 190,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 5 · price start 500",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.buy.default"
+      },
+      "x": 450,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 5 · price start 1000",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.buy.default"
+      },
+      "x": 710,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 5 · price start 1500",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.buy.default"
+      },
+      "x": 970,
+      "y": 0
+     }
+    ],
+    "w": 1232,
+    "h": 40,
+    "x": 0,
+    "y": 436
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 5 · heat starts",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "lane 5 · heat start 0",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.heatmap.bid.5"
+      },
+      "x": 196,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 5 · heat start 500",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.heatmap.bid.5"
+      },
+      "x": 456,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 5 · heat start 1000",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.heatmap.bid.5"
+      },
+      "x": 716,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 5 · heat start 1500",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.heatmap.bid.5"
+      },
+      "x": 976,
+      "y": 0
+     }
+    ],
+    "w": 1232,
+    "h": 40,
+    "x": 0,
+    "y": 436
+   }
+  },
+  {
+   "into": "budget∕requests · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "axis",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "axis · line",
+      "w": 1040,
+      "h": 1,
+      "o": {
+       "fill": "color.border.default"
+      },
+      "x": 184,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "axis · tick 0",
+      "w": 1,
+      "h": 6,
+      "o": {
+       "fill": "color.axis.text"
+      },
+      "x": 184,
+      "y": 0
+     },
+     {
+      "t": "text",
+      "name": "axis · label 0",
+      "chars": "0",
+      "typo": "type.ui.caption",
+      "color": "color.axis.text",
+      "x": 180,
+      "y": 8
+     },
+     {
+      "t": "rect",
+      "name": "axis · tick 250",
+      "w": 1,
+      "h": 6,
+      "o": {
+       "fill": "color.axis.text"
+      },
+      "x": 314,
+      "y": 0
+     },
+     {
+      "t": "text",
+      "name": "axis · label 250",
+      "chars": "250",
+      "typo": "type.ui.caption",
+      "color": "color.axis.text",
+      "x": 310,
+      "y": 8
+     },
+     {
+      "t": "rect",
+      "name": "axis · tick 500",
+      "w": 1,
+      "h": 6,
+      "o": {
+       "fill": "color.axis.text"
+      },
+      "x": 444,
+      "y": 0
+     },
+     {
+      "t": "text",
+      "name": "axis · label 500",
+      "chars": "500",
+      "typo": "type.ui.caption",
+      "color": "color.axis.text",
+      "x": 440,
+      "y": 8
+     },
+     {
+      "t": "rect",
+      "name": "axis · tick 750",
+      "w": 1,
+      "h": 6,
+      "o": {
+       "fill": "color.axis.text"
+      },
+      "x": 574,
+      "y": 0
+     },
+     {
+      "t": "text",
+      "name": "axis · label 750",
+      "chars": "750",
+      "typo": "type.ui.caption",
+      "color": "color.axis.text",
+      "x": 570,
+      "y": 8
+     },
+     {
+      "t": "rect",
+      "name": "axis · tick 1000",
+      "w": 1,
+      "h": 6,
+      "o": {
+       "fill": "color.axis.text"
+      },
+      "x": 704,
+      "y": 0
+     },
+     {
+      "t": "text",
+      "name": "axis · label 1000",
+      "chars": "1 000",
+      "typo": "type.ui.caption",
+      "color": "color.axis.text",
+      "x": 700,
+      "y": 8
+     },
+     {
+      "t": "rect",
+      "name": "axis · tick 1250",
+      "w": 1,
+      "h": 6,
+      "o": {
+       "fill": "color.axis.text"
+      },
+      "x": 834,
+      "y": 0
+     },
+     {
+      "t": "text",
+      "name": "axis · label 1250",
+      "chars": "1 250",
+      "typo": "type.ui.caption",
+      "color": "color.axis.text",
+      "x": 830,
+      "y": 8
+     },
+     {
+      "t": "rect",
+      "name": "axis · tick 1500",
+      "w": 1,
+      "h": 6,
+      "o": {
+       "fill": "color.axis.text"
+      },
+      "x": 964,
+      "y": 0
+     },
+     {
+      "t": "text",
+      "name": "axis · label 1500",
+      "chars": "1 500",
+      "typo": "type.ui.caption",
+      "color": "color.axis.text",
+      "x": 960,
+      "y": 8
+     },
+     {
+      "t": "rect",
+      "name": "axis · tick 1750",
+      "w": 1,
+      "h": 6,
+      "o": {
+       "fill": "color.axis.text"
+      },
+      "x": 1094,
+      "y": 0
+     },
+     {
+      "t": "text",
+      "name": "axis · label 1750",
+      "chars": "1 750",
+      "typo": "type.ui.caption",
+      "color": "color.axis.text",
+      "x": 1090,
+      "y": 8
+     },
+     {
+      "t": "rect",
+      "name": "axis · tick 2000",
+      "w": 1,
+      "h": 6,
+      "o": {
+       "fill": "color.axis.text"
+      },
+      "x": 1224,
+      "y": 0
+     },
+     {
+      "t": "text",
+      "name": "axis · label 2000",
+      "chars": "2 000 ms",
+      "typo": "type.ui.caption",
+      "color": "color.axis.text",
+      "x": 1175,
+      "y": 8
+     }
+    ],
+    "w": 1232,
+    "h": 24,
+    "x": 0,
+    "y": 504
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "budget∕admitted · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.canvas",
+     "clip": true,
+     "pad": "space.inset.xl",
+     "gap": "space.stack.md"
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "§4.3, §4.4; with the arbiter",
+    "x": 1440,
+    "y": 80,
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "§4.3 · the region arbiter on the same burst: who is admitted, ranked by FR-9 (liquidation, then the focused symbol, then the rest); at most 2 starts a window",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 1232
+     },
+     {
+      "t": "text",
+      "name": "key",
+      "chars": "Tall marks: an admitted start. Short grey marks: a request held by the source's own interval. Red marks low in the lane: a request the region refused — dropped, never queued; the source asks again on its next change and its value still updates (R-4).",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 1232
+     },
+     {
+      "t": "board",
+      "name": "timeline",
+      "w": 1232,
+      "h": 440,
+      "kids": [
+       {
+        "t": "board",
+        "name": "windows",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "window 1 · shade",
+          "w": 520,
+          "h": 408,
+          "o": {
+           "fill": "color.status.info.subtle"
+          },
+          "x": 184,
+          "y": 0,
+          "note": "annotation: a half-open 1 000 ms window"
+         },
+         {
+          "t": "text",
+          "name": "window 1 · label",
+          "chars": "window [0, 1 000) ms",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "x": 188,
+          "y": 2
+         },
+         {
+          "t": "text",
+          "name": "window 2 · label",
+          "chars": "window [1 000, 2 000) ms",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "x": 708,
+          "y": 2
+         }
+        ],
+        "w": 1224,
+        "h": 408,
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "lane 1 · label",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "1. I-24 liquidation flash, one panel",
+          "typo": "type.ui.label",
+          "color": "color.text.primary",
+          "w": 168
+         },
+         {
+          "t": "text",
+          "name": "line 1",
+          "chars": "rank 1 of FR-9; 2 admitted, 0 refused by the region, 78 held by FR-5",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 168
+         }
+        ],
+        "w": 168,
+        "x": 0,
+        "y": 40
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "budget∕admitted · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 1 · helds",
+    "w": 1232,
+    "h": 14,
+    "x": 0,
+    "y": 48,
+    "kids": [
+     {
+      "t": "rect",
+      "name": "lane 1 · held 25",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 197,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 50",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 210,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 75",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 223,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 100",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 236,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 125",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 249,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 150",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 262,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 175",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 275,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 200",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 288,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 225",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 301,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 250",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 314,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 275",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 327,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 300",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 340,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 325",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 353,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 350",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 366,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 375",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 379,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 400",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 392,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 425",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 405,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 450",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 418,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 475",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 431,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 500",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 444,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 525",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 457,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 550",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 470,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 575",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 483,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 600",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 496,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 625",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 509,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 650",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 522,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 675",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 535,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 700",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 548,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 725",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 561,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 750",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 574,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 775",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 587,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 800",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 600,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 825",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 613,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 850",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 626,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 875",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 639,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 900",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 652,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 925",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 665,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 950",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 678,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 975",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 691,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1025",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 717,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1050",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 730,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1075",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 743,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1100",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 756,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1125",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 769,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1150",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 782,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1175",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 795,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1200",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 808,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1225",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 821,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1250",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 834,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1275",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 847,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1300",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 860,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1325",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 873,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1350",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 886,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1375",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 899,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1400",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 912,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1425",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 925,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1450",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 938,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1475",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 951,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1500",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 964,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1525",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 977,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1550",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 990,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1575",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1003,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1600",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1016,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1625",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1029,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1650",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1042,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1675",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1055,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1700",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1068,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1725",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1081,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1750",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1094,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1775",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1107,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1800",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1120,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · held 1825",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 1133,
+      "y": 0
+     }
+    ]
+   }
+  },
+  {
+   "into": "budget∕admitted · dark/timeline/lane 1 · helds",
+   "node": {
+    "t": "rect",
+    "name": "lane 1 · held 1850",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1146,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕admitted · dark/timeline/lane 1 · helds",
+   "node": {
+    "t": "rect",
+    "name": "lane 1 · held 1875",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1159,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕admitted · dark/timeline/lane 1 · helds",
+   "node": {
+    "t": "rect",
+    "name": "lane 1 · held 1900",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1172,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕admitted · dark/timeline/lane 1 · helds",
+   "node": {
+    "t": "rect",
+    "name": "lane 1 · held 1925",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1185,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕admitted · dark/timeline/lane 1 · helds",
+   "node": {
+    "t": "rect",
+    "name": "lane 1 · held 1950",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1198,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕admitted · dark/timeline/lane 1 · helds",
+   "node": {
+    "t": "rect",
+    "name": "lane 1 · held 1975",
+    "w": 2,
+    "h": 14,
+    "o": {
+     "fill": "color.text.tertiary"
+    },
+    "x": 1211,
+    "y": 0
+   }
+  },
+  {
+   "into": "budget∕admitted · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 1 · admitteds",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "lane 1 · admitted 0",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.status.warning.strong"
+      },
+      "x": 184,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 1 · admitted 1000",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.status.warning.strong"
+      },
+      "x": 704,
+      "y": 0
+     }
+    ],
+    "w": 1232,
+    "h": 40,
+    "x": 0,
+    "y": 68
+   }
+  },
+  {
+   "into": "budget∕admitted · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 2 · label",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "2. I-5 value flash, one cell",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 168
+     },
+     {
+      "t": "text",
+      "name": "line 1",
+      "chars": "rank 2 of FR-9; 2 admitted, 40 refused by the region, 38 held by FR-1",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 168
+     }
+    ],
+    "w": 168,
+    "x": 0,
+    "y": 132
+   }
+  },
+  {
+   "into": "budget∕admitted · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 2 · helds",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "lane 2 · held 25",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 197,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 50",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 210,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 75",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 223,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 100",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 236,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 125",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 249,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 150",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 262,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 175",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 275,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 200",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 288,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 225",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 301,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 250",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 314,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 275",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 327,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 300",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 340,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 325",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 353,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 350",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 366,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 375",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 379,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 400",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 392,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 425",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 405,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 450",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 418,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 475",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 431,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 1025",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 717,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 1050",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 730,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 1075",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 743,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 1100",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 756,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 1125",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 769,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 1150",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 782,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 1175",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 795,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 1200",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 808,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 1225",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 821,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 1250",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 834,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 1275",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 847,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 1300",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 860,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 1325",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 873,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 1350",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 886,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 1375",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 899,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 1400",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 912,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 1425",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 925,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 1450",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 938,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · held 1475",
+      "w": 2,
+      "h": 14,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "x": 951,
+      "y": 0
+     }
+    ],
+    "w": 1232,
+    "h": 14,
+    "x": 0,
+    "y": 140
+   }
+  },
+  {
+   "into": "budget∕admitted · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 2 · refuseds",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 500",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 444,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 525",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 457,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 550",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 470,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 575",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 483,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 600",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 496,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 625",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 509,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 650",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 522,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 675",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 535,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 700",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 548,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 725",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 561,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 750",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 574,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 775",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 587,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 800",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 600,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 825",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 613,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 850",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 626,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 875",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 639,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 900",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 652,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 925",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 665,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 950",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 678,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 975",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 691,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 1500",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 964,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 1525",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 977,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 1550",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 990,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 1575",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1003,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 1600",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1016,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 1625",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1029,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 1650",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1042,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 1675",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1055,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 1700",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1068,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 1725",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1081,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 1750",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1094,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 1775",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1107,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 1800",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1120,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 1825",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1133,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 1850",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1146,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 1875",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1159,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 1900",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1172,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 1925",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1185,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 1950",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1198,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · refused 1975",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1211,
+      "y": 0
+     }
+    ],
+    "w": 1232,
+    "h": 10,
+    "x": 0,
+    "y": 204
+   }
+  },
+  {
+   "into": "budget∕admitted · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 2 · admitteds",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "lane 2 · admitted 0",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.buy.default"
+      },
+      "x": 184,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 2 · admitted 1000",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.buy.default"
+      },
+      "x": 704,
+      "y": 0
+     }
+    ],
+    "w": 1232,
+    "h": 40,
+    "x": 0,
+    "y": 160
+   }
+  },
+  {
+   "into": "budget∕admitted · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 3 · label",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "3. I-21 heatmap live-column cell",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 168
+     },
+     {
+      "t": "text",
+      "name": "line 1",
+      "chars": "rank 3 of FR-9; 0 admitted, 20 refused by the region, 0 held by FR-6",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 168
+     }
+    ],
+    "w": 168,
+    "x": 0,
+    "y": 224
+   }
+  },
+  {
+   "into": "budget∕admitted · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 3 · refuseds",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "lane 3 · refused 0",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 184,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · refused 100",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 236,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · refused 200",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 288,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · refused 300",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 340,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · refused 400",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 392,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · refused 500",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 444,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · refused 600",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 496,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · refused 700",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 548,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · refused 800",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 600,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · refused 900",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 652,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · refused 1000",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 704,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · refused 1100",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 756,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · refused 1200",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 808,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · refused 1300",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 860,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · refused 1400",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 912,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · refused 1500",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 964,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · refused 1600",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1016,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · refused 1700",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1068,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · refused 1800",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1120,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 3 · refused 1900",
+      "w": 2,
+      "h": 10,
+      "o": {
+       "fill": "color.status.danger.default"
+      },
+      "x": 1172,
+      "y": 0
+     }
+    ],
+    "w": 1232,
+    "h": 10,
+    "x": 0,
+    "y": 296
+   }
+  },
+  {
+   "into": "budget∕admitted · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 4 · label",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "all four, with the arbiter",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 168
+     },
+     {
+      "t": "text",
+      "name": "line 1",
+      "chars": "max 2 starts in any half-open window (FR-3 = 2; §4.4 L227: 2)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 168
+     }
+    ],
+    "w": 168,
+    "x": 0,
+    "y": 316
+   }
+  },
+  {
+   "into": "budget∕admitted · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 4 · liq admitteds",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "lane 4 · liq admitted 0",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.status.warning.strong"
+      },
+      "x": 184,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 4 · liq admitted 1000",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.status.warning.strong"
+      },
+      "x": 704,
+      "y": 0
+     }
+    ],
+    "w": 1232,
+    "h": 40,
+    "x": 0,
+    "y": 344
+   }
+  },
+  {
+   "into": "budget∕admitted · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 4 · price admitteds",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "lane 4 · price admitted 0",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.buy.default"
+      },
+      "x": 190,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "lane 4 · price admitted 1000",
+      "w": 4,
+      "h": 40,
+      "o": {
+       "fill": "color.buy.default"
+      },
+      "x": 710,
+      "y": 0
+     }
+    ],
+    "w": 1232,
+    "h": 40,
+    "x": 0,
+    "y": 344
+   }
+  },
+  {
+   "into": "budget∕admitted · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 4 · window 1 count",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "2 starts",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 192,
+    "y": 388,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "budget∕admitted · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "lane 4 · window 2 count",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "2 starts",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 712,
+    "y": 388,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "budget∕admitted · dark/timeline",
+   "node": {
+    "t": "board",
+    "name": "axis",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "axis · line",
+      "w": 1040,
+      "h": 1,
+      "o": {
+       "fill": "color.border.default"
+      },
+      "x": 184,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "axis · tick 0",
+      "w": 1,
+      "h": 6,
+      "o": {
+       "fill": "color.axis.text"
+      },
+      "x": 184,
+      "y": 0
+     },
+     {
+      "t": "text",
+      "name": "axis · label 0",
+      "chars": "0",
+      "typo": "type.ui.caption",
+      "color": "color.axis.text",
+      "x": 180,
+      "y": 8
+     },
+     {
+      "t": "rect",
+      "name": "axis · tick 250",
+      "w": 1,
+      "h": 6,
+      "o": {
+       "fill": "color.axis.text"
+      },
+      "x": 314,
+      "y": 0
+     },
+     {
+      "t": "text",
+      "name": "axis · label 250",
+      "chars": "250",
+      "typo": "type.ui.caption",
+      "color": "color.axis.text",
+      "x": 310,
+      "y": 8
+     },
+     {
+      "t": "rect",
+      "name": "axis · tick 500",
+      "w": 1,
+      "h": 6,
+      "o": {
+       "fill": "color.axis.text"
+      },
+      "x": 444,
+      "y": 0
+     },
+     {
+      "t": "text",
+      "name": "axis · label 500",
+      "chars": "500",
+      "typo": "type.ui.caption",
+      "color": "color.axis.text",
+      "x": 440,
+      "y": 8
+     },
+     {
+      "t": "rect",
+      "name": "axis · tick 750",
+      "w": 1,
+      "h": 6,
+      "o": {
+       "fill": "color.axis.text"
+      },
+      "x": 574,
+      "y": 0
+     },
+     {
+      "t": "text",
+      "name": "axis · label 750",
+      "chars": "750",
+      "typo": "type.ui.caption",
+      "color": "color.axis.text",
+      "x": 570,
+      "y": 8
+     },
+     {
+      "t": "rect",
+      "name": "axis · tick 1000",
+      "w": 1,
+      "h": 6,
+      "o": {
+       "fill": "color.axis.text"
+      },
+      "x": 704,
+      "y": 0
+     },
+     {
+      "t": "text",
+      "name": "axis · label 1000",
+      "chars": "1 000",
+      "typo": "type.ui.caption",
+      "color": "color.axis.text",
+      "x": 700,
+      "y": 8
+     },
+     {
+      "t": "rect",
+      "name": "axis · tick 1250",
+      "w": 1,
+      "h": 6,
+      "o": {
+       "fill": "color.axis.text"
+      },
+      "x": 834,
+      "y": 0
+     },
+     {
+      "t": "text",
+      "name": "axis · label 1250",
+      "chars": "1 250",
+      "typo": "type.ui.caption",
+      "color": "color.axis.text",
+      "x": 830,
+      "y": 8
+     },
+     {
+      "t": "rect",
+      "name": "axis · tick 1500",
+      "w": 1,
+      "h": 6,
+      "o": {
+       "fill": "color.axis.text"
+      },
+      "x": 964,
+      "y": 0
+     },
+     {
+      "t": "text",
+      "name": "axis · label 1500",
+      "chars": "1 500",
+      "typo": "type.ui.caption",
+      "color": "color.axis.text",
+      "x": 960,
+      "y": 8
+     },
+     {
+      "t": "rect",
+      "name": "axis · tick 1750",
+      "w": 1,
+      "h": 6,
+      "o": {
+       "fill": "color.axis.text"
+      },
+      "x": 1094,
+      "y": 0
+     },
+     {
+      "t": "text",
+      "name": "axis · label 1750",
+      "chars": "1 750",
+      "typo": "type.ui.caption",
+      "color": "color.axis.text",
+      "x": 1090,
+      "y": 8
+     },
+     {
+      "t": "rect",
+      "name": "axis · tick 2000",
+      "w": 1,
+      "h": 6,
+      "o": {
+       "fill": "color.axis.text"
+      },
+      "x": 1224,
+      "y": 0
+     },
+     {
+      "t": "text",
+      "name": "axis · label 2000",
+      "chars": "2 000 ms",
+      "typo": "type.ui.caption",
+      "color": "color.axis.text",
+      "x": 1175,
+      "y": 8
+     }
+    ],
+    "w": 1232,
+    "h": 24,
+    "x": 0,
+    "y": 412
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 01",
+    "chars": "state: budget/requests · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 80,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 02",
+    "chars": "state: budget/admitted · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 1440,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer · data",
+    "chars": "Data: synthetic, never a venue payload: the TICKS `burst` preset (seed 1, 40 Hz, 200 ticks from a start of 65000.00); sample data only",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "x": 80,
+    "y": 904
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "E47-D08 / 02 budget-timeline",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Board",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§0 L72: §4.4: the 40 Hz burst on a 0–2 000 ms axis; the requests, the admitted starts per source and the 1 000 ms windows",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Theme: dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Frames (hand-off §H L99): budget/requests · dark; budget/admitted · dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "Export: docs/design/E47/img/E47-D08-02-budget-timeline.png",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "Every frame a 1280 × 800 window, compact density (§0 L67)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-6",
+        "chars": "Data: synthetic, never a venue payload: the TICKS `burst` preset (seed 1, 40 Hz, 200 ticks from a start of 65000.00); sample data only",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-7",
+        "chars": "Markers, tags, shading, outlines and callouts in color.status.info.default are annotation, not product UI",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-8",
+        "chars": "Window: the first 2000 ms of the 5000 ms burst; the pattern repeats each second",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-9",
+        "chars": "Not drawn: light and high-contrast cells of this board (§0 L82)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "budget/requests · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Requests: I-24 liquidation flash 80, I-5 value flash 80, I-21 heatmap live-column cell 20 in 0–2000 ms; starts alone: FR-5 max 1, FR-1 max 2, FR-6 max 2",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Without the arbiter the four sum to 5 starts in a window (§4.4 'all four, no arbiter'), above FR-7's 3 (§4.1 L195)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "budget/admitted · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§4.3 L214: a start is drawn only if the region has seen fewer than FR-3 (2) starts in the half-open 1000 ms window ending now; ranked by FR-9",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Result: 2 starts in any window (§4.4's 2); the heatmap cell is refused every time in this burst (rank 3), its true size still reaching the readout (§7, R-4)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "The arbiter runs once per frame on the existing cadence: FR-4 = 30 frames at 60 Hz, no new timer (§4.1 FR-4)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E47-D08 — Motion · board 02 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400,
+    "x": 2800,
+    "y": 80
+   }
+  }
+ ],
+ "export": "docs/design/E47/img/E47-D08-02-budget-timeline.png",
+ "notes": {
+  "sources": [
+   "spec docs/design/E47/E47-D08.md md5 6c50afbb, hand-off docs/design/E47/E47-D08-handoff.md md5 dc1307c8 (§0 L72; hand-off §H L99); TICKS packages/fixtures/src/synthetic-ticks.mjs md5 64c3ede9; ring geometry E47-D04 at 1ff5d8cb9 (§7.1); SCR-117 strings E47-D05 at 3987edc89"
+  ],
+  "copy_keys": [],
+  "copy_gaps": [],
+  "spec_gaps": [],
+  "fallbacks": [
+   "kit choice: numbered markers, tags, window shading, outlines and callouts are annotation overlays in color.status.info.default (or its subtle tint) with color.text.inverse words, never product UI",
+   "kit choice: time axes and ms ticks are annotation (color.axis.text on a hairline), not product UI"
+  ],
+  "tokens": [
+   "color.status.info.subtle",
+   "type.ui.caption",
+   "color.text.secondary",
+   "type.ui.label",
+   "color.text.primary",
+   "space.stack.xs",
+   "color.text.tertiary",
+   "color.buy.default",
+   "color.status.warning.strong",
+   "color.heatmap.bid.5",
+   "color.border.default",
+   "color.axis.text",
+   "type.ui.heading-sm",
+   "color.surface.canvas",
+   "space.inset.xl",
+   "space.stack.md",
+   "color.status.danger.default",
+   "color.text.inverse",
+   "space.inset.xs",
+   "radius.control",
+   "color.status.info.default",
+   "space.stack.sm",
+   "space.inset.lg"
+  ],
+  "live_checks": [
+   "root 'E47-D08 / 02 budget-timeline' at (7000, 0): read back the name exactly after the first section call; size 3280 x 1000",
+   "after touchTexts + relayout: the annotation column (estimated 589 px) ends inside the root (h 1000); raise the root's h to its end + 80 if not",
+   "frame 'budget∕requests · dark': read back 1280 x 800 at (80, 80); clip on, no child spills",
+   "frame 'budget∕admitted · dark': read back 1280 x 800 at (1440, 80); clip on, no child spills",
+   "export docs/design/E47/img/E47-D08-02-budget-timeline.png under the dark set; record the board id and the PNG size in §0"
+  ],
+  "deviations": [],
+  "ambiguities": []
+ }
+}

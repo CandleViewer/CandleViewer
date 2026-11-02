@@ -1,0 +1,5634 @@
+{
+ "board": {
+  "name": "E47-D08 / 05 liquidation",
+  "w": 3280,
+  "h": 1000,
+  "x": 28000,
+  "y": 0,
+  "o": {
+   "fill": "color.surface.app",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "liquidation∕burst · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "§6; safe",
+    "x": 80,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · env badge",
+          "w": 56,
+          "h": 20,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar (E10): placeholders except the parts this board draws"
+     }
+    ]
+   }
+  },
+  {
+   "into": "liquidation∕burst · dark",
+   "node": {
+    "t": "board",
+    "name": "body",
+    "o": {
+     "dir": "row",
+     "align": "start"
+    },
+    "w": 1280,
+    "h": 728,
+    "kids": [
+     {
+      "t": "board",
+      "name": "NavRail",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.inset.xs",
+       "padY": "space.inset.sm",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "entry-1",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-2",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-3",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-4",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-5",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-6",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1,
+        "h": 728,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 55,
+        "y": 0,
+        "abs": true
+       }
+      ],
+      "w": 56,
+      "h": 728
+     },
+     {
+      "t": "board",
+      "name": "main",
+      "o": {
+       "fill": "color.surface.app",
+       "clip": true
+      },
+      "w": 1224,
+      "h": 728,
+      "kids": [
+       {
+        "t": "board",
+        "name": "workspace",
+        "w": 1224,
+        "h": 728,
+        "x": 0,
+        "y": 0,
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-080 panel · chart BTCUSDT",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.canvas",
+           "stroke": "color.border.subtle",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "clip": true
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "space-between",
+             "fill": "color.surface.raised"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "h2",
+              "chars": "Chart · BTCUSDT · 100 ms",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "board",
+              "name": "tools",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · tool",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "h": 28
+             }
+            ],
+            "w": 568,
+            "h": 28
+           },
+           {
+            "t": "board",
+            "name": "plot",
+            "o": {
+             "fill": "color.surface.canvas",
+             "clip": true
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "grid · mid",
+              "w": 496,
+              "h": 1,
+              "o": {
+               "fill": "color.grid.line"
+              },
+              "x": 8,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "wick 0",
+              "w": 1,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 19,
+              "y": 59
+             },
+             {
+              "t": "rect",
+              "name": "body 0",
+              "w": 22,
+              "h": 2,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 8,
+              "y": 102
+             },
+             {
+              "t": "rect",
+              "name": "wick 100",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 43,
+              "y": 59
+             },
+             {
+              "t": "rect",
+              "name": "body 100",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.down"
+              },
+              "x": 32,
+              "y": 102
+             },
+             {
+              "t": "rect",
+              "name": "wick 200",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 68,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "body 200",
+              "w": 22,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.down"
+              },
+              "x": 57,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "wick 300",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 92,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "body 300",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 81,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "wick 400",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 117,
+              "y": 145
+             },
+             {
+              "t": "rect",
+              "name": "body 400",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 106,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "wick 500",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 141,
+              "y": 59
+             },
+             {
+              "t": "rect",
+              "name": "body 500",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 130,
+              "y": 102
+             },
+             {
+              "t": "rect",
+              "name": "wick 600",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 165,
+              "y": 102
+             },
+             {
+              "t": "rect",
+              "name": "body 600",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 154,
+              "y": 102
+             },
+             {
+              "t": "rect",
+              "name": "wick 700",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 190,
+              "y": 145
+             },
+             {
+              "t": "rect",
+              "name": "body 700",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.down"
+              },
+              "x": 179,
+              "y": 145
+             },
+             {
+              "t": "rect",
+              "name": "wick 800",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 214,
+              "y": 231
+             },
+             {
+              "t": "rect",
+              "name": "body 800",
+              "w": 22,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.down"
+              },
+              "x": 203,
+              "y": 231
+             },
+             {
+              "t": "rect",
+              "name": "wick 900",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 239,
+              "y": 231
+             },
+             {
+              "t": "rect",
+              "name": "body 900",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 228,
+              "y": 231
+             },
+             {
+              "t": "rect",
+              "name": "wick 1000",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 263,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "body 1000",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 252,
+              "y": 231
+             },
+             {
+              "t": "rect",
+              "name": "wick 1100",
+              "w": 1,
+              "h": 129,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 287,
+              "y": 145
+             },
+             {
+              "t": "rect",
+              "name": "body 1100",
+              "w": 22,
+              "h": 129,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 276,
+              "y": 145
+             },
+             {
+              "t": "rect",
+              "name": "wick 1200",
+              "w": 1,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 312,
+              "y": 145
+             },
+             {
+              "t": "rect",
+              "name": "body 1200",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 301,
+              "y": 145
+             },
+             {
+              "t": "rect",
+              "name": "wick 1300",
+              "w": 1,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 336,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "body 1300",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.down"
+              },
+              "x": 325,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "wick 1400",
+              "w": 1,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 361,
+              "y": 231
+             },
+             {
+              "t": "rect",
+              "name": "body 1400",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.down"
+              },
+              "x": 350,
+              "y": 231
+             },
+             {
+              "t": "rect",
+              "name": "wick 1500",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 385,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "body 1500",
+              "w": 22,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 374,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "wick 1600",
+              "w": 1,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 409,
+              "y": 145
+             },
+             {
+              "t": "rect",
+              "name": "body 1600",
+              "w": 22,
+              "h": 2,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 398,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "wick 1700",
+              "w": 1,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 434,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "body 1700",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.down"
+              },
+              "x": 423,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "wick 1800",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 458,
+              "y": 145
+             },
+             {
+              "t": "rect",
+              "name": "body 1800",
+              "w": 22,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 447,
+              "y": 145
+             },
+             {
+              "t": "rect",
+              "name": "wick 1900",
+              "w": 1,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 483,
+              "y": 59
+             },
+             {
+              "t": "rect",
+              "name": "body 1900",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 472,
+              "y": 59
+             },
+             {
+              "t": "text",
+              "name": "axis 6500000",
+              "chars": "65,000.00",
+              "typo": "type.num.sm",
+              "color": "color.axis.text",
+              "x": 504,
+              "y": 52
+             },
+             {
+              "t": "text",
+              "name": "axis 6499997",
+              "chars": "64,999.97",
+              "typo": "type.num.sm",
+              "color": "color.axis.text",
+              "x": 504,
+              "y": 181
+             },
+             {
+              "t": "text",
+              "name": "axis 6499994",
+              "chars": "64,999.94",
+              "typo": "type.num.sm",
+              "color": "color.axis.text",
+              "x": 504,
+              "y": 310
+             }
+            ],
+            "w": 568,
+            "h": 392,
+            "note": "BTCUSDT candles of 100 ms from the TICKS burst (synthetic)"
+           }
+          ],
+          "w": 568,
+          "h": 420,
+          "x": 16,
+          "y": 16
+         },
+         {
+          "t": "board",
+          "name": "I-24 liquidation mark",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.xs",
+           "radius": "radius.control",
+           "fill": "color.status.warning.subtle",
+           "stroke": "color.status.warning.strong",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "glyph",
+            "icon": "warning",
+            "color": "color.status.warning.strong",
+            "size": "size.icon",
+            "note": "the liquidation glyph"
+           },
+           {
+            "t": "text",
+            "name": "size",
+            "chars": "7.36 BTC ×10",
+            "typo": "type.num.sm",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24,
+          "note": "§6: an opacity-only overlay, <= one start per 1 000 ms per panel; PROPOSED color.liquidation.flash (D08-A9)",
+          "x": 216,
+          "y": 196,
+          "abs": true
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "liquidation∕burst · dark/body/main/workspace",
+   "node": {
+    "t": "board",
+    "name": "evidence",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "lane title",
+      "chars": "One panel, 0–1 000 ms: 10 events, 1 overlay start",
+      "typo": "type.ui.label",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "board",
+      "name": "lane · events",
+      "kids": [
+       {
+        "t": "text",
+        "name": "label events",
+        "chars": "events",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "x": 0,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "event 0",
+        "w": 2,
+        "h": 14,
+        "o": {
+         "fill": "color.text.tertiary"
+        },
+        "x": 120,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "event 25",
+        "w": 2,
+        "h": 14,
+        "o": {
+         "fill": "color.text.tertiary"
+        },
+        "x": 131,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "event 50",
+        "w": 2,
+        "h": 14,
+        "o": {
+         "fill": "color.text.tertiary"
+        },
+        "x": 142,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "event 75",
+        "w": 2,
+        "h": 14,
+        "o": {
+         "fill": "color.text.tertiary"
+        },
+        "x": 153,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "event 100",
+        "w": 2,
+        "h": 14,
+        "o": {
+         "fill": "color.text.tertiary"
+        },
+        "x": 164,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "event 125",
+        "w": 2,
+        "h": 14,
+        "o": {
+         "fill": "color.text.tertiary"
+        },
+        "x": 175,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "event 150",
+        "w": 2,
+        "h": 14,
+        "o": {
+         "fill": "color.text.tertiary"
+        },
+        "x": 186,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "event 175",
+        "w": 2,
+        "h": 14,
+        "o": {
+         "fill": "color.text.tertiary"
+        },
+        "x": 197,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "event 200",
+        "w": 2,
+        "h": 14,
+        "o": {
+         "fill": "color.text.tertiary"
+        },
+        "x": 208,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "event 225",
+        "w": 2,
+        "h": 14,
+        "o": {
+         "fill": "color.text.tertiary"
+        },
+        "x": 219,
+        "y": 8
+       },
+       {
+        "t": "text",
+        "name": "label starts",
+        "chars": "overlay starts",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "x": 0,
+        "y": 36
+       },
+       {
+        "t": "rect",
+        "name": "start 0",
+        "w": 4,
+        "h": 28,
+        "o": {
+         "fill": "color.status.warning.strong"
+        },
+        "x": 120,
+        "y": 30
+       },
+       {
+        "t": "board",
+        "name": "axis",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "axis · line",
+          "w": 440,
+          "h": 1,
+          "o": {
+           "fill": "color.border.default"
+          },
+          "x": 120,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 0",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 120,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 0",
+          "chars": "0",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 116,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 250",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 230,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 250",
+          "chars": "250",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 226,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 500",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 340,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 500",
+          "chars": "500",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 336,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 750",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 450,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 750",
+          "chars": "750",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 446,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 1000",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 560,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 1000",
+          "chars": "1 000 ms",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 511,
+          "y": 8
+         }
+        ],
+        "w": 568,
+        "h": 24,
+        "x": 0,
+        "y": 64
+       }
+      ],
+      "w": 568,
+      "h": 96
+     }
+    ],
+    "x": 16,
+    "y": 448
+   }
+  },
+  {
+   "into": "liquidation∕burst · dark/body/main/workspace",
+   "node": {
+    "t": "board",
+    "name": "CMP-049 grid · events",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "w": 584,
+    "note": "annotation table, not product UI",
+    "x": 600,
+    "y": 16,
+    "kids": [
+     {
+      "t": "text",
+      "name": "caption",
+      "chars": "The 10 events (synthetic) and what the mark shows",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 584
+     },
+     {
+      "t": "board",
+      "name": "header row",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "th · n",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Event",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 56,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th · t",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "t (ms)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 64,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th · sz",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Size",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 88,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th · text",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Mark text after it",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 136,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th · ov",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Overlay",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 240,
+        "h": 24
+       }
+      ],
+      "w": 584,
+      "h": 24,
+      "note": "column headers, scope=\"col\""
+     },
+     {
+      "t": "rect",
+      "name": "header rule",
+      "w": 584,
+      "h": 1,
+      "o": {
+       "fill": "color.border.default"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "into": "liquidation∕burst · dark/body/main/workspace/CMP-049 grid · events",
+   "node": {
+    "t": "board",
+    "name": "rows",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "w": 584,
+    "h": 280,
+    "kids": [
+     {
+      "t": "board",
+      "name": "row 1",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "n",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "1",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 56,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "t",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 64,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "sz",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0.30 BTC",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 88,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "text",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0.30 BTC ×1",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 136,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "ov",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "start (FR-5)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 240,
+        "h": 28
+       }
+      ],
+      "w": 584,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "row 2",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "n",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "2",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 56,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "t",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "25",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 64,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "sz",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0.17 BTC",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 88,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "text",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0.47 BTC ×2",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 136,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "ov",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "no new start: in the window",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 240,
+        "h": 28
+       }
+      ],
+      "w": 584,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "row 3",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "n",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "3",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 56,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "t",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "50",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 64,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "sz",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0.77 BTC",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 88,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "text",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "1.24 BTC ×3",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 136,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "ov",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "no new start: in the window",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 240,
+        "h": 28
+       }
+      ],
+      "w": 584,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "row 4",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "n",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "4",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 56,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "t",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "75",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 64,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "sz",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0.20 BTC",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 88,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "text",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "1.44 BTC ×4",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 136,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "ov",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "no new start: in the window",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 240,
+        "h": 28
+       }
+      ],
+      "w": 584,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "row 5",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "n",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "5",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 56,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "t",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "100",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 64,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "sz",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0.51 BTC",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 88,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "text",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "1.95 BTC ×5",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 136,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "ov",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "no new start: in the window",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 240,
+        "h": 28
+       }
+      ],
+      "w": 584,
+      "h": 28
+     }
+    ]
+   }
+  },
+  {
+   "into": "liquidation∕burst · dark/body/main/workspace/CMP-049 grid · events/rows",
+   "node": {
+    "t": "board",
+    "name": "row 6",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "n",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "6",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 56,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "t",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "125",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 64,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "sz",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "0.54 BTC",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 88,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "text",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "2.49 BTC ×6",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 136,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "ov",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "no new start: in the window",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 240,
+      "h": 28
+     }
+    ],
+    "w": 584,
+    "h": 28
+   }
+  },
+  {
+   "into": "liquidation∕burst · dark/body/main/workspace/CMP-049 grid · events/rows",
+   "node": {
+    "t": "board",
+    "name": "row 7",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "n",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "7",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 56,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "t",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "150",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 64,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "sz",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "0.87 BTC",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 88,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "text",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3.36 BTC ×7",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 136,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "ov",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "no new start: in the window",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 240,
+      "h": 28
+     }
+    ],
+    "w": 584,
+    "h": 28
+   }
+  },
+  {
+   "into": "liquidation∕burst · dark/body/main/workspace/CMP-049 grid · events/rows",
+   "node": {
+    "t": "board",
+    "name": "row 8",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "n",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "8",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 56,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "t",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "175",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 64,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "sz",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "0.60 BTC",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 88,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "text",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3.96 BTC ×8",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 136,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "ov",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "no new start: in the window",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 240,
+      "h": 28
+     }
+    ],
+    "w": 584,
+    "h": 28
+   }
+  },
+  {
+   "into": "liquidation∕burst · dark/body/main/workspace/CMP-049 grid · events/rows",
+   "node": {
+    "t": "board",
+    "name": "row 9",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "n",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "9",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 56,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "t",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "200",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 64,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "sz",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.66 BTC",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 88,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "text",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "5.62 BTC ×9",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 136,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "ov",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "no new start: in the window",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 240,
+      "h": 28
+     }
+    ],
+    "w": 584,
+    "h": 28
+   }
+  },
+  {
+   "into": "liquidation∕burst · dark/body/main/workspace/CMP-049 grid · events/rows",
+   "node": {
+    "t": "board",
+    "name": "row 10",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "n",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "10",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 56,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "t",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "225",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 64,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "sz",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.74 BTC",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 88,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "text",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "7.36 BTC ×10",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 136,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "ov",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "no new start: in the window",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 240,
+      "h": 28
+     }
+    ],
+    "w": 584,
+    "h": 28
+   }
+  },
+  {
+   "into": "liquidation∕burst · dark",
+   "node": {
+    "t": "board",
+    "name": "StatusBar",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · env word",
+      "w": 56,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 24
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "liquidation∕reduce · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "§6; reduce",
+    "x": 1440,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · env badge",
+          "w": 56,
+          "h": 20,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar (E10): placeholders except the parts this board draws"
+     }
+    ]
+   }
+  },
+  {
+   "into": "liquidation∕reduce · dark",
+   "node": {
+    "t": "board",
+    "name": "body",
+    "o": {
+     "dir": "row",
+     "align": "start"
+    },
+    "w": 1280,
+    "h": 728,
+    "kids": [
+     {
+      "t": "board",
+      "name": "NavRail",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.inset.xs",
+       "padY": "space.inset.sm",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "entry-1",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-2",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-3",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-4",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-5",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-6",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 40,
+        "h": 32
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1,
+        "h": 728,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 55,
+        "y": 0,
+        "abs": true
+       }
+      ],
+      "w": 56,
+      "h": 728
+     },
+     {
+      "t": "board",
+      "name": "main",
+      "o": {
+       "fill": "color.surface.app",
+       "clip": true
+      },
+      "w": 1224,
+      "h": 728,
+      "kids": [
+       {
+        "t": "board",
+        "name": "workspace",
+        "w": 1224,
+        "h": 728,
+        "x": 0,
+        "y": 0,
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-080 panel · chart BTCUSDT",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.canvas",
+           "stroke": "color.border.subtle",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "clip": true
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "space-between",
+             "fill": "color.surface.raised"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "h2",
+              "chars": "Chart · BTCUSDT · 100 ms",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "board",
+              "name": "tools",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · tool",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "h": 28
+             }
+            ],
+            "w": 568,
+            "h": 28
+           },
+           {
+            "t": "board",
+            "name": "plot",
+            "o": {
+             "fill": "color.surface.canvas",
+             "clip": true
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "grid · mid",
+              "w": 496,
+              "h": 1,
+              "o": {
+               "fill": "color.grid.line"
+              },
+              "x": 8,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "wick 0",
+              "w": 1,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 19,
+              "y": 59
+             },
+             {
+              "t": "rect",
+              "name": "body 0",
+              "w": 22,
+              "h": 2,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 8,
+              "y": 102
+             },
+             {
+              "t": "rect",
+              "name": "wick 100",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 43,
+              "y": 59
+             },
+             {
+              "t": "rect",
+              "name": "body 100",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.down"
+              },
+              "x": 32,
+              "y": 102
+             },
+             {
+              "t": "rect",
+              "name": "wick 200",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 68,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "body 200",
+              "w": 22,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.down"
+              },
+              "x": 57,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "wick 300",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 92,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "body 300",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 81,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "wick 400",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 117,
+              "y": 145
+             },
+             {
+              "t": "rect",
+              "name": "body 400",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 106,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "wick 500",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 141,
+              "y": 59
+             },
+             {
+              "t": "rect",
+              "name": "body 500",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 130,
+              "y": 102
+             },
+             {
+              "t": "rect",
+              "name": "wick 600",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 165,
+              "y": 102
+             },
+             {
+              "t": "rect",
+              "name": "body 600",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 154,
+              "y": 102
+             },
+             {
+              "t": "rect",
+              "name": "wick 700",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 190,
+              "y": 145
+             },
+             {
+              "t": "rect",
+              "name": "body 700",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.down"
+              },
+              "x": 179,
+              "y": 145
+             },
+             {
+              "t": "rect",
+              "name": "wick 800",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 214,
+              "y": 231
+             },
+             {
+              "t": "rect",
+              "name": "body 800",
+              "w": 22,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.down"
+              },
+              "x": 203,
+              "y": 231
+             },
+             {
+              "t": "rect",
+              "name": "wick 900",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 239,
+              "y": 231
+             },
+             {
+              "t": "rect",
+              "name": "body 900",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 228,
+              "y": 231
+             },
+             {
+              "t": "rect",
+              "name": "wick 1000",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 263,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "body 1000",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 252,
+              "y": 231
+             },
+             {
+              "t": "rect",
+              "name": "wick 1100",
+              "w": 1,
+              "h": 129,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 287,
+              "y": 145
+             },
+             {
+              "t": "rect",
+              "name": "body 1100",
+              "w": 22,
+              "h": 129,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 276,
+              "y": 145
+             },
+             {
+              "t": "rect",
+              "name": "wick 1200",
+              "w": 1,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 312,
+              "y": 145
+             },
+             {
+              "t": "rect",
+              "name": "body 1200",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 301,
+              "y": 145
+             },
+             {
+              "t": "rect",
+              "name": "wick 1300",
+              "w": 1,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 336,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "body 1300",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.down"
+              },
+              "x": 325,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "wick 1400",
+              "w": 1,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 361,
+              "y": 231
+             },
+             {
+              "t": "rect",
+              "name": "body 1400",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.down"
+              },
+              "x": 350,
+              "y": 231
+             },
+             {
+              "t": "rect",
+              "name": "wick 1500",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 385,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "body 1500",
+              "w": 22,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 374,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "wick 1600",
+              "w": 1,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 409,
+              "y": 145
+             },
+             {
+              "t": "rect",
+              "name": "body 1600",
+              "w": 22,
+              "h": 2,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 398,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "wick 1700",
+              "w": 1,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 434,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "body 1700",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.down"
+              },
+              "x": 423,
+              "y": 188
+             },
+             {
+              "t": "rect",
+              "name": "wick 1800",
+              "w": 1,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 458,
+              "y": 145
+             },
+             {
+              "t": "rect",
+              "name": "body 1800",
+              "w": 22,
+              "h": 86,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 447,
+              "y": 145
+             },
+             {
+              "t": "rect",
+              "name": "wick 1900",
+              "w": 1,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.wick"
+              },
+              "x": 483,
+              "y": 59
+             },
+             {
+              "t": "rect",
+              "name": "body 1900",
+              "w": 22,
+              "h": 43,
+              "o": {
+               "fill": "color.candle.up"
+              },
+              "x": 472,
+              "y": 59
+             },
+             {
+              "t": "text",
+              "name": "axis 6500000",
+              "chars": "65,000.00",
+              "typo": "type.num.sm",
+              "color": "color.axis.text",
+              "x": 504,
+              "y": 52
+             },
+             {
+              "t": "text",
+              "name": "axis 6499997",
+              "chars": "64,999.97",
+              "typo": "type.num.sm",
+              "color": "color.axis.text",
+              "x": 504,
+              "y": 181
+             },
+             {
+              "t": "text",
+              "name": "axis 6499994",
+              "chars": "64,999.94",
+              "typo": "type.num.sm",
+              "color": "color.axis.text",
+              "x": 504,
+              "y": 310
+             }
+            ],
+            "w": 568,
+            "h": 392,
+            "note": "BTCUSDT candles of 100 ms from the TICKS burst (synthetic)"
+           }
+          ],
+          "w": 568,
+          "h": 420,
+          "x": 16,
+          "y": 16
+         },
+         {
+          "t": "board",
+          "name": "I-24 liquidation mark",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.xs",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "glyph",
+            "icon": "warning",
+            "color": "color.status.warning.strong",
+            "size": "size.icon",
+            "note": "the liquidation glyph"
+           },
+           {
+            "t": "text",
+            "name": "size",
+            "chars": "7.36 BTC ×10",
+            "typo": "type.num.sm",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24,
+          "note": "§6: an opacity-only overlay, <= one start per 1 000 ms per panel; no overlay",
+          "x": 216,
+          "y": 196,
+          "abs": true
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "liquidation∕reduce · dark/body/main/workspace",
+   "node": {
+    "t": "board",
+    "name": "evidence",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "lane title",
+      "chars": "One panel, 0–1 000 ms: 10 events, 0 overlay start",
+      "typo": "type.ui.label",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "board",
+      "name": "lane · events",
+      "kids": [
+       {
+        "t": "text",
+        "name": "label events",
+        "chars": "events",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "x": 0,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "event 0",
+        "w": 2,
+        "h": 14,
+        "o": {
+         "fill": "color.text.tertiary"
+        },
+        "x": 120,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "event 25",
+        "w": 2,
+        "h": 14,
+        "o": {
+         "fill": "color.text.tertiary"
+        },
+        "x": 131,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "event 50",
+        "w": 2,
+        "h": 14,
+        "o": {
+         "fill": "color.text.tertiary"
+        },
+        "x": 142,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "event 75",
+        "w": 2,
+        "h": 14,
+        "o": {
+         "fill": "color.text.tertiary"
+        },
+        "x": 153,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "event 100",
+        "w": 2,
+        "h": 14,
+        "o": {
+         "fill": "color.text.tertiary"
+        },
+        "x": 164,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "event 125",
+        "w": 2,
+        "h": 14,
+        "o": {
+         "fill": "color.text.tertiary"
+        },
+        "x": 175,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "event 150",
+        "w": 2,
+        "h": 14,
+        "o": {
+         "fill": "color.text.tertiary"
+        },
+        "x": 186,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "event 175",
+        "w": 2,
+        "h": 14,
+        "o": {
+         "fill": "color.text.tertiary"
+        },
+        "x": 197,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "event 200",
+        "w": 2,
+        "h": 14,
+        "o": {
+         "fill": "color.text.tertiary"
+        },
+        "x": 208,
+        "y": 8
+       },
+       {
+        "t": "rect",
+        "name": "event 225",
+        "w": 2,
+        "h": 14,
+        "o": {
+         "fill": "color.text.tertiary"
+        },
+        "x": 219,
+        "y": 8
+       },
+       {
+        "t": "text",
+        "name": "label starts",
+        "chars": "overlay starts (none)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "x": 0,
+        "y": 36
+       },
+       {
+        "t": "board",
+        "name": "axis",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "axis · line",
+          "w": 440,
+          "h": 1,
+          "o": {
+           "fill": "color.border.default"
+          },
+          "x": 120,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 0",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 120,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 0",
+          "chars": "0",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 116,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 250",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 230,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 250",
+          "chars": "250",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 226,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 500",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 340,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 500",
+          "chars": "500",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 336,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 750",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 450,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 750",
+          "chars": "750",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 446,
+          "y": 8
+         },
+         {
+          "t": "rect",
+          "name": "axis · tick 1000",
+          "w": 1,
+          "h": 6,
+          "o": {
+           "fill": "color.axis.text"
+          },
+          "x": 560,
+          "y": 0
+         },
+         {
+          "t": "text",
+          "name": "axis · label 1000",
+          "chars": "1 000 ms",
+          "typo": "type.ui.caption",
+          "color": "color.axis.text",
+          "x": 511,
+          "y": 8
+         }
+        ],
+        "w": 568,
+        "h": 24,
+        "x": 0,
+        "y": 64
+       }
+      ],
+      "w": 568,
+      "h": 96
+     }
+    ],
+    "x": 16,
+    "y": 448
+   }
+  },
+  {
+   "into": "liquidation∕reduce · dark/body/main/workspace",
+   "node": {
+    "t": "board",
+    "name": "CMP-049 grid · events",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "w": 584,
+    "note": "annotation table, not product UI",
+    "x": 600,
+    "y": 16,
+    "kids": [
+     {
+      "t": "text",
+      "name": "caption",
+      "chars": "The 10 events (synthetic) and what the mark shows",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 584
+     },
+     {
+      "t": "board",
+      "name": "header row",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "th · n",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Event",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 56,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th · t",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "t (ms)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 64,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th · sz",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Size",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 88,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th · text",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Mark text after it",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 136,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th · ov",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Overlay",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 240,
+        "h": 24
+       }
+      ],
+      "w": 584,
+      "h": 24,
+      "note": "column headers, scope=\"col\""
+     },
+     {
+      "t": "rect",
+      "name": "header rule",
+      "w": 584,
+      "h": 1,
+      "o": {
+       "fill": "color.border.default"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "into": "liquidation∕reduce · dark/body/main/workspace/CMP-049 grid · events",
+   "node": {
+    "t": "board",
+    "name": "rows",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "w": 584,
+    "h": 280,
+    "kids": [
+     {
+      "t": "board",
+      "name": "row 1",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "n",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "1",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 56,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "t",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 64,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "sz",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0.30 BTC",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 88,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "text",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0.30 BTC ×1",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 136,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "ov",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "none (reduce)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 240,
+        "h": 28
+       }
+      ],
+      "w": 584,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "row 2",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "n",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "2",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 56,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "t",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "25",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 64,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "sz",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0.17 BTC",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 88,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "text",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0.47 BTC ×2",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 136,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "ov",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "none (reduce)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 240,
+        "h": 28
+       }
+      ],
+      "w": 584,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "row 3",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "n",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "3",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 56,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "t",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "50",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 64,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "sz",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0.77 BTC",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 88,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "text",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "1.24 BTC ×3",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 136,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "ov",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "none (reduce)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 240,
+        "h": 28
+       }
+      ],
+      "w": 584,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "row 4",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "n",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "4",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 56,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "t",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "75",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 64,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "sz",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0.20 BTC",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 88,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "text",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "1.44 BTC ×4",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 136,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "ov",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "none (reduce)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 240,
+        "h": 28
+       }
+      ],
+      "w": 584,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "row 5",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "n",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "5",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 56,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "t",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "100",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 64,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "sz",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0.51 BTC",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 88,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "text",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "1.95 BTC ×5",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 136,
+        "h": 28
+       },
+       {
+        "t": "board",
+        "name": "ov",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "none (reduce)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 240,
+        "h": 28
+       }
+      ],
+      "w": 584,
+      "h": 28
+     }
+    ]
+   }
+  },
+  {
+   "into": "liquidation∕reduce · dark/body/main/workspace/CMP-049 grid · events/rows",
+   "node": {
+    "t": "board",
+    "name": "row 6",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "n",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "6",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 56,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "t",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "125",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 64,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "sz",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "0.54 BTC",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 88,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "text",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "2.49 BTC ×6",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 136,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "ov",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "none (reduce)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 240,
+      "h": 28
+     }
+    ],
+    "w": 584,
+    "h": 28
+   }
+  },
+  {
+   "into": "liquidation∕reduce · dark/body/main/workspace/CMP-049 grid · events/rows",
+   "node": {
+    "t": "board",
+    "name": "row 7",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "n",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "7",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 56,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "t",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "150",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 64,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "sz",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "0.87 BTC",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 88,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "text",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3.36 BTC ×7",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 136,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "ov",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "none (reduce)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 240,
+      "h": 28
+     }
+    ],
+    "w": 584,
+    "h": 28
+   }
+  },
+  {
+   "into": "liquidation∕reduce · dark/body/main/workspace/CMP-049 grid · events/rows",
+   "node": {
+    "t": "board",
+    "name": "row 8",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "n",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "8",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 56,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "t",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "175",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 64,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "sz",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "0.60 BTC",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 88,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "text",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3.96 BTC ×8",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 136,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "ov",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "none (reduce)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 240,
+      "h": 28
+     }
+    ],
+    "w": 584,
+    "h": 28
+   }
+  },
+  {
+   "into": "liquidation∕reduce · dark/body/main/workspace/CMP-049 grid · events/rows",
+   "node": {
+    "t": "board",
+    "name": "row 9",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "n",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "9",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 56,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "t",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "200",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 64,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "sz",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.66 BTC",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 88,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "text",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "5.62 BTC ×9",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 136,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "ov",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "none (reduce)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 240,
+      "h": 28
+     }
+    ],
+    "w": 584,
+    "h": 28
+   }
+  },
+  {
+   "into": "liquidation∕reduce · dark/body/main/workspace/CMP-049 grid · events/rows",
+   "node": {
+    "t": "board",
+    "name": "row 10",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "n",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "10",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 56,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "t",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "225",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 64,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "sz",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.74 BTC",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 88,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "text",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "7.36 BTC ×10",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 136,
+      "h": 28
+     },
+     {
+      "t": "board",
+      "name": "ov",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "none (reduce)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 240,
+      "h": 28
+     }
+    ],
+    "w": 584,
+    "h": 28
+   }
+  },
+  {
+   "into": "liquidation∕reduce · dark",
+   "node": {
+    "t": "board",
+    "name": "StatusBar",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · env word",
+      "w": 56,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 24
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 01",
+    "chars": "state: liquidation/burst · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 80,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 02",
+    "chars": "state: liquidation/reduce · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 1440,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer · data",
+    "chars": "Data: synthetic, never a venue payload: the TICKS `burst` preset (seed 1, 40 Hz, 200 ticks from a start of 65000.00); sample data only",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "x": 80,
+    "y": 904
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "E47-D08 / 05 liquidation",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Board",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§0 L75: §6: the overlay at one start per 1 000 ms against a 10-event burst; reduce: the glyph and the size as text",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Theme: dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Frames (hand-off §H L99): liquidation/burst · dark; liquidation/reduce · dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "Export: docs/design/E47/img/E47-D08-05-liquidation.png",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "Every frame a 1280 × 800 window, compact density (§0 L67)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-6",
+        "chars": "Data: synthetic, never a venue payload: the TICKS `burst` preset (seed 1, 40 Hz, 200 ticks from a start of 65000.00); sample data only",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-7",
+        "chars": "Markers, tags, shading, outlines and callouts in color.status.info.default are annotation, not product UI",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-8",
+        "chars": "The panel design and the mark's placement are E24-D04's (D08-G2): drawn here only as the motion layer's carrier",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "liquidation/burst · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§6 L249: at most one start per panel per 1 000 ms (FR-5); a burst inside the window updates the size text and the count, never re-starts the overlay",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "10 events at 0–225 ms: 1 start, at 0 ms; the mark ends at \"7.36 BTC ×10\"",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Overlay: FALLBACKS liq-overlay (PROPOSED color.liquidation.flash, D08-A9, not a token)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "liquidation/reduce · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "I-24 reduced (L164): none: the glyph and the size as text",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "No overlay paints; the warning glyph and the size text carry every event; the count still updates",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "§3: I-24's canvas-calm cell is the same (L164)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E47-D08 — Motion · board 05 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400,
+    "x": 2800,
+    "y": 80
+   }
+  }
+ ],
+ "export": "docs/design/E47/img/E47-D08-05-liquidation.png",
+ "notes": {
+  "sources": [
+   "spec docs/design/E47/E47-D08.md md5 6c50afbb, hand-off docs/design/E47/E47-D08-handoff.md md5 dc1307c8 (§0 L75; hand-off §H L99); TICKS packages/fixtures/src/synthetic-ticks.mjs md5 64c3ede9; ring geometry E47-D04 at 1ff5d8cb9 (§7.1); SCR-117 strings E47-D05 at 3987edc89"
+  ],
+  "copy_keys": [],
+  "copy_gaps": [
+   "the mark's count format \"<size> BTC ×<n>\" is a kit label: §6 says the burst updates \"the size text and the count\" without words (L249)"
+  ],
+  "spec_gaps": [],
+  "fallbacks": [
+   "kit choice: the shell chrome (TopBar, NavRail, StatusBar) and panels outside the board's subject are neutral placeholders; only the surfaces a board draws are drawn",
+   "fallback: the direction glyphs ▲ / ▼ drawn as text characters (E05-D03 MR-3's glyph and sign); the liquidation glyph as the local warning icon",
+   "fallback: the liquidation overlay (§6; PROPOSED color.liquidation.flash, D08-A9, not a token) drawn as color.status.warning.subtle under a color.status.warning.strong 2 px outline, labelled PROPOSED",
+   "kit choice: time axes and ms ticks are annotation (color.axis.text on a hairline), not product UI"
+  ],
+  "tokens": [
+   "color.grid.line",
+   "color.candle.wick",
+   "color.candle.up",
+   "color.candle.down",
+   "type.num.sm",
+   "color.axis.text",
+   "color.surface.canvas",
+   "type.ui.body-strong",
+   "color.text.primary",
+   "radius.control",
+   "color.surface.hover",
+   "space.inset.sm",
+   "color.surface.raised",
+   "color.border.subtle",
+   "border.hairline",
+   "color.status.warning.strong",
+   "size.icon",
+   "space.inset.xs",
+   "color.status.warning.subtle",
+   "border.thick",
+   "type.ui.caption",
+   "color.text.secondary",
+   "color.text.tertiary",
+   "color.border.default",
+   "type.num.base",
+   "type.ui.body",
+   "space.stack.xs",
+   "type.ui.label",
+   "color.surface.app",
+   "space.inset.md",
+   "space.inset.lg",
+   "type.ui.heading-sm",
+   "space.stack.sm"
+  ],
+  "live_checks": [
+   "root 'E47-D08 / 05 liquidation' at (28000, 0): read back the name exactly after the first section call; size 3280 x 1000",
+   "after touchTexts + relayout: the annotation column (estimated 523 px) ends inside the root (h 1000); raise the root's h to its end + 80 if not",
+   "frame 'liquidation∕burst · dark': read back 1280 x 800 at (80, 80); clip on, no child spills",
+   "frame 'liquidation∕reduce · dark': read back 1280 x 800 at (1440, 80); clip on, no child spills",
+   "export docs/design/E47/img/E47-D08-05-liquidation.png under the dark set; record the board id and the PNG size in §0"
+  ],
+  "deviations": [],
+  "ambiguities": []
+ }
+}

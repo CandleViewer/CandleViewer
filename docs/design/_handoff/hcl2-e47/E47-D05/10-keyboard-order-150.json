@@ -1,0 +1,3944 @@
+{
+ "board": {
+  "name": "E47-D05 / 10 keyboard-order-150",
+  "w": 1920,
+  "h": 2864,
+  "x": 28000,
+  "y": 4200,
+  "o": {
+   "fill": "color.surface.app",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "SCR-117∕keyboard-order · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 2664,
+    "note": "150 % text scale; the page at its full scroll length",
+    "x": 80,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar (placeholder)",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · env badge",
+          "w": 56,
+          "h": 20,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · health chip",
+          "w": 120,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar, not this spec's: placeholders only"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "w": 1280,
+      "h": 2568,
+      "kids": [
+       {
+        "t": "board",
+        "name": "NavRail (placeholder)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entry-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "entry-6",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · glyph",
+            "w": 16,
+            "h": 16,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 48,
+          "h": 32
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 2568,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 63,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 64,
+        "h": 2568
+       },
+       {
+        "t": "board",
+        "name": "CMP-086 SettingsNav",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "pad": "space.inset.sm",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entry-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 104,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry-2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 112,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry · Accessibility (current)",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs",
+           "padX": "space.inset.md",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Accessibility",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.link"
+           },
+           {
+            "t": "rect",
+            "name": "selected underline",
+            "w": 96,
+            "h": 2,
+            "o": {
+             "fill": "color.border.selected"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 36,
+          "note": "aria-current=\"page\"; its own SettingsNav entry and sub-route (BQ-8, D05-A6, PROPOSED)"
+         },
+         {
+          "t": "board",
+          "name": "entry-3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 96,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "board",
+          "name": "entry-4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · label",
+            "w": 104,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 192,
+          "h": 28
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 2568,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 207,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 208,
+        "h": 2568
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "SCR-117∕keyboard-order · dark/body",
+   "node": {
+    "t": "board",
+    "name": "main",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1008,
+    "h": 2568,
+    "kids": [
+     {
+      "t": "board",
+      "name": "SCR-117 content",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.inset.xl",
+       "pad": "space.inset.xl",
+       "fill": "color.surface.app"
+      },
+      "w": 1008,
+      "note": "main: one column, max-width 60 rem (S07:33–34); DOM order = visual order",
+      "x": 0,
+      "y": 0,
+      "kids": [
+       {
+        "t": "board",
+        "name": "header",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "h1",
+          "chars": "Accessibility",
+          "typo": "type.ui.display",
+          "color": "color.text.primary",
+          "note": "the one h1 (tabindex=\"-1\", a route-change target only; BQ-8)"
+         },
+         {
+          "t": "text",
+          "name": "intro · W-1",
+          "chars": "Changes apply immediately, including chart canvases. They are saved to your account.",
+          "typo": "type.ui.heading-lg",
+          "color": "color.text.primary",
+          "w": 960
+         },
+         {
+          "t": "text",
+          "name": "scope · W-2",
+          "chars": "Scope: per user, for every setting on this page.",
+          "typo": "type.ui.heading-md",
+          "color": "color.text.secondary",
+          "w": 960
+         },
+         {
+          "t": "board",
+          "name": "settings search",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Search settings",
+            "typo": "type.ui.heading-lg",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "board",
+            "name": "stop 2 + input",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "stop 2",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "justify": "center",
+               "fill": "color.status.info.default",
+               "radius": "radius.badge"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "n",
+                "chars": "2",
+                "typo": "type.ui.label",
+                "color": "color.text.inverse"
+               }
+              ],
+              "w": 20,
+              "h": 20,
+              "note": "annotation marker: Tab stop (not product UI)"
+             },
+             {
+              "t": "board",
+              "name": "input",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.sm",
+               "padX": "space.inset.sm",
+               "fill": "color.surface.canvas",
+               "radius": "radius.control",
+               "stroke": "color.border.strong",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "glyph",
+                "icon": "search",
+                "color": "color.text.secondary",
+                "size": "size.icon"
+               }
+              ],
+              "w": 320,
+              "h": 32,
+              "note": "role=\"searchbox\""
+             }
+            ]
+           }
+          ]
+         }
+        ],
+        "w": 960
+       },
+       {
+        "t": "board",
+        "name": "CMP-065 FormSection · Motion",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.md"
+        },
+        "w": 960,
+        "note": "fieldset, legend \"Motion\"",
+        "kids": [
+         {
+          "t": "text",
+          "name": "h2",
+          "chars": "Motion",
+          "typo": "type.ui.display",
+          "color": "color.text.primary",
+          "note": "h2 inside the fieldset's legend (`15`:743)"
+         },
+         {
+          "t": "board",
+          "name": "group",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.lg"
+          },
+          "w": 960,
+          "note": "the tile stacks under its group (§11)",
+          "kids": [
+           {
+            "t": "board",
+            "name": "rows",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.lg"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "option row · reduced_motion",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Reduced motion",
+                "typo": "type.ui.heading-lg",
+                "color": "color.text.primary"
+               },
+               {
+                "t": "text",
+                "name": "description",
+                "chars": "Panels open and close without sliding, heatmap trails stop fading, prices stop flashing and the chart stops gliding after you pan.",
+                "typo": "type.ui.heading-md",
+                "color": "color.text.secondary",
+                "w": 960
+               },
+               {
+                "t": "board",
+                "name": "stop 3 + CMP-006 RadioGroup",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "gap": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "stop 3",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "justify": "center",
+                   "fill": "color.status.info.default",
+                   "radius": "radius.badge"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "n",
+                    "chars": "3",
+                    "typo": "type.ui.label",
+                    "color": "color.text.inverse"
+                   }
+                  ],
+                  "w": 20,
+                  "h": 20,
+                  "note": "annotation marker: Tab stop (not product UI)"
+                 },
+                 {
+                  "t": "board",
+                  "name": "CMP-006 RadioGroup",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "gap": "space.inset.lg"
+                  },
+                  "kids": [
+                   {
+                    "t": "board",
+                    "name": "radio · Follow my system",
+                    "o": {
+                     "dir": "row",
+                     "align": "center",
+                     "gap": "space.inset.sm"
+                    },
+                    "kids": [
+                     {
+                      "t": "board",
+                      "name": "circle",
+                      "kids": [
+                       {
+                        "t": "ellipse",
+                        "name": "outline",
+                        "w": 16,
+                        "h": 16,
+                        "o": {
+                         "fill": "color.surface.canvas",
+                         "stroke": "color.border.strong",
+                         "strokeWidth": "border.hairline",
+                         "strokeAlign": "inner"
+                        },
+                        "x": 0,
+                        "y": 0,
+                        "abs": true
+                       },
+                       {
+                        "t": "ellipse",
+                        "name": "dot",
+                        "w": 8,
+                        "h": 8,
+                        "o": {
+                         "fill": "color.action.primary.default"
+                        },
+                        "x": 4,
+                        "y": 4,
+                        "abs": true
+                       }
+                      ],
+                      "w": 16,
+                      "h": 16
+                     },
+                     {
+                      "t": "text",
+                      "name": "label",
+                      "chars": "Follow my system",
+                      "typo": "type.ui.heading-lg",
+                      "color": "color.text.primary"
+                     }
+                    ],
+                    "h": 24,
+                    "note": "role=\"radio\" aria-checked=\"true\""
+                   },
+                   {
+                    "t": "board",
+                    "name": "radio · On",
+                    "o": {
+                     "dir": "row",
+                     "align": "center",
+                     "gap": "space.inset.sm"
+                    },
+                    "kids": [
+                     {
+                      "t": "board",
+                      "name": "circle",
+                      "kids": [
+                       {
+                        "t": "ellipse",
+                        "name": "outline",
+                        "w": 16,
+                        "h": 16,
+                        "o": {
+                         "fill": "color.surface.canvas",
+                         "stroke": "color.border.strong",
+                         "strokeWidth": "border.hairline",
+                         "strokeAlign": "inner"
+                        },
+                        "x": 0,
+                        "y": 0,
+                        "abs": true
+                       }
+                      ],
+                      "w": 16,
+                      "h": 16
+                     },
+                     {
+                      "t": "text",
+                      "name": "label",
+                      "chars": "On",
+                      "typo": "type.ui.heading-lg",
+                      "color": "color.text.primary"
+                     }
+                    ],
+                    "h": 24,
+                    "note": "role=\"radio\" aria-checked=\"false\""
+                   },
+                   {
+                    "t": "board",
+                    "name": "radio · Off",
+                    "o": {
+                     "dir": "row",
+                     "align": "center",
+                     "gap": "space.inset.sm"
+                    },
+                    "kids": [
+                     {
+                      "t": "board",
+                      "name": "circle",
+                      "kids": [
+                       {
+                        "t": "ellipse",
+                        "name": "outline",
+                        "w": 16,
+                        "h": 16,
+                        "o": {
+                         "fill": "color.surface.canvas",
+                         "stroke": "color.border.strong",
+                         "strokeWidth": "border.hairline",
+                         "strokeAlign": "inner"
+                        },
+                        "x": 0,
+                        "y": 0,
+                        "abs": true
+                       }
+                      ],
+                      "w": 16,
+                      "h": 16
+                     },
+                     {
+                      "t": "text",
+                      "name": "label",
+                      "chars": "Off",
+                      "typo": "type.ui.heading-lg",
+                      "color": "color.text.primary"
+                     }
+                    ],
+                    "h": 24,
+                    "note": "role=\"radio\" aria-checked=\"false\""
+                   }
+                  ],
+                  "h": 32,
+                  "note": "radiogroup: one Tab stop, arrows move a roving tabindex (`15`:108)"
+                 }
+                ]
+               },
+               {
+                "t": "text",
+                "name": "Effective line",
+                "chars": "Effective: Off, the product default",
+                "typo": "type.ui.heading-md",
+                "color": "color.text.secondary",
+                "w": 960,
+                "note": "a text node in the row's aria-describedby, not a live region (§5.1)"
+               }
+              ],
+              "w": 960,
+              "note": "fieldset/legend \"Reduced motion\""
+             },
+             {
+              "t": "board",
+              "name": "option row · disable_canvas_animation",
+              "o": {
+               "dir": "row",
+               "align": "start",
+               "gap": "space.inset.md"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "stop 4 + switch",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "gap": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "stop 4",
+                  "o": {
+                   "dir": "row",
+                   "align": "center",
+                   "justify": "center",
+                   "fill": "color.status.info.default",
+                   "radius": "radius.badge"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "n",
+                    "chars": "4",
+                    "typo": "type.ui.label",
+                    "color": "color.text.inverse"
+                   }
+                  ],
+                  "w": 20,
+                  "h": 20,
+                  "note": "annotation marker: Tab stop (not product UI)"
+                 },
+                 {
+                  "t": "board",
+                  "name": "switch",
+                  "o": {
+                   "fill": "color.surface.hover",
+                   "radius": "radius.badge",
+                   "stroke": "color.border.strong",
+                   "strokeWidth": "border.hairline",
+                   "strokeAlign": "inner"
+                  },
+                  "kids": [
+                   {
+                    "t": "ellipse",
+                    "name": "knob",
+                    "w": 12,
+                    "h": 12,
+                    "o": {
+                     "fill": "color.text.secondary"
+                    },
+                    "x": 4,
+                    "y": 4,
+                    "abs": true
+                   }
+                  ],
+                  "w": 38,
+                  "h": 20,
+                  "note": "role=\"switch\" aria-checked=\"false\"; Enter / Space toggles (`15`:87)"
+                 }
+                ]
+               },
+               {
+                "t": "board",
+                "name": "text",
+                "o": {
+                 "dir": "column",
+                 "align": "start",
+                 "gap": "space.stack.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Disable canvas animation",
+                  "typo": "type.ui.heading-lg",
+                  "color": "color.text.primary",
+                  "w": 882
+                 },
+                 {
+                  "t": "text",
+                  "name": "description",
+                  "chars": "Heatmap trails stop fading and change instantly; the chart stops easing when it pans; price cells stop flashing. The rest of the app keeps its motion.",
+                  "typo": "type.ui.heading-md",
+                  "color": "color.text.secondary",
+                  "w": 882
+                 }
+                ],
+                "w": 882
+               }
+              ],
+              "w": 960,
+              "note": "CMP-004 Toggle: role=\"switch\", its label visible"
+             }
+            ],
+            "w": 960
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "SCR-117∕keyboard-order · dark/body/main/SCR-117 content/CMP-065 FormSection · Motion/group",
+   "node": {
+    "t": "board",
+    "name": "CMP-228 PreviewTile · motion",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas",
+     "radius": "radius.card",
+     "stroke": "color.border.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "preview",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "frame",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "heatmap column",
+          "o": {
+           "dir": "column",
+           "align": "start"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "level 64 250.6",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "price",
+              "chars": "64 250.6",
+              "typo": "type.ui.heading-md",
+              "color": "color.axis.text"
+             },
+             {
+              "t": "rect",
+              "name": "cell",
+              "w": 40,
+              "h": 12,
+              "o": {
+               "fill": "color.heatmap.bid.4"
+              }
+             }
+            ],
+            "h": 19
+           },
+           {
+            "t": "board",
+            "name": "level 64 250.5",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "price",
+              "chars": "64 250.5",
+              "typo": "type.ui.heading-md",
+              "color": "color.axis.text"
+             },
+             {
+              "t": "rect",
+              "name": "cell",
+              "w": 40,
+              "h": 12,
+              "o": {
+               "fill": "color.heatmap.bid.5"
+              }
+             }
+            ],
+            "h": 19
+           },
+           {
+            "t": "board",
+            "name": "level 64 250.4",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "price",
+              "chars": "64 250.4",
+              "typo": "type.ui.heading-md",
+              "color": "color.axis.text"
+             },
+             {
+              "t": "rect",
+              "name": "cell",
+              "w": 40,
+              "h": 12,
+              "o": {
+               "fill": "color.heatmap.bid.2"
+              }
+             }
+            ],
+            "h": 19
+           },
+           {
+            "t": "board",
+            "name": "level 64 250.3",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "price",
+              "chars": "64 250.3",
+              "typo": "type.ui.heading-md",
+              "color": "color.axis.text"
+             },
+             {
+              "t": "rect",
+              "name": "cell",
+              "w": 40,
+              "h": 12,
+              "o": {
+               "fill": "color.heatmap.bid.2"
+              }
+             }
+            ],
+            "h": 19
+           },
+           {
+            "t": "board",
+            "name": "level 64 250.2",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "price",
+              "chars": "64 250.2",
+              "typo": "type.ui.heading-md",
+              "color": "color.axis.text"
+             },
+             {
+              "t": "rect",
+              "name": "cell",
+              "w": 40,
+              "h": 12,
+              "o": {
+               "fill": "color.heatmap.bid.1"
+              }
+             }
+            ],
+            "h": 19
+           },
+           {
+            "t": "board",
+            "name": "level 64 250.1",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "price",
+              "chars": "64 250.1",
+              "typo": "type.ui.heading-md",
+              "color": "color.axis.text"
+             },
+             {
+              "t": "rect",
+              "name": "cell",
+              "w": 40,
+              "h": 12,
+              "o": {
+               "fill": "color.heatmap.bid.3"
+              }
+             }
+            ],
+            "h": 19
+           },
+           {
+            "t": "board",
+            "name": "level 64 250.0",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "price",
+              "chars": "64 250.0",
+              "typo": "type.ui.heading-md",
+              "color": "color.axis.text"
+             },
+             {
+              "t": "rect",
+              "name": "cell",
+              "w": 40,
+              "h": 12,
+              "o": {
+               "fill": "color.heatmap.bid.3"
+              }
+             }
+            ],
+            "h": 19
+           },
+           {
+            "t": "board",
+            "name": "level 64 249.9",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "price",
+              "chars": "64 249.9",
+              "typo": "type.ui.heading-md",
+              "color": "color.axis.text"
+             },
+             {
+              "t": "rect",
+              "name": "cell",
+              "w": 40,
+              "h": 12,
+              "o": {
+               "fill": "color.heatmap.bid.4"
+              }
+             }
+            ],
+            "h": 19
+           },
+           {
+            "t": "board",
+            "name": "level 64 249.8",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "price",
+              "chars": "64 249.8",
+              "typo": "type.ui.heading-md",
+              "color": "color.axis.text"
+             },
+             {
+              "t": "rect",
+              "name": "cell",
+              "w": 40,
+              "h": 12,
+              "o": {
+               "fill": "color.heatmap.bid.1"
+              }
+             }
+            ],
+            "h": 19
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "price cell",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "justify": "end",
+           "fill": "color.buy.subtle"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "last",
+            "chars": "64 251.4",
+            "typo": "type.ui.heading-lg",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 144,
+          "h": 28,
+          "note": "flash once per change, never above three a second (`05`:218)"
+         }
+        ]
+       }
+      ],
+      "note": "a 6-second loop: the trail fades and the price flashes once per change (§6.1); role=\"img\" aria-label=\"Motion preview, full motion: the heatmap trail fades, the price flashes\"; its children presentational"
+     },
+     {
+      "t": "board",
+      "name": "stop 5 + button · Pause",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "stop 5",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center",
+         "fill": "color.status.info.default",
+         "radius": "radius.badge"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "n",
+          "chars": "5",
+          "typo": "type.ui.label",
+          "color": "color.text.inverse"
+         }
+        ],
+        "w": 20,
+        "h": 20,
+        "note": "annotation marker: Tab stop (not product UI)"
+       },
+       {
+        "t": "board",
+        "name": "button · Pause",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "padX": "space.button.paddingX",
+         "radius": "radius.control",
+         "justify": "center",
+         "fill": "color.action.secondary.default",
+         "stroke": "color.border.strong",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Pause",
+          "typo": "type.ui.heading-lg",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 82,
+        "h": 32,
+        "note": "CMP-001 Button (secondary)"
+       }
+      ]
+     }
+    ],
+    "w": 540,
+    "h": 283,
+    "note": "role=\"group\" aria-label=\"Motion preview, full motion: the heatmap trail fades, the price flashes\"; never the only disclosure (R-1); the frame is the decorative color.border.default (§11)"
+   }
+  },
+  {
+   "into": "SCR-117∕keyboard-order · dark/body/main/SCR-117 content",
+   "node": {
+    "t": "board",
+    "name": "CMP-065 FormSection · Contrast and focus",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md"
+    },
+    "w": 960,
+    "note": "fieldset, legend \"Contrast and focus\"",
+    "kids": [
+     {
+      "t": "text",
+      "name": "h2",
+      "chars": "Contrast and focus",
+      "typo": "type.ui.display",
+      "color": "color.text.primary",
+      "note": "h2 inside the fieldset's legend (`15`:743)"
+     },
+     {
+      "t": "board",
+      "name": "group",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.lg"
+      },
+      "w": 960,
+      "note": "the tile stacks under its group (§11)",
+      "kids": [
+       {
+        "t": "board",
+        "name": "rows",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.lg"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "option row · increased_contrast",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Increased contrast",
+            "typo": "type.ui.heading-lg",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "description",
+            "chars": "Text, borders and buy and sell colours switch to stronger versions, and charts redraw with darker backgrounds and brighter ink.",
+            "typo": "type.ui.heading-md",
+            "color": "color.text.secondary",
+            "w": 960
+           },
+           {
+            "t": "board",
+            "name": "stop 6 + CMP-006 RadioGroup",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "stop 6",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "justify": "center",
+               "fill": "color.status.info.default",
+               "radius": "radius.badge"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "n",
+                "chars": "6",
+                "typo": "type.ui.label",
+                "color": "color.text.inverse"
+               }
+              ],
+              "w": 20,
+              "h": 20,
+              "note": "annotation marker: Tab stop (not product UI)"
+             },
+             {
+              "t": "board",
+              "name": "CMP-006 RadioGroup",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.lg"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "radio · Follow my system",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "gap": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "circle",
+                  "kids": [
+                   {
+                    "t": "ellipse",
+                    "name": "outline",
+                    "w": 16,
+                    "h": 16,
+                    "o": {
+                     "fill": "color.surface.canvas",
+                     "stroke": "color.border.strong",
+                     "strokeWidth": "border.hairline",
+                     "strokeAlign": "inner"
+                    },
+                    "x": 0,
+                    "y": 0,
+                    "abs": true
+                   },
+                   {
+                    "t": "ellipse",
+                    "name": "dot",
+                    "w": 8,
+                    "h": 8,
+                    "o": {
+                     "fill": "color.action.primary.default"
+                    },
+                    "x": 4,
+                    "y": 4,
+                    "abs": true
+                   }
+                  ],
+                  "w": 16,
+                  "h": 16
+                 },
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Follow my system",
+                  "typo": "type.ui.heading-lg",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 24,
+                "note": "role=\"radio\" aria-checked=\"true\""
+               },
+               {
+                "t": "board",
+                "name": "radio · On",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "gap": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "circle",
+                  "kids": [
+                   {
+                    "t": "ellipse",
+                    "name": "outline",
+                    "w": 16,
+                    "h": 16,
+                    "o": {
+                     "fill": "color.surface.canvas",
+                     "stroke": "color.border.strong",
+                     "strokeWidth": "border.hairline",
+                     "strokeAlign": "inner"
+                    },
+                    "x": 0,
+                    "y": 0,
+                    "abs": true
+                   }
+                  ],
+                  "w": 16,
+                  "h": 16
+                 },
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "On",
+                  "typo": "type.ui.heading-lg",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 24,
+                "note": "role=\"radio\" aria-checked=\"false\""
+               },
+               {
+                "t": "board",
+                "name": "radio · Off",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "gap": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "circle",
+                  "kids": [
+                   {
+                    "t": "ellipse",
+                    "name": "outline",
+                    "w": 16,
+                    "h": 16,
+                    "o": {
+                     "fill": "color.surface.canvas",
+                     "stroke": "color.border.strong",
+                     "strokeWidth": "border.hairline",
+                     "strokeAlign": "inner"
+                    },
+                    "x": 0,
+                    "y": 0,
+                    "abs": true
+                   }
+                  ],
+                  "w": 16,
+                  "h": 16
+                 },
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Off",
+                  "typo": "type.ui.heading-lg",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 24,
+                "note": "role=\"radio\" aria-checked=\"false\""
+               }
+              ],
+              "h": 32,
+              "note": "radiogroup: one Tab stop, arrows move a roving tabindex (`15`:108)"
+             }
+            ]
+           },
+           {
+            "t": "text",
+            "name": "Effective line",
+            "chars": "Effective: Off, the product default",
+            "typo": "type.ui.heading-md",
+            "color": "color.text.secondary",
+            "w": 960,
+            "note": "a text node in the row's aria-describedby, not a live region (§5.1)"
+           }
+          ],
+          "w": 960,
+          "note": "fieldset/legend \"Increased contrast\""
+         },
+         {
+          "t": "board",
+          "name": "option row · thick_focus_ring",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "stop 7 + switch",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "stop 7",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "justify": "center",
+               "fill": "color.status.info.default",
+               "radius": "radius.badge"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "n",
+                "chars": "7",
+                "typo": "type.ui.label",
+                "color": "color.text.inverse"
+               }
+              ],
+              "w": 20,
+              "h": 20,
+              "note": "annotation marker: Tab stop (not product UI)"
+             },
+             {
+              "t": "board",
+              "name": "switch",
+              "o": {
+               "fill": "color.surface.hover",
+               "radius": "radius.badge",
+               "stroke": "color.border.strong",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "knob",
+                "w": 12,
+                "h": 12,
+                "o": {
+                 "fill": "color.text.secondary"
+                },
+                "x": 4,
+                "y": 4,
+                "abs": true
+               }
+              ],
+              "w": 38,
+              "h": 20,
+              "note": "role=\"switch\" aria-checked=\"false\"; Enter / Space toggles (`15`:87)"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "text",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Increase focus-ring thickness",
+              "typo": "type.ui.heading-lg",
+              "color": "color.text.primary",
+              "w": 882
+             },
+             {
+              "t": "text",
+              "name": "description",
+              "chars": "The outline around the control you are on gets thicker, with a wider dark edge, so it stands out on busy charts. In the high-contrast theme it is thick even with this off.",
+              "typo": "type.ui.heading-md",
+              "color": "color.text.secondary",
+              "w": 882
+             }
+            ],
+            "w": 882
+           }
+          ],
+          "w": 960,
+          "note": "CMP-004 Toggle: role=\"switch\", its label visible"
+         },
+         {
+          "t": "board",
+          "name": "option row · always_show_focus_ring",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "stop 8 + switch",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "stop 8",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "justify": "center",
+               "fill": "color.status.info.default",
+               "radius": "radius.badge"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "n",
+                "chars": "8",
+                "typo": "type.ui.label",
+                "color": "color.text.inverse"
+               }
+              ],
+              "w": 20,
+              "h": 20,
+              "note": "annotation marker: Tab stop (not product UI)"
+             },
+             {
+              "t": "board",
+              "name": "switch",
+              "o": {
+               "fill": "color.surface.hover",
+               "radius": "radius.badge",
+               "stroke": "color.border.strong",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "knob",
+                "w": 12,
+                "h": 12,
+                "o": {
+                 "fill": "color.text.secondary"
+                },
+                "x": 4,
+                "y": 4,
+                "abs": true
+               }
+              ],
+              "w": 38,
+              "h": 20,
+              "note": "role=\"switch\" aria-checked=\"false\"; Enter / Space toggles (`15`:87)"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "text",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Always show the focus ring",
+              "typo": "type.ui.heading-lg",
+              "color": "color.text.primary",
+              "w": 882
+             },
+             {
+              "t": "text",
+              "name": "description",
+              "chars": "The outline also stays after a mouse click or a tap, not only when you move with the keyboard.",
+              "typo": "type.ui.heading-md",
+              "color": "color.text.secondary",
+              "w": 882
+             }
+            ],
+            "w": 882
+           }
+          ],
+          "w": 960,
+          "note": "CMP-004 Toggle: role=\"switch\", its label visible"
+         }
+        ],
+        "w": 960
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "SCR-117∕keyboard-order · dark/body/main/SCR-117 content/CMP-065 FormSection · Contrast and focus/group",
+   "node": {
+    "t": "board",
+    "name": "CMP-228 PreviewTile · focus",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas",
+     "radius": "radius.card",
+     "stroke": "color.border.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "preview",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-039 ring · normal",
+        "o": {
+         "stroke": "color.surface.canvas",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner",
+         "radius": "radius.control"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "band-2 · ring",
+          "o": {
+           "stroke": "color.focus.ring",
+           "strokeWidth": "border.focus",
+           "strokeAlign": "inner",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "band-3 · halo",
+            "o": {
+             "stroke": "color.surface.canvas",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner",
+             "radius": "radius.control"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-001 Button · Sample",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.xs",
+               "padX": "space.button.paddingX",
+               "radius": "radius.control",
+               "justify": "center",
+               "fill": "color.action.secondary.default",
+               "stroke": "color.border.strong",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Sample",
+                "typo": "type.ui.heading-lg",
+                "color": "color.text.primary"
+               }
+              ],
+              "w": 93,
+              "h": 32,
+              "note": "CMP-001 Button (secondary)",
+              "x": 3,
+              "y": 3
+             }
+            ],
+            "w": 99,
+            "h": 38,
+            "x": 2,
+            "y": 2
+           }
+          ],
+          "w": 103,
+          "h": 42,
+          "x": 1,
+          "y": 1
+         }
+        ],
+        "w": 105,
+        "h": 44,
+        "note": "focus-visible; normal: ring 2 px, halo 1 px each side, offset 2 px (D04 §7.1 L235)"
+       },
+       {
+        "t": "board",
+        "name": "row · ladder",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "bid",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "500",
+            "typo": "type.ui.heading-lg",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 144,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "price",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "64 250.1",
+            "typo": "type.ui.heading-lg",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 156,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "ask",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "275",
+            "typo": "type.ui.heading-lg",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 144,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-039 ring · inset normal",
+          "o": {
+           "stroke": "color.surface.canvas",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "band-2 · ring",
+            "o": {
+             "stroke": "color.focus.ring",
+             "strokeWidth": "border.focus",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "band-3 · halo",
+              "o": {
+               "stroke": "color.surface.canvas",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "w": 438,
+              "h": 26,
+              "x": 2,
+              "y": 2
+             }
+            ],
+            "w": 442,
+            "h": 30,
+            "x": 1,
+            "y": 1
+           }
+          ],
+          "w": 444,
+          "h": 32,
+          "x": 0,
+          "y": 0,
+          "abs": true,
+          "note": "CMP-039 inset: drawn inside the row (E47-D04 §7.1)"
+         }
+        ],
+        "w": 444,
+        "h": 32,
+        "note": "a ladder row (bid size, price, ask size) from the seeded heatmap column"
+       }
+      ],
+      "note": "static, no loop; the samples inert and out of the Tab order; the ring painted by the data-focus-ring token path (§6.2); role=\"img\" aria-label=\"Focus preview: normal ring\"; its children presentational"
+     }
+    ],
+    "w": 540,
+    "h": 120,
+    "note": "role=\"group\" aria-label=\"Focus preview: normal ring\"; never the only disclosure (R-1); the frame is the decorative color.border.default (§11)"
+   }
+  },
+  {
+   "into": "SCR-117∕keyboard-order · dark/body/main/SCR-117 content",
+   "node": {
+    "t": "board",
+    "name": "CMP-065 FormSection · Data views",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "h2",
+      "chars": "Data views",
+      "typo": "type.ui.display",
+      "color": "color.text.primary",
+      "note": "h2 inside the fieldset's legend (`15`:743)"
+     },
+     {
+      "t": "board",
+      "name": "group",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "rows",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.lg"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "option row · always_show_tables",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "stop 9 + switch",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "stop 9",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "justify": "center",
+               "fill": "color.status.info.default",
+               "radius": "radius.badge"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "n",
+                "chars": "9",
+                "typo": "type.ui.label",
+                "color": "color.text.inverse"
+               }
+              ],
+              "w": 20,
+              "h": 20,
+              "note": "annotation marker: Tab stop (not product UI)"
+             },
+             {
+              "t": "board",
+              "name": "switch",
+              "o": {
+               "fill": "color.surface.hover",
+               "radius": "radius.badge",
+               "stroke": "color.border.strong",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "knob",
+                "w": 12,
+                "h": 12,
+                "o": {
+                 "fill": "color.text.secondary"
+                },
+                "x": 4,
+                "y": 4,
+                "abs": true
+               }
+              ],
+              "w": 38,
+              "h": 20,
+              "note": "role=\"switch\" aria-checked=\"false\"; Enter / Space toggles (`15`:87)"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "text",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Always show data-table alternatives",
+              "typo": "type.ui.heading-lg",
+              "color": "color.text.primary",
+              "w": 882
+             },
+             {
+              "t": "text",
+              "name": "description",
+              "chars": "Charts and heatmaps open as tables you can read row by row. Each panel can still switch back. Nothing reloads.",
+              "typo": "type.ui.heading-md",
+              "color": "color.text.secondary",
+              "w": 882
+             }
+            ],
+            "w": 882
+           }
+          ],
+          "w": 960,
+          "note": "CMP-004 Toggle: role=\"switch\", its label visible"
+         }
+        ],
+        "w": 960
+       },
+       {
+        "t": "board",
+        "name": "CMP-228 PreviewTile · table-alt",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.md",
+         "pad": "space.inset.lg",
+         "fill": "color.surface.canvas",
+         "radius": "radius.card",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "preview · candles",
+          "kids": [
+           {
+            "t": "rect",
+            "name": "wick 1",
+            "w": 1,
+            "h": 27,
+            "o": {
+             "fill": "color.candle.wick"
+            },
+            "x": 31,
+            "y": 65
+           },
+           {
+            "t": "rect",
+            "name": "body 1",
+            "w": 16,
+            "h": 6,
+            "o": {
+             "fill": "color.candle.down"
+            },
+            "x": 24,
+            "y": 82
+           },
+           {
+            "t": "rect",
+            "name": "wick 2",
+            "w": 1,
+            "h": 32,
+            "o": {
+             "fill": "color.candle.wick"
+            },
+            "x": 79,
+            "y": 88
+           },
+           {
+            "t": "rect",
+            "name": "body 2",
+            "w": 16,
+            "h": 24,
+            "o": {
+             "fill": "color.candle.down"
+            },
+            "x": 72,
+            "y": 88
+           },
+           {
+            "t": "rect",
+            "name": "wick 3",
+            "w": 1,
+            "h": 82,
+            "o": {
+             "fill": "color.candle.wick"
+            },
+            "x": 127,
+            "y": 30
+           },
+           {
+            "t": "rect",
+            "name": "body 3",
+            "w": 16,
+            "h": 82,
+            "o": {
+             "fill": "color.candle.up"
+            },
+            "x": 120,
+            "y": 30
+           },
+           {
+            "t": "rect",
+            "name": "wick 4",
+            "w": 1,
+            "h": 35,
+            "o": {
+             "fill": "color.candle.wick"
+            },
+            "x": 175,
+            "y": 30
+           },
+           {
+            "t": "rect",
+            "name": "body 4",
+            "w": 16,
+            "h": 12,
+            "o": {
+             "fill": "color.candle.down"
+            },
+            "x": 168,
+            "y": 30
+           },
+           {
+            "t": "rect",
+            "name": "wick 5",
+            "w": 1,
+            "h": 27,
+            "o": {
+             "fill": "color.candle.wick"
+            },
+            "x": 223,
+            "y": 15
+           },
+           {
+            "t": "rect",
+            "name": "body 5",
+            "w": 16,
+            "h": 14,
+            "o": {
+             "fill": "color.candle.up"
+            },
+            "x": 216,
+            "y": 28
+           },
+           {
+            "t": "rect",
+            "name": "wick 6",
+            "w": 1,
+            "h": 28,
+            "o": {
+             "fill": "color.candle.wick"
+            },
+            "x": 271,
+            "y": 0
+           },
+           {
+            "t": "rect",
+            "name": "body 6",
+            "w": 16,
+            "h": 28,
+            "o": {
+             "fill": "color.candle.up"
+            },
+            "x": 264,
+            "y": 0
+           }
+          ],
+          "w": 328,
+          "h": 120,
+          "note": "six seeded 1-minute candles, low 64 244.5 to high 64 249.3; role=\"img\" aria-label=\"Table preview: the sample candles as a chart\"; its children presentational"
+         }
+        ],
+        "w": 540,
+        "h": 152,
+        "note": "role=\"group\" aria-label=\"Table preview: the sample candles as a chart\"; never the only disclosure (R-1); the frame is the decorative color.border.default (§11)"
+       }
+      ],
+      "w": 960,
+      "note": "the tile stacks under its group (§11)"
+     }
+    ],
+    "w": 960,
+    "note": "fieldset, legend \"Data views\""
+   }
+  },
+  {
+   "into": "SCR-117∕keyboard-order · dark/body/main/SCR-117 content",
+   "node": {
+    "t": "board",
+    "name": "CMP-065 FormSection · Announcements",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md"
+    },
+    "w": 960,
+    "note": "fieldset, legend \"Announcements\"",
+    "kids": [
+     {
+      "t": "text",
+      "name": "h2",
+      "chars": "Announcements",
+      "typo": "type.ui.display",
+      "color": "color.text.primary",
+      "note": "h2 inside the fieldset's legend (`15`:743)"
+     },
+     {
+      "t": "board",
+      "name": "group",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.lg"
+      },
+      "w": 960,
+      "note": "the tile stacks under its group (§11)",
+      "kids": [
+       {
+        "t": "board",
+        "name": "rows",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.lg"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "option row · announce_prices",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Announce price updates",
+            "typo": "type.ui.heading-lg",
+            "color": "color.text.primary",
+            "w": 960
+           },
+           {
+            "t": "text",
+            "name": "description",
+            "chars": "Choose when a screen reader reads prices: not at all, only with the events listed under this choice, or also the latest price at the pace below. Order, risk, rule, connection and environment events are always read.",
+            "typo": "type.ui.heading-md",
+            "color": "color.text.secondary",
+            "w": 960
+           },
+           {
+            "t": "board",
+            "name": "stop 10 + CMP-006 RadioGroup",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "stop 10",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "justify": "center",
+               "fill": "color.status.info.default",
+               "radius": "radius.badge"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "n",
+                "chars": "10",
+                "typo": "type.ui.label",
+                "color": "color.text.inverse"
+               }
+              ],
+              "w": 28,
+              "h": 20,
+              "note": "annotation marker: Tab stop (not product UI)"
+             },
+             {
+              "t": "board",
+              "name": "CMP-006 RadioGroup",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.lg",
+               "wrap": "wrap"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "radio · Off",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "gap": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "circle",
+                  "kids": [
+                   {
+                    "t": "ellipse",
+                    "name": "outline",
+                    "w": 16,
+                    "h": 16,
+                    "o": {
+                     "fill": "color.surface.canvas",
+                     "stroke": "color.border.strong",
+                     "strokeWidth": "border.hairline",
+                     "strokeAlign": "inner"
+                    },
+                    "x": 0,
+                    "y": 0,
+                    "abs": true
+                   }
+                  ],
+                  "w": 16,
+                  "h": 16
+                 },
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Off",
+                  "typo": "type.ui.heading-lg",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 24,
+                "note": "role=\"radio\" aria-checked=\"false\""
+               },
+               {
+                "t": "board",
+                "name": "radio · On significant change",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "gap": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "circle",
+                  "kids": [
+                   {
+                    "t": "ellipse",
+                    "name": "outline",
+                    "w": 16,
+                    "h": 16,
+                    "o": {
+                     "fill": "color.surface.canvas",
+                     "stroke": "color.border.strong",
+                     "strokeWidth": "border.hairline",
+                     "strokeAlign": "inner"
+                    },
+                    "x": 0,
+                    "y": 0,
+                    "abs": true
+                   },
+                   {
+                    "t": "ellipse",
+                    "name": "dot",
+                    "w": 8,
+                    "h": 8,
+                    "o": {
+                     "fill": "color.action.primary.default"
+                    },
+                    "x": 4,
+                    "y": 4,
+                    "abs": true
+                   }
+                  ],
+                  "w": 16,
+                  "h": 16
+                 },
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "On significant change",
+                  "typo": "type.ui.heading-lg",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 24,
+                "note": "role=\"radio\" aria-checked=\"true\""
+               },
+               {
+                "t": "board",
+                "name": "radio · Always",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "gap": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "circle",
+                  "kids": [
+                   {
+                    "t": "ellipse",
+                    "name": "outline",
+                    "w": 16,
+                    "h": 16,
+                    "o": {
+                     "fill": "color.surface.canvas",
+                     "stroke": "color.border.strong",
+                     "strokeWidth": "border.hairline",
+                     "strokeAlign": "inner"
+                    },
+                    "x": 0,
+                    "y": 0,
+                    "abs": true
+                   }
+                  ],
+                  "w": 16,
+                  "h": 16
+                 },
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Always",
+                  "typo": "type.ui.heading-lg",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 24,
+                "note": "role=\"radio\" aria-checked=\"false\""
+               }
+              ],
+              "w": 960,
+              "h": 32
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "CMP-069 InfoPanel · inline",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs",
+             "pad": "space.inset.md",
+             "fill": "color.surface.raised",
+             "radius": "radius.card"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "title",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "info",
+                "icon": "info",
+                "color": "color.text.secondary",
+                "size": "size.icon"
+               },
+               {
+                "t": "text",
+                "name": "words",
+                "chars": "What significant includes",
+                "typo": "type.ui.heading-lg",
+                "color": "color.text.primary"
+               }
+              ]
+             },
+             {
+              "t": "text",
+              "name": "class · order filled",
+              "chars": "• order filled",
+              "typo": "type.ui.heading-md",
+              "color": "color.text.primary",
+              "w": 936
+             },
+             {
+              "t": "text",
+              "name": "class · order rejected",
+              "chars": "• order rejected",
+              "typo": "type.ui.heading-md",
+              "color": "color.text.primary",
+              "w": 936
+             },
+             {
+              "t": "text",
+              "name": "class · position auto-flattened by risk engine",
+              "chars": "• position auto-flattened by risk engine",
+              "typo": "type.ui.heading-md",
+              "color": "color.text.primary",
+              "w": 936
+             },
+             {
+              "t": "text",
+              "name": "class · rule triggered",
+              "chars": "• rule triggered",
+              "typo": "type.ui.heading-md",
+              "color": "color.text.primary",
+              "w": 936
+             },
+             {
+              "t": "text",
+              "name": "class · WS disconnected∕reconnected",
+              "chars": "• WS disconnected/reconnected",
+              "typo": "type.ui.heading-md",
+              "color": "color.text.primary",
+              "w": 936
+             },
+             {
+              "t": "text",
+              "name": "class · Demo∕Live environment switch confirmed",
+              "chars": "• Demo/Live environment switch confirmed",
+              "typo": "type.ui.heading-md",
+              "color": "color.text.primary",
+              "w": 936
+             }
+            ],
+            "w": 960,
+            "note": "its own aria-describedby target after the row's description; never throttled (`05`:152)"
+           }
+          ],
+          "w": 960,
+          "note": "radiogroup: one Tab stop, arrows move"
+         },
+         {
+          "t": "board",
+          "name": "option row · verbosity",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Screen-reader verbosity for the tape",
+            "typo": "type.ui.heading-lg",
+            "color": "color.text.primary",
+            "w": 960
+           },
+           {
+            "t": "text",
+            "name": "description",
+            "chars": "Low reads only the events listed above, never each trade. Normal and High also read routine trades at the pace you set.",
+            "typo": "type.ui.heading-md",
+            "color": "color.text.secondary",
+            "w": 960
+           },
+           {
+            "t": "board",
+            "name": "stop 11 + CMP-006 RadioGroup",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "stop 11",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "justify": "center",
+               "fill": "color.status.info.default",
+               "radius": "radius.badge"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "n",
+                "chars": "11",
+                "typo": "type.ui.label",
+                "color": "color.text.inverse"
+               }
+              ],
+              "w": 28,
+              "h": 20,
+              "note": "annotation marker: Tab stop (not product UI)"
+             },
+             {
+              "t": "board",
+              "name": "CMP-006 RadioGroup",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.lg",
+               "wrap": "wrap"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "radio · Low",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "gap": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "circle",
+                  "kids": [
+                   {
+                    "t": "ellipse",
+                    "name": "outline",
+                    "w": 16,
+                    "h": 16,
+                    "o": {
+                     "fill": "color.surface.canvas",
+                     "stroke": "color.border.strong",
+                     "strokeWidth": "border.hairline",
+                     "strokeAlign": "inner"
+                    },
+                    "x": 0,
+                    "y": 0,
+                    "abs": true
+                   }
+                  ],
+                  "w": 16,
+                  "h": 16
+                 },
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Low",
+                  "typo": "type.ui.heading-lg",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 24,
+                "note": "role=\"radio\" aria-checked=\"false\""
+               },
+               {
+                "t": "board",
+                "name": "radio · Normal",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "gap": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "circle",
+                  "kids": [
+                   {
+                    "t": "ellipse",
+                    "name": "outline",
+                    "w": 16,
+                    "h": 16,
+                    "o": {
+                     "fill": "color.surface.canvas",
+                     "stroke": "color.border.strong",
+                     "strokeWidth": "border.hairline",
+                     "strokeAlign": "inner"
+                    },
+                    "x": 0,
+                    "y": 0,
+                    "abs": true
+                   },
+                   {
+                    "t": "ellipse",
+                    "name": "dot",
+                    "w": 8,
+                    "h": 8,
+                    "o": {
+                     "fill": "color.action.primary.default"
+                    },
+                    "x": 4,
+                    "y": 4,
+                    "abs": true
+                   }
+                  ],
+                  "w": 16,
+                  "h": 16
+                 },
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Normal",
+                  "typo": "type.ui.heading-lg",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 24,
+                "note": "role=\"radio\" aria-checked=\"true\""
+               },
+               {
+                "t": "board",
+                "name": "radio · High",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "gap": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "circle",
+                  "kids": [
+                   {
+                    "t": "ellipse",
+                    "name": "outline",
+                    "w": 16,
+                    "h": 16,
+                    "o": {
+                     "fill": "color.surface.canvas",
+                     "stroke": "color.border.strong",
+                     "strokeWidth": "border.hairline",
+                     "strokeAlign": "inner"
+                    },
+                    "x": 0,
+                    "y": 0,
+                    "abs": true
+                   }
+                  ],
+                  "w": 16,
+                  "h": 16
+                 },
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "High",
+                  "typo": "type.ui.heading-lg",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 24,
+                "note": "role=\"radio\" aria-checked=\"false\""
+               }
+              ],
+              "w": 960,
+              "h": 32
+             }
+            ]
+           }
+          ],
+          "w": 960,
+          "note": "radiogroup: one Tab stop, arrows move"
+         }
+        ],
+        "w": 960
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "SCR-117∕keyboard-order · dark/body/main/SCR-117 content/CMP-065 FormSection · Announcements/group",
+   "node": {
+    "t": "board",
+    "name": "CMP-228 PreviewTile · announcements",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas",
+     "radius": "radius.card",
+     "stroke": "color.border.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "preview",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "burst",
+        "chars": "20 s BTCUSDT burst, 40 prints a second (800 prints)",
+        "typo": "type.ui.heading-md",
+        "color": "color.text.secondary",
+        "w": 508
+       }
+      ],
+      "note": "the role=img part: the burst it reads (§7.3); role=\"img\" aria-label=\"Announcement preview: On significant change, verbosity Normal\"; its children presentational"
+     },
+     {
+      "t": "board",
+      "name": "stop 12 + button · Play sample",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "stop 12",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center",
+         "fill": "color.status.info.default",
+         "radius": "radius.badge"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "n",
+          "chars": "12",
+          "typo": "type.ui.label",
+          "color": "color.text.inverse"
+         }
+        ],
+        "w": 28,
+        "h": 20,
+        "note": "annotation marker: Tab stop (not product UI)"
+       },
+       {
+        "t": "board",
+        "name": "button · Play sample",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "padX": "space.button.paddingX",
+         "radius": "radius.control",
+         "justify": "center",
+         "fill": "color.action.secondary.default",
+         "stroke": "color.border.strong",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Play sample",
+          "typo": "type.ui.heading-lg",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 149,
+        "h": 32,
+        "note": "CMP-001 Button (secondary)"
+       }
+      ]
+     }
+    ],
+    "w": 540,
+    "h": 95,
+    "note": "role=\"group\" aria-label=\"Announcement preview: On significant change, verbosity Normal\"; never the only disclosure (R-1); the frame is the decorative color.border.default (§11)"
+   }
+  },
+  {
+   "into": "SCR-117∕keyboard-order · dark/body/main/SCR-117 content",
+   "node": {
+    "t": "board",
+    "name": "CMP-065 FormSection · Interaction",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "h2",
+      "chars": "Interaction",
+      "typo": "type.ui.display",
+      "color": "color.text.primary",
+      "note": "h2 inside the fieldset's legend (`15`:743)"
+     },
+     {
+      "t": "board",
+      "name": "group",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "rows",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.lg"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "option row · keyboard_only",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "stop 13 + switch",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "stop 13",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "justify": "center",
+               "fill": "color.status.info.default",
+               "radius": "radius.badge"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "n",
+                "chars": "13",
+                "typo": "type.ui.label",
+                "color": "color.text.inverse"
+               }
+              ],
+              "w": 28,
+              "h": 20,
+              "note": "annotation marker: Tab stop (not product UI)"
+             },
+             {
+              "t": "board",
+              "name": "switch",
+              "o": {
+               "fill": "color.surface.hover",
+               "radius": "radius.badge",
+               "stroke": "color.border.strong",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "knob",
+                "w": 12,
+                "h": 12,
+                "o": {
+                 "fill": "color.text.secondary"
+                },
+                "x": 4,
+                "y": 4,
+                "abs": true
+               }
+              ],
+              "w": 38,
+              "h": 20,
+              "note": "role=\"switch\" aria-checked=\"false\"; Enter / Space toggles (`15`:87)"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "text",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Keyboard-only mode",
+              "typo": "type.ui.heading-lg",
+              "color": "color.text.primary",
+              "w": 882
+             },
+             {
+              "t": "text",
+              "name": "description",
+              "chars": "Drag handles stop responding to the mouse; each shows fields and step buttons you use from the keyboard instead. Orders still ask you to confirm.",
+              "typo": "type.ui.heading-md",
+              "color": "color.text.secondary",
+              "w": 882
+             }
+            ],
+            "w": 882
+           }
+          ],
+          "w": 960,
+          "note": "CMP-004 Toggle: role=\"switch\", its label visible"
+         },
+         {
+          "t": "board",
+          "name": "option row · larger_hit_targets",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "stop 14 + switch",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "stop 14",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "justify": "center",
+               "fill": "color.status.info.default",
+               "radius": "radius.badge"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "n",
+                "chars": "14",
+                "typo": "type.ui.label",
+                "color": "color.text.inverse"
+               }
+              ],
+              "w": 28,
+              "h": 20,
+              "note": "annotation marker: Tab stop (not product UI)"
+             },
+             {
+              "t": "board",
+              "name": "switch",
+              "o": {
+               "fill": "color.surface.hover",
+               "radius": "radius.badge",
+               "stroke": "color.border.strong",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "ellipse",
+                "name": "knob",
+                "w": 12,
+                "h": 12,
+                "o": {
+                 "fill": "color.text.secondary"
+                },
+                "x": 4,
+                "y": 4,
+                "abs": true
+               }
+              ],
+              "w": 38,
+              "h": 20,
+              "note": "role=\"switch\" aria-checked=\"false\"; Enter / Space toggles (`15`:87)"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "text",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Larger click targets",
+              "typo": "type.ui.heading-lg",
+              "color": "color.text.primary",
+              "w": 882
+             },
+             {
+              "t": "text",
+              "name": "description",
+              "chars": "Buttons, ladder rows and other click targets grow to at least 44 pixels. They are never smaller than 24 pixels, even with this off.",
+              "typo": "type.ui.heading-md",
+              "color": "color.text.secondary",
+              "w": 882
+             }
+            ],
+            "w": 882
+           }
+          ],
+          "w": 960,
+          "note": "CMP-004 Toggle: role=\"switch\", its label visible"
+         }
+        ],
+        "w": 960
+       }
+      ],
+      "w": 960
+     }
+    ],
+    "w": 960,
+    "note": "fieldset, legend \"Interaction\""
+   }
+  },
+  {
+   "into": "SCR-117∕keyboard-order · dark/body/main/SCR-117 content",
+   "node": {
+    "t": "board",
+    "name": "CMP-065 FormSection · Help and statement",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "h2",
+      "chars": "Help and statement",
+      "typo": "type.ui.display",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "board",
+      "name": "stop 15 + link · Read the accessibility statement",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "stop 15",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center",
+         "fill": "color.status.info.default",
+         "radius": "radius.badge"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "n",
+          "chars": "15",
+          "typo": "type.ui.label",
+          "color": "color.text.inverse"
+         }
+        ],
+        "w": 28,
+        "h": 20,
+        "note": "annotation marker: Tab stop (not product UI)"
+       },
+       {
+        "t": "board",
+        "name": "link · Read the accessibility statement",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Read the accessibility statement",
+          "typo": "type.ui.heading-lg",
+          "color": "color.text.link"
+         },
+         {
+          "t": "rect",
+          "name": "underline",
+          "w": 358,
+          "h": 1,
+          "o": {
+           "fill": "color.text.link"
+          }
+         }
+        ],
+        "note": "a real link, same tab, underlined in every theme (§9, A11Y-F-0018)"
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "stop 16 + link · Change shortcuts",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "stop 16",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center",
+         "fill": "color.status.info.default",
+         "radius": "radius.badge"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "n",
+          "chars": "16",
+          "typo": "type.ui.label",
+          "color": "color.text.inverse"
+         }
+        ],
+        "w": 28,
+        "h": 20,
+        "note": "annotation marker: Tab stop (not product UI)"
+       },
+       {
+        "t": "board",
+        "name": "link · Change shortcuts",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Change shortcuts",
+          "typo": "type.ui.heading-lg",
+          "color": "color.text.link"
+         },
+         {
+          "t": "rect",
+          "name": "underline",
+          "w": 179,
+          "h": 1,
+          "o": {
+           "fill": "color.text.link"
+          }
+         }
+        ],
+        "note": "a real link, same tab, underlined in every theme (§9, A11Y-F-0018)"
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "stop 17 + button · Show the keyboard shortcut cheatsheet (Ctrl+∕)",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "stop 17",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center",
+         "fill": "color.status.info.default",
+         "radius": "radius.badge"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "n",
+          "chars": "17",
+          "typo": "type.ui.label",
+          "color": "color.text.inverse"
+         }
+        ],
+        "w": 28,
+        "h": 20,
+        "note": "annotation marker: Tab stop (not product UI)"
+       },
+       {
+        "t": "board",
+        "name": "button · Show the keyboard shortcut cheatsheet (Ctrl+∕)",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "padX": "space.button.paddingX",
+         "radius": "radius.control",
+         "justify": "center",
+         "fill": "color.action.secondary.default",
+         "stroke": "color.border.strong",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Show the keyboard shortcut cheatsheet (Ctrl+/)",
+          "typo": "type.ui.heading-lg",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 541,
+        "h": 32,
+        "note": "CMP-001; aria-haspopup=\"dialog\"; opens SCR-013 in place, focus back on close (§9)"
+       }
+      ]
+     }
+    ],
+    "w": 960
+   }
+  },
+  {
+   "into": "SCR-117∕keyboard-order · dark",
+   "node": {
+    "t": "board",
+    "name": "StatusBar (placeholder)",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · env word",
+      "w": 56,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 48
+   }
+  },
+  {
+   "into": "SCR-117∕keyboard-order · dark",
+   "node": {
+    "t": "rect",
+    "name": "fold · 800 px viewport",
+    "w": 1280,
+    "h": 2,
+    "o": {
+     "fill": "color.status.info.default"
+    },
+    "x": 0,
+    "y": 800,
+    "abs": true,
+    "note": "annotation: the viewport fold (not product UI)"
+   }
+  },
+  {
+   "into": "SCR-117∕keyboard-order · dark",
+   "node": {
+    "t": "board",
+    "name": "stop 1 · SettingsNav",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "justify": "center",
+     "fill": "color.status.info.default",
+     "radius": "radius.badge"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "n",
+      "chars": "1",
+      "typo": "type.ui.label",
+      "color": "color.text.inverse"
+     }
+    ],
+    "w": 20,
+    "h": 20,
+    "x": 236,
+    "y": 128,
+    "abs": true,
+    "note": "annotation marker (not product UI)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 01",
+    "chars": "state: SCR-117/keyboard-order · dark at 150 % text scale",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 80,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer · data",
+    "chars": "Data: seeded synthetic stream (seed 1304, BTCUSDT, tick 0.1); sample data, never a market capture (§0 L61); the tick size is the recorded fixture's",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "x": 80,
+    "y": 2768
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "E47-D05 / 10 keyboard-order-150",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Board",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§0 L74: §12: the Tab and reading order numbered, at 150 % text scale",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Theme: dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Frames (hand-off §H L97): SCR-117/keyboard-order · dark at 150 % text scale",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "Export: docs/design/E47/img/E47-D05-10-keyboard-order-150.png",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "Data: seeded synthetic stream (seed 1304, BTCUSDT, tick 0.1); sample data, never a market capture (§0 L61); the tick size is the recorded fixture's",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-6",
+        "chars": "Markers, tags, fold lines and callouts in color.status.info.default are annotation, not product UI",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "SCR-117/keyboard-order · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§12 L260: Tab order — 1 SettingsNav \"Accessibility\"; 2 \"Search settings\"; 3 Reduced motion; 4 Disable canvas animation; 5 Pause (motion tile); 6 Increased contrast; 7 Increase focus-ring thickness; 8 Always show the focus ring; 9 Always show data-table alternatives; 10 Announce price updates; 11 Screen-reader verbosity for the tape; 12 Play sample (announcement tile); 13 Keyboard-only mode; 14 Larger click targets; 15 Read the accessibility statement; 16 Change shortcuts; 17 Show the keyboard shortcut cheatsheet (Ctrl+/)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Initial focus: from a SettingsNav click it stays on the entry (stop 1); from a deep link or reload it goes to the h1 (tabindex=\"-1\", out of the Tab order)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "A RadioGroup is one stop (arrows move a roving tabindex, `15`:108); a Toggle is role=\"switch\", Enter / Space toggles (`15`:87); Enter in the search does nothing beyond the field",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "The motion tile's Pause shows because the loop runs while focus is in its group (§13.2); the cadence row is a stop only when Always is chosen; each Reset and Reset this section slot in after their control when shown",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "Reading order = DOM order: h1, W-1, W-2, the search, each section (h2, rows, tile), Help and statement",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-6",
+        "chars": "§11 L256: at 150 % labels and descriptions wrap and each tile stacks under its group; the page is about 2568 px, drawn at full length with the 800 px fold marked",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-7",
+        "chars": "Shell stops (TopBar, NavRail) precede stop 1 and are the shell's; numbered markers are annotation",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E47-D05 SCR-117 · board 10 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400,
+    "x": 1440,
+    "y": 80
+   }
+  }
+ ],
+ "export": "docs/design/E47/img/E47-D05-10-keyboard-order-150.png",
+ "notes": {
+  "sources": [
+   "spec docs/design/E47/E47-D05.md md5 2352bde9, hand-off docs/design/E47/E47-D05-handoff.md md5 0b4d3568 (§0 L74; hand-off §H L97); shipped labels apps/web/src/features/a11y-preferences/AccessibilitySettingsScreen.tsx md5 797df795; tick size packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a; ring geometry E47-D04 at 1ff5d8cb9 (§7.1)"
+  ],
+  "copy_keys": [
+   "W-1 (§15 L284, verbatim): Changes apply immediately, including chart canvases. They are saved to your account.",
+   "W-2 (§15 L285, PROPOSED, the scope line): Scope: per user, for every setting on this page.",
+   "W-22 (§15 L305, PROPOSED): Show the keyboard shortcut cheatsheet (Ctrl+/)",
+   "W-21 (§15 L304, PROPOSED): Read the accessibility statement",
+   "W-23 (§15 L306, PROPOSED): Change shortcuts"
+  ],
+  "copy_gaps": [
+   "\"Search settings\": the settings search's visible label (§10 L249 names the search; no placeholder stands in for a label, `11`:5077)",
+   "\"Pause\" / \"Play\": the motion tile's one button (§6 L179: \"one button whose label swaps \\\"Pause\\\" / \\\"Play\\\"\")",
+   "the motion tile's accessible name \"Motion preview, full motion: the heatmap trail fades, the price flashes\": §6 L179 asks for \"the configuration in words\" and gives no string (an aria-label, not drawn)",
+   "\"Sample\": the focus tile's CMP-001 Button label (§6.2 L185 names the button, not its words)",
+   "the focus tile's accessible name \"Focus preview: normal ring\": §6 L179 asks for \"the configuration in words\" and gives no string (an aria-label, not drawn)",
+   "the table-alt tile's accessible name \"Table preview: the sample candles as a chart\": §6 L179 asks for \"the configuration in words\" and gives no string (an aria-label, not drawn)",
+   "\"Play sample\": the announcement tile's button (§6.3 L189; W-27 \"Show all\" is its label while playing)",
+   "the tile's burst line \"20 s BTCUSDT burst, 40 prints a second\": §7.3 L218's figures, worded by the kit",
+   "the announcements tile's accessible name \"Announcement preview: On significant change, verbosity Normal\": §6 L179 asks for \"the configuration in words\" and gives no string (an aria-label, not drawn)"
+  ],
+  "spec_gaps": [],
+  "fallbacks": [
+   "kit choice: numbered stop markers, tags and callouts are annotation overlays in color.status.info.default with color.text.inverse words, never product UI",
+   "fallback: border.control (E47-D03's D03-D5 / D03-D6, PROPOSED) is not a token yet: control boundaries bind border.hairline in dark and light and border.thick in high contrast",
+   "fallback: no type token at 150 %: each role is drawn with the token nearest 1.5 x its size (caption 11 -> heading-md 16, label 12 / body 13 -> heading-lg 20, heading-sm 14 / heading-md 16 -> display 24), as the E47-D03 kit does",
+   "fallback: the link underline (A11Y-F-0018) drawn as a 1 px color.text.link rect under the words (no text-decoration field in cvsheet)",
+   "kit choice: the shell chrome (TopBar, NavRail, StatusBar) and the other CMP-086 entries drawn as neutral placeholders; only SCR-117's content, its SettingsNav entry and the reveal hosts' named parts are drawn",
+   "kit choice: a 1280-wide window whose page is longer than the 800 px viewport is drawn at its full scroll length (the fixed TopBar and StatusBar drawn once, at the top and the bottom), with the 800 px fold marked by a dashed annotation line"
+  ],
+  "tokens": [
+   "type.ui.label",
+   "color.text.inverse",
+   "color.status.info.default",
+   "radius.badge",
+   "color.text.secondary",
+   "size.icon",
+   "space.inset.sm",
+   "color.surface.canvas",
+   "radius.control",
+   "color.border.strong",
+   "border.hairline",
+   "type.ui.heading-lg",
+   "color.text.primary",
+   "space.stack.xs",
+   "type.ui.display",
+   "type.ui.heading-md",
+   "space.stack.sm",
+   "color.action.primary.default",
+   "space.inset.lg",
+   "color.surface.hover",
+   "space.inset.md",
+   "color.axis.text",
+   "color.heatmap.bid.4",
+   "color.heatmap.bid.5",
+   "color.heatmap.bid.2",
+   "color.heatmap.bid.1",
+   "color.heatmap.bid.3",
+   "color.buy.subtle",
+   "space.inset.xs",
+   "space.button.paddingX",
+   "color.action.secondary.default",
+   "space.stack.md",
+   "radius.card",
+   "color.border.default",
+   "space.stack.lg",
+   "color.focus.ring",
+   "border.focus",
+   "color.surface.raised",
+   "color.candle.wick",
+   "color.candle.down",
+   "color.candle.up",
+   "color.text.link",
+   "space.inset.xl",
+   "color.surface.app",
+   "color.border.subtle",
+   "type.ui.body-strong",
+   "color.border.selected",
+   "type.ui.heading-sm",
+   "type.ui.caption",
+   "color.text.tertiary"
+  ],
+  "live_checks": [
+   "link 'Read the accessibility statement': after relayout set the underline's width to the words' measured width",
+   "link 'Change shortcuts': after relayout set the underline's width to the words' measured width",
+   "'fold · 800 px viewport': set its stroke to dashed (post-step), so it reads as an annotation, not a divider",
+   "root 'E47-D05 / 10 keyboard-order-150' at (28000, 4200): read back the name exactly after the first section call; size 1920 x 2864",
+   "after touchTexts + relayout: the annotation column (estimated 695 px) ends inside the root (h 2864); raise the root's h to its end + 80 if not",
+   "frame 'SCR-117∕keyboard-order · dark': read back 1280 x 2664 at (80, 80); clip on, no child spills",
+   "export docs/design/E47/img/E47-D05-10-keyboard-order-150.png; record the board id and the PNG size in §0"
+  ],
+  "deviations": [],
+  "ambiguities": [
+   "§2 L119 gives the five FormSections and their order but not which rows each holds: the kit groups §3's keys by their words — Motion: reduced_motion, disable_canvas_animation; Contrast and focus: increased_contrast, thick_focus_ring, always_show_focus_ring; Data views: always_show_tables; Announcements: announce_prices, announce_throttle_s, verbosity; Interaction: keyboard_only, larger_hit_targets (the tiles: motion, focus, table-alt and announcements after their group's last row, §6)"
+  ]
+ }
+}

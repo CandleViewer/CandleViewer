@@ -1,0 +1,1194 @@
+{
+ "board": {
+  "name": "E47-D07 / 04 incident-timeline",
+  "w": 1920,
+  "h": 1000,
+  "x": 21000,
+  "y": 0,
+  "o": {
+   "fill": "color.surface.app",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "timeline∕incident · dark",
+    "o": {
+     "fill": "color.surface.canvas",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "timeline/incident",
+    "x": 80,
+    "y": 80,
+    "kids": [
+     {
+      "t": "text",
+      "name": "lane · events in",
+      "chars": "events in",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 24,
+      "y": 66
+     },
+     {
+      "t": "text",
+      "name": "lane · focus (dialog)",
+      "chars": "focus (dialog)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 24,
+      "y": 130
+     },
+     {
+      "t": "text",
+      "name": "lane · assertive",
+      "chars": "assertive",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 24,
+      "y": 162
+     },
+     {
+      "t": "text",
+      "name": "lane · polite",
+      "chars": "polite",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 24,
+      "y": 194
+     },
+     {
+      "t": "board",
+      "name": "tag · event 1",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.xs",
+       "radius": "radius.control",
+       "fill": "color.status.info.default"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "T-3 · rank 3 · arrives 1.000 s",
+        "typo": "type.ui.caption",
+        "color": "color.text.inverse"
+       }
+      ],
+      "h": 16,
+      "x": 194,
+      "y": 64,
+      "abs": true,
+      "note": "annotation tag (not product UI)"
+     },
+     {
+      "t": "board",
+      "name": "tag · event 2",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.xs",
+       "radius": "radius.control",
+       "fill": "color.status.info.default"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "T-17 · rank 1 · arrives 1.000 s",
+        "typo": "type.ui.caption",
+        "color": "color.text.inverse"
+       }
+      ],
+      "h": 16,
+      "x": 194,
+      "y": 84,
+      "abs": true,
+      "note": "annotation tag (not product UI)"
+     },
+     {
+      "t": "board",
+      "name": "tag · event 3",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.xs",
+       "radius": "radius.control",
+       "fill": "color.status.info.default"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "T-23 · rank 4 · arrives 1.600 s",
+        "typo": "type.ui.caption",
+        "color": "color.text.inverse"
+       }
+      ],
+      "h": 16,
+      "x": 220,
+      "y": 104,
+      "abs": true,
+      "note": "annotation tag (not product UI)"
+     },
+     {
+      "t": "board",
+      "name": "line 1",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.neutral.subtle",
+       "stroke": "color.neutral.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "radius": "radius.control",
+       "padX": "space.inset.xs",
+       "clip": true
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "words",
+        "chars": "T-30 T-31 · 2.734 s",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 120,
+      "h": 20,
+      "x": 154,
+      "y": 192
+     },
+     {
+      "t": "board",
+      "name": "line 2",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.status.danger.subtle",
+       "stroke": "color.status.danger.strong",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "radius": "radius.control",
+       "padX": "space.inset.xs",
+       "clip": true
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "words",
+        "chars": "T-17 · 9.000 s",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 396,
+      "h": 20,
+      "x": 194,
+      "y": 128
+     },
+     {
+      "t": "rect",
+      "name": "drop 2",
+      "w": 2,
+      "h": 20,
+      "o": {
+       "fill": "color.status.info.default"
+      },
+      "x": 194,
+      "y": 192
+     },
+     {
+      "t": "board",
+      "name": "line 3",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.status.danger.subtle",
+       "stroke": "color.status.danger.strong",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "radius": "radius.control",
+       "padX": "space.inset.xs",
+       "clip": true
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "words",
+        "chars": "T-3 · 4.867 s",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 214,
+      "h": 20,
+      "x": 590,
+      "y": 160
+     },
+     {
+      "t": "rect",
+      "name": "drop 3",
+      "w": 2,
+      "h": 20,
+      "o": {
+       "fill": "color.status.info.default"
+      },
+      "x": 590,
+      "y": 192
+     },
+     {
+      "t": "board",
+      "name": "line 4",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.status.danger.subtle",
+       "stroke": "color.status.danger.strong",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "radius": "radius.control",
+       "padX": "space.inset.xs",
+       "clip": true
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "words",
+        "chars": "T-23 · 9.000 s",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 396,
+      "h": 20,
+      "x": 804,
+      "y": 160
+     },
+     {
+      "t": "rect",
+      "name": "drop 4",
+      "w": 2,
+      "h": 20,
+      "o": {
+       "fill": "color.status.info.default"
+      },
+      "x": 804,
+      "y": 192
+     },
+     {
+      "t": "board",
+      "name": "tag · drops",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.xs",
+       "radius": "radius.control",
+       "fill": "color.status.info.default"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "each assertive write drops the pending ambient values (PW:116–120)",
+        "typo": "type.ui.caption",
+        "color": "color.text.inverse"
+       }
+      ],
+      "h": 16,
+      "x": 200,
+      "y": 216,
+      "abs": true,
+      "note": "annotation tag (not product UI)"
+     },
+     {
+      "t": "rect",
+      "name": "axis",
+      "w": 1050,
+      "h": 1,
+      "o": {
+       "fill": "color.axis.text"
+      },
+      "x": 150,
+      "y": 244
+     },
+     {
+      "t": "text",
+      "name": "tick 0",
+      "chars": "0 s",
+      "typo": "type.num.sm",
+      "color": "color.axis.text",
+      "x": 144,
+      "y": 250
+     },
+     {
+      "t": "text",
+      "name": "tick 2",
+      "chars": "2 s",
+      "typo": "type.num.sm",
+      "color": "color.axis.text",
+      "x": 232,
+      "y": 250
+     },
+     {
+      "t": "text",
+      "name": "tick 4",
+      "chars": "4 s",
+      "typo": "type.num.sm",
+      "color": "color.axis.text",
+      "x": 320,
+      "y": 250
+     },
+     {
+      "t": "text",
+      "name": "tick 6",
+      "chars": "6 s",
+      "typo": "type.num.sm",
+      "color": "color.axis.text",
+      "x": 408,
+      "y": 250
+     },
+     {
+      "t": "text",
+      "name": "tick 8",
+      "chars": "8 s",
+      "typo": "type.num.sm",
+      "color": "color.axis.text",
+      "x": 496,
+      "y": 250
+     },
+     {
+      "t": "text",
+      "name": "tick 10",
+      "chars": "10 s",
+      "typo": "type.num.sm",
+      "color": "color.axis.text",
+      "x": 584,
+      "y": 250
+     },
+     {
+      "t": "text",
+      "name": "tick 12",
+      "chars": "12 s",
+      "typo": "type.num.sm",
+      "color": "color.axis.text",
+      "x": 672,
+      "y": 250
+     },
+     {
+      "t": "text",
+      "name": "tick 14",
+      "chars": "14 s",
+      "typo": "type.num.sm",
+      "color": "color.axis.text",
+      "x": 760,
+      "y": 250
+     },
+     {
+      "t": "text",
+      "name": "tick 16",
+      "chars": "16 s",
+      "typo": "type.num.sm",
+      "color": "color.axis.text",
+      "x": 848,
+      "y": 250
+     },
+     {
+      "t": "text",
+      "name": "tick 18",
+      "chars": "18 s",
+      "typo": "type.num.sm",
+      "color": "color.axis.text",
+      "x": 936,
+      "y": 250
+     },
+     {
+      "t": "text",
+      "name": "tick 20",
+      "chars": "20 s",
+      "typo": "type.num.sm",
+      "color": "color.axis.text",
+      "x": 1024,
+      "y": 250
+     },
+     {
+      "t": "text",
+      "name": "tick 22",
+      "chars": "22 s",
+      "typo": "type.num.sm",
+      "color": "color.axis.text",
+      "x": 1112,
+      "y": 250
+     },
+     {
+      "t": "text",
+      "name": "scale",
+      "chars": "44 px per second",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "x": 24,
+      "y": 250
+     },
+     {
+      "t": "board",
+      "name": "h",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Incident, Always · Normal · 2 s (§10.3 L480): reject, auto-flatten and disconnect",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary",
+        "w": 900
+       }
+      ],
+      "w": 900,
+      "x": 24,
+      "y": 24
+     }
+    ]
+   }
+  },
+  {
+   "into": "timeline∕incident · dark",
+   "node": {
+    "t": "board",
+    "name": "the queue",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "h",
+      "chars": "The queue at 1.600 s, by rank then arrival (§5.1)",
+      "typo": "type.ui.label",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "board",
+      "name": "queue 1",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.status.danger.subtle",
+       "radius": "radius.control",
+       "clip": true
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "stripe",
+        "w": 4,
+        "h": 66,
+        "o": {
+         "fill": "color.status.danger.strong"
+        }
+       },
+       {
+        "t": "board",
+        "name": "content",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "head",
+          "chars": "1. T-17 · rank 1 · speaking (dialog focus)",
+          "typo": "type.ui.label",
+          "color": "color.text.primary",
+          "w": 340
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Position auto-flattened, dialog. Auto-flattened. BTCUSDT long 0.8 closed by the risk engine. Reason: daily loss limit. Dismiss, button.",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 340
+         }
+        ],
+        "w": 360,
+        "h": 66
+       }
+      ],
+      "w": 364,
+      "h": 66
+     },
+     {
+      "t": "board",
+      "name": "queue 2",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.status.danger.subtle",
+       "radius": "radius.control",
+       "clip": true
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "stripe",
+        "w": 4,
+        "h": 53,
+        "o": {
+         "fill": "color.status.danger.strong"
+        }
+       },
+       {
+        "t": "board",
+        "name": "content",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "head",
+          "chars": "2. T-3 · rank 3 · waits; written at 10.000 s",
+          "typo": "type.ui.label",
+          "color": "color.text.primary",
+          "w": 340
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Rejected. Limit buy 0.5 BTCUSDT at 64,000.0. Reason: insufficient margin.",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 340
+         }
+        ],
+        "w": 360,
+        "h": 53
+       }
+      ],
+      "w": 364,
+      "h": 53
+     },
+     {
+      "t": "board",
+      "name": "queue 3",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.status.danger.subtle",
+       "radius": "radius.control",
+       "clip": true
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "stripe",
+        "w": 4,
+        "h": 66,
+        "o": {
+         "fill": "color.status.danger.strong"
+        }
+       },
+       {
+        "t": "board",
+        "name": "content",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "head",
+          "chars": "3. T-23 · rank 4 · waits; written at 14.867 s",
+          "typo": "type.ui.label",
+          "color": "color.text.primary",
+          "w": 340
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Disconnected. New orders off. Cancel and close still work, confirmed over the server. Exchange-side stops still protect open positions.",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 340
+         }
+        ],
+        "w": 360,
+        "h": 66
+       }
+      ],
+      "w": 364,
+      "h": 66
+     }
+    ],
+    "w": 364,
+    "x": 24,
+    "y": 288
+   }
+  },
+  {
+   "into": "timeline∕incident · dark",
+   "node": {
+    "t": "board",
+    "name": "CMP-060 NotificationCenter · log",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs",
+     "pad": "space.inset.sm",
+     "fill": "color.surface.raised",
+     "radius": "radius.card"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "h",
+      "chars": "CMP-060 entries: 3, one per assertive line (R-8)",
+      "typo": "type.ui.label",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "board",
+      "name": "row 1",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "time",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "t",
+          "chars": "1.000 s",
+          "typo": "type.num.sm",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 72,
+        "h": 20
+       },
+       {
+        "t": "board",
+        "name": "entry",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Auto-flattened. BTCUSDT long 0.8 closed by the risk engine. Reason: daily loss limit.",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 312
+         }
+        ],
+        "w": 328
+       }
+      ],
+      "w": 400,
+      "note": "CMP-060 entry: a listitem in the role=log list"
+     },
+     {
+      "t": "board",
+      "name": "row 2",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "time",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "t",
+          "chars": "10.000 s",
+          "typo": "type.num.sm",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 72,
+        "h": 20
+       },
+       {
+        "t": "board",
+        "name": "entry",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Rejected. Limit buy 0.5 BTCUSDT at 64,000.0. Reason: insufficient margin.",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 312
+         }
+        ],
+        "w": 328
+       }
+      ],
+      "w": 400,
+      "note": "CMP-060 entry: a listitem in the role=log list"
+     },
+     {
+      "t": "board",
+      "name": "row 3",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "time",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "t",
+          "chars": "14.867 s",
+          "typo": "type.num.sm",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 72,
+        "h": 20
+       },
+       {
+        "t": "board",
+        "name": "entry",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "Disconnected. New orders off. Cancel and close still work, confirmed over the server. Exchange-side stops still protect open positions.",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 312
+         }
+        ],
+        "w": 328
+       }
+      ],
+      "w": 400,
+      "note": "CMP-060 entry: a listitem in the role=log list"
+     }
+    ],
+    "w": 416,
+    "x": 412,
+    "y": 288,
+    "note": "role=\"log\"; the fallback of record when a write overruns the reader (§5.1, R-8)"
+   }
+  },
+  {
+   "into": "timeline∕incident · dark",
+   "node": {
+    "t": "board",
+    "name": "CMP-045 Toast · persistent",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.sm",
+     "pad": "space.inset.sm",
+     "fill": "color.surface.overlay",
+     "radius": "radius.card",
+     "stroke": "color.border.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "icon",
+      "name": "glyph",
+      "icon": "danger",
+      "color": "color.status.danger.strong",
+      "size": "size.icon"
+     },
+     {
+      "t": "text",
+      "name": "sentence",
+      "chars": "Auto-flattened. BTCUSDT long 0.8 closed by the risk engine. Reason: daily loss limit.",
+      "typo": "type.ui.body",
+      "color": "color.text.primary",
+      "w": 296
+     },
+     {
+      "t": "board",
+      "name": "close",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "justify": "center",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "icon",
+        "name": "glyph",
+        "icon": "close",
+        "color": "color.text.secondary",
+        "size": "size.icon"
+       }
+      ],
+      "w": 24,
+      "h": 24,
+      "note": "CMP-001 icon button, accessible name \"Close\""
+     }
+    ],
+    "w": 360,
+    "note": "persistent: stays until closed (R-8, `15`:531); appears without focus; its sentence is written into the shell pair, spoken once (R-6)",
+    "x": 896,
+    "y": 288
+   }
+  },
+  {
+   "into": "timeline∕incident · dark",
+   "node": {
+    "t": "board",
+    "name": "tag · the attention set's persistent toast (R-",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "the attention set's persistent toast (R-8); T-17's dialog is its speaker",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 896,
+    "y": 367,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "timeline∕incident · dark",
+   "node": {
+    "t": "board",
+    "name": "tag · synthetic data",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "Synthetic data · seed 1306 · BTCUSDT",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 24,
+    "y": 772,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 01",
+    "chars": "state: timeline/incident · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 80,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer · data",
+    "chars": "Data: seeded synthetic stream (seed 1306, BTCUSDT, tick 0.1), the §10 scripts; sample data, never a market capture (§0 L62); only the tick size is the recorded fixture's",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "x": 80,
+    "y": 904
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "E47-D07 / 04 incident-timeline",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Board",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§0 L69: §5.1, §10.3: the queue by rank, the speech estimates, the log row per event, the auto-flatten's persistent toast",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Theme: dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Frames (hand-off §H L107): timeline/incident · dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "Export: docs/design/E47/img/E47-D07-04-incident-timeline.png",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "Data: seeded synthetic stream (seed 1306, BTCUSDT, tick 0.1), the §10 scripts; sample data, never a market capture (§0 L62); only the tick size is the recorded fixture's",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-6",
+        "chars": "Markers, tags, arrows and callouts in color.status.info.default are annotation, not product UI",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "timeline/incident · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§5.1 L231: one queue by rank (1 the auto-flatten, 2 safety, 3 execution, 4 connectivity), drained once per frame; the head written alone and in full; the next write waits for its speech estimate, max(1.5 s, characters / 15 per second) (PROPOSED, D07-Q3)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Events: T-3 at 1.000 s; T-17 at 1.000 s; T-23 at 1.600 s; lines: T-30 T-31 polite at 0.100 s; T-17 focus at 1.000 s; T-3 assertive at 10.000 s; T-23 assertive at 14.867 s",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "T-17's write is its alertdialog taking focus (§9); the reader's focus speech is the queue's item, the pair does not also write W-5 (R-6)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "The disconnect is heard last, well after its event; the overlay and its toast are immediate (D07-Q4)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "Nothing is dropped from the queue; the drop counter stays 0 (§12); the shipped announcer's overwrite is D07-G1 (#304)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E47-D07 announcements · board 04 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400,
+    "x": 1440,
+    "y": 80
+   }
+  }
+ ],
+ "export": "docs/design/E47/img/E47-D07-04-incident-timeline.png",
+ "notes": {
+  "sources": [
+   "spec docs/design/E47/E47-D07.md md5 78bc33e5, hand-off docs/design/E47/E47-D07-handoff.md md5 574b8489 (§0 L69; hand-off §H L107); scripts docs/design/E47/E47-D07-transcripts.json md5 6bf5c553 replayed through docs/design/_tools/e47_d07_announcement_audit.py md5 d6f86dbc; tick size packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a; ring geometry E47-D04 at 1ff5d8cb9 (§7.1 there)"
+  ],
+  "copy_keys": [],
+  "copy_gaps": [],
+  "spec_gaps": [],
+  "fallbacks": [
+   "kit choice: a timeline's x scale is linear in milliseconds, its px per second stated on the axis label; bars span [write, write + the §5.1 speech estimate]",
+   "kit choice: numbered stop markers, tags, arrows and callouts are annotation overlays in color.status.info.default with color.text.inverse words, never product UI",
+   "kit choice: class tones (assertive danger, status info, ambient neutral, echo selected, silent sunken) are a stripe plus a subtle fill; the class word is always written, so colour is never the only signal (1.4.1)",
+   "kit choice: a diagram board (map, regions, timeline, matrix, anatomy) is a 1280 x 800 specimen frame on color.surface.canvas; its boxes, lanes and bars are annotation drawing, not product UI"
+  ],
+  "tokens": [
+   "type.ui.caption",
+   "color.text.secondary",
+   "color.text.inverse",
+   "space.inset.xs",
+   "radius.control",
+   "color.status.info.default",
+   "color.text.primary",
+   "color.neutral.subtle",
+   "color.neutral.default",
+   "border.hairline",
+   "color.status.danger.subtle",
+   "color.status.danger.strong",
+   "color.axis.text",
+   "type.num.sm",
+   "color.text.tertiary",
+   "type.ui.label",
+   "space.stack.xs",
+   "space.inset.sm",
+   "space.stack.sm",
+   "color.surface.raised",
+   "radius.card",
+   "size.icon",
+   "type.ui.body",
+   "color.surface.overlay",
+   "color.border.default",
+   "type.ui.heading-sm",
+   "color.surface.canvas",
+   "space.inset.lg"
+  ],
+  "live_checks": [
+   "root 'E47-D07 / 04 incident-timeline' at (21000, 0): read back the name exactly after the first section call; size 1920 x 1000",
+   "after touchTexts + relayout: the annotation column (estimated 515 px) ends inside the root (h 1000); raise the root's h to its end + 80 if not",
+   "frame 'timeline∕incident · dark': read back 1280 x 800 at (80, 80); clip on, no child spills",
+   "export docs/design/E47/img/E47-D07-04-incident-timeline.png; record the board id and the PNG size in §0"
+  ],
+  "deviations": [],
+  "ambiguities": []
+ }
+}

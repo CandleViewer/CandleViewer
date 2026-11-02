@@ -1,0 +1,7586 @@
+{
+ "board": {
+  "name": "E47-D06 / 04 ladder-table",
+  "w": 3280,
+  "h": 1000,
+  "x": 21000,
+  "y": 0,
+  "o": {
+   "fill": "color.surface.app",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "ladder∕depth-sort-my-levels · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "x": 80,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar (placeholder)",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · env badge",
+          "w": 56,
+          "h": 20,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · health chip",
+          "w": 120,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar, not this spec's: placeholders only"
+     }
+    ]
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark",
+   "node": {
+    "t": "board",
+    "name": "body",
+    "o": {
+     "dir": "row",
+     "align": "start"
+    },
+    "w": 1280,
+    "h": 704,
+    "kids": [
+     {
+      "t": "board",
+      "name": "NavRail (placeholder)",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.inset.xs",
+       "padY": "space.inset.sm",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "entry-1",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 48,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-2",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 48,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-3",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 48,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-4",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 48,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-5",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 48,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-6",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 48,
+        "h": 32
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1,
+        "h": 704,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 63,
+        "y": 0,
+        "abs": true
+       }
+      ],
+      "w": 64,
+      "h": 704
+     },
+     {
+      "t": "board",
+      "name": "dock",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.inset.sm",
+       "pad": "space.inset.sm",
+       "fill": "color.surface.app",
+       "clip": true
+      },
+      "w": 1216,
+      "h": 704,
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.canvas",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner",
+         "radius": "radius.card",
+         "clip": true
+        },
+        "w": 1200,
+        "h": 688,
+        "note": "the ladder table is kept beside the native grid (§6.2); the heatmap canvas is replaced in place while Table is on",
+        "kids": [
+         {
+          "t": "board",
+          "name": "panel header",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.raised"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "title",
+            "chars": "Heatmap + DOM ladder",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "symbol",
+            "chars": "BTCUSDT",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           },
+           {
+            "t": "board",
+            "name": "CMP-003 SegmentedControl · View │ Table",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "segment · View",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.raised",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner",
+               "radius": "radius.control",
+               "padX": "space.inset.sm",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "View",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 24,
+              "note": "aria-pressed=\"false\""
+             },
+             {
+              "t": "board",
+              "name": "segment · Table",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.selected",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner",
+               "radius": "radius.control",
+               "padX": "space.inset.sm",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "check",
+                "icon": "check",
+                "color": "color.text.primary",
+                "size": "size.icon.sm"
+               },
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Table",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 24,
+              "note": "aria-pressed=\"true\""
+             },
+             {
+              "t": "board",
+              "name": "CMP-022 Kbd · Alt+T",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "padX": "space.inset.xs",
+               "radius": "radius.control",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "key",
+                "chars": "Alt+T",
+                "typo": "type.ui.caption",
+                "color": "color.text.secondary"
+               }
+              ],
+              "h": 18
+             }
+            ],
+            "h": 24,
+            "note": "the equal-status entry in the panel header, every role (§7, R-8); Alt+T toggles in this panel's context (D06-A16); manual activation"
+           },
+           {
+            "t": "board",
+            "name": "chips",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.xs",
+             "justify": "end"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "feed chip · Live",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner",
+               "radius": "radius.badge",
+               "padX": "space.inset.sm",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "glyph",
+                "icon": "check",
+                "color": "color.text.secondary",
+                "size": "size.icon.sm"
+               },
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Live",
+                "typo": "type.ui.caption",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 20,
+              "note": "the panel's feed chip (E17-D01's states; the word is the signal, never colour alone)"
+             }
+            ],
+            "h": 20
+           }
+          ],
+          "w": 1200,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "table view",
+          "o": {
+           "dir": "column",
+           "align": "start"
+          },
+          "w": 1200,
+          "h": 656,
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-055 FilterBar",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-055 Add filter",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.raised",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner",
+               "radius": "radius.control",
+               "padX": "space.inset.sm",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Add filter",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               },
+               {
+                "t": "icon",
+                "name": "caret",
+                "icon": "chevron-down",
+                "color": "color.text.secondary",
+                "size": "size.icon.sm"
+               }
+              ],
+              "h": 24
+             },
+             {
+              "t": "board",
+              "name": "filter chip · My levels only",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.selected",
+               "radius": "radius.badge",
+               "padX": "space.inset.sm",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "My levels only",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               },
+               {
+                "t": "icon",
+                "name": "remove",
+                "icon": "close",
+                "color": "color.text.secondary",
+                "size": "size.icon.sm"
+               }
+              ],
+              "h": 20,
+              "note": "a button \"Remove filter My levels only\""
+             },
+             {
+              "t": "board",
+              "name": "CMP-056 Columns",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.raised",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner",
+               "radius": "radius.control",
+               "padX": "space.inset.sm",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Columns",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               },
+               {
+                "t": "icon",
+                "name": "caret",
+                "icon": "chevron-down",
+                "color": "color.text.secondary",
+                "size": "size.icon.sm"
+               }
+              ],
+              "h": 24
+             },
+             {
+              "t": "board",
+              "name": "toggle · Pause updates",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.raised",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner",
+               "radius": "radius.control",
+               "padX": "space.inset.sm",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Pause updates",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 24,
+              "note": "aria-pressed=\"false\"; PROPOSED (D06-Q6; WCAG 2.2.2), after the filters (§6.4)"
+             },
+             {
+              "t": "text",
+              "name": "count",
+              "chars": "Showing 4 of 100 rows",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary"
+             }
+            ],
+            "w": 1200,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "caption",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "caption",
+              "chars": "DOM ladder, BTCUSDT, 50 levels a side",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary"
+             }
+            ],
+            "w": 1200,
+            "h": 20,
+            "note": "<caption>: \"{panel}, {symbol}, {scope}\" plus the feed-state clause (§6.2, §6.5)"
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view",
+   "node": {
+    "t": "board",
+    "name": "grid area",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.md"
+    },
+    "w": 1200,
+    "h": 572,
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-108 DOM ladder (native grid)",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.canvas",
+       "clip": true
+      },
+      "w": 328,
+      "h": 572,
+      "note": "role=\"grid\", native DOM rows (IV-6); no canvas node; the trade keys are not named here (D06-C16)",
+      "kids": [
+       {
+        "t": "board",
+        "name": "header row",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "th · Price",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Price",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 96,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · Bid",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Bid",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · Ask",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Ask",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · Mine",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "start"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Mine",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 72,
+          "h": 24
+         }
+        ],
+        "w": 328,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "row 01",
+        "o": {
+         "dir": "row",
+         "align": "center"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "th · Price",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "64,101.9",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 96,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Bid",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Ask",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "1.769",
+            "typo": "type.num.base",
+            "color": "color.sell.default"
+           }
+          ],
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Mine",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 72,
+          "h": 24
+         }
+        ],
+        "w": 328,
+        "h": 24,
+        "note": "role=\"row\" aria-label \"Price 64,101.9; ask size 1.769\""
+       },
+       {
+        "t": "board",
+        "name": "row 02",
+        "o": {
+         "dir": "row",
+         "align": "center"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "th · Price",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "64,101.8",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 96,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Bid",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Ask",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "1.526",
+            "typo": "type.num.base",
+            "color": "color.sell.default"
+           }
+          ],
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Mine",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 72,
+          "h": 24
+         }
+        ],
+        "w": 328,
+        "h": 24,
+        "note": "role=\"row\" aria-label \"Price 64,101.8; ask size 1.526\""
+       },
+       {
+        "t": "board",
+        "name": "row 03",
+        "o": {
+         "dir": "row",
+         "align": "center"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "th · Price",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "64,101.7",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 96,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Bid",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Ask",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "0.678",
+            "typo": "type.num.base",
+            "color": "color.sell.default"
+           }
+          ],
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Mine",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 72,
+          "h": 24
+         }
+        ],
+        "w": 328,
+        "h": 24,
+        "note": "role=\"row\" aria-label \"Price 64,101.7; ask size 0.678\""
+       },
+       {
+        "t": "board",
+        "name": "row 04",
+        "o": {
+         "dir": "row",
+         "align": "center"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "th · Price",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "64,101.6",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 96,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Bid",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Ask",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "1.936",
+            "typo": "type.num.base",
+            "color": "color.sell.default"
+           }
+          ],
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Mine",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 72,
+          "h": 24
+         }
+        ],
+        "w": 328,
+        "h": 24,
+        "note": "role=\"row\" aria-label \"Price 64,101.6; ask size 1.936\""
+       },
+       {
+        "t": "board",
+        "name": "row 05",
+        "o": {
+         "dir": "row",
+         "align": "center"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "th · Price",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "64,101.5",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 96,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Bid",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Ask",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "0.693",
+            "typo": "type.num.base",
+            "color": "color.sell.default"
+           }
+          ],
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Mine",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 72,
+          "h": 24
+         }
+        ],
+        "w": 328,
+        "h": 24,
+        "note": "role=\"row\" aria-label \"Price 64,101.5; ask size 0.693\""
+       },
+       {
+        "t": "board",
+        "name": "row 06",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "fill": "color.sell.subtle"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "th · Price",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "64,101.4",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 96,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Bid",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Ask",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "2.272",
+            "typo": "type.num.base",
+            "color": "color.sell.default"
+           }
+          ],
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Mine",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 72,
+          "h": 24
+         }
+        ],
+        "w": 328,
+        "h": 24,
+        "note": "role=\"row\" aria-label \"Price 64,101.4; ask size 2.272\""
+       },
+       {
+        "t": "board",
+        "name": "row 07",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "fill": "color.buy.subtle"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "th · Price",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "64,101.2",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 96,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Bid",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "1.971",
+            "typo": "type.num.base",
+            "color": "color.buy.default"
+           }
+          ],
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Ask",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Mine",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 72,
+          "h": 24
+         }
+        ],
+        "w": 328,
+        "h": 24,
+        "note": "role=\"row\" aria-label \"Price 64,101.2; bid size 1.971\""
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 08",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,101.1",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "0.405",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,101.1; bid size 0.405\""
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 09",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,101.0",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.236",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,101.0; bid size 1.236\""
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 10",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,100.9",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "2.228",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,100.9; bid size 2.228\""
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 11",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,100.8",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.340",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,100.8; bid size 1.340\""
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 12",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,100.7",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.940",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,100.7; bid size 1.940\""
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 13",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,100.6",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.230",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,100.6; bid size 1.230\""
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 14",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,100.5",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.846",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,100.5; bid size 1.846\""
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 15",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,100.4",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.379",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,100.4; bid size 1.379\""
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 16",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,100.3",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.950",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,100.3; bid size 1.950\""
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 17",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,100.2",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "0.971",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,100.2; bid size 0.971\""
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 18",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,100.1",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.914",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,100.1; bid size 1.914\""
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 19",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,100.0",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.054",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "0.500",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,100.0; bid size 1.054; your buy order 0.500 at this price\""
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 20",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,099.9",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.161",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,099.9; bid size 1.161\""
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 21",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,099.8",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "0.464",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,099.8; bid size 0.464\""
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 22",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,099.7",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "2.054",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,099.7; bid size 2.054\""
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area",
+   "node": {
+    "t": "board",
+    "name": "CMP-049 Table · grid",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "padX": "space.inset.sm",
+     "clip": true
+    },
+    "w": 696,
+    "h": 572,
+    "note": "role=\"grid\", one Tab stop (APG grid, `05`:95); rows keyed by logical identity (R-6)",
+    "kids": [
+     {
+      "t": "board",
+      "name": "header row",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "th · Price",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "gap": "space.inset.xs",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Price",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 104,
+        "h": 24,
+        "note": "aria-sort=\"none\"; the row header column"
+       },
+       {
+        "t": "board",
+        "name": "th · Bid size",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "gap": "space.inset.xs",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Bid size",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 96,
+        "h": 24,
+        "note": "aria-sort=\"none\""
+       },
+       {
+        "t": "board",
+        "name": "th · Ask size",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "gap": "space.inset.xs",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Ask size",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 96,
+        "h": 24,
+        "note": "aria-sort=\"none\""
+       },
+       {
+        "t": "board",
+        "name": "th · Cumulative depth",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "gap": "space.inset.xs",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Cumulative depth",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "icon",
+          "name": "sort",
+          "icon": "arrow-up",
+          "color": "color.text.primary",
+          "size": "size.icon.sm"
+         }
+        ],
+        "w": 144,
+        "h": 24,
+        "note": "aria-sort=\"ascending\""
+       },
+       {
+        "t": "board",
+        "name": "th · My orders",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "gap": "space.inset.xs",
+         "justify": "start"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "My orders",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 200,
+        "h": 24,
+        "note": "filter-only, not sortable"
+       },
+       {
+        "t": "board",
+        "name": "th · actions",
+        "o": {
+         "dir": "row",
+         "align": "center"
+        },
+        "w": 40,
+        "h": 24,
+        "note": "actions column (no header text)"
+       }
+      ],
+      "w": 680,
+      "h": 24,
+      "note": "sticky header; <th scope=\"col\">"
+     },
+     {
+      "t": "board",
+      "name": "row 01",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "th · Price",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "64,102.2",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 104,
+        "h": 24,
+        "note": "<th scope=\"row\">"
+       },
+       {
+        "t": "board",
+        "name": "td · Bid size",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "—",
+          "typo": "type.num.base",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Ask size",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0.634",
+          "typo": "type.num.base",
+          "color": "color.sell.default"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Cumulative depth",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "12.705",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 144,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · My orders",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "your sell order 0.400",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 200,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · actions",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "glyph",
+          "icon": "more-horizontal",
+          "color": "color.text.secondary",
+          "size": "size.icon.sm"
+         }
+        ],
+        "w": 40,
+        "h": 24,
+        "note": "a button \"Actions for 64,102.2\" (D04E11 §5.1)"
+       }
+      ],
+      "w": 680,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "row 02",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.selected"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "th · Price",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "64,100.0",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 104,
+        "h": 24,
+        "note": "<th scope=\"row\">"
+       },
+       {
+        "t": "board",
+        "name": "td · Bid size",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "1.054",
+          "typo": "type.num.base",
+          "color": "color.buy.default"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Ask size",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "—",
+          "typo": "type.num.base",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Cumulative depth",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "19.464",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 144,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · My orders",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "your buy order 0.500",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 200,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · actions",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "glyph",
+          "icon": "more-horizontal",
+          "color": "color.text.secondary",
+          "size": "size.icon.sm"
+         }
+        ],
+        "w": 40,
+        "h": 24,
+        "note": "a button \"Actions for 64,100.0\" (D04E11 §5.1)"
+       },
+       {
+        "t": "board",
+        "name": "CMP-039 ring · inset (focus)",
+        "o": {
+         "stroke": "color.surface.canvas",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "band-2 · ring",
+          "o": {
+           "stroke": "color.focus.ring",
+           "strokeWidth": "border.focus",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "band-3 · halo",
+            "o": {
+             "stroke": "color.surface.canvas",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "w": 674,
+            "h": 18,
+            "x": 2,
+            "y": 2
+           }
+          ],
+          "w": 678,
+          "h": 22,
+          "x": 1,
+          "y": 1
+         }
+        ],
+        "w": 680,
+        "h": 24,
+        "x": 0,
+        "y": 0,
+        "abs": true,
+        "note": "CMP-039 inset: drawn inside the row (E47-D04 §7.1)"
+       }
+      ],
+      "w": 680,
+      "h": 24,
+      "note": "aria-current=\"true\"; the grid's one stop (roving), focus here"
+     },
+     {
+      "t": "board",
+      "name": "row 03",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "th · Price",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "64,103.3",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 104,
+        "h": 24,
+        "note": "<th scope=\"row\">"
+       },
+       {
+        "t": "board",
+        "name": "td · Bid size",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "—",
+          "typo": "type.num.base",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Ask size",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "2.293",
+          "typo": "type.num.base",
+          "color": "color.sell.default"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Cumulative depth",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "27.008",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 144,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · My orders",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "your sell order 0.150",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 200,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · actions",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "glyph",
+          "icon": "more-horizontal",
+          "color": "color.text.secondary",
+          "size": "size.icon.sm"
+         }
+        ],
+        "w": 40,
+        "h": 24,
+        "note": "a button \"Actions for 64,103.3\" (D04E11 §5.1)"
+       }
+      ],
+      "w": 680,
+      "h": 24
+     }
+    ]
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-049 Table · grid",
+   "node": {
+    "t": "board",
+    "name": "row 04",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,098.5",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 104,
+      "h": 24,
+      "note": "<th scope=\"row\">"
+     },
+     {
+      "t": "board",
+      "name": "td · Bid size",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "0.822",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask size",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "—",
+        "typo": "type.num.base",
+        "color": "color.text.tertiary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Cumulative depth",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "42.724",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 144,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · My orders",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "your buy order 0.250",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 200,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · actions",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "justify": "center"
+      },
+      "kids": [
+       {
+        "t": "icon",
+        "name": "glyph",
+        "icon": "more-horizontal",
+        "color": "color.text.secondary",
+        "size": "size.icon.sm"
+       }
+      ],
+      "w": 40,
+      "h": 24,
+      "note": "a button \"Actions for 64,098.5\" (D04E11 §5.1)"
+     }
+    ],
+    "w": 680,
+    "h": 24
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view",
+   "node": {
+    "t": "board",
+    "name": "footer",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.sm",
+     "padX": "space.inset.sm",
+     "justify": "space-between"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-053 Load more rows",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.raised",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "radius": "radius.control",
+       "padX": "space.inset.sm",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Load more rows",
+        "typo": "type.ui.label",
+        "color": "color.text.primary"
+       }
+      ],
+      "h": 24,
+      "note": "appends without moving focus (`05`:195)"
+     },
+     {
+      "t": "board",
+      "name": "spacer",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "w": 8,
+      "h": 8
+     },
+     {
+      "t": "board",
+      "name": "CMP-099 PrintExportBar",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "T2 · Export CSV",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "button · Export CSV (T2)",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.raised",
+           "stroke": "color.border.default",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.control",
+           "padX": "space.inset.sm",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "CMP-019 Icon lock",
+            "icon": "locked",
+            "color": "color.text.tertiary",
+            "size": "size.icon.sm",
+            "note": "decorative=false, accessible name \"Not available\""
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Export CSV",
+            "typo": "type.ui.label",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "h": 24,
+          "note": "CMP-079 RbacGate; aria-disabled=\"true\", never disabled, never inert; aria-describedby → the reason beside it"
+         },
+         {
+          "t": "text",
+          "name": "reason",
+          "chars": "Export arrives with E15",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ],
+        "h": 24
+       }
+      ],
+      "h": 24
+     }
+    ],
+    "w": 1200,
+    "h": 32
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark",
+   "node": {
+    "t": "board",
+    "name": "StatusBar (placeholder)",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · env word",
+      "w": 56,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 48
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark",
+   "node": {
+    "t": "board",
+    "name": "callout · AC3",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs",
+     "pad": "space.inset.sm",
+     "fill": "color.surface.overlay",
+     "radius": "radius.control",
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.thick",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "line-1",
+      "chars": "Sorted by cumulative depth, ascending; My levels only on; focus on 64,100.0 (aria-current)",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 304
+     },
+     {
+      "t": "text",
+      "name": "line-2",
+      "chars": "Rows keyed by price level (D04:118), never by row index (R-6)",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 304
+     }
+    ],
+    "w": 320,
+    "x": 420,
+    "y": 284,
+    "abs": true,
+    "note": "annotation callout (not product UI)"
+   }
+  },
+  {
+   "into": "ladder∕depth-sort-my-levels · dark",
+   "node": {
+    "t": "board",
+    "name": "callout · the native grid",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs",
+     "pad": "space.inset.sm",
+     "fill": "color.surface.overlay",
+     "radius": "radius.control",
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.thick",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "line-1",
+      "chars": "CMP-108, native DOM (IV-6): no canvas node; the table is kept beside it because `05` mandates it (§6.2)",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 304
+     }
+    ],
+    "w": 320,
+    "x": 764,
+    "y": 284,
+    "abs": true,
+    "note": "annotation callout (not product UI)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "ladder∕patch-tick · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "x": 1440,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "TopBar (placeholder)",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · env badge",
+          "w": 56,
+          "h": 20,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · account picker",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · health chip",
+          "w": 120,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · user menu",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 48
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "the shell's TopBar, not this spec's: placeholders only"
+     }
+    ]
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark",
+   "node": {
+    "t": "board",
+    "name": "body",
+    "o": {
+     "dir": "row",
+     "align": "start"
+    },
+    "w": 1280,
+    "h": 704,
+    "kids": [
+     {
+      "t": "board",
+      "name": "NavRail (placeholder)",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.inset.xs",
+       "padY": "space.inset.sm",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "entry-1",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 48,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-2",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 48,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-3",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 48,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-4",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 48,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-5",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 48,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "entry-6",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · glyph",
+          "w": 16,
+          "h": 16,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 48,
+        "h": 32
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1,
+        "h": 704,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 63,
+        "y": 0,
+        "abs": true
+       }
+      ],
+      "w": 64,
+      "h": 704
+     },
+     {
+      "t": "board",
+      "name": "dock",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.inset.sm",
+       "pad": "space.inset.sm",
+       "fill": "color.surface.app",
+       "clip": true
+      },
+      "w": 1216,
+      "h": 704,
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.canvas",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner",
+         "radius": "radius.card",
+         "clip": true
+        },
+        "w": 1200,
+        "h": 688,
+        "note": "the ladder table is kept beside the native grid (§6.2); the heatmap canvas is replaced in place while Table is on",
+        "kids": [
+         {
+          "t": "board",
+          "name": "panel header",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.raised"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "title",
+            "chars": "Heatmap + DOM ladder",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "symbol",
+            "chars": "BTCUSDT",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           },
+           {
+            "t": "board",
+            "name": "CMP-003 SegmentedControl · View │ Table",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "segment · View",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.raised",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner",
+               "radius": "radius.control",
+               "padX": "space.inset.sm",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "View",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 24,
+              "note": "aria-pressed=\"false\""
+             },
+             {
+              "t": "board",
+              "name": "segment · Table",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.selected",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner",
+               "radius": "radius.control",
+               "padX": "space.inset.sm",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "check",
+                "icon": "check",
+                "color": "color.text.primary",
+                "size": "size.icon.sm"
+               },
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Table",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 24,
+              "note": "aria-pressed=\"true\""
+             },
+             {
+              "t": "board",
+              "name": "CMP-022 Kbd · Alt+T",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "padX": "space.inset.xs",
+               "radius": "radius.control",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "key",
+                "chars": "Alt+T",
+                "typo": "type.ui.caption",
+                "color": "color.text.secondary"
+               }
+              ],
+              "h": 18
+             }
+            ],
+            "h": 24,
+            "note": "the equal-status entry in the panel header, every role (§7, R-8); Alt+T toggles in this panel's context (D06-A16); manual activation"
+           },
+           {
+            "t": "board",
+            "name": "chips",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.xs",
+             "justify": "end"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "feed chip · Live",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner",
+               "radius": "radius.badge",
+               "padX": "space.inset.sm",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "glyph",
+                "icon": "check",
+                "color": "color.text.secondary",
+                "size": "size.icon.sm"
+               },
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Live",
+                "typo": "type.ui.caption",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 20,
+              "note": "the panel's feed chip (E17-D01's states; the word is the signal, never colour alone)"
+             }
+            ],
+            "h": 20
+           }
+          ],
+          "w": 1200,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "table view",
+          "o": {
+           "dir": "column",
+           "align": "start"
+          },
+          "w": 1200,
+          "h": 656,
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-055 FilterBar",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-055 Add filter",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.raised",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner",
+               "radius": "radius.control",
+               "padX": "space.inset.sm",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Add filter",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               },
+               {
+                "t": "icon",
+                "name": "caret",
+                "icon": "chevron-down",
+                "color": "color.text.secondary",
+                "size": "size.icon.sm"
+               }
+              ],
+              "h": 24
+             },
+             {
+              "t": "board",
+              "name": "filter chip · My levels only",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.selected",
+               "radius": "radius.badge",
+               "padX": "space.inset.sm",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "My levels only",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               },
+               {
+                "t": "icon",
+                "name": "remove",
+                "icon": "close",
+                "color": "color.text.secondary",
+                "size": "size.icon.sm"
+               }
+              ],
+              "h": 20,
+              "note": "a button \"Remove filter My levels only\""
+             },
+             {
+              "t": "board",
+              "name": "CMP-056 Columns",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.raised",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner",
+               "radius": "radius.control",
+               "padX": "space.inset.sm",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Columns",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               },
+               {
+                "t": "icon",
+                "name": "caret",
+                "icon": "chevron-down",
+                "color": "color.text.secondary",
+                "size": "size.icon.sm"
+               }
+              ],
+              "h": 24
+             },
+             {
+              "t": "board",
+              "name": "toggle · Pause updates",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "fill": "color.surface.raised",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner",
+               "radius": "radius.control",
+               "padX": "space.inset.sm",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Pause updates",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 24,
+              "note": "aria-pressed=\"false\"; PROPOSED (D06-Q6; WCAG 2.2.2), after the filters (§6.4)"
+             },
+             {
+              "t": "text",
+              "name": "count",
+              "chars": "Showing 4 of 100 rows",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary"
+             }
+            ],
+            "w": 1200,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "caption",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "caption",
+              "chars": "DOM ladder, BTCUSDT, 50 levels a side",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary"
+             }
+            ],
+            "w": 1200,
+            "h": 20,
+            "note": "<caption>: \"{panel}, {symbol}, {scope}\" plus the feed-state clause (§6.2, §6.5)"
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view",
+   "node": {
+    "t": "board",
+    "name": "grid area",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.md"
+    },
+    "w": 1200,
+    "h": 572,
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-108 DOM ladder (native grid)",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.canvas",
+       "clip": true
+      },
+      "w": 328,
+      "h": 572,
+      "note": "role=\"grid\", native DOM rows (IV-6); no canvas node; the trade keys are not named here (D06-C16)",
+      "kids": [
+       {
+        "t": "board",
+        "name": "header row",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "th · Price",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Price",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 96,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · Bid",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Bid",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · Ask",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Ask",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · Mine",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "start"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Mine",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 72,
+          "h": 24
+         }
+        ],
+        "w": 328,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "row 01",
+        "o": {
+         "dir": "row",
+         "align": "center"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "th · Price",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "64,101.9",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 96,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Bid",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Ask",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "1.408",
+            "typo": "type.num.base",
+            "color": "color.sell.default"
+           }
+          ],
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Mine",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 72,
+          "h": 24
+         }
+        ],
+        "w": 328,
+        "h": 24,
+        "note": "role=\"row\" aria-label \"Price 64,101.9; ask size 1.408\""
+       },
+       {
+        "t": "board",
+        "name": "row 02",
+        "o": {
+         "dir": "row",
+         "align": "center"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "th · Price",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "64,101.8",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 96,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Bid",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Ask",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "0.845",
+            "typo": "type.num.base",
+            "color": "color.sell.default"
+           }
+          ],
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Mine",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 72,
+          "h": 24
+         }
+        ],
+        "w": 328,
+        "h": 24,
+        "note": "role=\"row\" aria-label \"Price 64,101.8; ask size 0.845\""
+       },
+       {
+        "t": "board",
+        "name": "row 03",
+        "o": {
+         "dir": "row",
+         "align": "center"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "th · Price",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "64,101.7",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 96,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Bid",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Ask",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "0.678",
+            "typo": "type.num.base",
+            "color": "color.sell.default"
+           }
+          ],
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Mine",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 72,
+          "h": 24
+         }
+        ],
+        "w": 328,
+        "h": 24,
+        "note": "role=\"row\" aria-label \"Price 64,101.7; ask size 0.678\""
+       },
+       {
+        "t": "board",
+        "name": "row 04",
+        "o": {
+         "dir": "row",
+         "align": "center"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "th · Price",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "64,101.6",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 96,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Bid",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Ask",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "1.936",
+            "typo": "type.num.base",
+            "color": "color.sell.default"
+           }
+          ],
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Mine",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 72,
+          "h": 24
+         }
+        ],
+        "w": 328,
+        "h": 24,
+        "note": "role=\"row\" aria-label \"Price 64,101.6; ask size 1.936\""
+       },
+       {
+        "t": "board",
+        "name": "row 05",
+        "o": {
+         "dir": "row",
+         "align": "center"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "th · Price",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "64,101.5",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 96,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Bid",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Ask",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "0.693",
+            "typo": "type.num.base",
+            "color": "color.sell.default"
+           }
+          ],
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Mine",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 72,
+          "h": 24
+         }
+        ],
+        "w": 328,
+        "h": 24,
+        "note": "role=\"row\" aria-label \"Price 64,101.5; ask size 0.693\""
+       },
+       {
+        "t": "board",
+        "name": "row 06",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "fill": "color.sell.subtle"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "th · Price",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "64,101.4",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 96,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Bid",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Ask",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "2.272",
+            "typo": "type.num.base",
+            "color": "color.sell.default"
+           }
+          ],
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Mine",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 72,
+          "h": 24
+         }
+        ],
+        "w": 328,
+        "h": 24,
+        "note": "role=\"row\" aria-label \"Price 64,101.4; ask size 2.272\""
+       },
+       {
+        "t": "board",
+        "name": "row 07",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "fill": "color.buy.subtle"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "th · Price",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "64,101.2",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 96,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Bid",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "1.971",
+            "typo": "type.num.base",
+            "color": "color.buy.default"
+           }
+          ],
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Ask",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 80,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "td · Mine",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm"
+          },
+          "w": 72,
+          "h": 24
+         }
+        ],
+        "w": 328,
+        "h": 24,
+        "note": "role=\"row\" aria-label \"Price 64,101.2; bid size 1.971\""
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 08",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,101.1",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "0.124",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,101.1; bid size 0.124\""
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 09",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,101.0",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.236",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,101.0; bid size 1.236\""
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 10",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,100.9",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.437",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,100.9; bid size 1.437\""
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 11",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,100.8",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.340",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,100.8; bid size 1.340\""
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 12",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,100.7",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.940",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,100.7; bid size 1.940\""
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 13",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,100.6",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.230",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,100.6; bid size 1.230\""
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 14",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,100.5",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.846",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,100.5; bid size 1.846\""
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 15",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,100.4",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.379",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,100.4; bid size 1.379\""
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 16",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,100.3",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.739",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,100.3; bid size 1.739\""
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 17",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,100.2",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "0.971",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,100.2; bid size 0.971\""
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 18",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,100.1",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.914",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,100.1; bid size 1.914\""
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 19",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,100.0",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.054",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "0.500",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,100.0; bid size 1.054; your buy order 0.500 at this price\""
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 20",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,099.9",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.161",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,099.9; bid size 1.161\""
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 21",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,099.8",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "0.464",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,099.8; bid size 0.464\""
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-108 DOM ladder (native grid)",
+   "node": {
+    "t": "board",
+    "name": "row 22",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,099.7",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Bid",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "2.054",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 80,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Mine",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm"
+      },
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 328,
+    "h": 24,
+    "note": "role=\"row\" aria-label \"Price 64,099.7; bid size 2.054\""
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area",
+   "node": {
+    "t": "board",
+    "name": "CMP-049 Table · grid",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "padX": "space.inset.sm",
+     "clip": true
+    },
+    "w": 696,
+    "h": 572,
+    "note": "role=\"grid\", one Tab stop (APG grid, `05`:95); rows keyed by logical identity (R-6)",
+    "kids": [
+     {
+      "t": "board",
+      "name": "header row",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "th · Price",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "gap": "space.inset.xs",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Price",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 104,
+        "h": 24,
+        "note": "aria-sort=\"none\"; the row header column"
+       },
+       {
+        "t": "board",
+        "name": "th · Bid size",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "gap": "space.inset.xs",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Bid size",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 96,
+        "h": 24,
+        "note": "aria-sort=\"none\""
+       },
+       {
+        "t": "board",
+        "name": "th · Ask size",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "gap": "space.inset.xs",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Ask size",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 96,
+        "h": 24,
+        "note": "aria-sort=\"none\""
+       },
+       {
+        "t": "board",
+        "name": "th · Cumulative depth",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "gap": "space.inset.xs",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Cumulative depth",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "icon",
+          "name": "sort",
+          "icon": "arrow-up",
+          "color": "color.text.primary",
+          "size": "size.icon.sm"
+         }
+        ],
+        "w": 144,
+        "h": 24,
+        "note": "aria-sort=\"ascending\""
+       },
+       {
+        "t": "board",
+        "name": "th · My orders",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "gap": "space.inset.xs",
+         "justify": "start"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "My orders",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 200,
+        "h": 24,
+        "note": "filter-only, not sortable"
+       },
+       {
+        "t": "board",
+        "name": "th · actions",
+        "o": {
+         "dir": "row",
+         "align": "center"
+        },
+        "w": 40,
+        "h": 24,
+        "note": "actions column (no header text)"
+       }
+      ],
+      "w": 680,
+      "h": 24,
+      "note": "sticky header; <th scope=\"col\">"
+     },
+     {
+      "t": "board",
+      "name": "row 01",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "th · Price",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "64,102.2",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 104,
+        "h": 24,
+        "note": "<th scope=\"row\">"
+       },
+       {
+        "t": "board",
+        "name": "td · Bid size",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "—",
+          "typo": "type.num.base",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Ask size",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "0.634",
+          "typo": "type.num.base",
+          "color": "color.sell.default"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Cumulative depth",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "fill": "color.surface.selected"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "12.227",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 144,
+        "h": 24,
+        "note": "patched in place this tick (the same cell node)"
+       },
+       {
+        "t": "board",
+        "name": "td · My orders",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "your sell order 0.400",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 200,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · actions",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "glyph",
+          "icon": "more-horizontal",
+          "color": "color.text.secondary",
+          "size": "size.icon.sm"
+         }
+        ],
+        "w": 40,
+        "h": 24,
+        "note": "a button \"Actions for 64,102.2\" (D04E11 §5.1)"
+       }
+      ],
+      "w": 680,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "row 02",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.selected"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "th · Price",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "64,100.0",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 104,
+        "h": 24,
+        "note": "<th scope=\"row\">"
+       },
+       {
+        "t": "board",
+        "name": "td · Bid size",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "1.054",
+          "typo": "type.num.base",
+          "color": "color.buy.default"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Ask size",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "—",
+          "typo": "type.num.base",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Cumulative depth",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "fill": "color.surface.selected"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "18.181",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 144,
+        "h": 24,
+        "note": "patched in place this tick (the same cell node)"
+       },
+       {
+        "t": "board",
+        "name": "td · My orders",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "your buy order 0.500",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 200,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · actions",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "glyph",
+          "icon": "more-horizontal",
+          "color": "color.text.secondary",
+          "size": "size.icon.sm"
+         }
+        ],
+        "w": 40,
+        "h": 24,
+        "note": "a button \"Actions for 64,100.0\" (D04E11 §5.1)"
+       },
+       {
+        "t": "board",
+        "name": "CMP-039 ring · inset (focus)",
+        "o": {
+         "stroke": "color.surface.canvas",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "band-2 · ring",
+          "o": {
+           "stroke": "color.focus.ring",
+           "strokeWidth": "border.focus",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "band-3 · halo",
+            "o": {
+             "stroke": "color.surface.canvas",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "w": 674,
+            "h": 18,
+            "x": 2,
+            "y": 2
+           }
+          ],
+          "w": 678,
+          "h": 22,
+          "x": 1,
+          "y": 1
+         }
+        ],
+        "w": 680,
+        "h": 24,
+        "x": 0,
+        "y": 0,
+        "abs": true,
+        "note": "CMP-039 inset: drawn inside the row (E47-D04 §7.1)"
+       }
+      ],
+      "w": 680,
+      "h": 24,
+      "note": "aria-current=\"true\"; the grid's one stop (roving), focus here"
+     },
+     {
+      "t": "board",
+      "name": "row 03",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "th · Price",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "64,103.3",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 104,
+        "h": 24,
+        "note": "<th scope=\"row\">"
+       },
+       {
+        "t": "board",
+        "name": "td · Bid size",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "—",
+          "typo": "type.num.base",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Ask size",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "2.293",
+          "typo": "type.num.base",
+          "color": "color.sell.default"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · Cumulative depth",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "fill": "color.surface.selected"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "26.624",
+          "typo": "type.num.base",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 144,
+        "h": 24,
+        "note": "patched in place this tick (the same cell node)"
+       },
+       {
+        "t": "board",
+        "name": "td · My orders",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "your sell order 0.150",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 200,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "td · actions",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "glyph",
+          "icon": "more-horizontal",
+          "color": "color.text.secondary",
+          "size": "size.icon.sm"
+         }
+        ],
+        "w": 40,
+        "h": 24,
+        "note": "a button \"Actions for 64,103.3\" (D04E11 §5.1)"
+       }
+      ],
+      "w": 680,
+      "h": 24
+     }
+    ]
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view/grid area/CMP-049 Table · grid",
+   "node": {
+    "t": "board",
+    "name": "row 04",
+    "o": {
+     "dir": "row",
+     "align": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "th · Price",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "64,098.5",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 104,
+      "h": 24,
+      "note": "<th scope=\"row\">"
+     },
+     {
+      "t": "board",
+      "name": "td · Bid size",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "0.822",
+        "typo": "type.num.base",
+        "color": "color.buy.default"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Ask size",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "—",
+        "typo": "type.num.base",
+        "color": "color.text.tertiary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · Cumulative depth",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "fill": "color.surface.selected"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "40.973",
+        "typo": "type.num.base",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 144,
+      "h": 24,
+      "note": "patched in place this tick (the same cell node)"
+     },
+     {
+      "t": "board",
+      "name": "td · My orders",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "your buy order 0.250",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 200,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "td · actions",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "justify": "center"
+      },
+      "kids": [
+       {
+        "t": "icon",
+        "name": "glyph",
+        "icon": "more-horizontal",
+        "color": "color.text.secondary",
+        "size": "size.icon.sm"
+       }
+      ],
+      "w": 40,
+      "h": 24,
+      "note": "a button \"Actions for 64,098.5\" (D04E11 §5.1)"
+     }
+    ],
+    "w": 680,
+    "h": 24
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark/body/dock/CMP-080 DockPanel · heatmap + DOM ladder (SCR-050)/table view",
+   "node": {
+    "t": "board",
+    "name": "footer",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "gap": "space.inset.sm",
+     "padX": "space.inset.sm",
+     "justify": "space-between"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-053 Load more rows",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.raised",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "radius": "radius.control",
+       "padX": "space.inset.sm",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Load more rows",
+        "typo": "type.ui.label",
+        "color": "color.text.primary"
+       }
+      ],
+      "h": 24,
+      "note": "appends without moving focus (`05`:195)"
+     },
+     {
+      "t": "board",
+      "name": "spacer",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "w": 8,
+      "h": 8
+     },
+     {
+      "t": "board",
+      "name": "CMP-099 PrintExportBar",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "T2 · Export CSV",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "button · Export CSV (T2)",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.raised",
+           "stroke": "color.border.default",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.control",
+           "padX": "space.inset.sm",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "CMP-019 Icon lock",
+            "icon": "locked",
+            "color": "color.text.tertiary",
+            "size": "size.icon.sm",
+            "note": "decorative=false, accessible name \"Not available\""
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Export CSV",
+            "typo": "type.ui.label",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "h": 24,
+          "note": "CMP-079 RbacGate; aria-disabled=\"true\", never disabled, never inert; aria-describedby → the reason beside it"
+         },
+         {
+          "t": "text",
+          "name": "reason",
+          "chars": "Export arrives with E15",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ],
+        "h": 24
+       }
+      ],
+      "h": 24
+     }
+    ],
+    "w": 1200,
+    "h": 32
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark",
+   "node": {
+    "t": "board",
+    "name": "StatusBar (placeholder)",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.lg",
+     "gap": "space.inset.lg",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "placeholder · env word",
+      "w": 56,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 48
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark",
+   "node": {
+    "t": "board",
+    "name": "callout · the tick",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs",
+     "pad": "space.inset.sm",
+     "fill": "color.surface.overlay",
+     "radius": "radius.control",
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.thick",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "line-1",
+      "chars": "One tick of the SCR-117 cadence: 4 cells rewritten in place (marked); no row node recreated (QA-2)",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 304
+     },
+     {
+      "t": "text",
+      "name": "line-2",
+      "chars": "The focused row keeps focus, its position and aria-current; the filter keeps its rows; a tick patch announces nothing (§13)",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 304
+     }
+    ],
+    "w": 320,
+    "x": 420,
+    "y": 284,
+    "abs": true,
+    "note": "annotation callout (not product UI)"
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark",
+   "node": {
+    "t": "board",
+    "name": "callout · order held",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs",
+     "pad": "space.inset.sm",
+     "fill": "color.surface.overlay",
+     "radius": "radius.control",
+     "stroke": "color.status.info.default",
+     "strokeWidth": "border.thick",
+     "strokeAlign": "inner"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "line-1",
+      "chars": "While focus is inside the grid the rows are not re-ordered; the sort is re-applied when focus leaves, on Shift+R or on resume (§6.4)",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 304
+     },
+     {
+      "t": "text",
+      "name": "line-2",
+      "chars": "The patched depths keep the same order",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 304
+     }
+    ],
+    "w": 320,
+    "x": 764,
+    "y": 284,
+    "abs": true,
+    "note": "annotation callout (not product UI)"
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark",
+   "node": {
+    "t": "board",
+    "name": "tag · patched",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "patched",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 1124,
+    "y": 168,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark",
+   "node": {
+    "t": "board",
+    "name": "tag · patched · 2",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "patched",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 1124,
+    "y": 192,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark",
+   "node": {
+    "t": "board",
+    "name": "tag · patched · 3",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "patched",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 1124,
+    "y": 216,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "ladder∕patch-tick · dark",
+   "node": {
+    "t": "board",
+    "name": "tag · patched · 4",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.xs",
+     "radius": "radius.control",
+     "fill": "color.status.info.default"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "label",
+      "chars": "patched",
+      "typo": "type.ui.caption",
+      "color": "color.text.inverse"
+     }
+    ],
+    "h": 16,
+    "x": 1124,
+    "y": 240,
+    "abs": true,
+    "note": "annotation tag (not product UI)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 01",
+    "chars": "state: ladder/depth-sort-my-levels · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 80,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 02",
+    "chars": "state: ladder/patch-tick · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 1440,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer · data",
+    "chars": "Data: seeded synthetic stream (seed 1305, BTCUSDT, 1m bars); sample data, never a market capture (§0 L63); only the tick size (0.1) is the recorded fixture's (hand-off §I L111)",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "x": 80,
+    "y": 904
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "E47-D06 / 04 ladder-table",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Board",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§0 L70: AC3: the ladder table sorted by cumulative depth, My levels only on, focus on a row, a patch tick",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Theme: dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Frames (hand-off §I L111): ladder/depth-sort-my-levels · dark; ladder/patch-tick · dark (each 1280 x 800, compact)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "Export: docs/design/E47/img/E47-D06-04-ladder-table.png",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "Data: seeded synthetic stream (seed 1305, BTCUSDT, 1m bars); sample data, never a market capture (§0 L63); only the tick size (0.1) is the recorded fixture's (hand-off §I L111)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-6",
+        "chars": "Markers, tags, brackets and callouts in color.status.info.default are annotation, not product UI",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "ladder/depth-sort-my-levels · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "AC3 (§6.4 L252): sorted by cumulative depth, My levels only on, focus on 64,100.0",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Columns (§6.2 L230): Price · Bid size · Ask size · Cumulative depth · My orders",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "My orders reads the panel's own account only (§10 L318); flag word N-6 \"your {side} order {size}\"",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "4 own-order levels of 100 drawn (50 a side); the depth runs from the best price outward on each side (`05`)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "ladder/patch-tick · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "The same rows one tick later (seeded size changes on a fifth of the levels); depths re-derived from the new sizes",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Pause updates (PROPOSED, D06-Q6) would stop the patch; it is off here",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E47-D06 — Canvas accessibility · board 04 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400,
+    "x": 2800,
+    "y": 80
+   }
+  }
+ ],
+ "export": "docs/design/E47/img/E47-D06-04-ladder-table.png",
+ "notes": {
+  "sources": [
+   "spec docs/design/E47/E47-D06.md md5 d9cdedd6, hand-off docs/design/E47/E47-D06-handoff.md md5 d9a47687 (§0 L70; hand-off §I L111); T2 reason templates docs/design/E09/E09-D09.md md5 20c5d5f4; tick size packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a; ring geometry E47-D04 at 1ff5d8cb9 (§7.1)"
+  ],
+  "copy_keys": [
+   "table.export_deferred (PROPOSED, owner E11-D04): \"Export arrives with E15\", the Export CSV T2 reason"
+  ],
+  "copy_gaps": [
+   "the native grid's column words \"Price\", \"Bid\", \"Ask\", \"Mine\" are kit labels (CMP-108's own header words are E21's)"
+  ],
+  "spec_gaps": [],
+  "fallbacks": [
+   "size.icon.sm (12 px) is a Tier-1 primitive (validator WARN)",
+   "the CMP-019 Icon `lock` glyph is the local set's `locked` icon (the same glyph, the set's name)",
+   "kit choice: numbered markers, tags, brackets and callouts are annotation overlays in color.status.info.default with color.text.inverse words, never product UI",
+   "kit choice: the shell chrome (TopBar, NavRail, StatusBar) drawn as neutral placeholders (the E47-D03 kit's SCR-116 chrome); only the panels this spec designs carry words"
+  ],
+  "tokens": [
+   "type.num.base",
+   "color.text.primary",
+   "space.inset.sm",
+   "color.text.tertiary",
+   "color.sell.default",
+   "type.ui.body",
+   "color.text.secondary",
+   "size.icon.sm",
+   "color.buy.default",
+   "color.surface.selected",
+   "color.surface.canvas",
+   "border.hairline",
+   "color.focus.ring",
+   "border.focus",
+   "type.ui.label",
+   "color.surface.raised",
+   "color.sell.subtle",
+   "color.buy.subtle",
+   "space.inset.xs",
+   "space.inset.md",
+   "color.border.default",
+   "radius.control",
+   "radius.badge",
+   "type.ui.caption",
+   "type.ui.body-strong",
+   "radius.card",
+   "space.stack.xs",
+   "color.surface.overlay",
+   "color.status.info.default",
+   "border.thick",
+   "color.surface.app",
+   "color.surface.hover",
+   "color.border.subtle",
+   "space.inset.lg",
+   "color.text.inverse",
+   "type.ui.heading-sm",
+   "space.stack.sm"
+  ],
+  "live_checks": [
+   "root 'E47-D06 / 04 ladder-table' at (21000, 0): read back the name exactly after the first section call; size 3280 x 1000",
+   "after touchTexts + relayout: the annotation column (estimated 502 px) ends inside the root (h 1000); raise the root's h to its end + 80 if not",
+   "frame 'ladder∕depth-sort-my-levels · dark': read back 1280 x 800 at (80, 80); clip on, no child spills",
+   "frame 'ladder∕patch-tick · dark': read back 1280 x 800 at (1440, 80); clip on, no child spills",
+   "export docs/design/E47/img/E47-D06-04-ladder-table.png; record the board id and the PNG size in §0"
+  ],
+  "deviations": [
+   "own orders at 64,102.2, 64,100.0, 64,103.3, 64,098.5 (synthetic); BASE is derived so that AC3's 64,100.0 is one of them"
+  ],
+  "ambiguities": [
+   "\"sorted by cumulative depth\" (AC3) names no direction: drawn ascending, the first activation of §6.3's tri-state (nearest depth first)",
+   "Bid size on an ask level and Ask size on a bid level read \"—\" (`05` gives one row per price level; a level rests on one side)"
+  ]
+ }
+}

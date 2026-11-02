@@ -1,0 +1,1368 @@
+{
+ "board": {
+  "name": "E47-D08 / 10 forced-reduce",
+  "w": 1920,
+  "h": 1000,
+  "x": 28000,
+  "y": 4200,
+  "o": {
+   "fill": "color.surface.app",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "forced-reduce∕matrix · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.canvas",
+     "clip": true,
+     "pad": "space.inset.xl",
+     "gap": "space.stack.md"
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "§10's matrix, three classes",
+    "x": 80,
+    "y": 80,
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "§10 · forced colours × reduced motion: independent axes",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "text",
+      "name": "sub",
+      "chars": "Independent axes: forced colours never sets data-motion, and the motion mode never changes the colour mapping (D03:478–480). Under forced colours the DOM value-flash overlay is never applied; the direction is carried by the glyph and the sign in CanvasText. The canvas keeps the high-contrast ink (D03:480), so its flashes keep §4 and §5.",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 1232
+     },
+     {
+      "t": "board",
+      "name": "header row",
+      "o": {
+       "dir": "row",
+       "align": "center"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "corner",
+        "w": 200,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th 0",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "safe",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 256,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th 1",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "reduce",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 256,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th 2",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "safe + forced colours",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 256,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th 3",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "reduce + forced colours",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 256,
+        "h": 24
+       }
+      ],
+      "w": 1232,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "row 1",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "row 1 label",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "class",
+          "chars": "DOM value flash (I-5)",
+          "typo": "type.ui.label",
+          "color": "color.text.primary",
+          "w": 184
+         },
+         {
+          "t": "text",
+          "name": "cite",
+          "chars": "§10 L283",
+          "typo": "type.ui.caption",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "w": 200,
+        "h": 176
+       },
+       {
+        "t": "board",
+        "name": "cell 1-1",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "specimen · BTCUSDT last",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm",
+           "fill": "color.surface.canvas"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "cell · last",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "end"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "I-5 overlay · peak",
+              "w": 104,
+              "h": 24,
+              "o": {
+               "fill": "color.sell.subtle"
+              },
+              "x": 0,
+              "y": 0,
+              "abs": true,
+              "note": "overlay opacity 0.25 → 0 in color.sell.default (§3 I-5): peak"
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "64,999.95",
+              "typo": "type.num.base",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 104,
+            "h": 24
+           },
+           {
+            "t": "text",
+            "name": "glyph down",
+            "chars": "▼",
+            "typo": "type.num.base",
+            "color": "color.sell.default"
+           },
+           {
+            "t": "text",
+            "name": "sign",
+            "chars": "−0.01",
+            "typo": "type.num.base",
+            "color": "color.sell.default"
+           }
+          ],
+          "h": 28
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "overlay, FR-1",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 240
+         }
+        ],
+        "w": 256,
+        "h": 176
+       },
+       {
+        "t": "board",
+        "name": "cell 1-2",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "specimen · BTCUSDT last",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm",
+           "fill": "color.surface.canvas"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "cell · last",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "end"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "64,999.95",
+              "typo": "type.num.base",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 104,
+            "h": 24
+           },
+           {
+            "t": "text",
+            "name": "glyph down",
+            "chars": "▼",
+            "typo": "type.num.base",
+            "color": "color.sell.default"
+           },
+           {
+            "t": "text",
+            "name": "sign",
+            "chars": "−0.01",
+            "typo": "type.num.base",
+            "color": "color.sell.default"
+           }
+          ],
+          "h": 28
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "glyph and sign, held (§5)",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 240
+         }
+        ],
+        "w": 256,
+        "h": 176
+       },
+       {
+        "t": "board",
+        "name": "cell 1-3",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "specimen · BTCUSDT last",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm",
+           "fill": "color.surface.canvas"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "cell · last",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "end"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "64,999.95",
+              "typo": "type.num.base",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 104,
+            "h": 24
+           },
+           {
+            "t": "text",
+            "name": "glyph down",
+            "chars": "▼",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "sign",
+            "chars": "−0.01",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 28
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "glyph and sign in CanvasText, held",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 240
+         },
+         {
+          "t": "text",
+          "name": "system",
+          "chars": "system colours: CanvasText on Canvas; focus Highlight",
+          "typo": "type.ui.caption",
+          "color": "color.text.tertiary",
+          "w": 240
+         }
+        ],
+        "w": 256,
+        "h": 176
+       },
+       {
+        "t": "board",
+        "name": "cell 1-4",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "specimen · BTCUSDT last",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm",
+           "fill": "color.surface.canvas"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "cell · last",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "padX": "space.inset.sm",
+             "justify": "end"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "64,999.95",
+              "typo": "type.num.base",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 104,
+            "h": 24
+           },
+           {
+            "t": "text",
+            "name": "glyph down",
+            "chars": "▼",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "sign",
+            "chars": "−0.01",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 28
+         },
+         {
+          "t": "text",
+          "name": "words",
+          "chars": "glyph and sign in CanvasText, held",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary",
+          "w": 240
+         },
+         {
+          "t": "text",
+          "name": "system",
+          "chars": "system colours: CanvasText on Canvas; focus Highlight",
+          "typo": "type.ui.caption",
+          "color": "color.text.tertiary",
+          "w": 240
+         }
+        ],
+        "w": 256,
+        "h": 176
+       }
+      ],
+      "w": 1232,
+      "h": 176
+     }
+    ]
+   }
+  },
+  {
+   "into": "forced-reduce∕matrix · dark",
+   "node": {
+    "t": "board",
+    "name": "row 2",
+    "o": {
+     "dir": "row",
+     "align": "start"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "row 2 label",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "class",
+        "chars": "canvas data-rate (I-20 … I-24)",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 184
+       },
+       {
+        "t": "text",
+        "name": "cite",
+        "chars": "§10 L284",
+        "typo": "type.ui.caption",
+        "color": "color.text.tertiary"
+       }
+      ],
+      "w": 200,
+      "h": 176
+     },
+     {
+      "t": "board",
+      "name": "cell 2-1",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.sm",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "specimen",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "fill": "color.surface.canvas"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "I-24 liquidation mark",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.xs",
+           "radius": "radius.control",
+           "fill": "color.status.warning.subtle",
+           "stroke": "color.status.warning.strong",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "glyph",
+            "icon": "warning",
+            "color": "color.status.warning.strong",
+            "size": "size.icon",
+            "note": "the liquidation glyph"
+           },
+           {
+            "t": "text",
+            "name": "size",
+            "chars": "1.63 BTC",
+            "typo": "type.num.sm",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24,
+          "note": "§6: an opacity-only overlay, <= one start per 1 000 ms per panel; PROPOSED color.liquidation.flash (D08-A9)"
+         }
+        ],
+        "h": 32
+       },
+       {
+        "t": "text",
+        "name": "words",
+        "chars": "per row, §4 budgets",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 240
+       }
+      ],
+      "w": 256,
+      "h": 176
+     },
+     {
+      "t": "board",
+      "name": "cell 2-2",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.sm",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "specimen",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "fill": "color.surface.canvas"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "I-24 liquidation mark",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.xs",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "glyph",
+            "icon": "warning",
+            "color": "color.status.warning.strong",
+            "size": "size.icon",
+            "note": "the liquidation glyph"
+           },
+           {
+            "t": "text",
+            "name": "size",
+            "chars": "1.63 BTC",
+            "typo": "type.num.sm",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24,
+          "note": "§6: an opacity-only overlay, <= one start per 1 000 ms per panel; no overlay"
+         }
+        ],
+        "h": 32
+       },
+       {
+        "t": "text",
+        "name": "words",
+        "chars": "instant, §5 holds",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 240
+       }
+      ],
+      "w": 256,
+      "h": 176
+     },
+     {
+      "t": "board",
+      "name": "cell 2-3",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.sm",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "specimen",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "fill": "color.surface.canvas"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "I-24 liquidation mark",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.xs",
+           "radius": "radius.control",
+           "fill": "color.status.warning.subtle",
+           "stroke": "color.status.warning.strong",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "glyph",
+            "icon": "warning",
+            "color": "color.status.warning.strong",
+            "size": "size.icon",
+            "note": "the liquidation glyph"
+           },
+           {
+            "t": "text",
+            "name": "size",
+            "chars": "1.63 BTC",
+            "typo": "type.num.sm",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24,
+          "note": "§6: an opacity-only overlay, <= one start per 1 000 ms per panel; PROPOSED color.liquidation.flash (D08-A9)"
+         }
+        ],
+        "h": 32
+       },
+       {
+        "t": "text",
+        "name": "words",
+        "chars": "per row, high-contrast ink, §4 budgets",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 240
+       },
+       {
+        "t": "text",
+        "name": "system",
+        "chars": "system colours: CanvasText on Canvas; focus Highlight",
+        "typo": "type.ui.caption",
+        "color": "color.text.tertiary",
+        "w": 240
+       }
+      ],
+      "w": 256,
+      "h": 176
+     },
+     {
+      "t": "board",
+      "name": "cell 2-4",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.sm",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "specimen",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "fill": "color.surface.canvas"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "I-24 liquidation mark",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.xs",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "glyph",
+            "icon": "warning",
+            "color": "color.status.warning.strong",
+            "size": "size.icon",
+            "note": "the liquidation glyph"
+           },
+           {
+            "t": "text",
+            "name": "size",
+            "chars": "1.63 BTC",
+            "typo": "type.num.sm",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24,
+          "note": "§6: an opacity-only overlay, <= one start per 1 000 ms per panel; no overlay"
+         }
+        ],
+        "h": 32
+       },
+       {
+        "t": "text",
+        "name": "words",
+        "chars": "instant, high-contrast ink, §5 holds",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 240
+       },
+       {
+        "t": "text",
+        "name": "system",
+        "chars": "system colours: CanvasText on Canvas; focus Highlight",
+        "typo": "type.ui.caption",
+        "color": "color.text.tertiary",
+        "w": 240
+       }
+      ],
+      "w": 256,
+      "h": 176
+     }
+    ],
+    "w": 1232,
+    "h": 176
+   }
+  },
+  {
+   "into": "forced-reduce∕matrix · dark",
+   "node": {
+    "t": "board",
+    "name": "row 3",
+    "o": {
+     "dir": "row",
+     "align": "start"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "row 3 label",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "class",
+        "chars": "DOM chrome transition (I-1 …)",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 184
+       },
+       {
+        "t": "text",
+        "name": "cite",
+        "chars": "§10 L282",
+        "typo": "type.ui.caption",
+        "color": "color.text.tertiary"
+       }
+      ],
+      "w": 200,
+      "h": 176
+     },
+     {
+      "t": "board",
+      "name": "cell 3-1",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.sm",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "panel",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "pad": "space.inset.sm",
+         "fill": "color.surface.raised",
+         "stroke": "color.border.subtle",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "h2",
+          "chars": "Panel",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "text",
+          "name": "motion",
+          "chars": "opacity 0 → 1, translateY(8px) → 0",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 200,
+        "note": "I-1 (§3 L141)"
+       },
+       {
+        "t": "text",
+        "name": "words",
+        "chars": "the recipe",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 240
+       }
+      ],
+      "w": 256,
+      "h": 176
+     },
+     {
+      "t": "board",
+      "name": "cell 3-2",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.sm",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "panel",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "pad": "space.inset.sm",
+         "fill": "color.surface.raised",
+         "stroke": "color.border.subtle",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "h2",
+          "chars": "Panel",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "text",
+          "name": "motion",
+          "chars": "the end state at frame 0",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 200,
+        "note": "I-1 (§3 L141)"
+       },
+       {
+        "t": "text",
+        "name": "words",
+        "chars": "none",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 240
+       }
+      ],
+      "w": 256,
+      "h": 176
+     },
+     {
+      "t": "board",
+      "name": "cell 3-3",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.sm",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "panel",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "pad": "space.inset.sm",
+         "fill": "color.surface.raised",
+         "stroke": "color.border.strong",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "h2",
+          "chars": "Panel",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "text",
+          "name": "motion",
+          "chars": "opacity 0 → 1, translateY(8px) → 0",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 200,
+        "note": "I-1 (§3 L141)"
+       },
+       {
+        "t": "text",
+        "name": "words",
+        "chars": "the recipe, system colours",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 240
+       },
+       {
+        "t": "text",
+        "name": "system",
+        "chars": "system colours: CanvasText on Canvas; focus Highlight",
+        "typo": "type.ui.caption",
+        "color": "color.text.tertiary",
+        "w": 240
+       }
+      ],
+      "w": 256,
+      "h": 176
+     },
+     {
+      "t": "board",
+      "name": "cell 3-4",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.sm",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "panel",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "pad": "space.inset.sm",
+         "fill": "color.surface.raised",
+         "stroke": "color.border.strong",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "h2",
+          "chars": "Panel",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "text",
+          "name": "motion",
+          "chars": "the end state at frame 0",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 200,
+        "note": "I-1 (§3 L141)"
+       },
+       {
+        "t": "text",
+        "name": "words",
+        "chars": "none, system colours",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 240
+       },
+       {
+        "t": "text",
+        "name": "system",
+        "chars": "system colours: CanvasText on Canvas; focus Highlight",
+        "typo": "type.ui.caption",
+        "color": "color.text.tertiary",
+        "w": 240
+       }
+      ],
+      "w": 256,
+      "h": 176
+     }
+    ],
+    "w": 1232,
+    "h": 176
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 01",
+    "chars": "state: forced-reduce/matrix · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 80,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer · data",
+    "chars": "Data: synthetic, never a venue payload: the TICKS `burst` preset (seed 1, 40 Hz, 200 ticks from a start of 65000.00); sample data only",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "x": 80,
+    "y": 904
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "E47-D08 / 10 forced-reduce",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Board",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§0 L80: §10's 2 × 2 matrix for the value flash, the canvas flash and a chrome transition",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Theme: dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Frames (hand-off §H L99): forced-reduce/matrix · dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "Export: docs/design/E47/img/E47-D08-10-forced-reduce.png",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "Every frame a 1280 × 800 window, compact density (§0 L67)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-6",
+        "chars": "Data: synthetic, never a venue payload: the TICKS `burst` preset (seed 1, 40 Hz, 200 ticks from a start of 65000.00); sample data only",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-7",
+        "chars": "Markers, tags, shading, outlines and callouts in color.status.info.default are annotation, not product UI",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-8",
+        "chars": "§10's other rows (canvas interaction, safety signal) are text-only here; safety is board 09's",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "forced-reduce/matrix · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§10 L276: forced colours never sets data-motion; the motion mode never changes the colour mapping (D03:478–480)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Rows: DOM value flash (I-5), canvas data-rate (I-20 … I-24), DOM chrome transition (I-1 …); columns: safe, reduce, safe + forced colours, reduce + forced colours; words verbatim from §10's table",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Specimens: the focused cell (I-5) at 1 000 ms of the burst, the liquidation mark (I-24), a panel mount (I-1); the canvas keeps the high-contrast ink under forced colours (D03:480)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E47-D08 — Motion · board 10 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400,
+    "x": 1440,
+    "y": 80
+   }
+  }
+ ],
+ "export": "docs/design/E47/img/E47-D08-10-forced-reduce.png",
+ "notes": {
+  "sources": [
+   "spec docs/design/E47/E47-D08.md md5 6c50afbb, hand-off docs/design/E47/E47-D08-handoff.md md5 dc1307c8 (§0 L80; hand-off §H L99); TICKS packages/fixtures/src/synthetic-ticks.mjs md5 64c3ede9; ring geometry E47-D04 at 1ff5d8cb9 (§7.1); SCR-117 strings E47-D05 at 3987edc89"
+  ],
+  "copy_keys": [],
+  "copy_gaps": [],
+  "spec_gaps": [],
+  "fallbacks": [
+   "fallback: system colours (CanvasText, Canvas, Highlight, ButtonBorder) are not tokens: under forced colours they are drawn token-bound as color.text.primary / color.surface.app / color.focus.ring / color.border.strong with the system colour's name written beside them",
+   "fallback: the value-flash overlay's peak (opacity 0.25 of color.buy.default / color.sell.default, §3 I-5) has no opacity token: drawn as color.buy.subtle / color.sell.subtle over the cell, its mid-decay as the same tint at opacity.muted, labelled with the spec's values",
+   "fallback: the direction glyphs ▲ / ▼ drawn as text characters (E05-D03 MR-3's glyph and sign); the liquidation glyph as the local warning icon",
+   "fallback: the liquidation overlay (§6; PROPOSED color.liquidation.flash, D08-A9, not a token) drawn as color.status.warning.subtle under a color.status.warning.strong 2 px outline, labelled PROPOSED"
+  ],
+  "tokens": [
+   "type.ui.label",
+   "color.text.secondary",
+   "space.inset.sm",
+   "color.text.primary",
+   "type.ui.caption",
+   "color.text.tertiary",
+   "space.stack.xs",
+   "type.num.base",
+   "color.sell.subtle",
+   "color.sell.default",
+   "color.surface.canvas",
+   "space.stack.sm",
+   "color.surface.raised",
+   "color.status.warning.strong",
+   "size.icon",
+   "type.num.sm",
+   "space.inset.xs",
+   "radius.control",
+   "color.status.warning.subtle",
+   "border.thick",
+   "type.ui.body-strong",
+   "color.border.subtle",
+   "border.hairline",
+   "color.border.strong",
+   "type.ui.heading-sm",
+   "space.inset.xl",
+   "space.stack.md",
+   "space.inset.lg"
+  ],
+  "live_checks": [
+   "root 'E47-D08 / 10 forced-reduce' at (28000, 4200): read back the name exactly after the first section call; size 1920 x 1000",
+   "after touchTexts + relayout: the annotation column (estimated 462 px) ends inside the root (h 1000); raise the root's h to its end + 80 if not",
+   "frame 'forced-reduce∕matrix · dark': read back 1280 x 800 at (80, 80); clip on, no child spills",
+   "export docs/design/E47/img/E47-D08-10-forced-reduce.png under the dark set; record the board id and the PNG size in §0"
+  ],
+  "deviations": [],
+  "ambiguities": []
+ }
+}
