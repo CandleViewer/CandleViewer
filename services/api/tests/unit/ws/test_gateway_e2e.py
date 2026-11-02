@@ -29,6 +29,8 @@ ACC = uuid.uuid4()
 OTHER_ACC = uuid.uuid4()
 #: Far-future token expiry: this module does not test expiry (test_token_expiry.py does).
 _EXPIRES = datetime(2100, 1, 1, tzinfo=UTC)
+#: The session store's clock (#2101): a fixed instant, never compared here (C-13.7).
+_NOW = datetime(2026, 10, 31, 12, 0, tzinfo=UTC)
 ORIGIN = "http://testserver"  # §2.5: in CV_ALLOWED_ORIGINS and sent on every upgrade
 _PERMS = {
     "owner": frozenset(Permission),
@@ -129,7 +131,7 @@ class _Sessions:
         return ()
 
     def now(self) -> datetime:
-        return datetime.now(UTC)
+        return _NOW
 
     async def revoke_all(self, user_id: str, **_kw: Any) -> tuple[Any, ...]:
         return ()

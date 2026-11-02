@@ -140,6 +140,33 @@ def test_put_replaces_the_grants_and_pushes_after_the_commit(grants: Any, ack: s
     assert w.notifier.pushes == [(TARGET, True)]
 
 
+def test_a_grant_change_revokes_no_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SR-013 lists role changes, not grants (#2101 ruling C-2): a committed grant change reads
+    and revokes no session of anyone; it is applied in place (23 section 9.5), as pushed."""
+    touched: list[str] = []
+
+    async def revoke_all(self: object, user_id: str, **_: Any) -> tuple[Any, ...]:
+        touched.append(f"revoke_all:{user_id}")
+        return ()
+
+    async def revoke(self: object, session_id: str, *, reason: str) -> None:
+        touched.append(f"revoke:{session_id}")
+
+    async def live_sessions(self: object, user_id: str) -> tuple[Any, ...]:
+        touched.append(f"live_sessions:{user_id}")
+        return ()
+
+    monkeypatch.setattr(rbac._Sessions, "revoke_all", revoke_all)
+    monkeypatch.setattr(rbac._Sessions, "revoke", revoke)
+    monkeypatch.setattr(rbac._Sessions, "live_sessions", live_sessions)
+    w = _World()
+
+    r = w.put(_body((_A, "read"), (_B, "trade")))
+
+    assert r.status_code == 200, r.text
+    assert w.notifier.pushes == [(TARGET, True)] and touched == []
+
+
 @pytest.mark.parametrize(
     ("bound", "recorded"), [(str(_RID), _RID), ("", None)], ids=["uuid", "empty"]
 )
