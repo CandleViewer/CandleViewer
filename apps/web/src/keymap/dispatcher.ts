@@ -65,11 +65,17 @@ export function isEditableTarget(target: EventTarget | null | undefined): boolea
 /**
  * Bare navigation keys are never reported, in any context (D6, ruled option (c)): Tab, Enter, Space and the arrows,
  * Shift aside, move focus, activate, scroll or move inside a widget wherever they are pressed. Nor is Esc, the
- * universal cancel (D7).
+ * universal cancel (D7). Nor is Ctrl+F, the browser's find: the Watchlist panel takes it for its filter, and wherever
+ * that is not drawn (another screen, a panel loading, failed or with no list) it is the browser's, which a notice
+ * would only talk over (C-5335-d02). The exemption is the chord's, not the command's: a `watchlist.filter` remapped
+ * elsewhere gets its notice back on the new chord, and a command remapped onto Ctrl+F loses its inert notice.
  */
 const NAVIGATION_KEYS = new Set(["Tab", "Enter", "Space", "←", "→", "↑", "↓"]);
+const BROWSER_FIND = "Ctrl+F";
 const neverReported = (binding: string): boolean =>
-  binding === "Esc" || NAVIGATION_KEYS.has(binding.replace(/^Shift\+/, ""));
+  binding === "Esc" ||
+  binding === BROWSER_FIND ||
+  NAVIGATION_KEYS.has(binding.replace(/^Shift\+/, ""));
 
 /**
  * A text field's own editing chords (D-19, #5196): select all, clipboard, undo / redo, word moves and deletes, line
@@ -107,9 +113,10 @@ const viewOf = (active: ReadonlySet<string>): string =>
  * reported and runs only if its command opts in (`allowInEditable`). Global resolves first, with a declared shadow
  * before the Global (AC1, BQ-4); the first command that can run takes the key, once per press unless it is a stepper.
  * An inert key explains itself from any context, as E49-S07 shipped, except a bare navigation key (Tab, Enter, Space,
- * the arrows: D6, ruled option (c)), Esc (D7), a range binding and a held key's repeat; `Ctrl+K`, reserved for the
- * palette, is taken without a notice until E15 registers the palette on it (BQ-7, D9). An order entry (`requiresArm`,
- * BQ-5) that could run takes its key while the arm reads unarmed, runs nothing and says why, as an inert key does.
+ * the arrows: D6, ruled option (c)), Esc (D7), Ctrl+F (the browser's find), a range binding and a held key's repeat;
+ * `Ctrl+K`, reserved for the palette, is taken without a notice until E15 registers the palette on it (BQ-7, D9). An
+ * order entry (`requiresArm`, BQ-5) that could run takes its key while the arm reads unarmed, runs nothing and says
+ * why, as an inert key does.
  */
 export function createDispatcher(deps: DispatcherDeps) {
   const lastNotified = new Map<string, number>();
