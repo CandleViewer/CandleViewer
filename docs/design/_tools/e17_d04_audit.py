@@ -37,12 +37,15 @@ Gates (each FAIL led by its code):
 - [G12-WALKTHROUGH] the owner checklist holds one to ten items.
 - [G13-BQ] section R lists BQ-0..BQ-16 once each, each with a status from the ruled set, and names
   the comment that rules them.
-- [G14-IMG] every embedded image is committed and every committed one embedded; ten at most.
+- [G14-IMG] every embedded image is committed and every committed one embedded; ten at most; each
+  committed image's sha256 equals its pin in `IMG_SHA256`, and the record lists every pin.
 - [G15-FREEZE] post-merge mode: every merged table row stands unchanged.
 - [G16-ROUTE] every RT row targets an open owner of the ruled set; every F target that is an issue
   is named by an RT row.
 - [G17-PIN] the pinned head is readable and named in the record; every build key reads at it.
-- [G18-T2] every T2 row has a verdict from the ruled set, and the record states the gate's outcome.
+- [G18-T2] the T2 section states the gate's outcome; every T2 reason key the record names is an
+  E09-D09 section 3.1 key at the merge-base or a feed key PROPOSED in E17-D02 section 10 J there,
+  and the record marks it PROPOSED with its vocabulary owner.
 - [G19-AROW] every A row amends an owner document of the ruled set, through an open owner, and cites
   an F row.
 
@@ -73,10 +76,22 @@ SPEC_REL = "docs/design/E17/E17-D04.md"
 TOOL_REL = "docs/design/_tools/e17_d04_audit.py"
 PINS_REL = "docs/design/_tools/e17_d04_ruled_pins.txt"
 IMG_DIR = "docs/design/E17/img/e17-d04"
+# The committed captures, pinned by content (section 11 lists the same digests).
+IMG_SHA256 = {
+    "e17-d04-cmp076-dark.png": "55c9115461d7f560ffb2f41576bdc43bac9d1597451139091f8ea4a7cad1d522",
+    "e17-d04-cmp076-forced-colors.png": (
+        "e3a4f231707bf99ff2d3e621d189cde7bf72c56904c2b5c9bfa0efaf0fb132cd"
+    ),
+    "e17-d04-cmp076-greyscale.png": "26bf73e85bc8159c1ec934f0d844e3d6cbc1c630d9433fcd80e243110b7ab11f",
+    "e17-d04-cmp076-high-contrast.png": (
+        "a971f86d26822864ae33be4a6986df3e54153a68150ccb4a66bb00623e2c5162"
+    ),
+    "e17-d04-cmp076-light.png": "d2520729547d45539f22390829e08b2373f75ee45e1b655019fcd293917b04e4",
+}
 OWN = {SPEC_REL, TOOL_REL, PINS_REL}
 UPSTREAM = "origin/main"
 # #5420's head as the BQ list pins it; re-pinned to the merge commit once it lands (BQ-0).
-PIN = "86f6a14c25e18e7b155d4de13062c70244b5ad5e"
+PIN = "590bb92e528125c00ed0d11f2d33098a0ca26119"
 DECK_REL = "docs/design/E08/E08-D13-copy.json"
 DS_JSON_DIR = "packages/ui/tokens"
 RULING_COMMENT = "6573589779"
@@ -159,7 +174,10 @@ SEVERITIES = {
 OPEN_OWNERS = {"#32", "#325", "#569", "#1028", "#5335"}
 TARGETS_EXTRA = {"register"}
 OWNER_DOCS = re.compile(r"^(`D02` §\d+[A-Z ]*(row \d+(–\d+)?)?|`14` SCR-\d+|`15` CMP-\d+)")
-T2_VERDICTS = {"not a gated control", "not built", "other surface"}
+E09D09_REL = "docs/design/E09/E09-D09.md"
+T2_KEY = re.compile(r"`((?:rbac|feed)\.[a-z0-9_]+)`")
+T2_PROPOSED = "PROPOSED in `D02` §10 J"
+T2_VOCAB_OWNER = "vocabulary owner E17-D01 §7"
 T2_OUTCOME = "no in-scope T2 control"
 BQ_IDS = list(range(17))
 BQ_STATUS = re.compile(
@@ -167,7 +185,7 @@ BQ_STATUS = re.compile(
     r"|ruled as proposed|ruled: .+)$"
 )
 FAMILIES = (
-    "BQ", "RN", "FS", "W", "DL", "CN", "CP", "CM", "IX", "AN", "MO", "AX", "T2", "SC", "F", "A",
+    "BQ", "RN", "FS", "W", "DL", "CN", "CP", "CM", "IX", "AN", "MO", "AX", "SC", "F", "A",
     "DR", "RT", "IS", "OR",
 )  # fmt: skip
 
@@ -343,6 +361,7 @@ class Ctx:
     tokens: dict[str, dict[str, Any]]
     images: list[str]
     img_text: dict[str, str]
+    img_sha: dict[str, str]
 
     def text_of(self, key: str) -> str | None:
         if key in PIN_KEYS:
@@ -414,6 +433,11 @@ def build_ctx() -> Ctx:
         tokens=tokens,
         images=sorted(p.name for p in img.glob("*.png")) if img.is_dir() else [],
         img_text={p.name: png_text(p) for p in img.glob("*.png")} if img.is_dir() else {},
+        img_sha=(
+            {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in img.glob("*.png")}
+            if img.is_dir()
+            else {}
+        ),
     )
 
 
@@ -746,6 +770,17 @@ def g_img(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
         f.append(f"[G14-IMG] {n} is committed but not embedded")
     if len(ctx.images) > 10:
         f.append(f"[G14-IMG] {len(ctx.images)} images, more than ten")
+    for n in ctx.images:
+        pin = IMG_SHA256.get(n)
+        if pin is None:
+            f.append(f"[G14-IMG] {n} has no sha256 pin")
+        elif ctx.img_sha.get(n) != pin:
+            f.append(f"[G14-IMG] {n}'s sha256 is not its pin {pin[:12]}")
+    for n, pin in sorted(IMG_SHA256.items()):
+        if n not in ctx.images:
+            f.append(f"[G14-IMG] {n} is pinned but not committed")
+        if not re.search(rf"(?m)^\| `{re.escape(n)}`\s+\| `{pin}`", ctx.spec):
+            f.append(f"[G14-IMG] the record does not list {n} with its sha256")
 
 
 def g_freeze(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
@@ -782,14 +817,27 @@ def g_pin(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
 
 def g_t2(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
     sec = section(ctx.spec, "10.")
-    t2 = rows(sec, "T2")
-    if not t2:
-        f.append("[G18-T2] no T2 row")
-    for r in t2:
-        if not any(r[3].startswith(v) for v in T2_VERDICTS):
-            f.append(f"[G18-T2] {r[0]}: verdict {r[3][:30]!r}")
-    if T2_OUTCOME not in sec:
+    t2 = sec[sec.index("### 10.2") : sec.index("### 10.3")] if "### 10.2" in sec else ""
+    if T2_OUTCOME not in t2:
         f.append(f"[G18-T2] the T2 section does not state {T2_OUTCOME!r}")
+    rbac = set(re.findall(r"(?m)^\| `(rbac\.[a-z_]+)`", show(ctx.base, E09D09_REL) or ""))
+    if not rbac:
+        f.append(f"[G18-T2] E09-D09 section 3.1's keys cannot be read at {ctx.base[:10]}")
+    j = ctx.line("D02", 245) or ""
+    if not j.startswith("**J. T2 reason keys"):
+        f.append("[G18-T2] `D02`:245 is not section 10 J's T2 reason-key paragraph")
+    feed = set(re.findall(r"`(feed\.[a-z0-9_]+)`", j))
+    for key in sorted(set(T2_KEY.findall(ctx.spec))):
+        if key.startswith("rbac."):
+            if key not in rbac:
+                f.append(f"[G18-T2] {key} is no E09-D09 section 3.1 key")
+            continue
+        if key not in feed:
+            f.append(f"[G18-T2] {key} is not PROPOSED in E17-D02 section 10 J")
+        if key not in t2:
+            f.append(f"[G18-T2] {key} is named but not on section 10.2's PROPOSED line")
+    if T2_KEY.search(ctx.spec) and (T2_PROPOSED not in t2 or T2_VOCAB_OWNER not in t2):
+        f.append("[G18-T2] the reason keys are not marked PROPOSED with their vocabulary owner")
 
 
 def g_arow(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
@@ -900,7 +948,12 @@ def mutations(ctx: Ctx) -> list[tuple[str, Callable[[Ctx], Ctx]]]:
         ("G15-FREEZE", with_(merged_spec="| F-1 | a row that changed |\n")),
         ("G16-ROUTE", sub(r"(?m)^\| RT-1\s+\|.*\n", "")),
         ("G17-PIN", with_(pin="0" * 40, pin_ok=False)),
+        ("G14-IMG", lambda c: with_(img_sha={**c.img_sha, c.images[0]: "0" * 64})(c)),
+        ("G14-IMG", sub(r"(?m)^(\| `e17-d04-cmp076-dark\.png`\s+\| `)55c9", r"\g<1>66c9")),
         ("G18-T2", spec(lambda s: s.replace(T2_OUTCOME, "no T2 outcome"))),
+        ("G18-T2", spec(lambda s: s.replace("`feed.shutdown`", "`feed.shutdown_now`", 1))),
+        ("G18-T2", spec(lambda s: s.replace(T2_VOCAB_OWNER, "owner to be named", 1))),
+        ("G18-T2", spec(lambda s: s + "\nThe chip shows `rbac.chip_owner`.\n")),
         ("G19-AROW", sub(r"(?m)^(\| A-1\s+\| )", r"\1`22` ")),
     ]
 
