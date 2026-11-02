@@ -8,31 +8,41 @@ cited file AS TEXT with `git show`: the plan docs, E37-D02, `ports.ts`, the keyb
 and E37-D04 at #5495's head (`D04_REF`) until they merge.
 Default-deny: a gate that cannot read its input FAILs.
 
-Two modes, chosen by what the working tree holds. With the spec, the hand-off or the pins file
-present the tool runs every gate (full mode; a missing one of the three FAILs). With all three
-absent it runs the deck gates alone (deck-only mode, the deck-first PR): G-DECK reads the rows,
-the `cited` list and the slot samples from the JSON Lines twin itself; G-MATRIX, G-COVER (its
-verbatim, copy.ts and E36-D05 parts), G-RAW, G-FROZEN, G-HYGIENE, G-SCOPE and G-STATUS read the
-same rows; a row is a frozen (section 9) row when its status is FROZEN or its context carries the
-PROPOSED freeze. The self-test runs the mutations of the mode it is in.
+Two stages, named by an explicit `--stage deck|full` (default `full`; never chosen by which files
+exist). `--stage full` runs every gate and needs the spec, the hand-off, the deck and the pins
+file: a missing one FAILs G-STAGE and no other gate runs. `--stage deck` (the deck-first PR) needs
+the deck alone and runs the deck gates: G-DECK reads the rows, the `cited` list, the slot samples
+and the caps from the JSON Lines twin itself; G-MATRIX, G-COVER (its verbatim, copy.ts and E36-D05
+parts), G-RAW, G-FROZEN, G-HYGIENE, G-SCOPE and G-STATUS read the same rows; a row is a frozen
+(section 9) row when its `frozen` flag carries an FZ id. The pack-side gates the deck stage does
+not run are named on every run, never skipped silently. The self-test runs its stage's mutations.
+
+Status words (BQ-12 as ruled): `merged` (the string stands on a merged line at the base), `RULED`
+(an orchestrator ruling or a ruled open parent decided it) and `PROPOSED` (awaiting the owner,
+#2701). Whether a string is frozen is a separate flag with its id (`frozen`: FZ-n or null), never a
+status. A string E36-D05's deck already freezes is cited by its E36-D05 key, never re-frozen.
 
 Gates (each FAIL led by its name):
+  G-STAGE   every file the stage needs is in the working tree (full: all five; deck: the deck).
   G-FRAME   every `14` SCR-082 state and indicator word has exactly one frame row; every row's
             frame is a D02 frame on its cited line; every D02 frame is indexed once.
   G-SHEET   every component of the set has a sheet with Props, States, Tokens, Name and Owner
             story, a hand-off contract row and a Storybook row; every token a sheet names is in
             the token map; every hand-off A-row's Old text or anchor stands once in its file.
   G-DECK    the JSON Lines twin (one row per line) equals the deck tables and its slot samples
-            section 8.4; every row has every field and no other; keys, kinds and statuses are
-            from their sets; each cap is its kind's, measured with the slot samples.
-  G-MATRIX  the 36 `rules.graph.connect.*` rows equal ports.ts's PORT_COMPAT at the base.
+            section 8.4; every row has the nine fields and the `frozen` flag and no other; keys,
+            kinds and statuses are from their sets (merged, RULED, PROPOSED); the head's caps are
+            the ruled ones (24 and 120 PROPOSED); each cap is its kind's, measured with the samples.
+  G-MATRIX  the 36 `rules.graph.connect.*` rows equal ports.ts's PORT_COMPAT at the base: the 7
+            cells that connect are merged, the 29 reasons PROPOSED.
   G-COVER   every quoted string of D02 sections 4, 14, 15, D04's script and announcements and
             the ticket's labels is covered; every copy.ts export is a row's source; a row sourced
             from a D02, D04 or `14` line is verbatim there; every E36-D05 key cited exists.
   G-RAW     no raw hex in the pack; a px value only beside a D02, D03 or D04 cite.
   G-MOTION  section 5 equals E37-D03's motion rows, their reduce cells and lines.
-  G-FROZEN  every section 9 row is FROZEN, verbatim at its owner, its freeze PROPOSED, and free of
-            the words that soften (undo, just, simply, anytime).
+  G-FROZEN  every section 9 row carries its FZ id in order, an owner cite it stands verbatim on,
+            its freeze PROPOSED, and none of the words that soften (undo, just, simply, anytime);
+            a string E36-D05 freezes is a cited row (frozen by E36-D05), never re-frozen here.
   G-EVENT   section 10 lists the six events in order, each named on its cited line, no property
             carrying an account or rule content.
   G-CITE    every cite in range and on a non-blank line at its ref, its content equal to the
@@ -40,19 +50,21 @@ Gates (each FAIL led by its name):
   G-HYGIENE no closing keyword, local path, URL, agent name, double-brace slot or deny word in
             the pack, this tool or the pins file; no unknown anchor.
   G-SCOPE   the diff against `git merge-base HEAD origin/main` touches only the five files (the
-            deck and this tool in deck-only mode).
-  G-STATUS  a deck row whose source line marks its string PROPOSED stays PROPOSED; section 3.1
-            keeps the `application` role PROPOSED until E37-Q05's run, never DECIDED.
+            deck and this tool at the deck stage).
+  G-STATUS  a deck row whose source line marks its string PROPOSED stays PROPOSED; a merged row's
+            first cite is a merged file; a RULED row cites D03, D04 or its ruling; section 3.1
+            keeps the `application` role PROPOSED until E37-Q05's run, never merged or RULED.
   G-CHECKLIST section 13 holds DA-1 ... DA-17 in order: DA-1 ... DA-7 cite `14`'s seven boxes,
             DA-8 ... DA-17 cite D04's SC-1 ... SC-10, each on the line that starts with its SC id.
 
 Usage (from the repo root):
-  python3 -I docs/design/_tools/e37_d05_handoff_audit.py --check       (exit 1 on any FAIL;
-      the first line names the mode)
-  python3 -I docs/design/_tools/e37_d05_handoff_audit.py --json
-  python3 -I docs/design/_tools/e37_d05_handoff_audit.py --self-test
-  python3 -I docs/design/_tools/e37_d05_handoff_audit.py --repin-ruled
-      (the pins file's only writer)
+  python3 -I docs/design/_tools/e37_d05_handoff_audit.py --stage deck --check   (exit 1 on any
+      FAIL; the first lines name the stage and the gates it does not run)
+  python3 -I docs/design/_tools/e37_d05_handoff_audit.py --stage full --check
+  python3 -I docs/design/_tools/e37_d05_handoff_audit.py --stage full --json
+  python3 -I docs/design/_tools/e37_d05_handoff_audit.py --stage deck --self-test
+  python3 -I docs/design/_tools/e37_d05_handoff_audit.py --stage full --repin-ruled
+      (the pins file's only writer; the full stage only)
 """
 
 from __future__ import annotations
@@ -76,12 +88,10 @@ TOOL_REL = "docs/design/_tools/e37_d05_handoff_audit.py"
 PINS_REL = "docs/design/_tools/e37_d05_ruled_pins.txt"
 OWN_PATHS = (SPEC_REL, HAND_REL, DECK_REL, TOOL_REL, PINS_REL)
 DECK_PATHS = (DECK_REL, TOOL_REL)
-PACK_PATHS = (SPEC_REL, HAND_REL, PINS_REL)  # all absent: deck-only mode
-BASE = "1c4f51bb5dbeb167627749a04d6ad426e26bf5e6"  # origin/main, re-pinned (BQ-02)
+STAGES = ("deck", "full")
+BASE = "860056b7706c1c1152a7382a53a9cfe2396de893"  # origin/main as ruled (BQ-02)
 D03_REF = "fa8121d1b9601727a77d9c5013f4c5bbcfb87951"  # #5448's head (E37-D03 PR 2)
-D04_REF = (
-    "19e002c0799086a77f7b007a1facbbd58928d3d4"  # #5495's head (E37-D04, its lens fold)
-)
+D04_REF = "19e002c0799086a77f7b007a1facbbd58928d3d4"  # #5495's head (E37-D04, its lens fold)
 PATHS: dict[str, str] = {
     "14": "docs/plan/14-screens-catalogue.md",
     "15": "docs/plan/15-component-catalogue.md",
@@ -109,9 +119,7 @@ SLOT = re.compile(r"\{([^{}]*)\}")
 TOKEN = re.compile(
     r"`((?:color|space|radius|size|border|type|font|elevation|motion)\.[a-z0-9.]*[a-z0-9])`"
 )
-CLOSING = re.compile(
-    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE
-)
+CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE)
 LOCAL_PATH = re.compile(
     "/" + "home/|/Us" + "ers/|/" + "tmp/|[A-Za-z]:\\\\|\\bw" + "t/|\\bno" + "tes/"
 )  # assembled
@@ -144,7 +152,26 @@ CAPS: dict[str, int | None] = {
     "tooltip": 120,
     "aria pattern": None,
 }
-STATUSES = ("DECIDED", "PROPOSED", "FROZEN")
+STATUSES = ("merged", "RULED", "PROPOSED")  # BQ-12 as ruled; frozen is a separate flag
+ROW_FIELDS = (*FIELDS, "frozen")
+FZ_ID = re.compile(r"FZ-\d+")
+MERGED_KEYS = ("14", "15", "D02", "PORTS", "COPY", "E36D05", "E09D09", "CAL")
+RULED_KEYS = ("D03", "D04")
+NEW_CAP = "new (BQ-15; no owner doc sets it)"
+# the caps as ruled (BQ-15): 24 and 120 stand in no owner doc, so they are PROPOSED
+HEAD_CAPS: dict[str, dict[str, Any]] = {
+    "label": {"max": 24, "status": "PROPOSED", "source": NEW_CAP},
+    "reason": {"max": 80, "status": "merged", "source": "`PORTS`:20 (OQ9)"},
+    "t2 reason": {"max": 60, "status": "merged", "source": "`E09D09`:85 (E09-D09 " + SECT + "3.1)"},
+    "announce": {"max": 120, "status": "PROPOSED", "source": NEW_CAP},
+    "message": {"max": 120, "status": "PROPOSED", "source": NEW_CAP},
+    "tooltip": {"max": 120, "status": "PROPOSED", "source": NEW_CAP},
+    "aria pattern": {
+        "max": None,
+        "status": "PROPOSED",
+        "source": "new (BQ-15; a context note instead)",
+    },
+}
 KEY_RX = re.compile(r"rules\.graph\.[a-z_]+(?:\.[a-z0-9_]+)+")
 PORT_TYPES = ("boolean", "number", "price", "side", "action", "trigger")
 EVENTS = (
@@ -155,9 +182,7 @@ EVENTS = (
     "rule.graph_autolayout_used",
     "rule.graph_keyboard_authoring_used",
 )
-PRIVATE_PROPS = re.compile(
-    r"account|rule content|\bname\b|\btext\b|symbol", re.IGNORECASE
-)
+PRIVATE_PROPS = re.compile(r"account|rule content|\bname\b|\btext\b|symbol", re.IGNORECASE)
 # ARIA role words D02 section 14 quotes; they name roles, not copy
 ROLE_WORDS = {
     "region", "group", "status", "dialog", "log", "tree", "listbox", "alertdialog", "note",
@@ -195,6 +220,7 @@ class Texts:
     changed: list[str] | None
     memo: dict[str, str | None]
     full: bool = True
+    missing: tuple[str, ...] = ()
 
 
 def git(*args: str) -> str | None:
@@ -301,7 +327,7 @@ def quoted(s: str) -> list[str]:
 # ---------------------------------------------------------------------------- the pack's tables
 
 
-def deck_record(c: list[str]) -> dict[str, Any]:
+def deck_record(c: list[str], frozen: str | None = None) -> dict[str, Any]:
     mx = c[4]
     return {
         "key": unkey(c[0]),
@@ -313,6 +339,7 @@ def deck_record(c: list[str]) -> dict[str, Any]:
         "kind": c[5],
         "status": c[6],
         "source": unesc(c[7]),
+        "frozen": frozen,
     }
 
 
@@ -346,7 +373,7 @@ def jdeck(t: Texts) -> dict[str, Any] | None:
 
 
 def frozen_like(r: dict[str, Any]) -> bool:
-    return r.get("status") == "FROZEN" or FREEZE in str(r.get("context", ""))
+    return r.get("frozen") is not None
 
 
 def jrows(t: Texts) -> list[dict[str, Any]]:
@@ -356,14 +383,14 @@ def jrows(t: Texts) -> list[dict[str, Any]]:
 
 
 def table81(t: Texts) -> list[dict[str, Any]]:
-    """Section 8.1's rows (full mode) or the twin's rows that are not frozen (deck-only)."""
+    """Section 8.1's rows (full stage) or the twin's rows that carry no frozen flag (deck)."""
     if t.full:
         return deck_rows(t.spec)
     return [r for r in jrows(t) if not frozen_like(r)]
 
 
 def table9(t: Texts) -> list[dict[str, Any]]:
-    """Section 9's rows (full mode) or the twin's frozen rows (deck-only)."""
+    """Section 9's rows (full stage) or the twin's rows with a frozen flag (deck)."""
     if t.full:
         return frozen_rows(t.spec)
     return [r for r in jrows(t) if frozen_like(r)]
@@ -391,7 +418,7 @@ def deck_rows(spec: str) -> list[dict[str, Any]]:
 
 
 def frozen_rows(spec: str) -> list[dict[str, Any]]:
-    return [deck_record(c[1:]) for c in rows(section(spec, "## 9."), "FZ")]
+    return [deck_record(c[1:], c[0]) for c in rows(section(spec, "## 9."), "FZ")]
 
 
 def cited_rows(spec: str) -> list[dict[str, str]]:
@@ -400,17 +427,13 @@ def cited_rows(spec: str) -> list[dict[str, str]]:
     for ln in block.split("\n"):
         if ln.startswith("| `"):
             c = cells(ln)
-            out.append(
-                {"key": unkey(c[0]), "text": unesc(unquote(c[1])), "where": unesc(c[2])}
-            )
+            out.append({"key": unkey(c[0]), "text": unesc(unquote(c[1])), "where": unesc(c[2])})
     return out
 
 
 def notkeyed_rows(spec: str) -> list[str]:
     block = subsection(spec, "### 8.3")
-    return [
-        unesc(unquote(cells(ln)[0])) for ln in block.split("\n") if ln.startswith('| "')
-    ]
+    return [unesc(unquote(cells(ln)[0])) for ln in block.split("\n") if ln.startswith('| "')]
 
 
 def samples(spec: str) -> dict[str, str]:
@@ -424,6 +447,18 @@ def e36_deck(t: Texts) -> dict[str, Any]:
     return strings if isinstance(strings, dict) else {}
 
 
+def first_cite_in(s: str) -> tuple[str, int] | None:
+    """The first cite anywhere in a source cell (an E36-D05 key's owner line follows its key)."""
+    m = CITE.search(s)
+    return (m[1], int(m[2].split(DASH)[0].split(",")[0])) if m else None
+
+
+def e36_status(entry: dict[str, Any]) -> str | None:
+    """The status word E36-D05's deck gives a string (`string merged ...`), if it gives one."""
+    m = re.match(r"string (merged|RULED|PROPOSED)\b", str(entry.get("status", "")))
+    return m[1] if m else None
+
+
 def fill(text: str, sample: dict[str, str]) -> tuple[str, list[str]]:
     missing = [s for s in SLOT.findall(text) if s not in sample]
     return SLOT.sub(lambda m: sample.get(m[1], m[0]), text), missing
@@ -434,9 +469,7 @@ def scr082(t: Texts) -> list[str]:
     start = next((i for i, ln in enumerate(ls) if ln.startswith("### SCR-082 ")), -1)
     if start < 0:
         return []
-    end = next(
-        (i for i in range(start + 1, len(ls)) if ls[i].startswith("### ")), len(ls)
-    )
+    end = next((i for i in range(start + 1, len(ls)) if ls[i].startswith("### ")), len(ls))
     return ls[start:end]
 
 
@@ -447,9 +480,7 @@ def states_14(t: Texts) -> list[str]:
 
 
 def words_14(t: Texts) -> list[str]:
-    return [
-        m[1] for ln in scr082(t) if (m := re.match(r"\s+\d\. \*\*`([^`]+)`\*\*", ln))
-    ]
+    return [m[1] for ln in scr082(t) if (m := re.match(r"\s+\d\. \*\*`([^`]+)`\*\*", ln))]
 
 
 def d02_frames(t: Texts) -> list[str]:
@@ -577,9 +608,7 @@ def g_frame(t: Texts, vals: dict[str, str]) -> list[str]:
         bad.append("section 2's rows are not FI-1 ... FI-n in order")
     parts, words = states_14(t), words_14(t)
     if not parts or len(words) != 4:
-        bad.append(
-            "cannot read SCR-082's States line and four indicator words at the base"
-        )
+        bad.append("cannot read SCR-082's States line and four indicator words at the base")
     by_kind: dict[str, list[list[str]]] = {}
     for r in fis:
         if len(r) != 6:
@@ -624,9 +653,7 @@ def a_rows(hand: str) -> list[tuple[str, str, list[str]]]:
             continue
         body = ln[m.end() :]
         anchors = re.findall(r'Old: "(.+?)"\.? New:', body)
-        anchors += re.findall(
-            r'(?:[Aa]fter|[Bb]efore) "(.+?)"(?: \([^)]*\))? add', body
-        )
+        anchors += re.findall(r'(?:[Aa]fter|[Bb]efore) "(.+?)"(?: \([^)]*\))? add', body)
         out.append((m[1], m[2], anchors))
     return out
 
@@ -677,16 +704,14 @@ def g_deck(t: Texts, vals: dict[str, str]) -> list[str]:
     except (ValueError, AttributeError) as e:
         return [f"the JSON Lines twin does not parse: {e}"]
     table = table81(t) + table9(t)
-    if data.get("fields") != list(FIELDS):
-        bad.append("the JSON twin's field list is not the deck's nine fields")
+    if data.get("fields") != list(FIELDS) or data.get("flags") != ["frozen"]:
+        bad.append("the JSON twin's head does not list the nine fields and the `frozen` flag")
+    if data.get("caps") != HEAD_CAPS:
+        bad.append("the head's caps are not the ruled ones (24 and 120 PROPOSED; BQ-15)")
     if t.full:
         if data.get("rows") != table:
-            drift = [
-                r.get("key") for r, s in zip(data.get("rows", []), table) if r != s
-            ]
-            bad.append(
-                f"the JSON rows differ from sections 8.1 and 9 (first: {drift[:1]})"
-            )
+            drift = [r.get("key") for r, s in zip(data.get("rows", []), table) if r != s]
+            bad.append(f"the JSON rows differ from sections 8.1 and 9 (first: {drift[:1]})")
         if data.get("cited") != cited_rows(t.spec):
             bad.append("the JSON `cited` list differs from section 8.2")
         if data.get("samples") != samples(t.spec):
@@ -695,22 +720,18 @@ def g_deck(t: Texts, vals: dict[str, str]) -> list[str]:
         if data.get("pack") != "E37-D05" or data.get("base") != BASE[:10]:
             bad.append(f"the head line is not E37-D05's at the base {BASE[:10]}")
         if table != data.get("rows"):
-            bad.append(
-                "the twin's rows are not its non-frozen rows, then its frozen ones"
-            )
-        bad += [f"{r.get('key')}: fields {sorted(r)}, not the nine" for r in table
-                if sorted(r) != sorted(FIELDS)]  # fmt: skip
+            bad.append("the twin's rows are not its non-frozen rows, then its frozen ones")
+        bad += [f"{r.get('key')}: fields {sorted(r)}, not the nine and the flag" for r in table
+                if sorted(r) != sorted(ROW_FIELDS)]  # fmt: skip
         bad += [f"a cited row with fields {sorted(c)}" for c in cited_of(t)
                 if sorted(c) != ["key", "text", "where"]]  # fmt: skip
         if not samples_of(t):
             bad.append("the head line carries no slot samples")
-    if any(sorted(r) != sorted(FIELDS) for r in table):
+    if any(sorted(r) != sorted(ROW_FIELDS) for r in table):
         return bad
     sample = samples_of(t)
     keys = [r["key"] for r in table]
-    bad += [
-        f"{k} is keyed twice" for k in sorted({k for k in keys if keys.count(k) > 1})
-    ]
+    bad += [f"{k} is keyed twice" for k in sorted({k for k in keys if keys.count(k) > 1})]
     for r in table:
         k = r["key"]
         for f in FIELDS:
@@ -719,9 +740,7 @@ def g_deck(t: Texts, vals: dict[str, str]) -> list[str]:
         if r["kind"] not in CAPS:
             bad.append(f"{k}: kind {r['kind']!r} is not one of the six")
         if r["status"] not in STATUSES:
-            bad.append(
-                f"{k}: status {r['status']!r} is not one of {', '.join(STATUSES)}"
-            )
+            bad.append(f"{k}: status {r['status']!r} is not one of {', '.join(STATUSES)} (BQ-12)")
         if not k.startswith("rules.graph."):
             continue
         if not KEY_RX.fullmatch(k):
@@ -732,11 +751,7 @@ def g_deck(t: Texts, vals: dict[str, str]) -> list[str]:
             text, missing = fill(r["text"], sample)
             bad += [f"{k}: slot {{{s}}} has no sample in section 8.4" for s in missing]
             if len(text) > r["max_length"]:
-                bad.append(
-                    f"{k}: {len(text)} characters filled, over {r['max_length']}"
-                )
-    bad += [f"{k}: an 8.1 row marked FROZEN (section 9 holds them)"
-            for k in (r["key"] for r in table81(t) if r["status"] == "FROZEN")]  # fmt: skip
+                bad.append(f"{k}: {len(text)} characters filled, over {r['max_length']}")
     return bad + anchor_problems(t, vals, "DECK:")
 
 
@@ -745,12 +760,8 @@ def g_matrix(t: Texts, vals: dict[str, str]) -> list[str]:
     bad = []
     if len(pc) != len(PORT_TYPES) ** 2:
         bad.append(f"PORT_COMPAT reads {len(pc)} cells at the base, not 36")
-    deck = {
-        r["key"]: r for r in table81(t) if r["key"].startswith("rules.graph.connect.")
-    }
-    want = {
-        f"rules.graph.connect.{a}.{b}": (a, b) for a in PORT_TYPES for b in PORT_TYPES
-    }
+    deck = {r["key"]: r for r in table81(t) if r["key"].startswith("rules.graph.connect.")}
+    want = {f"rules.graph.connect.{a}.{b}": (a, b) for a in PORT_TYPES for b in PORT_TYPES}
     bad += [f"{k} is not a port pair" for k in deck if k not in want]
     for k, pair in want.items():
         r = deck.get(k)
@@ -761,7 +772,7 @@ def g_matrix(t: Texts, vals: dict[str, str]) -> list[str]:
         text = "connects" if cell is True else cell
         if r["text"] != text:
             bad.append(f"{k}: {r['text']!r}, PORTS reads {text!r}")
-        if r["status"] != ("DECIDED" if cell is True else "PROPOSED"):
+        if r["status"] != ("merged" if cell is True else "PROPOSED"):
             bad.append(f"{k}: status {r['status']}")
         if first_cite(r["source"]) != ("PORTS", n):
             bad.append(f"{k}: its source is not `PORTS`:{n}")
@@ -771,19 +782,11 @@ def g_matrix(t: Texts, vals: dict[str, str]) -> list[str]:
 def coverage_sources(t: Texts) -> list[tuple[str, str]]:
     d02, d04 = at(t, "D02"), at(t, "D04")
     out = [("D02 section 15", q) for q in quoted(section(d02, "## 15. "))]
-    out += [
-        ("D02 section 14", q)
-        for q in quoted(section(d02, "## 14. "))
-        if q not in ROLE_WORDS
-    ]
+    out += [("D02 section 14", q) for q in quoted(section(d02, "## 14. ")) if q not in ROLE_WORDS]
     for ln in section(d02, "## 4. ").split("\n"):
         if ln.startswith("| `SCR-082 / "):
             out += [("D02 section 4 tooltip", q) for q in quoted(cells(ln)[3])]
-    out += [
-        ("D04 script", unquote(r[2]))
-        for r in rows(section(d04, "## 5. "), "S")
-        if len(r) > 2
-    ]
+    out += [("D04 script", unquote(r[2])) for r in rows(section(d04, "## 5. "), "S") if len(r) > 2]
     for r in rows(section(d04, "## 4. "), "K"):
         out += [("D04 announcement", q) for q in quoted(r[4] if len(r) > 4 else "")]
     out += [("T labels", label) for label in T_LABELS]
@@ -795,9 +798,7 @@ def g_cover(t: Texts, vals: dict[str, str]) -> list[str]:
     table, fz, cited = table81(t), table9(t), cited_of(t)
     if t.full:
         nk = notkeyed_rows(t.spec)
-        have = {collapse(r["text"]) for r in table + fz} | {
-            collapse(c["text"]) for c in cited
-        }
+        have = {collapse(r["text"]) for r in table + fz} | {collapse(c["text"]) for c in cited}
         have |= {collapse(s) for s in nk}
         srcs = coverage_sources(t)
         for where, s in srcs:
@@ -815,9 +816,7 @@ def g_cover(t: Texts, vals: dict[str, str]) -> list[str]:
         if c and c[0] in ("D02", "D04", "14"):
             line = unesc(slots_to_braces(norm(line_at(t, c[0], c[1]))))
             if norm(r["text"]) not in line:
-                bad.append(
-                    f"{r['key']}: {r['text'][:40]!r} is not verbatim on `{c[0]}`:{c[1]}"
-                )
+                bad.append(f"{r['key']}: {r['text'][:40]!r} is not verbatim on `{c[0]}`:{c[1]}")
         elif not c and not r["source"].startswith("new ("):
             bad.append(f"{r['key']}: its source is neither a cite nor `new (...)`")
     e36 = e36_deck(t)
@@ -837,9 +836,7 @@ def g_raw(t: Texts, vals: dict[str, str]) -> list[str]:
             if HEX.search(ln):
                 bad.append(f"{name}:{i} carries a raw hex value (raise it to E37-D03)")
             if PX.search(ln) and not re.search(r"`D0[234]`:\d", ln):
-                bad.append(
-                    f"{name}:{i} carries a px value beside no D02 / D03 / D04 cite"
-                )
+                bad.append(f"{name}:{i} carries a px value beside no D02 / D03 / D04 cite")
     return bad
 
 
@@ -859,9 +856,7 @@ def g_motion(t: Texts, vals: dict[str, str]) -> list[str]:
         if first_cite(r[3]) != ("D03", n):
             bad.append(f"{r[0]}: its cite is not `D03`:{n}")
     if vals["MOT:rows"] != vals["MOT:reduce"]:
-        bad.append(
-            f"D03: {vals['MOT:rows']} motion rows, {vals['MOT:reduce']} with a reduce cell"
-        )
+        bad.append(f"D03: {vals['MOT:rows']} motion rows, {vals['MOT:reduce']} with a reduce cell")
     for key in ("MOT:rows", "MOT:reduce"):
         if f"<!--={key}-->" not in t.spec:
             bad.append(f"the spec drops the {key} anchor")
@@ -873,44 +868,54 @@ def g_frozen(t: Texts, vals: dict[str, str]) -> list[str]:
     e36 = e36_deck(t)
     recs: list[tuple[str, dict[str, Any]]] = []
     if t.full:
-        fz = rows(section(t.spec, "## 9."), "FZ")
-        if [r[0] for r in fz] != [f"FZ-{i}" for i in range(1, len(fz) + 1)]:
-            bad.append("section 9's rows are not FZ-1 ... FZ-n in order")
-        for c in fz:
+        for c in rows(section(t.spec, "## 9."), "FZ"):
             if len(c) != 10:
                 bad.append(f"{c[0]}: {len(c)} cells, not 10")
                 continue
-            recs.append((c[0], deck_record(c[1:])))
+            recs.append((c[0], deck_record(c[1:], c[0])))
     else:
-        recs = [(str(r.get("key")), r) for r in table9(t)]
+        recs = [(str(r.get("frozen")), r) for r in table9(t)]
         if not recs:
             bad.append("the twin holds no frozen row")
+    if [lab for lab, _ in recs] != [f"FZ-{i}" for i in range(1, len(recs) + 1)]:
+        bad.append("the frozen flags are not FZ-1 ... FZ-n in order")
     for label, r in recs:
-        if r["status"] != "FROZEN":
-            bad.append(f"{label}: status {r['status']}, not FROZEN")
+        if not FZ_ID.fullmatch(str(r.get("frozen"))):
+            bad.append(f"{r['key']}: frozen flag {r.get('frozen')!r}, not an FZ id")
         soft = SOFT.search(r["text"])
         if soft:
             bad.append(f"{label}: {soft[0]!r} softens a safety string (R-7)")
         if FREEZE not in r["context"]:
             bad.append(f"{label}: the context does not say the freeze is PROPOSED")
-        if r["key"].startswith("rules.graph."):
-            cite = first_cite(r["source"])
-            line = norm(line_at(t, cite[0], cite[1])) if cite else ""
-            if not cite or norm(r["text"]) not in line:
-                bad.append(f"{label}: not verbatim on its first cite")
-        else:
+        cite = first_cite_in(r["source"])
+        line = norm(unesc(slots_to_braces(line_at(t, cite[0], cite[1])))) if cite else ""
+        if not cite:
+            bad.append(f"{label}: no owner `file`:line in its source (BQ-16)")
+        elif norm(r["text"]) not in line:
+            bad.append(f"{label}: not verbatim on its owner cite `{cite[0]}`:{cite[1]}")
+        if not r["key"].startswith("rules.graph."):
             entry = e36.get(r["key"])
             if not isinstance(entry, dict) or entry.get("text") != r["text"]:
                 bad.append(f"{label}: {r['key']} is not E36-D05's key with this text")
+            elif entry.get("frozen"):
+                bad.append(f"{label}: E36-D05 freezes {r['key']}; cite it, never re-freeze (BQ-16)")
+    for r in table81(t):
+        entry = e36.get(r["key"])
+        if isinstance(entry, dict) and entry.get("frozen"):
+            bad.append(f"{r['key']}: E36-D05 freezes it; it belongs in the cited list (BQ-16)")
+    for ci in cited_of(t):
+        entry = e36.get(ci.get("key", ""))
+        if isinstance(entry, dict) and entry.get("frozen"):
+            where, word = str(ci.get("where", "")), e36_status(entry)
+            if "frozen by E36-D05" not in where:
+                bad.append(f"{ci['key']}: cited without saying E36-D05 freezes it (BQ-16)")
+            elif word and f"string {word}," not in where:
+                bad.append(f"{ci['key']}: its status is not E36-D05's (string {word})")
     return bad
 
 
 def event_rows(spec: str) -> list[list[str]]:
-    return [
-        cells(ln)
-        for ln in section(spec, "## 10.").split("\n")
-        if ln.startswith("| `rule.")
-    ]
+    return [cells(ln) for ln in section(spec, "## 10.").split("\n") if ln.startswith("| `rule.")]
 
 
 def g_event(t: Texts, vals: dict[str, str]) -> list[str]:
@@ -936,9 +941,7 @@ def g_cite(t: Texts, vals: dict[str, str]) -> list[str]:
     pinned = parse_pins(t.pins)
     for label, h in hashes.items():
         if label not in pinned:
-            bad.append(
-                f"cite {label} is unpinned: verify it by content, then --repin-ruled"
-            )
+            bad.append(f"cite {label} is unpinned: verify it by content, then --repin-ruled")
         elif pinned[label] != h:
             bad.append(f"cite {label}: the line at its ref is not the pinned content")
     return bad + anchor_problems(t, vals, "SHA:")
@@ -954,9 +957,7 @@ def g_hygiene(t: Texts, vals: dict[str, str]) -> list[str]:
     )
     for name, text in (("spec", t.spec), ("hand-off", t.hand), ("deck", t.deck)):
         for i, ln in enumerate(text.split("\n"), 1):
-            bad += [
-                f"{name}:{i} carries {what}" for rx, what in checks if rx.search(ln)
-            ]
+            bad += [f"{name}:{i} carries {what}" for rx, what in checks if rx.search(ln)]
             if "{{" in ln:
                 bad.append(f"{name}:{i} carries a double-brace slot")
     texts = (("spec", t.spec), ("hand-off", t.hand), ("deck", t.deck), ("tool", t.tool),
@@ -975,15 +976,21 @@ def g_scope(t: Texts, vals: dict[str, str]) -> list[str]:
     if t.changed is None:
         return ["cannot list the changed paths (git failed)"]
     own = OWN_PATHS if t.full else DECK_PATHS
-    return [
-        f"{p} is touched; this ticket owns {', '.join(own)}"
-        for p in t.changed
-        if p not in own
-    ]
+    return [f"{p} is touched; this ticket owns {', '.join(own)}" for p in t.changed if p not in own]
 
 
 def g_status(t: Texts, vals: dict[str, str]) -> list[str]:
     bad = []
+    for r in table81(t) + table9(t):
+        own = first_cite_in(r["source"])
+        if r["status"] == "merged" and (own is None or own[0] not in MERGED_KEYS):
+            bad.append(f"{r['key']}: merged, but its first cite is no merged file")
+        if (
+            r["status"] == "RULED"
+            and (own is None or own[0] not in RULED_KEYS)
+            and ("RULED" not in r["context"])
+        ):
+            bad.append(f"{r['key']}: RULED, but it cites no ruled parent or ruling")
     for r in table81(t):
         src = first_cite(r["source"])
         if r["status"] == "PROPOSED" or src is None or src[0] not in ("D02", "D04"):
@@ -994,23 +1001,15 @@ def g_status(t: Texts, vals: dict[str, str]) -> list[str]:
             continue
         after = re.match(r"\s*\(([^)]*)\)", line[i + len(r["text"]) + 2 :])
         if after and "PROPOSED" in after[1]:
-            bad.append(
-                f"{r['key']}: {r['status']}, but `{src[0]}`:{src[1]} marks it PROPOSED"
-            )
+            bad.append(f"{r['key']}: {r['status']}, but `{src[0]}`:{src[1]} marks it PROPOSED")
     if not t.full:
         return bad
     role = next(
-        (
-            ln
-            for ln in t.spec.split("\n")
-            if ln.startswith("- **Name**: `rules.graph.aria.region`")
-        ),
+        (ln for ln in t.spec.split("\n") if ln.startswith("- **Name**: `rules.graph.aria.region`")),
         "",
     )
-    if "PROPOSED until E37-Q05's run" not in role or "DECIDED" in role:
-        bad.append(
-            "§3.1: the `application` role is not PROPOSED until E37-Q05's run (D04 Q-1)"
-        )
+    if "PROPOSED until E37-Q05's run" not in role or re.search(r"\b(?:merged|RULED)\b", role):
+        bad.append("§3.1: the `application` role is not PROPOSED until E37-Q05's run (D04 Q-1)")
     return bad
 
 
@@ -1058,11 +1057,26 @@ DECK_GATES = (
 )  # fmt: skip
 
 
+def g_stage(t: Texts, vals: dict[str, str]) -> list[str]:
+    return [f"{p} is missing; the {stage(t)} stage needs it" for p in t.missing]
+
+
+def stage(t: Texts) -> str:
+    return "full" if t.full else "deck"
+
+
 def gates_of(t: Texts) -> dict[str, Callable[[Texts, dict[str, str]], list[str]]]:
-    return GATES if t.full else {g: GATES[g] for g in DECK_GATES}
+    names = GATES if t.full else DECK_GATES
+    return {"G-STAGE": g_stage, **{g: GATES[g] for g in names}}
+
+
+def not_run(t: Texts) -> list[str]:
+    return [g for g in GATES if g not in gates_of(t)]
 
 
 def audit(t: Texts) -> list[tuple[str, str]]:
+    if t.missing:  # default-deny: no gate reads a file that is not there
+        return [("G-STAGE", m) for m in g_stage(t, {})]
     vals = compute(t)
     return [(g, msg) for g, fn in gates_of(t).items() for msg in fn(t, vals)]
 
@@ -1088,12 +1102,17 @@ def read(rel: str) -> str:
     return p.read_text(encoding="utf-8") if p.exists() else ""
 
 
-def load() -> Texts:
-    full = any((ROOT / rel).exists() for rel in PACK_PATHS)
-    return Texts(
-        read(SPEC_REL), read(HAND_REL), read(DECK_REL), read(PINS_REL), read(TOOL_REL),
-        changed_paths(), {}, full,
-    )  # fmt: skip
+def load(stage_name: str) -> Texts:
+    full = stage_name == "full"
+    need = OWN_PATHS if full else DECK_PATHS
+    missing = tuple(rel for rel in need if not (ROOT / rel).exists())
+    if full:
+        return Texts(
+            read(SPEC_REL), read(HAND_REL), read(DECK_REL), read(PINS_REL), read(TOOL_REL),
+            changed_paths(), {}, True, missing,
+        )  # fmt: skip
+    # the deck stage reads the deck alone, present pack files or not
+    return Texts("", "", read(DECK_REL), "", read(TOOL_REL), changed_paths(), {}, False, missing)
 
 
 Mutation = Callable[[Texts], Texts]
@@ -1101,9 +1120,7 @@ Mutation = Callable[[Texts], Texts]
 
 def once(text: str, old: str, where: str) -> None:
     if text.count(old) != 1:
-        raise SystemExit(
-            f"self-test: the {where} carries {old[:50]!r} {text.count(old)} times"
-        )
+        raise SystemExit(f"self-test: the {where} carries {old[:50]!r} {text.count(old)} times")
 
 
 def sub(old: str, new: str) -> Mutation:
@@ -1159,6 +1176,34 @@ def deck_cited(key: str, field: str, value: object) -> Mutation:
     return f
 
 
+def deck_add(row: dict[str, Any]) -> Mutation:
+    """Appends one row to the JSON twin only."""
+
+    def f(t: Texts) -> Texts:
+        data = parse_deck(t.deck)
+        data["rows"].append(dict(row))
+        return replace(t, deck=dump_deck(data))
+
+    return f
+
+
+def missing(rel: str) -> Mutation:
+    return lambda t: replace(t, missing=(rel,))
+
+
+def caps_with(kind: str, status: str) -> dict[str, Any]:
+    return {**HEAD_CAPS, kind: {**HEAD_CAPS[kind], "status": status}}
+
+
+# a string E36-D05 already freezes (FS-3), typed back into the twin as a frozen row of this pack
+REFROZEN = {
+    "key": "rules.editor.stop.never_loosen", "text": "Rules never loosen a stop.",
+    "component": "CMP-149", "state": "stop actions", "max_length": None,
+    "context": "#4137 RULED; " + FREEZE, "kind": "message", "status": "RULED",
+    "source": "E36-D05 key; `D02`:419", "frozen": "FZ-15",
+}  # fmt: skip
+
+
 def row_set(key: str, col: int, value: str, field: str, jvalue: object) -> Mutation:
     """Changes one cell of a deck row (section 8.1 or 9) and its JSON twin together."""
 
@@ -1201,9 +1246,7 @@ def drop_hand(lead: str, has: str) -> Mutation:
 def drop_row(lead: str) -> Mutation:
     def f(t: Texts) -> Texts:
         ls = t.spec.split("\n")
-        return replace(
-            t, spec="\n".join(x for x in ls if not x.startswith(f"| {lead} "))
-        )
+        return replace(t, spec="\n".join(x for x in ls if not x.startswith(f"| {lead} ")))
 
     return f
 
@@ -1235,9 +1278,9 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
      sub_hand("one roving stop, type-ahead;", "one roving stop, 40 px rows;")),
     ("G-MOTION", "M-13's reduce cell retyped", set_cell("M-13", 2, "identical")),
     ("G-MOTION", "the motion row count typed by hand", sub("19<!--=MOT:rows-->", "18<!--=MOT:rows-->")),
-    ("G-FROZEN", "FZ-17 no longer FROZEN",
-     row_set("rules.graph.badge.graph_only", 6, "PROPOSED", "status", "PROPOSED")),
-    ("G-FROZEN", "FZ-10's freeze stated as decided",
+    ("G-FROZEN", "FZ-9's source loses its owner cite",
+     row_set("rules.graph.palette.needs_stop", 7, "new (A1)", "source", "new (A1)")),
+    ("G-FROZEN", "FZ-6's freeze stated as decided",
      row_set("rules.graph.node.only_tighten", 8, "the ratchet line", "context", "the ratchet line")),
     ("G-EVENT", "an event renamed",
      set_cell("`rule.graph_autolayout_used`", 0, "`rule.graph_layout_used`")),
@@ -1250,10 +1293,15 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
      lambda t: replace(t, tool=t.tool + "\n# " + "fl" + "ood\n")),
     ("G-SCOPE", "a parent file in the diff",
      lambda t: replace(t, changed=[*OWN_PATHS, PATHS["D02"]])),
-    ("G-STATUS", "the hint, PROPOSED at its source, made DECIDED",
-     row_set("rules.graph.aria.hint", 6, "DECIDED", "status", "DECIDED")),
-    ("G-STATUS", "the `application` role made DECIDED in §3.1",
-     sub("PROPOSED until E37-Q05's run (`D04`:308)", "DECIDED (`D04`:308)")),
+    ("G-STATUS", "the hint, PROPOSED at its source, made merged",
+     row_set("rules.graph.aria.hint", 6, "merged", "status", "merged")),
+    ("G-STATUS", "the `application` role made merged in §3.1",
+     sub("PROPOSED until E37-Q05's run (`D04`:308)", "merged (`D04`:308)")),
+    ("G-STAGE", "the hand-off missing at the full stage", missing(HAND_REL)),
+    ("G-SHEET", "CMP-157's cited-owner contract row dropped", drop_hand("CMP-157", "cited owner")),
+    ("G-DECK", "an 8.1 status outside the three words",
+     row_set("rules.graph.edge.delete", 6, "DECIDED", "status", "DECIDED")),
+    ("G-DECK", "the label cap stated as merged in the head", deck_head("caps", caps_with("label", "merged"))),
     ("G-CHECKLIST", "DA-17 dropped", drop_row("DA-17")),
     ("G-CHECKLIST", "DA-17 cites SC-9's line", set_cell("DA-17", 3, "`D04`:320")),
 )
@@ -1278,8 +1326,20 @@ DECK_MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
      deck_set("rules.graph.canvas.fit", "context", "a foot-row button (L-4), #11151A")),
     ("G-RAW", "a raw px value in a row with no D0x cite",
      deck_set("rules.graph.aria.position", "context", "the node's place, 40 px")),
-    ("G-FROZEN", "a frozen row no longer FROZEN",
-     deck_set("rules.graph.badge.graph_only", "status", "PROPOSED")),
+    ("G-DECK", "a status outside the three words", deck_set("rules.graph.edge.delete", "status", "DECIDED")),
+    ("G-DECK", "the old FROZEN status on a frozen row",
+     deck_set("rules.graph.badge.mismatch", "status", "FROZEN")),
+    ("G-DECK", "the announce cap stated as merged in the head",
+     deck_head("caps", caps_with("announce", "merged"))),
+    ("G-MATRIX", "a cell that connects made PROPOSED",
+     deck_set("rules.graph.connect.side.side", "status", "PROPOSED")),
+    ("G-FROZEN", "a frozen flag that is no FZ id",
+     deck_set("rules.graph.badge.mismatch", "frozen", "FROZEN")),
+    ("G-FROZEN", "a frozen row with no owner cite",
+     deck_set("rule.save.mismatch", "source", "E36-D05 key")),
+    ("G-FROZEN", "a string E36-D05 freezes re-frozen here", deck_add(REFROZEN)),
+    ("G-FROZEN", "a string E36-D05 freezes cited without saying so",
+     deck_cited("rules.editor.stop.never_loosen", "where", "CMP-149, the stop actions")),
     ("G-FROZEN", "a frozen row's freeze stated as decided",
      deck_set("rules.graph.node.only_tighten", "context", "the ratchet line")),
     ("G-FROZEN", "a frozen E36-D05 string reworded",
@@ -1291,23 +1351,33 @@ DECK_MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
     ("G-SCOPE", "a parent file in the diff",
      lambda t: replace(t, changed=[*DECK_PATHS, PATHS["D02"]])),
     ("G-SCOPE", "the spec in the deck-first diff", lambda t: replace(t, changed=[*DECK_PATHS, SPEC_REL])),
-    ("G-STATUS", "the hint, PROPOSED at its source, made DECIDED",
-     deck_set("rules.graph.aria.hint", "status", "DECIDED")),
+    ("G-STATUS", "the hint, PROPOSED at its source, made merged",
+     deck_set("rules.graph.aria.hint", "status", "merged")),
+    ("G-STATUS", "a row with no ruled parent made RULED",
+     deck_set("rules.graph.announce.deleted_one", "status", "RULED")),
+    ("G-FROZEN", "a string E36-D05 freezes cited with another status",
+     deck_cited("rules.editor.stop.never_loosen", "where",
+                "CMP-149; frozen by E36-D05 FS-3, string merged, not re-frozen here (BQ-16)")),
+    ("G-STAGE", "the deck missing at the deck stage", missing(DECK_REL)),
 )
 # fmt: on
 
 
-def mode(t: Texts) -> str:
-    return "full" if t.full else "deck-only (spec, hand-off and pins absent)"
+def header(t: Texts) -> list[str]:
+    skipped = not_run(t)
+    out = [f"stage: {stage(t)} ({len(gates_of(t))} gates)"]
+    if skipped:
+        out.append(f"stage: not run here, the full stage runs them: {', '.join(skipped)}")
+    return out
 
 
-def selftest() -> tuple[bool, list[str]]:
-    first = load()
+def selftest(stage_name: str) -> tuple[bool, list[str]]:
+    first = load(stage_name)
     base = replace(first, changed=list(OWN_PATHS if first.full else DECK_PATHS))
     muts = MUTATIONS if base.full else DECK_MUTATIONS
     before = (base.spec, base.hand, base.deck)
     found = audit(base)
-    out = [f"self-test: mode {mode(base)}", f"self-test: baseline {len(found)} FAIL"]
+    out = [*(f"self-test: {h}" for h in header(base)), f"self-test: baseline {len(found)} FAIL"]
     out += [f"  baseline {g}: {m}" for g, m in found]
     ok = not found
     for i, (gate, what, fn) in enumerate(muts, 1):
@@ -1322,12 +1392,10 @@ def selftest() -> tuple[bool, list[str]]:
     ok &= not missing
     if missing:
         out.append(f"FAIL no mutation for {', '.join(missing)}")
-    after = load()
+    after = load(stage_name)
     restored = (after.spec, after.hand, after.deck) == before
     ok &= restored
-    out.append(
-        f"self-test: {len(muts)} mutations, texts restored: {'yes' if restored else 'NO'}"
-    )
+    out.append(f"self-test: {len(muts)} mutations, texts restored: {'yes' if restored else 'NO'}")
     out.append(f"self-test: {'PASS' if ok else 'FAIL'}")
     return ok, out
 
@@ -1339,17 +1407,16 @@ def main(argv: list[str]) -> int:
     g.add_argument("--self-test", action="store_true")
     g.add_argument("--repin-ruled", action="store_true")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--stage", choices=STAGES, default="full")
     a = ap.parse_args(argv)
     if a.self_test:
-        ok, out = selftest()
+        ok, out = selftest(a.stage)
         print("\n".join(out))
         return 0 if ok else 1
-    t = load()
+    t = load(a.stage)
     if a.repin_ruled:
-        if not t.full:
-            print(
-                "refused: deck-only mode has no pins file to write (the pack PR adds it)"
-            )
+        if not t.full or t.missing:
+            print("refused: --repin-ruled needs the full stage with every pack file present")
             return 1
         hashes, bad = cite_hashes(t)
         if bad:
@@ -1369,11 +1436,12 @@ def main(argv: list[str]) -> int:
         print(
             json.dumps(
                 {
-                    "mode": "full" if t.full else "deck-only",
+                    "stage": stage(t),
+                    "not_run": not_run(t),
                     "base": BASE,
                     "d03": D03_REF,
                     "d04": D04_REF,
-                    "values": compute(t),
+                    "values": {} if t.missing else compute(t),
                     "findings": [{"gate": g, "msg": m} for g, m in found],
                 },
                 ensure_ascii=False,
@@ -1381,7 +1449,7 @@ def main(argv: list[str]) -> int:
             )
         )
     else:
-        print(f"mode: {mode(t)}")
+        print("\n".join(header(t)))
         for gate, msg in found:
             print(f"FAIL {gate}: {msg}")
         print(f"{len(found)} FAIL ({len(gates_of(t))} gates)")
