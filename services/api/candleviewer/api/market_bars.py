@@ -26,7 +26,10 @@ Order of refusal (each before any storage read except where noted):
 
 The cursor is bound to `(bars, symbol, bar_type:param)` (`api.market_response`), so a klines
 cursor or one for another series is `invalid_cursor`. Time bars order by `ts` with a `ts`
-cursor (open time is unique per interval; kline rows have a NULL `index`). Non-time bars order
+cursor (kline rows have a NULL `index`). The stored key also holds `generation` and `index`, so
+rows can share an open time: time bars are collapsed to one per open time before paging
+(`one_bar_per_open_time`). `include_open` adds the live series store's forming bar to the last
+page (`forming_bar`; storage holds closed bars only). Non-time bars order
 by the stored key `(ts, generation, index)` and the cursor carries that key (#2017), so
 equal-`ts` siblings (one print -> N volume bars / renko bricks) are each served exactly once
 across page boundaries. Every stored bar carries `index` and `generation` when the row has one.
@@ -205,6 +208,28 @@ def _window_too_large(detail: str) -> JSONResponse:
     return problem(422, "bar_window_too_large", "Window too large", detail)
 
 
+#: Time bars: rows read beyond `limit + 1`, so a page still holds `limit` bars after rows that
+#: share an open time collapse into one (a kline row, a tape row, a rebuilt generation).
+_SAME_OPEN_ROOM: Final = 8
+
+
+def one_bar_per_open_time(rows: list[StoredBar]) -> list[StoredBar]:
+    """Time bars, ascending by `ts`: one row per open time. The stored key is `(ts, generation,
+    index)` (21 §4.8), so a kline row (NULL `index`) and a tape row, or two generations, can
+    share a `ts`. Keep the tape-built one over kline, then the highest generation, then the
+    highest index (a NULL index is lowest)."""
+    best: dict[int, StoredBar] = {}
+    for row in rows:
+        held = best.get(row.ts_us)
+        if held is None or _preference(row) > _preference(held):
+            best[row.ts_us] = row
+    return list(best.values())  # dict order = first sight = ascending ts
+
+
+def _preference(row: StoredBar) -> tuple[bool, int, int]:
+    return (row.tape_built, row.generation or 0, -1 if row.index is None else row.index)
+
+
 def _stored_key(row: StoredBar) -> BarKey:
     return (row.ts_us, row.generation or 0, -1 if row.index is None else row.index)
 
@@ -222,7 +247,8 @@ def _forming_row(
     if bar.closed or not first_us <= bar.open_time < end_us:
         return None
     row = stored_bar(bar_row(bar, spec, generation=generation))
-    if any(r.ts_us == row.ts_us and r.index == row.index for r in rows):
+    # time bars: one per open time, so any served row at that open time wins (D13)
+    if any(r.ts_us == row.ts_us and (spec.kind == "time" or r.index == row.index) for r in rows):
         return None
     return row
 
@@ -398,8 +424,12 @@ def make_market_bars_router(
                 return refusal
         try:
             async with asyncio.timeout(QUERY_TIMEOUT_S):
+                # time bars read a few extra rows: rows sharing an open time collapse below
+                room = _SAME_OPEN_ROOM if spec.kind == "time" else 0
                 page = await (
-                    reader.read_bars(symbol, spec, start_us, end_us, limit + 1, after_us=after_us)
+                    reader.read_bars(
+                        symbol, spec, start_us, end_us, limit + 1 + room, after_us=after_us
+                    )
                     if at_key is None
                     else reader.read_bars(symbol, spec, start_us, end_us, limit + 1, at_key=at_key)
                 )
@@ -420,15 +450,23 @@ def make_market_bars_router(
                 rows = [s for s, r in zip(rows, page.rows, strict=True)
                         if row_key(r) < page.next_key]  # fmt: skip
                 next_cursor = encode_key_cursor(scope, page.next_key)
-        elif (resume := page.next_cursor) is not None:
-            kept = [r for r in rows if r.ts_us < resume]  # the extra row opens the next page
-            if kept or not rows:
-                rows = kept
-            else:  # unreachable for time bars (unique open time); strict progress regardless
+        else:
+            # One bar per open time, before any counting. Every open time but the last of a full
+            # read is complete, and the last is re-read whole from the cursor (it is not served).
+            rows = one_bar_per_open_time(rows)
+            resume = page.next_cursor
+            if len(rows) > limit:  # the (limit+1)-th distinct open time opens the next page
+                resume = rows[limit].ts_us
                 rows = rows[:limit]
-                resume = rows[-1].ts_us + 1
-            next_cursor = encode_cursor(scope, resume)
-            page_to = resume
+            elif resume is not None:
+                kept = [r for r in rows if r.ts_us < resume]  # the extra row opens the next page
+                if kept or not rows:
+                    rows = kept
+                else:  # one open time fills the read (more than the extra-row room); progress
+                    resume = rows[-1].ts_us + 1
+            if resume is not None:
+                next_cursor = encode_cursor(scope, resume)
+                page_to = resume
         served_forming: StoredBar | None = None
         if not include_open:
             rows = [r for r in rows if r.confirmed]  # only the newest bar can be forming
