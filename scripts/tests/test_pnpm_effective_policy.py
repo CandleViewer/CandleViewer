@@ -42,6 +42,9 @@ POLICY = {
     "frozen-lockfile": "true",
     "save-exact": "true",
     "strict-peer-dependencies": "false",
+    # #5113: the registry fetch bound and retries (CI-INFRA-002/003).
+    "fetch-retries": "4",
+    "fetch-timeout": "60000",
 }
 #: What `.npmrc` keeps for npm, not pnpm: npm run at the repo root, for example an accidental
 #: `npm install`, reads this file (not in global mode, `-g`, and not inside a workspace package).

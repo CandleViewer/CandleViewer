@@ -45,6 +45,10 @@ env:
   # allowed by the guard; this var stays empty until a ticket adds
   # `integration_db`-marked tests with digest-pinned service containers.
   CV_CI_ALLOWED_HOSTS: ""
+  # #5113 (CI-INFRA-002/003): uv retries each request and bounds it; registry_retry.py retries the
+  # whole `uv sync`. Decision (retry, not a mirror): docs/ci-runbook.md, CI-INFRA-*.
+  UV_HTTP_TIMEOUT: "60"
+  UV_HTTP_RETRIES: "5"
 
 jobs:
   py-checks:
@@ -67,7 +71,7 @@ jobs:
           python-version: "3.12"
 
       - name: uv sync --frozen (fails if pyproject.toml drifted from uv.lock)
-        run: uv sync --frozen --all-groups
+        run: python3 ../../tools/ci/registry_retry.py --registry pypi --timeout 120 -- uv sync --frozen --all-groups
 
       - name: ruff check
         run: uv run ruff check . ../../docs/research/xstate/gate/_paths.py ../../docs/research/xstate/gate/run_gate.py ../../tools/statechart/nightly_gate.py
@@ -207,7 +211,7 @@ jobs:
           python-version: "3.12"
 
       - name: uv sync --frozen
-        run: uv sync --frozen --all-groups
+        run: python3 ../../tools/ci/registry_retry.py --registry pypi --timeout 120 -- uv sync --frozen --all-groups
 
       # #4301: the tests construct PostgresContainer("postgres:16-alpine"), and testcontainers pulls it
       # when the daemon lacks it, a cold pull mid-test. Pull it here, with retries and a pinned mirror.
@@ -273,7 +277,7 @@ jobs:
           python-version: "3.12"
 
       - name: uv sync --frozen
-        run: uv sync --frozen --all-groups
+        run: python3 ../../tools/ci/registry_retry.py --registry pypi --timeout 120 -- uv sync --frozen --all-groups
 
       - name: Download every lane's raw coverage data
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -360,7 +364,7 @@ jobs:
           python-version: "3.12"
 
       - name: uv sync --frozen
-        run: uv sync --frozen --all-groups
+        run: python3 ../../tools/ci/registry_retry.py --registry pypi --timeout 120 -- uv sync --frozen --all-groups
 
       # #4301: the tests construct PostgresContainer("postgres:16-alpine"), and testcontainers pulls it
       # when the daemon lacks it, a cold pull mid-test. Pull it here, with retries and a pinned mirror.
@@ -407,7 +411,7 @@ jobs:
           python-version: "3.12"
 
       - name: uv sync --frozen
-        run: uv sync --frozen --all-groups
+        run: python3 ../../tools/ci/registry_retry.py --registry pypi --timeout 120 -- uv sync --frozen --all-groups
 
       - name: The perf index equals a live perf collection (#5193)
         run: uv run python ../../tools/ci/py_perf_index.py check
