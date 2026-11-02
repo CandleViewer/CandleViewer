@@ -19,8 +19,9 @@ edits (§8.3), the limitations register `docs/plan/a11y/47-limitations.json`, th
 3. **Cites.** Every `NN`:line and KEY:line cite resolves to a non-blank line at the base (G-CITE);
    every "verbatim" copy string occurs on its cited line (G-QUOTE); every A-row Old fragment
    occurs on its cited line (G-AROW).
-4. **Gates.** One FAIL line per gate: G-PENDING (BQ-0 ... BQ-16 once each, "default built; ruling
-   pending", the heading names the list's comment), G-BOARDS, G-ROWS (55 rows, A 31 + AA 24 as the
+4. **Gates.** One FAIL line per gate: G-PENDING (BQ-0 ... BQ-16 once each; BQ-0 ... BQ-12 "RULED
+   as proposed (comment 6566807313)", BQ-13 ... BQ-16 "default built; ruling pending"; the heading
+   names the ruling and the list; the ruling quoted verbatim), G-BOARDS, G-ROWS (55 rows, A 31 + AA 24 as the
    D02 catalogue tool lists them, 4.1.1 noted not rowed, levels as the four words), G-CONTRACT
    (spec §4 equals this tool's class map; every criterion in one class), G-CLAIM (no Supports
    without every required artefact on every screen and no open finding; no override raises),
@@ -113,6 +114,34 @@ INFLIGHT_NOTE = "re-pinned to their merge commits at merge"
 BQ_LIST_ID = "6566521425"  # the BQ list on #1311 (posted 2026-11-02)
 BQ_MARK = "default built; ruling pending"
 BQ_IDS = tuple(f"BQ-{n}" for n in range(17))
+RULING_ID = "6566807313"  # the ruling of record on #1311 (orchestrator, 2026-11-02 01:20Z)
+RULED_MARK = f"RULED as proposed (comment {RULING_ID})"
+RULED_IDS = tuple(f"BQ-{n}" for n in range(13))  # the ruling names BQ-0 ... BQ-12
+RULING_HEAD = f"BQ-0 … BQ-12 RULED (comment {RULING_ID}, on the list {BQ_LIST_ID})"
+RULING_TEXT = (
+    "**Rulings of record — E47-D13 (#1311) BQ-0..BQ-12 (orchestrator, 01:20Z 2026-11-02, unde"
+    "r the owner's 2026-10-29 delegation): all ORCH-defaults as proposed (6566521425).** Pins"
+    ": BQ-1 — D13 = structure, rules, statement hi-fi and a dry run; T05 (#1360) = the CI gen"
+    'erator, the Owner acceptances and the shipped statement; "E47-T06" read as T05 (C-rows).'
+    ' BQ-2 — the committed report is a generated **dry run** with the banner "Dry run at `<sh'
+    'a>`, not a conformance claim"; columns, row order and remark grammar frozen in the spec.'
+    " BQ-3 — the 55 WCAG 2.2 A + AA rows, 4.1.1 noted removed, AAA / Section 508 / EN 301 549"
+    ' "not claimed", Not Applicable only with a cited reason. BQ-4 — **honest claims made mec'
+    "hanical: Supports only on sufficient artefacts on every non-reserved screen with no open"
+    " finding; a reviewer can lower, never raise.** BQ-5 — the SC → artefact table with the `"
+    "<kind>:<id>@<sha>` grammar; carried rows posted on the owning tickets, not edits. BQ-6 —"
+    ' name the four layers (`05` §6.1–§6.4) in the remarks; never "the canvas is accessible";'
+    " Partially until D06 / S01 / S02 evidence. BQ-7 — one limitations register (`47-limitati"
+    "ons.json`); a row with no disposition blocks sign-off; **a Level A row is never an accep"
+    "ted exception**. BQ-8 — the statement at the as-built `/accessibility` as a SCR-119 sub-"
+    'view, all roles, lazy chunk; A-rows to `12` / `14`. BQ-9 — W3C words only ("Fully confor'
+    'ms" iff all 55 rows Supports / N/A, else "Partially conforms"); limitations in plain wor'
+    "ds, the SC number after. BQ-10 — a versioned statement data chunk; stale → still renders"
+    " under a CMP-028 notice; the cadence and owner written into `05` §8.3 in this PR. BQ-11 "
+    "— the copy-template feedback path, no personal fields; the submit endpoint a G-row; the "
+    "two analytics events as a `14` A-row. BQ-12 — read-only for all roles, no T2 control. `R"
+    "efs #1311` + `Partial:` while #1301 is open, then `Closes #1311`."
+)
 
 DS_SRC_REL = "packages/ui/tokens"
 THEMES: dict[str, tuple[str, ...]] = {
@@ -1025,14 +1054,17 @@ def g_pending(t: Texts) -> list[Finding]:
     head = t.spec.split("\n")[s - 1] if s else ""
     lines = t.spec.split("\n")[s:e]
     bad: list[str] = []
-    if f"{BQ_MARK} (comment {BQ_LIST_ID})" not in head:
-        bad.append("the heading does not name the list's comment")
+    if RULING_HEAD not in head:
+        bad.append("the heading does not name the ruling and the list")
+    if not any(ln == "> " + RULING_TEXT for ln in lines):
+        bad.append("the ruling is not quoted verbatim")
     for bq in BQ_IDS:
         rows = [ln for ln in lines if ln.startswith(f"- **{bq}**")]
+        want, other = (RULED_MARK, BQ_MARK) if bq in RULED_IDS else (BQ_MARK, "RULED")
         if len(rows) != 1:
             bad.append(f"{bq} appears {len(rows)} times")
-        elif BQ_MARK not in rows[0] or "RULED" in rows[0]:
-            bad.append(f"{bq} is not marked '{BQ_MARK}'")
+        elif want not in rows[0] or other in rows[0]:
+            bad.append(f"{bq} is not marked '{want}'")
     return [("G-PENDING", b, "spec", region) for b in bad]
 
 
@@ -1186,7 +1218,10 @@ def g_canvas(t: Texts) -> list[Finding]:
         if len(r) < 4 or CANVAS_REMARK not in r[3]:
             out.append(("G-CANVAS", f"{sc} does not name the four layers", "report", f"row {sc}"))
     for doc in ("spec", "hand", "report"):
-        if re.search(r"the canvas (?:itself )?is accessible", t.doc(doc), re.IGNORECASE):
+        # the ruling's quoted prohibition (never "the canvas is accessible") is not a claim
+        if re.search(
+            r'(?<!never ")the canvas (?:itself )?is accessible', t.doc(doc), re.IGNORECASE
+        ):
             out.append(("G-CANVAS", "claims the canvas is accessible", doc, ""))
     return out
 
@@ -1572,12 +1607,12 @@ MUTATIONS = (
     ),
     _m(
         "M-3",
-        "mark BQ-4 as ruled",
+        "unmark BQ-4's ruling",
         "G-PENDING",
         "spec",
         "## The questions",
+        "lowers, never raises — RULED as proposed (comment 6566807313)",
         "lowers, never raises — default built; ruling pending",
-        "lowers, never raises — RULED",
     ),
     _m(
         "M-4",
