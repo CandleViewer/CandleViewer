@@ -205,8 +205,8 @@ export const PAIRS = [
   { fg: "color.status.info.strong", bg: "color.surface.overlay", threshold: THRESHOLD.NON_TEXT },
 
   // --- Replay page chrome and marks (E26-D02 SCR-097, spec §12.2) ----
-  // Left out: CR-4 `color.replay.border` (E11-D02 §11.4). It resolves only to `palette.purple`
-  // primitives and is not in the theme maps, so its canvas and raised pairs wait for the token.
+  // CR-4 (E11-D02 §11.4) lands as `color.chart.replay.border` (E11-D05 Q3): its canvas pair is in
+  // the chart block below; a pair on `color.surface.raised` waits for the replay page to bind it.
   // Never registered, as the spec marks them: `border.strong` on `surface.raised` and
   // `text.primary` on `neutral.default` (both under 3:1), and `text.disabled` on `surface.raised`.
   { fg: "color.text.tertiary", bg: "color.surface.raised", threshold: THRESHOLD.TEXT },
@@ -323,6 +323,26 @@ export const PAIRS = [
     fg: "color.status.warning.strong",
     bg: "color.surface.selected",
     threshold: THRESHOLD.NON_TEXT,
+  },
+
+  // --- Chart slots and engine-chrome aliases (E11-D05 §4.1, §4.1b, §4.4 rule 5) --
+  // The meaning-carrying aliases take the rows their primitives already have; the decorative
+  // ones (grid, watermark, pane background, rule, hatch texture, pill border and fill) are
+  // exempted in exemptions.json (Q4). The pill-text rows are the fills each GL pill sits on.
+  { fg: "color.chart.axis", bg: "color.surface.canvas", threshold: THRESHOLD.TEXT },
+  { fg: "color.chart.crosshair", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.chart.replay.border", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.chart.boundary", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.chart.marker.goto", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.chart.focus.ring", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.chart.pill.text.default", bg: "color.chart.pill.bg", threshold: THRESHOLD.TEXT },
+  { fg: "color.chart.pill.text.inverse", bg: "color.chart.crosshair", threshold: THRESHOLD.TEXT },
+  { fg: "color.chart.pill.text.inverse", bg: "color.candle.up", threshold: THRESHOLD.TEXT },
+  { fg: "color.chart.pill.text.inverse", bg: "color.candle.down", threshold: THRESHOLD.TEXT },
+  {
+    fg: "color.chart.pill.text.on-marker",
+    bg: "color.chart.marker.goto",
+    threshold: THRESHOLD.TEXT,
   },
 
   // --- Dock sync-group edges (E15-D13 §6 P-1 … P-6) --------------------

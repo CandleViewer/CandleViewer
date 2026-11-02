@@ -61,6 +61,29 @@
         "risk panel": ["text", "glyph"],
         "alerts": ["text", "glyph"]
       }
+    },
+    "estimated": {
+      "surfaces": {
+        "CMP-227 chip": ["text", "glyph"],
+        "chart marks": ["pattern", "text"],
+        "footprint cells": ["pattern", "text"],
+        "heatmap columns": ["pattern", "text"],
+        "table cells": ["text"],
+        "estimated series": ["pattern", "text"]
+      }
+    },
+    "gap": {
+      "surfaces": {
+        "chart panes": ["pattern", "text"],
+        "time axis": ["text"]
+      }
+    },
+    "reduced-detail": {
+      "surfaces": {
+        "chart corner badge": ["text", "glyph"],
+        "cursor announcement": ["text"],
+        "aggregation chip": ["text"]
+      }
     }
   }
 }

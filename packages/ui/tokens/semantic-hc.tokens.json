@@ -12,5 +12,6 @@
   "color.action.primary.default": { "$type": "color", "$value": "{palette.blue.300}" },
   "color.action.primary.hover": { "$type": "color", "$value": "{palette.blue.400}" },
   "color.action.primary.active": { "$type": "color", "$value": "{palette.blue.450}" },
-  "color.status.danger.default": { "$type": "color", "$value": "{palette.red.550}" }
+  "color.status.danger.default": { "$type": "color", "$value": "{palette.red.550}" },
+  "color.chart.grid.minor": { "$type": "color", "$value": "{color.surface.canvas}" }
 }
