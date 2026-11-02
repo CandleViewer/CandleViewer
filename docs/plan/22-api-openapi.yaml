@@ -6379,11 +6379,64 @@ paths:
         (SR-E29-13); with none named, the list is every account the caller may view, of this
         server's environment. A malformed, foreign or expired `cursor` is `400 invalid_cursor`,
         a malformed parameter `400 validation_failed`.
+
+        **Lookup (#2303).** `idempotency_key` and `order_link_id` find orders by exact match, so a
+        client whose `placeOrder` answer never arrived (an idle lock, the absolute expiry, a
+        revocation, a dropped connection) learns its outcome without sending it again; it never
+        resubmits (E09-D06 rule 2). Each parameter may be repeated, at most 20 values, its values
+        alternatives (any match, duplicates once); the two combine with each other and with every
+        other filter by AND, as every filter does. Neither changes the default: `open_only` stays
+        `false`, so a terminal order (`filled`, `rejected`, `cancelled`, `expired`, `killed`) is
+        found too, and the order, newest first, and paging are unchanged (each value matches at
+        most one order, so a lookup finds at most 40, within one page at the default `limit`).
+        `idempotency_key` matches the `Idempotency-Key` the caller itself sent on `placeOrder`,
+        compared as a UUID, and finds the one order that request created: an entry's, or a
+        reduce-only order's. A key the caller never sent there, one another principal sent, one
+        whose request was refused before anything was recorded (a refused request binds nothing,
+        `IdempotencyKeyRequired`), and one whose order is on an account outside the caller's
+        grants are all answered alike, with no item and no refusal, so the page never says whether
+        such an order exists (C-12.4). A named `exchange_account_ids` entry outside the grants is
+        refused as above, `403 account_scope_denied`, before any key is read, whatever the key. In
+        a view-as context the lookup matches the target's keys, as every read takes the target's
+        scope (View-as session), so the viewer's own unanswered keys read as empty while viewing.
+        `order_link_id` matches an order of any origin on the accounts the caller may view.
+        A request admitted but not yet acknowledged by the exchange is found in its current state,
+        its `lifecycle_state` `validated`, `submitting` or `unknown`: the outcome is still pending,
+        the client keeps following the WS `orders` topic and does not resubmit (INV-B1-e). A value
+        that is not a UUID, or not an id the `Order.order_link_id` pattern admits, or more than 20
+        values, is `400 validation_failed` naming the parameter.
+
+        **Resume reconciliation.** After a reconnect, an unlock or any other interruption, a client
+        reads `GET /orders?open_only=true` for its working set, plus `GET
+        /orders?idempotency_key=...` for every `placeOrder` request whose response was not
+        received. An empty answer to the latter means the OMS never admitted the request (the
+        client may show it as not sent); an order found is the request's outcome. The WS `orders`
+        topic stays the source of truth for an order's state, REST the backstop (C-2.5).
       parameters:
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/AccountIdsQuery"
         - $ref: "#/components/parameters/SymbolQueryOptional"
+        - name: idempotency_key
+          in: query
+          explode: true
+          description: >
+            The `Idempotency-Key` of the caller's own `placeOrder` request, exact match, repeated
+            for several (at most 20). See Lookup in the operation's description.
+          schema: { type: array, items: { type: string, format: uuid }, maxItems: 20 }
+        - name: order_link_id
+          in: query
+          explode: true
+          description: >
+            An order's `order_link_id`, exact match, repeated for several (at most 20). See Lookup
+            in the operation's description.
+          schema:
+            type: array
+            maxItems: 20
+            items:
+              type: string
+              maxLength: 36
+              pattern: "^(cv[ldtp]-[0-7][0-9A-Za-z]{21}-[0-9A-Za-z]{4}-[0-9A-Za-z]{2}(en|sl|tp|sc|fl|ac)|ext-[0-9a-f]{32})$"
         - name: state
           in: query
           explode: true
