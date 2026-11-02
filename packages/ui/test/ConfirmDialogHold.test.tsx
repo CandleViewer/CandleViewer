@@ -74,7 +74,7 @@ const openHost = async (props: Extra = {}, guard = false): Promise<HTMLElement> 
 /** jsdom has no PointerEvent: a MouseEvent of the pointer type carries `button` to React's handler. */
 const pointer = async (
   target: Element,
-  type: "pointerdown" | "pointerup",
+  type: "pointerdown" | "pointerup" | "pointerout" | "pointercancel",
   button = 0,
 ): Promise<void> => {
   await act(async () => {
@@ -128,6 +128,76 @@ describe("ConfirmDialog hold (CMP-044, H25)", () => {
     expect(onConfirm).not.toHaveBeenCalled();
     expect(ring()).toHaveAttribute("aria-valuenow", "0");
     expect(target).not.toHaveAttribute("data-holding");
+  });
+
+  it("Gherkin 'Hold-to-confirm has a keyboard path': a pointer hold is announced, an early release is said once", async () => {
+    await openHost();
+    const target = confirmButton();
+    const status = (): HTMLElement => screen().getByRole("status");
+    await pointerDown(target);
+    expect(status()).toHaveTextContent(/^Holding — keep pressing to flatten/);
+    const held = status().textContent;
+    await advance(400);
+    // Progress ticks are never spoken: the status text is the same.
+    expect(status().textContent).toBe(held);
+    await pointerUp(target);
+    expect(status()).toHaveTextContent(/^Released early — hold cancelled; flatten .* not done$/);
+    await pointerUp(target);
+    expect(status().textContent?.match(/Released early/g)).toHaveLength(1);
+  });
+
+  // React derives onPointerLeave from pointerout (to outside the target), so that is the event fired.
+  it.each(["pointerout", "pointercancel"] as const)(
+    "a %s ends a pointer hold early: said once, nothing fires",
+    async (type) => {
+      const onConfirm = vi.fn();
+      await openHost({ onConfirm });
+      const target = confirmButton();
+      await pointerDown(target);
+      await advance(400);
+      await pointer(target, type);
+      const said = (): string =>
+        screen()
+          .getAllByRole("status")
+          .map((s: HTMLElement) => s.textContent)
+          .join("|");
+      expect(said().match(/Released early/g)).toHaveLength(1);
+      // A second leave/cancel/up after the release adds no second announcement.
+      await pointer(target, type);
+      await pointerUp(target);
+      expect(said().match(/Released early/g)).toHaveLength(1);
+      await advance(2000);
+      expect(onConfirm).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a pointer press during a key hold starts nothing and says nothing new", async () => {
+    await openHost();
+    const target = await focusConfirm();
+    await key("keyDown", "Enter");
+    const said = (): string =>
+      screen()
+        .getAllByRole("status")
+        .map((s: HTMLElement) => s.textContent)
+        .join("|");
+    expect(said()).toContain(ARMED);
+    await pointerDown(target);
+    expect(said()).toContain(ARMED);
+    expect(said()).not.toMatch(/Holding/);
+  });
+
+  it("an early Enter release stays on the armed text: it is a discrete press, not a cancel", async () => {
+    await openHost();
+    await focusConfirm();
+    await key("keyDown", "Enter");
+    await advance(100);
+    await key("keyUp", "Enter");
+    const said = screen()
+      .getAllByRole("status")
+      .map((s: HTMLElement) => s.textContent)
+      .join("|");
+    expect(said).toContain(ARMED);
+    expect(said).not.toMatch(/Released/);
   });
 
   it("a pointer hold fires at the duration, never before, once", async () => {
