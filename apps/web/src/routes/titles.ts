@@ -21,7 +21,7 @@ export const ROUTE_TITLES: Readonly<Record<string, string>> = {
   "R-009": "Invitation acceptance",
   "R-100": "Terminal default layout",
   "R-101": "Terminal",
-  "R-102": "Terminal pane",
+  "R-102": "Workspace",
   "R-110": "Watchlists",
   "R-111": "Watchlist group",
   "R-120": "Layouts",

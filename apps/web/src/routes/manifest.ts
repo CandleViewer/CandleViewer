@@ -39,7 +39,7 @@ export const ROUTE_MANIFEST: readonly ManifestEntry[] = [
   // Trading Terminal
   { id: "R-100", path: "/terminal", access: ALL, owner: "E15" },
   { id: "R-101", path: "/terminal/:layoutId", access: ALL, owner: "E15" },
-  { id: "R-102", path: "/terminal/:layoutId/pane/:paneId", access: ALL, owner: "E15" },
+  { id: "R-102", path: "/w/:workspaceId", access: ALL, owner: "E15" },
 
   // Watchlist / symbol search
   { id: "R-110", path: "/watchlist", access: ALL, owner: "E13" },

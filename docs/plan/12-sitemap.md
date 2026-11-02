@@ -55,7 +55,7 @@ Legend for RBAC column: `O`=Owner, `M`=Manager, `V`=Viewer, `A`=Admin-hat (Owner
 | **Trading Terminal** |
 | R-100 | `/terminal` | Terminal — default/last layout | O, M(◑), V(⓪) | Redirects to `/terminal/:layoutId` for the user's last-used or default layout. |
 | R-101 | `/terminal/:layoutId` | Terminal — specific saved layout | O, M(◑), V(⓪) | `layoutId` = UUID or `new`. Deep-link params: `?symbol=`, `?tf=`, `?paneFocus=`. |
-| R-102 | `/terminal/:layoutId/pane/:paneId` | Deep link to a single pane (used when popping a pane into its own Electron window) | O, M(◑), V(⓪) | See §6.2. |
+| R-102 | `/w/:workspaceId` | Workspace route (a pane popped into its own Electron window opens it; the pane is named by the shell's window state, not by the URL) | O, M(◑), V(⓪) | No query for the pop-out window and no pane segment. See §6.2. |
 | **Watchlist / symbol search** |
 | R-110 | `/watchlist` | Watchlist manager (full-page view of saved groups) | O, M, V | Symbol search itself is a top-bar overlay (R-omni, §5), not a route. |
 | R-111 | `/watchlist/:groupId` | Specific saved watchlist group | O, M, V | |
@@ -134,7 +134,7 @@ graph TD
   LOGIN --> FIRSTRUN["/login/first-run"]
   ROOT --> APP["Authenticated shell"]
   APP --> TERM["/terminal/:layoutId"]
-  TERM --> TERMPANE["/terminal/:layoutId/pane/:paneId"]
+  APP --> TERMPANE["/w/:workspaceId"]
   APP --> WATCH["/watchlist/:groupId"]
   APP --> LAYOUTS["/layouts"]
   APP --> POS["/positions"]
@@ -245,7 +245,7 @@ Modals block interaction with the underlying screen; drawers slide in from the r
 ### 6.2 Pop-out windows (multi-monitor support for P1/P2)
 
 - Any Terminal pane (single chart, DOM ladder, Risk Dashboard, a single symbol's footprint) can be "popped out" into its own `BrowserWindow` via a pane-header control ("Pop out to window").
-- Pop-out windows render route R-102 (`/terminal/:layoutId/pane/:paneId`) or an equivalent standalone route for non-Terminal panels (`/risk?standalone=1`, etc.) — they are thin windows with no nav rail, just the panel + a minimal title bar showing the environment badge (safety invariant: the DEMO/LIVE badge is present in **every** window, including pop-outs).
+- Pop-out windows render route R-102 (`/w/:workspaceId`, the pane identified by the window state's `paneId`) or an equivalent standalone route for non-Terminal panels (`/risk?standalone=1`, etc.) — they are thin windows with no nav rail, just the panel + a minimal title bar showing the environment badge (safety invariant: the DEMO/LIVE badge is present in **every** window, including pop-outs).
 - Pop-out window state (which panes are popped, their monitor/position/size) is persisted per-layout in `/settings/windows` (R-205) and restored on next launch.
 - Closing a pop-out window merges its pane back into the primary window's layout (never silently discarded).
 - Maximum pop-outs: no hard app limit; practically bounded by monitor count (owner runs 2–3 monitors).
