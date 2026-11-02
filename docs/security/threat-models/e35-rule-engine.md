@@ -121,6 +121,7 @@ Existing controls referenced: C-2.6 native SL, C-2.9 audit, C-2.21 sync code enf
 | RE-I5 | C2, C3 | A 403 vs 404 reveals whether an account or rule exists | A1 | M | L | Low | Foreign and missing rule ids / ungranted accounts return an identical 404 shape (C-12.4; **E35-FR-09**; `test_foreign_and_missing_rule_indistinguishable`) | Low | none |
 | RE-I6 | C4, C9 | A credential, key or token reaches a log line, firing record or export | A1 | L | H | Medium | The epic stores no secrets; rule params are typed and `extra="forbid"`; redaction filter on all loggers (C-12.6); `rules` may not import `secrets` (import-linter C-3.2; `test_rules_cannot_import_secrets`) | Low | log-scan CI |
 | RE-I7 | C11 | Simulation output estimates reveal equity or size beyond the caller grants | A1 | L | M | Low | Simulation resolves targets through the same scope enforcer as live execution | Low | none |
+| RE-I8 | C3 | The armed-rule dependents read of a flag (22 `listFeatureFlagDependents`, #5479) lists every armed rule's name, owner and accounts, whatever each rule's own read scope (SR-051) | A1 | L | M | Low | The read is unscoped by design and Owner-only: it holds `flags:write`, so a Manager, a Viewer or a `flags:read` holder gets `403` with no rule id; it carries no condition or parameter, and the flag write's records hold rule ids only, never a name (C-12.6; #5479) | Low | audit (`admin.area_entered`) |
 
 ### 4.5 Denial of service
 

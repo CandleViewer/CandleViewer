@@ -3688,6 +3688,16 @@
         }
       }
     },
+    "/admin/feature-flags/{flagKey}/dependents": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "flags:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
     "/admin/health": {
       "get": {
         "x-rbac": {

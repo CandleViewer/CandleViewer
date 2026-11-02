@@ -5754,11 +5754,107 @@ class SetFeatureFlagRequest(BaseModel):
             description="The flag's `updated_at` as the caller last read it (E42-T03). The write is applied only if the stored value still matches, else `409 conflict`. The server refuses a write without it (`422 validation_failed`); schema-optional for the same reason as `reason`.\n"
         ),
     ] = None
-    __null_refused = field_validator("overrides", "reason", "evidence_url", "expected_updated_at", mode="before")(_refuse_null)
+    acknowledged_dependents: Annotated[
+        list[UUID] | None,
+        Field(
+            description="The ids of the armed rules that read this flag, as the caller last read them (`listFeatureFlagDependents`, #5479). The write is applied only if they are exactly the live set, compared as sets, else `422 validation_failed` (rule `dependents_unacknowledged`); an empty live set needs none, and an omitted member and `[]` both pass. The server requires it whenever the live set is not empty (`422 validation_failed` without it); it stays optional in the schema for the same reason as `reason`. At most 200 ids, the cap of armed rules (`24-internal-schemas.md` 16.4); a repeated id is refused (`422`, rule `duplicate_rule`).\n",
+            max_length=200,
+        ),
+    ] = None
+    __null_refused = field_validator("overrides", "reason", "evidence_url", "expected_updated_at", "acknowledged_dependents", mode="before")(_refuse_null)
 
 
 class FeatureFlagConflict(Problem):
     current: FeatureFlag
+
+
+class Scope(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    level: Literal["global", "account", "symbol", "position", "trade_group"]
+    account_ids: list[UUID]
+    environments: list[Literal["live", "demo", "testnet"]]
+
+
+class Read(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    node_id: Annotated[str, Field(description="The action's `node_id` in the IR.")]
+    node_kind: Annotated[
+        Literal["action"],
+        Field(
+            description="What the node is: `action` only, as no other node reads a flag. Closed: a new kind is a breaking change (C-6.3).\n"
+        ),
+    ]
+    action_type: Annotated[
+        str, Field(description="The action's `type` (`RuleAction.type`), the one the table names.")
+    ]
+
+
+class FeatureFlagDependent(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    rule_id: UUID
+    name: Annotated[
+        str,
+        Field(
+            description="User text, as saved (`RuleInput.name`): in no audit record and no log (C-12.6).",
+            max_length=120,
+        ),
+    ]
+    version: Annotated[
+        JsonInt,
+        Field(
+            description="The number of the active version, the one the engine runs: an update of an armed rule keeps it, and `setActiveRuleVersion` moves it.\n",
+            ge=1,
+        ),
+    ]
+    owner_user_id: UUID
+    scope: Annotated[
+        Scope,
+        Field(
+            description="The scope of the active version's IR (`RuleIrScope`). An empty `account_ids` means every account the rule's owner holds a grant on when the rule fires. A scope that cannot be read is shown as the widest: `level: global`, no account listed and every environment, as the profile delete's guard counts an unreadable scope as covering every account.\n"
+        ),
+    ]
+    reads: Annotated[
+        list[Read],
+        Field(
+            description="The action nodes of the active version that read the flag, in IR order: at most 10, as many as `RuleIr.actions` holds. Empty only when `unreadable` is `true`.\n",
+            max_length=10,
+        ),
+    ]
+    unreadable: Annotated[
+        StrictBool | None,
+        Field(
+            description="`true` when the active version's actions cannot be read: the rule counts as reading every flag the table names (fail closed), and `reads` is empty. Sent only as `true`.\n"
+        ),
+    ] = None
+
+
+class FeatureFlagWriteRefused(Problem):
+    dependents: Annotated[
+        list[FeatureFlagDependent] | None,
+        Field(
+            description="The live set, in the shape of `FeatureFlagDependents.items`.",
+            max_length=200,
+        ),
+    ] = None
+    missing: Annotated[
+        list[UUID] | None,
+        Field(
+            description="The ids of live dependents that the request did not name.", max_length=200
+        ),
+    ] = None
+    unexpected: Annotated[
+        list[UUID] | None,
+        Field(
+            description="The ids the request named that are not live dependents: a rule disarmed since the caller read the list, or one that does not read the flag.\n",
+            max_length=200,
+        ),
+    ] = None
 
 
 class Backup(BaseModel):
@@ -8023,6 +8119,20 @@ class IndicatorPresetInput(BaseModel):
         ),
     ] = False
     __null_refused = field_validator("style", mode="before")(_refuse_null)
+
+
+class FeatureFlagDependents(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    flag_key: Annotated[str, Field(max_length=80)]
+    items: Annotated[list[FeatureFlagDependent], Field(max_length=200)]
+    truncated: Annotated[
+        StrictBool,
+        Field(
+            description="`true` when more than 200 armed rules read the flag: `items` then holds the first 200 by `rule_id`, no `acknowledged_dependents` can match the live set, and `setFeatureFlag` refuses the write (`dependents_over_bound`) until fewer are armed. Always sent.\n"
+        ),
+    ]
 
 
 class Job(BaseModel):

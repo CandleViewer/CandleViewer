@@ -82,7 +82,7 @@
 
 ## 1. Scope
 
-In scope: the admin area as the server exposes it. That is the 60 operations of `22-api-openapi.yaml` that §1.3
+In scope: the admin area as the server exposes it. That is the 61 operations of `22-api-openapi.yaml` that §1.3
 lists (`/users*`, `/roles`, `/permissions`, `/invites/*`, `/me/sessions*`, `/auth/step-up`, `/admin/*`,
 `/health/*` and `/system/build`, and since #3164 `/auth/session/view-as`); the WS `system` topic
 (`23-ws-protocol.md` §6.2, §15.9); the Postgres grant model and the append-only audit tables (`0003_audit_log`,
@@ -225,7 +225,8 @@ checks the permission in the route itself. Paths in the control column are under
 | `purgeRecordedData` | `POST /admin/recorder/purge` | `recording:write` | `recorder_purge` (no-grace), handler-gated | C | served (m:185; `api/recorder_purge.py`) | Owner-only, then the body, before the step-up: one fresh code per purge, bound to the request, its `challenge_id` named by the write-ahead record; the `Idempotency-Key` anchored durably with `before` (`api/recorder_purge.py`); `e16-recorder.md` R-R1, R-E1 |
 | **Feature flags (P6)** | | | | | | |
 | `listFeatureFlags` | `GET /admin/feature-flags` | `flags:read` | — | I; C (owner-only keys) | contract-only (m:117, a:89) | Per-flag visibility (`admin/flags/registry.py:110-112`); planned G (E42-T03) |
-| `setFeatureFlag` | `PUT /admin/feature-flags/{flagKey}` | `flags:write` (dangerous) | `flags`, `killswitch` or `live_enablement`, chosen under the row lock (yaml:8862-8872), handler-gated (`api/step_up.py:455-457`) | C, integrity (live gate, kill switches, maintenance) | contract-only (m:124, a:549) | Registry refusal (§3.2); `flags.change` written ahead (yaml:8890-8898); a pending handler gate since #3160 (§3.3) |
+| `setFeatureFlag` | `PUT /admin/feature-flags/{flagKey}` | `flags:write` (dangerous) | `flags`, `killswitch` or `live_enablement`, chosen under the row lock (yaml:8862-8872), handler-gated (`api/step_up.py:455-457`) | C, integrity (live gate, kill switches, maintenance) | contract-only (m:124, a:549) | Registry refusal (§3.2); `flags.change` written ahead (yaml:8890-8898); a pending handler gate since #3160 (§3.3); the armed-rule acknowledgement (`acknowledged_dependents`, #5479, contract-first) is judged under the row lock before the step-up gate, and its records hold ids only |
+| `listFeatureFlagDependents` | `GET /admin/feature-flags/{flagKey}/dependents` | `flags:write` | — | C (every armed rule's name, owner and accounts, to the Owner alone) | contract-only (m:136, a:33) | G; a key the caller cannot see is `404`; the read changes no rule and writes `admin.area_entered` only; a rule's name is in no record (C-12.6); contract-first, #5479 |
 | **Backups and restore (P7), cited at the commit that merges #966 BK-12** | | | | | | |
 | `listBackups` | `GET /admin/backups` | `backups:read` | — | C (paths, sizes, coverage) | served, 501 until `BACKUPS_CATALOGUED` (m:47; `api/admin_backups.py:162`) | Planned (E42-T05) |
 | `getBackup` | `GET /admin/backups/{backupId}` | `backups:read` | — | C | served, 501 until `BACKUPS_CATALOGUED` (m:59; `api/admin_backups.py:178`) | Planned (E42-T05) |
@@ -243,8 +244,8 @@ checks the permission in the route itself. Paths in the control column are under
 | WS `system` topic | implicit on every socket (`23-ws-protocol.md:758`) | authenticated | — | I; C (kill-switch detail, owner-only flag keys) | served (`ws/gateway.py:169`; `ws/permissions.py:213`) | Since #3136 each frame is cut when queued for a socket (SR-188, E17 WS-I05; `ws/gateway.py:471-481`): whole for the Owner, role-neutral fields for a Manager or Viewer, nothing for an unknown kind (`ws/system_filter.py:49-69`); since #3221 (cited at `0cfb12c2`) a Manager or Viewer gets only the flag keys whose registry visibility admits its role, never an undefined key (`ws/system_filter.py:194-201`), through the predicate `create_app` injects (`app.py:1305`; AD-F16) |
 | admin re-auth (SCR-149) | no contract | — | a 15-minute window (`14-screens-catalogue.md:2216`, :2704) | S in (password, code) | no contract | Observability only: `reauth_age_s` (`admin/http.py:19-26`), pinned by `test_admin_http.py:288`; D8 open (AD-F06) |
 
-62 rows: the 60 operations (the 57 read at the anchor, of which 29 served, 2 at 501 and 26 contract-only, `deleteUser`
-and `setUserAccountAccess` served since, `downloadAuditExport` since #889 S9-1b; and the three view-as operations, served since #3085), the `system` topic and
+63 rows: the 61 operations (the 57 read at the anchor, of which 29 served, 2 at 501 and 26 contract-only, `deleteUser`
+and `setUserAccountAccess` served since, `downloadAuditExport` since #889 S9-1b; the three view-as operations, served since #3085; and `listFeatureFlagDependents`, contract-only since #5479), the `system` topic and
 SCR-149, the one surface with no contract.
 Seventeen operations need a step-up: sixteen have a registry row or a handler gate today, two of them
 (`setFeatureFlag`, `downloadAuditExport`) since #3160, one (`startViewAs`) since #3164, one

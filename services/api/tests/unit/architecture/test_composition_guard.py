@@ -57,6 +57,8 @@ E02-T13 (#5181) serves the frozen `getSettings` and `updateSettings`: 73, frozen
 E21-T03 (#606) serves the frozen `getHeatmap`: 72, frozen 69.
 E35-T14's contract PR (#5006) adds the contract-first `listRuleConfirmations`, `confirmRuleFire`
 and `rejectRuleFire`, three entries within the cap of 72: no raise.
+#5479's contract PR adds the contract-first `listFeatureFlagDependents`, one entry within the cap
+of 72: no raise.
 Keep both caps tight: a contract PR that
 adds an operation raises ``PENDING_BASELINE`` by exactly its overflow, measured against current
 ``main`` with CI re-run there (two parallel raises merge cleanly yet both under-count); a PR that
