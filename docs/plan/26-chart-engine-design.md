@@ -150,7 +150,7 @@ Scheduler mapping (E11-S01, rulings BQ-S4 and BQ-S5): `06` §4.3's nine stages a
 | 4 background panes             | `BACKGROUND_PANES`                                                        | non-focused pane redraw                                        | deferred, flags kept, collected at least every 500 ms |
 | never shed                     | `NONE`, a `critical` node (order and position lines, the DOM-mirror sync) | trading-critical overlays                                      | collected every frame                                 |
 
-Three consecutive frames over 16.7 ms shed the next rung and request one LOD level down (`ENGINE_LOD_STEPDOWN`, §11), and the first frame of an over-budget run raises `ENGINE_FRAME_BUDGET_EXCEEDED` (recoverable, informational); three consecutive frames under 85 % of budget spanning at least 500 ms (the longest cadence) restore one rung; LOD recovery is E11-S12's policy.
+Three consecutive frames over 16.7 ms shed the next rung and request one LOD level down (`ENGINE_LOD_STEPDOWN`, §11), and the first frame of an over-budget run raises `ENGINE_FRAME_BUDGET_EXCEEDED` (recoverable, informational); three consecutive frames under 85 % of budget spanning at least 500 ms (the longest cadence) restore one rung; the LOD step and its recovery follow §3.6 (E11-S12).
 
 ### 3.3 Data model
 
@@ -232,7 +232,7 @@ percent:    sy computed against an anchor bar's close
 
 | Layer     | Levels                                                                                                            | Rule                                                                                                                                                                                                                                                                                                                                                                        |
 | --------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Candles   | L0 full OHLC bodies+wicks; L1 bodies only; L2 min/max column strip (one column per pixel)                         | `barSpacing ≥ 3 px` → L0; `≥ 1.5 px` → L1; else L2 with min/max aggregation per pixel column                                                                                                                                                                                                                                                                                |
+| Candles   | L0 full OHLC bodies+wicks; L1 bodies + 1-device-px wicks; L2 min/max column strip (one column per device pixel)   | `barSpacing ≥ 3 px` → L0; `≥ 1.5 px` → L1; else L2 with min/max aggregation per pixel column                                                                                                                                                                                                                                                                                |
 | Footprint | L0 cell + two numbers; L1 cell + one number (delta); L2 coloured cell only; L3 hidden (candles only)              | L0 needs ≥ 12 px cell text height (two-number density); L1 needs ≥ 10 px (one-number, delta only); below 10 px cell height (or L2's own 6 px floor) drops further. Thresholds and asymmetric ±15 % hysteresis are the frozen `LOD_PROFILE_M0` set from `docs/design/E06/E06-D01.md` §2 (corrects the earlier provisional 11 px figure, which conflated the L0 and L1 needs) |
 | Heatmap   | Texture mip selection; column aggregation when > 1 column per pixel (max of columns, preserving liquidity spikes) | Always constant cost via texture sampling                                                                                                                                                                                                                                                                                                                                   |
 | Profile   | Row merging when rows < 2 px tall                                                                                 | Merge by summing adjacent levels                                                                                                                                                                                                                                                                                                                                            |
@@ -242,6 +242,38 @@ percent:    sy computed against an anchor bar's close
 Decimation for candles at L2 uses a **min/max preserving** reduction (per pixel column emit min-low, max-high, first-open, last-close) so spikes never disappear — a correctness requirement, not a cosmetic one.
 
 Hysteresis: LOD thresholds have a ±15 % dead band so slow zooming does not flicker between levels.
+
+_Contract for E11-S12 (#418 PR-0; rulings BQ-S12-01 to BQ-S12-15, all as proposed), implemented by its code PR:_
+
+- **L1 keeps the wicks** (BQ-S12-03): at 1.5–3 px/bar the bodies simplify and every wick stays,
+  1 device px wide, so every high and low survives at every candle tier (threat model CE-T07 / H-12).
+  The wick is drawn by the candle renderer (E12-S06); S12 encodes the tier semantics only.
+- **Candle hysteresis is symmetric** (BQ-S12-02): a tier demotes below `t · 0.85` and promotes above
+  `t · 1.15` of its threshold `t` (3 px and 1.5 px of `barSpacing`). Footprint keeps E06-D01's
+  asymmetric low-biased band and `LOD_PROFILE_M0`; the band shape is registered per layer. The first
+  frame, and the first frame after `setLod("auto")`, select on the plain thresholds. Erratum: E11-D06
+  §6.3 quotes "candle" steps at 10.2/12 px and 8.5/10 px; those are the footprint numbers.
+- **`lodBias` is footprint-only** (BQ-S12-04): the density record's px offset is added to every
+  `LOD_PROFILE_M0` cell height (E11-D02 D6 rule 2); candle width thresholds ignore it, so the candle
+  tiers are identical in every density mode.
+- **Column grid** (BQ-S12-05, BQ-S12-06): one column per device px (`plotWidth · dpr`); bar `i` falls
+  in column `floor(indexToScreen(i) · dpr)`, so each bar is in exactly one column and a pan re-buckets
+  deterministically. A column carries `(minLow, maxHigh, firstOpen, lastClose)` in integer ticks, in a
+  buffer preallocated to the backing store's device width (grown only on E11-S10's 128 px steps; the
+  stride reserves room for volume). The scan reads the ring through its mask, never through `view()`;
+  an append re-folds the trailing column only, and any shift, prepend, patch or viewport change
+  rebuilds the visible range.
+- **Bars per column** (BQ-S12-09): `barsPerColumn = 1 / (barSpacing · dpr)` (device px), reported as
+  aggregated while it exceeds 1, with the ±15 % band on that boundary. The engine reports the ratio;
+  the DOM chip, its copy (E11-D01 D6) and its announcements belong to the app and E11-S13.
+- **Tier drivers** (BQ-S12-08): effective candle tier = `max(zoomTier, loadTier)`. The selector owns
+  `zoomTier`; the scheduler's three-over-budget run (§3.2) raises `loadTier` by one, and 2,000 ms of
+  frames under 85 % of budget lower it by one (`ENGINE_LOD_STEPUP`, §11), separately from the 500 ms
+  rung recovery; at most one tier transition per 2 s. `setLod(levels)` pins both tiers and suspends
+  both drivers until `setLod("auto")`. The shed order stays §3.2's table (`06` §4.4); E11-D06 D23's
+  rung 0 is E11-S09's (BQ-S12-07).
+- **Drawings** are never registered with a decimation seam. The thresholds, band and timings are
+  internal constants exported for tests and bench, not `ChartOptions` (BQ-S12-14).
 
 ### 3.7 Text rendering (SDF atlas)
 
@@ -397,6 +429,8 @@ Shipped by E11-S05 PR 1 (package README BQ-115 and BQ-124), additive: `command {
 
 Shipped by E11-S08 PR 2 (package README BQ-134 to BQ-136), additive: `command { k: "pickAt", x, y, pointer?, reqId? }` (`pointer` one of `mouse`, `pen`, `touch`; a safe-integer `reqId`) always answers with one `pick`, echoing `reqId`; `pick` gains `part?` (`body` or `handle`), `handle?` and `reqId?`, and carries `bar` and `price` (the bar index and integer tick level under the point) on every reply, with kind `none` on a miss and `axis` in a gutter. Hover picks come from `input` moves, edge-triggered; a new `input` row type `leave = 7` (a mouse or pen `pointerleave`, `pointer` input only) clears hover with one `objectId: null` when an object was hovered. `cell` stays absent (E18).
 
+Contract for E11-S12 (#418 PR-0, BQ-S12-10), additive: `command { k: "setLod" }` gains `auto: true`, which drops a pin set by `{ candles, footprint }` and hands both tiers back to their drivers (§3.6). The `viewport` message gains `lod { candles, footprint, barsPerColumn, aggregated }`, sent on any change of these values (edge-triggered, ≤ 1/frame), so the DOM never waits for the 1/s `frame` sample to report a tier or ratio.
+
 Shipped by E11-S10 PR 1 (package README BQ-147, BQ-148 and BQ-153), additive: `resize` sizes are CSS px equal to `backing / dpr` and may be 0 (finite, ≥ 0; dpr > 0), which suspends the chart until a non-zero size; `ExportRejectReason` gains `suspended`; `frame` gains `dpr` and `backingStorePx` (`[width, height]` in device px).
 
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
@@ -449,6 +483,7 @@ export interface Chart {
   readonly timeScale: TimeScale;
   setTheme(theme: ThemeTokens): void;
   setDensity(d: Density): void;
+  setLod(levels: LodLevels | "auto"): void; // E11-S12: pins both tiers; "auto" releases (§3.6)
   subscribe<E extends keyof ChartEvents>(e: E, cb: (p: ChartEvents[E]) => void): Unsubscribe;
   takeScreenshot(opts?: { scale?: number }): Promise<Blob>;
   getStats(): FrameStats;
@@ -575,7 +610,7 @@ export interface ChartEvents {
   click: { time: number; price: number; button: number; modifiers: Modifiers };
   orderLineDragged: { id: string; price: number; commit: boolean };
   drawingChanged: { drawing: Drawing; phase: "create" | "update" | "delete" };
-  viewportChanged: { timeStart: number; timeEnd: number; barSpacing: number };
+  viewportChanged: { timeStart: number; timeEnd: number; barSpacing: number; lod: LodState }; // lod: E11-S12
   visibleRangeNeedsData: { fromTime: number; toTime: number }; // triggers paging
   frameStats: FrameStats;
   error: {
@@ -603,8 +638,19 @@ export interface FrameStats {
   uploadedBytesPerSec: number;
   lodCandles: 0 | 1 | 2;
   lodFootprint: 0 | 1 | 2 | 3;
+  barsPerColumn: number; // E11-S12: 1 / (barSpacing · dpr); > 1 means candle columns aggregate
   gpuMemoryMbEstimate: number;
   renderProfile: "full" | "reduced" | "degraded-2d";
+}
+
+// E11-S12 (§3.6, §6): the tiers a pin sets, and the state the `viewport` message carries.
+export interface LodLevels {
+  candles: 0 | 1 | 2;
+  footprint: 0 | 1 | 2 | 3;
+}
+export interface LodState extends LodLevels {
+  barsPerColumn: number;
+  aggregated: boolean;
 }
 
 // ---- Plugin API ----------------------------------------------------------
@@ -707,18 +753,19 @@ Replay uses exactly the same series and the same frame types — only the subscr
 
 ## 11. Error handling and degradation
 
-| Condition                                      | Engine behaviour                                                                                                                                                                                                                                                     |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| WebGL2 unavailable                             | `RenderProfile = degraded-2d`: Canvas 2D candles, axes, lines, crosshair, drawings; footprint limited to coloured cells without text; heatmap disabled with an explanatory placeholder                                                                               |
-| Context lost                                   | Loop parked, GPU state invalidated, rebuilt from `DataModel`; `ENGINE_CONTEXT_LOST` + `details` per try (1/2/4 s), `ENGINE_CONTEXT_RESTORED` (informational) on the first frame after a rebuild, else `ENGINE_CONTEXT_RESTORE_FAILED`, `degraded-2d` (BQ-49, 53, 64) |
-| SDF atlas cache record invalid                 | Discarded and regenerated (bad shape, version, key-bound checksum or slot bounds, or F-03's re-derived trading glyphs differ); `ENGINE_ATLAS_CACHE_INVALID` (recoverable) once per launch (E11-S11)                                                                  |
-| SDF atlas not generated                        | No bytes, a failed face load, an unmapped glyph, an overflow or a raster fault: `ENGINE_ATLAS_GENERATION_FAILED` once, `details.atlasReason`; no fallback face (E11-S11)                                                                                             |
-| Shader compile failure                         | `ENGINE_SHADER_COMPILE_FAILED` with program, renderer and info log; the whole chart goes `degraded-2d` on a new canvas, not a simpler program (README BQ-54)                                                                                                         |
-| Out-of-memory on texture allocation            | Heatmap drops the coarse ring first, then halves rows; `MemoryGovernor` logs and emits a stats event                                                                                                                                                                 |
-| Data sequence gap                              | Engine keeps the last consistent state and requests a snapshot; UI shows a per-pane stale badge                                                                                                                                                                      |
-| Frame budget exceeded for 3 consecutive frames | Step down one LOD level; if already at the lowest, reduce DPI of the heatmap layer; log the step; code `ENGINE_LOD_STEPDOWN` (recoverable, informational)                                                                                                            |
-| Frame budget exceeded (first frame of a run)   | Log the per-stage timings once per over-budget run; code `ENGINE_FRAME_BUDGET_EXCEEDED` (recoverable, informational; package README BQ-44)                                                                                                                           |
-| Worker crash                                   | The controller detects the `error`/`close` event, respawns the worker, replays store state from the last snapshot                                                                                                                                                    |
+| Condition                                                  | Engine behaviour                                                                                                                                                                                                                                                     |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| WebGL2 unavailable                                         | `RenderProfile = degraded-2d`: Canvas 2D candles, axes, lines, crosshair, drawings; footprint limited to coloured cells without text; heatmap disabled with an explanatory placeholder                                                                               |
+| Context lost                                               | Loop parked, GPU state invalidated, rebuilt from `DataModel`; `ENGINE_CONTEXT_LOST` + `details` per try (1/2/4 s), `ENGINE_CONTEXT_RESTORED` (informational) on the first frame after a rebuild, else `ENGINE_CONTEXT_RESTORE_FAILED`, `degraded-2d` (BQ-49, 53, 64) |
+| SDF atlas cache record invalid                             | Discarded and regenerated (bad shape, version, key-bound checksum or slot bounds, or F-03's re-derived trading glyphs differ); `ENGINE_ATLAS_CACHE_INVALID` (recoverable) once per launch (E11-S11)                                                                  |
+| SDF atlas not generated                                    | No bytes, a failed face load, an unmapped glyph, an overflow or a raster fault: `ENGINE_ATLAS_GENERATION_FAILED` once, `details.atlasReason`; no fallback face (E11-S11)                                                                                             |
+| Shader compile failure                                     | `ENGINE_SHADER_COMPILE_FAILED` with program, renderer and info log; the whole chart goes `degraded-2d` on a new canvas, not a simpler program (README BQ-54)                                                                                                         |
+| Out-of-memory on texture allocation                        | Heatmap drops the coarse ring first, then halves rows; `MemoryGovernor` logs and emits a stats event                                                                                                                                                                 |
+| Data sequence gap                                          | Engine keeps the last consistent state and requests a snapshot; UI shows a per-pane stale badge                                                                                                                                                                      |
+| Frame budget exceeded for 3 consecutive frames             | Raise the candle load tier by one (§3.6); if already at the lowest, reduce DPI of the heatmap layer (a no-op seam until E21); log the step; code `ENGINE_LOD_STEPDOWN` (recoverable, informational)                                                                  |
+| Frames under 85 % of budget for 2,000 ms after a load step | Lower the candle load tier by one (§3.6, at most one tier transition per 2 s); log the step; code `ENGINE_LOD_STEPUP` (recoverable, informational; E11-S12)                                                                                                          |
+| Frame budget exceeded (first frame of a run)               | Log the per-stage timings once per over-budget run; code `ENGINE_FRAME_BUDGET_EXCEEDED` (recoverable, informational; package README BQ-44)                                                                                                                           |
+| Worker crash                                               | The controller detects the `error`/`close` event, respawns the worker, replays store state from the last snapshot                                                                                                                                                    |
 
 _Shipped (E11-T05 PR 1, package README BQ-84 to BQ-97): `degraded-2d` is whole-chart. A chart with no WebGL2, or after a compile or restore handoff, draws through `Canvas2DBackend` behind the same `RenderBackend` (§3.4): lines, quads and colour-only cells in one path per style bucket; text waits for E11-S11's text runs (`footprint-text` is disclosed). `ENGINE_NO_WEBGL2` carries the optional `details: { reducedCapabilities, reason }` as codes (§8). Export is reject, not flag (F-13): while parked mid-loss or failed, the worker answers `exported { blob: null, reason }` and `takeScreenshot` rejects with `ExportUnavailableError` (`ENGINE_EXPORT_UNAVAILABLE`); a healthy `degraded-2d` chart draws, then encodes._
 
