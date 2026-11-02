@@ -114,6 +114,15 @@ describe("OHLC geometry (D06 §3.2)", () => {
     expect(rect(SEAM, [0, 0, 0, 0], 0, g)).toEqual([30, 0, 1, 600]);
     expect(rect(SEAM, [0, 0, 0, 0], 0, geom(12, 2))).toEqual([29, 0, 2, 600]);
   });
+
+  it("BQ-8: with a plot rect the seam stays inside it, off the time-axis strip", () => {
+    const { c } = series("candles", Uint8Array.of(0, 0, 0, 1, 0, 0));
+    c.frame(12, 2, 0, 5, 20, 280); // plot top 20, bottom 280 CSS px at dpr 2
+    const out = new Float64Array(4);
+    candleRect(SEAM, 3, 0, 0, 0, 0, 0, K, 0, 0, c.geom, out);
+    expect([out[1], (out[1] ?? 0) + (out[3] ?? 0)]).toEqual([40, 560]);
+    expect((out[1] ?? 0) + (out[3] ?? 0)).toBeLessThan(K[5] ?? 0); // the canvas is taller
+  });
 });
 
 function series(shape: "candles" | "bars", flags?: Uint8Array) {

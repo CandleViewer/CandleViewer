@@ -6,8 +6,8 @@
 // a degenerate quad, so a prepend, an eviction and a pan are uniform writes (BQ-14). Ints are
 // subtracted before any float (BQ-75); y is bar-cell's log1p / series mix (BQ-113). `u_batch` =
 // (part, head, mask, n), part as `CANDLE_PART`: 0 wick, 1 body, 2 OHLC ticks, 3 OHLC stem, 4 the
-// gap seam. `u_geom[0]` = (body, hairline, tick) device px and spacing CSS px; `u_geom[1].x` the
-// DPR. Mirrors `src/layers/candle/geometry.ts` line for line.
+// gap seam. `u_geom[0]` = (body, hairline, tick) device px and spacing CSS px; `u_geom[1]` = (DPR, plot top, plot bottom) in device px;
+// the seam spans top to bottom. Mirrors `src/layers/candle/geometry.ts` line for line.
 // `u_palette` = up, down, wick, up tint, down tint, neutral (E12-D06 §2-§4, §9).
 export const CANDLE = {
   name: "candle",
@@ -68,12 +68,12 @@ void main() {
   float y1;
   v_outline = 0;
   if (part == 4) {
-    // BQ-8: the slot's left edge, a hairline over the whole pane. y1 = u_viewport.y is the full
-    // canvas height: correct while the pane scissor clips it and only pane 0 exists (E11-S09).
+    // BQ-8: the slot's left edge, a hairline over the plot rect: u_geom[1].y / .z are its top and
+    // bottom edges in device px (the canvas height when .z is 0, no plot set).
     x0 = floor(centre - u_k.x * 0.5 - h * 0.5 + 0.5);
     w = h;
-    y0 = 0.0;
-    y1 = u_viewport.y;
+    y1 = u_geom[1].z > 0.0 ? u_geom[1].z : u_viewport.y;
+    y0 = u_geom[1].z > 0.0 ? u_geom[1].y : 0.0;
   } else {
     float left = floor(centre - body * 0.5 + 0.5);
     float weight = dir == 1 ? 2.0 * h : h;

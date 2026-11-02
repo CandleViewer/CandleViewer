@@ -19,12 +19,20 @@ function run(
   n: number,
   shape: Shape = "candles",
   window = 0,
+  gapEvery = 0,
 ): { p50: number; p95: number; gpuMb: number; bytes: number } {
   const frames: number[] = [];
   let gpuMb = 0;
   let bytes = 0;
   for (let r = -1; r < 5; r += 1) {
-    const bench = new CandleSeriesBench(n, new FakeGl(), () => performance.now(), shape, window);
+    const bench = new CandleSeriesBench(
+      n,
+      new FakeGl(),
+      () => performance.now(),
+      shape,
+      window,
+      gapEvery,
+    );
     bench.backend.takeUploadedBytes();
     for (let f = 1; f <= 300; f += 1) {
       const start = performance.now();
@@ -80,5 +88,12 @@ describe("perf budgets: candle series", () => {
     expect(r.p50, why(r.p50, 0.3)).toBeLessThanOrEqual(budget(0.3));
     expect(r.p95, why(r.p95, 1)).toBeLessThanOrEqual(budget(1));
     memory(r, n, true);
+  });
+
+  // AC 7: OHLC bars and the gap seam (one every 10 bars, so several in view): same bound.
+  it.each([5_000, 100_000])("%i OHLC bars with seams: a theme switch frame, p95 <= 1 ms", (n) => {
+    const r = run((b, t) => b.switchTheme(t), n, "bars", 120, 10);
+    expect(r.p95, why(r.p95, 1)).toBeLessThanOrEqual(budget(1));
+    memory(r, n, false);
   });
 });

@@ -22,7 +22,16 @@ export const OHLC_TICKS_FROM = 5;
  * `u_geom` (two vec4 rows): body width, hairline and OHLC tick in device px, spacing in CSS px;
  * then the DPR (the up outline's CSS-px threshold, D06 §3.2). Floats per block: `GEOM_FLOATS`.
  */
-export const GEOM = { body: 0, hair: 1, tick: 2, spacing: 3, dpr: 4 } as const;
+export const GEOM = {
+  body: 0,
+  hair: 1,
+  tick: 2,
+  spacing: 3,
+  dpr: 4,
+  /** The plot rect's top and bottom edges, device px (`CandleSeries.frame`); bottom 0 = unset. */
+  plotTop: 5,
+  plotBottom: 6,
+} as const;
 export const GEOM_FLOATS = 8;
 /** D06 §3.2: an up body is outlined on every side once it is ≥ 3 CSS px wide. */
 export const FULL_OUTLINE_CSS = 3;
@@ -87,12 +96,14 @@ export function candleRect(
   const kx = k[0] ?? 0;
   const centre = (index - indexBase + 0.5 - (k[3] ?? 0)) * kx; // the shader's evaluation order
   if (part === CANDLE_PART.seam) {
-    // BQ-8: the slot's left edge, a hairline over the whole pane: the full canvas height (`k[5]`),
-    // correct while the pane scissor clips it and only pane 0 exists (E11-S09).
+    // BQ-8: the slot's left edge, a hairline over the plot rect's height (`GEOM.plotTop` to
+    // `plotBottom`, so it stops at the time axis); the canvas height when the frame set none.
+    const bottom = geom[GEOM.plotBottom] ?? 0;
+    const top = bottom > 0 ? (geom[GEOM.plotTop] ?? 0) : 0;
     out[0] = Math.floor(centre - kx * 0.5 - hair * 0.5 + 0.5);
-    out[1] = 0;
+    out[1] = top;
     out[2] = hair;
-    out[3] = k[5] ?? 0;
+    out[3] = (bottom > 0 ? bottom : (k[5] ?? 0)) - top;
     return;
   }
   // The body's left edge snapped to a device pixel; every part is centred on it from there.

@@ -33,7 +33,7 @@ const W = 1600;
 const H = 900;
 
 /** `n` one-minute bars with a small up / down / doji mix; one batch shape (flags included). */
-export function candleBars(n: number, t0 = 0): BarBatch {
+export function candleBars(n: number, t0 = 0, gapEvery = 0, tail = 120): BarBatch {
   const open = Int32Array.from({ length: n }, (_, i) => 1_000 + (i % 50));
   return {
     time: Float64Array.from({ length: n }, (_, i) => t0 + i * 60e6),
@@ -42,7 +42,9 @@ export function candleBars(n: number, t0 = 0): BarBatch {
     low: open.map((o) => o - 3),
     close: open.map((o, i) => o + ((i % 3) - 1)),
     volume: new Float32Array(n).fill(1),
-    flags: new Uint8Array(n),
+    flags: Uint8Array.from({ length: n }, (_, i) =>
+      gapEvery > 0 && i >= n - tail && i % gapEvery === 0 ? 1 : 0,
+    ),
     priceOrigin: 0,
     tickSize: 1,
   };
@@ -69,6 +71,7 @@ export class CandleSeriesBench {
     private readonly now: () => number = () => 0,
     shape: "candles" | "bars" = "candles",
     window = 0,
+    gapEvery = 0,
   ) {
     this.graph.addPane("main");
     this.viewport = new ChartViewport(this.store);
@@ -98,7 +101,7 @@ export class CandleSeriesBench {
         const vp = this.viewport;
         const first = Math.floor(vp.leftIndex);
         const last = Math.floor(vp.leftIndex + vp.plotWidth / vp.barSpacing);
-        this.series.frame(vp.barSpacing, vp.dpr, first, last);
+        this.series.frame(vp.barSpacing, vp.dpr, first, last, 0, H);
         writePaneUniforms(this.viewport, 0, this.uniforms);
         this.uniforms.floats[4] = W;
         this.uniforms.floats[5] = H;
@@ -106,7 +109,7 @@ export class CandleSeriesBench {
       },
       viewport: this.viewport,
     });
-    const all = candleBars(n);
+    const all = candleBars(n, 0, gapEvery); // gapEvery > 0: a seam every that many bars of the last 120
     this.ring.sync(this.store, this.store.replace(all));
     this.viewport.setPriceInfo(0, 0, 1);
     const from = window > 0 ? n - window : 0; // all bars at the spacing floor (BQ-13)

@@ -138,8 +138,10 @@ export class CandleSeries implements HostedPlugin {
    * bars under 5 CSS px draw the candle mark (D06 §3.2): their two batches switch to the wick and
    * body parts. The seam draws only while a `gap_before` bar lies in logical [first, last].
    */
-  frame(spacingCss: number, dpr: number, first = 0, last = -1): void {
+  frame(spacingCss: number, dpr: number, first = 0, last = -1, plotTop = 0, plotBottom = 0): void {
     candleGeometry(spacingCss, dpr, this.geom);
+    this.geom[GEOM.plotTop] = plotTop * dpr; // the seam stops at the plot rect's edges
+    this.geom[GEOM.plotBottom] = plotBottom > 0 ? plotBottom * dpr : 0;
     const r = this.ring;
     const head = r.head;
     const mask = r.capacity - 1;
