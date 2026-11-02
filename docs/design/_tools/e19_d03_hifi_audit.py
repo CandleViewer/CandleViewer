@@ -1041,6 +1041,23 @@ def g_t2(c: Ctx) -> list[str]:
             bad.append(f"{f} must name T2 (§1.4) (G-T2.6)")
     if "**T2 (§1.4)**" not in section(c.spec, "## 11."):
         bad.append("§11's view-as must name T2 (§1.4) (G-T2.6)")
+    fill = "`color.surface.raised` with a `color.border.default` hairline"
+    if (
+        f"the gated SCR-039 `Save`, a dialog-footer committing action, keeps the fill {fill}"
+        not in (body)
+    ):
+        bad.append("§1.4 lacks the gated SCR-039 `Save` fill (G-T2.2)")
+    if "SCR-039/view-as" in rows and f"`Save`'s fill {fill}" not in rows["SCR-039/view-as"][2]:
+        bad.append("SCR-039/view-as must give `Save`'s fill (G-T2.2)")
+    if "CMP-079 RbacGate" not in section(c.spec, "## 11.") or "CMP-019 `lock`" not in section(
+        c.spec, "## 11."
+    ):
+        bad.append("§11's view-as must name CMP-079 and CMP-019 `lock` (G-T2.6)")
+    boards = {r[0]: r[2] for r in board_rows(c.spec)}
+    if "**T2 (§1.4)**: CMP-079, CMP-019 `lock`" not in boards.get("09", ""):
+        bad.append("board 09 must name T2 (§1.4), CMP-079 and CMP-019 `lock` (G-T2.6)")
+    if "**T2 (§1.4)**, sentence form" not in boards.get("10", ""):
+        bad.append("board 10 must name T2 (§1.4) for its sentence forms (G-T2.6)")
     return bad
 
 
@@ -1654,6 +1671,26 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Ctx], Ctx]], ...] = (
     ("M-58", "G-TPO", sub_spec("a letterless form", "a letter form")),
     ("M-59", "G-ENV", sub_spec("no local badge repeats (`14`:81; ", "no local badge repeats (")),
     ("M-60", "G-VERSION", sub_spec("is a separate, later PR and closes the ticket", "is later")),
+    (
+        "M-61",
+        "G-T2",
+        sub_spec("keeps the fill `color.surface.raised`", "keeps the fill `color.surface.overlay`"),
+    ),
+    (
+        "M-62",
+        "G-T2",
+        sub_spec("`Save`'s fill `color.surface.raised`", "`Save`'s fill `color.surface.overlay`"),
+    ),
+    ("M-63", "G-T2", sub_spec("gated by CMP-079 RbacGate (2a)", "gated (2a)")),
+    ("M-64", "G-T2", sub_spec("each led by the CMP-019 `lock` glyph", "each led by a glyph")),
+    ("M-65", "G-T2", sub_spec("(**T2 (§1.4)**: CMP-079, CMP-019 `lock`)", "(CMP-079)")),
+    (
+        "M-66",
+        "G-T2",
+        sub_spec(
+            "the two no-history frames **T2 (§1.4)**, sentence form", "the two no-history frames"
+        ),
+    ),
     ("M-46", "G-NOCLOSE", sub_spec(_ANCHOR, _ANCHOR + _CLOSE + "\n")),
     ("M-47", "G-NOCLOSE", sub_spec("\n## 1. Purpose", _HEAD + "\n## 1. Purpose")),
     ("M-48", "G-PUBLIC", sub_spec(_ANCHOR, _ANCHOR + _HOST + "\n")),
