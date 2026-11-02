@@ -12,6 +12,7 @@ import {
   denial,
   STRIP_READS,
   stripItems,
+  stripUnread,
 } from "../../../../src/features/admin/overview/strip";
 import { ROUTE_MANIFEST } from "../../../../src/routes/manifest";
 
@@ -141,6 +142,52 @@ describe("the strip's items", () => {
     expect(
       stripItems({ ...s, capacity: { ...s.capacity, phase: "not_built" } }, "live"),
     ).toBeUndefined();
+  });
+});
+
+// An absent item is gone only if its source was read: the announcement says an item left on that
+// word, and a slice that errored inside an answer that otherwise succeeded reads as an absence
+// (C-5330-d02). `stripUnread` names the ids whose own source was not read.
+describe("the items whose source is unread", () => {
+  const ALL = ["no_mfa", "key_expiry", "keys_invalid", "tier"];
+  const clear = overview({ without_mfa: 0 }, { keys_expiring_30d: 0, keys_invalid: 0 });
+
+  it("names every item while no source was read, and none once every source was", () => {
+    expect(stripUnread(state())).toEqual(ALL);
+    const every = state({
+      overview: overview({ without_mfa: 2 }, { keys_expiring_30d: 1, keys_invalid: 3 }),
+      capacity: capacity("unrecorded"),
+    });
+    expect(stripUnread(every)).toEqual([]);
+    expect(stripItems(every, "live")?.map((i) => i.id)).toEqual(ALL); // the same ids the items carry
+    expect(stripUnread(state({ overview: clear, capacity: capacity("recorded") }))).toEqual([]);
+  });
+
+  it("names only the item whose slice errored inside an answer that otherwise succeeded", () => {
+    const errored = state({
+      overview: ok({
+        users: { status: "error", generated_at: AT, detail: "users: read failed" },
+        accounts: { status: "ok", generated_at: AT, keys_expiring_30d: 0, keys_invalid: 1 },
+      }),
+      capacity: capacity("recorded"),
+    });
+    expect(stripUnread(errored)).toEqual(["no_mfa"]);
+    // the key item stands, so the strip is drawn without the users item: unread, not gone
+    expect(stripItems(errored, "live")?.map((i) => i.id)).toEqual(["keys_invalid"]);
+  });
+
+  it("names a failed read's items, and the tier while capacity is not built or not understood", () => {
+    const failed = { phase: "failed", reason: "status", status: 503 } as const;
+    const overviewFailed = state({
+      overview: { ...clear, ...failed },
+      capacity: capacity("recorded"),
+    });
+    expect(stripUnread(overviewFailed)).toEqual(["no_mfa", "key_expiry", "keys_invalid"]);
+    const notBuilt = state({ overview: clear, capacity: { phase: "not_built" } });
+    expect(stripUnread(notBuilt)).toEqual(["tier"]);
+    expect(stripUnread(state({ overview: clear, capacity: capacity("surprise") }))).toEqual([
+      "tier",
+    ]);
   });
 });
 

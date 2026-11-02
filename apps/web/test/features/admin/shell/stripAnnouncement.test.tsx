@@ -8,8 +8,15 @@
 import { act, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { adminReads, REREAD_MS } from "../../../../src/features/admin/overview/readStore";
+import { AdminLayout, type AdminStripItem } from "@candleviewer/ui";
+import {
+  adminReads,
+  REREAD_MS,
+  useAdminHold,
+} from "../../../../src/features/admin/overview/readStore";
+import { STRIP_READS } from "../../../../src/features/admin/overview/strip";
 import { AdminArea } from "../../../../src/features/admin/shell/AdminArea";
+import { useStripAnnouncements } from "../../../../src/features/admin/shell/useStripAnnouncements";
 import {
   announce,
   clearAnnouncements,
@@ -234,6 +241,36 @@ describe("a new strip item is said once, politely, through the shell's announcer
     expect(heard()).toBe(KEY_REJECTED);
   });
 
+  // Two reads' worth of items (C-5330-d01): what a second read brings must neither bring a waiting
+  // line forward, nor drop it, nor block the items that come after.
+  it("keeps a waiting line a budget behind the first through a change that brings nothing new", async () => {
+    await arrive();
+    served = { ...NOTHING, mfa: 1, invalid: 1 };
+    await flush(REREAD_MS);
+    expect(heard()).toBe(NO_MFA); // the key line waits its turn
+    await flush(1_000);
+    served = { ...NOTHING, mfa: 3, invalid: 1 }; // a count moves on the first item: the strip changes
+    act(() => adminReads.retry(["overview"], "test"));
+    await flush();
+    expect(pills()[0]).toHaveAccessibleName("Attention: 3 active users without two-factor → Users");
+    expect(heard()).toBe(NO_MFA); // nothing is new, so the waiting line is not brought forward
+    await flush(REGION_BUDGET_MS - 1_000 - 100);
+    expect(heard()).toBe(NO_MFA);
+    await flush(100);
+    expect(heard()).toBe(KEY_REJECTED); // and not dropped: still a budget after the first
+  });
+
+  it("says an item that arrives on a later read, after a line the timer said", async () => {
+    await arrive();
+    served = { ...NOTHING, mfa: 1, invalid: 1 };
+    await flush(REREAD_MS); // the first line at once
+    await flush(REGION_BUDGET_MS); // the second by the timer
+    expect(heard()).toBe(KEY_REJECTED);
+    served = { ...NOTHING, mfa: 1, expiring: 2, invalid: 1 }; // a third item on a later re-read
+    await flush(REREAD_MS);
+    expect(heard()).toBe("Attention: 2 keys expire within 30 days → Accounts and keys DEMO");
+  });
+
   it("says an item again when it leaves and comes back: a new item", async () => {
     await arrive();
     served = { ...NOTHING, invalid: 1 };
@@ -245,11 +282,36 @@ describe("a new strip item is said once, politely, through the shell's announcer
     expect(screen.getByRole("region", { name: "Needs your action" })).toHaveTextContent(
       "Nothing needs your action",
     );
-    expect(writes()).toBe(first); // an item going says nothing
+    expect(heard()).toBeNull(); // an item going says nothing, and its line goes with it (A-5330-d04)
     served = { ...NOTHING, invalid: 1 };
     await flush(REREAD_MS);
     expect(writes()).not.toBe(first);
     expect(heard()).toBe(KEY_REJECTED);
+  });
+
+  it("takes an item's line off the region when the item leaves, and no other item's", async () => {
+    await arrive();
+    served = { ...NOTHING, mfa: 1, invalid: 1 };
+    await flush(REREAD_MS); // the first line at once
+    await flush(REGION_BUDGET_MS); // the second, which the region now reads
+    expect(heard()).toBe(KEY_REJECTED);
+    served = { ...NOTHING, invalid: 1 }; // the first item's condition ended
+    await flush(REREAD_MS);
+    expect(heard()).toBe(KEY_REJECTED); // the region reads the other's line: it stays
+    served = NOTHING; // and the second's
+    await flush(REREAD_MS);
+    expect(heard()).toBeNull(); // no stale text outlives the condition
+  });
+
+  it("says an item whose source was still unread at the arrival when it first appears", async () => {
+    refused = { overview: 503 };
+    await arrive({ mfa: 1 }); // the overview failed: its items were not on the strip to be the arrival
+    expect(heard()).toBeNull();
+    refused = {};
+    act(() => adminReads.retry(["overview"], "test"));
+    await flush();
+    expect(pills()).toHaveLength(1);
+    expect(heard()).toBe(NO_MFA); // the owner has not seen it: it is new
   });
 
   it("says nothing for items a failed read dropped from the strip and a later one brought back", async () => {
@@ -275,6 +337,52 @@ describe("a new strip item is said once, politely, through the shell's announcer
     expect(heard()).toBeNull();
   });
 
+  // The reproduction of C-5330-d02: the users slice errors while another item stands, so the strip
+  // is drawn and the read-level gate took the item for gone.
+  it("says nothing for an item whose slice errored while another item stands, once it answers again", async () => {
+    await arrive({ mfa: 1, invalid: 1 });
+    expect(pills()).toHaveLength(2);
+    served = { ...NOTHING, mfa: null, invalid: 1 }; // the users slice errors; the key item stands
+    await flush(REREAD_MS);
+    expect(pills()).toHaveLength(1);
+    served = { ...NOTHING, mfa: 1, invalid: 1 }; // and answers again
+    await flush(REREAD_MS);
+    expect(pills()).toHaveLength(2);
+    expect(heard()).toBeNull();
+  });
+
+  // Only the unread ids change between the two answers below, so the effect must run on them too.
+  it("says an item again once its source answered without it, though the strip did not change", async () => {
+    await arrive({ mfa: 1, invalid: 1 });
+    served = { ...NOTHING, mfa: null, invalid: 1 }; // the users slice errors: no_mfa unread, the strip is [keys_invalid]
+    await flush(REREAD_MS);
+    served = { ...NOTHING, mfa: 0, invalid: 1 }; // it answers without the item: gone, the strip is the same
+    await flush(REREAD_MS);
+    served = { ...NOTHING, mfa: 1, invalid: 1 }; // it comes back: new again
+    await flush(REREAD_MS);
+    expect(heard()).toBe(NO_MFA);
+  });
+
+  // A source that stays failed or not built is no reason to take every other item for one that never
+  // leaves: with the read-level gate the strip's record only grew, so an item that left and came
+  // back stayed silent for the rest of the visit.
+  it.each([
+    [404, "not built"],
+    [503, "failed"],
+  ])(
+    "says an item again when it leaves and comes back while capacity stays %i (%s)",
+    async (status) => {
+      refused = { capacity: status }; // the tier item never has a source this visit
+      await arrive({ invalid: 1 });
+      served = NOTHING;
+      await flush(REREAD_MS); // the overview was read: the key item's condition ended
+      expect(heard()).toBeNull();
+      served = { ...NOTHING, invalid: 1 };
+      await flush(REREAD_MS);
+      expect(heard()).toBe(KEY_REJECTED); // it is back: a new item
+    },
+  );
+
   it("drops a line still waiting when its item left before its turn", async () => {
     await arrive();
     served = { ...NOTHING, mfa: 1, invalid: 1 };
@@ -289,16 +397,48 @@ describe("a new strip item is said once, politely, through the shell's announcer
     expect(heard()).toBe(NO_MFA);
   });
 
+  it("says a waiting item in the words its pill reads when its turn comes, not as it was queued", async () => {
+    await arrive();
+    served = { ...NOTHING, mfa: 1, invalid: 1 };
+    await flush(REREAD_MS);
+    expect(heard()).toBe(NO_MFA); // the key line waits its turn
+    served = { ...NOTHING, mfa: 1, invalid: 3 }; // the count moves while it waits
+    act(() => adminReads.retry(["overview"], "test"));
+    await flush();
+    await flush(REGION_BUDGET_MS);
+    const words = "Attention: 3 keys rejected by Bybit → Accounts and keys DEMO";
+    expect(heard()).toBe(words);
+    expect(pills()[1]).toHaveAccessibleName(words); // what is said is what Tab reads
+  });
+
+  it("says a waiting item that is off the strip at its turn once it is back, holding no other up", async () => {
+    await arrive();
+    await flush(REREAD_MS - 2_000);
+    act(() => void announce("polite", "Admin · Users and roles · DEMO", "test:route"));
+    served = { ...NOTHING, mfa: 1, invalid: 1 };
+    await flush(2_000); // the re-read lands 2 s after the other line: both new items wait for a budget
+    served = { ...NOTHING, mfa: null, invalid: 1 }; // the users slice errors while they wait
+    act(() => adminReads.retry(["overview"], "test"));
+    await flush();
+    expect(pills()).toHaveLength(1);
+    await flush(REGION_BUDGET_MS); // the first item's turn comes with it off the strip
+    expect(heard()).toBe(KEY_REJECTED); // the second is not held up behind it
+    served = { ...NOTHING, mfa: 1, invalid: 1 }; // the slice answers again
+    act(() => adminReads.retry(["overview"], "test"));
+    await flush();
+    expect(heard()).toBe(KEY_REJECTED); // a budget has not passed since that line
+    await flush(REGION_BUDGET_MS);
+    expect(heard()).toBe(NO_MFA); // it was never said, so it is said now
+  });
+
   it("cancels a line still waiting when the area is left", async () => {
     const view = await arrive();
     served = { ...NOTHING, mfa: 1, invalid: 1 };
     await flush(REREAD_MS);
     expect(heard()).toBe(NO_MFA);
-    const last = writes();
     view.rerender(<Visit show={false} />);
     await flush(REGION_BUDGET_MS * 3);
-    expect(writes()).toBe(last);
-    expect(heard()).toBe(NO_MFA);
+    expect(heard()).toBeNull(); // the key line is never said, and the one said goes with the visit
   });
 
   it("drops a line still waiting when a 403 withdraws the area", async () => {
@@ -306,31 +446,125 @@ describe("a new strip item is said once, politely, through the shell's announcer
     served = { ...NOTHING, mfa: 1, invalid: 1 };
     await flush(REREAD_MS);
     expect(heard()).toBe(NO_MFA);
-    const last = writes();
     refused = { overview: 403 };
     act(() => adminReads.retry(["overview"], "test"));
     await flush();
     expect(screen.getByRole("heading", { level: 1, name: "Your access changed" })).toBeVisible();
     expect(heard("assertive")).toBe("Your access changed.");
+    expect(heard()).toBeNull(); // the pills the line pointed from are gone, and the line with them
     await flush(REGION_BUDGET_MS * 3);
-    expect(writes()).toBe(last);
+    expect(heard()).toBeNull(); // and the waiting line is never said
   });
 
   it("starts afresh on the next visit: the arrival is silent and an item said before is news again", async () => {
     const view = await arrive();
     served = { ...NOTHING, invalid: 1 };
     await flush(REREAD_MS);
-    const first = writes();
     expect(heard()).toBe(KEY_REJECTED);
     view.rerender(<Visit show={false} />);
     await flush();
+    expect(heard()).toBeNull(); // the visit's line went with it
     served = NOTHING;
     view.rerender(<Visit />); // the owner comes back to nothing on the strip
     await flush();
-    expect(writes()).toBe(first);
+    expect(heard()).toBeNull();
     served = { ...NOTHING, invalid: 1 };
     await flush(REREAD_MS);
-    expect(writes()).not.toBe(first);
     expect(heard()).toBe(KEY_REJECTED);
+  });
+});
+
+// The strip carries no critical or info item yet (CG-7 withdrawal, CG-8 tamper: no source), so the
+// hook is fed a strip of the test's own, beside the real pills that `AdminLayout` draws for it.
+describe("the hook fed a strip of its own: the severities the strip does not carry yet", () => {
+  const item = (more: Partial<AdminStripItem> & Pick<AdminStripItem, "id" | "label">) =>
+    ({
+      href: "/admin/users",
+      kind: "other",
+      severity: "warning",
+      ...more,
+    }) satisfies AdminStripItem;
+  const TAMPER = item({
+    id: "tamper",
+    label: "The audit log failed its check → Audit log",
+    kind: "tamper",
+    severity: "critical",
+  });
+  const WARNING = item({ id: "no_mfa", label: "1 active user without two-factor → Users" });
+  const NONE: readonly AdminStripItem[] = [];
+
+  function Fed({ strip }: { strip: readonly AdminStripItem[] }) {
+    useAdminHold(STRIP_READS); // the area's own hold: both strip reads answer
+    useStripAnnouncements(strip);
+    return null;
+  }
+  const shown = (strip: readonly AdminStripItem[]) => (
+    <>
+      <ShellAnnouncer />
+      <Fed strip={strip} />
+      <AdminLayout routeLabel="Overview" strip={strip}>
+        <h1>Overview</h1>
+      </AdminLayout>
+    </>
+  );
+
+  it("leaves a critical item to its assertive line, which is not built (CG-7, CG-8)", async () => {
+    const view = render(shown(NONE));
+    await flush(); // both reads answered: the arrival, an empty strip
+    view.rerender(shown([TAMPER]));
+    await flush(REGION_BUDGET_MS);
+    expect(pills()).toHaveLength(1); // it is on the strip
+    expect(heard()).toBeNull(); // and not said, politely or otherwise
+    expect(heard("assertive")).toBeNull();
+    view.rerender(shown([TAMPER, WARNING])); // a warning beside it is a new item, and said
+    await flush();
+    expect(heard()).toBe("Attention: 1 active user without two-factor → Users");
+    await flush(REGION_BUDGET_MS * 2);
+    expect(heard()).toBe("Attention: 1 active user without two-factor → Users"); // still no line for it
+    expect(heard("assertive")).toBeNull();
+  });
+
+  // `wordsOf` copies the pill's naming rule (CMP-087's `StripItem`), which lives in packages/ui: this
+  // pins each arm of the copy against the pill itself, so the two cannot drift apart unseen.
+  it("says each item in the words its pill reads: its severity, its own lead and its badge", async () => {
+    const INFO = item({
+      id: "backup",
+      label: "Last backup is 2 days old → Backups",
+      severity: "info",
+    });
+    const LED = item({ id: "drift", label: "Attention: the clock drifted → Settings" });
+    const BADGED = item({
+      id: "key_expiry",
+      label: "1 key expires within 30 days → Accounts and keys",
+      env: "live",
+    });
+    const view = render(shown(NONE));
+    await flush();
+    const said = [
+      [[INFO], "Last backup is 2 days old → Backups"], // info: no "Attention:"
+      [[INFO, LED], "Attention: the clock drifted → Settings"], // not led twice
+      [[INFO, LED, BADGED], "Attention: 1 key expires within 30 days → Accounts and keys LIVE"],
+    ] as const;
+    for (const [strip, words] of said) {
+      view.rerender(shown(strip));
+      await flush(REGION_BUDGET_MS);
+      expect(heard()).toBe(words);
+      expect(screen.getByRole("link", { name: words })).toBeVisible(); // what is said is what Tab reads
+    }
+  });
+
+  // Items are named by id and cleared by key prefix: an id that prefixes another's must not take
+  // the other's line with it when its item leaves.
+  it("takes only the leaving item's line off the region, whose id prefixes another's", async () => {
+    const SHORT = item({ id: "tier", label: "Tier not recorded → Record tier" });
+    const LONG = item({ id: "tier_2", label: "Tier 2 not recorded → Record tier" });
+    const view = render(shown(NONE));
+    await flush();
+    view.rerender(shown([SHORT, LONG]));
+    await flush(REGION_BUDGET_MS); // both said, the second last: the region reads its line
+    expect(heard()).toBe("Attention: Tier 2 not recorded → Record tier");
+    view.rerender(shown([LONG])); // the short id's item leaves
+    await flush();
+    expect(heard()).toBe("Attention: Tier 2 not recorded → Record tier");
   });
 });
