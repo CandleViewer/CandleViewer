@@ -1,0 +1,229 @@
+name: perf-shell
+
+# E10-Q04 (#303, PR-4; BQ-Q04-03/07/09 ruled with the critic's corrections): the shell perf benches
+# as a standing CI job, RECORDING ONLY (R0, docs/plan/30-release-roadmap.md §4.4). Not a required
+# check, and no other workflow waits on it. Per PR on the shell paths: headless Chromium only (the
+# browser cold start, then the route-change, rail and chip benches). Nightly and on dispatch:
+# Electron as well (under xvfb-run), and the palette filter budget (packages/ui `test:perf`).
+#
+# Cold start runs 3 sets of 10 (06 §7.4). scripts/perf-sets.mjs records the median of the three
+# p95s and, as the trend, the median of the three p50s (n = 10 makes each p95 one outlier); a trend
+# >= 15 % above the committed baseline (E10-Q04 PR-5) is flagged in the summary, never failed. CI
+# numbers are never compared with the 3 000 / 4 000 ms budgets: the verdict is a reference-class
+# run's. A FAILURE TO RUN is enforced: a missing set report or a harness error turns the job red,
+# after the reports are uploaded (7-day retention: traces). Nothing leaves the loopback: the shell
+# boots against the harness's stub backend (C-13.5), so no secret and no network is needed.
+#
+# Runner: GitHub-hosted ubuntu-latest, no GPU (software GL), so the numbers are comparable only
+# with a baseline from the same runner class. `runner: cv-bench-01` (dispatch only) runs the cold
+# start on the self-hosted bench runner for a steadier attended reading: from `main` only (a
+# self-hosted runner never runs unreviewed code), in the `cv-bench-01` concurrency group, so it
+# never runs beside perf-ingestion-nightly.yml's perf-pack-full.
+# The ref guard lives in the dispatched ref's own copy of this file, so a branch could edit it out:
+# the real control is the cv-bench-01 runner group restricted to main in the repo settings.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "apps/web/src/shell/**"
+      - "apps/web/src/features/app-shell/**"
+      - "apps/desktop/src/**"
+      - "apps/desktop/e2e/perf/**"
+      - "apps/desktop/scripts/perf-sets.mjs"
+      - ".github/workflows/perf-shell.yml"
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "ubuntu-latest (recording), or cv-bench-01 (attended, from main only)"
+        type: choice
+        options: [ubuntu-latest, cv-bench-01]
+        default: ubuntu-latest
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-shell-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  chromium:
+    name: shell-perf-chromium (recording, not gating)
+    if: ${{ (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.runner == 'ubuntu-latest') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # nothing here pushes or fetches
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: ".nvmrc"
+      - run: npm install -g corepack@latest && corepack enable && corepack prepare pnpm@12.5.1 --activate
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: node tools/ci/run-allowed-postinstall.mjs
+      - name: Build the workspace packages apps/web depends on
+        run: pnpm --filter "@candleviewer/web^..." run build
+      - name: "Guard: the packages apps/web imports are built (fails fast, CI-BUILD-001)"
+        run: node tools/ci/check_built_exports.mjs packages/ui packages/chart-engine packages/protocol
+      - run: pnpm --filter @candleviewer/web run build # the stub backend serves apps/web/dist
+      - name: Install the lockfile's Playwright Chromium
+        working-directory: apps/desktop
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Browser cold start, 3 sets of 10, then the route, rail and chip benches
+        working-directory: apps/desktop
+        env:
+          OUT: ${{ runner.temp }}/shell-perf
+        run: |
+          rc=0
+          for s in 1 2 3; do
+            CV_PERF_REPORT_DIR="$OUT/set-$s" pnpm run perf cold-start.perf.ts -g "browser cold start" || rc=1
+          done
+          node scripts/perf-sets.mjs --target browser --out "$OUT" --summary "$GITHUB_STEP_SUMMARY" \
+            --baseline e2e/perf/baselines/browser-ubuntu-latest.json "$OUT/set-1" "$OUT/set-2" "$OUT/set-3" || rc=1
+          CV_PERF_REPORT_DIR="$OUT/chrome" pnpm run perf shell-chrome.perf.ts || rc=1
+          exit "$rc"
+      - name: Upload the shell perf reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: shell-perf-chromium
+          path: ${{ runner.temp }}/shell-perf/
+          if-no-files-found: warn
+          retention-days: 7
+
+  electron:
+    name: shell-perf-electron (recording, not gating)
+    if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.runner == 'ubuntu-latest') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: ".nvmrc"
+      - run: npm install -g corepack@latest && corepack enable && corepack prepare pnpm@12.5.1 --activate
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: node tools/ci/run-allowed-postinstall.mjs # the Electron binary (SR-138)
+      - name: Build the workspace packages apps/web depends on
+        run: pnpm --filter "@candleviewer/web^..." run build
+      - name: "Guard: the packages apps/web imports are built (fails fast, CI-BUILD-001)"
+        run: node tools/ci/check_built_exports.mjs packages/ui packages/chart-engine packages/protocol
+      - run: pnpm --filter @candleviewer/web run build
+      - run: pnpm --filter @candleviewer/desktop run build # the harness launches dist/main/index.js
+      - name: Install the browser system libraries (as the e2e Electron job does)
+        working-directory: apps/desktop
+        run: pnpm exec playwright install --with-deps chromium
+      # As perf-engine-matrix.yml: the hosted image blocks unprivileged user namespaces, so the
+      # sandbox helper must be root-owned and setuid; `--no-sandbox` would measure another shell.
+      - name: Make Electron's sandbox helper setuid root
+        working-directory: apps/desktop
+        run: |
+          pkg="$(node -p "require('path').dirname(require.resolve('electron/package.json'))")"
+          sandbox="$pkg/dist/chrome-sandbox"
+          test -f "$sandbox" && ! test -L "$sandbox"
+          sudo chown root:root "$sandbox"
+          sudo chmod 4755 "$sandbox"
+      - name: Electron cold start, 3 sets of 10 (`tuned` flags as shipped, software GL)
+        working-directory: apps/desktop
+        env:
+          OUT: ${{ runner.temp }}/shell-perf
+        run: |
+          rc=0
+          for s in 1 2 3; do
+            CV_PERF_REPORT_DIR="$OUT/set-$s" xvfb-run -a pnpm run perf cold-start.perf.ts -g "electron cold start" || rc=1
+          done
+          node scripts/perf-sets.mjs --target electron --out "$OUT" --summary "$GITHUB_STEP_SUMMARY" \
+            --baseline e2e/perf/baselines/electron-ubuntu-latest.json "$OUT/set-1" "$OUT/set-2" "$OUT/set-3" || rc=1
+          exit "$rc"
+      - name: Upload the shell perf reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: shell-perf-electron
+          path: ${{ runner.temp }}/shell-perf/
+          if-no-files-found: warn
+          retention-days: 7
+
+  palette:
+    name: palette-filter-perf (recording, not gating)
+    if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.runner == 'ubuntu-latest') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: ".nvmrc"
+      - run: npm install -g corepack@latest && corepack enable && corepack prepare pnpm@12.5.1 --activate
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: CMP-059's filter, 2 000 labels, p95 within budget(16) (calibrated, retry 2, no coverage)
+        run: pnpm --filter @candleviewer/ui test:perf
+
+  bench-ref-guard:
+    name: refuse a cv-bench-01 dispatch off main
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.runner == 'cv-bench-01' && github.ref != 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: |
+          echo "::error::cv-bench-01 runs main only, not $GITHUB_REF" >&2
+          exit 1
+
+  bench:
+    name: shell-perf on cv-bench-01 (attended, recording)
+    # Dispatch only, from main only: the self-hosted runner never runs a PR's or a branch's code.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.runner == 'cv-bench-01' && github.ref == 'refs/heads/main' }}
+    runs-on: [self-hosted, Linux, X64, bench]
+    concurrency:
+      group: cv-bench-01 # serialises with perf-pack-full and the memdiag legs
+      cancel-in-progress: false
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: ".nvmrc"
+      - run: npm install -g corepack@latest && corepack enable && corepack prepare pnpm@12.5.1 --activate
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: node tools/ci/run-allowed-postinstall.mjs
+      - name: Build the workspace packages apps/web depends on
+        run: pnpm --filter "@candleviewer/web^..." run build
+      - name: "Guard: the packages apps/web imports are built (fails fast, CI-BUILD-001)"
+        run: node tools/ci/check_built_exports.mjs packages/ui packages/chart-engine packages/protocol
+      - run: pnpm --filter @candleviewer/web run build
+      - run: pnpm --filter @candleviewer/desktop run build
+      - name: Install the lockfile's Playwright Chromium (no system packages, no sudo here)
+        working-directory: apps/desktop
+        run: pnpm exec playwright install chromium
+      - name: Cold start, Electron then browser, 3 sets of 10 each
+        working-directory: apps/desktop
+        env:
+          OUT: ${{ runner.temp }}/shell-perf
+        run: |
+          rc=0
+          for t in electron browser; do
+            for s in 1 2 3; do
+              CV_PERF_REPORT_DIR="$OUT/$t-$s" xvfb-run -a pnpm run perf cold-start.perf.ts -g "$t cold start" || rc=1
+            done
+            node scripts/perf-sets.mjs --target "$t" --out "$OUT" --summary "$GITHUB_STEP_SUMMARY" \
+              "$OUT/$t-1" "$OUT/$t-2" "$OUT/$t-3" || rc=1
+          done
+          exit "$rc"
+      - name: Upload the shell perf reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: shell-perf-cv-bench-01
+          path: ${{ runner.temp }}/shell-perf/
+          if-no-files-found: warn
+          retention-days: 7

@@ -33,6 +33,19 @@ export default defineConfig({
           setupFiles: vitestPreset.test.setupFiles,
           tags: vitestPreset.test.tags,
           include: ["test/**/*.test.{ts,tsx}"],
+          exclude: ["test/**/*.perf.test.ts"],
+        },
+      },
+      {
+        // E10-Q04 (#303, BQ-Q04-09): wall-clock budgets, calibrated, run WITHOUT coverage by
+        // `test:perf` (perf-shell.yml). C-9.3: a budget may retry twice; the budget never moves.
+        extends: true,
+        test: {
+          name: "perf",
+          include: ["test/**/*.perf.test.ts"],
+          testTimeout: 60_000,
+          retry: 2,
+          setupFiles: ["../config/src/perf-calibration-setup.mjs"],
         },
       },
       {
