@@ -31,8 +31,14 @@ Gates (each FAIL led by its name):
               pins file's hash; the SHA anchors are the pinned refs.
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
               public-text deny word in the spec, this tool or the pins file; no unknown anchor.
+  G-DRAWN     §0 is pending ("to draw in PR 2" with no board table, PR 1) or drawn (PR 2).
+              Drawn: §0 names the page id; every board bullet ends "drawn, board NN" with NN a
+              row of the board table; each board row's Status is `drawn (r<n>)` with its board
+              id and export, the export's number and slug agree with the row's board name, and
+              on disk the PNG's IHDR width × height and sha256 equal the record; and no other
+              E38-D04-*.png sits in `docs/design/E38/img/`.
   G-SCOPE     the diff against `git merge-base HEAD origin/main` touches only the spec, this
-              tool and the pins file.
+              tool, the pins file and the E38-D04 exports in `docs/design/E38/img/`.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e38_d04_hifi_audit.py --check       (exit 1 on any FAIL)
@@ -61,6 +67,16 @@ OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
 BASE = "c327ed438c01c5bab9247890dd00f5dce3717f97"  # origin/main when written
 MEMO_REF = "4774b2f8cd7b67a1ee934fe88546568f7aa3e34c"  # #5451's head (E38-D01 memo)
 TOKENS = "packages/ui/tokens"
+IMG_REL = "docs/design/E38/img"
+IMG = re.compile(r"docs/design/E38/img/E38-D04-\d\d-[a-z0-9-]+\.png")
+PENDING = "to draw in PR 2"
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+DRAWN = re.compile(
+    rf"drawn \(r\d+\): board id `{UUID}`, "
+    r"`docs/design/E38/img/(E38-D04-(\d\d)-([a-z0-9-]+)\.png)` "
+    r"\((\d+) × (\d+), sha256 `([0-9a-f]{64})`\)"
+)
+BULLET = re.compile(r"^- (\d\d) (.+)$", re.MULTILINE)
 PATHS: dict[str, str] = {
     "05": "docs/plan/05-accessibility-standard.md",
     "11": "docs/plan/11-user-stories.md",
@@ -152,6 +168,7 @@ class Texts:
     tool: str
     changed: list[str] | None
     memo: dict[str, str | None]
+    files: dict[str, bytes]
 
 
 def git(*args: str) -> str | None:
@@ -519,10 +536,62 @@ def g_scope(t: Texts, vals: dict[str, str]) -> list[str]:
     if t.changed is None:
         return ["cannot list the changed paths (git failed)"]
     return [
-        f"{p} is touched; this ticket owns {', '.join(OWN_PATHS)}"
+        f"{p} is touched; this ticket owns {', '.join(OWN_PATHS)} and the E38-D04 exports"
         for p in t.changed
-        if p not in OWN_PATHS
+        if p not in OWN_PATHS and not IMG.fullmatch(p)
     ]
+
+
+def png_size(data: bytes) -> tuple[int, int] | None:
+    if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        return None
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def g_drawn(t: Texts, vals: dict[str, str]) -> list[str]:
+    s0 = section(t.spec, "## 0.")
+    head = s0.strip().split("\n", 1)[0]
+    bullets = BULLET.findall(s0)
+    boards = [
+        cells(ln) for ln in s0.split("\n") if re.match(r"\| \d\d +\|", ln.strip())
+    ]
+    if not bullets:
+        return ["§0 lists no boards"]
+    if PENDING in head and not boards:
+        return []  # PR 1: nothing drawn yet
+    bad = []
+    if PENDING in head:
+        bad.append(f"a mix: §0's heading still reads {PENDING!r}")
+    if not re.search(rf"page id `{UUID}`", s0):
+        bad.append("drawn, but §0 names no page id")
+    nos = {r[0] for r in boards}
+    for no, text in bullets:
+        m = re.search(r": drawn, board (\d\d);?\.?$", text)
+        if m is None or m[1] != no or no not in nos:
+            bad.append(f"bullet {no}: names no drawn board of the board table")
+    listed: set[str] = set()
+    for r in boards:
+        m = DRAWN.fullmatch(r[4]) if len(r) == 5 else None
+        if m is None:
+            bad.append(f"board {r[0]}: Status is not the drawn form")
+            continue
+        name, no, slug, sha = m[1], m[2], m[3], m[6]
+        listed.add(name)
+        if no != r[0] or r[1] != f"`E38-D04 / {no} {slug}`":
+            bad.append(f"board {r[0]}: the export names another board or slug")
+        data = t.files.get(name)
+        if (
+            data is None
+            or hashlib.sha256(data).hexdigest() != sha
+            or png_size(data) != (int(m[4]), int(m[5]))
+        ):
+            bad.append(f"board {r[0]}: {name} is missing or not its W × H and sha256")
+    if len(boards) != len(bullets):
+        bad.append(f"{len(bullets)} board bullets but {len(boards)} board rows")
+    stray = sorted(set(t.files) - listed)
+    if stray:
+        bad.append(f"E38-D04 PNGs on disk that §0 does not list: {stray}")
+    return bad
 
 
 GATES: dict[str, Callable[[Texts, dict[str, str]], list[str]]] = {
@@ -534,6 +603,7 @@ GATES: dict[str, Callable[[Texts, dict[str, str]], list[str]]] = {
     "G-AROW": g_arow,
     "G-CITE": g_cite,
     "G-HYGIENE": g_hygiene,
+    "G-DRAWN": g_drawn,
     "G-SCOPE": g_scope,
 }
 
@@ -567,7 +637,13 @@ def load() -> Texts:
         else ""
     )
     tool = (ROOT / TOOL_REL).read_text(encoding="utf-8")
-    return Texts(spec, pins, tool, changed_paths(), {})
+    img = ROOT / IMG_REL
+    files = (
+        {f.name: f.read_bytes() for f in sorted(img.glob("E38-D04-*.png"))}
+        if img.is_dir()
+        else {}
+    )
+    return Texts(spec, pins, tool, changed_paths(), {}, files)
 
 
 def sub(old: str, new: str) -> Callable[[Texts], Texts]:
@@ -615,6 +691,43 @@ def a1_without(name: str) -> Callable[[Texts], Texts]:
         "CMP-019": ", wrapped by CMP-079 RbacGate",
     }[name]
     return sub(A1_T2, kept)
+
+
+def with_file(name: str, data: bytes | None) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        files = {k: v for k, v in t.files.items() if k != name}
+        if data is not None:
+            files[name] = data
+        return replace(t, files=files)
+
+    return f
+
+
+def one_pixel_wider(t: Texts) -> Texts:
+    """Board 04's IHDR width plus one; the record's sha256 moves to match, so only the size is off."""
+    name = "E38-D04-04-demo-simulated-pair.png"
+    data = bytearray(t.files[name])
+    data[16:20] = (int.from_bytes(data[16:20], "big") + 1).to_bytes(4, "big")
+    old = hashlib.sha256(t.files[name]).hexdigest()
+    new = hashlib.sha256(bytes(data)).hexdigest()
+    return replace(
+        t, spec=t.spec.replace(old, new, 1), files={**t.files, name: bytes(data)}
+    )
+
+
+def one_byte_off(t: Texts) -> Texts:
+    """Board 02's last byte changed: its size stands, its sha256 does not."""
+    name = "E38-D04-02-placement-sheet.png"
+    data = bytearray(t.files[name])
+    data[-1] ^= 0x01
+    return replace(t, files={**t.files, name: bytes(data)})
+
+
+def swap_boards(t: Texts) -> Texts:
+    """Boards 01 and 03 swap bytes: both sizes and sha256 then disagree with the record."""
+    a = "E38-D04-01-badge-sheet.png"
+    b = "E38-D04-03-disclosure-block.png"
+    return replace(t, files={**t.files, a: t.files[b], b: t.files[a]})
 
 
 MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
@@ -710,6 +823,55 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "G-HYGIENE",
         "a deny word in the tool's own text",
         lambda t: replace(t, tool=t.tool + "\n# " + "fl" + "ood\n"),
+    ),
+    ("G-DRAWN", "board 04's PNG one pixel wider than its record", one_pixel_wider),
+    ("G-DRAWN", "board 02's PNG one byte off its sha256", one_byte_off),
+    ("G-DRAWN", "boards 01 and 03 swap bytes", swap_boards),
+    (
+        "G-DRAWN",
+        "a board's PNG missing on disk",
+        with_file("E38-D04-03-disclosure-block.png", None),
+    ),
+    (
+        "G-DRAWN",
+        "an extra E38-D04 PNG on disk",
+        with_file("E38-D04-05-extra.png", b"\x89PNG\r\n\x1a\n"),
+    ),
+    (
+        "G-DRAWN",
+        "§0's heading back to pending (a mix)",
+        sub(
+            "## 0. The boards (Penpot) — drawn",
+            "## 0. The boards (Penpot) — to draw in PR 2",
+        ),
+    ),
+    (
+        "G-DRAWN",
+        "a bullet names a board not drawn",
+        sub(
+            "orthogonality note: drawn, board 04.",
+            "orthogonality note: drawn, board 05.",
+        ),
+    ),
+    (
+        "G-DRAWN",
+        "a board row's name off its export's slug",
+        sub("`E38-D04 / 02 placement-sheet`", "`E38-D04 / 02 placement-grid`"),
+    ),
+    (
+        "G-DRAWN",
+        "the page id dropped",
+        lambda t: replace(
+            t, spec=re.sub(rf"page id `{UUID}`", "page id pending", t.spec)
+        ),
+    ),
+    ("G-DRAWN", "a board row dropped", drop_row("04")),
+    (
+        "G-SCOPE",
+        "another ticket's export in the diff",
+        lambda t: replace(
+            t, changed=[*OWN_PATHS, "docs/design/E38/img/E38-D02-01-x.png"]
+        ),
     ),
     (
         "G-SCOPE",
