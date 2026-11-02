@@ -12,7 +12,9 @@ Gates, each FAIL led by its letter:
   E contributions DS-A..DS-I each carry their fields; the PROPOSED ids are absent from `15`
   F pointers      the six `14` A-rows pending (PR 1) or all applied (PR 2); a mix FAILs
   G hygiene       no hex outside §11.1; the public-text word list; the stamped counts
-  H T2            the read-only matrix cell stated once (§6.1), cited by every section showing a cell
+  H T2            the read-only matrix cell stated once (§6.1), cited by every subsection showing a cell
+  I `15` A-rows   each appended field's Old verbatim at the base; New pending (PR 1) or applied
+  J copy          each new string (§13) verbatim where its row says it is used
 
 usage: e28_d03_hifi_audit.py [--check | --self-test | --json | --matrix | --write-matrix]
 """
@@ -23,6 +25,7 @@ import codecs
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -175,10 +178,23 @@ class Texts(NamedTuple):
     spec: str
     screens: str
     catalogue: str
+    base15: str  # `15` at the merge base with origin/main (the working copy when git has no base)
+
+
+def git_show_base(rel: str) -> str | None:
+    def run(*a: str) -> str | None:
+        r = subprocess.run(
+            ["git", "-C", str(ROOT), *a], capture_output=True, text=True, check=False
+        )
+        return r.stdout if r.returncode == 0 else None
+
+    base = run("merge-base", "HEAD", "origin/main")
+    return run("show", f"{base.strip()}:{rel}") if base else None
 
 
 def read_texts() -> Texts:
-    return Texts(*(p.read_text(encoding="utf-8") for p in (SPEC, SCREENS, CATALOGUE)))
+    spec, screens, cat = (p.read_text(encoding="utf-8") for p in (SPEC, SCREENS, CATALOGUE))
+    return Texts(spec, screens, cat, git_show_base("docs/plan/15-component-catalogue.md") or cat)
 
 
 def section(spec: str, start: str, end: str) -> str:
@@ -190,7 +206,9 @@ def section(spec: str, start: str, end: str) -> str:
 
 
 def cells(ln: str) -> list[str]:
-    return [c.strip() for c in ln.strip().strip("|").split("|")]
+    """A table row's cells; `\\|` is a pipe inside a cell, not a separator."""
+    parts = re.split(r"(?<!\\)\|", ln.strip().strip("|"))
+    return [c.strip().replace("\\|", "|") for c in parts]
 
 
 # ------------------------------------------------------------------ the gates ----------------
@@ -343,8 +361,10 @@ T2_NEEDS = (
     'aria-disabled="true"',
     "aria-describedby",
     "G-T2.5",
+    "`rbac.read_only`",
     "`rbac.view_as`",
     "`rbac.owner_only`",
+    "D03-C9",
 )
 CELL_RX = re.compile(r"DS-A|SymbolMatrixCell|matrix cell|cell states|three cell")
 
@@ -359,13 +379,90 @@ def g_t2(t: Texts, p: list[str]) -> dict[str, Any]:
     if lost:
         p.append(f"[H] §6.1 lacks {lost}")
     uncited = []
-    for sec in re.split(r"\n(?=## )", t.spec):
+    for sec in re.split(r"\n(?=#{2,3} )", t.spec):  # every section and subsection on its own
         title = sec.splitlines()[0][:40]
-        if sec.startswith("## ") and CELL_RX.search(sec) and "§6.1" not in sec:
+        if not sec.startswith("#") or sec.startswith(T2_HEAD):
+            continue
+        if CELL_RX.search(sec) and "§6.1" not in sec:
             uncited.append(title)
     if uncited:
-        p.append(f"[H] sections that show a matrix cell without citing §6.1: {uncited}")
+        p.append(f"[H] subsections that show a matrix cell without citing §6.1: {uncited}")
     return {"t2": n, "cited": not uncited}
+
+
+FIELD_RX = re.compile(r"^(\w+) \((\d+)\)$")
+
+
+def a15_rows(spec: str) -> list[list[str]]:
+    s14 = section(spec, "## 14. ", "## 15. ")
+    return [
+        cells(ln) for ln in s14.splitlines() if re.match(r"^\|\s*A-\d+\s*\|\s*CMP-\d+\s*\|", ln)
+    ]
+
+
+def field_text(cat: str, cmp_: str, fname: str) -> str | None:
+    """A CMP entry's own `- **Field**:` text, found by content inside its entry."""
+    lines, inside = cat.splitlines(), False
+    for ln in lines:
+        if ln.startswith("### "):
+            inside = ln.startswith(f"### {cmp_} ")
+        elif inside and ln.startswith(f"- **{fname}**: "):
+            return ln[len(f"- **{fname}**: ") :]
+    return None
+
+
+def g_a15(t: Texts, p: list[str]) -> dict[str, Any]:
+    """The appended `15` A-rows: Old verbatim at the base, New pending (PR 1) or applied (PR 2)."""
+    done: list[str] = []
+    todo: list[str] = []
+    for r in a15_rows(t.spec):
+        m = FIELD_RX.match(r[2])
+        old = re.fullmatch(r'"(.*)" \(\d+\)', r[3])
+        new = re.fullmatch(r'keep; append: "(.*)"', r[4])
+        if not (m and old and new) or "**E28-D03 —**" not in new.group(1):
+            p.append(
+                f'[I] {r[0]}: not a copy-ready append (Field (line), "Old" (line), keep; append)'
+            )
+            continue
+        base = field_text(t.base15, r[1], m.group(1))
+        if base is None or base != old.group(1):
+            p.append(f"[I] {r[0]}: the Old text is not {r[1]}'s {m.group(1)} at the base")
+            continue
+        head = field_text(t.catalogue, r[1], m.group(1))
+        if head == base + " " + new.group(1):
+            done.append(r[0])
+        elif head == base:
+            todo.append(r[0])
+        else:
+            p.append(f"[I] {r[0]}: {r[1]}'s {m.group(1)} differs from both Old and Old + New")
+    if done and todo:
+        p.append(f"[I] `15` A-rows: applied {done}, pending {todo} (a mix)")
+    return {"a15": len(done) + len(todo), "mode": "applied" if done and not todo else "pending"}
+
+
+WHERE_RX = re.compile(r"§\d+(?:\.\d+)?|DS-[A-I]")
+
+
+def where_text(spec: str, ref: str) -> str:
+    if ref.startswith("DS-"):
+        m = re.search(rf"^### 9\.\d {ref} ", spec, flags=re.MULTILINE)
+        return section(spec, m.group(0), "\n### ") if m else ""
+    head = ("### " if "." in ref else "## ") + ref[1:] + ("" if "." in ref else ".") + " "
+    return section(spec, head, "\n### " if "." in ref else "\n## ")
+
+
+def g_copy(t: Texts, p: list[str]) -> dict[str, Any]:
+    """Each new string (§13) stands verbatim where its row says it is used."""
+    s13 = section(t.spec, "## 13. ", "## 14. ")
+    n = 0
+    for r in (cells(ln) for ln in s13.splitlines() if re.match(r"^\|\s*H-\d+\s*\|", ln)):
+        refs = WHERE_RX.findall(r[2])
+        places = [where_text(t.spec, x) for x in refs]
+        for frag in re.findall(r'"([^"]+)"', r[1]):
+            n += 1
+            if not refs or not any(frag in pl for pl in places):
+                p.append(f"[J] {r[0]}: {frag!r} is not at {r[2]}")
+    return {"strings": n}
 
 
 HEX = re.compile(r"#[0-9A-Fa-f]{6}\b")
@@ -438,6 +535,8 @@ def evaluate(t: Texts | None = None) -> tuple[list[str], dict[str, Any]]:
         "E": g_contrib(t, p),
         "F": g_pointers(t, p),
         "H": g_t2(t, p),
+        "I": g_a15(t, p),
+        "J": g_copy(t, p),
     }
     c = counted(t)
     out["G"] = g_hygiene(t, p, c)
@@ -465,6 +564,28 @@ def apply_last(t: Texts) -> Texts:
     return t._replace(screens="\n".join(lines))
 
 
+def drop_cite_91(t: Texts) -> Texts:
+    """§9.1 loses its §6.1 cites while §9 keeps others (a per-subsection gate must notice)."""
+    m = re.search(r"^### 9\.1 [^\n]*", t.spec, flags=re.MULTILINE)
+    if not m:
+        raise SystemExit("self-test: no §9.1")
+    i = m.start()
+    j = t.spec.index("\n### ", i + 1)
+    return t._replace(spec=t.spec[:i] + t.spec[i:j].replace("§6.1", "§6") + t.spec[j:])
+
+
+def apply_one_15(t: Texts) -> Texts:
+    """Apply the first appended `15` A-row alone (a mix)."""
+    r = a15_rows(t.spec)[0]
+    fname = r[2].split()[0]
+    new = re.fullmatch(r'keep; append: "(.*)"', r[4])
+    base = field_text(t.catalogue, r[1], fname)
+    if not new or base is None:
+        raise SystemExit("self-test: A-row not appendable")
+    line = f"- **{fname}**: {base}"
+    return t._replace(catalogue=t.catalogue.replace(line, line + " " + new.group(1), 1))
+
+
 MUTATIONS: list[tuple[str, Callable[[Texts], Texts]]] = [
     ("A: an invented token", sub("spec", "`color.surface.canvas`", "`color.surface.bogus`")),
     ("B: a measured cell retyped", sub("spec", "14.35 / 15.62 / 16.25", "14.35 / 15.62 / 16.24")),
@@ -475,6 +596,16 @@ MUTATIONS: list[tuple[str, Callable[[Texts], Texts]]] = [
     (
         "H: the T2 statement loses G-T2.5",
         sub("spec", "One notice, many pointers (G-T2.5)", "One notice, many pointers"),
+    ),
+    ("H: §9.1 loses its §6.1 cite", drop_cite_91),
+    (
+        "I: an Old cell retyped",
+        sub("spec", '"`title?` · `actions?: ReactNode`', '"`title` · `actions?: ReactNode`'),
+    ),
+    ("I: one `15` A-row applied early", apply_one_15),
+    (
+        "J: a new string reworded where it is used",
+        sub("spec", "the example needs this account's equity.", "the example needs the equity."),
     ),
     ("G: a hex typed in prose", sub("spec", "## 19. Deviations", "## 19. Deviations (#123456)")),
 ]
@@ -512,7 +643,7 @@ def main(argv: list[str]) -> int:
     if arg == "--json":
         print(json.dumps(out, indent=1))
         return 0
-    for k in "ABCDEFGH":
+    for k in "ABCDEFGHIJ":
         print(f"{k}. {out[k]}")
     print(f"counts {out['counts']}")
     for x in problems:
