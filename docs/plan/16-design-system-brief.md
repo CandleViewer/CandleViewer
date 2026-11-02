@@ -267,6 +267,29 @@ a running transition completes on its clock when the mode flips (no re-mount on 
 
 Spec: `docs/design/E37/E37-D03.md` §7 (the motion-pair table M-1…M-19, every reduce cell `instant` or `identical` except the 0-flash row's `0`, 0 flashes; §7.1 the reduced-motion mode bound to `data-motion`). Tokens used by name, none added: `motion.duration.{fast,slow}`, `motion.easing.{standard,decelerate,accelerate}`. The connection-made motion is an opacity fade, never a line-draw; the active-connect port never pulses; auto-layout is `slow` 400 ms with stagger 0 for any node count.
 
+### 7.4 Derivatives panel motion (E24-D04; PROPOSED until the owner's run)
+
+Spec: `docs/design/E24/E24-D04.md` §2–§8 (the moments, the cadence rule, reduced motion and canvas calm, the budgets).
+Tokens used by name, none added: `motion.duration.{instant,fast,normal}` and `motion.easing.{standard,accelerate}`;
+colours `color.surface.selected` (M-02, PROPOSED to the owner) and E47-D08's PROPOSED `color.liquidation.flash` (M-03).
+
+| Moment                                | Enter                                                                                   | Reduce (and canvas calm)               | Source                    |
+| ------------------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------- | ------------------------- |
+| M-01 funding countdown tick (CMP-126) | a text swap, one frame                                                                  | the same                               | E24-D02 §13; E47-D08 I-18 |
+| M-02 OI / funding value change        | a neutral overlay 0.25 → 0 over `fast` / `accelerate`; ≥ 500 ms between starts per cell | none (canvas calm: runs, a DOM recipe) | E05-D03 row 3             |
+| M-03 a liquidation print              | an overlay 0.25 → 0 over `fast` / `accelerate`; ≤ 1 start per panel per 1 000 ms        | none                                   | E47-D08 I-24 (FR-5, FR-3) |
+| M-04 a bucket's bar and feed row      | inserted in one frame, no slide                                                         | the same                               | E47-D08 I-23              |
+| M-05 stale shading                    | data ink 1.00 → 0.85 over `normal` / `standard`; recovery over `normal`                 | instant                                | E11-D06 D13               |
+| M-06 sub-pane collapse / restore      | pane heights as translate + clip over `normal` / `standard`                             | a cut                                  | E11-D06 D18; E47-D08 I-31 |
+| M-07 estimated-zone layer on enable   | appears in one frame                                                                    | the same                               | E11-D06 row 38            |
+
+Rules: no motion lasts longer than the period of the data that starts it, and none starts faster than that data
+arrives; a transition that would overlap, start inside a cascade or start in an over-budget frame is skipped and its
+end state applied, never queued; canvas motion integrates real `dt`; every end state carries its meaning in text, a
+glyph or geometry; announcements never wait for motion and no transition moves focus; a stale chip, an error or the
+< 5 min warning appears in the frame it is known. The heatmap's per-redraw decay is not motion: reduced motion leaves
+it unchanged, and only forced colours drops it.
+
 ---
 
 ## 8. Layout grid, docking rules, responsive & minimum sizes (desktop-only)
