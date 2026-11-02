@@ -1,0 +1,92 @@
+{
+  "note": "GENERATED - do not hand-edit. Regenerate from services/api with `CV_REGEN_GOLDEN=1 uv run pytest tests/unit/oms/test_positions_web_golden.py` and review the diff.",
+  "story": "E29-S01 (#911), BQ-22",
+  "sources": {
+    "capture": "packages/fixtures/bybit/2026-10-05/ws/private-position.jsonl, line 1 (a flat BTCUSDT `position` push), the frame every row starts from",
+    "values": "docs/design/E29/E29-D02.md §5.2, the LIVE rows (Main, Sub-1, Sub-2)",
+    "wallet": "22 listExchangeAccounts example (Main); Sub-1 and Sub-2 chosen for D02 §5.3",
+    "contract_fields": "ws_positions_contract_fields.json adds margin_mode, realised_pnl_session, r_multiple and trade_group_id: 23 §15.2 allows them and no producer sends them (23 §6.2.3); E29-T09 owns them (BQ-8, BQ-10)"
+  },
+  "accounts": {
+    "a1000000-0000-4000-8000-000000000001": "Main",
+    "a1000000-0000-4000-8000-000000000002": "Sub-1",
+    "a1000000-0000-4000-8000-000000000003": "Sub-2"
+  },
+  "environment": "live",
+  "mappers": [
+    {
+      "function": "candleviewer.exchange.bybit.private_parse.read_push",
+      "path": "services/api/candleviewer/exchange/bybit/private_parse.py",
+      "commit": "064aa16b9b7d427f2e87133a4ad3c87290b2f5b8"
+    },
+    {
+      "function": "candleviewer.oms.positions._state",
+      "path": "services/api/candleviewer/oms/positions.py",
+      "commit": "0a1151f32536d5b7c0edc4804d8e3dfda95f3b01"
+    },
+    {
+      "function": "candleviewer.oms.ws_topics.position_item",
+      "path": "services/api/candleviewer/oms/ws_topics.py",
+      "commit": "cd0f0497029848804057a7c889ae7b21c3f3e195"
+    },
+    {
+      "function": "candleviewer.api.oms_reads.position_document",
+      "path": "services/api/candleviewer/api/oms_reads.py",
+      "commit": "56f3a4c3be6a44605290e2ec407fc15156c8ed36"
+    },
+    {
+      "function": "candleviewer.oms.reads.aggregate_positions",
+      "path": "services/api/candleviewer/oms/reads.py",
+      "commit": "299e02ad5a3f876f402200d19ab465fb0b137147"
+    },
+    {
+      "function": "candleviewer.api.exchange_accounts.account_document",
+      "path": "services/api/candleviewer/api/exchange_accounts.py",
+      "commit": "772f1f07cad1f7818151ffedf9f77720eaba399e"
+    },
+    {
+      "function": "candleviewer.accounts.wallet_topic.balance_item",
+      "path": "services/api/candleviewer/accounts/wallet_topic.py",
+      "commit": "6751bf1a1811f87631fab92742b262dfbc23374c"
+    },
+    {
+      "function": "candleviewer.oms_stream_wiring.account_notice",
+      "path": "services/api/candleviewer/oms_stream_wiring.py",
+      "commit": "e3a087d88d28854d7cfb162c1c28177b90cc00a8"
+    }
+  ],
+  "files": [
+    {
+      "name": "rest_list_exchange_accounts.json",
+      "sha256": "036729a96939f1deb3ea3cc8892cf15b9abc7038c79d23bb17cdeeb6fdda1ec0"
+    },
+    {
+      "name": "rest_list_positions.json",
+      "sha256": "8e4350ba52cd5f2bb4b8b96b92fce848c87361445625a3a1eaf8850817c35b07"
+    },
+    {
+      "name": "rest_list_positions_aggregate.json",
+      "sha256": "da1fed2f9e0c8e2b2fe58c2b6c54759dd23c40a701357e2ba347470e541cad35"
+    },
+    {
+      "name": "ws_positions_contract_fields.json",
+      "sha256": "aaa4a68e956f0b4a6e2e2b99f18c81c770a9482d653616e71a79d0ed94e81288"
+    },
+    {
+      "name": "ws_positions_deltas.json",
+      "sha256": "e2255a246d710cf09ab5a1dc2864c9eb1400b982b5738e2c4377dde089a1191c"
+    },
+    {
+      "name": "ws_positions_snapshot.json",
+      "sha256": "03f06c7c1cbac81e32990f528c773751e693668a04453303285f3a08306a107c"
+    },
+    {
+      "name": "ws_system_account_notice.json",
+      "sha256": "4c96f8cf335808b1cf8fd6f365e25a4719400957916511da2c27f07151821b00"
+    },
+    {
+      "name": "ws_wallet_snapshot.json",
+      "sha256": "193cd8039b92d79aad7b3e5dc4023b426252f12281dfd16ad74a374c81c00386"
+    }
+  ]
+}

@@ -806,3 +806,54 @@ the open trigger closes the popover. Any other host passes `expanded`, its dialo
 A host composes `id`, `tabIndex`, a `ref`, `aria-controls` and `onKeyDown`. `role`, `aria-labelledby`,
 `aria-disabled`, `aria-pressed`, `disabled` and `style` are no props and are dropped if passed, so the trigger's
 semantics and its name stay its own.
+
+### FilterBar (CMP-055, no widget pattern: a labelled group of controls)
+
+| Keys                              | Action                                                                                                         |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab                   | Each chip's remove, then the host's add control, then "Clear all": one stop each, in that order.               |
+| Enter / Space (a chip's remove)   | Drops that filter; focus moves to the next chip's remove, else the previous one, else the add control.         |
+| Enter / Space ("Clear all")       | Drops every filter; focus moves to the add control. With no add control, focus lands on the group, never body. |
+| Anything while focus is elsewhere | A chip the host drops later never pulls focus back to the bar.                                                 |
+
+| Element     | Role   | Name                                          | Notes                                                                |
+| ----------- | ------ | --------------------------------------------- | -------------------------------------------------------------------- |
+| bar         | group  | "Active filters"                              | `tabindex="-1"`: the hand-off's last resort only, never a Tab stop.  |
+| chip        | text   | —                                             | CMP-011, neutral and removable: "Account: Sub-1".                    |
+| chip remove | button | "Remove filter Account: Sub-1" (E29-D05 N-03) | CMP-002, the chip's `removeLabel`.                                   |
+| "Clear all" | button | "Clear all"                                   | CMP-001 ghost, shown while two or more chips exist (E29-D04 §2.8.5). |
+
+A filter is a view choice: nothing in the bar is ever T2 (E29-D04 §4.2), and the bar has no live region; the table's
+polite line speaks the filtered result.
+
+### SplitButton (CMP-057, two APG Buttons; the ▾ is an APG Menu Button)
+
+| Keys                    | Action                                                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab         | The primary, then the ▾: two stops.                                                                           |
+| Enter / Space (primary) | Runs the primary action. Busy or gated: nothing is sent; gated re-shows its reason once, politely, per press. |
+| Enter / Space / ↓ (▾)   | Opens CMP-041's menu on its first item (↑ on its last); Esc closes it and returns focus to the ▾.             |
+| Arrows in the menu      | Reach every item, gated ones too; a gated item never runs, a press re-shows its reason.                       |
+
+| Element | Role               | Name                                                    | ARIA                                                                                                    |
+| ------- | ------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| primary | button (CMP-001)   | its full label: "Close", "Cancel"                       | Gated (2b): `aria-disabled="true"`, `aria-describedby` the reason, never `disabled`. Busy: `aria-busy`. |
+| ▾       | button (CMP-002)   | `menuLabel`: "More close actions, BTCUSDT Long on Main" | `aria-haspopup="menu"`, `aria-expanded`, `aria-controls`; it names the menu.                            |
+| items   | menuitem (CMP-041) | each item's label                                       | Gated by its host, from its own operation: the reason is the second line and the description.           |
+
+`allowed={false}` with a `reason` gates the primary alone, in rendering 2b, which E29-D02 §10.4 keeps for a reason that
+is the row's own: a Cancel on an Untracked or Held order (`blotter.untracked`, `blotter.held`, PROPOSED), a Manager's
+Close under the kill switch (E39-D01's "Frozen — the owner closes or releases"). The ▾ items never inherit it: each
+keeps the `disabledReason` its host computes from its own operation (E09-D09 §2.3), so an item the row's reason also
+covers repeats it as its second line and it is never hover-only, while an item it does not cover stays enabled: Chart
+never takes T2, and SL/TP… is never gated by view-as, the kill switch or a lockout (E29-D02 §8.1). CMP-079 RbacGate's
+`disabledReason` wins over `reason`, as E09-D09 §2.1 checks the role legs first; the T2ViaRbacGate story shows only
+that. On SCR-063 a role leg (a Viewer, view-as, a read-only grant) is a scope's reason and renders once, through the
+panel's notice, which every gated control points at with no echo and no second line (E29-D02 §10.4; CMP-079
+`form="notice"`, E05's to build). Busy keeps the label (`busyLabel`, "Closing…") with a static ⟳ leading it; a gate wins
+over busy. The split button is built for E29's row actions and mounts with the ticket that wires them (E29-S01's
+ruling, BQ-3).
+
+Text resize (`05` §5 item 7: 200 % zoom and the in-app text scale): both halves grow with their text and the split
+button widens to its label's full width, never truncating a verb (E29-D02 D-8); SCR-063's Actions column widens with
+it, and a two-line T2 item in the ▾ menu wraps and grows (E29-D02 §11.5).

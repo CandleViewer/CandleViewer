@@ -1,0 +1,108 @@
+/* CMP-105 AccountMultiSelect, the account filter use (E29-D04 §2.6; tokens per E30-D04 §8). The panel is CMP-017's;
+   this file draws its list as E29-D04 board 05 does: rows at the row height, CMP-005's plate as each check box, the
+   active row in color.surface.hover with CMP-041's inset ring. No motion: a row's state swaps at once (Mo-8). */
+.cv-account-multi-select {
+  display: inline-flex;
+}
+
+.cv-account-multi-select__list {
+  display: grid;
+  outline: none; /* the active row draws the ring (below), as a CMP-041 row does */
+}
+
+/* The row: a presentational pointer target at the row height, which carries the fill and the ring. */
+.cv-account-multi-select__row {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  min-block-size: var(--size-row-height);
+  padding-inline: var(--space-inset-sm);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+/* The option: its check box and its label. */
+.cv-account-multi-select__option {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-inset-sm);
+  min-width: 0;
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+}
+
+.cv-account-multi-select__row[data-active] {
+  background: var(--color-surface-hover);
+}
+
+/* Light `surface.hover` equals the overlay (E29-D04 Q-21): the active row takes the selected fill there. */
+:root[data-theme="light"] .cv-account-multi-select__row[data-active] {
+  background: var(--color-surface-selected);
+}
+
+/* CMP-039's inset ring on the active row while the list holds keyboard focus (H8). */
+.cv-account-multi-select__list:focus-visible > .cv-account-multi-select__row[data-active] {
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: calc(var(--border-focus) * 1px * -2);
+}
+
+/* An empty list keeps a visible focus of its own. */
+.cv-account-multi-select__list:focus-visible:empty {
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: calc(var(--border-focus) * 1px * -1);
+}
+
+/* CMP-005's plate, drawn: a tertiary hairline on raised; chosen, the primary action fill and its check. */
+.cv-account-multi-select__box {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  border: calc(var(--border-hairline) * 1px) solid var(--color-text-tertiary);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-raised);
+  color: var(--color-text-on-action);
+}
+
+.cv-account-multi-select__option[aria-selected="true"] > .cv-account-multi-select__box {
+  border-color: var(--color-action-primary-default);
+  background: var(--color-action-primary-default);
+}
+
+/* A long account label wraps: the option keeps its whole name on screen as in the accessibility tree. */
+.cv-account-multi-select__label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (forced-colors: active) {
+  .cv-account-multi-select__row[data-active],
+  :root[data-theme] .cv-account-multi-select__row[data-active] {
+    forced-color-adjust: none;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .cv-account-multi-select__list:focus-visible > .cv-account-multi-select__row[data-active],
+  .cv-account-multi-select__list:focus-visible:empty {
+    outline-color: Highlight;
+  }
+
+  /* The box keeps its shape; a chosen one is Highlight with its check in HighlightText. */
+  .cv-account-multi-select__box {
+    forced-color-adjust: none;
+    border-color: CanvasText;
+    background: Canvas;
+  }
+
+  .cv-account-multi-select__option[aria-selected="true"] > .cv-account-multi-select__box {
+    border-color: Highlight;
+    background: Highlight;
+    color: HighlightText;
+  }
+}

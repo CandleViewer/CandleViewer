@@ -1,0 +1,57 @@
+/* CMP-116 PnLBadge (E29-D04 §2.3). Tokens only. The digits keep color.text.primary at every sign; the hue rides on
+   a border.thick accent bar before them (E29-D02 D-6), and the sign is text, so colour never carries the direction
+   alone (05 §4). No motion: a host cell's value flash wraps the badge (E29-D04 Mo-3), a sign change is a cut. */
+.cv-pnl-badge {
+  --cv-pnl-family: var(--type-num-base-font-family);
+  --cv-pnl-size: var(--type-num-base-font-size);
+  --cv-pnl-weight: var(--type-num-base-font-weight);
+  --cv-pnl-leading: var(--type-num-base-line-height);
+  display: inline-flex;
+  align-items: stretch;
+  gap: var(--space-inset-xs);
+  font-family: var(--cv-pnl-family);
+  font-size: var(--cv-pnl-size);
+  font-weight: var(--cv-pnl-weight);
+  line-height: var(--cv-pnl-leading);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.cv-pnl-badge[data-size="sm"] {
+  --cv-pnl-family: var(--type-num-sm-font-family);
+  --cv-pnl-size: var(--type-num-sm-font-size);
+  --cv-pnl-weight: var(--type-num-sm-font-weight);
+  --cv-pnl-leading: var(--type-num-sm-line-height);
+}
+
+.cv-pnl-badge[data-size="lg"] {
+  --cv-pnl-family: var(--type-num-md-font-family);
+  --cv-pnl-size: var(--type-num-md-font-size);
+  --cv-pnl-weight: var(--type-num-md-font-weight);
+  --cv-pnl-leading: var(--type-num-md-line-height);
+}
+
+/* The bar is as tall as the digits' line and border.thick wide; a null value draws none. */
+.cv-pnl-badge__bar {
+  flex: none;
+  width: calc(var(--border-thick) * 1px);
+  background: var(--color-neutral-default);
+}
+
+.cv-pnl-badge[data-sign="positive"] > .cv-pnl-badge__bar {
+  background: var(--color-buy-default);
+}
+
+.cv-pnl-badge[data-sign="negative"] > .cv-pnl-badge__bar {
+  background: var(--color-sell-default);
+}
+
+@media (forced-colors: active) {
+  /* E29-D02:527: the hue-only bar falls back to CanvasText; the sign and the hidden words still carry it. */
+  .cv-pnl-badge__bar,
+  .cv-pnl-badge[data-sign] > .cv-pnl-badge__bar {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+}

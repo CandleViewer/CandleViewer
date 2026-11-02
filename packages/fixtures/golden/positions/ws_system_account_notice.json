@@ -1,0 +1,9 @@
+{
+  "kind": "account_notice",
+  "severity": "warning",
+  "reason": "oms.account_resyncing",
+  "message": "An account is resynchronising; its orders and positions are being verified.",
+  "exchange_account_ids": [
+    "a1000000-0000-4000-8000-000000000002"
+  ]
+}

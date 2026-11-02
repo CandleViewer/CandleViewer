@@ -1,0 +1,15 @@
+/* CMP-055 FilterBar (E29-D04 §2.8.5). Tokens only; `15`'s space.filterbar.* is not shipped, so the bar takes the
+   SCR-063 toolbar's gap, space.stack.sm (E29-D02 board 11). The chips, the add control and "Clear all" draw
+   themselves; the bar only lays them out and wraps them, never clipping one (200 % zoom, 05 §5 item 7). No motion:
+   a chip comes and goes at once. */
+.cv-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-stack-sm);
+  min-width: 0;
+}
+
+.cv-filter-bar__add {
+  display: inline-flex;
+}

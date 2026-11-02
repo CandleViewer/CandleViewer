@@ -96,6 +96,12 @@ before commit.
   figures only, no path, no id, no secret. Read by `services/api/tests/contract/storage/` and meant
   for E16's mock layer. Regenerate from `services/api` with
   `python -m tests.contract.storage.test_storage_usage_verification --write-baseline`.
+- `golden/positions/` — E29-S01 web positions goldens: the `positions` snapshot and deltas, `wallet`,
+  an `account_notice`, and the `listPositions` (plain and `?aggregate=true`) and
+  `listExchangeAccounts` bodies, for three fixture accounts. Source: the recorded
+  `bybit/2026-10-05/ws/private-position.jsonl` push with E29-D02 §5.2's LIVE rows' values, through
+  the shipped adapter, projection and mappers; one contract-valid extension file. Provenance, the
+  mapper commits and regeneration: `golden/positions/README.md` and its `manifest.json`.
 
 ## Scripts
 

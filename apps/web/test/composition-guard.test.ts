@@ -25,6 +25,7 @@ const ALLOW_UNMOUNTED: Readonly<Record<string, string>> = {
   "chart-errors": "E11-S02 (#334): SCR-048 wraps <Chart>, which no screen mounts until SCR-030",
   "chart-price-scale":
     "E11-S05 (#386): SCR-043 is a <Chart> child; no screen mounts one until SCR-030",
+  positions: "E29-S01 (#911): SCR-063's data layer, dark until its closing PR mounts the panel",
   "rule-builder-graph":
     "E47-S03 (#1317): the pure keyboard / screen-reader core; E37-S05 (#1071) wires it into SCR-082",
   tape: "E22-S01 (#714) PR-A: the SCR-053 model only; PR-B mounts the panel behind its flag",

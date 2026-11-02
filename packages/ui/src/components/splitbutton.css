@@ -1,0 +1,32 @@
+/* CMP-057 SplitButton (E29-D04 §2.8.4). Tokens only; the halves draw themselves as CMP-001 and CMP-002 (`15`:
+   "inherits CMP-001/CMP-041"). This file joins them and gives the primary the busy look the change request asks for.
+   No motion: busy, gated and back are cuts (E29-D04 Mo-8, Mo-12). */
+.cv-split-button {
+  display: inline-flex;
+  align-items: stretch;
+  gap: calc(var(--border-hairline) * 1px);
+  vertical-align: middle;
+}
+
+/* The halves join along the hairline seam: the primary's end corners and the ▾'s start corners are square. */
+.cv-split-button > .cv-button {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.cv-split-button > .cv-icon-button {
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+}
+
+/* Busy (E29-D02:341, Mo-12): CMP-001's loading look hides the label under a spinning CMP-014; this primary keeps
+   "Closing…" in color.text.primary, led by a static ⟳ (its refresh glyph), and nothing turns. */
+.cv-split-button
+  > .cv-button[aria-busy="true"]:not([data-side])
+  > :is(.cv-button__label, .cv-button__icon) {
+  opacity: 1;
+}
+
+.cv-split-button > .cv-button[aria-busy="true"] > .cv-spinner {
+  display: none;
+}
