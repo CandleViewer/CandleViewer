@@ -39,7 +39,9 @@ Gates (each FAIL led by its name):
               C-4 while the C-4 row stands (F-3).
   G-MERGED    only merged owners are cited: E38-D02 or #1003 appears only on a request row or
               the sentence saying so, and the unmerged #1075 is never named.
-  G-CITE      every cite in range and on a non-blank line at its base, and equal to the pins.
+  G-CITE      every cite in range and on a non-blank line at its base, and equal to the pins;
+              each §7 owner quote (`A11Y_QUOTES`) stands in §7 and, as text, on its cited
+              line(s) at the base (`05` by content).
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
               deny word in the spec; no deny word in this tool's text or the pins.
   G-DRAWN     §0 is pending ("to draw (PR 2)" with no board table, PR 1) or drawn (PR 2).
@@ -52,7 +54,8 @@ Gates (each FAIL led by its name):
   G-AROW      §9's A-rows, applied in PR 2 (none held): every row ends "**Applied (PR 2)**" with
               the `14` line it follows at the base; its quoted text stands nowhere in `14` at the
               base, and in the working tree each quote stands once as the line right after that
-              base line ("after"), or ends that line ("appended", A-3).
+              base line ("after"), or ends that line ("appended", A-3, which also rewords "old"
+              to "new" in it).
   G-SCOPE     the diff touches only the spec, this tool, the pins file, `14` (the applied A-rows)
               and the E38-D03 exports in `docs/design/E38/img/`.
 
@@ -90,6 +93,7 @@ CVD_PATH = ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py"
 CONTRAST_PATH = ROOT / "docs" / "design" / "_tools" / "contrast_check.py"
 PATHS: dict[str, str] = {
     "04": "docs/plan/04-security-program.md",
+    "05": "docs/plan/05-accessibility-standard.md",
     "11": "docs/plan/11-user-stories.md",
     "14": "docs/plan/14-screens-catalogue.md",
     "15": "docs/plan/15-component-catalogue.md",
@@ -598,8 +602,63 @@ def g_merged(t: Texts) -> list[str]:
     return bad
 
 
+# §7's owner quotes: the quote, its owner and the cited line(s) at the base (None: cited by content)
+A11Y_QUOTES: tuple[tuple[str, str, tuple[int, int] | None], ...] = (
+    (
+        (
+            "for every dialog, drawer and fixed-height region, say what reflows at 200 % zoom and"
+            " the in-app text scale, at the design lanes' 1280 × 800 frame"
+        ),
+        "DS",
+        (65, 66),
+    ),
+    ("the reflow behaviour must not lose data, only re-lay-out it", "05", None),
+    (
+        "fills the viewport, its footer stays one sticky row and its body scrolls",
+        "E10D03",
+        (486, 486),
+    ),
+    ("name the `forced-colors` rendering for every colour-only carrier", "DS", (67, 68)),
+    ("badge, strip, chip and tile tones drop and the glyph and word carry", "E42D03", (805, 805)),
+    ("the danger confirm keeps its border", "E42D03", (805, 805)),
+    (
+        "T2 labels and glyphs render in `GrayText` and their reasons in `CanvasText`",
+        "E42D03",
+        (805, 805),
+    ),
+    ("the focus ring is `Highlight`", "E42D03", (805, 805)),
+    (
+        (
+            "initial focus, the Tab order across columns and sticky footers, what `Enter` does in"
+            " a field, where focus returns on close"
+        ),
+        "DS",
+        (69, 71),
+    ),
+    ("return focus to the triggering element on close", "05", None),
+    ("`Enter` in the typed field never confirms", "15", (521, 521)),
+)
+
+
+def a11y_quotes(t: Texts) -> list[str]:
+    """§7.1-§7.3: each owner quote stands in §7 and, as text, on its cited line(s) at the base."""
+    bad = []
+    s7 = norm(section(t.spec, "## 7."))
+    for q, key, lines in A11Y_QUOTES:
+        owner = at(t, key)
+        if lines is not None:
+            owner = "\n".join(owner.split("\n")[lines[0] - 1 : lines[1]])
+        if f'"{q}"' not in s7:
+            bad.append(f"§7 does not quote {q[:40]!r}… verbatim")
+        elif norm(q) not in norm(owner.replace("**", "")):
+            where = f"`{key}`" + (f":{lines[0]}" if lines else "")
+            bad.append(f"§7's quote {q[:40]!r}… is not the text of {where} at the base")
+    return bad
+
+
 def g_cite(t: Texts) -> list[str]:
     hashes, bad = cite_hashes(t)
+    bad += a11y_quotes(t)
     pinned = parse_pins(t.pins)
     for label, h in hashes.items():
         if label not in pinned:
@@ -656,6 +715,9 @@ def g_arow(t: Texts) -> list[str]:
             continue
         quotes = re.findall(r'"([^"]+)"', ln[: a.start()])
         nos = [int(n) for n in a.groups()[1:] if n]
+        if a[1] == "appended" and len(quotes) == 3 and len(nos) == 1:
+            bad += reworded(aid, quotes, nos[0], base, work)
+            continue
         if not quotes or len(quotes) != len(nos):
             bad.append(f"{aid}: {len(quotes)} quotes for {len(nos)} base lines")
             continue
@@ -674,6 +736,20 @@ def g_arow(t: Texts) -> list[str]:
     if seen != 4:
         bad.append(f"§9 carries {seen} A-rows, not 4")
     return bad
+
+
+def reworded(aid: str, quotes: list[str], n: int, base: list[str], work: list[str]) -> list[str]:
+    """An appended A-row that also rewords its base line: "old" reads "new", then the sentence."""
+    old, new, q = quotes
+    anchor = base[n - 1] if 0 < n <= len(base) else ""
+    if anchor.count(old) != 1:
+        return [f"{aid}: {old!r} does not stand once in `14`:{n} at the base"]
+    if any(q in x for x in base):
+        return [f"{aid}: its text already stands in `14` at the base"]
+    want = f"{anchor.replace(old, new)} {q}"
+    if sum(x == want for x in work) != 1 or sum(q in x for x in work) != 1:
+        return [f"{aid}: its text does not stand once, reworded and appended to `14`:{n}"]
+    return []
 
 
 def png_size(data: bytes) -> tuple[int, int] | None:
@@ -895,6 +971,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-MERGED", "cite the unmerged E38-D02", sub("It is a request row to E38-D02 (R-1), not drawn here.", "It is drawn by E38-D02 §3.4.")),
     ("G-MERGED", "name #1075's offer", sub("The values are illustrative, and the defect ids are fixtures.", "The values are illustrative (#1075).")),
     ("G-CITE", "re-point a `14` cite to an unpinned line", sub("(`14`:43)", "(`14`:44)")),
+    ("G-CITE", "drop one character from a §7 owner quote", sub('"the danger confirm keeps its border"', '"the danger confirm keeps its borde"')),
     ("G-HYGIENE", "write a closing keyword against #1074", sub("carries the closing line.", "carries the closing line. Closes #1074.")),
     ("G-HYGIENE", "put a deny word into the tool's own text", lambda t: replace(t, tool=t.tool + "\n# " + DENY[6] + "\n")),
     ("G-DRAWN", "board 04's PNG one pixel wider than its record", one_pixel_wider),
@@ -911,7 +988,8 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-DRAWN", "board 05's row dropped (its PNG then unlisted)", drop_row("| 05 ")),
     ("G-AROW", "A-1's line dropped from `14`", work_sub("\n- **Hi-fi (E38-D03):** the paper reset", "\n- **Hi-fi:** the paper reset")),
     ("G-AROW", "A-4's line moved one line down", work_sub("\n- **Parity link (E38-D03):**", "\n\n- **Parity link (E38-D03):**")),
-    ("G-AROW", "A-3's sentence dropped from item 5", work_sub(" A paper-only control has no object", " A control has no object")),
+    ("G-AROW", "A-3's sentence dropped from item 5", work_sub(" a paper-only control has no object", " a control has no object")),
+    ("G-AROW", "item 5 still says one mandatory exception", work_sub("with two exceptions. The first, mandatory:", "with one mandatory exception:")),
     ("G-AROW", "A-2's SCR-137 line standing twice", work_sub(A2_SCR137, A2_SCR137 + " x" + A2_SCR137)),
     ("G-AROW", "A-2 no longer marked applied", sub(" **Applied (PR 2)**, after each entry's last line (`14`:2593, :2857).", "")),
     ("G-SCOPE", "touch `15` in the diff", lambda t: replace(t, changed=[*OWN_PATHS, PATHS["15"]])),
