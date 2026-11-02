@@ -171,11 +171,19 @@ describe("BQ-157: a resize never moves the cursor", () => {
     frame();
     const summaries = of("a11y").length;
     expect(summaries).toBeGreaterThan(0);
+    const before = of("a11y").at(-1);
     resize(500, 250, 1);
     frame();
     resize(500, 250, 2);
     frame();
-    expect(of("a11y")).toHaveLength(summaries);
+    // E11-S13 PR-1: a resize may post the new visible range, never a moved cursor or summary.
+    for (const m of of("a11y").slice(summaries)) {
+      expect(m).toMatchObject({
+        cursorSummary: before?.cursorSummary,
+        cursorBar: before?.cursorBar,
+        cursorTime: before?.cursorTime,
+      });
+    }
   });
 });
 

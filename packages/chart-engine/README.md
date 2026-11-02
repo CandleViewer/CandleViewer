@@ -658,6 +658,19 @@ vendored fonts, the table edit and the `<Chart>` font binding are PR C.
 | BQ-T04-06 | LUTs    | Three LUTs incl. "imbalance intensity".     | Bid, ask, delta; no imbalance LUT (G8). Delta: the current D05 §5.3 stops behind the tokens (ε = 1/8; Q5 unruled); entries 0..128 are t −1..0, 128..255 are 0..+1. The canvas stop is `color.heatmap.zero`.               |
 | —         | LUTs    | CVD-safe twins; convention swap.            | Inverted swaps the bid and ask rows, and the delta row's ±ε stops (`bid.1` at −ε, `ask.1` at +ε) because the host's remap already swapped its ±1 ends. No CVD-safe stops until G16; the palette changes no row.           |
 
+## Design deltas (E11-S13 PR-1; BQ-S13-01, PROPOSED)
+
+The a11y query surface. The canvas is presentation; the mirror, the cursor region and the `img`
+label carry the semantics (PR-2 to PR-4), and conformance evidence is E11-Q05's.
+
+| BQ        | Topic         | Shipped                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| BQ-S13-01 | Query surface | `Chart` adds E06-D03 D9's `getA11yWindow()` and `onA11yWindowChange(cb)` beside the §8 pair (additive); `getVisibleWindow()` is the visible range and `getFocusedUnit()` the cursor's bar on pane 0, both from the worker's last `a11y` message. `A11yRows` is declared; the feed passes `null` rows until PR-2. `setCursor`, `requestCursorCells` and `getBarSummary` are PR-2/PR-3's. |
+| BQ-S13-01 | Worker        | `src/a11y/window.ts` computes the 60-row cursor-centred window (cap 200), the visible range, the tiers and `barsPerColumn` from the runtime's own map, viewport and LOD, into reused objects. Until the data cursor (PR-3) the cursor follows the latest bar (`origin: "data"`). `barsPerColumn` is local until E11-S12's `viewport.lod` ships.                                         |
+| BQ-S13-01 | Cadence       | `a11y` posts on the frame the cursor window, the visible range, a tier or the hover summary changes (edge-triggered, ≤ 1 per frame; 05 §6.1 frame-synchronized). The listeners fire only on a window or visible-range change, never on hover (D6). R-6's 2 s cadence (#5443 head 7a9002db, if it merges as is) is the PR-2 label and table writers'.                                    |
+| BQ-S13-01 | Deviation     | Production passes no `timeMap` (`RuntimeDeps.timeMap` is test-only until E12 wires the store, `Viewport.ts:38-43`), so in the shipped worker the map is empty and the window stays `EMPTY_A11Y_WINDOW` (`0, -1`, no cursor) until E12.                                                                                                                                                  |
+| BQ-S13-01 | Bench         | `bench/scenes/a11y-window.ts` (rule 31): pan frames through the real render runtime over a 200k-bar BarStore (one `a11y` a frame) and the window core alone; its `.perf.test.ts` budgets them (0.5 ms a runtime frame, 0.005 ms the core) and asserts no allocating built-in on the frame path and at most one scavenge over a million core steps.                                      |
+
 ## Scripts
 
 - `pnpm --filter @candleviewer/chart-engine build` — tsup ESM build with `.d.ts` (entries:

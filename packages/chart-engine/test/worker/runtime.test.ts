@@ -285,7 +285,9 @@ describe("interaction", () => {
     rt.handle({ t: "sync", groupId: "g", timeRange: [10, 20], crosshair: 15 });
     frame();
     expect(of("viewport").map((v) => v.id)).toEqual([1]);
-    expect(of("a11y")).toEqual([{ t: "a11y", id: 1, cursorSummary: "1970-01-01T00:00:00.000Z" }]);
+    expect(of("a11y").map((m) => [m.id, m.cursorSummary])).toEqual([
+      [1, "1970-01-01T00:00:00.000Z"],
+    ]);
     rt.handle({ t: "sync", groupId: "g", timeRange: [10, 20], crosshair: null });
     frame();
     expect(of("a11y").at(-1)?.cursorSummary).toBe("");

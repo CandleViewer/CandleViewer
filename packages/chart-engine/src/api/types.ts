@@ -4,6 +4,7 @@
 // markers, each as the narrowest shape the engine needs today (package README "Design deltas").
 // Types only: no React, no DOM globals, no I/O here (C-2.16). `HTMLElement` is a type reference.
 
+import type { A11yWindow, CursorOrigin } from "../a11y/window.js";
 import type { DataRange, InstanceRing, SeriesProjection } from "../layers/plugin-api.js";
 
 // ---- §8 verbatim ----------------------------------------------------------
@@ -39,6 +40,10 @@ export interface Chart {
   getDomMirrorRoot(): HTMLElement;
   getVisibleWindow(): VisibleWindow | null;
   getFocusedUnit(): FocusedUnit | null;
+  // Design delta BQ-S13-01 (E11-S13, additive; E06-D03 D9): the a11y window, synchronous from the
+  // cache of the worker's last `a11y` message, and its change feed (once per message, <= 1/frame).
+  getA11yWindow(): A11yWindow;
+  onA11yWindowChange(cb: A11yWindowListener): Unsubscribe;
 }
 
 export interface Pane {
@@ -544,7 +549,10 @@ export interface OverlayPlugin {
   detach(): void;
 }
 
-/** The bars the DOM mirror must materialise (05 §6.1). */
+/**
+ * The visible range (05 §6.1): its times and its first and last loaded bar. The mirror holds the
+ * cursor-centred window instead, `A11yWindow.firstBar`/`lastBar` (E06-D03 D1).
+ */
 export interface VisibleWindow {
   readonly timeStart: number;
   readonly timeEnd: number;
@@ -552,10 +560,43 @@ export interface VisibleWindow {
   readonly lastBarIndex: number;
 }
 
-/** The unit keyboard focus is on (05 §6.1): a bar, a footprint cell or a DOM-ladder row. */
+/**
+ * The unit keyboard focus is on (05 §6.1): a bar, a footprint cell or a DOM-ladder row. E11-S13
+ * PR-1 reports the selected cursor's bar on pane 0 (the cursor follows the latest bar until the
+ * data cursor lands).
+ */
 export interface FocusedUnit {
   readonly kind: "bar" | "cell" | "row";
   readonly paneId: PaneId;
   readonly barIndex: number;
   readonly priceLevel?: number;
 }
+
+export type { A11yWindow, CandleTier, CursorOrigin, FootprintTier } from "../a11y/window.js";
+/**
+ * E06-D03 D9 `A11yRows`: the mirror window's struct-of-arrays, prices as ticks from
+ * `priceOrigin` exactly as `CandleData`. Declared now; the worker sends rows from E11-S13 PR-2,
+ * so the feed passes null until then.
+ */
+export interface A11yRows {
+  readonly firstBar: number;
+  readonly count: number;
+  readonly shifted: number;
+  readonly dirty: Uint16Array;
+  readonly time: Float64Array;
+  readonly open: Int32Array;
+  readonly high: Int32Array;
+  readonly low: Int32Array;
+  readonly close: Int32Array;
+  readonly volume: Float32Array;
+  readonly delta: Float32Array;
+  readonly priceOrigin: number;
+  readonly tickSize: number;
+  readonly priceDecimals: number;
+}
+
+export type A11yWindowListener = (
+  w: A11yWindow,
+  rows: A11yRows | null,
+  origin: CursorOrigin,
+) => void;

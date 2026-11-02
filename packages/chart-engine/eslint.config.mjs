@@ -214,8 +214,9 @@ export default tseslint.config(
     // E11-S08: and picking (src/hit, BQ-140). E11-S11: and the SDF atlas (src/text, BQ-261), whose
     // font, raster and store needs reach the browser only through the TextPlatform seam.
     // E11-T04: and the theme ingest (src/theme), which never reads CSS (BQ-T04-03).
+    // E11-S13: and the a11y window (src/a11y), computed in the worker from engine state.
     files: [
-      "src/{core,layers,scene,model,gl,viewport,canvas2d,interaction,hit,text,theme}/**/*.ts",
+      "src/{core,layers,scene,model,gl,viewport,canvas2d,interaction,hit,text,theme,a11y}/**/*.ts",
     ],
     rules: {
       "no-restricted-globals": ["error", ...NETWORK_GLOBALS, ...DOM_GLOBALS],
