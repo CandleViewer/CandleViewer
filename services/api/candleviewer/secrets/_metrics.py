@@ -45,8 +45,9 @@ export_key_boot_failures_total = Counter(
 )
 for _step in ("destroy", "rewrap"):  # Q3's destroy retried, the rotation boot's re-wrap
     export_key_boot_failures_total.labels(step=_step)
-#: #2152 S4 (BQ-14): set only once the keyring is wired (#2152's switch-over); PR 2 serves both on
-#: `/metrics` with their alert.
+#: #2152 (BQ-14): moved only where the composition seam wires the keyring (BQ-7). Both are served on
+#: `/metrics` through `secrets/metrics.py` (`EXPORTED_NAMES`) and read by `AuthKeyringUnavailable`
+#: (`system_page.yml`) and `AuthKeyringBootStepFailed` (`system_ticket.yml`).
 auth_keyring_unavailable_state = Gauge(
     "cv_auth_keyring_unavailable_state",
     "1 while the auth keyring cannot be used with the KEK up (MFA 503), else 0 (#2152).",
