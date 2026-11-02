@@ -1,0 +1,28 @@
+[
+  {
+    "case": "new",
+    "body": {
+      "executions": [
+        {
+          "id": "0e000000-0000-4000-8000-000000000007",
+          "exec_id": "7f3c9a1e-4219-438b-b30a-32ec86300007",
+          "order_id": "0a000000-0000-4000-8000-00000000a3f2",
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000001",
+          "symbol": "BTCUSDT",
+          "side": "buy",
+          "exec_qty": "0.03",
+          "exec_price": "63420",
+          "exec_value": "1902.6",
+          "fee": "0.38052",
+          "fee_coin": "USDT",
+          "is_maker": true,
+          "exec_type": "Trade",
+          "environment": "live",
+          "is_paper": false,
+          "ts_ms": 1792677732517,
+          "fee_rate": "0.0002"
+        }
+      ]
+    }
+  }
+]
