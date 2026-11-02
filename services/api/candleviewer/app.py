@@ -1989,9 +1989,10 @@ def create_app(
     # (the one outbound path since #2409 removed its flag).
     ws_backpressure = BackpressureConfig.from_settings(resolved)
     # E29-S07 (#1028, 23 Sec.15.9): each account's latest reconciliation notice, kept as the OMS's
-    # two notice bindings broadcast it (`StatesBroadcast`, below), and the standing's locks once it
-    # is bound (below), replayed after a first `auth_ok`. Read and written on this loop only.
-    account_states = AccountNoticeStates()
+    # notice bindings broadcast it (`StatesBroadcast`, below), and the standing's locks once it is
+    # bound (below), replayed after a first `auth_ok`; each reported pass ends a kept resync (the
+    # runtime's `notice_states`). Read and written on this loop only.
+    app.state.account_notice_states = account_states = AccountNoticeStates()
     include_ws_router(  # #3907: `/ws` and, under the server base, `/api/v1/ws`
         app,
         make_ws_router(
@@ -2699,7 +2700,7 @@ def create_app(
     account_states.bind_standing(reconcile_standing)  # E29-S07: a restored lock is replayed too
     # E29-S07 (#1028, 24 Sec.8.5 "The digest"): each account's latest reconciliation pass, kept by
     # the OMS runtime's jobs once its record is written, served by `getReconciliationDigest`.
-    reconcile_digests = ReconcileDigests()
+    app.state.reconcile_digests = reconcile_digests = ReconcileDigests()
     app.state.order_entry_gate = feature_flags.compose_order_entry_gate(
         account_health.order_entry_check, reconcile_standing
     )
@@ -2765,6 +2766,7 @@ def create_app(
         hub=StatesBroadcast(account_states, ws_hub),
         standing=reconcile_standing,
         digests=reconcile_digests,
+        notice_states=account_states,  # E29-S07: each reported pass ends a kept resync
         topics=ws_oms,  # E29-T13 (#4207): its WS topics, published from its lane
         trade_groups=ws_trade_groups,
         kill_switch=kill_switch_port,  # #2904: the halt's port, shared (G-79)
@@ -2852,8 +2854,9 @@ def create_app(
             versions=order_versions(lambda: oms_runtime_of(app.state)),
         )
     )
-    # E29-S07 (#1028): `getReconciliationDigest`, in the caller's grants, over the digests above;
-    # none is held on the fake backend, which composes no OMS (404 for every account).
+    # E29-S07 (#1028): `getReconciliationDigest`, in the caller's grants, over the digests above.
+    # The fake backend composes no identity, so no principal source: it answers 501, as
+    # `placeOrder` does (a test-injected `principal_resolver` serves it).
     app.include_router(
         make_reconciliation_digest_router(
             order_principals, reconcile_digests, audit=_LazyAuditEmitter(ctx.audit), auth=ctx.auth

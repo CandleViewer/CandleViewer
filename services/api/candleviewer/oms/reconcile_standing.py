@@ -15,6 +15,11 @@ records; this enforces:
   #2204).
 * **Rebuilt at start-up** from each account's restored B19 state (`restored`), as a static restore
   runs no entry action: a restart never unlocks a stale account.
+* **Heard as it is gained** (E29-S07, 23 Sec.15.9). Its one listener (`listen`, the runtime's)
+  hears each account the set gains, after the set holds it, on the writer's thread, so a lock with
+  no notice of its own (a restored one, or one set ahead of B19's) reaches the sockets already
+  open. A listener that raises is logged by its class and never reaches the writer: the lock
+  stands either way.
 
 It is neither account health nor B20's risk lockout, and protective paths (a stop attach, restore
 or tightening, a cancel, a close) never consult it (C-2.6): only the order-entry gate does.
@@ -28,9 +33,12 @@ never disagree. Times are the OMS clock's, in microseconds.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Final
+from typing import Any, Final
 from uuid import UUID
+
+import structlog
 
 from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.domain.primitives import AccountId
@@ -42,6 +50,7 @@ __all__ = [
     "STALE_STATE",
     "Failure",
     "FailureTracker",
+    "LockGained",
     "ReconcileStanding",
 ]
 
@@ -53,6 +62,13 @@ STALE_STATE: Final = "stale_lockout"
 STALE_DETAIL: Final = (
     "Order entry on this account is paused: reconciliation has failed for 2 minutes."
 )
+#: The standing's listener (E29-S07): called with each account the set gains, once it holds it.
+LockGained = Callable[[AccountId], None]
+
+
+def _log() -> Any:
+    """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)
 
 
 class ReconcileStanding:
@@ -60,6 +76,11 @@ class ReconcileStanding:
 
     def __init__(self) -> None:
         self._stale: set[AccountId] = set()
+        self._gained: LockGained | None = None
+
+    def listen(self, gained: LockGained | None) -> None:
+        """The one listener of each account the set gains (module docstring), or None for none."""
+        self._gained = gained
 
     def refusal(self, account_id: UUID) -> OrderEntryRefusal | None:
         """`OrderEntryCheck`: refuses a stale account's entry with `account_stale` (24 Sec.8.10).
@@ -79,8 +100,19 @@ class ReconcileStanding:
         return frozenset(self._stale)
 
     def mark_stale(self, account_id: AccountId) -> None:
-        """Before B19 is told (C-2.21); idempotent."""
+        """Before B19 is told (C-2.21); idempotent, so the listener hears a gain only."""
+        if account_id in self._stale:
+            return
         self._stale.add(account_id)
+        if self._gained is not None:
+            try:
+                self._gained(account_id)
+            except Exception as exc:  # the lock stands; the writer never hears of it
+                _log().error(
+                    "reconcile_standing_listener_failed",
+                    account_id=str(account_id),
+                    error=type(exc).__name__,
+                )
 
     def clear(self, account_id: AccountId) -> None:
         """Only after B19 recorded `OPERATOR_RESOLVED` (BQ-5)."""
@@ -89,7 +121,7 @@ class ReconcileStanding:
     def restored(self, account_id: AccountId, state: str) -> None:
         """Start-up: the account's restored B19 leaf state decides, as no entry action re-ran."""
         if state == STALE_STATE:
-            self._stale.add(account_id)
+            self.mark_stale(account_id)
         else:
             self._stale.discard(account_id)
 

@@ -11,9 +11,11 @@ from typing import ClassVar, Literal
 from uuid import UUID
 
 import pytest
+from structlog.testing import capture_logs
 
 import candleviewer
 from candleviewer.domain.order_entry import OrderEntryGate, OrderEntryRefusal
+from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.models import RateHeadroom
 from candleviewer.oms.reconcile_report import STALE_NOTICE, Notice
 from candleviewer.oms.reconcile_standing import (
@@ -89,6 +91,40 @@ def test_stale_accounts_is_one_copy_of_the_locks_held_now() -> None:
     standing.clear(ACCOUNT)
     assert held == frozenset({ACCOUNT, OTHER}) and type(held) is frozenset
     assert standing.stale_accounts() == frozenset({OTHER})
+
+
+def test_the_listener_hears_each_account_the_standing_gains_once_it_holds_it() -> None:
+    """E29-S07 (23 Sec.15.9): a gain, by `mark_stale` or by a restored `stale_lockout`, reaches the
+    one listener after the set holds the account; a mark of a held account, a restored state that
+    is no lock, an unlock and a clear reach it never."""
+    standing = ReconcileStanding()
+    heard: list[tuple[AccountId, bool]] = []
+    standing.listen(lambda account: heard.append((account, standing.is_stale(account))))
+    standing.mark_stale(ACCOUNT)
+    standing.mark_stale(ACCOUNT)  # held already: no gain
+    standing.restored(OTHER, "stale_lockout")
+    standing.restored(OTHER, "stale_lockout")
+    standing.restored(ACCOUNT, "idle")
+    standing.clear(OTHER)
+    standing.listen(None)
+    standing.mark_stale(ACCOUNT)  # no listener: the lock alone
+    assert heard == [(ACCOUNT, True), (OTHER, True)] and standing.is_stale(ACCOUNT)
+
+
+def test_a_listener_that_raises_is_logged_and_the_lock_stands() -> None:
+    """C-2.21: the refusal is in force whatever the listener does, and its writer hears nothing."""
+
+    def broken(account: AccountId) -> None:
+        raise RuntimeError("the serving loop is closed")
+
+    standing = ReconcileStanding()
+    standing.listen(broken)
+    with capture_logs() as logs:
+        standing.mark_stale(ACCOUNT)
+    assert standing.refusal(ACCOUNT) == OrderEntryRefusal("account_stale", STALE_DETAIL)
+    assert [(log["event"], log["error"]) for log in logs] == [
+        ("reconcile_standing_listener_failed", "RuntimeError")
+    ]
 
 
 def test_protective_paths_never_consult_the_standing() -> None:

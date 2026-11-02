@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -24,6 +25,7 @@ from candleviewer.api.reconciliation_digest import (
 )
 from candleviewer.domain.primitives import AccountId
 from candleviewer.oms.reconcile_digest import DIGEST_LISTS, MAX_DIGEST_ITEMS, digest_of
+from candleviewer.oms.reconcile_report import NO_RECORD_IN_FORCE, PassError, PositionDrift
 from tests.openapi_helpers import deref
 from tests.unit.api.oms_reads_world import ACCOUNT_A, ACCOUNT_B, MISSING
 from tests.unit.api.test_reconciliation_digest_route import _seeded, _state, _World
@@ -89,6 +91,29 @@ def test_the_operation_is_the_routes_with_its_permission_pair() -> None:
         "permissions": [p.value for p in PERMISSIONS],
         "scope": "granted_accounts",
     }
+
+
+def test_a_digest_with_every_list_filled_is_the_schemas() -> None:
+    """Every list kind at once, each past its cap where it can be, a drift of each side and an
+    entry past 64 characters or empty: the builder's document is a valid `ReconciliationDigest`."""
+    many = tuple(f"cvl-{n}" for n in range(MAX_DIGEST_ITEMS + 2))
+    lists: dict[str, Any] = {name: many for name in DIGEST_LISTS}
+    lists["unpaired"] = ("E" * 80, "", "E1")
+    lists["position_drift"] = (
+        PositionDrift("ETHUSDT", 0, "buy", Decimal("1.50"), None, Decimal("0")),
+        PositionDrift("BTCUSDT", 2, None, None, "sell", Decimal("0.010")),
+    )
+    lists["errors"] = (PassError("5", NO_RECORD_IN_FORCE, "SOLUSDT"),)
+    body = digest_of(AccountId(ACCOUNT_A), _state(ACCOUNT_A, **lists))
+    validator = Draft202012Validator(
+        deref(_SPEC, _SCHEMAS["ReconciliationDigest"]),
+        format_checker=Draft202012Validator.FORMAT_CHECKER,
+    )
+    assert [error.message for error in validator.iter_errors(body)] == []
+    assert body["result"] == "divergent" and body["unprotected"] == ["SOLUSDT"]
+    corrected, drift = body["corrected"], body["position_drift"]
+    assert isinstance(corrected, list) and isinstance(drift, list)
+    assert (len(corrected), len(drift)) == (MAX_DIGEST_ITEMS, 2)
 
 
 def test_the_schemas_lists_cap_and_members_are_the_builders() -> None:

@@ -3111,7 +3111,8 @@ export interface paths {
      *     so a client never infers a correction from its own cache. The server holds the latest
      *     digest per account, keyed by the account's id (C-2.11), in memory: each pass's replaces
      *     it once the pass's `oms.reconcile` record is written (§15.5), and none is held after a
-     *     restart until the next pass reports.
+     *     restart until the next pass reports. A pass whose reads were lost confirmed nothing and
+     *     keeps no digest, so the account's last one stands.
      *
      *     **Scope.** `orders:read` and `positions:read`, both required, on the account (a grant that
      *     can view it): a caller without either is `403 forbidden`, audited `rbac.denied`, before
@@ -10775,7 +10776,7 @@ export interface components {
       }[];
       resolved_from_history: components["schemas"]["ReconciliationDigestIds"];
       /**
-       * @description `corrected` when it applied a correction, `divergent` when it left an item for the Owner, `errored` when it listed an error, else `clean`.
+       * @description The first that holds, in this order: `divergent` when the pass left an item for the Owner, `errored` when it listed an error, `corrected` when it applied a correction, else `clean`; so a pass that corrected and listed an error is `errored`.
        * @enum {string}
        */
       result: "clean" | "corrected" | "divergent" | "errored";

@@ -200,6 +200,7 @@ from candleviewer.oms.ws_topics import (
 from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, Lane, LaneStopped, OrderLane, Serving
 from candleviewer.oms_reconcile_wiring import (
     DigestKeep,
+    PassReports,
     ReconcileReads,
     ReconcileWiring,
     SweptRequests,
@@ -2407,6 +2408,7 @@ class OmsRuntime:
         kill_switch: KillSwitch | None = None,
         standing: ReconcileStanding | None = None,
         digests: DigestKeep | None = None,
+        notice_states: PassReports | None = None,
     ) -> None:
         self._settings, self._metrics, self._lanes = settings, metrics, lane
         #: The B18 port, the composition root's one instance (#2904 G-79), else the interim.
@@ -2415,8 +2417,9 @@ class OmsRuntime:
         #: composed into the gate by the root), which the jobs set and clear (BQ-5, C-2.21).
         self._standing = ReconcileStanding() if standing is None else standing
         #: E29-S07 (#1028): each pass's digest, kept once its record is written, which the
-        #: composition root serves (`getReconciliationDigest`); None keeps none.
-        self._digests = digests
+        #: composition root serves (`getReconciliationDigest`); None keeps none. And the replay's
+        #: states, which hear each reported pass, so a kept resync ends (23 Sec.15.9).
+        self._digests, self._notice_states = digests, notice_states
         #: E29-T06 #914: the requests the startup sweep resumed, which each account's next
         #: reconciliation fetch waits for (24 Sec.8.5: a pass never races one in flight).
         self._resumed = SweptRequests()
@@ -3295,6 +3298,7 @@ class OmsRuntime:
                     now_us=self._now_us, stale_after_s=STALE_AFTER_S,
                     remediates=lambda e: router.port_for(e).capabilities.auto_remediate,
                     resumed=self._resumed, digests=self._digests,
+                    states=self._notice_states,
                 )  # fmt: skip
                 notices.bind_reconciliation(
                     functools.partial(reconcile.jobs.trigger, trigger="unknown")
@@ -3496,6 +3500,7 @@ def build_oms_runtime(
     kill_switch: KillSwitch | None = None,
     standing: ReconcileStanding | None = None,
     digests: DigestKeep | None = None,
+    notice_states: PassReports | None = None,
 ) -> OmsRuntime | None:
     """The process's OMS runtime, with no I/O; None on the fake backend, which composes no OMS, so
     `placeOrder` answers `501 not_implemented` there (20 Sec.6.2). Its audit writer is its order
@@ -3507,7 +3512,8 @@ def build_oms_runtime(
     lane's snapshot reads serve (E29-T13); `trade_groups`, the topic it seeds and hands each
     committed group write to (E28-T05); `kill_switch`, the B18 port with the audit-chain break
     halt folded in (#2904), the one instance every reader of the port shares; `digests`, where each
-    reconciliation pass's digest is kept once its record is written (E29-S07)."""
+    reconciliation pass's digest is kept once its record is written, and `notice_states`, the
+    replay's, which each reported pass ends a kept resync on (E29-S07)."""
     if settings.storage_backend != "real":
         return None
     return OmsRuntime(
@@ -3517,5 +3523,5 @@ def build_oms_runtime(
         profiles=profiles, persistence=persistence, feed=feed, lane_signing=lane_signing,
         health=health, hub=hub, lane_transport=lane_transport, topics=topics,
         trade_groups=trade_groups, kill_switch=kill_switch, standing=standing,
-        digests=digests,
+        digests=digests, notice_states=notice_states,
     )  # fmt: skip

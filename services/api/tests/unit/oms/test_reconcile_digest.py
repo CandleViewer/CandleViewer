@@ -18,14 +18,18 @@ from candleviewer.oms.reconcile_digest import (
     DIGEST_LISTS,
     MAX_DIGEST_ACCOUNTS,
     MAX_DIGEST_ITEMS,
+    MAX_ENTRY_TEXT,
     ReconcileDigests,
+    confirmed_us,
     digest_of,
 )
 from candleviewer.oms.reconcile_report import (
+    EMPTY_TEXT,
     NO_RECORD_IN_FORCE,
     PassError,
     PositionDrift,
     ReconcileReport,
+    ReportDraft,
     audit_state,
 )
 
@@ -106,14 +110,48 @@ def test_digest_lists_are_cut_to_their_cap_and_counts_give_full_lengths() -> Non
     assert MAX_DIGEST_ITEMS == 256
 
 
+def test_digest_entries_are_bounded_to_the_schemas_text() -> None:
+    """22 `ReconciliationDigestIds`: an entry past 64 characters is cut to them, an empty one is
+    named, as the report names its errors' subjects; `counts` is unchanged."""
+    long, empty = "x" * (MAX_ENTRY_TEXT + 9), ""
+    naked = PassError("5", NO_RECORD_IN_FORCE, "SOLUSDT")
+    digest = digest_of(A, _state(unpaired=(long, empty, "E1"), errors=(naked,)))
+    assert digest["unpaired"] == ["x" * MAX_ENTRY_TEXT, EMPTY_TEXT, "E1"]
+    assert MAX_ENTRY_TEXT == 64 and digest["unprotected"] == ["SOLUSDT"]
+    counts = digest["counts"]
+    assert isinstance(counts, dict) and counts["unpaired"] == 3
+
+
 @pytest.mark.parametrize(
     "change",
-    [{"gap_window": [1]}, {"gap_window": ["1", "2"]}, {"corrected": "cvl-1"}],
-    ids=["one-bound", "text-bounds", "not-a-list"],
-)
+    [{"gap_window": [1]}, {"gap_window": ["1", "2"]}, {"corrected": "cvl-1"},
+     {"position_drift": [{"symbol": "ETHUSDT"}]}, {"position_drift": ["ETHUSDT"]}],
+    ids=["one-bound", "text-bounds", "not-a-list", "drift-short", "drift-text"],
+)  # fmt: skip
 def test_digest_of_a_record_audit_state_does_not_write_raises(change: dict[str, Any]) -> None:
     with pytest.raises(ValueError):
         digest_of(A, _state() | change)
+
+
+@pytest.mark.parametrize("member", ["pass_id", "trigger", "result", "gap_window", "errors"])
+def test_digest_of_a_record_missing_a_member_is_a_value_error(member: str) -> None:
+    with pytest.raises(ValueError):
+        digest_of(A, {k: v for k, v in _state().items() if k != member})
+
+
+def test_a_pass_that_read_the_exchange_is_confirmed_at_its_windows_end() -> None:
+    assert confirmed_us(_state()) == TO_US
+    naked = PassError("5", NO_RECORD_IN_FORCE, "SOLUSDT")
+    assert confirmed_us(_state(errors=(naked,))) == TO_US  # an error is no lost read
+
+
+def test_a_pass_whose_reads_were_lost_confirmed_nothing() -> None:
+    """`ReconcilePhases._freeze`'s report of a lost pass: an empty window, an error at step 1."""
+    draft = ReportDraft(A, RUN_ID, "startup", (TO_US, TO_US))
+    draft.error("1", "pass_lost")
+    assert confirmed_us(audit_state(draft.freeze(0))) is None
+    with pytest.raises(ValueError):
+        confirmed_us(_state() | {"gap_window": [TO_US]})
 
 
 def test_digests_keep_the_latest_per_account_and_none_before_a_pass() -> None:
@@ -125,6 +163,15 @@ def test_digests_keep_the_latest_per_account_and_none_before_a_pass() -> None:
     assert latest is not None
     assert json.loads(latest) == digest_of(A, _state(sl_repaired=("BTCUSDT",)))
     assert digests.latest(AccountId(UUID(int=1))) is None
+
+
+def test_a_record_the_builder_refuses_leaves_the_account_with_no_digest() -> None:
+    """Fail closed: the read is a `404`, never the pass before as the latest."""
+    digests = ReconcileDigests()
+    digests.keep(A, _state(corrected=("cvl-1",)))
+    with pytest.raises(ValueError):
+        digests.keep(A, _state() | {"gap_window": [3]})
+    assert digests.latest(A) is None
 
 
 def test_digests_bounded_drop_the_least_recently_reported() -> None:

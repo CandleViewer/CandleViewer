@@ -479,15 +479,26 @@ def test_account_notice_without_time_has_five_keys() -> None:
     assert checked_notice(body) == body
 
 
-def test_a_stream_notice_whose_clock_raises_is_logged_never_sent() -> None:
-    def broken() -> int:
-        raise RuntimeError(SENTINEL)
+def _raising() -> int:
+    raise RuntimeError(SENTINEL)
 
+
+@pytest.mark.parametrize(
+    ("clock", "error"),
+    [(_raising, "RuntimeError"), (lambda: -1, "out_of_range"), (lambda: True, "out_of_range")],
+    ids=["raises", "negative", "bool"],
+)
+def test_a_stream_notice_whose_clock_raises_is_logged_and_sent_untimed(
+    clock: Callable[[], int], error: str
+) -> None:
+    """23 Sec.15.9 (E29-S07): a clock that cannot give the time costs the notice its time, never
+    the notice: it is logged by its class and sent without `changed_at_ms`."""
     world = World()
-    notices = wiring.StreamNotices(world, world, now_ms=broken)
+    notices = wiring.StreamNotices(world, world, now_ms=clock)
     with capture_logs() as logs:
         notices.publish(A, reason=RESYNCING)
-    assert world.frames == [] and [log["event"] for log in logs] == ["stream_notice_refused"]
+    assert world.frames == [account_notice(A, RESYNCING)]
+    assert [(log["event"], log["error"]) for log in logs] == [("account_notice_untimed", error)]
     assert SENTINEL not in repr(logs)
 
 

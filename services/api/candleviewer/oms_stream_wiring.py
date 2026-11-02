@@ -26,7 +26,8 @@ foreign order or fill").
 `wallet_pushed`) and the account notices are notified there (`oms_lane.Serving.notify`), never
 awaited, so one account task's calls land in their order. A notice is the closed table's row for its
 `reason` (`NOTICES`, 23 Sec.15.9), stamped with the time of its transition (`changed_at_ms`, the
-OMS's clock in ms, E29-S07) and checked before it leaves (`checked_notice`: an `account_notice`
+OMS's clock in ms, E29-S07; a clock that cannot be read sends it without one, `notice_time`) and
+checked before it leaves (`checked_notice`: an `account_notice`
 whose `exchange_account_ids` is a non-empty list of canonical lowercase UUID strings, whose
 `message` names no account), then offered through `GatewayHub.broadcast_system`. The composition
 root hands the runtime that broadcast behind `StatesBroadcast`, so each notice is kept in
@@ -182,6 +183,7 @@ OMS_FAMILY: Final = "oms."
 #: The accounts `AccountNoticeStates` keeps a notice for, the oldest forgotten past it (C-2.18).
 MAX_NOTICE_ACCOUNTS: Final = 4096
 _SYNCED: Final[AccountNoticeReason] = "oms.account_synced"
+_RESYNCING: Final[AccountNoticeReason] = "oms.account_resyncing"
 _STALE: Final[AccountNoticeReason] = "oms.account_stale"
 _DESYNC: Final[AccountNoticeReason] = "oms.account_desync"
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
@@ -260,6 +262,21 @@ def wall_ms() -> int:
 def _ms_of(at: datetime) -> int:
     """`at`, an aware time, in epoch ms."""
     return (at - _EPOCH) // _MS
+
+
+def notice_time(now_ms: Callable[[], int]) -> int | None:
+    """A notice's `changed_at_ms` from its binding's clock, or None to send the notice without one:
+    a clock that raises, or answers no epoch-ms integer, costs the notice its time and never the
+    notice (23 Sec.15.9), logged by its class. Raises nothing but `CancelledError`."""
+    try:
+        at = now_ms()
+    except Exception as exc:
+        _log().error("account_notice_untimed", error=type(exc).__name__)
+        return None
+    if not _is_epoch_ms(at):
+        _log().error("account_notice_untimed", error="out_of_range")
+        return None
+    return at
 
 
 def account_notice(
@@ -345,18 +362,21 @@ class AccountNoticeStates:
     restart, never a notice's alone: each account the standing holds is answered as
     `oms.account_stale`, with the time of the lock's notice when this process sent it and with
     none otherwise (never a restart's time). Any other state is the account's latest notice of the
-    `oms.` family as checked and broadcast (`StatesBroadcast`), until `oms.account_synced` drops
-    the account; a lock's notice the standing no longer holds is not answered. A notice of another
-    family is an event and is never kept, nor is a body `checked_notice` refuses (it raises). Each
-    state is keyed by its account id and names that account alone (C-2.11). Bounded at
-    `max_accounts` (C-2.18): past it the least recently changed account goes, logged once (one
-    instance per process) with the count and no id. Read and written on the serving loop only."""
+    `oms.` family as checked and broadcast (`StatesBroadcast`), kept in memory only, until
+    `oms.account_synced` drops the account, or, for `oms.account_resyncing`, until the account's
+    next reconciliation pass whose reads follow it reports (`pass_reported`), clean or not; a lock's
+    notice the standing no longer holds is not answered. A notice of another family is an event
+    and is never kept, nor is a body `checked_notice` refuses (it raises). Each state is keyed by
+    its account id and names that account alone (C-2.11). Bounded at `max_accounts` (C-2.18): past
+    it the least recently changed account goes, with its lock's time, logged once (one instance per
+    process) with the count and no id. Read and written on the serving loop only."""
 
     def __init__(self, *, max_accounts: int = MAX_NOTICE_ACCOUNTS) -> None:
         self._max = max_accounts
         self._kept: OrderedDict[str, dict[str, Any]] = OrderedDict()
-        #: The time of each lock's notice this process sent, until a pass (`oms.account_desync`)
-        #: or `oms.account_synced` ends the lock: a resync during the lock keeps it.
+        #: The time of each lock's notice this process sent, until a pass (`oms.account_desync`),
+        #: `oms.account_synced` or a lock gained anew (its notice untimed) ends it: a resync during
+        #: the lock keeps it.
         self._locked_at: dict[str, int] = {}
         self._standing: StaleAccounts | None = None
         self._overflowed = False
@@ -388,6 +408,18 @@ class AccountNoticeStates:
                 self._overflowed = True
                 _log().warning("account_notice_states_full", accounts=len(self._kept))
 
+    def pass_reported(self, account_id: UUID | str, read_at_ms: int) -> None:
+        """The account's reconciliation pass reported, its reads made at `read_at_ms` (its window's
+        end, the digest's `confirmed_at`): a kept `oms.account_resyncing` sent no later ends, as
+        the pass verified the account after the drop, whatever it found (a desync pass's own
+        notice follows). A resync sent after the reads began stays the account's state."""
+        account = str(account_id)
+        kept = self._kept.get(account)
+        if kept is None or kept["reason"] != _RESYNCING:
+            return
+        if kept.get(CHANGED_AT, read_at_ms) <= read_at_ms:
+            del self._kept[account]
+
     def notices(self) -> list[dict[str, Any]]:
         """The kept states of the accounts the standing does not hold, a lock's notice left out;
         then each lock the standing holds, in id order. Each a fresh `dict`, so no caller changes
@@ -409,24 +441,29 @@ class AccountNoticeStates:
 
 
 class StatesBroadcast:
-    """The OMS runtime's `SystemBroadcast` (E29-S07): each notice its two bindings publish is
-    offered to the states, then to the gateway's `broadcast_system`, in the one call the serving
-    loop runs, so what a later socket is replayed and what every live socket is sent never part.
-    A body the states refuse raises there, before the broadcast (`Serving.notify` logs it)."""
+    """The OMS runtime's `SystemBroadcast` (E29-S07): each notice its bindings publish is offered
+    to the states, then to the gateway's `broadcast_system`, in the one call the serving loop runs,
+    so what a later socket is replayed and what every live socket is sent never part. A body the
+    states cannot keep is logged by its class and still broadcast: the producers' `checked_notice`
+    is the check, so the bookkeeping never costs a live frame."""
 
     def __init__(self, states: AccountNoticeStates, hub: SystemBroadcast) -> None:
         self._states, self._hub = states, hub
 
     def broadcast_system(self, body: dict[str, Any]) -> int:
-        self._states.offer(body)
+        try:
+            self._states.offer(body)
+        except Exception as exc:
+            _log().error("account_notice_state_unkept", error=type(exc).__name__)
         return self._hub.broadcast_system(body)
 
 
 class StreamNotices:
     """`AccountNotices` (24 Sec.8.12): the notice built from the closed table, stamped with its
-    transition time (`now_ms`, the OMS's clock in the runtime) and checked, then offered to the
-    gateway on the serving loop: one notified call, `hub.broadcast_system` (`StatesBroadcast` in
-    the runtime). Raises nothing but `CancelledError`."""
+    transition time (`now_ms`, the OMS's clock in the runtime; none when it cannot be read,
+    `notice_time`) and checked, then offered to the gateway on the serving loop: one notified
+    call, `hub.broadcast_system` (`StatesBroadcast` in the runtime). Raises nothing but
+    `CancelledError`."""
 
     def __init__(
         self, hub: SystemBroadcast, serving: Notify, *, now_ms: Callable[[], int] = wall_ms
@@ -434,8 +471,9 @@ class StreamNotices:
         self._hub, self._serving, self._now_ms = hub, serving, now_ms
 
     def publish(self, account_id: AccountId, *, reason: AccountNoticeReason) -> None:
+        at = notice_time(self._now_ms)
         try:
-            body = account_notice(account_id, reason, changed_at_ms=self._now_ms())
+            body = account_notice(account_id, reason, changed_at_ms=at)
             self._serving.notify(self._hub.broadcast_system, checked_notice(body))
         except Exception as exc:
             _log().error(

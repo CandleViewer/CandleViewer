@@ -1,10 +1,11 @@
 """E29-S07 (#1028; 23-ws-protocol.md Sec.15.9 "Replay at connect"): each account's latest notice of
 the `oms.` family reaches a socket right after its first `auth_ok` and the `system` snap, through
 the gateway's `system_notices` port bound as `create_app` binds it, cut as every `account_notice`
-is (SR-E29-10), and never on an in-place re-`auth`. The real `/ws` router runs on the test's loop
-behind a fake socket (`test_system_topic_roles`' rig), its port reading `AccountNoticeStates`; the
-notices are published by reconciliation's own binding over `StatesBroadcast`, on a fake clock. No
-threads, no sleeps."""
+is (SR-E29-10), and never on an in-place re-`auth`; a resync a later pass verified is replayed to
+no later socket, and a lock the standing gains after a socket's `auth_ok` reaches it at once. The
+real `/ws` router runs on the test's loop behind a fake socket (`test_system_topic_roles`' rig),
+its port reading `AccountNoticeStates`; the notices are published by the OMS's own bindings over
+`StatesBroadcast`, on a fake clock. No threads, no sleeps."""
 
 from __future__ import annotations
 
@@ -18,10 +19,21 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.view_as import ViewAsBinding, ViewAsPhase
 from candleviewer.domain.primitives import AccountId
-from candleviewer.oms.reconcile_report import STALE_NOTICE, Notice
+from candleviewer.oms.reconcile_digest import ReconcileDigests
+from candleviewer.oms.reconcile_report import STALE_NOTICE, Notice, ReconcileReport, audit_state
 from candleviewer.oms.reconcile_standing import ReconcileStanding
-from candleviewer.oms_reconcile_wiring import ReconcileNoticesBinding
-from candleviewer.oms_stream_wiring import AccountNoticeStates, StatesBroadcast, account_notice
+from candleviewer.oms_reconcile_wiring import (
+    DigestRecords,
+    GainedLocks,
+    ReconcileNoticesBinding,
+    ReconcileRecords,
+)
+from candleviewer.oms_stream_wiring import (
+    AccountNoticeStates,
+    StatesBroadcast,
+    StreamNotices,
+    account_notice,
+)
 from candleviewer.ws.gateway import FlagSnapshot, make_ws_router
 from tests.unit.ws import _auth_rig
 from tests.unit.ws import test_system_topic_roles as roles
@@ -29,6 +41,7 @@ from tests.unit.ws.test_system_filter import ACC_A, ACC_B
 from tests.unit.ws.test_system_topic_roles import _DEADLINE_S, _as, _Rig, _Socket, _system
 
 T1 = 1_789_132_262_000
+RUN = "a3000000-0000-4000-8000-000000000001"
 #: What `create_app`'s port answers before the account states: the read-only gate's notice and an
 #: unresolved break-glass (role-neutral, as `client_notice` and `BreakGlassNotice` build them).
 READ_ONLY = {"kind": "notice", "severity": "critical", "message": "Read only.", "reason": "ro.x"}
@@ -39,6 +52,13 @@ DESYNC = Notice("oms.account_desync", "warning")
 class _Serving:
     def notify(self, fn: Callable[..., object], /, *args: Any, **kwargs: Any) -> None:
         fn(*args, **kwargs)
+
+
+class _Emitter:
+    """The pass's record writer, which writes: a pass's record comes before what it feeds."""
+
+    async def emit(self, action: str, **fields: Any) -> None:
+        return None
 
 
 def _rig(
@@ -267,3 +287,46 @@ async def test_replay_under_view_as_is_cut_to_the_target() -> None:
         await handler
     stale_a = account_notice(ACC_A, "oms.account_stale", changed_at_ms=T1)
     assert [(f["s"], f["p"]) for f in frames if f.get("ch") == "system"] == [(2, stale_a)]
+
+
+async def test_a_resync_a_later_pass_verified_is_replayed_to_no_later_connection() -> None:
+    """The stream drops (`oms.account_resyncing` at T1); the reconnect pass reads A after it and
+    finds nothing to correct, so it sends no notice. A socket open during the drop keeps the state
+    it was sent until its next connection; one that connects after the pass is replayed nothing."""
+    states = AccountNoticeStates()
+    rig = _rig(states)
+    kept, serving = StatesBroadcast(states, rig.hub), _Serving()
+    records = DigestRecords(
+        ReconcileRecords(_Emitter(), environment="demo"), ReconcileDigests(), serving,
+        states=states,
+    )  # fmt: skip
+    window = ((T1 - 60_000) * 1_000, (T1 + 2_000) * 1_000)  # the pass's reads follow the drop
+    clean = audit_state(ReconcileReport(AccountId(ACC_A), RUN, "reconnect", window, 400))
+    async with asyncio.timeout(_DEADLINE_S):
+        early = await rig.connect(_as(uuid.uuid4(), "manager"))
+        StreamNotices(kept, serving, now_ms=lambda: T1).publish(
+            AccountId(ACC_A), reason="oms.account_resyncing"
+        )
+        await records.finished(AccountId(ACC_A), pass_id=RUN, state=clean)
+        late = await rig.connect(_as(uuid.uuid4(), "manager"))
+        resync = account_notice(ACC_A, "oms.account_resyncing", changed_at_ms=T1)
+        assert await _system(early) == [(2, resync)]
+        assert await _system(late) == []
+        await rig.close()
+
+
+async def test_a_lock_restored_after_a_socket_authenticated_reaches_it() -> None:
+    """The socket authenticates inside the start-up window, before B19's restore rebuilds the
+    standing: the standing's listener broadcasts the restored lock at once, untimed, so the socket
+    learns it, and a socket that connects later is replayed it."""
+    states, standing = _locked()
+    rig = _rig(states)
+    standing.listen(GainedLocks(StatesBroadcast(states, rig.hub), _Serving()))
+    async with asyncio.timeout(_DEADLINE_S):
+        early = await rig.connect(_as(uuid.uuid4(), "viewer"))
+        standing.restored(AccountId(ACC_A), "stale_lockout")  # the job's restore, after the auth
+        late = await rig.connect(_as(uuid.uuid4(), "viewer"))
+        stale = account_notice(ACC_A, "oms.account_stale")
+        assert await _system(early) == [(2, stale)]
+        assert await _system(late) == [(2, stale)]
+        await rig.close()

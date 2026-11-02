@@ -18,14 +18,34 @@ from structlog.testing import capture_logs
 
 from candleviewer import oms_reconcile_wiring as rw
 from candleviewer.domain.primitives import AccountId
+from candleviewer.oms.reconcile_digest import ReconcileDigests
 from candleviewer.oms.reconcile_job import ReconcileJobs
-from candleviewer.oms.reconcile_report import Notice
+from candleviewer.oms.reconcile_report import Notice, ReconcileReport, ReportDraft, audit_state
+from candleviewer.oms.reconcile_standing import ReconcileStanding
 from candleviewer.oms.reconciler import PositionDriftSeen
+from candleviewer.oms_stream_wiring import AccountNoticeStates, StatesBroadcast, account_notice
 from candleviewer.storage.repositories.positions import PositionRow
 from tests.unit.oms.reconcile_rig import ACCOUNT, OTHER, position, record, remote, row
 
 T0 = datetime(2026, 10, 31, 12, 0, tzinfo=UTC)
 RUN_ID = "00000000-0000-4000-8000-0000000000a1"
+#: A pass's read window, its end the reads' instant (the digest's `confirmed_at`), in µs.
+READ_FROM_US, READ_AT_US = 1_793_613_480_000_000, 1_793_613_600_000_000
+
+
+def _passed(**lists: Any) -> dict[str, object]:
+    """The `oms.reconcile` record of a pass that read the exchange, as `audit_state` writes it."""
+    report = ReconcileReport(
+        ACCOUNT, RUN_ID, "reconnect", (READ_FROM_US, READ_AT_US), duration_ms=900, **lists
+    )
+    return audit_state(report)
+
+
+def _lost(at_us: int = READ_AT_US) -> dict[str, object]:
+    """The record of a pass whose reads were lost, as `ReconcilePhases._freeze` reports one."""
+    draft = ReportDraft(ACCOUNT, RUN_ID, "startup", (at_us, at_us))
+    draft.error("1", "pass_lost")
+    return audit_state(draft.freeze(0))
 
 
 @dataclass
@@ -222,14 +242,14 @@ class _Notify:
         fn(*args, **kwargs)
 
 
-async def test_a_passs_digest_is_kept_on_the_serving_loop_once_its_record_is_written() -> None:
+async def test_a_pass_digest_is_kept_on_the_serving_loop_once_its_record_is_written() -> None:
     """E29-S07 (24 Sec.8.5 "The digest"): the record first (C-2.9), then the digest's hand-off."""
     trace: list[str] = []
     emitter, kept = Emitter(), _Kept(trace)
     records = rw.DigestRecords(
         rw.ReconcileRecords(emitter, environment="demo"), kept, _Notify(trace)
     )
-    state = {"stage": "finished", "pass_id": RUN_ID, "corrected": ["cvl-1"]}
+    state = _passed(corrected=("cvl-1",))
     await records.finished(ACCOUNT, pass_id=RUN_ID, state=state)
     assert [action for action, _ in emitter.emitted] == [rw.RECONCILE]
     assert trace == ["notify", "keep"] and kept.kept == [(ACCOUNT, state)]
@@ -247,7 +267,7 @@ async def test_a_pass_whose_record_is_not_written_keeps_no_digest() -> None:
         rw.ReconcileRecords(Failing(), environment="demo"), kept, _Notify(trace)
     )
     with pytest.raises(RuntimeError):
-        await records.finished(ACCOUNT, pass_id=RUN_ID, state={"stage": "finished"})
+        await records.finished(ACCOUNT, pass_id=RUN_ID, state=_passed())
     assert trace == [] and kept.kept == []
 
 
@@ -261,10 +281,52 @@ async def test_a_digest_hand_off_that_fails_is_logged_and_the_record_stands() ->
         rw.ReconcileRecords(emitter, environment="demo"), _Kept([]), Closed()
     )
     with capture_logs() as logs:
-        await records.finished(ACCOUNT, pass_id=RUN_ID, state={"stage": "finished"})
+        await records.finished(ACCOUNT, pass_id=RUN_ID, state=_passed())
     assert [action for action, _ in emitter.emitted] == [rw.RECONCILE]
     assert [(log["event"], log["error"]) for log in logs] == [
         ("reconcile_digest_unkept", "RuntimeError")
+    ]
+
+
+async def test_a_reported_pass_ends_the_replays_kept_resync_its_reads_follow() -> None:
+    """E29-S07 (23 Sec.15.9): the pass's reads, its window's end in ms, reach the replay's states
+    on the serving loop after its digest, clean pass or not, so a resync the pass verified is not
+    replayed to a later connection; a resync sent after the reads stays."""
+    trace: list[str] = []
+    states, digests = AccountNoticeStates(), ReconcileDigests()
+    states.offer(account_notice(ACCOUNT, "oms.account_resyncing", changed_at_ms=READ_AT_US // 1000))
+    states.offer(
+        account_notice(OTHER, "oms.account_resyncing", changed_at_ms=READ_AT_US // 1000 + 1)
+    )
+    records = rw.DigestRecords(
+        rw.ReconcileRecords(Emitter(), environment="demo"), digests, _Notify(trace),
+        states=states,
+    )  # fmt: skip
+    await records.finished(ACCOUNT, pass_id=RUN_ID, state=_passed())
+    await records.finished(OTHER, pass_id=RUN_ID, state=_passed() | {"pass_id": "p-other"})
+    assert trace == ["notify"] * 4 and digests.latest(ACCOUNT) is not None
+    assert [n["exchange_account_ids"] for n in states.notices()] == [[str(OTHER)]]
+
+
+async def test_a_lost_pass_keeps_no_digest_and_ends_no_resync() -> None:
+    """24 Sec.8.5: a pass whose reads were lost (an empty window, an error at step 1) confirmed
+    nothing: its record is written, the account's last digest stands, a kept resync stays, and
+    the skip is logged with the account and pass ids."""
+    emitter, digests, states = Emitter(), ReconcileDigests(), AccountNoticeStates()
+    records = rw.DigestRecords(
+        rw.ReconcileRecords(emitter, environment="demo"), digests, Serving(), states=states
+    )
+    await records.finished(ACCOUNT, pass_id=RUN_ID, state=_passed(corrected=("cvl-1",)))
+    before = digests.latest(ACCOUNT)
+    resync = account_notice(ACCOUNT, "oms.account_resyncing", changed_at_ms=1)
+    states.offer(resync)
+    with capture_logs() as logs:
+        await records.finished(ACCOUNT, pass_id=RUN_ID, state=_lost())
+    assert [action for action, _ in emitter.emitted] == [rw.RECONCILE] * 2
+    assert before is not None and digests.latest(ACCOUNT) == before
+    assert states.notices() == [resync]
+    assert [(log["event"], log["log_level"], log["pass_id"]) for log in logs] == [
+        ("reconcile_digest_lost_pass", "warning", RUN_ID)
     ]
 
 
@@ -332,6 +394,51 @@ def test_each_notice_carries_its_bindings_clock_in_ms_as_changed_at_ms() -> None
     assert [f["changed_at_ms"] for f in (*hub.frames, *built_hub.frames)] == [
         1_789_132_262_000,
         1_789_132_381_999,
+    ]
+
+
+def test_a_notice_whose_clock_raises_is_logged_and_sent_untimed() -> None:
+    def broken() -> int:
+        raise RuntimeError("the clock is gone")
+
+    hub = Hub()
+    with capture_logs() as logs:
+        rw.ReconcileNoticesBinding(hub, Serving(), now_ms=broken).publish(
+            ACCOUNT, Notice("oms.account_desync", "warning")
+        )
+    assert hub.frames == [account_notice(ACCOUNT, "oms.account_desync")]
+    assert [(e["event"], e["error"]) for e in logs] == [("account_notice_untimed", "RuntimeError")]
+
+
+def test_a_lock_the_standing_gains_is_broadcast_at_once_untimed_and_kept_as_its_state() -> None:
+    """E29-S07 (23 Sec.15.9): `build_reconciliation` gives the standing its listener, so a lock
+    with no notice of its own (a restored one, or one set ahead of B19's notice) reaches the
+    sockets already open as one untimed frame per account, kept by `StatesBroadcast`; a mark of
+    a held account and a restored state that is no lock send nothing."""
+    standing, states, hub = ReconcileStanding(), AccountNoticeStates(), Hub()
+    states.bind_standing(standing)
+    _build(standing=standing, hub=StatesBroadcast(states, hub))
+    standing.restored(ACCOUNT, "stale_lockout")
+    standing.mark_stale(ACCOUNT)
+    standing.restored(OTHER, "idle")
+    standing.mark_stale(OTHER)
+    stale = [account_notice(a, "oms.account_stale") for a in (ACCOUNT, OTHER)]
+    by_id = sorted(stale, key=lambda frame: frame["exchange_account_ids"][0])
+    assert hub.frames == stale and states.notices() == by_id
+
+
+def test_a_lock_notice_the_loop_refuses_is_logged_and_the_lock_stands() -> None:
+    class Closed:
+        def notify(self, fn: Any, /, *args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("the serving loop is closed")
+
+    standing = ReconcileStanding()
+    _build(standing=standing, serving=Closed())
+    with capture_logs() as logs:
+        standing.mark_stale(ACCOUNT)
+    assert standing.is_stale(ACCOUNT)
+    assert [(e["event"], e["error"]) for e in logs] == [
+        ("reconcile_lock_notice_refused", "RuntimeError")
     ]
 
 
@@ -460,15 +567,16 @@ def test_a_live_or_demo_record_that_does_not_remediate_fails_the_composition(
 
 def test_build_reconciliation_keeps_digests_only_when_given_them() -> None:
     assert isinstance(_build().phases._records, rw.ReconcileRecords)
-    kept = _Kept([])
-    records = _build(digests=kept).phases._records
-    assert isinstance(records, rw.DigestRecords) and records._digests is kept
+    kept, states = _Kept([]), AccountNoticeStates()
+    records = _build(digests=kept, states=states).phases._records
+    assert isinstance(records, rw.DigestRecords)
+    assert (records._digests, records._states) == (kept, states)
 
 
 def test_the_runtime_hands_reconciliation_the_digests_the_root_gave_it() -> None:
     """The OMS runtime composes reconciliation on the real backend only, so its call is pinned by
-    its source: `build_oms_runtime` forwards `digests` to the runtime, and the runtime to
-    `build_reconciliation` (E29-S07)."""
+    its source: `build_oms_runtime` forwards `digests` and `notice_states` to the runtime, and the
+    runtime to `build_reconciliation` (E29-S07)."""
     import ast
     import inspect
     from collections.abc import Callable
@@ -483,8 +591,13 @@ def test_the_runtime_hands_reconciliation_the_digests_the_root_gave_it() -> None
         ]  # fmt: skip
         return {k.arg: ast.unparse(k.value) for k in call.keywords}
 
-    assert keywords(oms_wiring.build_oms_runtime, "OmsRuntime")["digests"] == "digests"
-    assert keywords(oms_wiring.OmsRuntime, "build_reconciliation")["digests"] == "self._digests"
+    runtime = keywords(oms_wiring.build_oms_runtime, "OmsRuntime")
+    reconciliation = keywords(oms_wiring.OmsRuntime, "build_reconciliation")
+    assert (runtime["digests"], runtime["notice_states"]) == ("digests", "notice_states")
+    assert (reconciliation["digests"], reconciliation["states"]) == (
+        "self._digests",
+        "self._notice_states",
+    )
 
 
 async def test_build_reconciliation_wires_the_pass_its_phases_and_the_driver() -> None:

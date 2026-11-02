@@ -65,6 +65,17 @@ def _paragraph(start: str) -> str:
         "target's accounts, cut to the target's scope.",
         "keys it on the account, `reason` and `changed_at_ms` or its absence: a frame equal in all "
         "three to the state it holds is that state again, never a new episode",
+        "A lock the standing gains with no notice of its own, one B19's restored state rebuilds "
+        "after a restart or one set ahead of B19's notice, is broadcast at once as "
+        "`oms.account_stale` with no `changed_at_ms`, one frame per account, so a socket that "
+        "authenticated before the lock learns it too",
+        "Only the lock is read from the standing: every other state of the family is the notice as "
+        "the server keeps it in memory, so after a restart a desync or a resync is not replayed "
+        "until the account's next notice.",
+        "A kept `oms.account_resyncing` ends when the account's next reconciliation pass whose "
+        "reads follow it reports, whatever the pass found",
+        "a socket open during the drop keeps the state until its next connection, as the "
+        "`oms.account_synced` rule above is unchanged.",
     ],
 )
 def test_section_15_9_replays_the_oms_family_at_a_first_authentication(sentence: str) -> None:
@@ -79,6 +90,9 @@ def test_section_15_9_replays_the_oms_family_at_a_first_authentication(sentence:
         "No other family carries it, so a `profiles.changed` frame never does.",
         "It names no account and counts nothing, so a Manager or Viewer receives it with the rest "
         "of its cut (the table above).",
+        "A lock broadcast as the standing gains it (above) carries none until B19's notice gives "
+        "it one, a restored lock's replay carries none, and a notice whose clock cannot be read "
+        "is sent without it rather than not at all.",
         "The field is optional and additive (C-6.3)",
     ],
 )
@@ -104,7 +118,28 @@ def test_24_says_how_a_connecting_client_learns_a_lock_and_a_resync() -> None:
     assert (
         "and with no time after a restart, as the standing is rebuilt from B19's restored " in doc
     )
-    assert "a connecting client is sent it after `auth_ok` until then (E29-S07)" in doc
+    assert (
+        "a connecting client is sent it after `auth_ok` until then or its next pass (E29-S07)"
+        in (doc)
+    )
+    assert (
+        "A lock the standing gains with no notice of its own (a restored one, or one set ahead of "
+        "B19's notice) is broadcast at once as `oms.account_stale` with no time, one frame per "
+        "account"
+    ) in doc
+    assert "Only the lock is read from the standing" in doc
+    assert (
+        "A pass whose reads were lost (the report of one has an empty `gap_window` and an error at "
+        "step 1) confirmed nothing, so it keeps no digest and the account's last one stands"
+    ) in doc
+    assert "The digest is kept before the pass's notice is sent" in doc
+
+
+def test_section_16_1_records_the_change() -> None:
+    doc = _words(PROTOCOL_DOC.read_text(encoding="utf-8"))
+    note = doc.split("**Contract change, 2026-11-02 (#1028).**", 1)[1].split("###", 1)[0]
+    assert "gains an optional `changed_at_ms` (`epochMs`, §15.9)" in note
+    assert "This is additive (C-6.3)" in note
 
 
 @pytest.mark.parametrize(

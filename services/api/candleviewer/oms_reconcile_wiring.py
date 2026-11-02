@@ -23,8 +23,11 @@ the facade and before the private-stream consumer, which takes its driver as its
   loop: no new bus topic, BQ-6; kept for the replay at connect, E29-S07), the pager, and the five
   metrics of 20 Sec.12.1 with no account label (`ReconcileMetrics`; `oms_stale_accounts` is the
   driver's);
-* each pass's digest, kept once its record is written (`DigestRecords`, E29-S07, 24 Sec.8.5 "The
-  digest"), on the serving loop, for `getReconciliationDigest`;
+* the standing's listener (`GainedLocks`, E29-S07): a lock the standing gains with no notice of
+  its own is broadcast at once, untimed, so the sockets already open learn it;
+* each pass's digest, kept once its record is written, and the end of a kept resync its reads
+  follow (`DigestRecords`, E29-S07, 24 Sec.8.5 "The digest", 23 Sec.15.9), on the serving loop,
+  for `getReconciliationDigest` and the replay at connect;
 * the stream's last message per account (`LastMessages`), the other half of `gap_from`;
 * the requests the startup sweep resumed (`SweptRequests`), which the sweep records and each
   account's next fetch waits for, bounded, so the first pass never races them (24 Sec.8.5).
@@ -59,9 +62,10 @@ from candleviewer.oms.ports import (
     TradingAccounts,
 )
 from candleviewer.oms.push_mapping import money_text
+from candleviewer.oms.reconcile_digest import confirmed_us
 from candleviewer.oms.reconcile_job import JobPersistence, ReconcileJobs, RetryHop
 from candleviewer.oms.reconcile_phases import ReconcilePhases, ResumedRequests
-from candleviewer.oms.reconcile_report import Notice, ReconcileMetrics
+from candleviewer.oms.reconcile_report import STALE_NOTICE, Notice, ReconcileMetrics
 from candleviewer.oms.reconcile_standing import FailureTracker, ReconcileStanding
 from candleviewer.oms.reconcile_stops import RecordedStopWriter
 from candleviewer.oms.reconciler import (
@@ -81,6 +85,7 @@ from candleviewer.oms_stream_wiring import (
     SystemBroadcast,
     account_notice,
     checked_notice,
+    notice_time,
     wall_ms,
 )
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
@@ -105,9 +110,11 @@ __all__ = [
     "AdoptionRecords",
     "BundleJobs",
     "DigestRecords",
+    "GainedLocks",
     "LastMessages",
     "PassFills",
     "PassOrders",
+    "PassReports",
     "PassStops",
     "PositionsTruth",
     "ReconcileNoticesBinding",
@@ -362,33 +369,84 @@ class DigestKeep(Protocol):
     def keep(self, account_id: UUID, state: Mapping[str, object]) -> None: ...
 
 
-class DigestRecords:
-    """`reconcile_phases.ReportRecords` with the digest (E29-S07, 24 Sec.8.5 "The digest"): the
-    pass's record first, durable or it raises (C-2.9), then its digest handed to the serving loop
-    (`Serving.notify`, never awaited), so a pass whose record is not written keeps no digest. A
-    hand-off that fails is logged by its class and the account; the record stands."""
+class PassReports(Protocol):
+    """`oms_stream_wiring.AccountNoticeStates.pass_reported`, on the serving loop (E29-S07)."""
 
-    def __init__(self, records: ReconcileRecords, digests: DigestKeep, serving: Notify) -> None:
+    def pass_reported(self, account_id: UUID | str, read_at_ms: int) -> None: ...
+
+
+class DigestRecords:
+    """`reconcile_phases.ReportRecords` with what each reported pass feeds on the serving loop
+    (E29-S07; 24 Sec.8.5 "The digest", 23 Sec.15.9): the pass's record first, durable or it raises
+    (C-2.9), then, handed to the serving loop (`Serving.notify`, never awaited), its digest and, to
+    the replay's states, the end of a kept resync its reads follow. A pass whose record is not
+    written feeds neither. A pass whose reads were lost (`confirmed_us` is None) confirmed nothing:
+    it keeps no digest, so the last one stands, and ends no resync, logged with its account and
+    pass ids. A hand-off that fails is logged by its class and the account; the record stands."""
+
+    def __init__(
+        self,
+        records: ReconcileRecords,
+        digests: DigestKeep | None,
+        serving: Notify,
+        *,
+        states: PassReports | None = None,
+    ) -> None:
         self._records, self._digests, self._serving = records, digests, serving
+        self._states = states
 
     async def finished(
         self, account_id: AccountId, *, pass_id: str, state: Mapping[str, object]
     ) -> None:
         await self._records.finished(account_id, pass_id=pass_id, state=state)
         try:
-            self._serving.notify(self._digests.keep, account_id, dict(state))
+            read_at_us = confirmed_us(state)
+            if read_at_us is None:
+                _log().warning(
+                    "reconcile_digest_lost_pass", account_id=str(account_id), pass_id=pass_id
+                )
+                return
+            if self._digests is not None:
+                self._serving.notify(self._digests.keep, account_id, dict(state))
+            if self._states is not None:
+                self._serving.notify(self._states.pass_reported, account_id, read_at_us // 1_000)
         except Exception as exc:
             _log().error(
                 "reconcile_digest_unkept", account_id=str(account_id), error=type(exc).__name__
             )
 
 
+class GainedLocks:
+    """The standing's listener (E29-S07, 23 Sec.15.9): a lock the standing gains with no notice of
+    its own, one B19's restored state rebuilds after a restart or one set ahead of B19's notice, is
+    broadcast at once as `oms.account_stale` with no `changed_at_ms`, one frame per account, on the
+    serving loop through `hub.broadcast_system` (the runtime's `StatesBroadcast`, which keeps it as
+    the lock's state), so a socket that authenticated before the lock learns it; B19's own notice,
+    when one follows, gives the lock its time. Called on the order lane, after the standing holds
+    the account; raises nothing but `CancelledError`."""
+
+    def __init__(self, hub: SystemBroadcast, serving: Notify) -> None:
+        self._hub, self._serving = hub, serving
+
+    def __call__(self, account_id: AccountId) -> None:
+        try:
+            body = checked_notice(account_notice(account_id, STALE_NOTICE.reason))
+            self._serving.notify(self._hub.broadcast_system, body)
+        except Exception as exc:
+            _log().error(
+                "reconcile_lock_notice_refused",
+                account_id=str(account_id),
+                error=type(exc).__name__,
+            )
+
+
 class ReconcileNoticesBinding:
     """`reconcile_phases.ReconcileNotices`: 23 Sec.15.9's row for the notice, stamped with its
-    transition time (`changed_at_ms`, `now_ms`), checked against the closed table, offered to the
-    gateway's `system` topic on the serving loop, never awaited: one notified call,
-    `hub.broadcast_system` (the runtime's `StatesBroadcast`, E29-S07). Raises nothing but
-    `CancelledError`: a notice that is refused is logged by its class."""
+    transition time (`changed_at_ms`, `now_ms`; none when it cannot be read, `notice_time`),
+    checked against the closed table, offered to the gateway's `system` topic on the serving loop,
+    never awaited: one notified call, `hub.broadcast_system` (the runtime's `StatesBroadcast`,
+    E29-S07). Raises nothing but `CancelledError`: a notice that is refused is logged by its
+    class."""
 
     def __init__(
         self, hub: SystemBroadcast, serving: Notify, *, now_ms: Callable[[], int] = wall_ms
@@ -396,10 +454,9 @@ class ReconcileNoticesBinding:
         self._hub, self._serving, self._now_ms = hub, serving, now_ms
 
     def publish(self, account_id: AccountId, notice: Notice) -> None:
+        at = notice_time(self._now_ms)
         try:
-            body = account_notice(
-                account_id, notice.reason, notice.severity, changed_at_ms=self._now_ms()
-            )
+            body = account_notice(account_id, notice.reason, notice.severity, changed_at_ms=at)
             self._serving.notify(self._hub.broadcast_system, checked_notice(body))
         except Exception as exc:
             _log().error(
@@ -560,15 +617,19 @@ def build_reconciliation(
     sink: MachineEventSink, persistence: JobPersistence | None, now_us: Callable[[], int],
     stale_after_s: float, remediates: Callable[[Environment], bool],
     resumed: ResumedRequests | None = None, digests: DigestKeep | None = None,
+    states: PassReports | None = None,
 ) -> ReconcileWiring:  # fmt: skip
     """The pass, its phases and the driver over the runtime's stores and adapters (module
     docstring), built and not started; `ReconcileJobs.start` opens the jobs. A live or demo
     environment whose capability record does not remediate is a `ValueError` here, so the OMS's
     composition fails closed (24 Sec.14.3, C-2.6, C-4.14). `resumed`, the requests the startup
     sweep resumed, holds each account's next fetch until they have answered (24 Sec.8.5);
-    `digests`, when given, keeps each pass's digest once its record is written (E29-S07)."""
+    `digests`, when given, keeps each pass's digest once its record is written, and `states`, the
+    replay's, hears each reported pass (a kept resync ends, E29-S07). The standing's listener
+    broadcasts each lock it gains (`GainedLocks`)."""
     if environment in ("live", "demo") and not remediates(environment):
         raise ValueError("a live or demo reconciliation job always remediates (24 Sec.14.3)")
+    standing.listen(GainedLocks(hub, serving))
     counted = ReconcileMetrics(metrics)
     writer = RecordedStopWriter(router=router, gate=gate, audit=audit)
     ports = ReconcilePorts(
@@ -585,7 +646,10 @@ def build_reconciliation(
     phases = ReconcilePhases(
         reconciler, standing=standing, tracker=FailureTracker(window_s=stale_after_s),
         marks=marks, watermarks=AccountWatermarks(reads),
-        records=records if digests is None else DigestRecords(records, digests, serving),
+        records=(
+            records if digests is None and states is None
+            else DigestRecords(records, digests, serving, states=states)
+        ),
         notices=ReconcileNoticesBinding(hub, serving, now_ms=lambda: now_us() // 1_000),
         retries=hop, metrics=counted,
         pager=pager, now_us=now_us, resumed=resumed,

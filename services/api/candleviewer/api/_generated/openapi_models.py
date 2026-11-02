@@ -7164,7 +7164,7 @@ class ReconciliationDigest(BaseModel):
     result: Annotated[
         Literal["clean", "corrected", "divergent", "errored"],
         Field(
-            description="`corrected` when it applied a correction, `divergent` when it left an item for the Owner, `errored` when it listed an error, else `clean`.\n"
+            description="The first that holds, in this order: `divergent` when the pass left an item for the Owner, `errored` when it listed an error, `corrected` when it applied a correction, else `clean`; so a pass that corrected and listed an error is `errored`.\n"
         ),
     ]
     gap_window: Annotated[
