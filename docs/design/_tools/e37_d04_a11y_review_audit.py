@@ -37,11 +37,14 @@ Gates (each FAIL led by its name):
              cover the regions of D02's focus order; no V row is Blocking unless §11 counts as
              many Blocking rows.
   G-RULED    the ruled content holds: A-3, Q-1 and L-3 carry PROPOSED and the `grid` swap, and
-             A-3 and Q-1 the three escapes, none DECIDED (BQ-10's narrow override); C-5 ... C-10
+             A-3 and Q-1 the three escapes, none DECIDED (BQ-10's narrow override); C-5 ... C-11
              exist; F-26, F-29, F-01 and F-11 route by C-5, C-6, C-7 and C-8; F-08 names C-9
-             and K-02 names C-10; D5 records the re-ruling ask on #949.
+             and K-02 names C-10; L-8 and A-10 carry "T2 per `D02`:131" and their PROPOSED
+             names, C-11 the T2 terms and SC-11 names C-11 (the orchestrator's read); C-9 names
+             the step buttons as the single-pointer path; F-08, C-9 and D5 record F-08 CONFIRMED
+             Major (the re-ruling on #949).
 
-The self-test runs 27 mutations, one or more per gate, each failing only its own gate.
+The self-test runs 33 mutations, one or more per gate, each failing only its own gate.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e37_d04_a11y_review_audit.py --check       (exit 1 on any FAIL)
@@ -150,16 +153,37 @@ ESCAPES = (
     "`Alt+L` opens the outline `tree`",
     "the Form toggle (CMP-235)",
 )
-RULED_PHRASES: dict[str, tuple[str, ...]] = {
-    "A-3": ("The role is PROPOSED until E37-Q05", "`grid`", *ESCAPES),
-    "Q-1": ("PROPOSED until E37-Q05", "`grid`", *ESCAPES),
-    "L-3": ("PROPOSED", "`grid`"),
+T2 = "T2 per `D02`:131"
+CONFIRMED = "CONFIRMED Major"
+# each ruled row, the ruling it holds and the phrases it keeps; only BQ-10's rows refuse DECIDED
+RULED_PHRASES: dict[str, tuple[str, tuple[str, ...]]] = {
+    "A-3": ("BQ-10", ("The role is PROPOSED until E37-Q05", "`grid`", *ESCAPES)),
+    "Q-1": ("BQ-10", ("PROPOSED until E37-Q05", "`grid`", *ESCAPES)),
+    "L-3": ("BQ-10", ("PROPOSED", "`grid`")),
+    "L-8": (
+        "the T2 read",
+        ('"Rule actions" (PROPOSED)', '"Actions" (PROPOSED', T2, "C-11"),
+    ),
+    "A-10": ("the T2 read", ("both names PROPOSED", T2, "C-11")),
+    "C-11": (
+        "the T2 read",
+        (
+            T2,
+            '`aria-disabled="true"`',
+            "stays arrow-reachable in the toolbar",
+            "re-shows the one notice",
+            "one polite announcement",
+        ),
+    ),
+    "SC-11": ("the T2 read", ("(T2 per `D02`:131; C-11)",)),
+    "C-9": ("the F-08 re-ruling", ("step buttons", "single-pointer path", CONFIRMED)),
+    "F-08": ("the F-08 re-ruling", (CONFIRMED,)),
 }
 # the C-rows the rulings and the lens fold made, and the row that must name each; a finding
 # listed here routes by its C-row
 RULED_ROUTES = {"F-26": "C-5", "F-29": "C-6", "F-01": "C-7", "F-11": "C-8"}
 RULED_NAMES = {"F-08": "C-9", "K-02": "C-10"}
-D5_ASK = "re-ruling requested on #949"
+D5_RULED = "**F-08 CONFIRMED Major**"
 # assembled with an explicit +, so the formatter keeps the split and the tool never spells a word
 DENY = (
     "le" + "ak",
@@ -581,23 +605,23 @@ def g_xref(t: Texts, vals: dict[str, str]) -> list[str]:
 def ruled_line(t: Texts, rid: str) -> str:
     """The table row or the A-row list item carrying `rid`, or "" when there is none."""
     for ln in t.spec.split("\n"):
-        if ln.startswith((f"| {rid} ", f"- **{rid} ")):
+        if ln.startswith((f"| {rid} ", f"- **{rid} ", f"- **{rid}** ")):
             return ln
     return ""
 
 
 def g_ruled(t: Texts, vals: dict[str, str]) -> list[str]:
     bad = []
-    for rid, phrases in RULED_PHRASES.items():
+    for rid, (why, phrases) in RULED_PHRASES.items():
         ln = ruled_line(t, rid)
         if not ln:
-            bad.append(f"{rid} is missing (BQ-10)")
+            bad.append(f"{rid} is missing ({why})")
             continue
-        bad += [f"{rid} drops {p!r} (BQ-10)" for p in phrases if p not in ln]
-        if "DECIDED" in ln:
+        bad += [f"{rid} drops {p!r} ({why})" for p in phrases if p not in ln]
+        if why == "BQ-10" and "DECIDED" in ln:
             bad.append(f"{rid} reads DECIDED; BQ-10 keeps the role PROPOSED")
     crows = {r[0]: r for r in rows(section(t.spec, "## 13."), "C")}
-    for cid in sorted({*RULED_ROUTES.values(), *RULED_NAMES.values()}):
+    for cid in sorted({*RULED_ROUTES.values(), *RULED_NAMES.values(), "C-11"}):
         if cid not in crows:
             bad.append(f"§13 has no {cid}, a ruled row")
     fs = {r[0]: r for r in rows(section(t.spec, "## 11."), "F")}
@@ -609,8 +633,10 @@ def g_ruled(t: Texts, vals: dict[str, str]) -> list[str]:
         if not re.search(rf"\b{cid}\b", ruled_line(t, rid)):
             bad.append(f"{rid} no longer names {cid}")
     d5 = next((ln for ln in t.spec.split("\n") if ln.strip().startswith("- D5:")), "")
-    if D5_ASK not in d5:
-        bad.append(f"D5 drops the open ask ({D5_ASK!r})")
+    if D5_RULED not in d5:
+        bad.append(f"D5 drops the re-ruling ({D5_RULED!r})")
+    if "Open ask" in d5:
+        bad.append("D5 still reads an open ask; F-08 is re-ruled")
     return bad
 
 
@@ -832,8 +858,50 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ),
     (
         "G-RULED",
-        "D5's re-ruling ask dropped",
-        sub("**Open ask: re-ruling requested on #949**, ", ""),
+        "D5 put back to the open ask",
+        sub(
+            "D5: **F-08 CONFIRMED Major** by",
+            "D5: F-08 stays Major. **Open ask: re-ruling requested on #949**, by",
+        ),
+    ),
+    (
+        "G-RULED",
+        "T: L-8 drops the T2 rule for the toolbar",
+        sub("`Arm…`; T2 per `D02`:131: a gated", "`Arm…`; a gated"),
+    ),
+    (
+        "G-RULED",
+        "T: C-11, the T2 C-row, dropped",
+        drop_row("C-11"),
+    ),
+    (
+        "G-RULED",
+        "T: C-11's gated buttons no longer arrow-reachable",
+        sub(
+            "and stays arrow-reachable in the toolbar, its",
+            "and leaves the toolbar, its",
+        ),
+    ),
+    (
+        "G-RULED",
+        "T: SC-11 no longer names C-11",
+        sub("(T2 per `D02`:131; C-11).", "(T2 per `D02`:131)."),
+    ),
+    (
+        "G-RULED",
+        "r-1: A-10's toolbar names no longer PROPOSED",
+        sub(
+            '"Actions", both names PROPOSED for E37-D05\'s copy deck (#950);',
+            '"Actions";',
+        ),
+    ),
+    (
+        "G-RULED",
+        "C-9 no longer names the step buttons as the single-pointer path",
+        sub(
+            "(A-8's O14 row) are the single-pointer path;",
+            "(A-8's O14 row) meet it too;",
+        ),
     ),
 )
 
