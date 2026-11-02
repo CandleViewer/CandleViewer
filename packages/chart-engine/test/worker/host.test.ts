@@ -20,7 +20,14 @@ import {
   type ToWorker,
 } from "../../src/worker/protocol.js";
 import type { CandleData, ChartEvents, ThemeTokens } from "../../src/index.js";
-import { asHtml, FakeDocument, FakeElement, FakeOffscreen } from "../api/fake-dom.js";
+import {
+  asHtml,
+  canvasesIn,
+  canvasIn,
+  FakeDocument,
+  FakeElement,
+  FakeOffscreen,
+} from "../api/fake-dom.js";
 import { MOD } from "../../src/interaction/wheel.js";
 import { watchSize } from "../../src/host/resize.js";
 import { fakeEnv, FakeWorker } from "./fake-worker.js";
@@ -117,7 +124,7 @@ describe("Scenario: Rendering runs off the main thread", () => {
   it("takes a screenshot through the worker's export", async () => {
     const container = workerDoc();
     const chart = createChart({ container: asHtml(container), theme });
-    const canvas = container.children.find((c) => c.tagName === "CANVAS") as FakeElement;
+    const canvas = canvasIn(container) as FakeElement;
     const blob = new Blob(["png"]);
     canvas.blob = blob;
     const ok = chart.takeScreenshot();
@@ -373,6 +380,7 @@ describe("one message per frame", () => {
     // `dt` is per kind; a touch row carries its pointer id; Shift+wheel is the pan class.
     expect(rows("touch")).toEqual([[INPUT.up, 4, 1, 7, 5, 0]]);
     expect(rows("wheel")).toEqual([[INPUT.wheel, 5, 1, -40, 5 | MOD.pan, 0]]);
+    // The host's own canvas is unsized (0 × 0): its first size is exact, unpadded (BQ-149).
     expect(inboxOf(w, "resize")).toEqual([{ t: "resize", id: 1, width: 300, height: 100, dpr: 1 }]);
     expect(observed).toHaveLength(1);
     detach();
@@ -391,7 +399,7 @@ describe("Scenario: Worker death is recovered", () => {
     chart.timeScale.setVisibleRange({ from: 100, to: 200 });
     settle();
     const first = lastWorker();
-    const oldCanvas = container.children[0];
+    const oldCanvas = canvasIn(container);
     // An export in flight when the worker dies resolves null, so the screenshot rejects.
     const pending = chart.takeScreenshot().catch((e: Error) => e.message);
     first.kill();
@@ -405,7 +413,7 @@ describe("Scenario: Worker death is recovered", () => {
     expect(FakeWorker.created).toHaveLength(1);
     vi.advanceTimersByTime(1);
     expect(FakeWorker.created).toHaveLength(2);
-    const fresh = container.children[0] as FakeElement;
+    const fresh = canvasIn(container) as FakeElement;
     expect(fresh).not.toBe(oldCanvas);
     expect(fresh.transferred).toBe(true);
     settle();
@@ -493,8 +501,7 @@ describe("Scenario: Worker death is recovered", () => {
     const chart = createChart({ container: asHtml(container), theme }) as ChartInternal;
     chart.timeScale.setVisibleRange({ from: 1, to: 2 });
     settle();
-    const canvasOf = (): FakeElement =>
-      container.children.find((c) => c.tagName === "CANVAS") as FakeElement;
+    const canvasOf = (): FakeElement => canvasIn(container) as FakeElement;
     const box = (c: FakeElement): unknown[] => [
       c.width,
       c.height,
@@ -521,6 +528,9 @@ describe("Scenario: Worker death is recovered", () => {
     expect(box(canvasOf())).toEqual([600, 300, "300px", "150px"]);
     onResize([{}]);
     settle();
+    // 600 -> 640 device px grows one 128 px step; 10 resize-free frames trim it (BQ-149).
+    expect(box(canvasOf())).toEqual([728, 300, "364px", "150px"]);
+    vi.advanceTimersByTime(16 * 11);
     expect(box(canvasOf())).toEqual([640, 300, "320px", "150px"]);
     chart.dispose();
   });
@@ -612,7 +622,7 @@ describe("worker mode falls back to inline when the worker cannot start", () => 
     const chart = createChart({ container: asHtml(container), theme }) as ChartInternal;
     expect(chart.runMode).toBe("inline");
     settle();
-    const canvas = container.children.find((c) => c.tagName === "CANVAS") as FakeElement;
+    const canvas = canvasIn(container) as FakeElement;
     expect(canvas.webgl2?.clears.length).toBeGreaterThan(0);
     chart.dispose();
   });
@@ -624,7 +634,7 @@ describe("worker mode falls back to inline when the worker cannot start", () => 
     expect(chart.runMode).toBe("inline");
     expect(lastWorker().terminated).toBe(true); // the worker it spawned had no other chart
     settle();
-    const canvases = container.children.filter((c) => c.tagName === "CANVAS");
+    const canvases = canvasesIn(container);
     expect(canvases).toHaveLength(1);
     expect(canvases[0]?.webgl2?.clears.length).toBeGreaterThan(0);
     chart.dispose();

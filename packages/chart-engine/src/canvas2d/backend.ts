@@ -109,7 +109,31 @@ export class Canvas2DBackend implements RenderBackend {
     this.frameSlots.length = 0; // no released node's slot outlives the backend
   }
 
-  submit(list: readonly RetainedBatch[], count: number, w: number, h: number): null {
+  /** A padded `bw` × `bh` store is clipped to its exact top-left `w` × `h` (BQ-149). */
+  submit(
+    list: readonly RetainedBatch[],
+    count: number,
+    w: number,
+    h: number,
+    bw = w,
+    bh = h,
+  ): null {
+    const ctx = this.ctx;
+    const clip = ctx?.clip !== undefined && (bw !== w || bh !== h) ? ctx : null;
+    if (clip !== null) {
+      clip.save?.();
+      clip.beginPath();
+      clip.rect(0, 0, w, h);
+      clip.clip?.();
+    }
+    try {
+      return this.draw(list, count, w, h);
+    } finally {
+      clip?.restore?.();
+    }
+  }
+
+  private draw(list: readonly RetainedBatch[], count: number, w: number, h: number): null {
     const trace = this.trace;
     trace.begin();
     const ctx = this.ctx;

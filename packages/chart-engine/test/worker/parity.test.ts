@@ -8,7 +8,7 @@ import { createChart, setHostEnvFactory } from "../../src/api/chart.js";
 import { captureInput, createChartHost } from "../../src/worker/host.js";
 import { INPUT, KEY, type FromWorker, type RunMode } from "../../src/worker/protocol.js";
 import type { ThemeTokens } from "../../src/index.js";
-import { asHtml, FakeDocument, FakeElement } from "../api/fake-dom.js";
+import { asHtml, canvasIn, FakeDocument, FakeElement } from "../api/fake-dom.js";
 import { fakeEnv, FakeWorker } from "./fake-worker.js";
 
 const theme: ThemeTokens = {
@@ -71,7 +71,7 @@ function scenario(runMode: RunMode): unknown[] {
   resized([{}]);
   container.dispatch("pointermove", pointer(300, 1, 6));
   vi.advanceTimersByTime(1000);
-  const canvas = container.children.find((c) => c.tagName === "CANVAS");
+  const canvas = canvasIn(container);
   // The backing store follows the resize in the runtime, the CSS box on the main thread.
   log.push([
     "pixels",

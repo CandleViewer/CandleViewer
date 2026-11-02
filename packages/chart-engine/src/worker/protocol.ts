@@ -155,6 +155,12 @@ export type ToWorker =
       readonly width: number;
       readonly height: number;
       readonly dpr: number;
+      /**
+       * The backing store in device px when the host pads it (BQ-149): whole integers, never below
+       * `round(size * dpr)`; the chart draws into that exact top-left sub-rect. Absent: exact.
+       */
+      readonly backingWidth?: number;
+      readonly backingHeight?: number;
     }
   | {
       readonly t: "input";
@@ -456,13 +462,20 @@ export function rejectReason(msg: unknown): string | null {
         (msg["reducedMotion"] === undefined || typeof msg["reducedMotion"] === "boolean")
         ? null
         : "malformed init";
-    case "resize":
+    case "resize": {
       // A 0 size is a hidden container (BQ-147, C-45); NaN, a negative size or dpr <= 0 is not.
-      return [msg["width"], msg["height"]].every((v) => finite(v) && v >= 0) &&
-        finite(msg["dpr"]) &&
-        (msg["dpr"] as number) > 0
+      const dpr = msg["dpr"] as number;
+      const ok = [msg["width"], msg["height"]].every((v) => finite(v) && v >= 0);
+      if (!ok || !finite(dpr) || dpr <= 0) return "malformed resize";
+      // BQ-149: a padded store is a whole number of device px, at least the exact size.
+      const padOk = (store: unknown, css: number): boolean =>
+        store === undefined ||
+        (Number.isSafeInteger(store) && (store as number) >= Math.round(css * dpr));
+      return padOk(msg["backingWidth"], msg["width"] as number) &&
+        padOk(msg["backingHeight"], msg["height"] as number)
         ? null
         : "malformed resize";
+    }
     case "input": {
       const ev = msg["events"];
       if (!KINDS.has(msg["kind"] as string) || !(ev instanceof Float32Array))

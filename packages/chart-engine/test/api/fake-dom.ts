@@ -120,6 +120,13 @@ export class FakeElement extends FakeTarget {
   transferControlToOffscreen?: () => FakeOffscreen;
 }
 
+/** Every canvas under `root`, in document order (the canvas sits in the clip wrapper, BQ-150). */
+export const canvasesIn = (root: FakeElement): FakeElement[] =>
+  root.children.flatMap((c) => (c.tagName === "CANVAS" ? [c] : canvasesIn(c)));
+
+/** The first canvas under `root`. */
+export const canvasIn = (root: FakeElement): FakeElement | undefined => canvasesIn(root)[0];
+
 /** The OffscreenCanvas a fake canvas hands over: it draws into the element's own context. */
 export class FakeOffscreen {
   constructor(private readonly el: FakeElement) {}
@@ -164,6 +171,8 @@ export function fakeResizeObserver(dpcb = true) {
     observed: unknown[];
     fire: (device?: Box, css?: Box) => void;
     ctor: unknown;
+    /** The boxes as they are now: a fresh `observe` delivers them as its first entry. */
+    now?: [device: Box, css: Box];
   } = {
     observed: [],
     fire: () => undefined,
@@ -180,6 +189,7 @@ export function fakeResizeObserver(dpcb = true) {
       observe(_t: unknown, opts?: { box?: string }): void {
         if (opts?.box === "device-pixel-content-box" && !dpcb) throw new TypeError("box");
         state.observed.push(opts ?? null);
+        if (state.now !== undefined) state.fire(...state.now);
       }
       disconnect(): void {
         state.observed.length = 0;

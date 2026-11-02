@@ -19,7 +19,7 @@ import {
   type ToWorker,
 } from "../../src/worker/protocol.js";
 import { createRenderRuntime } from "../../src/worker/runtime.js";
-import { asHtml, FakeDocument, FakeElement } from "../api/fake-dom.js";
+import { asHtml, canvasIn, FakeDocument, FakeElement } from "../api/fake-dom.js";
 import { FULL } from "../gl/fake-gl.js";
 import { bars, STEP } from "../model/fixtures.js";
 import { fakeEnv, FakeWorker } from "../worker/fake-worker.js";
@@ -284,7 +284,7 @@ describe("Scope: degraded paths", () => {
       chart.subscribe("error", (e) => errors.push(e.code));
       expect((chart as unknown as { runMode: RunMode }).runMode).toBe("inline");
       frames(48);
-      const canvas = box.children.find((e) => e.tagName === "CANVAS");
+      const canvas = canvasIn(box); // inside the clip wrapper (BQ-150)
       canvas?.webgl2?.loseContext();
       canvas?.dispatch("webglcontextlost", {});
       frames(300);

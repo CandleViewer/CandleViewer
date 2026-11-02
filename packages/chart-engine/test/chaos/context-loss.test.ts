@@ -15,7 +15,13 @@ import {
   ENGINE_NO_WEBGL2,
   type FromWorker,
 } from "../../src/worker/protocol.js";
-import { asHtml, fakeContainer, FakeDocument, type FakeElement } from "../api/fake-dom.js";
+import {
+  asHtml,
+  canvasesIn,
+  fakeContainer,
+  FakeDocument,
+  type FakeElement,
+} from "../api/fake-dom.js";
 import { FakeGl } from "../gl/fake-gl.js";
 import { fakeEnv } from "../worker/fake-worker.js";
 import {
@@ -281,7 +287,7 @@ function mountedChart() {
   });
   const errors: ChartEvents["error"][] = [];
   chart.subscribe("error", (e) => errors.push(e));
-  const canvas = (): FakeElement[] => container.children.filter((c) => c.tagName === "CANVAS");
+  const canvas = (): FakeElement[] => canvasesIn(container); // inside the clip wrapper (BQ-150)
   return { chart, errors, canvas };
 }
 
