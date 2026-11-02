@@ -2,9 +2,9 @@
 
 Ticket E26-D02 (#509); spec `docs/design/E26/E26-D02.md`. SCR-097 uses three components whose contracts E26-D05 owns
 (CMP-170 ReplayScrubber, CMP-171 ReplaySpeedPicker, CMP-172 ReplayRangePicker); each block records what SCR-097 needs of
-one **in context**, and E26-D05's own blocks supersede them. **Status:** text pass; the Penpot and PNG lines are PENDING
-(boards: RULED, comment 6555545802): no board is drawn yet, and the ten composite boards and
-their PNGs come in the boards PR, which closes #509 (file `E26-D02 boards`, page `E26-D02 SCR-097 Replay page`, spec
+one **in context**, and E26-D05's own blocks supersede them. **Status:** text pass; the Penpot and PNG lines are done
+(boards: RULED, comment 6555545802): the ten composite boards are drawn, and the boards and
+their PNGs land in the boards PR, which closes #509 (file `E26-D02 boards`, page `E26-D02 SCR-097 Replay page`, spec
 §16); E26-S02 writes the stories against E26-D05's entries. Penpot token sets = `packages/ui/tokens` at
 `2ea55a8c6dba55edca0181fc9672ac9d701d8de1`, re-seeded with `docs/design/_tools/penpot_token_sets.py` (`--check` first)
 before B1. A Penpot cell reads `NN (Bk)`: the spec §16 frame id and the composite board that nests it.
@@ -14,7 +14,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ## Handoff checklist — CMP-170 ReplayScrubber (E26-D02 in context, #509)
 
-- [ ] **Final Penpot link** — PENDING, in the boards PR: file `E26-D02 boards`, page `E26-D02 SCR-097 Replay page`; frames 01 (B1), 07 and 16 (B6), 22 and 23 (B10); 17 not drawn — the text is binding, its looks drawn in B5, B7, B9 and B10, the exit glyph on B1 and B2; exports `E26-D02-01-anatomy-focus-order-dark.png`, `E26-D02-06-scrubber-and-seeking-dark.png` and `E26-D02-10-panels-and-conditions-dark.png` (spec §16)
+- [x] **Final Penpot link** — drawn: file `E26-D02 boards`, page `E26-D02 SCR-097 Replay page` (page id `cb0c3916-2579-81a4-8008-e0e7ddc3711a`; board ids in spec §16); frames 01 (B1), 07 and 16 (B6), 22 and 23 (B10); 17 not drawn — the text is binding, its looks drawn in B5, B7, B9 and B10, the exit glyph on B1 and B2; exports `E26-D02-01-anatomy-focus-order-dark.png`, `E26-D02-06-scrubber-and-seeking-dark.png` and `E26-D02-10-panels-and-conditions-dark.png` (spec §16)
 - [x] **Variants × States matrix** — table 1: the catalogued stories plus the states SCR-097 adds (Seeking, GapAhead, EndOfRange, SessionExpired, the E26-D05 ticket's own list, and Error, CoverageClasses, ThumbStates, ViewingAs, OnHold; ReadOnlyRole only if Viewers are granted sessions, spec D-26)
 - [x] **Keyboard table** — table 2; checked against `05` §3.2 and §3.3 and the keymap's Replay rows (`apps/web/src/keymap/keymap.json:730-839`): the thumb's keys mean what the page's keys mean, nothing overrides a global binding, no trading action sits on a bare key, `Esc` is only ever a cancel, a focused form control keeps `Space` (spec D-21), `Ctrl+K` untouched; a key on a T2 control changes nothing and re-shows its reason once (spec §5.3)
 - [x] **Accessible name / role table** — table 3
@@ -24,7 +24,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — none
 - [ ] **Tokens used** — PENDING E26-D05: `15` CMP-170 lists `color.action.primary` and `font.mono`; in context the track binds `color.surface.sunken`, `color.neutral.default`, `color.text.tertiary`, `color.text.primary`, `color.text.secondary`, `color.surface.raised`, `color.surface.overlay`, `color.focus.ring`, `type.num.xs` / `.sm` and `radius.pill`, never the primary blue (spec D-7); the coverage-state tokens and the groove hatch (E11-D02 CR-6's geometry with a 2 px `color.neutral.default` stroke, spec §11) are E26-D05's to define, the hatch with E11-D05
 - [x] **Data contract confirmed** — `GET /market/data-coverage` (`DataCoverage`, spec §6.1), `ReplaySession` `from`, `to`, `state`, the control actions of spec §5.1, the `replay_seek` snaps (`23` §11) and `machines.replay:{id}.state` (`23` §6.4); the gaps are spec §15.1 (CC-1, CC-3, CC-4, CC-9, CC-15, CC-20), and the step rows depend on CC-16 (no step reaches the clock today)
-- [ ] **Contrast and CVD** — computed (spec §12.2, re-measured at `2ea55a8c6`); the pairs in `tools/contrast/pairs.mjs` are on `main` (#4122, `8ccfbae06`); PENDING: only the `cvd_sim.py` renders of B2 and B6 still come with the boards PR
+- [x] **Contrast and CVD** — computed (spec §12.2, re-measured at `2ea55a8c6`); the pairs in `tools/contrast/pairs.mjs` are on `main` (#4122, `8ccfbae06`); the `cvd_sim.py` renders of B2 and B6 are in `docs/design/E26/img/` (spec §16, As built)
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — at the end
 - [ ] **Sign-off** — PENDING: the owner's `approved` on #509 or the merge of the boards PR that closes it
 
@@ -85,7 +85,7 @@ the native activation wins.
 
 ## Handoff checklist — CMP-171 ReplaySpeedPicker (E26-D02 in context, #509)
 
-- [ ] **Final Penpot link** — PENDING, in the boards PR: file `E26-D02 boards`, page `E26-D02 SCR-097 Replay page`; frames 04 (B2, light twin B3), 09 and 10 (B9), 22 and 23 (B10); 17 not drawn — the text is binding, its looks drawn in B5, B7, B9 and B10, the exit glyph on B1 and B2; exports `E26-D02-02-playing-paper-dark.png`, `E26-D02-03-playing-paper-light.png`, `E26-D02-09-paper-fills-and-speed-dark.png` and `E26-D02-10-panels-and-conditions-dark.png` (spec §16)
+- [x] **Final Penpot link** — drawn: file `E26-D02 boards`, page `E26-D02 SCR-097 Replay page` (page id `cb0c3916-2579-81a4-8008-e0e7ddc3711a`; board ids in spec §16); frames 04 (B2, light twin B3), 09 and 10 (B9), 22 and 23 (B10); 17 not drawn — the text is binding, its looks drawn in B5, B7, B9 and B10, the exit glyph on B1 and B2; exports `E26-D02-02-playing-paper-dark.png`, `E26-D02-03-playing-paper-light.png`, `E26-D02-09-paper-fills-and-speed-dark.png` and `E26-D02-10-panels-and-conditions-dark.png` (spec §16)
 - [x] **Variants × States matrix** — table 1
 - [x] **Keyboard table** — table 2; the arrows move only inside the picker (a radio group, spec D-21); `.` and `,` work page-wide and are proposed (spec §10); a T2 preset is reached, never skipped, and re-shows its reason once (spec §5.3); Space is play/pause only when focus is on the page body, a panel region, the thumb or a non-interactive element; on any focused form control (button, checkbox, switch, radio, menu item, option, text field) the native activation wins.
 - [x] **Accessible name / role table** — table 3
@@ -95,7 +95,7 @@ the native activation wins.
 - [x] **Essential-exceptions log** — none
 - [ ] **Tokens used** — PENDING E26-D05: `15` CMP-171 "inherits CMP-009" (a select) and CMP-003 allows 2–6 options, while the canonical list is seven presets shown at once (spec X-10); in context: `color.surface.selected` (a T2 preset drops it, spec §5.3), `color.border.strong`, `color.text.primary`, `color.text.secondary`, `color.status.warning.subtle` / `.strong`, `type.num.sm` / `.base`, `size.icon.sm`
 - [x] **Data contract confirmed** — `ReplaySession.speed`; `play` with `speed` and `set_speed` (`22`; CC-11); the 0.1–100 range (`replay/playback.py:29-30`); the achieved rate from the engine once CC-3 lands, from the frames' `ts` / `wt` until then (spec D-8)
-- [ ] **Contrast and CVD** — computed (spec §12.2, re-measured at `2ea55a8c6`); the pairs in `tools/contrast/pairs.mjs` are on `main` (#4122, `8ccfbae06`); PENDING: only the `cvd_sim.py` renders of B2 and B6 come with the boards PR
+- [x] **Contrast and CVD** — computed (spec §12.2, re-measured at `2ea55a8c6`); the pairs in `tools/contrast/pairs.mjs` are on `main` (#4122, `8ccfbae06`); the `cvd_sim.py` renders of B2 and B6 are in `docs/design/E26/img/` (spec §16, As built)
 - [x] **Design QA checklist (16 §12)** and the **a11y template (05 §10)** — at the end
 - [ ] **Sign-off** — PENDING: as CMP-170
 
@@ -177,10 +177,10 @@ No Table 4: nothing animates (each block's Motion line).
 ## Design QA checklist (`16` §12) — SCR-097
 
 - [x] Tokens: published semantic tokens only (spec §11); `color.replay.border` is E11-D02's proposed token, named as such
-- [ ] Themes and densities: dark, light and high contrast at both densities — PENDING: the boards PR draws ten boards, light on the twins B3 and B8; every other light binding by token, high contrast by table (spec §12.2, §16)
+- [ ] Themes and densities: dark, light and high contrast at both densities — drawn: ten boards, light on the twins B3 and B8; every other light binding by token, high contrast by table (spec §12.2, §16)
 - [x] Contrast matrix for every pair introduced (spec §12.2)
-- [ ] CVD renders — PENDING: the boards PR (`docs/design/_tools/cvd_sim.py` on B2 and B6)
-- [ ] Every state has a variant and a story — PENDING: the boards PR (a nested frame per state, spec §16), E26-D05 and E26-S02 (states: spec §7)
+- [x] CVD renders — `docs/design/_tools/cvd_sim.py` on B2 and B6, in `docs/design/E26/img/` (spec §16, As built)
+- [ ] Every state has a variant and a story — frames drawn (a nested frame per state, spec §16); PENDING: E26-D05 and E26-S02 (states: spec §7)
 - [x] Disabled with a reason (T2), never hidden: CMP-079 with the CMP-019 `lock`, `aria-disabled`, 2a or 2b per control, every reason keyed (spec §5.3, D-26); busy is `aria-busy`, not T2; loading, empty, error and not-replayed designed
 - [x] Keyboard and name/role tables (tables 2, 3); canvas alternatives stay the panels' own; the track is DOM
 - [x] Motion: none here (E26-D06); targets 24 compact and a 40 comfortable band (spec §11)
