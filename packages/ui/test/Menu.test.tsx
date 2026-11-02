@@ -311,6 +311,52 @@ describe("Menu (CMP-041) items", () => {
     expect(page.queryByRole("status")).toBeNull();
   });
 
+  it("disabledReasonId: the gated item points at the host's notice, keeps its lock and draws no second line", async () => {
+    const announceReason = fn<(reason: string) => void>();
+    const reason = "Your role can't place orders.";
+    await mount(
+      <div>
+        <p id="orders-notice">{reason}</p>
+        <Menu
+          trigger={<Button>Row actions</Button>}
+          announceReason={announceReason}
+          items={[
+            {
+              id: "cancel",
+              label: "Cancel",
+              disabledReason: reason,
+              disabledReasonId: "orders-notice",
+              onSelect: noop,
+            },
+            {
+              id: "own",
+              label: "Edit",
+              disabledReason: "Held for owner review — nothing can be sent.",
+              onSelect: noop,
+            },
+          ]}
+        />
+      </div>,
+    );
+    const gated = page.getByRole("menuitem", { name: "Cancel", hidden: true });
+    expect(gated).toHaveAttribute("aria-disabled", "true");
+    expect(gated).toHaveAttribute("aria-describedby", "orders-notice");
+    expect(gated).toHaveAccessibleDescription(reason);
+    const row = gated.closest<HTMLElement>(".cv-menu__row");
+    expect(row?.querySelector(".cv-menu__second")).toBeNull();
+    expect(row).not.toHaveAttribute("data-lines");
+    expect(row?.querySelector(".cv-menu__lead svg")).not.toBeNull(); // the lock leads the full label
+    // a row's own reason keeps its second line
+    const own = page.getByRole("menuitem", { name: "Edit", hidden: true });
+    expect(own.closest(".cv-menu__row")?.querySelector(".cv-menu__second")).toHaveTextContent(
+      "Held for owner review — nothing can be sent.",
+    );
+    await openWith("{Enter}");
+    await press("{Enter}");
+    expect(announceReason.mock.calls).toEqual([[reason]]); // a press still re-shows the reason, once
+    expect(await seriousViolations(document.body)).toEqual([]);
+  });
+
   it("a held Enter on a gated item hands the host its reason once, not once per repeat", async () => {
     const announceReason = fn<(reason: string) => void>();
     await renderMenu({ items: states, announceReason });

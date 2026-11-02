@@ -54,6 +54,12 @@ interface MenuItemShared {
   readonly disabled?: boolean;
   /** Gated (T2, rendering 2a): the lock, the label in tertiary, this reason as the second line. Wins over the rest. */
   readonly disabledReason?: string;
+  /**
+   * The id of the node in which the host already shows `disabledReason` (E09-D09 §2.2 "one notice, many pointers", as
+   * CMP-001's `disabledReasonId`): a read-only panel's one notice. The gated item keeps its lock and full label with
+   * no second line (E29-D02 §10.4), described by that node; a press still re-shows the reason once.
+   */
+  readonly disabledReasonId?: string;
   /** The host is still loading what it acts on: CMP-014 leads the label, `aria-busy`, never activated. */
   readonly busy?: boolean;
 }
@@ -888,11 +894,13 @@ function MenuRow({ item, id, expanded, controls, onActivate, onFocus }: MenuRowP
   const kind = item.kind ?? "action";
   const reason = reasonOf(item);
   const submenu = opensSubmenu(item);
-  const second = reason ?? item.description;
+  // A gated item whose reason the host already shows points at the host's node and draws no second line.
+  const hostReason = reason === undefined ? undefined : item.disabledReasonId?.trim() || undefined;
+  const second = hostReason === undefined ? (reason ?? item.description) : undefined;
   const secondId = `${id}-second`;
   const dangerId = `${id}-danger`;
   const describedBy =
-    [second === undefined ? "" : secondId, item.danger === true ? dangerId : ""]
+    [hostReason ?? (second === undefined ? "" : secondId), item.danger === true ? dangerId : ""]
       .filter((part) => part !== "")
       .join(" ") || undefined;
   const checked = checkable(item) ? item.checked === true : undefined;

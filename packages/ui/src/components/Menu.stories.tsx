@@ -255,6 +255,49 @@ export const DisabledWithReason: Story = {
   },
 };
 
+const ORDERS_NOTICE = "Your role can't place orders.";
+
+/**
+ * ItemState=disabled-with-reason, the reason the host's (`disabledReasonId`, E09-D09 §2.2 "one notice, many
+ * pointers"; E29-D02 §10.4): SCR-063's row menu for a Viewer. "Cancel" keeps its lock and full label with no second
+ * line and points at the panel's one notice; "Edit", gated for its own row's reason, keeps its second line.
+ */
+export const DisabledWithHostReason: Story = {
+  render: () => (
+    <div style={stage}>
+      <p id="story-orders-notice">{ORDERS_NOTICE}</p>
+      <Menu
+        trigger={<Button>Order actions</Button>}
+        items={[
+          {
+            id: "cancel",
+            label: "Cancel",
+            disabledReason: ORDERS_NOTICE,
+            disabledReasonId: "story-orders-notice",
+            onSelect: noop,
+          },
+          {
+            id: "edit",
+            label: "Edit price",
+            disabledReason: "Held for owner review — nothing can be sent.",
+            onSelect: noop,
+          },
+        ]}
+      />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    await opened(canvasElement, "Order actions");
+    const cancel = page.getByRole("menuitem", { name: "Cancel" });
+    await expect(cancel).toHaveFocus();
+    await expect(cancel).toHaveAttribute("aria-describedby", "story-orders-notice");
+    await expect(cancel).toHaveAccessibleDescription(ORDERS_NOTICE);
+    await expect(cancel.closest(".cv-menu__row")?.querySelector(".cv-menu__second")).toBeNull();
+    await userEvent.keyboard("{Enter}");
+    await expect(within(canvasElement).getByRole("status")).toHaveTextContent(ORDERS_NOTICE);
+  },
+};
+
 /** A T2 item's long label and reason (#4703 carry 3): the menu grows to the viewport, then wraps; nothing is cut. */
 export const LongLabelAndReason: Story = {
   render: () => (
