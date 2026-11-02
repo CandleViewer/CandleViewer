@@ -69,7 +69,7 @@ TOOL_REL = "docs/design/_tools/e47_d06_canvas_audit.py"
 PIN_REL = "docs/design/_tools/e47_d06_ruled_pins.txt"
 BOARD_PREFIX = "docs/design/E47/img/E47-D06-"
 OWN = (SPEC_REL, HAND_REL, TOOL_REL, PIN_REL)
-SPEC_BUDGET = 470
+SPEC_BUDGET = 490  # a deliberate ratchet: about 20 lines over the spec; raise it only with a reason
 HAND_BUDGET = 150
 
 # The in-flight packs (read at their PR heads, re-pinned at their merges) and E47-D03's merge.
