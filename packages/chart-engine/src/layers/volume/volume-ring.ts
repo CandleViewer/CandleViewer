@@ -1,62 +1,63 @@
-// VolumeRing (E12-S08 pre-stage, E12-D06 §12, #534 plan BQ-2, BQ-6, BQ-7): the volume view
-// transform of a `CandleRing`. Installed as the ring's derived write (`ring.setMode(store, false,
-// new VolumeRing(q))`, the seam `HaRing` uses), it fills the SAME instance words from the price
-// store's columns, so volume borrows the price series' bars (no second `BarStore`) and renders
-// through the existing `candle` program's body part: instance = [0, v, 0, v] with v = volume in
-// int32 ticks of the quantum `q` (the instrument's qty_step, passed in by the caller). The
-// direction in `meta` is the REAL open / close direction (D06 §12: not Heikin-Ashi, not the
-// previous close; O = C is doji, neutral). A bar whose volume is unavailable (the caller's flag
-// bit, or a non-finite / negative value) is written at `UNAVAILABLE_TICK`, far below any pane,
-// with `VOLUME_UNAVAILABLE` set in `meta`: it draws nothing (AC-5) and the readout and extent
-// read the bit. Zero volume stays zero (a zero-height column). Bars are independent, so a write
-// is exactly the mutated range plus what the ring's derived path adds. No DOM, no GL.
-import type { BarStore } from "../../model/BarStore.js";
+// VolumeRing (E12-S08 PR 1, E12-D06 §12; #534 BQ-2, BQ-6, BQ-7): the volume view transform of a
+// `CandleRing`. Installed as the ring's derived write (`ring.setMode(store, false, ring)`, the
+// seam `HaRing` uses), it fills the SAME slots from the price store's columns, so volume borrows
+// the price series' bars (no second `BarStore`) and draws through the dedicated `volume` program:
+// word 0 = the volume in int32 ticks of the quantisation step (a REQUIRED option, no default),
+// words 1..3 stay 0, word 4 = `meta`: the store's flags (bits 0..3), the REAL open / close
+// direction (4..5, D06 §12: not Heikin-Ashi, not the previous close), `VOLUME_UNAVAILABLE` (6)
+// and `VOLUME_NEUTRAL` (7). An unavailable bar (the store's engine-internal null bit, or a
+// non-finite / negative value) is written as 0 ticks with bit 6: the shader skips it, the readout
+// and the extent read the bit; there is no sentinel position. Zero volume stays zero (nothing
+// drawn). Bars are independent (`local`): a write is exactly the mutated range. No DOM, no GL.
+import { BAR_FLAG_INTERNAL, type BarStore } from "../../model/BarStore.js";
 import { CANDLE_STRIDE, candleDir, outside, type RingTransform } from "../candle/ring.js";
 
-/** The default quantum when the caller passes none (BTCUSDT's qty_step, plan BQ-6). */
-export const DEFAULT_QUANTUM = 1e-3;
 /** The largest column, in ticks; larger volumes clamp (counted in `VolumeRing.clamped`). */
 export const MAX_TICKS = 2 ** 30 - 1;
-/** Where an unavailable bar is written: below the pane, so its column is clipped away. */
-export const UNAVAILABLE_TICK = -(2 ** 30);
-/** `meta` bit 6 (left to other marks by the candle ring's bit table): the bar has no volume. */
-export const VOLUME_UNAVAILABLE = 0x40;
-/** the `dir` bits (4..5) of `meta`: a flag mask may not overlap them. */
-const RESERVED_MASK = 0x30;
+/** `meta` bit 6: the bar has no volume (the store's engine-internal bit 6, same position). */
+export const VOLUME_UNAVAILABLE: number = BAR_FLAG_INTERNAL.volumeNull;
+/** `meta` bit 7: a decimated tier's column, drawn neutral (D06 §12 L1 / L2). Never a store bit. */
+export const VOLUME_NEUTRAL = 0x80;
+
+/** A refusal of the required quantisation step. */
+export class VolumeQuantumError extends RangeError {
+  constructor() {
+    super("chart-engine: the volume quantisation step is required: a positive finite number");
+    this.name = "VolumeQuantumError";
+  }
+}
+
+const checkQuantum = (q: unknown): number => {
+  if (typeof q !== "number" || !(q > 0) || !Number.isFinite(q)) throw new VolumeQuantumError();
+  return q;
+};
 
 /** Volume in ticks: round half up, clamped to [0, MAX_TICKS]. `v` must be finite and >= 0. */
 export const quantise = (v: number, quantum: number): number =>
   Math.min(MAX_TICKS, Math.floor(v / quantum + 0.5));
 
 export class VolumeRing implements RingTransform {
-  /** Volumes clamped to `MAX_TICKS` since construction (a quantum too fine for the data). */
+  readonly local = true;
+  /** Volumes clamped to `MAX_TICKS` since construction (a step too fine for the data). */
   clamped = 0;
   /** Bars written since construction. */
   computed = 0;
+  /** True while a decimated tier draws: every column carries `VOLUME_NEUTRAL`. */
+  neutral = false;
+  private step: number;
 
-  /**
-   * `quantum`: base-asset units per tick, > 0. `unavailableMask`: the `BarStore` flag bit(s)
-   * marking a bar's volume unavailable (BQ-7), 0 when the store has none; it must not overlap the
-   * `dir` bits the ring owns.
-   */
-  constructor(
-    public quantum: number = DEFAULT_QUANTUM,
-    readonly unavailableMask: number = 0,
-  ) {
-    if (!(quantum > 0) || !Number.isFinite(quantum)) {
-      throw new RangeError("chart-engine: volume quantum must be a positive finite number");
-    }
-    if ((unavailableMask & (RESERVED_MASK | ~0xff)) !== 0 || unavailableMask < 0) {
-      throw new RangeError("chart-engine: unavailable mask overlaps the ring's meta bits");
-    }
+  /** `quantum`: base-asset units per tick (the instrument's qty_step); required, > 0, finite. */
+  constructor(quantum: number) {
+    this.step = checkQuantum(quantum);
   }
 
-  /** Changes the quantum; the caller then re-syncs the ring over [0, length) (a full rewrite). */
+  get quantum(): number {
+    return this.step;
+  }
+
+  /** Changes the step; the caller then rewrites the ring over [0, length). */
   setQuantum(quantum: number): void {
-    if (!(quantum > 0) || !Number.isFinite(quantum)) {
-      throw new RangeError("chart-engine: volume quantum must be a positive finite number");
-    }
-    this.quantum = quantum;
+    this.step = checkQuantum(quantum);
   }
 
   write(
@@ -85,7 +86,7 @@ function volumeFill(
 ): number {
   const { open, high, low, close, volume, flags } = store.columns;
   const q = t.quantum;
-  const na = t.unavailableMask;
+  const tier = t.neutral ? VOLUME_NEUTRAL : 0;
   let clamped = 0;
   for (let i = from; i < to; i += 1) {
     const p = (head + i) & mask;
@@ -95,21 +96,16 @@ function volumeFill(
     const v = volume[p] as number;
     const meta =
       (f & 0x0f) |
-      (candleDir(open[p] as number, high[p] as number, low[p] as number, close[p] as number) << 4);
-    if ((f & na) !== 0 || !(v >= 0) || v === Number.POSITIVE_INFINITY) {
-      ints[w] = UNAVAILABLE_TICK;
-      ints[w + 1] = UNAVAILABLE_TICK;
-      ints[w + 2] = UNAVAILABLE_TICK;
-      ints[w + 3] = UNAVAILABLE_TICK;
+      (candleDir(open[p] as number, high[p] as number, low[p] as number, close[p] as number) << 4) |
+      tier;
+    if ((f & VOLUME_UNAVAILABLE) !== 0 || !(v >= 0) || v === Number.POSITIVE_INFINITY) {
+      ints[w] = 0;
       ints[w + 4] = meta | VOLUME_UNAVAILABLE;
       continue;
     }
     const ticks = quantise(v, q);
     if (ticks === MAX_TICKS && v / q >= MAX_TICKS) clamped += 1;
-    ints[w] = 0;
-    ints[w + 1] = ticks;
-    ints[w + 2] = 0;
-    ints[w + 3] = ticks;
+    ints[w] = ticks;
     ints[w + 4] = meta;
   }
   return clamped;

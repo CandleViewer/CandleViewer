@@ -1,26 +1,28 @@
-// VolumeSeries (E12-S08 pre-stage, E12-D06 §12; plan BQ-2, BQ-11): the volume column plugin. One
-// host node draws the `candle` program's body part from a `CandleRing` whose derived write is a
-// `VolumeRing`; the ring is synced from the PRICE series' store (borrowed, never owned), so the
-// columns sit on the same logical indices and slots as the price series' bars (index spacing on
-// time and non-time bars alike). One draw, 20 B per bar, labelled `series.volume.body`. The
-// palette is the candle palette (tokens from the theme object, never a colour in code); a theme
-// without them hides the column. A theme switch is a uniform write; a pan writes no bytes. The
-// pane is the caller's (`HostDeps.pane`): nothing here knows the pane stack. `dispose()` detaches
-// the host and drops the ring. No DOM, no GL.
+// VolumeSeries (E12-S08 PR 1, E12-D06 §12; BQ-2, BQ-11): the volume column plugin. One host node
+// draws the dedicated `volume` program from a `CandleRing` whose derived write is a `VolumeRing`;
+// the ring is synced from the PRICE series' store (borrowed, never owned), so the columns sit on
+// the same logical indices and slots as the price series' bars (index spacing on time and non-time
+// bars alike). One draw, 20 B per bar, labelled `series.volume.body`. The palette is the candle
+// palette (tokens from the theme object, never a colour in code); a theme without them hides the
+// column. A theme switch is a uniform write; a pan writes no bytes. The pane is the caller's
+// (`HostDeps.pane`): nothing here knows the pane stack. `dispose()` detaches the host and drops
+// the ring. No DOM, no GL.
 import type { AttributeLayout, BatchUniforms, VertexSource } from "../../scene/gpu-types.js";
 import type { BarStore } from "../../model/BarStore.js";
 import type { MutationRange } from "../../model/counters.js";
 import type { SceneGraph } from "../../scene/graph.js";
 import { PROGRAM } from "../../scene/instance-layout.js";
 import { type HostContext, type HostDeps, type HostedPlugin, SeriesHost } from "../host.js";
-import { CANDLE_PART, candleGeometry, GEOM, GEOM_FLOATS } from "../candle/geometry.js";
+import { candleGeometry, GEOM, GEOM_FLOATS } from "../candle/geometry.js";
 import { candlePalette, PALETTE_FLOATS, PaletteError } from "../candle/palette.js";
 import { CANDLE_STRIDE, CandleRing, type RangePatchSink } from "../candle/ring.js";
 import { VolumeExtentSource } from "./extent.js";
-import { DEFAULT_QUANTUM, VolumeRing } from "./volume-ring.js";
+import { VolumeRing } from "./volume-ring.js";
 
 export const VOLUME_LABEL = "series.volume";
-/** The ring as the `candle` shader's attributes (the candle series' layout). */
+/** `u_batch.x` and the host part of the one column batch. */
+export const VOLUME_PART = 0;
+/** The ring as the `volume` shader's attributes (`a_vol`, `a_meta`; the candle ring's stride). */
 export const VOLUME_ATTRIBUTES: AttributeLayout = {
   stride: CANDLE_STRIDE,
   ints: [
@@ -42,17 +44,14 @@ export class VolumeSeries implements HostedPlugin {
   /** False while the theme lacks a candle token: the host is hidden. */
   drawable = false;
 
-  /**
-   * `quantum`: the instrument's qty_step (the caller passes it); `unavailableMask`: the store's
-   * flag bit(s) for "volume unavailable" (0 when the store has none).
-   */
-  constructor(sink: RangePatchSink | null = null, quantum = DEFAULT_QUANTUM, unavailableMask = 0) {
+  /** `quantum`: the instrument's qty_step, REQUIRED (`VolumeQuantumError` when absent / invalid). */
+  constructor(quantum: number, sink: RangePatchSink | null = null) {
     this.ring = new CandleRing(sink);
-    this.transform = new VolumeRing(quantum, unavailableMask);
+    this.transform = new VolumeRing(quantum);
     this.ring.setMode(null, false, this.transform);
     this.extent = new VolumeExtentSource(this.ring);
     this.block = {
-      ints: Int32Array.of(CANDLE_PART.body, 0, 0, 0),
+      ints: Int32Array.of(VOLUME_PART, 0, 0, 0),
       geom: this.geom,
       palette: this.palette,
       vertices: 4,
@@ -66,7 +65,7 @@ export class VolumeSeries implements HostedPlugin {
   }
 
   collect(ctx: HostContext): void {
-    ctx.instances(this.ring, "candle", CANDLE_PART.body);
+    ctx.instances(this.ring, "candle", VOLUME_PART); // the name is the plugin API's; see PROGRAM
   }
 
   /** Mirrors the price series' `store` after its mutation `r` (the store is borrowed). */
@@ -78,6 +77,17 @@ export class VolumeSeries implements HostedPlugin {
   /** New quantum (an instrument change): rewrites every column in place from `store`. */
   setQuantum(store: BarStore, quantum: number): void {
     this.transform.setQuantum(quantum);
+    this.rewrite(store);
+  }
+
+  /** A decimated tier draws every column neutral (D06 §12 L1 / L2); L0 draws by direction. */
+  setNeutral(store: BarStore, on: boolean): void {
+    if (this.transform.neutral === on) return;
+    this.transform.neutral = on;
+    this.rewrite(store);
+  }
+
+  private rewrite(store: BarStore): void {
     this.ring.setMode(null, false, null); // no store: sets the mode only, nothing written
     this.ring.setMode(store, false, this.transform); // one O(n) rewrite, same array
     this.extent.bump();
@@ -85,8 +95,8 @@ export class VolumeSeries implements HostedPlugin {
 
   mount(graph: SceneGraph, paneId: string, id: string, deps: HostDeps): SeriesHost {
     const host = new SeriesHost(id, this, deps, {
-      part: CANDLE_PART.body,
-      program: PROGRAM.candle,
+      part: VOLUME_PART,
+      program: PROGRAM.volume,
     });
     graph.addNode(paneId, "series", host);
     host.visible = this.drawable;

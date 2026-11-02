@@ -46,6 +46,11 @@ export const candleDir = (o: number, h: number, l: number, c: number): number =>
  * the store's columns. The ring hands it [first mutated bar, length).
  */
 export interface RingTransform {
+  /**
+   * E12-S08: true when each bar is written from its own store bar alone (no recurrence), so the
+   * ring writes exactly the mutated range instead of [first mutated bar, length). Absent: false.
+   */
+  readonly local?: boolean;
   write(
     store: BarStore,
     ints: Int32Array,
@@ -185,7 +190,14 @@ export class CandleRing implements VertexSource {
    */
   private derive(store: BarStore, from: number, to: number): void {
     const ha = this.ha;
-    const end = ha !== null ? this.length : to > from && to < this.length ? to + 1 : to;
+    const end =
+      ha !== null
+        ? ha.local === true
+          ? to
+          : this.length
+        : to > from && to < this.length
+          ? to + 1
+          : to;
     const n = Math.max(0, end - from);
     this.lastFrom = from;
     this.lastTo = from + n;

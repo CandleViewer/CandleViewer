@@ -14,6 +14,13 @@ export const BAR_BYTES = 33;
 /** The `flags` bits (BQ-3); bits 4..7 are reserved and refused (the ring packs `dir` there). */
 export const BAR_FLAG = { gapBefore: 1, forming: 2, partial: 4, amended: 8 } as const;
 const FLAG_MASK = 0x0f;
+/**
+ * ENGINE-INTERNAL flag bits (E12-S08, BQ-7): set only by the engine through `markVolumeNull`,
+ * never by a host batch (`check` still refuses every bit 4..7 from the wire: `23` kind 4 carries
+ * a non-null `u64 v` and `flags` bit 0 only). Bit 6: this bar's volume is null (unavailable). Bits
+ * 4..5 are the candle ring's `dir`; 7 is the volume ring's own neutral mark (not a store bit).
+ */
+export const BAR_FLAG_INTERNAL = { volumeNull: 0x40 } as const;
 
 /** A batch of bars: §8 `CandleData` plus an optional `delta` column (zeros when absent). */
 export interface BarBatch {
@@ -180,6 +187,27 @@ export class BarStore {
     if (b.flags !== undefined) this.hasFlags = true;
     for (let j = 0; j < k; j += 1) this.put(index + j, b, j);
     return this.range.set("patch", index, index + k, 0);
+  }
+
+  /**
+   * ENGINE-INTERNAL (E12-S08, BQ-7): marks bars [index, index + count) volume-null (`on`) or not.
+   * The only writer of `BAR_FLAG_INTERNAL`; host batches never set it. In place, a `patch` range.
+   */
+  markVolumeNull(index: number, count = 1, on = true): MutationRange {
+    if (!Number.isInteger(index) || !Number.isInteger(count) || index < 0 || count < 0) {
+      this.counters.reject("range", `markVolumeNull [${index}, +${count}) is not a bar range`);
+    }
+    if (index + count > this.n) {
+      this.counters.reject("range", `markVolumeNull [${index}, +${count}) outside ${this.n} bars`);
+    }
+    this.hasFlags = true;
+    const flags = this.c.flags;
+    const bit = BAR_FLAG_INTERNAL.volumeNull;
+    for (let j = 0; j < count; j += 1) {
+      const p = (this.head + index + j) & (this.cap - 1);
+      flags[p] = on ? (flags[p] as number) | bit : (flags[p] as number) & ~bit;
+    }
+    return this.range.set("patch", index, index + count, 0);
   }
 
   /** Splices older bars at the front: in the ring's free space, else one reallocation with room. */

@@ -980,3 +980,56 @@ not-runnable scenario fails with or without a like-for-like baseline ("NOT RUN (
 engine report needs five reps. Without `--enforce` all of these are recorded only. The page has not
 yet run in CI: no workflow invokes `--page engine` in PR-1, and `--enforce` stays off for it until
 one recorded run exists. Wiring it into `_job-engine-bench.yml` is E11-T06 PR-2.
+
+## Volume sub-pane layer (E12-S08 PR 1 of 2, #534; pre-stage on E12-S07)
+
+The pane-independent half of the volume sub-pane (E12-D06 §12). `VolumeSeries`
+(`src/layers/volume/`) draws one column per bar from 0 to the bar's volume, through its own `volume`
+program (`src/gl/shaders/volume.ts`, `PROGRAM.volume`), over the price series' own `BarStore`
+(26 §3.3, borrowed, never owned: no second store). The runtime wiring (the `addVolume` command, the
+pane, the toggle, the data-table column, E2E and goldens) is PR 2.
+
+**Why not the `candle` program (BQ-2 override).** The derived candle ring forces a doji or
+zero-range body to the 2-hairline mark (D06 §9), so a doji bar's column would draw thin, and it has
+no skip bit, so an unavailable bar needed a sentinel position. §12 wants full-height columns. The
+`volume` program is instanced columns from the tick-0 line to the volume line: the candle body's
+width and centre (`candleGeometry`), linear only, never log. Per instance: `a_vol.x` volume in int32
+ticks and `a_meta`. `meta` bits: 0..3 the store's flags, 4..5 the real open / close direction,
+6 unavailable (the instance collapses), 7 neutral (a decimated tier). Colour: L0 up is the tinted
+fill with a `color.candle.up` outline, down is solid, doji and zero-range are solid
+`color.candle.wick`; neutral is always solid wick. The ring is a `CandleRing` (stride 5, so the
+same sync, patch and seam code) whose derived write is `VolumeRing` (`local`: a patch writes exactly
+the mutated range, not to the end). The 2D backend has no painter for it yet (`trace.skipped`);
+that lands with the wiring.
+
+**Quantisation step (BQ-6).** The store holds f32 volume; the ring int32 ticks. The step (the
+instrument's qty_step, `VolumeOptions.quantum`) is REQUIRED: a missing or invalid one throws
+`VolumeQuantumError`. There is no default and no 1e-3 fallback. `VolumeExtentSource` fits exactly
+[0, the visible maximum] (D06 §12); the pane's margins are 0 (`VOLUME_PANE_MARGINS`).
+
+**Null volume (BQ-7).** `BAR_FLAG_INTERNAL.volumeNull` = bit 6 of the store's `flags` column,
+set only by the engine (`BarStore.markVolumeNull`). It is engine-internal: it is not in the wire
+`flags` (`23` kind 4 carries a non-null `u64 v` and bit 0 only), and the store still refuses
+every host batch with a bit 4..7 set. Bits 4..5 are the ring's `dir` and bit 7 is the volume
+ring's own meta bit, not a store bit, so bit 6 is free on this head. A wire carrier for "no volume"
+would need a `23` PR first.
+
+**Tiers.** L0 is what draws today. Decimation (L1 / L2) is E12-S09's and is not on this head: the
+tier's reduction is `maxPerColumn` in the twin (the maximum per column, unavailable bars ignored)
+and `VolumeSeries.setNeutral` rewrites the ring with the neutral bit, both tested; S09 supplies the
+column placement.
+
+Bench: `bench/scenes/volume-series.ts` (a pan frame is one draw, `series.volume.body`, 0 bytes;
+a feed frame uploads the two touched bars) and `volume-ring.ts` (the data plane). One draw, well
+under the 40-draw ceiling. A new `bench:baseline` row is a CODEOWNER change and is not made in this PR.
+
+### Design deltas (E12-S08 PR 1; from BQ-1 to BQ-14 as ruled 2026-11-02)
+
+| ID     | Item                | The ticket / design says                         | Shipped                                                                                                                                                                      |
+| ------ | ------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| C-S8-1 | Bar-cell wording    | Volume as bar cells.                             | Volume is its own `volume` program, columns from 0 to v (BQ-2; D06 §12). The ticket's "bar-cell" wording goes to the PR's Deviations.                                        |
+| C-S8-2 | Delta colour        | Colour by delta.                                 | Colour by the real open / close direction at L0 (D06 §12); delta is dropped. No delta-volume ticket exists (BQ-3).                                                           |
+| C-S8-3 | Renko column        | AC-3's zero-height Renko column.                 | Renko is not shown (D06 §12 Modes); `volume_allocated` is not in `23`. No code, no follow-up issue (BQ-4, BQ-14).                                                            |
+| A-S8-1 | Top margin and step | Scale 0 to the visible maximum.                  | PROPOSED to D06: no margin is shipped (the pane's margins are 0), and the quantisation step is the instrument's qty_step, required. Any margin or step figure is a proposal. |
+| A-S8-2 | Internal null bit   | A way to say "volume unavailable".               | PROPOSED: store flag bit 6, engine-internal (above). `26` §6 / §8 note it additively.                                                                                        |
+| A-S8-3 | Ring rewrite span   | The candle ring's derived write runs to the end. | `RingTransform.local` (opt-in): a transform that needs no neighbour writes only the mutated range. HA and hollow keep their spans.                                           |

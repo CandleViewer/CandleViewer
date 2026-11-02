@@ -14,3 +14,4 @@ export * from "./volume/volume-ring.js";
 export * from "./volume/geometry.js";
 export * from "./volume/extent.js";
 export * from "./volume/series.js";
+export * from "./volume/options.js";

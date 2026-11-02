@@ -147,4 +147,5 @@ export const PAINTERS: readonly (((ctx: Ctx2DLike, a: PaintArgs) => void) | null
   null,
   paintBarCell,
   paintCandle,
+  null, // `volume` (E12-S08 PR 1): its 2D painter lands with the runtime wiring (PR 2)
 ];

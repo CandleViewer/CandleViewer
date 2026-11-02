@@ -447,6 +447,8 @@ Shipped by E12-S06 PR 2 (package README "OHLC bars, gap seams, bar picks and `da
 
 Shipped by E11-S10 PR 2 (package README BQ-149), additive: `resize` gains optional `backingWidth` and `backingHeight`, the padded backing store in device px (safe integers, at least `round(size * dpr)`); the chart draws into its exact top-left sub-rect, and `frame.backingStorePx` reports the padded store.
 
+Shipped by E12-S08 PR 1 (package README "Volume sub-pane layer"), additive and internal: a volume series borrows the price series' `BarStore` (§3.3) and draws through the `volume` program (one draw, label `series.volume.body`); PR 2 adds the `addVolume` command. The store's `flags` column gains one ENGINE-INTERNAL bit, 6 (`BAR_FLAG_INTERNAL.volumeNull`, "volume unavailable"), set only by the engine; it is not part of the wire `flags` (bits 0–3 as above; bits 4–7 stay refused from a host batch) and `23` kind 4 is unchanged (a non-null `u64 v`).
+
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
 
 ---
@@ -569,6 +571,15 @@ export interface CandleData {
   tickSize: number;
   flags?: Uint8Array; // E12-S06 (BQ-3, 24 §19.75): gap_before | forming | partial | amended bits
 }
+
+// E12-S08 (BQ-6, BQ-11), additive; the facade method lands with PR 2. A volume sub-pane over the
+// price series' own bars (§3.3). Bit 6 of the store's `flags` column ("volume unavailable") is
+// engine-internal: never in `CandleData.flags`, which still refuses bits 4–7.
+export interface VolumeOptions {
+  quantum: number; // REQUIRED: the instrument's qty_step, base units per tick; no default
+  heightRatio?: number; // default 0.2 (E12-D06 §12)
+}
+// Pane.addVolume(opts: VolumeOptions): { setVisible(v: boolean): void; remove(): void }
 
 export interface FootprintData {
   barIndexOffsets: Uint32Array; // length = bars + 1, prefix sums into cells
