@@ -1293,13 +1293,13 @@ interface FootprintCellMirrorProps extends FootprintCellData {
 
 ### CMP-110 ProfileBar (volume/delta profile histogram bar)
 
-- **Tier**: Molecule (trading, chart-primitive-adjacent) · **Purpose**: one horizontal bar of the volume/delta/TPO profile histogram at a given price level.
-- **Props**: `price: number` · `value: number` · `maxValue: number` (for width scaling) · `isPoc?: boolean` · `isValueArea?: boolean` · `mode: "volume"|"delta"|"tpo"`.
-- **A11y**: same DOM-mirror-per-bar pattern as FootprintCell; POC and Value-Area status conveyed by border/pattern + text label, never fill-colour alone.
-- **Tokens**: `color.profile.bar`, `color.profile.poc`, `color.profile.valuearea`.
+- **Tier**: Chart-primitive (canvas-rendered, DOM-mirrored; was Molecule, (E19-D03, PROPOSED, owner approval pending: `docs/design/E19/E19-D03.md` D03-C10) · **Purpose**: one horizontal bar of the volume/delta/TPO profile histogram at a given price level.
+- **Props**: `price: number` · `value: number` · `maxValue: number` (for width scaling) · `isPoc?: boolean` · `isValueArea?: boolean` · `mode: "volume"|"delta"|"tpo"`. (E19-D03, PROPOSED, owner approval pending: `docs/design/E19/E19-D03.md` §4): `split?: boolean` (buy / sell segments) · `buyValue?: number` · `sellValue?: number` · `traded: boolean` (false = untraded: no mark; true with zero delta = the centred tick, §4.3) · `levels?: { hvn?: boolean; lvn?: boolean; nakedPoc?: boolean; singlePrint?: boolean; initialBalance?: boolean }` · `estimated?: boolean` · `merged?: { levels: number }`.
+- **A11y**: same DOM-mirror-per-bar pattern as FootprintCell; POC and Value-Area status conveyed by border/pattern + text label, never fill-colour alone. (E19-D03, PROPOSED, owner approval pending: `docs/design/E19/E19-D03.md` §3, §12): every meaning has the non-colour carrier of the spec's §3 table, binding on implementation; per-row words and numbers are DOM-mirror-only ("point of control", "high-volume node", "low-volume node", "single print", "initial balance", "In VA" / "Outside VA", "No trades at this price" / "Net delta zero", "(estimated)"); the roving row draws the canvas-surrogate focus ring.
+- **Tokens**: `color.profile.bar`, `color.profile.poc`, `color.profile.valuearea`. (E19-D03, PROPOSED, owner approval pending: `docs/design/E19/E19-D03.md` §2): plus `color.buy.default` / `color.sell.default` (split and delta), `color.text.tertiary` (zero-delta tick, tested rays), `color.text.secondary` (HVN / LVN glyphs), `color.tpo.letter` (single-print glyph), `color.focus.ring`; patterns `pattern.hatch.estimated`, `pattern.dashed.tested` (`docs/design/E11/E11-D05.md` §7); measured contrast in the spec's §2.2.
 - **API sketch**: `interface ProfileBarProps { price: number; value: number; maxValue: number; isPoc?: boolean; isValueArea?: boolean; mode: "volume"|"delta"|"tpo"; }`
 - **Data contract**: `value` computed client-side from the same aggregated-trades WS stream as CMP-109, bucketed by price level across the profile's bar range; POC/value-area flags are a client-side derived calculation, not a Bybit-provided field.
-- **Storybook**: Volume, Delta, TPO, POC, ValueArea.
+- **Storybook**: Volume, Delta, TPO, POC, ValueArea; (E19-D03, PROPOSED, owner approval pending: `docs/design/E19/E19-D03.md` §15): Split, ZeroDeltaVsUntraded, Hvn, Lvn, NakedPoc, SinglePrint, Estimated, Merged, Focused, Greyscale, HighContrast, ForcedColors.
 - **Tests**: unit, visual, axe (mirror), performance (full profile render, hundreds of levels).
 
 ### CMP-111 HeatmapCell (DOM liquidity heatmap unit, texture-backed)
@@ -2397,18 +2397,18 @@ interface FootprintSeriesProps {
 ### CMP-183 VolumeProfilePane
 
 - **Tier**: Chart-primitive · **Purpose**: dedicated side/overlay pane rendering N ProfileBar (CMP-110) instances for one period.
-- **Props**: `data: ProfileBarData[]` · `periodType: "composite"|"multiples"|"visible"|"personalized"` · `valueAreaPct: number` (default 70) · `showVwap?: boolean`.
+- **Props**: `data: ProfileBarData[]` · `periodType: "composite"|"multiples"|"visible"|"personalized"` · `valueAreaPct: number` (default 70) · `showVwap?: boolean`. (E19-D03, PROPOSED, owner approval pending: `docs/design/E19/E19-D03.md` §7, D03-C8): `periodType: "session"|"fixed_range"|"visible_range"|"anchored"|"composite"` (the five words Session, Fixed range, Visible range, Anchored, Composite; multiples a Session option) · `complete: boolean` (developing: an open bracket and "Developing · as of {HH:MM} UTC"; final: closed and "Final") · `host: "docked"|"overlay"` · `alignment: "aligned"|"own-scale"` · `extendLines?: boolean` · `nakedPocLimit: number` (default 5, 1–20; hidden ones counted on a CMP-199 legend button) · `showTestedNakedPoc?: boolean`; CMP-227 `section` is pinned in the header whenever any part is bar-approximated; rows under 2 px merge, keeping the strongest level's mark.
 - **Tokens**: inherits CMP-110.
-- **Storybook**: Composite, Visible, WithVwap, ValueAreaHighlight.
+- **Storybook**: Composite, Visible, WithVwap, ValueAreaHighlight; (E19-D03, PROPOSED, owner approval pending: `docs/design/E19/E19-D03.md` §15): Session, FixedRange, Anchored, Multiples, Developing, Final, Approximated, ExtendLines, NakedPocCapped, NakedPocTested, Bucketed5000, PocTooltip, Table, Docked, Overlay.
 - **Tests**: unit, visual, axe, performance.
 
 ### CMP-184 MarketProfileTpoPane (TPO letters)
 
 - **Tier**: Chart-primitive · **Purpose**: TPO (Market Profile) block/profile rendering — sequential-letter periods, Initial Balance shading, 24/7 UTC-day redefinition (digest 04 §11).
-- **Props**: `data: TpoPeriodData[]` · `tpoBaseMinutes: number` (default 30) · `tpoType: "blocks"|"profile"` · `dayBoundaryUtcHour: number` (default 0).
-- **A11y**: each TPO letter-block is DOM-mirrored with its period/price-range/letter for screen reader traversal.
-- **Tokens**: `color.tpo.letter`, `color.tpo.initialbalance`.
-- **Storybook**: Blocks, Profile, InitialBalanceShaded.
+- **Props**: `data: TpoPeriodData[]` · `tpoBaseMinutes: number` (default 30) · `tpoType: "blocks"|"profile"` · `dayBoundaryUtcHour: number` (default 0). (E19-D03, PROPOSED, owner approval pending: `docs/design/E19/E19-D03.md` §6): `letterSizePx: number` (10–14, default 10) · `showSinglePrints?: boolean` (default true) · `initialBalancePeriods: number`; the profile form falls back to blocks (one 3 px block per period on a 4 px pitch) whenever the busiest row's letters exceed the run, the legend saying so.
+- **A11y**: each TPO letter-block is DOM-mirrored with its period/price-range/letter for screen reader traversal. (E19-D03, PROPOSED, owner approval pending: `docs/design/E19/E19-D03.md` §6): in the blocks form the letter is on hover, focus, the mirror and the table; the IB is a solid bar labelled "IB {low} – {high}", its band reinforcing only; single prints a solid bar glyph.
+- **Tokens**: `color.tpo.letter`, `color.tpo.initialbalance`. (E19-D03, PROPOSED, owner approval pending: `docs/design/E19/E19-D03.md` §2.1): `color.tpo.letter` = `palette.neutral.700` (dark) / `palette.light.neutral.700` (light), `color.tpo.initialbalance` = `palette.cyan.400` / `palette.light.cyan.300`, both aliases until the token PR (E19-T04); the IB band `color.surface.raised`.
+- **Storybook**: Blocks, Profile, InitialBalanceShaded; (E19-D03, PROPOSED, owner approval pending: `docs/design/E19/E19-D03.md` §15): LettersFullDay48, BlocksFallbackCompact, SinglePrints, LetterSize12, Greyscale.
 - **Tests**: unit, visual, axe, performance.
 
 ### CMP-185 CvdPane

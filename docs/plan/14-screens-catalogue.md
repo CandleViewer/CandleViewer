@@ -1018,6 +1018,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `profile.period_changed`, `profile.mode_changed`, `profile.va_percent_changed` (analytics).
 - **Design sign-off acceptance checklist:** [ ] volume, delta and TPO modes drawn [ ] POC / VAH / VAL / value-area shading drawn with non-colour labelling [ ] session, visible-range, fixed-range and composite period modes [ ] the recorder-dependent empty state ('History starts <ts>') drawn [ ] alignment with the price scale verified when docked beside a chart
 - **Wireframes (E19-D02):** [E19-D02.md](../design/E19/E19-D02.md) §2–§7, §10–§11 (text-first, owner approval pending; boards pending on page `E19-D02`, whose page ref and exports land with the boards PR); UX research in E19-D01's memo `docs/design/research/e19-profiles.md` once it merges — no requirement here changes.
+- **Hi-fi (E19-D03):** [E19-D03.md](../design/E19/E19-D03.md) §2–§10, §12 (text-first, PROPOSED, owner approval pending; boards pending on page `E19-D03`, whose page ref and exports land with the boards PR) — no requirement here changes.
 
 ### SCR-039 — Profile settings dialog
 
@@ -1030,6 +1031,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `profile.settings_changed` with `{key}` (analytics).
 - **Design sign-off acceptance checklist:** [ ] period mode, row size/ticks, value-area %, split bid/ask, TPO letter size and composite look-back controls drawn [ ] live preview [ ] warning when the requested look-back exceeds recorded history [ ] reset
 - **Wireframes (E19-D02):** [E19-D02.md](../design/E19/E19-D02.md) §8–§9 (text-first, owner approval pending; boards pending on page `E19-D02`, whose page ref and exports land with the boards PR) — no requirement here changes.
+- **Hi-fi (E19-D03):** [E19-D03.md](../design/E19/E19-D03.md) §11 (text-first, PROPOSED, owner approval pending; boards pending on page `E19-D03`, whose page ref and exports land with the boards PR) — no requirement here changes.
 
 ### SCR-040 — Chart trading overlay settings
 
