@@ -217,7 +217,7 @@ class BarRowLike(Protocol):
     @property
     def volume(self) -> str: ...
     @property
-    def turnover(self) -> str: ...
+    def turnover(self) -> str | None: ...
     @property
     def confirmed(self) -> bool: ...
 
@@ -233,6 +233,8 @@ def serialize_bar(row: BarRowLike, *, include_delta: bool) -> dict[str, object]:
         "turnover": row.turnover,
         "confirm": row.confirmed,
     }
+    if row.turnover is None:  # a kline-sourced stored row: absent, never a fabricated "0.0"
+        del bar["turnover"]
     for name in ("index", "generation"):  # stored bars only (#2017); klines have neither
         value = getattr(row, name, None)
         if isinstance(value, int) and not isinstance(value, bool):
@@ -267,6 +269,8 @@ def serialize_bars(rows: Sequence[BarRowLike], *, include_delta: bool) -> list[d
     if include_delta:
         optional += ["trades", *_DELTA_FIELDS]
     n = len(rows)
+    if any(r.turnover is None for r in rows):  # absent key: the row-by-row path omits it
+        return [serialize_bar(r, include_delta=include_delta) for r in rows]
     if any(list(map(getattr, rows, repeat(name), repeat(None))).count(None) != n
            for name in optional):  # fmt: skip
         return [serialize_bar(r, include_delta=include_delta) for r in rows]

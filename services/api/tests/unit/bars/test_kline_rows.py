@@ -255,3 +255,19 @@ async def test_stored_tape_lookup_decodes_datetime_rows_and_binds_datetime() -> 
     )
     assert got == {1_700_000_000_000_001}
     assert all(isinstance(p, datetime) for p in seen[0][2:])
+
+
+def test_stored_kline_row_serves_no_fabricated_trades_or_turnover() -> None:
+    """SR-E12-10: a kline has no trade count and no vwap; the read side invents neither."""
+    from candleviewer.api.market_response import serialize_bar, serialize_bars
+    from candleviewer.bars.reader import stored_bar
+
+    s = stored_bar(kline_row(_k(), SPEC))
+    assert (s.trades, s.turnover) == (None, None)
+    for bar in (
+        serialize_bar(s, include_delta=True),
+        *serialize_bars([s, s], include_delta=True),
+    ):
+        assert "trades" not in bar and "turnover" not in bar
+        assert (bar["delta"], bar["min_delta"], bar["max_delta"], bar["cvd"]) == (None,) * 4
+        assert bar["v"] == "10.0" and bar["confirm"] is True
