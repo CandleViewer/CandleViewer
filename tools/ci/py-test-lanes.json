@@ -55,6 +55,17 @@
       "tests/unit/auth",
       "tests/unit/admin",
       "tests/unit/bench"
+    ],
+    "rest-heavy-4": ["tests/unit/oms"],
+    "rest-heavy-5": [
+      "tests/unit/accounts",
+      "tests/unit/replay",
+      "tests/unit/exchange",
+      "tests/unit/recorder",
+      "tests/unit/ingestion",
+      "tests/unit/cvdev",
+      "tests/unit/rules_ir",
+      "tests/unit/net"
     ]
   }
 }

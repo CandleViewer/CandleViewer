@@ -39,7 +39,7 @@ PR opened/updated, merge group queued for main, or merge train dispatched (.gith
 ├─ dependabot-alerts (always, #3558) → C-9.1 #11's Dependabot alert gate: the open alerts on
 │                                      `main`, judged on this tree         (CI-SEC-001/004/005)
 ├─ _job-js.yml    (js filter)        → node-version, lint, typecheck, unit, build (CI-JS-001, CI-BUILD-001)
-├─ _job-py.yml    (py filter)        → ruff, mypy --strict, architecture contract; pytest in sixteen
+├─ _job-py.yml    (py filter)        → ruff, mypy --strict, architecture contract; pytest in eighteen
 │                                      parallel lanes (tools/ci/py-test-lanes.json, the heavy
 │                                      matrices sharded, #3881), coverage combined over all of them
 ├─ architecture   (py filter)        → mirrors the py lane's result, beside coverage-thresholds
@@ -1518,7 +1518,7 @@ section in the same sprint — do not just work around it and move on.
   lane's raw coverage, so the 85% / 75% floors (C-9.4) are measured on the union, never per shard.
   The `rest` lane runs `tests` minus every listed path: a new test directory runs there until it is
   listed. A heavy matrix is several lanes named `<family>-<k>` (`unit-heavy-1..4`, `db-chaos-1..5`,
-  `contract-security-1..3`; `rest-heavy-1..3` are the listed part of `rest`). A directory can be
+  `contract-security-1..3`; `rest-heavy-1..5` are the listed part of `rest`). A directory can be
   shared: a path one lane lists inside another lane's path is carved out of it (`--ignore`), so
   `contract-security-1` runs `tests/contract` minus what the other two list below it, a
   subdirectory added later included.
@@ -1531,6 +1531,14 @@ section in the same sprint — do not just work around it and move on.
   2 minutes to collect under `--cov`). The Postgres- and QuestDB-backed files (`db-chaos-*`) ran up
   to 3 times slower on one run than on another a few hours earlier, so cut lanes from a run's
   numbers, not from the best one.
+- **The rest leg grew (#5505).** `rest` ran 10m53 on 2026-10-20 and about 21 to 22 minutes in the
+  merge-group runs of 2026-11-02 (41452897386, 41451680524, 41454043929), the unit directories
+  added since having landed in it unlisted. `rest-heavy-4` (`tests/unit/oms`) and `rest-heavy-5`
+  (`accounts`, `replay`, `exchange`, `recorder`, `ingestion`, `cvdev`, `rules_ir`, `net` under
+  `tests/unit`) lift the heaviest of them out, so `rest` keeps the remainder: eighteen lanes, and
+  two more `py-tests` jobs in a run. The coverage and `ci-required` wiring is unchanged, because
+  `py_test_lanes.py data-files` expects one coverage file per manifest lane. Re-measure with
+  `estimate` after the next runs and move paths again if either leg approaches the budget.
 - **To rebalance**, take the lane jobs' logs of a recent green `pr` run (job ids from
   `gh api repos/CandleViewer/CandleViewer/actions/runs/<run id>/jobs`, then
   `gh api --allow-escape-sequences repos/CandleViewer/CandleViewer/actions/jobs/<job id>/logs`) and
