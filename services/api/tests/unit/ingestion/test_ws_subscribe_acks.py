@@ -142,7 +142,7 @@ async def test_unanswered_ack_times_out_once() -> None:
     m._expire_acks()
     m._expire_acks()
     assert _count("timeout") == before + 1 and m._pending == {}
-    assert wd.check() == [TOPIC]
+    assert not wd._forced  # a timeout only counts: it never forces the topic stale
 
 
 async def test_pending_map_is_bounded_dropping_oldest() -> None:
@@ -299,3 +299,18 @@ async def test_derived_fixture_acks_settle_by_req_id() -> None:
         pass
     assert _count("rejected") == rej + 1 and m._pending == {}
     assert wd.check() == ["publicTrade.BTCUSDT"]
+
+
+async def test_silent_socket_ack_timeout_still_recycles_at_the_staleness_limit() -> None:
+    """Regression: a timeout once forced its topics stale, so `all_stale()` never fired for a
+    socket silent from connect (trade limit == ACK_TIMEOUT_S) and the recycle was lost."""
+    clk, sock = _Clock(), _Sock()
+    m, wd = _mgr(clk, sock)
+    trade = "publicTrade.BTCUSDT"
+    m.set_desired({trade})
+    await m.subscribe()
+    clk.t = conn_mod.ACK_TIMEOUT_S  # ack deadline and the 10 s trade limit coincide
+    before = _count("timeout")
+    m._expire_acks()
+    assert _count("timeout") == before + 1
+    assert wd.check() == [trade] and wd.all_stale()

@@ -327,8 +327,9 @@ _DOCS_FRAMES: dict[str, tuple[str, str, str, str, str]] = {
 #: subscribe acks (`ws/public-subscribe-ack-derived.jsonl`) are the recorded private ack
 #: (`ws/private-subscribe-ok.jsonl`, key order success, ret_msg, op, conn_id) plus the `req_id`
 #: echo the Bybit docs describe (`ws/connect`: a request `req_id` is echoed in its reply), in the
-#: documented order success, ret_msg, conn_id, req_id, op. The refused frame's `ret_msg` echoing
-#: the 10-topic args list is the documented failure shape, not a capture. A capture row is owned
+#: documented order success, ret_msg, conn_id, req_id, op. The refused frame is derived too: its
+#: `ret_msg` value (an echo of the 10-topic args list) is NOT recorded anywhere; the fixtures
+#: README states that no public refused example exists. A capture row is owned
 #: by the recorder lane once the demo stack is up; it then replaces this file.
 _DERIVED_ACK_SRC = "ws/private-subscribe-ok.jsonl"
 _DERIVED_ACK_TOPICS = [

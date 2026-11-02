@@ -290,7 +290,10 @@ class ConnectionManager:
 
     def _ack_failed(self, pending: _PendingAck, reason: str) -> None:
         ingest_subscribe_rejected_total.labels(reason=reason).inc()
-        if pending.op == "subscribe":
+        if reason == "rejected" and pending.op == "subscribe":
+            # Only a refusal is forced stale. An unanswered ack is just counted: the topic is
+            # left to the ordinary staleness path, so a socket silent from connect still
+            # reaches `all_stale()` and recycles (a forced mark would hide that silence).
             for topic in pending.topics:
                 self._watchdog.force_stale(topic)
 

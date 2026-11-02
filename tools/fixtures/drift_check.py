@@ -82,17 +82,28 @@ def infer(docs: Iterable[tuple[str, Any]]) -> Schema:
     }
 
 
+def _derived_paths(directory: Path) -> set[str]:
+    """Manifest paths whose `source` is `derived`: built from a recording plus a documented
+    field, so they yield no expectations (keyed on `source`, never on a file name)."""
+    manifest = directory / "manifest.json"
+    if not manifest.is_file():
+        return set()
+    entries = json.loads(manifest.read_text(encoding="utf-8")).get("fixtures", [])
+    return {str(e["path"]) for e in entries if e.get("source") == "derived"}
+
+
 def load_docs(directory: Path) -> list[tuple[str, Any]]:
     """`.jsonl` -> one doc per frame, keyed by topic; `.json` -> keyed by file stem
     with a trailing `_<SYMBOL>...`/`_pageN` suffix removed (e.g. `kline`)."""
     docs: list[tuple[str, Any]] = []
+    derived = _derived_paths(directory)
     for path in sorted(directory.rglob("*")):
         if path.name.endswith(".manifest.json") or path.name in {
             "manifest.json",
             EXPECTATIONS.name,
         }:
             continue
-        if path.stem.endswith("-derived"):  # #1955: built, never evidence: no expectations
+        if path.relative_to(directory).as_posix() in derived:  # #1955: built, never evidence
             continue
         if path.suffix == ".jsonl":
             for line in path.read_text(encoding="utf-8").splitlines():
