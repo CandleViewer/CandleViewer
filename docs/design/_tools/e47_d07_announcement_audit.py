@@ -138,7 +138,7 @@ PINS = (
     Pin(
         "D08",
         "E47-D08",
-        "d08df8873",
+        "e60fe7baa",
         "docs/design/E47/E47-D08.md",
         "design/e47-motion-reduced-motion",
         5444,
