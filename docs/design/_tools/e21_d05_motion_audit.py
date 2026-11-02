@@ -98,10 +98,11 @@ INTERVAL_MS = 1000  # heatmap.recentre.minIntervalMs
 CROSS_PX = 3.0  # continuous only above the 23 section 6.1.1 target column
 LUMA_STEP, LUMA_CAP = 0.09, 0.10  # heatmap.rescale.lumaStep; the per-frame cap it serves
 REVERSAL_MS = 1000  # heatmap.rescale.minReversalMs
-ROWS = (12, 20, 40, 60)  # visible ladder rows replayed for the band table
-REPLAY_ROWS, REPLAY_MS, TICK_MS = 40, 10_000, 5
-OSC = ((2, "edge ± 1 row"), (5, "edge ± 1 row"), (20, "edge ± 1 row"),
-       (2, "edge to edge"), (5, "edge to edge"), (20, "edge to edge"))  # fmt: skip
+ROWS = (4, 6, 8, 10, 12, 20, 40, 60)  # visible ladder rows replayed (zoom and text scale too)
+REPLAY_MS, TICK_MS = 10_000, 5
+OSC = ((40, 2, "edge ± 1 row"), (40, 5, "edge ± 1 row"), (40, 20, "edge ± 1 row"),
+       (40, 2, "edge to edge"), (40, 5, "edge to edge"), (40, 20, "edge to edge"),
+       (6, 20, "edge ± 1 row"), (6, 20, "edge to edge"))  # fmt: skip
 WINDOWS = (900, 60)  # the 23 reference window and the trail chip's 60 s (`14`:1197)
 BUCKETS = (100, 250, 500, 1000, 5000)
 FRAME_MS = 1000 / 60
@@ -154,13 +155,15 @@ def standard() -> tuple[float, float, float, float]:
 
 # ---------- replay 1: the re-centre band and the oscillation runs (AC 1) --------------------------
 def band(rows: int) -> int:
-    return min(BAND_MAX, max(BAND_MIN, math.floor(BAND_FRAC * rows)))
+    """Section 4.1: 20 % of the rows, 3 to 10, capped so the centre row is never in the band."""
+    clamped = min(BAND_MAX, max(BAND_MIN, math.floor(BAND_FRAC * rows)))
+    return max(0, min(clamped, (rows - 1) // 2 - 1))
 
 
-def replay(hz: int, amp: str, interval: int) -> tuple[int, int | None]:
+def replay(rows: int, hz: int, amp: str, interval: int) -> tuple[int, int | None]:
     """Re-centres in REPLAY_MS and the smallest gap between two (None: fewer than two). The mark
     alternates between two prices every half period; `interval` 0 is the band rule alone."""
-    v, b, half = REPLAY_ROWS, band(REPLAY_ROWS), 1000 // (2 * hz)
+    v, b, half = rows, band(rows), 1000 // (2 * hz)
     lo, hi = (b - 1, b) if amp.startswith("edge ±") else (b - 1, b - 1 + v)
     top, last, times = 0, -(10**9), []
     for t in range(0, REPLAY_MS, TICK_MS):
@@ -179,10 +182,12 @@ def band_rows() -> list[list[str]]:
 
 def replay_rows() -> list[list[str]]:
     out = []
-    for hz, amp in OSC:
-        naive, _ = replay(hz, amp, 0)
-        n, gap = replay(hz, amp, INTERVAL_MS)
-        out.append([f"{hz} Hz", amp, str(naive), str(n), "—" if gap is None else f"{gap} ms"])
+    for rows, hz, amp in OSC:
+        naive, _ = replay(rows, hz, amp, 0)
+        n, gap = replay(rows, hz, amp, INTERVAL_MS)
+        out.append(
+            [str(rows), f"{hz} Hz", amp, str(naive), str(n), "—" if gap is None else f"{gap} ms"]
+        )
     return out
 
 
@@ -391,10 +396,12 @@ def g_five(t: L.Tree) -> list[str]:
 def g_recentre(t: L.Tree) -> list[str]:
     bad = table_gate(t, "### 4.2", band_rows(), "band")
     bad += table_gate(t, "### 4.3", replay_rows(), "replay")
-    for hz, amp in OSC:
-        _, gap = replay(hz, amp, INTERVAL_MS)
+    for rows, hz, amp in OSC:
+        _, gap = replay(rows, hz, amp, INTERVAL_MS)
         if gap is not None and gap < INTERVAL_MS:
-            bad.append(f"{hz} Hz {amp}: two re-centres {gap} ms apart")
+            bad.append(f"{rows} rows {hz} Hz {amp}: two re-centres {gap} ms apart")
+    bad += [f"{n} rows: the centre row is in the band" for n in ROWS if n // 2 < band(n) or
+            n // 2 > n - 1 - band(n)]  # fmt: skip
     return bad
 
 
@@ -647,7 +654,7 @@ def fill() -> int:
         "### 3.2": md(["Display (`23`:825–830)", "Device px", "Window", "`ideal_ms`", "Bucket ms",
                        "Column px", "Safe mode", "Reduce"], crossover_rows()),
         "### 4.2": md(["Visible rows", "Band rows (each edge)", "Quiet rows"], band_rows()),
-        "### 4.3": md(["Oscillation", "Amplitude", "Band rule alone", "This spec",
+        "### 4.3": md(["Visible rows", "Oscillation", "Amplitude", "Band rule alone", "This spec",
                        "Smallest gap"], replay_rows()),
         "### 5.2": md(["Theme", "Cut: worst ΔL", "Cut: cells ≥ 0.10", "`slow` eased, no cap",
                        "Smallest δ", "This spec: worst ΔL", "10× lands", "100× lands"],
