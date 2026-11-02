@@ -294,11 +294,13 @@ async def test_the_guard_reads_columns_only_after_the_alter_was_applied() -> Non
 
     await run_migrations(engine, DDL_DIR, sleep=record)  # "already exists" if it read too early
 
-    # Five waits, all the guard's (the fake does not model the record table, so its read waits for
-    # nothing): `liquidations` once, as 0005's ALTER is not applied yet; `orderbook_deltas` once,
-    # before 0006's second ADD COLUMN on it; `heatmap_cells` three times, before the second to
-    # fourth ADD COLUMN of 0007. Each waits for the ALTER before it on that table to be applied.
-    assert engine.records == NAMES and slept == [0.02] * 5
+    # Seventeen waits, all the guard's (the fake does not model the record table, so its read
+    # waits for nothing): `liquidations` once, as 0005's ALTER is not applied yet;
+    # `orderbook_deltas` once, before 0006's second ADD COLUMN on it; `heatmap_cells` three times,
+    # before the second to fourth ADD COLUMN of 0007; each of the six `bars_*` tables twice,
+    # before the second and third ADD COLUMN of 0008 (#5396). Each waits for the ALTER before it
+    # on that table to be applied.
+    assert engine.records == NAMES and slept == [0.02] * 17
 
 
 async def test_a_suspended_data_table_stops_the_run_before_any_drop() -> None:
@@ -314,7 +316,7 @@ async def test_a_suspended_data_table_stops_the_run_before_any_drop() -> None:
 
 
 async def test_a_resumed_file_logs_each_skipped_statement_and_one_warning_with_names_only() -> None:
-    engine = await _migrated(records_kept=3)  # 0004 to 0007 re-run over their own effects
+    engine = await _migrated(records_kept=3)  # 0004 to 0008 re-run over their own effects
 
     with capture_logs() as logs:
         await run_migrations(engine, DDL_DIR, sleep=_no_sleep)
@@ -332,12 +334,18 @@ async def test_a_resumed_file_logs_each_skipped_statement_and_one_warning_with_n
             (NAMES[6], "add_column", "heatmap_cells", column)
             for column in ("estimated", "samples", "off_window_bid_qty", "off_window_ask_qty")
         ],
+        *[
+            (NAMES[7], "add_column", f"bars_{family}", column)
+            for family in ("time", "tick", "volume", "range", "renko", "delta")
+            for column in ("gap_before", "partial", "tape_gap")
+        ],
     ]
     assert [(r["filename"], r["log_level"], r["statements_skipped"]) for r in resumed] == [
         (NAMES[3], "warning", 6),
         (NAMES[4], "warning", 1),
         (NAMES[5], "warning", 3),
         (NAMES[6], "warning", 4),
+        (NAMES[7], "warning", 18),
     ]
     # Names and counts only, never a value (C-12.6).
     assert {frozenset(s) - {"column"} for s in skipped} == {

@@ -267,8 +267,12 @@ def _client_objects() -> list[tuple[str, dict[str, Any]]]:
 
 def test_msgpack_map_cap_covers_every_object_a_client_frame_may_carry() -> None:
     """#2509 review: the widest closed client object in `ws-schema.json` (a topic's `opts`) and
-    the widest `opts` the server accepts fit the map cap. The one open object, `opts.params`, is
-    an option no family accepts, so the server refuses it at any width."""
+    the widest `opts` the server accepts fit the map cap. Two objects are open. `opts.params` is
+    an option no family accepts, so the server refuses it at any width. A `meta.coverage_holes`
+    item (#5396) is a server-to-client `snapMeta` member that the shared envelope schema puts in
+    reach of a client frame; the server never reads a client frame's `meta`, its declared members
+    fit the cap, and the unpacker holds any map there to `MAX_MSGPACK_MAP_LEN` like every other,
+    so it needs no decode bound of its own."""
     objects = _client_objects()
     closed = [
         len(o.get("properties", {})) for _, o in objects if o.get("additionalProperties") is False
@@ -276,7 +280,9 @@ def test_msgpack_map_cap_covers_every_object_a_client_frame_may_carry() -> None:
     assert max(closed) <= MAX_MSGPACK_MAP_LEN
     opened = {name for name, o in objects if o.get("additionalProperties") is not False}
     accepted = {*UNIVERSAL, *(key for f in FAMILIES.values() for key in f.options)}
-    assert opened == {"params"} and not opened & accepted
+    assert opened == {"params", "coverage_holes"} and not opened & accepted
+    holes = [o for name, o in objects if name == "coverage_holes" and "properties" in o]
+    assert holes and all(len(o["properties"]) <= MAX_MSGPACK_MAP_LEN for o in holes)
     assert max(len({**UNIVERSAL, **f.options}) for f in FAMILIES.values()) <= MAX_MSGPACK_MAP_LEN
 
 
