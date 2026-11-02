@@ -121,6 +121,9 @@ function normalise(v: Vector): Pick<Vector, "records" | "trailer" | "prefix" | "
           trades: Number(s[9]),
           delta: q(s[10]!),
           confirmed: (Number(s[11]) & 1) === 1,
+          gapBefore: (Number(s[11]) & 0b10) !== 0,
+          partial: (Number(s[11]) & 0b100) !== 0,
+          tapeGap: (Number(s[11]) & 0b1000) !== 0,
         });
         return s;
       });
@@ -224,6 +227,12 @@ describe("kind-4 flag bits beyond bit0 (§3.4, #5396)", () => {
     expect(v.records[0]?.[11]).toBe(String(flags));
     expect(decodeBars(bytes(v.hex)).bars.map((b) => b.confirmed)).toEqual([confirmed]);
     expect(seeds.find((s) => s.name === `valid-${name}`)?.expect).toBe("ok");
+  });
+  it("reads gap_before, partial and tape_gap from bits 1-3 (#5396)", () => {
+    const [gapped] = decodeBars(bytes(named("bars_flags_gap_partial").hex)).bars;
+    expect(gapped).toMatchObject({ gapBefore: true, partial: true, tapeGap: true });
+    const [reserved] = decodeBars(bytes(named("bars_flags_reserved_bits").hex)).bars;
+    expect(reserved).toMatchObject({ gapBefore: false, partial: false, tapeGap: false });
   });
   it("ignores reserved bits 4-7: the bar decodes as the same record with bit0 only", () => {
     const buf = bytes(named("bars_flags_reserved_bits").hex);

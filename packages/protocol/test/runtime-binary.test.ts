@@ -239,8 +239,22 @@ describe("decodeBars", () => {
         trades: 42,
         delta: "-5.000",
         confirmed: true,
+        gapBefore: false,
+        partial: false,
+        tapeGap: false,
       },
     ]);
+  });
+
+  it.each([
+    [0b0010, { gapBefore: true, partial: false, tapeGap: false }],
+    [0b0100, { gapBefore: false, partial: true, tapeGap: false }],
+    [0b1000, { gapBefore: false, partial: false, tapeGap: true }],
+    [0xf1, { gapBefore: false, partial: false, tapeGap: false }],
+  ] as const)("reads flags byte %i bit by bit (bits 1-3, §3.4, #5396)", (flags, want) => {
+    const frame = concatBuffers(barsHeader(1), barRecord(0n, 0n, 105000n, flags));
+    const [bar] = decodeBars(frame).bars;
+    expect(bar).toMatchObject({ ...want, confirmed: (flags & 1) !== 0 });
   });
 
   it("keeps same-open-time bars distinct by index", () => {
