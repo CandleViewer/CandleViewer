@@ -520,7 +520,9 @@ def _violated_constraint(exc: DBAPIError) -> str | None:
         return None
     orig: Any = exc.orig
     for source in (orig, getattr(orig, "__cause__", None), getattr(orig, "driver_exception", None)):
-        name = getattr(source, "constraint_name", None)
+        name = getattr(source, "constraint_name", None) or getattr(
+            getattr(source, "diag", None), "constraint_name", None
+        )
         if name:
             return str(name)
     return None
