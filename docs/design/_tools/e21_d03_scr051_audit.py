@@ -13,8 +13,9 @@ G-BOARDS, G-PENPOT, G-RULING, G-RULED, G-NOCLOSE, G-PUBLIC, G-UNTOUCHED and G-MU
 section 19.3 equals this tool's list).
 
 Pins (G-RULED): every bullet of the BQ section is pinned by its sha256 in
-`e21_d03_ruled_pins.txt`; `--repin-ruled` is the only writer. The section is pending a ruling
-(comment 6579618328); when it is ruled, the section and RULING below change together.
+`e21_d03_ruled_pins.txt`; `--repin-ruled` is the only writer. The section is RULED by the
+orchestrator's ruling of record (comment 6580396430 on the BQ list 6579618328): every bullet keeps
+its default and carries "RULED: ACCEPT" with the ruling id (G-RULING).
 
 --self-test applies every mutation (M-n) in memory; each must add exactly one FAIL, from the gate
 it names, to a clean baseline; the files on disk are checked byte-identical afterwards (sha256).
@@ -44,12 +45,13 @@ from pathlib import Path
 from types import ModuleType
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "9b77e6b83"  # origin/main when the spec was written; every plan cite is read here
+BASE = "201e19744"  # origin/main at the ruling fold (from 9b77e6b83); every plan cite is read here
 D02_HEAD = (
     "7e1040260"  # PR #5488 (E21-D02, #440) head; re-pinned to its merge commit when it merges
 )
 D02_PR = "#5488"
-BQ_LIST = "6579618328"  # the BQ list on #503; no ruling yet
+BQ_LIST = "6579618328"  # the BQ list on #503
+RULING = "6580396430"  # the ruling of record on it: all 16 ACCEPT with riders
 
 SPEC_REL = "docs/design/E21/E21-D03.md"
 TOOL_REL = "docs/design/_tools/e21_d03_scr051_audit.py"
@@ -584,14 +586,18 @@ def g_tabs(t: Texts) -> list[Finding]:
 
 def g_valid(t: Texts) -> list[Finding]:
     cat = cite_line("14", None, 1248) or ""
+    wire = cite_line("23", None, 2452) or ""
     bad = []
     got = {r[0]: r for r in rows(section(t.spec, "### 9.1"))}
     trail = got.get("Trail length", [])
-    m = re.search(r"trail (\d+)–(\d+) s", cat)
-    if not m or len(trail) < 3 or trail[1] != f"{m.group(1)}–{m.group(2)} s":
-        bad.append("trail range differs from `14`:1248")
+    # BQ-7's rider: the contract (`window_seconds`) beats the catalogue's range, which is an A-row.
+    m = re.search(r'"window_seconds".*"minimum": (\d+), "maximum": (\d+)', wire)
+    if not m or len(trail) < 4 or trail[1] != f"{m.group(1)}–{m.group(2)} s":
+        bad.append("trail range differs from `window_seconds` (`23`:2452)")
     elif f"`{{min}}` {m.group(1)}" not in trail[2] or f"`{{max}}` {m.group(2)}" not in trail[2]:
         bad.append("trail copy fills")
+    elif "trail 5–600 s" not in cat or "A-7" not in trail[3]:
+        bad.append("the catalogue's trail range not routed (A-7)")
     row = got.get("Row height", [])
     if "row height 10–40 px" not in cat or len(row) < 4 or row[1] != "24–40 px":
         bad.append("row height not 24–40 px against the catalogue's 10–40")
@@ -616,7 +622,7 @@ def g_cost(t: Texts) -> list[Finding]:
         if re.search(r"\d", s) or not deck.get(wid):
             bad.append(f"{wid} carries a figure")
     s34 = section(t.spec, "### 3.4")
-    if 'labelled "illustrative, seeded synthetic book"' not in s34:
+    if 'labelled "illustrative, PROPOSED, not a budget"' not in s34:
         bad.append("illustrative label")
     if "never an estimate" not in s34 or "R-6" not in s34:
         bad.append("measured only (R-6)")
@@ -793,14 +799,16 @@ def g_penpot(t: Texts) -> list[Finding]:
 
 
 def g_ruling(t: Texts) -> list[Finding]:
-    head = f"## The questions BQ-0 … BQ-15 — defaults built; ruling pending (comment {BQ_LIST})"
+    head = f"## The questions BQ-0 … BQ-15 — RULED (comment {RULING})"
     bad = [] if head in t.spec.split("\n") else ["heading"]
+    if f"comment {BQ_LIST} on #503" not in section(t.spec, "## The questions BQ-0"):
+        bad.append("the BQ list id")
     bullets = bq_bullets(t.spec)
     ids = [m.group(1) for b in bullets if (m := re.match(r"- \*\*(BQ-\d+)", b))]
     if ids != [f"BQ-{n}" for n in range(16)]:
         bad.append(f"ids {ids}")
     for b, bid in zip(bullets, ids):
-        if "Default built:" not in b or "RULED" in b:
+        if "Default built:" not in b or f"**RULED: ACCEPT** ({RULING})" not in b:
             bad.append(bid)
     return [("G-RULING", "; ".join(bad))] if bad else []
 
@@ -899,9 +907,9 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "M-8",
         "G-VALID",
-        "the trail range drifts",
-        "| Trail length | 5–600 s",
-        "| Trail length | 5–900 s",
+        "the trail falls back to the catalogue's range",
+        "| Trail length | 10–900 s",
+        "| Trail length | 5–600 s ",
     ),
     Mutation(
         "M-9",
@@ -914,7 +922,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "M-10",
         "G-COST",
         "the illustrative label dropped",
-        'labelled "illustrative, seeded synthetic book"',
+        'labelled "illustrative, PROPOSED, not a budget"',
         "labelled as a sample",
     ),
     Mutation(
@@ -1000,9 +1008,9 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "M-22",
         "G-RULING",
-        "the heading claims a ruling",
-        "defaults built; ruling pending (comment 6579618328)",
-        "RULED (orchestrator, comment 6579618328)",
+        "the heading cites the BQ list, not the ruling",
+        "BQ-15 — RULED (comment 6580396430)",
+        "BQ-15 — RULED (comment 6579618328)",
     ),
     Mutation(
         "M-23",
