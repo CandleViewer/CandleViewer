@@ -39,7 +39,15 @@ Gates (each FAIL led by its name):
   G-CITE      every cite in range and on a non-blank line at its base, and equal to the pins.
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
               deny word in the spec; no deny word in this tool's text or the pins.
-  G-SCOPE     the diff touches only the spec, this tool and the pins file.
+  G-DRAWN     §0 is pending ("to draw (PR 2)" with no board table, PR 1) or drawn (PR 2).
+              Drawn: §0 names the page id; every frame row's Status reads "drawn, board NN" (or
+              "boards NN and MM") with each NN a row of the board table and the first NN its
+              Board cell's number; each board row's Status is `drawn (r<n>)` with its board id
+              and export, the export's number and slug agree with the row's board name, and on
+              disk the PNG's IHDR width × height and sha256 equal the record; and no other
+              E38-D03-*.png sits in `docs/design/E38/img/`.
+  G-SCOPE     the diff touches only the spec, this tool, the pins file and the E38-D03 exports in
+              `docs/design/E38/img/`.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e38_d03_honesty_audit.py --check
@@ -97,12 +105,8 @@ CITE = re.compile(
 TOKEN_NAME = re.compile(
     r"`((?:color|font|border|radius|type|space|size|motion|opacity)\.[a-z0-9.-]*[a-z0-9])`"
 )
-CLOSING = re.compile(
-    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE
-)
-LOCAL_PATH = re.compile(
-    "/" + "home/|/Users/|[A-Za-z]:\\\\|\\bwt-" + "notes\\b"
-)  # assembled
+CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE)
+LOCAL_PATH = re.compile("/" + "home/|/Users/|[A-Za-z]:\\\\|\\bwt-" + "notes\\b")  # assembled
 AGENT_NAME = re.compile(r"\b[a-z]{2,4}-worker-\d\b")
 URL_OR_HOST = re.compile(r"https?://|penpot\.[a-z]|team-id=|file-id=", re.IGNORECASE)
 DENY = (
@@ -152,6 +156,16 @@ ACS = ("AC-1", "AC-2", "AC-3", "AC-4", "AC-5")
 FRAME = re.compile(r"`((?:SCR-\d{3}|[a-z-]+)/[a-z0-9-]+)`")
 UNMERGED = re.compile(r"E38-D02|#1003")
 NEVER = re.compile(r"#1075|FillModelDisclosure")
+IMG_REL = "docs/design/E38/img"
+IMG = re.compile(r"docs/design/E38/img/E38-D03-\d\d-[a-z0-9-]+\.png")
+PENDING = "to draw (PR 2)"
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+DRAWN = re.compile(
+    rf"drawn \(r\d+\): board id `{UUID}`, "
+    r"`docs/design/E38/img/(E38-D03-(\d\d)-([a-z0-9-]+)\.png)` "
+    r"\((\d+) × (\d+), sha256 `([0-9a-f]{64})`\)"
+)
+FRAME_DRAWN = re.compile(r"drawn, boards? (\d\d)(?: and (\d\d))?")
 
 
 @dataclass(frozen=True)
@@ -161,13 +175,12 @@ class Texts:
     tool: str
     changed: list[str] | None
     memo: dict[str, str | None]
+    files: dict[str, bytes]
 
 
 def git(*args: str) -> str | None:
     try:
-        r = subprocess.run(
-            ["git", "-C", str(ROOT), *args], capture_output=True, check=False
-        )
+        r = subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, check=False)
     except OSError:
         return None
     return r.stdout.decode("utf-8", "surrogateescape") if r.returncode == 0 else None
@@ -300,8 +313,7 @@ def contrast_values(t: Texts, row: list[str]) -> list[str]:
     cc = mod("contrast_check")
     fg, bg = tok(row[1]), tok(row[2])
     return [
-        f"{cc.contrast_ratio(hex_rgb(color(th, fg)), hex_rgb(color(th, bg))):.2f}"
-        for th in THEMES
+        f"{cc.contrast_ratio(hex_rgb(color(th, fg)), hex_rgb(color(th, bg))):.2f}" for th in THEMES
     ]
 
 
@@ -313,11 +325,7 @@ def cvd_values(t: Texts, row: list[str]) -> tuple[str, str]:
     ds = [cv.delta_e76(ha, hb)] + [
         cv.delta_e76(cv.simulate(ha, d), cv.simulate(hb, d)) for d in DEFICIENCIES
     ]
-    under = [
-        n
-        for n, d in zip(("normal", *DEFICIENCIES), ds, strict=True)
-        if d < cv.JND_FLOOR
-    ]
+    under = [n for n, d in zip(("normal", *DEFICIENCIES), ds, strict=True) if d < cv.JND_FLOOR]
     return " / ".join(f"{d:.2f}" for d in ds), (", ".join(under) if under else "none")
 
 
@@ -386,9 +394,7 @@ def g_token(t: Texts) -> list[str]:
     known = known_tokens()
     names = sorted(set(TOKEN_NAME.findall(t.spec)))
     return [
-        f"`{n}` does not resolve in the token JSON at the base"
-        for n in names
-        if n not in known
+        f"`{n}` does not resolve in the token JSON at the base" for n in names if n not in known
     ]
 
 
@@ -445,9 +451,7 @@ def g_hidden(t: Texts) -> list[str]:
     bad = []
     live, alt, b07 = row(t, "S79-07"), row(t, "S79-09"), row(t, "B07")
     if "absent" not in live[3] or "T2" in live[3] or "disabled" in live[3]:
-        bad.append(
-            "S79-07: the LIVE reset must read absent, with no T2 or disabled leg"
-        )
+        bad.append("S79-07: the LIVE reset must read absent, with no T2 or disabled leg")
     if "not even disabled" not in live[2]:
         bad.append("S79-07: the note that it never renders disabled is missing")
     for r in (alt, b07):
@@ -509,9 +513,7 @@ def t2_quotes(t: Texts) -> list[str]:
             bad.append(f"§1 item 4 does not quote {gid} verbatim from `DS`")
     pairs = {(r[1], r[2]) for r in contrast_rows(t) if len(r) > 2}
     if ("`color.text.tertiary`", "`color.surface.raised`") not in pairs:
-        bad.append(
-            "§8.1 has no `color.text.tertiary` on `color.surface.raised` pair (G-T2.2)"
-        )
+        bad.append("§8.1 has no `color.text.tertiary` on `color.surface.raised` pair (G-T2.2)")
     return bad
 
 
@@ -523,18 +525,10 @@ def g_t2(t: Texts) -> list[str]:
         return ["the spec has no state rows"]
     keys = e09_templates(t)
     for r in rows:  # G-T2.1c: every gated control names its rendering
-        if (
-            len(r) >= 4
-            and ("T2" in r[2] or "T2" in r[3])
-            and not RENDERING.search(r[3])
-        ):
-            bad.append(
-                f"{r[0]}: a T2 control with no rendering (2a, 2b or the sentence form)"
-            )
+        if len(r) >= 4 and ("T2" in r[2] or "T2" in r[3]) and not RENDERING.search(r[3]):
+            bad.append(f"{r[0]}: a T2 control with no rendering (2a, 2b or the sentence form)")
     if "CMP-019 `lock`" not in section(t.spec, "## 1."):
-        bad.append(
-            "§1 item 4 does not state the CMP-019 `lock` glyph that leads a T2 label"
-        )
+        bad.append("§1 item 4 does not state the CMP-019 `lock` glyph that leads a T2 label")
     if not re.search(
         r"Until it is acknowledged, live order entry stays T2 `rbac.env` \(G-3\), rendering",
         t.spec,
@@ -548,9 +542,7 @@ def g_t2(t: Texts) -> list[str]:
         if not quote:
             bad.append(f"{r[0]}: a T2 presentation with no quoted reason")
         elif "PROPOSED" not in r[3] and not any(k.match(quote[1]) for k in keys):
-            bad.append(
-                f"{r[0]}: {quote[1]!r} is no E09-D09 key's text and is not PROPOSED"
-            )
+            bad.append(f"{r[0]}: {quote[1]!r} is no E09-D09 key's text and is not PROPOSED")
     return bad
 
 
@@ -566,16 +558,10 @@ def g_ruled(t: Texts) -> list[str]:
         "**Close, cancel, reduce-only and stops stay enabled** (C-2.6): a protective write is never gated."
         not in t.spec
     ):
-        bad.append(
-            "§4.2: the protective writes are not stated as enabled (BQ-13, C-2.6)"
-        )
+        bad.append("§4.2: the protective writes are not stated as enabled (BQ-13, C-2.6)")
     if "close, cancel, reduce-only and stops enabled" not in row(t, "S122-06")[2]:
-        bad.append(
-            "S122-06: the reduce-only frame does not keep the protective writes enabled"
-        )
-    row(
-        t, "S77-01"
-    )  # BQ-18's primary entry: the row must exist (LookupError otherwise)
+        bad.append("S122-06: the reduce-only frame does not keep the protective writes enabled")
+    row(t, "S77-01")  # BQ-18's primary entry: the row must exist (LookupError otherwise)
     row(t, "OQ-2")  # BQ-05: the section ids asked of the `14` owner
     return bad
 
@@ -595,9 +581,7 @@ def g_cite(t: Texts) -> list[str]:
     pinned = parse_pins(t.pins)
     for label, h in hashes.items():
         if label not in pinned:
-            bad.append(
-                f"cite {label} is unpinned: verify it by content, then --repin-ruled"
-            )
+            bad.append(f"cite {label} is unpinned: verify it by content, then --repin-ruled")
         elif pinned[label] != h:
             bad.append(f"cite {label}: the line at its base is not the pinned content")
     return bad
@@ -627,16 +611,67 @@ def g_scope(t: Texts) -> list[str]:
         return ["cannot list the changed paths (git failed)"]
     own = ", ".join(OWN_PATHS)
     return [
-        f"{p} is touched; this ticket owns {own}"
+        f"{p} is touched; this ticket owns {own} and the E38-D03 exports"
         for p in t.changed
-        if p not in OWN_PATHS
+        if p not in OWN_PATHS and not IMG.fullmatch(p)
     ]
+
+
+def png_size(data: bytes) -> tuple[int, int] | None:
+    if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        return None
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def board_problems(t: Texts, boards: list[list[str]]) -> list[str]:
+    bad = []
+    listed: set[str] = set()
+    for r in boards:
+        m = DRAWN.fullmatch(r[5]) if len(r) == 6 else None
+        if m is None:
+            bad.append(f"board {r[0]}: Status is not the drawn form")
+            continue
+        name, no, slug, sha = m[1], m[2], m[3], m[6]
+        listed.add(name)
+        if no != r[0] or r[1] != f"`E38-D03 / {no} {slug}`":
+            bad.append(f"board {r[0]}: the export names another board or slug")
+        data = t.files.get(name)
+        size = (int(m[4]), int(m[5]))
+        if data is None or hashlib.sha256(data).hexdigest() != sha or png_size(data) != size:
+            bad.append(f"board {r[0]}: {name} is missing or not its W × H and sha256")
+    stray = sorted(set(t.files) - listed)
+    if stray:
+        bad.append(f"E38-D03 PNGs on disk that §0 does not list: {stray}")
+    return bad
+
+
+def g_drawn(t: Texts) -> list[str]:
+    zero = section(t.spec, "## 0.")
+    head = zero.strip().split("\n", 1)[0]
+    frames = [r for r in table_rows(zero, "B") if re.fullmatch(r"B\d\d", r[0])]
+    boards = table_rows(zero, "0")
+    if not frames:
+        return ["§0 lists no frames"]
+    if PENDING in head and not boards:
+        return []  # PR 1: nothing drawn yet
+    bad = []
+    if PENDING in head:
+        bad.append(f"a mix: §0's heading still reads {PENDING!r}")
+    if not re.search(rf"page id `{UUID}`", zero):
+        bad.append("drawn, but §0 names no page id")
+    nos = {r[0] for r in boards}
+    for r in frames:
+        m = FRAME_DRAWN.fullmatch(r[3]) if len(r) == 4 else None
+        drawn = [n for n in (m.groups() if m else ()) if n]
+        if not drawn or any(n not in nos for n in drawn) or int(drawn[0]) != int(r[2][:1] or 0):
+            bad.append(f"{r[0]}: names no drawn board of the board table")
+    return bad + board_problems(t, boards)
 
 
 GATES: dict[str, Callable[[Texts], list[str]]] = {
     "G-STATE": g_state, "G-TOKEN": g_token, "G-CONTRAST": g_contrast, "G-CVD": g_cvd,
     "G-HIDDEN": g_hidden, "G-T2": g_t2, "G-RULED": g_ruled, "G-MERGED": g_merged, "G-CITE": g_cite, "G-HYGIENE": g_hygiene,
-    "G-SCOPE": g_scope,
+    "G-DRAWN": g_drawn, "G-SCOPE": g_scope,
 }  # fmt: skip
 
 
@@ -668,13 +703,13 @@ def changed_paths() -> list[str] | None:
 
 def load() -> Texts:
     spec = (ROOT / SPEC_REL).read_text(encoding="utf-8")
-    pins = (
-        (ROOT / PINS_REL).read_text(encoding="utf-8")
-        if (ROOT / PINS_REL).exists()
-        else ""
-    )
+    pins = (ROOT / PINS_REL).read_text(encoding="utf-8") if (ROOT / PINS_REL).exists() else ""
     tool = (ROOT / TOOL_REL).read_text(encoding="utf-8")
-    return Texts(spec, pins, tool, changed_paths(), {})
+    img = ROOT / IMG_REL
+    files = (
+        {f.name: f.read_bytes() for f in sorted(img.glob("E38-D03-*.png"))} if img.is_dir() else {}
+    )
+    return Texts(spec, pins, tool, changed_paths(), {}, files)
 
 
 def fill(t: Texts) -> str:
@@ -695,9 +730,7 @@ def fill(t: Texts) -> str:
 def sub(old: str, new: str) -> Callable[[Texts], Texts]:
     def f(t: Texts) -> Texts:
         if t.spec.count(old) != 1:
-            raise SystemExit(
-                f"self-test: the spec carries {old[:50]!r} {t.spec.count(old)} times"
-            )
+            raise SystemExit(f"self-test: the spec carries {old[:50]!r} {t.spec.count(old)} times")
         return replace(t, spec=t.spec.replace(old, new))
 
     return f
@@ -723,6 +756,43 @@ def drop_row(lead: str) -> Callable[[Texts], Texts]:
         )
 
     return f
+
+
+def with_file(name: str, data: bytes | None) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        files = {k: v for k, v in t.files.items() if k != name}
+        if data is not None:
+            files[name] = data
+        return replace(t, files=files)
+
+    return f
+
+
+B04_PNG = "E38-D03-04-scr-137-paper-fidelity.png"
+B02_PNG = "E38-D03-02-scr-122-live-eligibility.png"
+
+
+def one_pixel_wider(t: Texts) -> Texts:
+    """Board 04's IHDR width plus one; the record's sha256 moves to match, so only the size is off."""
+    data = bytearray(t.files[B04_PNG])
+    data[16:20] = (int.from_bytes(data[16:20], "big") + 1).to_bytes(4, "big")
+    old = hashlib.sha256(t.files[B04_PNG]).hexdigest()
+    new = hashlib.sha256(bytes(data)).hexdigest()
+    return replace(t, spec=t.spec.replace(old, new, 1), files={**t.files, B04_PNG: bytes(data)})
+
+
+def one_byte_off(t: Texts) -> Texts:
+    """Board 02's last byte changed: its size stands, its sha256 does not."""
+    data = bytearray(t.files[B02_PNG])
+    data[-1] ^= 0x01
+    return replace(t, files={**t.files, B02_PNG: bytes(data)})
+
+
+def swap_boards(t: Texts) -> Texts:
+    """Boards 01 and 03 swap bytes: both sizes and sha256 then disagree with the record."""
+    a = "E38-D03-01-scr-079-paper-reset.png"
+    b = "E38-D03-03-scr-137-parity-report.png"
+    return replace(t, files={**t.files, a: t.files[b], b: t.files[a]})
 
 
 MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
@@ -751,7 +821,20 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-CITE", "re-point a `14` cite to an unpinned line", sub("(`14`:43)", "(`14`:44)")),
     ("G-HYGIENE", "write a closing keyword against #1074", sub("carries the closing line.", "carries the closing line. Closes #1074.")),
     ("G-HYGIENE", "put a deny word into the tool's own text", lambda t: replace(t, tool=t.tool + "\n# " + DENY[6] + "\n")),
+    ("G-DRAWN", "board 04's PNG one pixel wider than its record", one_pixel_wider),
+    ("G-DRAWN", "board 02's PNG one byte off its sha256", one_byte_off),
+    ("G-DRAWN", "boards 01 and 03 swap bytes", swap_boards),
+    ("G-DRAWN", "a board's PNG missing on disk", with_file("E38-D03-05-scr-079-paper-reset-light.png", None)),
+    ("G-DRAWN", "an extra E38-D03 PNG on disk", with_file("E38-D03-06-extra.png", b"\x89PNG\r\n\x1a\n")),
+    ("G-DRAWN", "§0's heading back to pending (a mix)", sub("## 0. The frames (Penpot) — drawn", "## 0. The frames (Penpot) — to draw (PR 2)")),
+    ("G-DRAWN", "a frame row names a board not drawn", set_cell("B19", 3, "drawn, board 06")),
+    ("G-DRAWN", "a frame row on another board than its Board cell", set_cell("B13", 3, "drawn, board 02")),
+    ("G-DRAWN", "a frame row back to pending", set_cell("B08", 3, PENDING)),
+    ("G-DRAWN", "a board row's name off its export's slug", sub("`E38-D03 / 02 scr-122-live-eligibility`", "`E38-D03 / 02 scr-122-live-access`")),
+    ("G-DRAWN", "the page id dropped", lambda t: replace(t, spec=re.sub(rf"page id `{UUID}`", "page id pending", t.spec))),
+    ("G-DRAWN", "board 05's row dropped (its PNG then unlisted)", drop_row("| 05 ")),
     ("G-SCOPE", "touch `14` in the diff", lambda t: replace(t, changed=[*OWN_PATHS, PATHS["14"]])),
+    ("G-SCOPE", "another ticket's export in the diff", lambda t: replace(t, changed=[*OWN_PATHS, "docs/design/E38/img/E38-D04-01-x.png"])),
 )  # fmt: skip
 
 
@@ -759,9 +842,7 @@ def selftest() -> tuple[bool, list[str]]:
     base = replace(load(), changed=list(OWN_PATHS))
     before = base.spec
     found = audit(base)
-    out = [f"self-test: baseline {len(found)} FAIL"] + [
-        f"  baseline {g}: {m}" for g, m in found
-    ]
+    out = [f"self-test: baseline {len(found)} FAIL"] + [f"  baseline {g}: {m}" for g, m in found]
     ok = not found
     for i, (gate, what, fn) in enumerate(MUTATIONS, 1):
         gates = sorted({g for g, _ in audit(fn(base))})
