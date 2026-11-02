@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import importlib
+import importlib.util
 import json
 import re
 from collections.abc import Callable, Mapping, Sequence
@@ -260,11 +261,33 @@ def _probe(module: str, word: str) -> Callable[[], bool]:
     )
 
 
+def _heatmap_names(word: str) -> Callable[[], bool]:
+    return lambda: any(
+        word in n for n in vars(importlib.import_module("candleviewer.orderflow.heatmap"))
+    )
+
+
+def _module(name: str) -> Callable[[], bool]:
+    return lambda: importlib.util.find_spec(f"candleviewer.ws.{name}") is not None
+
+
 #: 16.2 rows the contract states and no code enforces yet: the owning ticket, and a probe that is
 #: true once code for it exists (the row must then be mapped above, so this list cannot rot).
-#: None is left: the deep-book cap (#604, E21-T01) and the heatmap spec caps and snapshot bound
-#: (#605, E21-T02) are built and mapped.
-CONTRACT_ONLY_ROWS: Final[dict[str, tuple[str, Callable[[], bool]]]] = {}
+#: The deep-book cap (#604, E21-T01) and the heatmap spec caps and snapshot bound (#605, E21-T02)
+#: are built and mapped. The subscription quota rows are #652's (E21-X02): each probe fires once
+#: `ws.limits` or `orderflow.heatmap` names its constant, or `ws.quota` exists.
+CONTRACT_ONLY_ROWS: Final[dict[str, tuple[str, Callable[[], bool]]]] = {
+    "Max `heatmap.*` / connection": ("#652", _probe("limits", "HEATMAP_SUBSCRIPTIONS")),
+    "Max `heatmap.*` / user": ("#652", _probe("limits", "HEATMAP_SUBSCRIPTIONS")),
+    "Max `heatmap.*` specs / user": ("#652", _probe("limits", "HEATMAP_SPECS_PER_USER")),
+    "Heatmap specs / user / symbol": ("#652", _probe("limits", "SPECS_PER_USER_SYMBOL")),
+    "Heatmap spec points / server": ("#652", _heatmap_names("POINTS_PER_SERVER")),
+    "Quota points / connection": ("#652", _probe("limits", "QUOTA_POINTS")),
+    "Quota points / user": ("#652", _probe("limits", "QUOTA_POINTS")),
+    "Quota point": ("#652", _heatmap_names("QUOTA_ROWS_PER_POINT")),
+    "`heatmap.*` weight": ("#652", _module("quota")),
+    "Deep `book.*` weight": ("#652", _probe("limits", "DEEP_BOOK_ROWS")),
+}
 #: 3.6 table rows: the JSON bounds of SR-184, which 16.2 does not repeat, and the JSON value bound,
 #: SR-185's number, which 16.2 states for both encodings (#4924).
 SECTION_3_6_ROWS: Final = {
