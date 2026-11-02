@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Final, Protocol
 
@@ -36,11 +37,14 @@ import structlog
 from candleviewer.bars.errors import BarsError
 from candleviewer.bars.metrics import bar_emit_sink_errors_total
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
-from candleviewer.bars.rows import bar_param_for
+from candleviewer.bars.rows import bar_param_for, bar_row
 from candleviewer.bars.write_holes import HoleKey, HoleRecorder
 
 #: Per-sink emit bound (§4.2 `Bars lane → sinks` row).
 SINK_TIMEOUT_S: Final = 5.0
+#: The per-sink bound `EmitRouter.emit` is awaiting a sink under, so a sink can tell a cancellation
+#: by the bound (`expired()`) from a stop.
+_BOUND: ContextVar[asyncio.Timeout | None] = ContextVar("bars_emit_bound", default=None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,10 +75,10 @@ class WriterSink:
     would multiply the QuestDB write rate by the trade rate for no reader.
 
     #5396: an emission whose closed bars the writer does not take has them recorded in `holes`
-    before its exception propagates: reason `sink_timeout` when the emission is cancelled,
-    `refused` otherwise. `abandon` records them as `shutdown` when the router is cancelled before
-    it reaches this sink. Recording is synchronous. A bar the writer took is cleared again once
-    it is stored.
+    before its exception propagates: reason `sink_timeout` when the router's per-sink bound
+    cancelled it, `shutdown` for any other cancellation (a stop), `refused` otherwise. `abandon`
+    records them as `shutdown` when the router is cancelled before it reaches this sink.
+    Recording is synchronous. A bar the writer took is cleared again once it is stored.
     """
 
     name = "questdb"
@@ -92,19 +96,22 @@ class WriterSink:
                 closed, emission.spec, source="tape", generation=emission.generation
             )
         except asyncio.CancelledError:
-            self._record(closed, emission, "sink_timeout")
+            bound = _BOUND.get()  # the router's per-sink bound, when it is what cancelled
+            reason = "sink_timeout" if bound is not None and bound.expired() else "shutdown"
+            self._note_unstored(closed, emission, reason)
             raise
         except Exception:
-            self._record(closed, emission, "refused")
+            self._note_unstored(closed, emission, "refused")
             raise
 
     def abandon(self, emission: BarEmission) -> None:
         """The router was cancelled before this sink got `emission`: its closed bars are holes."""
         closed = [u.bar for u in emission.updates if u.kind == "close"]
         if closed:
-            self._record(closed, emission, "shutdown")
+            self._note_unstored(closed, emission, "shutdown")
 
-    def _record(self, closed: list[Bar], emission: BarEmission, reason: str) -> None:
+    # Not `_record`: the event-coverage lint keys on bare names and misreads it (#4730).
+    def _note_unstored(self, closed: list[Bar], emission: BarEmission, reason: str) -> None:
         if self._holes is None:
             return
         spec, gen = emission.spec, emission.generation
@@ -114,10 +121,20 @@ class WriterSink:
             param = ""
         keys = [
             HoleKey(b.symbol, spec.spec_hash, spec.kind, param, gen, b.index, b.open_time,
-                    b.close_time + 1)
+                    b.close_time + 1, _checksum(b, spec, gen))
             for b in closed if not b.synthetic
         ]  # fmt: skip
         self._holes.lost(keys, reason)
+
+
+def _checksum(bar: Bar, spec: BarSpec, generation: int) -> int | None:
+    """The `row_checksum` the writer would store for `bar` (the version the ledger compares with
+    the one stored); None when it has no stored form."""
+    try:
+        value = bar_row(bar, spec, source="tape", generation=generation)["row_checksum"]
+    except (BarsError, ValueError):
+        return None
+    return int(str(value))
 
 
 class EmitRouter:
@@ -141,8 +158,12 @@ class EmitRouter:
         emission = BarEmission(spec, generation, updates)
         for n, sink in enumerate(self._sinks):
             try:
-                async with asyncio.timeout(self._timeout_s):
-                    await sink.emit(emission)
+                async with asyncio.timeout(self._timeout_s) as bound:
+                    token = _BOUND.set(bound)
+                    try:
+                        await sink.emit(emission)
+                    finally:
+                        _BOUND.reset(token)
             except asyncio.CancelledError:  # not the bound: `asyncio.timeout` raises TimeoutError
                 _abandon(self._sinks[n + 1 :], emission)
                 raise

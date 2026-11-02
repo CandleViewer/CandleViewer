@@ -15,8 +15,11 @@ and queued for heal (`pending()`, the rebuild path's hand-off). It is never sile
 the time it was first seen and the number of terminal outcomes it holds. Keys are recorded only
 at a terminal outcome, never per attempt; a repeat raises `count` and is not counted again by the
 metric. A key stored since (`written`) leaves its record, which splits around it. A key already
-stored when a later write of it is not stored is no hole (the stored row is served): it is
-counted as `superseded` and logged, and not recorded (`MAX_RECENT_KEYS` keys are remembered).
+stored when a later write of it (an amend) is not stored is a hole too, reason `superseded`: the
+row served is the earlier one, which no longer matches the tape. `MAX_RECENT_KEYS` stored keys are
+remembered, each with its row checksum, and a loss of the very version stored is no hole. A
+`superseded` record is `stale_served`: a bar a response serves never suppresses it, and it closes
+only when a later write of the key is stored.
 
 **Bound.** At most `MAX_RANGES_PER_SERIES` records per series and `MAX_TOTAL_RANGES` in all (the
 series with the most merges first). Past either, the oldest records merge into one span: a merged
@@ -85,8 +88,9 @@ MAX_SERIES: Final = 16_384
 MAX_RECENT_KEYS: Final = 4096
 #: Recorded and superseded losses are logged at most once per series per minute.
 LOG_EVERY_US: Final = 60_000_000
-#: The closed `reason` values of a record (and of `bars_write_holes_total`, with `superseded`).
+#: The closed `reason` values `lost` takes; a record also takes `superseded` (a stored key's).
 HOLE_REASONS: Final = WRITE_HOLE_REASONS
+_RECORD_REASONS: Final = (*WRITE_HOLE_REASONS, SUPERSEDED)
 _KINDS: Final = frozenset(get_args(BarKind))
 
 
@@ -102,7 +106,8 @@ def _wall_us() -> int:
 @dataclass(frozen=True, slots=True)
 class HoleKey:
     """One closed bar of a series: its identity and its span `[open_us, end_us)`. `generation`
-    and `index` are None for a row with no builder index (a kline row)."""
+    and `index` are None for a row with no builder index (a kline row). `checksum` is the row's
+    `row_checksum` when known: it tells the version stored from a later one."""
 
     symbol: str
     spec_hash: str
@@ -112,6 +117,7 @@ class HoleKey:
     index: int | None
     open_us: int
     end_us: int
+    checksum: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +147,7 @@ class HoleRange:
     first_seen_us: int
     count: int
     merged: bool
+    stale_served: bool
 
 
 @dataclass(slots=True)
@@ -154,6 +161,8 @@ class _Range:
     first_seen_us: int
     count: int
     merged: bool = False
+    #: The store serves an earlier row for a key here: a served bar never suppresses it.
+    stale_served: bool = False
 
     def holds(self, kind: str, key: Present) -> bool:
         """True when `key` is one of this record's keys (a time bar: by its open time)."""
@@ -189,7 +198,7 @@ class _Range:
 
     def _part(self, first: int, last: int, from_us: int, to_us: int) -> _Range:
         return _Range(self.generation, first, max(first, last), from_us, to_us, self.reason,
-                      self.first_seen_us, self.count, self.merged)  # fmt: skip
+                      self.first_seen_us, self.count, self.merged, self.stale_served)  # fmt: skip
 
 
 @dataclass(slots=True)
@@ -219,6 +228,7 @@ def hole_key_for_row(row: dict[str, object], spec_hash: str, kind: str) -> HoleK
         str(row["symbol"]), spec_hash, kind, str(row.get("bar_param") or ""),
         None if gen is None else int(str(gen)), None if idx is None else int(str(idx)),
         open_us, max(end_us, open_us + 1),
+        None if row.get("row_checksum") is None else int(str(row["row_checksum"])),
     )  # fmt: skip
 
 
@@ -231,7 +241,8 @@ class WriteHoleLedger:
         self._now = now_us
         self._series: dict[tuple[str, str], _Series] = {}
         self._revisions: dict[tuple[str, str], int] = {}
-        self._recent: OrderedDict[_KeyId, None] = OrderedDict()  # keys stored lately
+        #: Keys stored lately, with the stored row's checksum (None: unknown).
+        self._recent: OrderedDict[_KeyId, int | None] = OrderedDict()
         self._counted: OrderedDict[_KeyId, None] = OrderedDict()  # keys counted lately
         self._logged: dict[tuple[tuple[str, str], str], int] = {}
         self._dirty = False
@@ -245,8 +256,8 @@ class WriteHoleLedger:
 
     def lost(self, keys: Sequence[HoleKey], reason: str) -> int:
         """Record the terminal outcome of closed bars not stored; returns the keys new to the
-        ledger (the metric's increment). A key with no builder index is not recorded. A key
-        stored before is not a hole (the stored row is served): it is counted as `superseded`."""
+        ledger (the metric's increments). A key with no builder index is not recorded. A key
+        stored before is recorded as `superseded` and `stale_served` (module docstring)."""
         if reason not in HOLE_REASONS:
             raise ValueError(f"unknown write-hole reason {reason!r}")
         new: dict[tuple[str, str], int] = {}
@@ -256,14 +267,21 @@ class WriteHoleLedger:
             if gen is None or idx is None:
                 continue
             series_key = (key.symbol, key.spec_hash)
-            if _key_id(key) in self._recent:
-                superseded[series_key] = superseded.get(series_key, 0) + 1
-                continue
+            kid = _key_id(key)
+            if kid in self._recent and key.checksum is not None:
+                if self._recent[kid] == key.checksum:
+                    continue  # this very version is stored: no hole
+            stale = kid in self._recent  # an earlier row of it is served
+            if stale:  # its latest version is not stored now; a later store re-adds it
+                del self._recent[kid]
             series = self._series.get(series_key) or self._add_series(series_key, key)
             series.touched_us = self._now()
-            added, spans = self._insert(series, key, gen, idx, reason)
+            added, spans = self._insert(
+                series, key, gen, idx, SUPERSEDED if stale else reason, stale=stale
+            )
             if added:
-                new[series_key] = new.get(series_key, 0) + 1
+                tally = superseded if stale else new
+                tally[series_key] = tally.get(series_key, 0) + 1
                 _remember(self._counted, _key_id(key), MAX_RECENT_KEYS)
             self._changed(series_key, spans=spans)
         self._collapse_stale()
@@ -274,12 +292,16 @@ class WriteHoleLedger:
         for series_key, n in superseded.items():
             bars_write_holes_total.labels(reason=SUPERSEDED).inc(n)
             self._log_due(series_key, "bars_write_holes_superseded", "warning", bars=n)
-        return sum(new.values())
+        return sum(new.values()) + sum(superseded.values())
 
     def written(self, keys: Sequence[HoleKey]) -> None:
         """Keys now stored: each leaves its record (and is remembered for `lost`)."""
         for key in keys:
-            _remember(self._recent, _key_id(key), MAX_RECENT_KEYS)
+            self._recent[_key_id(key)] = key.checksum
+            self._recent.move_to_end(_key_id(key))
+            while len(self._recent) > MAX_RECENT_KEYS:
+                self._recent.popitem(last=False)
+            self._counted.pop(_key_id(key), None)  # a later loss of it is a new outcome
             series_key = (key.symbol, key.spec_hash)
             series = self._series.get(series_key)
             if series is None:
@@ -308,20 +330,25 @@ class WriteHoleLedger:
         return series
 
     def _insert(
-        self, series: _Series, key: HoleKey, gen: int, idx: int, reason: str
+        self, series: _Series, key: HoleKey, gen: int, idx: int, reason: str, *, stale: bool
     ) -> tuple[bool, bool]:
-        """Add `key` (generation `gen`, index `idx`): (new to the ledger, spans changed). Inside a
-        merged span a key is new unless it was counted lately (`MAX_RECENT_KEYS`)."""
+        """Add `key` (generation `gen`, index `idx`; `stale`: an earlier row of it is served):
+        (new to the ledger, spans changed). Inside a merged span a key is new unless it was
+        counted lately (`MAX_RECENT_KEYS`). A record that holds a `stale` key becomes
+        `stale_served`."""
         p = Present(gen, idx, key.open_us, key.end_us)
         for r in series.ranges:
             if r.holds(series.kind, p):
                 r.count += 1
+                exempted = stale and not r.stale_served
+                r.stale_served = r.stale_served or stale
                 if not r.merged or _key_id(key) in self._counted:
-                    return False, False
+                    return False, exempted
                 grown = key.end_us > r.to_us  # a key new to a merged span: its whole bar is in
                 r.to_us = max(r.to_us, key.end_us)
-                return True, grown
-        open_ = [r for r in series.ranges if not r.merged and r.generation == gen]
+                return True, grown or exempted
+        open_ = [r for r in series.ranges
+                 if not r.merged and r.generation == gen and r.stale_served == stale]  # fmt: skip
         before = next((r for r in open_ if r.last == idx - 1), None)
         after = next((r for r in open_ if r.first == idx + 1), None)
         if before is not None:
@@ -336,8 +363,9 @@ class WriteHoleLedger:
             after.count += 1
         else:
             series.ranges.append(
-                _Range(gen, idx, idx, key.open_us, key.end_us, reason, self._now(), 1)
-            )
+                _Range(gen, idx, idx, key.open_us, key.end_us, reason, self._now(), 1,
+                       stale_served=stale)
+            )  # fmt: skip
         series.ranges.sort(key=lambda r: (r.from_us, r.to_us))
         while len(series.ranges) > MAX_RANGES_PER_SERIES:
             _merge_oldest(series)
@@ -397,7 +425,8 @@ class WriteHoleLedger:
         self, symbol: str, spec_hash: str, from_us: int, to_us: int, present: Iterable[Present]
     ) -> list[tuple[int, int]]:
         """The series' spans inside `[from_us, to_us)`, minus the bars in `present` (those a
-        response serves), oldest first, overlapping and touching spans joined."""
+        response serves; never from a `stale_served` record, whose served row is the earlier
+        one), oldest first, overlapping and touching spans joined."""
         series = self._series.get((symbol, spec_hash))
         if series is None or from_us >= to_us:
             return []
@@ -408,9 +437,13 @@ class WriteHoleLedger:
             if r.to_us <= from_us or r.from_us >= to_us:
                 continue
             parts = [r]
-            for p in served[
-                bisect.bisect_left(opens, r.from_us) : bisect.bisect_left(opens, r.to_us)
-            ]:
+            for p in (
+                []
+                if r.stale_served
+                else served[
+                    bisect.bisect_left(opens, r.from_us) : bisect.bisect_left(opens, r.to_us)
+                ]
+            ):
                 parts = _subtract(series.kind, parts, p)
             spans += [(max(x.from_us, from_us), min(x.to_us, to_us)) for x in parts]
         return join_spans(s for s in spans if s[0] < s[1])
@@ -420,7 +453,7 @@ class WriteHoleLedger:
         no-op until #535 (module docstring)."""
         return [
             HoleRange(sym, h, s.kind, s.bar_param, r.generation, r.first, r.last, r.from_us,
-                      r.to_us, r.reason, r.first_seen_us, r.count, r.merged)
+                      r.to_us, r.reason, r.first_seen_us, r.count, r.merged, r.stale_served)
             for (sym, h), s in self._series.items() for r in s.ranges
         ]  # fmt: skip
 
@@ -481,7 +514,7 @@ class WriteHoleLedger:
         return [
             (sym, h, s.kind, s.bar_param,
              [(r.generation, r.first, r.last, r.from_us, r.to_us, r.reason, r.first_seen_us,
-               r.count, r.merged) for r in s.ranges])
+               r.count, r.merged, r.stale_served) for r in s.ranges])
             for (sym, h), s in sorted(self._series.items())
         ]  # fmt: skip
 
@@ -506,7 +539,7 @@ class WriteHoleLedger:
 
 #: `(symbol, spec_hash, generation, index, open_us)`; a time bar's is `(…, -1, -1, open_us)`.
 _KeyId = tuple[str, str, int, int, int]
-_Row = tuple[int, int, int, int, int, str, int, int, bool]
+_Row = tuple[int, int, int, int, int, str, int, int, bool, bool]
 _Snapshot = list[tuple[str, str, str, str, list[_Row]]]
 
 
@@ -530,7 +563,8 @@ def _merge_oldest(series: _Series) -> None:
     series.ranges[0:2] = [
         _Range(a.generation, min(a.first, b.first), max(a.last, b.last),
                min(a.from_us, b.from_us), max(a.to_us, b.to_us), a.reason,
-               min(a.first_seen_us, b.first_seen_us), a.count + b.count, merged=True)
+               min(a.first_seen_us, b.first_seen_us), a.count + b.count, merged=True,
+               stale_served=a.stale_served or b.stale_served)
     ]  # fmt: skip
 
 
@@ -557,7 +591,7 @@ def _serialise_and_write(path: Path, snapshot: _Snapshot) -> None:
             raise ValueError("the write-hole journal cannot fit its bound")
         a, b = rows[0], rows[1]
         rows[0:2] = [(a[0], min(a[1], b[1]), max(a[2], b[2]), min(a[3], b[3]), max(a[4], b[4]),
-                      a[5], min(a[6], b[6]), a[7] + b[7], True)]  # fmt: skip
+                      a[5], min(a[6], b[6]), a[7] + b[7], True, a[9] or b[9])]  # fmt: skip
     _write_atomic(path, data)
 
 
@@ -622,11 +656,11 @@ def _parse_series(doc: dict[str, Any]) -> _Series:
     if not isinstance(rows, list) or not 0 < len(rows) <= MAX_RANGES_PER_SERIES:
         raise ValueError("ranges")
     ranges = []
-    for gen, first, last, from_us, to_us, reason, seen, count, merged in rows:
-        if reason not in HOLE_REASONS or type(merged) is not bool:
-            raise ValueError("reason or merged")
+    for gen, first, last, from_us, to_us, reason, seen, count, merged, stale in rows:
+        if reason not in _RECORD_REASONS or type(merged) is not bool or type(stale) is not bool:
+            raise ValueError("reason, merged or stale_served")
         r = _Range(_int(gen), _int(first), _int(last), _int(from_us), _int(to_us), reason,
-                   _int(seen), _int(count, 1), merged)  # fmt: skip
+                   _int(seen), _int(count, 1), merged, stale)  # fmt: skip
         if r.last < r.first or r.to_us <= r.from_us:
             raise ValueError("empty range")
         ranges.append(r)

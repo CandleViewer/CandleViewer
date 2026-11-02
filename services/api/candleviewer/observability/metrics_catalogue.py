@@ -1795,9 +1795,9 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         " meta.coverage_holes until stored (reason: sink_timeout, refused, permanent,"
         " transient_exhausted, shutdown; #5396). An upper bound once records merge: a key new to"
         " a merged span is told apart only while it is remembered. superseded = a later write of"
-        " a stored bar not stored (the stored row is served, no hole).",
-        "any but superseded = served bar history has a recorded hole; heal is queued"
-        " (bars.write_holes); superseded = a stored bar may be out of date",
+        " a stored bar not stored: a hole too, since the served row no longer matches the tape.",
+        "any = served bar history has a recorded hole (superseded: a served bar is out of date);"
+        " heal is queued (bars.write_holes)",
         _L,
         "E12",
         max_series=6,

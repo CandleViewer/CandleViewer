@@ -254,7 +254,7 @@ for _bucket in HISTORY_BUCKETS:
     bars_subscribe_snapshot_total.labels(history=_bucket)
 #: #5396: closed bars not stored, counted once per bar when the write-hole ledger
 #: (`bars.write_holes`) first records it, by reason; `superseded` counts a later write of a bar
-#: already stored that was not stored (no hole: the stored row is served).
+#: already stored that was not stored (a hole too: the served row no longer matches the tape).
 WRITE_HOLE_REASONS: Final = (
     "sink_timeout", "refused", "permanent", "transient_exhausted", "shutdown",
 )  # fmt: skip
@@ -263,7 +263,7 @@ bars_write_holes_total = Counter(
     "bars_write_holes_total",
     "Closed bars not stored, recorded once each as a coverage hole (reason: sink_timeout,"
     " refused, permanent, transient_exhausted, shutdown; an upper bound once records merge);"
-    " superseded = a later write of a stored bar not stored (the stored row is served, no hole).",
+    " superseded = a later write of a stored bar not stored (a hole: the served row is stale).",
     labelnames=("reason",),
 )
 for _reason in (*WRITE_HOLE_REASONS, SUPERSEDED):

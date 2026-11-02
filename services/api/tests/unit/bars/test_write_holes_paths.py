@@ -157,12 +157,14 @@ async def test_writer_sink_router_timeout_records_sink_timeout_holes(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_writer_sink_cancellation_is_recorded_and_re_raised(tmp_path: Path) -> None:
+async def test_writer_sink_cancellation_by_a_stop_is_recorded_as_shutdown_and_re_raised(
+    tmp_path: Path,
+) -> None:
     ledger = WriteHoleLedger(tmp_path)
     sink = WriterSink(_Writer(asyncio.CancelledError()), holes=ledger)
     with pytest.raises(asyncio.CancelledError):
         await sink.emit(BarEmission(SPEC, 7, _closes(1)))
-    assert [r.reason for r in ledger.pending()] == ["sink_timeout"]
+    assert [r.reason for r in ledger.pending()] == ["shutdown"]
 
 
 @pytest.mark.asyncio
@@ -282,3 +284,28 @@ async def test_writer_keeps_draining_when_the_hole_recorder_raises() -> None:
         assert await w.stop() == 0
     assert len(sink.rows) == 2
     assert [e["event"] for e in logs].count("bars_write_holes_outcome_failed") == 2
+
+
+@pytest.mark.asyncio
+async def test_writer_sink_loss_of_the_version_the_writer_stored_is_no_hole(
+    tmp_path: Path,
+) -> None:
+    """The writer stored an emission's bar before the sink's cancellation reported it: the same
+    row checksum on both paths, so no hole; an amended version of it is `superseded`."""
+    ledger = WriteHoleLedger(tmp_path)
+    sink = _Failing(ValueError("not stored"))
+    sink.exc = None
+    w = BarWriter(sink, holes=ledger)
+    await w.start()
+    (bar,) = _bars(3)
+    await w.submit([bar], SPEC, generation=7)
+    await w.stop()
+    stop = WriterSink(_Writer(asyncio.CancelledError()), holes=ledger)
+    with pytest.raises(asyncio.CancelledError):
+        await stop.emit(BarEmission(SPEC, 7, [BarUpdate(kind="close", bar=bar)]))
+    assert ledger.pending() == []
+    amended = bar.model_copy(update={"close": bar.open})
+    with pytest.raises(asyncio.CancelledError):
+        await stop.emit(BarEmission(SPEC, 7, [BarUpdate(kind="close", bar=amended)]))
+    assert [r.reason for r in ledger.pending()] == ["superseded"]
+    await ledger.flush()

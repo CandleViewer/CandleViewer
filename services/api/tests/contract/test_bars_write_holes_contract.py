@@ -10,6 +10,7 @@ klines). The hole comes from the real write path: a `BarWriter` whose sink store
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from fastapi.testclient import TestClient
 from candleviewer.api._generated.openapi_models import KlineResponse
 from candleviewer.api.market import make_market_router
 from candleviewer.api.market_bars import make_market_bars_router
+from candleviewer.api.market_response import iso_us
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.reader import BarReader
 from candleviewer.bars.rows import bar_param_for
@@ -111,6 +113,23 @@ def test_bars_a_served_bar_suppresses_its_recorded_hole(tmp_path: Path) -> None:
                          bar.open_time + _MIN)], "refused")  # fmt: skip
     body = _get_bars(_bars_client(ledger), "time", "1")
     assert "coverage_holes" not in body["meta"]
+
+
+def test_bars_a_failed_amend_of_a_stored_bar_is_listed_though_the_bar_is_served(
+    tmp_path: Path,
+) -> None:
+    """The ruling on #5432: the bar's stored row is served, but an amend of it was not stored, so
+    that row no longer matches the tape and `meta.coverage_holes` names its interval."""
+    bar = [b for b in bars_world._build(_TIME) if b.closed][5]
+    ledger = WriteHoleLedger(tmp_path)
+    key = HoleKey("BTCUSDT", _TIME.spec_hash, "time", "1m", 0, bar.index, bar.open_time,
+                  bar.open_time + _MIN)  # fmt: skip
+    ledger.written([replace(key, checksum=1)])  # the original, stored and served
+    ledger.lost([replace(key, checksum=2)], "refused")  # its amend, not stored
+    body = _get_bars(_bars_client(ledger), "time", "1")
+    assert any(b["t"] == iso_us(bar.open_time) for b in body["bars"])  # the stale row is served
+    assert body["meta"]["coverage_holes"] == [{"start_us": bar.open_time,
+                                               "end_us": bar.open_time + _MIN}]  # fmt: skip
 
 
 def test_bars_a_hole_is_listed_on_the_page_that_spans_it(
