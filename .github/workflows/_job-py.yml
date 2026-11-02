@@ -132,6 +132,10 @@ jobs:
             "page_event alertname=AuthOwnerBootstrapped severity=page component=auth_owner_bootstrap resolves=window" \
             "page_event alertname=AuthRecoveryCodeUsed severity=page component=auth_recovery resolves=window" \
             "page_event alertname=IngestionTradeGapUnrecovered severity=page component=ingestion resolves=window" \
+            "page_event alertname=NakedPositionDetected severity=page component=oms resolves=window" \
+            "page_event alertname=OmsClockHaltTripped severity=page component=oms resolves=window" \
+            "page_event alertname=OmsNativeStopBackstop severity=page component=oms resolves=window" \
+            "page_event alertname=OmsSubmitFailing severity=page component=oms resolves=window" \
             "ticket severity=ticket" \
             "deadman alertname=Watchdog" \
             "ticket severity=ticket component=auth" \

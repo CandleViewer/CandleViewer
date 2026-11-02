@@ -103,8 +103,69 @@ def test_required_rules_present() -> None:
         "AuditSigningKeyBootStepFailed",  # #889 S6a-2's security F1: a step that degraded nothing
         "AuthKeyringUnavailable",  # #2152 BQ-14: MFA alone answers 503, a page
         "AuthKeyringBootStepFailed",  # #2152 BQ-4: a re-wrap that degraded nothing, a ticket
+        *OMS_PAGES,  # E29-T08 (#916): every OMS rule is the ticket's (BQ-1)
+        *OMS_TICKETS,
     }
     assert required <= names
+
+
+#: E29-T08 (#916): the OMS pages and tickets the ticket owns (BQ-1, BQ-4, BQ-7, BQ-8, BQ-10 to
+#: BQ-12). `OmsPositionReadingOwed` (E29-T05) and `OmsRateRejects` (E04) predate it.
+OMS_PAGES = (
+    "NakedPositionDetected",
+    "OmsUnknownOrders",
+    "OmsUntrackedOrders",
+    "OmsStaleAccounts",
+    "OmsClockHaltTripped",
+    "OmsSubmitFailing",
+    "OmsNativeStopBackstop",
+)
+OMS_TICKETS = (
+    "OmsUnknownOrdersAlreadyTerminal",
+    "OmsAccountScopeDenied",
+    "OmsIllegalTransitions",
+    "OmsReconcileAnomalies",
+    "OmsLaneNoticesFailed",
+    "OmsTierRequestsDropped",
+    "OmsStuckOrderIncidents",
+    "OmsStuckDetectorStalled",
+    "OmsRateHeadroomExhausted",
+)
+
+
+def test_oms_rules_have_the_severity_their_set_names() -> None:
+    """E29-T08 (#916): each OMS page is a page and each ticket a ticket, in the file of its kind."""
+    rules = {r["alert"]: r for r in _rules()}
+    for name in OMS_PAGES:
+        assert rules[name]["labels"]["severity"] == "page", name
+    for name in OMS_TICKETS:
+        assert rules[name]["labels"]["severity"] == "ticket", name
+    files = {
+        name: f.name
+        for f in (INFRA / "prometheus" / "alerts").glob("*.yml")
+        for g in yaml.safe_load(f.read_text(encoding="utf-8"))["groups"]
+        for r in g["rules"]
+        if (name := r.get("alert")) in {*OMS_PAGES, *OMS_TICKETS}
+    }
+    assert {files[n] for n in OMS_PAGES} == {"system_page.yml"}
+    assert {files[n] for n in OMS_TICKETS} == {"system_ticket.yml"}
+
+
+DRILL_MATRIX = INFRA.parent / "qa" / "plans" / "e04-alert-drill-matrix.md"
+
+
+def test_oms_rules_each_have_one_drill_matrix_row_as_their_rule_reads() -> None:
+    """E29-T08 (#916): each OMS rule has one row in the E04 drill matrix (E04-Q01), whose
+    severity, hold and runbook are the rule's; the alert-drill-matrix gate reads the name alone."""
+    rules = {r["alert"]: r for r in _rules()}
+    rows = DRILL_MATRIX.read_text(encoding="utf-8").splitlines()
+    for name in (*OMS_PAGES, *OMS_TICKETS):
+        mine = [row for row in rows if row.startswith(f"| {name} |")]
+        assert len(mine) == 1, name
+        cells = [cell.strip() for cell in mine[0].strip("|").split("|")]
+        rule = rules[name]
+        runbook = f"`{rule['annotations']['runbook_url']}`"
+        assert cells[1:5] == [rule["labels"]["severity"], rule["for"], runbook, "synthetic"], name
 
 
 def _reason_matcher(expr: str) -> tuple[str, set[str]]:
@@ -134,6 +195,124 @@ def test_csrf_refusal_alerts_watch_the_bounded_metric() -> None:
 def test_oms_unknown_orders_for_60s() -> None:
     r = next(r for r in _rules() if r["alert"] == "OmsUnknownOrders")
     assert r["for"] == "1m"
+
+
+def test_unknown_orders_page_leaves_already_terminal_to_its_ticket() -> None:
+    """E29-T08 #916 BQ-7: the page reads every reason but `already_terminal`, and the stalled-
+    reconciler ticket that reason alone, once one is held 5 minutes. The matchers are parsed, so
+    flipping an operator fails."""
+    rules = {r["alert"]: r for r in _rules()}
+    page, ticket = rules["OmsUnknownOrders"], rules["OmsUnknownOrdersAlreadyTerminal"]
+    assert _reason_matcher(page["expr"]) == ("!=", {"already_terminal"})
+    assert _reason_matcher(ticket["expr"]) == ("=", {"already_terminal"})
+    for rule in (page, ticket):
+        assert rule["expr"].startswith("sum by (env) (oms_unknown_orders{"), rule["alert"]
+        assert rule["expr"].endswith("}) > 0"), rule["alert"]
+    assert (page["for"], ticket["for"]) == ("1m", "5m")
+    assert ticket["labels"] == {"severity": "ticket", "component": "oms"}
+
+
+def test_untracked_orders_page_is_unconditional_under_its_own_component() -> None:
+    """E29-T08 #916 BQ-8: any untracked row pages at once, with nothing beside it, under a
+    component of its own: a resting manual order can hold the page for days, and a page hides
+    the tickets of its component. The control: the same page labelled `oms` hides an `oms`
+    ticket, so a revert of the label fails."""
+    rules = _rules()
+    rule = {r["alert"]: r for r in rules}["OmsUntrackedOrders"]
+    assert rule["expr"] == "max by (env) (oms_untracked_orders) > 0"
+    assert rule["for"] == "0m"
+    assert rule["labels"] == {"severity": "page", "component": "oms_untracked"}
+    assert [r["alert"] for r in rules if r["labels"]["component"] == "oms_untracked"] == [
+        "OmsUntrackedOrders"
+    ]
+    page, ticket = _alert_labels(rule), {"severity": "ticket", "component": "oms", "env": "live"}
+    assert _inhibits({**page, "component": "oms"}, ticket)
+    assert not _inhibits(page, ticket)
+    assert _route_for(page)["receiver"] == "page"
+
+
+def test_stale_accounts_page_holds_a_minute_under_its_own_component() -> None:
+    """E29-T08 #916 BQ-1: the reconciliation standing's gauge above 0, held a minute (each start
+    marks every account stale until its job opens), under a component of its own, as the
+    untracked page's: a lock stands until the Owner resolves it."""
+    rules = _rules()
+    rule = {r["alert"]: r for r in rules}["OmsStaleAccounts"]
+    assert rule["expr"] == "max by (env) (oms_stale_accounts) > 0"
+    assert rule["for"] == "1m"
+    assert rule["labels"] == {"severity": "page", "component": "oms_stale"}
+    assert [r["alert"] for r in rules if r["labels"]["component"] == "oms_stale"] == [
+        "OmsStaleAccounts"
+    ]
+    ticket = {"severity": "ticket", "component": "oms", "env": "live"}
+    assert not _inhibits(_alert_labels(rule), ticket)
+
+
+def test_detector_stall_ticket_is_hidden_by_no_page_under_its_own_component() -> None:
+    """E29-T08 #916 (the orchestrator's ruling on PR B's security look, M1): the ticket that says
+    stuck-order and naked-position detection is blind takes a component no page carries, so no
+    standing page hides it: the page-over-ticket inhibit matches on component and env, and
+    OmsUnknownOrders can stand for hours. PostgresDown's inhibit does not list the component
+    either, as a Postgres outage fails every scan. The control: the same ticket labelled `oms` is
+    hidden by every `oms` page, so a revert of the label fails."""
+    rules = _rules()
+    rule = {r["alert"]: r for r in rules}["OmsStuckDetectorStalled"]
+    assert rule["labels"] == {"severity": "ticket", "component": "oms_detector"}
+    assert [r["alert"] for r in rules if r["labels"].get("component") == "oms_detector"] == [
+        "OmsStuckDetectorStalled"
+    ]
+    ticket = _alert_labels(rule)
+    pages = [_alert_labels(r) for r in rules if r["labels"].get("severity") == "page"]
+    oms_pages = [page for page in pages if page["component"] == "oms"]
+    assert {"OmsUnknownOrders", "NakedPositionDetected"} <= {p["alertname"] for p in oms_pages}
+    for page in oms_pages:
+        assert _inhibits(page, {**ticket, "component": "oms"}), page["alertname"]
+    assert "PostgresDown" in {page["alertname"] for page in pages}
+    assert [page["alertname"] for page in pages if _inhibits(page, ticket)] == []
+    assert _route_for(ticket)["receiver"] == "ticket"
+
+
+def test_naked_position_page_is_an_event_page_on_its_counter() -> None:
+    """E29-T08 #916 BQ-4: the detector counts `naked_position_alerts_total` once per episode, so
+    the page clears when its 5 minute window moves on, not when the position is protected: an
+    event page, on the receiver that sends no [RESOLVED]. A first sample above 0 with none 5
+    minutes before pages too (PR B's security look, N1): `increase()` has nothing before it."""
+    rule = {r["alert"]: r for r in _rules()}["NakedPositionDetected"]
+    assert " ".join(rule["expr"].split()) == (
+        "increase(naked_position_alerts_total[5m]) > 0 "
+        "or (naked_position_alerts_total unless naked_position_alerts_total offset 5m) > 0"
+    )
+    assert rule["for"] == "0m"
+    assert rule["labels"] == {"severity": "page", "component": "oms", "resolves": "window"}
+    assert _route_for(_alert_labels(rule))["receiver"] == "page_event"
+
+
+def test_scope_denial_ticket_reads_both_counters_child_by_child_under_auth() -> None:
+    """E29-T08 #916 BQ-10 (SR-E29-16): `account_scope_denied` on the submit and the exit counters,
+    a rise or a child's first sample, held past the quiet hours; under `auth`, so neither
+    PostgresDown nor an `oms` page hides it (SR-125)."""
+    rule = {r["alert"]: r for r in _rules()}["OmsAccountScopeDenied"]
+    expr = " ".join(rule["expr"].split())
+    for series in ("oms_submit_rejected_total", "oms_exit_refused_total"):
+        assert f'increase({series}{{code="account_scope_denied"}}[1h])' in expr, series
+        assert f'unless {series}{{code="account_scope_denied"}} offset 1h' in expr, series
+    assert set(re.findall(r'code\s*(?:=~|!~|!=|=)\s*"([^"]*)"', expr)) == {"account_scope_denied"}
+    assert (rule["for"], rule["keep_firing_for"]) == ("0m", "9h30m")
+    assert rule["labels"] == {"severity": "ticket", "component": "auth"}
+    assert not _inhibited("auth")
+    page = {"severity": "page", "component": "oms", "env": "live"}
+    assert not _inhibits(page, _alert_labels(rule))
+
+
+def test_submit_failing_page_reads_the_three_codes_and_holds_five_minutes() -> None:
+    """E29-T08 #916 BQ-12 item 2 (E29-T04's promise): the store, audit and internal-error codes
+    only, each child's first sample counted, held 5 minutes; an event page."""
+    rule = {r["alert"]: r for r in _rules()}["OmsSubmitFailing"]
+    codes = re.findall(r'code\s*(=~|!~|!=|=)\s*"([^"]*)"', rule["expr"])
+    wanted = {"store_unavailable", "audit_unavailable", "internal_error"}
+    assert codes and all(op == "=~" and set(alts.split("|")) == wanted for op, alts in codes)
+    assert "offset 5m" in rule["expr"] and "[5m]" in rule["expr"]
+    assert rule["for"] == "5m"
+    assert rule["labels"] == {"severity": "page", "component": "oms", "resolves": "window"}
 
 
 def test_absent_guards_are_ticket() -> None:
@@ -489,10 +668,10 @@ def test_break_glass_read_failure_ticket_says_when_the_two_pages_go_blind() -> N
 #: [RESOLVED] would report as handled while the event is unresolved. `AuthBreakGlassAttempted`
 #: reads a rise of a gauge that only ever rises, over the same window, so it also ends when the
 #: window moves on; so does `AuthOwnerBootstrapped` (#4479 C2), on the bootstrap grant count.
-#: Not classified yet: `NakedPositionDetected`. Whether its [RESOLVED] means "protected again"
-#: or only "the window moved on" depends on how the E32 watchdog counts
-#: `naked_position_alerts_total`: once per detection (an event page), or on every scan while a
-#: position is naked (a condition page). TODO(#932): decide there; add it here if it is the former.
+#: E29-T08 (#916): `NakedPositionDetected` (BQ-4: the detector counts once per episode, so its
+#: [RESOLVED] would mean only "the window moved on", never "protected again"), and three OMS pages
+#: over a counter's window, whose window moving on says nothing about the cause: a clock-halt trip,
+#: an entry the native-stop backstop refused, and store, audit or internal-error refusals.
 EVENT_TYPE_PAGES = {
     "AuditChainVerificationFailed",
     "AuthAuditOutcomesLostBurst",
@@ -501,6 +680,10 @@ EVENT_TYPE_PAGES = {
     "AuthOwnerBootstrapped",
     "AuthRecoveryCodeUsed",
     "IngestionTradeGapUnrecovered",
+    "NakedPositionDetected",
+    "OmsClockHaltTripped",
+    "OmsNativeStopBackstop",
+    "OmsSubmitFailing",
 }
 
 
@@ -577,21 +760,22 @@ def test_event_type_page_goes_to_the_page_channel_without_a_resolved_message() -
 
 def test_pages_not_classified_as_event_pages_keep_their_resolved_notification() -> None:
     """#2931: a page without `resolves: window` keeps `page` and its [RESOLVED]. For a condition
-    page (`PostgresDown`, an unknown-order gauge, the mesh guard) that is right: it resolves
-    because the condition cleared, which the Owner wants to read. `NakedPositionDetected` is in
-    this group only because it is not classified yet (see EVENT_TYPE_PAGES)."""
+    page (`PostgresDown`, an unknown-order gauge, the mesh guard, and #916's untracked-order and
+    stale-account gauges) that is right: it resolves because the condition cleared, which the
+    Owner wants to read."""
     pages = [
         r
         for r in _rules()
         if r["labels"]["severity"] == "page" and r["alert"] not in EVENT_TYPE_PAGES
     ]
-    condition_and_unclassified = {
+    condition_pages = {
         "PostgresDown",
         "OmsUnknownOrders",
         "NetBindingUnsafe",
-        "NakedPositionDetected",
+        "OmsUntrackedOrders",
+        "OmsStaleAccounts",
     }
-    assert condition_and_unclassified <= {r["alert"] for r in pages}
+    assert condition_pages <= {r["alert"] for r in pages}
     for rule in pages:
         assert _route_for(_alert_labels(rule))["receiver"] == "page", rule["alert"]
     assert _slack("page")["send_resolved"] is True
@@ -853,9 +1037,35 @@ def test_every_system_page_rule_has_an_absent_guard_on_its_series() -> None:
         if r["alert"] != "SyntheticAlert"
         # #5174: a rule whose own expression carries an `absent(` arm guards itself (ApiDown).
         and "absent(" not in r["expr"]
+        # #916: a page whose one series binds a child at its first increment (see below).
+        and r["alert"] not in LAZY_SERIES_PAGES
         and not any(re.search(rf"\b{m}\b", r["expr"]) for m in guarded)
     ]
     assert unguarded == []
+
+
+#: E29-T08 (#916 BQ-12): a page whose one series binds a child per label value at its first
+#: increment has no sample before it, so an `absent()` guard would stand on a healthy process.
+#: Each is listed `lazy-series` in the QA guard baseline, which the test below reads: both gates
+#: name the same pairs, and neither takes a page off this list without the other.
+LAZY_SERIES_PAGES = {"OmsSubmitFailing": "oms_submit_rejected_total"}
+GUARD_BASELINE = (
+    INFRA.parent / "services" / "api" / "tests" / "qa" / "e04_q02_alert_guard_baseline.json"
+)
+
+
+def test_each_lazy_series_page_reads_its_one_series_listed_lazy_in_the_guard_baseline() -> None:
+    import json
+
+    rules = {r["alert"]: r for r in _rules()}
+    entries = json.loads(GUARD_BASELINE.read_text(encoding="utf-8"))["entries"]
+    lazy = {(e["alert"], e["series"]) for e in entries if e["class"] == "lazy-series"}
+    for alert, series in LAZY_SERIES_PAGES.items():
+        assert rules[alert]["labels"]["severity"] == "page", alert
+        assert (alert, series) in lazy, alert
+        # every series the page reads carries a matcher, so the names before a `{` are all of them
+        bare = re.sub(r'"[^"]*"', '""', rules[alert]["expr"])
+        assert set(re.findall(r"\b([a-z][a-z0-9_]*)\s*\{", bare)) == {series}, alert
 
 
 def test_postgres_pages_read_the_probe_joined_to_build_info_for_env() -> None:

@@ -259,6 +259,24 @@
       "reason": "recorded rule (latency_budget.yml) over the e2e_tick_to_paint_seconds histogram; it has no absent() guard and the source's emission was not traced; routed to the latency owner"
     },
     {
+      "alert": "OmsAccountScopeDenied",
+      "series": "oms_exit_refused_total",
+      "class": "lazy-series",
+      "reason": "labelled (operation, code) counter, api/order_exits_common.py: a child is bound at its first refusal and none before, so a guard would stand on a healthy process (#916)"
+    },
+    {
+      "alert": "OmsAccountScopeDenied",
+      "series": "oms_submit_rejected_total",
+      "class": "lazy-series",
+      "reason": "labelled (code) counter, oms/submit.py and the order routes: a child is bound at its first refusal and none before, so a guard would stand on a healthy process (#916)"
+    },
+    {
+      "alert": "OmsSubmitFailing",
+      "series": "oms_submit_rejected_total",
+      "class": "lazy-series",
+      "reason": "labelled (code) counter, oms/submit.py and the order routes: a child is bound at its first refusal and none before, so a guard would stand on a healthy process (#916)"
+    },
+    {
       "alert": "RecorderAnchorSkipped",
       "series": "recorder_anchor_skipped_total",
       "class": "lazy-series",

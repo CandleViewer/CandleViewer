@@ -5,19 +5,34 @@ groups:
     interval: 30s
     rules:
       - alert: NakedPositionDetected
-        # #2931: not classified as an event page (`resolves: window`) yet: that depends on how the
-        # E32 watchdog counts this series. See EVENT_TYPE_PAGES in
-        # infra/alertmanager/tests/test_alerting_config.py.
-        expr: increase(naked_position_alerts_total[5m]) > 0
+        # E29-T08 #916 BQ-4: an event page (`resolves: window`, #2931). The stuck-order detector
+        # counts the series once per episode of an open position with no exchange-side stop past
+        # CV_NATIVE_SL_DEADLINE_MS (3 s), read-only and alert-only: it never attaches or flattens
+        # (C-2.6, C-2.21); reconciliation counts each stop it repairs (24 Sec.8.5 step 5). The page
+        # clears when its 5 minute window moves on, not when the position is protected, so its
+        # receiver sends no [RESOLVED] (infra/alertmanager/alertmanager.yml). A first sample
+        # already above 0, with none 5 minutes before, counts too (#916 PR B's security look, N1):
+        # increase() has nothing before it, so a detection ahead of the first scrape would page
+        # nowhere here. Safe for a counter bound at 0 when its runtime is composed; a gap of more
+        # than 5 minutes in the scrapes of a process whose count is above 0 pages once more, a
+        # false alarm on the safe side.
+        expr: >-
+          increase(naked_position_alerts_total[5m]) > 0
+          or (naked_position_alerts_total unless naked_position_alerts_total offset 5m) > 0
         for: 0m
         labels:
           severity: page
           component: oms
+          resolves: window
         annotations:
           summary: "A position was detected without a native stop-loss"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-nakedpositiondetected"
       - alert: OmsUnknownOrders
-        expr: oms_unknown_orders > 0
+        # ADR-0006 rule 3; E29-T08 #916 BQ-7: every reason but `already_terminal` (a cancel the
+        # venue answered 110001, 24 Sec.8.6), which OmsUnknownOrdersAlreadyTerminal tickets once one
+        # is held 5 minutes. Each reason's child is bound at 0, so the series exists with no order
+        # there (ExpectedMetricMissingOmsUnknownOrders). A condition page.
+        expr: sum by (env) (oms_unknown_orders{reason!="already_terminal"}) > 0
         for: 1m
         labels:
           severity: page
@@ -38,6 +53,96 @@ groups:
         annotations:
           summary: "A position reading has been owed to protection for a minute or more"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-omspositionreadingowed"
+      # --- E29-T08 (#916): the OMS pages the ticket owns (BQ-1, BQ-8, BQ-12). A page that can stand
+      # for days takes a component of its own, as BQ-8 rules for the untracked page: a page hides
+      # the tickets of its component (alertmanager.yml), so no `oms` ticket waits behind it. A page
+      # that ends with its window keeps `oms`. A page over a counter's window is an event page
+      # (`resolves: window`): its window moving on says nothing about the cause.
+      - alert: OmsUntrackedOrders
+        # BQ-8 (approved under the delegation, the observability contract's Owner approval):
+        # exchange orders reconciliation recorded `untracked` and never manages (S9, SR-E29-12,
+        # SR-E27-19), as each account's last pass counted them; unconditional, `for` included. A
+        # resting manual order can hold it for days (24 Sec.8.10), hence `oms_untracked`. A
+        # condition page.
+        expr: max by (env) (oms_untracked_orders) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: oms_untracked
+        annotations:
+          summary: "Exchange orders are untracked: the OMS records them and never manages them"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-omsuntrackedorders"
+      - alert: OmsStaleAccounts
+        # BQ-1 (#914's ruling, BQ-11: it pages above 0): an account refused order entry with
+        # `account_stale` (24 Sec.8.5), its job locked stale (B19 stale_lockout: 2 minutes of failed
+        # fetches, or a refused snapshot) until the Owner resolves it, or not opened. PROPOSED (no
+        # ruling sets them): the 1m hold, since each start marks every account stale until its job
+        # opens (oms/reconcile_job.py ReconcileJobs.start), and `oms_stale`, since a lock stands
+        # until the Owner acts. A condition page.
+        expr: max by (env) (oms_stale_accounts) > 0
+        for: 1m
+        labels:
+          severity: page
+          component: oms_stale
+        annotations:
+          summary: "An account is stale: its order entry is refused until the Owner resolves it"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-omsstaleaccounts"
+      - alert: OmsClockHaltTripped
+        # BQ-12 item 1 (20 Sec.12.1 "page > 0"; 24 Sec.8.6's distinct alert for a 10002): a 10002
+        # that reached an order tripped the clock halt, which refuses every order request until a
+        # measurement taken after the trip clears it. Bound at 0 with the halt, so the first trip is
+        # an increase. PROPOSED: the 15 minute window, and the event class.
+        expr: sum by (env) (increase(oms_clock_halt_trips_total[15m])) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: oms
+          resolves: window
+        annotations:
+          summary: "Order entry was halted on clock drift (a 10002 reached an order)"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-omsclockhalttripped"
+      - alert: OmsSubmitFailing
+        # BQ-12 item 2 (E29-T04's promise, 20 Sec.12.1): order requests refused for the order store
+        # (`store_unavailable`), the audit sink (`audit_unavailable`) or a fault (`internal_error`),
+        # at least one in each 5 minutes, held 5 minutes: order entry failing, not one refusal (a
+        # fault is logged and paged where it happens). A `code` child is bound at its first refusal,
+        # so its first sample, with none 5 minutes before, counts too, as BybitRowsRefusedAccount
+        # reads its first one; `absent()` would stand on a healthy process, so no guard watches it
+        # (`lazy-series` in tests/qa/e04_q02_alert_guard_baseline.json). One refusal never pages:
+        # its first-sample arm ends as the hold would end. Two a scrape or more apart within 5
+        # minutes do, 30 s apart included: the second keeps the 5 minute increase above 0 past the
+        # hold the first began, so a blip of the store or the audit sink that refuses two orders
+        # pages (a case pins it: refusals at 5:00 and 5:30 page at 10 minutes, ended at 11).
+        # PROPOSED, kept by the orchestrator's ruling on #916 PR B's code look (m2): that reading of
+        # 20 Sec.12.1's "> 0 for 5 min", the 5 minute window, and the event class (no refusal for 5
+        # minutes may only mean no order was tried). Its owner, the E04 alert owner
+        # (docs/plan/observability-contract.md), may re-tune it with its runbook (07 Sec.9).
+        expr: >-
+          sum by (env) (increase(oms_submit_rejected_total{code=~"store_unavailable|audit_unavailable|internal_error"}[5m])) > 0
+          or sum by (env) (oms_submit_rejected_total{code=~"store_unavailable|audit_unavailable|internal_error"}
+          unless oms_submit_rejected_total{code=~"store_unavailable|audit_unavailable|internal_error"} offset 5m) > 0
+        for: 5m
+        labels:
+          severity: page
+          component: oms
+          resolves: window
+        annotations:
+          summary: "Order entry is failing: requests refused for the store, the audit sink or a fault for 5 minutes"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-omssubmitfailing"
+      - alert: OmsNativeStopBackstop
+        # BQ-12 item 2 (E29-T04's promise, 20 Sec.12.1 "page > 0"; C-2.6): an entry reached the
+        # order facade without a native stop and the start() backstop refused it at VALIDATE,
+        # nothing sent: a caller defect, logged at ERROR. Bound at 0 with the facade. PROPOSED: the
+        # 15 minute window, and the event class (the window moving on does not fix the caller).
+        expr: sum by (env) (increase(oms_native_stop_backstop_total[15m])) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: oms
+          resolves: window
+        annotations:
+          summary: "An entry without a native stop-loss reached the order facade and was refused"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-omsnativestopbackstop"
       - alert: PostgresDown
         # #5174: the API's own Postgres probe (health_wiring.py: SELECT 1 each second), 3 = down.
         # `build_info` supplies `env`, so the PostgresDown inhibit rule (equal: [env]) can match.
