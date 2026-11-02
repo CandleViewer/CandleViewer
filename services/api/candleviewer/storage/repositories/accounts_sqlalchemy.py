@@ -49,6 +49,7 @@ from candleviewer.storage.repositories.accounts import (
     ExchangeAccountRow,
     GranteeRow,
     GrantScope,
+    GrantsWriteAhead,
     NewExchangeAccount,
     NewKeyRotation,
     OwnerScope,
@@ -285,6 +286,20 @@ _SOFT_DELETE = sa.text(
     "updated_at = greatest(clock_timestamp(), ea.updated_at + interval '1 microsecond') "
     "WHERE ea.id = CAST(:id AS uuid) AND ea.deleted_at IS NULL"
 )
+# #3027: the delete takes the account's grants out with it, in its transaction. Row locks follow
+# the grant lock order (21 Sec.3.1.3): the account row (the UPDATE above), then these rows in
+# ascending `user_id`. A soft revoke (`can_view = can_trade = false`), never a DELETE.
+_LIVE_ACCOUNT_GRANTS = sa.text(
+    "SELECT uaa.user_id::text AS user_id, u.username AS username, uaa.can_trade AS can_trade "
+    "FROM user_account_access uaa JOIN users u ON u.id = uaa.user_id "
+    "WHERE uaa.exchange_account_id = CAST(:account AS uuid) AND uaa.can_view "
+    "ORDER BY uaa.user_id FOR NO KEY UPDATE OF uaa"
+)
+_REVOKE_ACCOUNT_GRANTS = sa.text(
+    "UPDATE user_account_access SET can_view = false, can_trade = false, "
+    "updated_at = clock_timestamp() "
+    "WHERE exchange_account_id = CAST(:account AS uuid) AND can_view"
+)
 
 _GET_KEY = sa.text(
     "SELECT "
@@ -464,8 +479,8 @@ _COUNT_PROFILES = sa.text(
 OWNER_STATEMENTS = frozenset(
     {
         _CREATE, _LOCK_PARENT, _COUNT_SUBS, _GET_OWNER, _LIST_OWNER, _UPDATE, _SOFT_DELETE,
-        _GET_KEY, _LIST_KEYS, _LIST_GRANTEES, _GRANTEES_TIMEOUT, _TRANSITION, _START_ROT,
-        _GET_ROT, _LIST_ROTS, *_STEPS.values(),
+        _LIVE_ACCOUNT_GRANTS, _REVOKE_ACCOUNT_GRANTS, _GET_KEY, _LIST_KEYS, _LIST_GRANTEES,
+        _GRANTEES_TIMEOUT, _TRANSITION, _START_ROT, _GET_ROT, _LIST_ROTS, *_STEPS.values(),
     }
 )  # fmt: skip
 GRANT_STATEMENTS = frozenset({_GET_GRANT, _LIST_GRANT})
@@ -740,7 +755,16 @@ class SqlAlchemyAccountsStore:
             raise _refusal(state, name) from None
         return _account(row)
 
-    async def soft_delete_account(self, scope: OwnerScope, account_id: UUID) -> bool:
+    async def soft_delete_account(
+        self,
+        scope: OwnerScope,
+        account_id: UUID,
+        *,
+        write_ahead: GrantsWriteAhead | None = None,
+    ) -> bool:
+        """Soft-delete the account and soft-revoke its live grants in one transaction (#3027);
+        `write_ahead` (C-2.9) sees the grants about to be revoked before the revoke and the
+        commit, and anything it raises rolls the whole change back."""
         owner = _require_owner(scope)
         async with self._relational.unit_of_work() as uow:
             await self._gate(uow, owner)
@@ -753,8 +777,20 @@ class SqlAlchemyAccountsStore:
                     _SOFT_DELETE, {"id": str(account_id), "caller": str(owner.user_id)}
                 ),
             )
+            deleted = res.rowcount == 1
+            if deleted:  # an already-deleted account changes no grant and writes no record
+                params = {"account": str(account_id)}
+                rows = (await uow.session.execute(_LIVE_ACCOUNT_GRANTS, params)).mappings()
+                grants = tuple(
+                    GranteeRow(UUID(str(r["user_id"])), str(r["username"]), bool(r["can_trade"]))
+                    for r in rows
+                )
+                if grants:
+                    if write_ahead is not None:
+                        await bounded_write_ahead(write_ahead(grants), self._audit_timeout_s)
+                    await uow.session.execute(_REVOKE_ACCOUNT_GRANTS, params)
             await uow.commit()
-        return res.rowcount == 1
+        return deleted
 
     # -- api_keys (metadata only) -----------------------------------------------------------
     async def get_key(self, scope: OwnerScope, account_id: UUID, key_id: UUID) -> ApiKeyRow | None:

@@ -58,6 +58,7 @@ class World:
         self.log: list[str] = []
         self.faults: dict[str, BaseException] = {}
         self.deleted = False
+        self.grants_ahead: Any = None
         self.held: dict[UUID, str] = {}
         self.destroyer: Any = self
 
@@ -91,8 +92,11 @@ class World:
         self.log.append("committed")
         return written
 
-    async def soft_delete_account(self, scope: OwnerScope, account_id: UUID) -> None:
+    async def soft_delete_account(
+        self, scope: OwnerScope, account_id: UUID, *, write_ahead: Any = None
+    ) -> None:
         self._hit("soft_delete")
+        self.grants_ahead = write_ahead
         self.deleted = True
 
     def hold(self, account_id: UUID, reason: str) -> None:
@@ -138,14 +142,15 @@ class World:
             count_deleted=lambda reason: self.log.append("counted"),
         )  # fmt: skip
 
-    async def delete(self) -> None:
+    async def delete(self, grants_ahead: Any = None, grants_committed: Any = None) -> None:
         async def record(stored: ExchangeAccount) -> None:
             assert stored.is_enabled is False
             self._hit("record")
 
         await self.lifecycle().delete(
-            OWNER, self.account, write_ahead=record, reason="flat", actor=ACTOR, role="owner"
-        )
+            OWNER, self.account, write_ahead=record, reason="flat", actor=ACTOR, role="owner",
+            grants_ahead=grants_ahead, grants_committed=grants_committed,
+        )  # fmt: skip
 
 
 async def test_a_delete_runs_every_step_in_the_ruled_order() -> None:
@@ -153,6 +158,43 @@ async def test_a_delete_runs_every_step_in_the_ruled_order() -> None:
     await world.delete()
     assert world.log == ORDER
     assert world.held == {ACCOUNT.id: "account_deleted"} and world.deleted
+
+
+async def test_a_delete_hands_the_grants_record_to_the_soft_delete() -> None:
+    """#3027: the grants' write-ahead rides the store's soft delete, the one transaction."""
+    world = World()
+
+    async def ahead(grants: Any) -> None:
+        raise AssertionError("the fake store never calls it")
+
+    await world.delete(ahead)
+    assert world.grants_ahead is ahead
+    plain = World()
+    await plain.delete()
+    assert plain.grants_ahead is None
+
+
+@pytest.mark.parametrize("step", [None, "soft_delete", "ws", "disarm", f"close:{K1}"])
+async def test_a_delete_signals_the_grants_commit_right_after_the_soft_delete_only(
+    step: str | None,
+) -> None:
+    """#3027 (C-2.9): the signal follows the soft delete's commit and precedes every later
+    effect, so a caller closes its grants' records only for a failure before that commit."""
+    world = World()
+
+    async def deleting() -> None:
+        await world.delete(grants_committed=lambda: world.log.append("grants_committed"))
+
+    if step is None:
+        await deleting()
+    else:
+        world.faults[step] = RuntimeError("down")
+        with pytest.raises(RuntimeError):
+            await deleting()
+    signalled = "grants_committed" in world.log
+    assert signalled is (step != "soft_delete")
+    if signalled:
+        assert world.log[world.log.index("soft_delete") + 1] == "grants_committed"
 
 
 async def test_a_delete_of_a_disabled_account_still_switches_it_off_and_records_it() -> None:

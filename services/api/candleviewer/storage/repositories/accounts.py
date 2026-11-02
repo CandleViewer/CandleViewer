@@ -161,6 +161,9 @@ RotationStep = Literal["validated", "cutover", "completed", "failed"]
 #: awaited on the written row in its transaction, before its commit; anything it raises rolls the
 #: write back.
 AccountWriteAhead = Callable[[ExchangeAccountRow], Awaitable[None]]
+#: #3027: awaited in the soft delete's transaction on the grants it is about to soft-revoke
+#: (never called with none), before the revoke and the commit; what it raises rolls both back.
+GrantsWriteAhead = Callable[[tuple[GranteeRow, ...]], Awaitable[None]]
 
 
 class AccountsStoreError(Exception):
@@ -249,7 +252,13 @@ class AccountsStore(AccountsRowCounts, Protocol):
         write_ahead: AccountWriteAhead | None = None,
     ) -> ExchangeAccountRow | None: ...
 
-    async def soft_delete_account(self, scope: OwnerScope, account_id: UUID) -> bool: ...
+    async def soft_delete_account(
+        self,
+        scope: OwnerScope,
+        account_id: UUID,
+        *,
+        write_ahead: GrantsWriteAhead | None = None,
+    ) -> bool: ...
 
     async def get_key(
         self, scope: OwnerScope, account_id: UUID, key_id: UUID

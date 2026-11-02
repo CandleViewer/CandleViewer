@@ -46,10 +46,14 @@ from candleviewer.storage.repositories.account_access import (
 from candleviewer.storage.repositories.account_access_sqlalchemy import (
     SqlAlchemyAccountAccessStore,
 )
+from candleviewer.storage.repositories.accounts import OwnerScope
+from candleviewer.storage.repositories.accounts_sqlalchemy import SqlAlchemyAccountsStore
+from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.onboarding_sqlalchemy import SqlAlchemyOnboardingStore
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+from candleviewer.storage.repositories.scope_sqlalchemy import SqlAlchemyScopeSource
 
 pytestmark = pytest.mark.integration
 
@@ -377,25 +381,60 @@ async def test_account_soft_delete_first_refuses_the_grant(db: Any) -> None:
 
 
 async def test_grant_first_blocks_the_account_soft_delete_until_commit(db: Any) -> None:
-    """The grant holds the account `FOR SHARE` through its audit and commit: the delete queues.
-    A grant that committed first stays live after the delete (an E27 follow-up, not S9)."""
+    """The grant holds the account `FOR SHARE` through its audit and commit: the delete queues,
+    then (#3027) soft-revokes the grant that committed first, in its own transaction."""
     rel, engine = db
     owner, user, (a,) = await _setup(engine, 1)
     gate = asyncio.Event()
     audit = _Audit(gate=gate)
+    accounts = SqlAlchemyAccountsStore(rel)
     async with engine.connect() as probe:
         call = asyncio.create_task(
             _store(rel, audit).replace_grants(user, {a: "read"}, actor_user_id=owner)
         )
         async with asyncio.timeout(_WAIT_S):
             await audit.entered.wait()
-        delete = asyncio.create_task(_exec(engine, _SOFT_DELETE, id=str(a)))
+        delete = asyncio.create_task(accounts.soft_delete_account(OwnerScope(owner), a))
         await _until_blocked(probe, 1)
         gate.set()
         async with asyncio.timeout(_WAIT_S):
             change = await call
-            await delete
-    assert change.after == {a: "read"} and await _access(engine, user) == {a: (True, False)}
+            assert await delete is True
+    assert change.after == {a: "read"}  # committed first, not refused
+    assert await _access(engine, user) == {a: (False, False)}  # then revoked by the delete
+
+
+async def test_account_soft_delete_revokes_the_grant_and_the_readers_skip_it(db: Any) -> None:
+    """#3027: a committed grant is soft-revoked by the delete, with the write-ahead seeing it
+    first; the identity reader returns no scope for the account."""
+    rel, engine = db
+    owner, user, (a, b) = await _setup(engine, 2)
+    await _store(rel).replace_grants(user, {a: "trade", b: "read"}, actor_user_id=owner)
+    seen: list[Any] = []
+
+    async def ahead(grants: Any) -> None:
+        seen.append([(g.user_id, g.can_trade) for g in grants])
+
+    accounts = SqlAlchemyAccountsStore(rel)
+    assert await accounts.soft_delete_account(OwnerScope(owner), a, write_ahead=ahead) is True
+    assert seen == [[(user, True)]]
+    assert await _access(engine, user) == {a: (False, False), b: (True, False)}
+    info = await SqlAlchemyIdentityProvider(rel).session_info(str(user))
+    assert info["account_scope"] == [str(b)]
+    assert [g[0] for g in await SqlAlchemyScopeSource(rel).load_grants(user)] == [b]
+    assert [g[0] for g in await SqlAlchemyScopeSource(rel).load_trade_grants(user)] == [b]
+
+
+async def test_account_soft_delete_first_leaves_the_readers_no_scope_for_it(db: Any) -> None:
+    """The delete committed first (a legacy grant, no revoke): the readers still skip it."""
+    rel, engine = db
+    owner, user, (a,) = await _setup(engine, 1)
+    await _store(rel).replace_grants(user, {a: "trade"}, actor_user_id=owner)
+    await _exec(engine, _SOFT_DELETE, id=str(a))  # the old delete: the grant row stays live
+    assert await _access(engine, user) == {a: (True, True)}
+    assert (await SqlAlchemyIdentityProvider(rel).session_info(str(user)))["account_scope"] == []
+    assert await SqlAlchemyScopeSource(rel).load_grants(user) == []
+    assert await SqlAlchemyScopeSource(rel).load_trade_grants(user) == []
 
 
 async def test_user_soft_delete_first_refuses_the_grant(db: Any) -> None:

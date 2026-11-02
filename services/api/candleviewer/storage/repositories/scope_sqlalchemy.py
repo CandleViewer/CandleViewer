@@ -13,14 +13,17 @@ import sqlalchemy as sa
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 
 _GRANTS = sa.text(
-    "SELECT exchange_account_id, can_view, frozen FROM user_account_access "
-    "WHERE user_id = CAST(:id AS uuid)"
+    "SELECT uaa.exchange_account_id, uaa.can_view, uaa.frozen FROM user_account_access uaa "
+    "JOIN exchange_accounts ea ON ea.id = uaa.exchange_account_id AND ea.deleted_at IS NULL "
+    "WHERE uaa.user_id = CAST(:id AS uuid)"
 )
 # E29-T04 (#913): the same rows with their trade right (21 Sec.3.1.3), so `decide(...,
 # requires_trade=True)` admits a grant with `can_trade` and refuses a view-only or frozen one.
 _TRADE_GRANTS = sa.text(
-    "SELECT exchange_account_id, can_view, can_trade, frozen FROM user_account_access "
-    "WHERE user_id = CAST(:id AS uuid)"
+    "SELECT uaa.exchange_account_id, uaa.can_view, uaa.can_trade, uaa.frozen "
+    "FROM user_account_access uaa "
+    "JOIN exchange_accounts ea ON ea.id = uaa.exchange_account_id AND ea.deleted_at IS NULL "
+    "WHERE uaa.user_id = CAST(:id AS uuid)"
 )
 # O5 (E42-T04, #965, C-2.21): a user who is not `active`, or is deleted, has no permission, so a
 # disabled user's armed rules lose `rules:arm_live` on the next read, before the asynchronous

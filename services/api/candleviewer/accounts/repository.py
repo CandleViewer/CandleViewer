@@ -42,6 +42,7 @@ from candleviewer.storage.repositories.accounts import (
     AccountWriteAhead,
     ExchangeAccountPatch,
     ExchangeAccountRow,
+    GrantsWriteAhead,
     NewExchangeAccount,
     NewKeyRotation,
     OwnerScope,
@@ -168,9 +169,19 @@ class AccountsRepository:
             raise AccountNotFoundError("account")
         return ExchangeAccount.model_validate(row, from_attributes=True)
 
-    async def soft_delete_account(self, scope: OwnerScope, account_id: UUID) -> None:
+    async def soft_delete_account(
+        self,
+        scope: OwnerScope,
+        account_id: UUID,
+        *,
+        write_ahead: GrantsWriteAhead | None = None,
+    ) -> None:
+        """#3027: also soft-revokes the account's live grants in the same transaction;
+        `write_ahead` (C-2.9) is awaited on them, ahead of the revoke and the commit."""
         try:
-            deleted = await self._store.soft_delete_account(scope, account_id)
+            deleted = await self._store.soft_delete_account(
+                scope, account_id, write_ahead=write_ahead
+            )
         except AccountsStoreError as exc:
             raise self._map(exc) from None
         if not deleted:

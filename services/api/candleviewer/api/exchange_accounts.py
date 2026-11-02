@@ -37,6 +37,7 @@ hour; one that is not is `400 invalid_cursor`. Logs carry classes and ids, never
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import inspect
 import json
@@ -108,6 +109,7 @@ from candleviewer.storage.errors import StorageError, StorageQueryFailed, WriteA
 from candleviewer.storage.repositories.accounts import (
     SUB_ACCOUNT_CAP_CONFLICT,
     AccountKey,
+    GranteeRow,
     OwnerScope,
 )
 
@@ -1046,26 +1048,67 @@ def make_exchange_accounts_router(
                          **grant}  # fmt: skip
                 await _written(record(before=before, after=after))
 
+            ahead: list[GranteeRow] = []
+
+            async def grants_event(grant: GranteeRow, action: str, outcome: str) -> None:
+                level = "trade" if grant.can_trade else "read"
+                await audit.emit(
+                    action, actor_label=who, actor_user_id=principal.user_id,
+                    actor_ip=ip, object_kind="user", object_id=str(grant.user_id),
+                    outcome=outcome, severity="warning", request_id=request_id,
+                    env=account.env, reason="account_deleted",
+                    before_state={"grants": [
+                        {"exchange_account_id": str(account_id), "level": level}
+                    ]}, after_state={"grants": []},
+                )  # fmt: skip
+
+            async def grants_revoked(grants: tuple[GranteeRow, ...]) -> None:
+                # #3027: one `users.access_change` per grantee, written ahead of the revoke the
+                # delete's transaction makes (the grant store's action and shape, reason below).
+                for grant in grants:
+                    await _written(grants_event(grant, "users.access_change", "success"))
+                    ahead.append(grant)
+
+            async def close_grants() -> None:
+                # C-2.9: a change that fails after its write-ahead, before its commit, closes each
+                # record with `users.access_change_failed`, as the grant store does; best effort.
+                # Once the soft delete commits, `ahead` is emptied: its grants are revoked.
+                for grant in ahead:
+                    try:
+                        await grants_event(grant, "users.access_change_failed", "failure")
+                    except _UNWRITTEN:
+                        _log().warning("grants_close_unwritten", account_id=str(account_id))
+
             try:
                 await lifecycle.delete(
                     owner, account, write_ahead=deleted,
                     reason="flattened" if decision.flattened else "flat",
-                    actor=principal.user_id, role=role,
+                    actor=principal.user_id, role=role, grants_ahead=grants_revoked,
+                    grants_committed=ahead.clear,
                 )  # fmt: skip
             except PrivateStreamCloseOverran:
                 _log().warning("account_delete_close_overran", account_id=str(account_id))
                 detail = "The account is deleted; its private streams are still closing."
                 return problem("exchange_unavailable", detail, status=503)
             except (AccountAuditRefused, WriteAheadTimeout):
-                return problem(
-                    "audit_unavailable", "The audit record could not be written; nothing changed."
-                )
+                await close_grants()
+                detail = "The audit record could not be written; the account is not deleted. Retry."
+                return problem("audit_unavailable", detail)
             except AccountNotFoundError:
+                await close_grants()
                 return problem("not_found", _NO_ACCOUNT)
             except KeyDestroyFailedError:
+                await close_grants()
                 detail = "A key of the account could not be destroyed; it stays disabled. Retry."
                 return problem("store_unavailable", detail)
+            except asyncio.CancelledError:
+                # Cancelled before the commit: close each record, best effort, never swallow.
+                await close_grants()
+                raise
             except Exception as exc:  # mapped, or raised as a defect
+                # An ambiguous commit error (the connection drops after COMMIT) closes the records
+                # as failed; the grant rows stay the truth, as in the grant store.
+                await close_grants()
                 return _unavailable(exc)
         return kept_answer(who, key, digest, Response(status_code=204))
 

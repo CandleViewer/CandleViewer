@@ -110,7 +110,9 @@ async def test_session_scope_reads_only_the_callers_view_grants_that_are_not_fro
     assert params == {"id": "u1"}, "the only bind is the caller; no client-supplied scope"
     # The one scope rule (C-12.4): the grants that currently permit access, decided in the
     # statement and never filtered after the fetch, so a frozen grant is not listed.
-    assert "WHERE user_id = CAST(:id AS uuid) AND can_view AND NOT frozen" in " ".join(sql.split())
+    assert "WHERE uaa.user_id = CAST(:id AS uuid) AND uaa.can_view AND NOT uaa.frozen" in " ".join(
+        sql.split()
+    )
 
 
 async def test_session_scope_and_me_accounts_use_the_same_grant_predicate() -> None:
@@ -118,7 +120,7 @@ async def test_session_scope_and_me_accounts_use_the_same_grant_predicate() -> N
     provider = _provider(rel)
     await provider.session_info("u1")
     await provider.accounts("u1")
-    scope_sql = " ".join(rel.calls[1][0].split())
+    scope_sql = " ".join(rel.calls[1][0].split()).replace("uaa.", "")
     accounts_sql = " ".join(rel.calls[2][0].split()).replace("uaa.", "")
     # `Me.accounts` is the model: the two copies of the grant predicate cannot drift apart.
     assert "can_view AND NOT frozen" in scope_sql and "can_view AND NOT frozen" in accounts_sql
@@ -202,3 +204,17 @@ async def test_active_users_selects_only_ids_of_active_undeleted_users_in_one_st
 async def test_active_users_with_no_ids_reads_nothing() -> None:
     rel = _Rel([])
     assert await _provider(rel).active_users(()) == frozenset() and rel.calls == []
+
+
+def test_every_grant_reader_joins_the_live_account() -> None:
+    """#3027: a grant to a soft-deleted account is no scope, whatever the grant row says."""
+    from candleviewer.storage.repositories import identity_sqlalchemy, scope_sqlalchemy
+
+    for stmt in (
+        identity_sqlalchemy._SCOPE_SQL,
+        scope_sqlalchemy._GRANTS,
+        scope_sqlalchemy._TRADE_GRANTS,
+    ):
+        text = str(stmt)
+        assert "JOIN exchange_accounts ea ON ea.id = uaa.exchange_account_id" in text
+        assert "ea.deleted_at IS NULL" in text

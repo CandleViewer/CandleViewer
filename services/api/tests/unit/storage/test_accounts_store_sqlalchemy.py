@@ -5,6 +5,7 @@ Real-SQL behaviour is covered by tests/integration/storage/test_accounts_store_p
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import re
 import traceback
@@ -19,7 +20,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
-from candleviewer.storage.errors import StorageConstraintViolated
+from candleviewer.storage.errors import StorageConstraintViolated, WriteAheadTimeout
 from candleviewer.storage.repositories import accounts_sqlalchemy as mod
 from candleviewer.storage.repositories.accounts import (
     SUB_ACCOUNT_CAP_CONFLICT,
@@ -184,6 +185,8 @@ _NO_COLUMN_COPY = {
     "_LOCK_PARENT",
     "_COUNT_SUBS",
     "_SOFT_DELETE",
+    "_LIVE_ACCOUNT_GRANTS",
+    "_REVOKE_ACCOUNT_GRANTS",
     "_START_ROT",
     "_COUNT_ACCOUNTS",
     "_COUNT_KEYS",
@@ -780,10 +783,82 @@ async def test_an_account_guard_refusal_is_a_typed_rule_error(trigger: str) -> N
 
 
 async def test_soft_delete_reports_rowcount() -> None:
-    rel = _Rel(_Result(), _Result(rowcount=1))
+    rel = _Rel(_Result(), _Result(rowcount=1), _Result([]))
     assert await _store(rel).soft_delete_account(_OWNER, uuid4()) is True
-    rel2 = _Rel(_Result(), _Result(rowcount=0))
+    rel2 = _Rel(_Result(), _Result(rowcount=0), _Result([]))
     assert await _store(rel2).soft_delete_account(_OWNER, uuid4()) is False
+
+
+async def test_soft_delete_soft_revokes_the_accounts_live_grants_in_one_transaction() -> None:
+    """#3027: the delete soft-revokes (never DELETEs) the grants, the write-ahead sees them
+    first, and one commit ends the whole change."""
+    user, account = uuid4(), uuid4()
+    rows = [{"user_id": str(user), "username": "mgr", "can_trade": True}]
+    rel = _Rel(_Result(), _Result(rowcount=1), _Result(rows), _Result())
+    seen: list[tuple[Any, ...]] = []
+    order: list[str] = []
+
+    async def ahead(grants: tuple[Any, ...]) -> None:
+        order.append(f"ahead after {len(rel.calls)} statements, commits={rel.commits}")
+        seen.append(grants)
+
+    assert await _store(rel).soft_delete_account(_OWNER, account, write_ahead=ahead) is True
+    text = [str(c[0]) for c in rel.calls]
+    assert "deleted_at = now()" in text[1]
+    assert "FOR NO KEY UPDATE" in text[2] and "ORDER BY" in text[2]
+    assert text[3].startswith("UPDATE user_account_access")
+    assert "can_view = false" in text[3] and "can_trade = false" in text[3]
+    assert "DELETE" not in text[3]
+    assert rel.calls[3][1] == {"account": str(account)}
+    assert order == ["ahead after 3 statements, commits=0"]  # ahead of the revoke and the commit
+    assert [(g.user_id, g.username, g.can_trade) for g in seen[0]] == [(user, "mgr", True)]
+    assert rel.commits == 1
+
+
+async def test_soft_delete_audit_refusal_rolls_back_without_commit() -> None:
+    rows = [{"user_id": str(uuid4()), "username": "mgr", "can_trade": False}]
+    rel = _Rel(_Result(), _Result(rowcount=1), _Result(rows), _Result())
+
+    async def refuse(grants: tuple[Any, ...]) -> None:
+        raise RuntimeError("audit down")
+
+    with pytest.raises(RuntimeError):
+        await _store(rel).soft_delete_account(_OWNER, uuid4(), write_ahead=refuse)
+    assert rel.commits == 0 and len(rel.calls) == 3  # no revoke after a refused record
+
+
+async def test_soft_delete_stalled_write_ahead_is_a_timeout_and_rolls_back() -> None:
+    rows = [{"user_id": str(uuid4()), "username": "mgr", "can_trade": False}]
+    rel = _Rel(_Result(), _Result(rowcount=1), _Result(rows), _Result())
+
+    async def hang(grants: tuple[Any, ...]) -> None:
+        await asyncio.Event().wait()
+
+    store = SqlAlchemyAccountsStore(rel, audit_timeout_s=0.01)  # type: ignore[arg-type]  # fake rel
+    with pytest.raises(WriteAheadTimeout):
+        await store.soft_delete_account(_OWNER, uuid4(), write_ahead=hang)
+    assert rel.commits == 0 and len(rel.calls) == 3  # no revoke after a stalled record
+
+
+async def test_soft_delete_without_grants_skips_the_write_ahead_and_the_revoke() -> None:
+    rel = _Rel(_Result(), _Result(rowcount=1), _Result([]))
+
+    async def never(grants: tuple[Any, ...]) -> None:
+        raise AssertionError("no grant, no record")
+
+    assert await _store(rel).soft_delete_account(_OWNER, uuid4(), write_ahead=never) is True
+    assert len(rel.calls) == 3 and rel.commits == 1
+
+
+async def test_soft_delete_of_an_already_deleted_account_leaves_its_grants_alone() -> None:
+    rows = [{"user_id": str(uuid4()), "username": "mgr", "can_trade": True}]
+    rel = _Rel(_Result(), _Result(rowcount=0), _Result(rows), _Result())
+
+    async def never(grants: tuple[Any, ...]) -> None:
+        raise AssertionError("nothing deleted, no record")
+
+    assert await _store(rel).soft_delete_account(_OWNER, uuid4(), write_ahead=never) is False
+    assert len(rel.calls) == 2 and rel.commits == 1  # the delete only: no lookup, no revoke
 
 
 async def test_soft_delete_result_without_rowcount_fails_loudly_not_as_not_found() -> None:
