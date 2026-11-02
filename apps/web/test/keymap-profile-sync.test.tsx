@@ -12,6 +12,7 @@ import type { Role } from "../src/routes/rbac";
  * (BQ-15, SEC-305C-03); a Viewer (A55) and a view-as session (BQ-14) send nothing. Each test is a page of its own.
  */
 type Binding = generated.rest.components["schemas"]["HotkeyBinding"];
+type HotkeyProfile = generated.rest.components["schemas"]["HotkeyProfile"];
 const load = async () => ({
   ...(await import("../src/keymap/sync")),
   ...(await import("../src/keymap/profileStore")),
@@ -76,8 +77,9 @@ type Refuse = (method: string, url: string, init?: RequestInit) => Answer;
 const noRefusal: Refuse = () => undefined;
 /**
  * `22`'s `/settings/hotkeys*` for one user, as the server PR serves it: list, create (inactive, version 1), replace,
- * activate; an unknown id is `404`. `refuse` answers a request first when it returns one, and `view` answers `22`
- * `getViewAs` (`204`: no view). Every request is recorded in order.
+ * activate; an unknown id is `404`, and a create or a replace naming a profile another one holds (folded by `lower()`)
+ * is `409 name_taken`. `refuse` answers a request first when it returns one, and `view` answers `22` `getViewAs`
+ * (`204`: no view). Every request is recorded in order.
  */
 function stubServer() {
   const calls: Call[] = [];
@@ -98,16 +100,20 @@ function stubServer() {
         : { hotkey_profile_id: active.id, bindings: active.bindings };
     },
   };
-  const profile = (r: Row) => ({
-    id: r.id,
-    owner_user_id: "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001",
-    name: r.name,
-    bindings: r.bindings,
-    is_active: r.isActive,
-    version: r.version,
-    created_at: "2026-10-31T00:00:00Z",
-    updated_at: "2026-10-31T00:00:00Z",
-  });
+  const profile = (r: Row) =>
+    ({
+      id: r.id,
+      owner_user_id: "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001",
+      name: r.name,
+      bindings: r.bindings,
+      is_active: r.isActive,
+      version: r.version,
+      created_at: "2026-10-31T00:00:00Z",
+      updated_at: "2026-10-31T00:00:00Z",
+    }) satisfies HotkeyProfile;
+  /** `22` folds names as Postgres `lower()` does: a name another of the user's profiles holds is taken (`name_taken`). */
+  const taken = (name: string, except?: Row): boolean =>
+    rows.some((r) => r !== except && r.name.toLowerCase() === name.toLowerCase());
   const missing = () => problem(404, "not_found");
   const rewrite = (): Record<string, string> =>
     server.rewritten === null ? {} : { "Hotkey-Bindings-Rewritten": server.rewritten };
@@ -125,6 +131,7 @@ function stubServer() {
       const sent = body as { name: string; bindings: Binding[] } | undefined;
       if (url === PROFILES) {
         if (method === "GET") return Response.json({ items: rows.map(profile) });
+        if (taken(sent?.name ?? "")) return problem(409, "conflict", "name_taken");
         made += 1;
         const id = `17000000-0000-4000-8000-${String(made).padStart(12, "0")}`;
         const row: Row = {
@@ -142,6 +149,7 @@ function stubServer() {
       if (row === undefined) return missing();
       if (verb !== undefined) rows.forEach((r) => (r.isActive = r === row));
       else if (sent !== undefined) {
+        if (taken(sent.name, row)) return problem(409, "conflict", "name_taken");
         Object.assign(row, { name: sent.name, bindings: sent.bindings, version: row.version + 1 });
       }
       return Response.json(profile(row), { headers: verb === undefined ? rewrite() : {} });
@@ -341,6 +349,35 @@ describe("flush: on a change, on online and at sign-in; the last write wins, wit
     expect(server.rows.map((r) => [r.isActive, r.version])).toEqual([[true, 2]]);
   });
 
+  it("with no active profile, the one the server holds under the default's name in another case is replaced and activated, never created again", async () => {
+    const server = stubServer();
+    const id = "17000000-0000-4000-8000-000000000001";
+    server.rows.push({
+      id,
+      name: "CANDLEVIEWER DEFAULT",
+      isActive: false,
+      version: 1,
+      bindings: [],
+    });
+    signIn("u-1", "owner");
+    const { store } = startSync();
+    rebind("chart.footprint_toggle", "Alt+Q");
+    await store.flush();
+    expect(lines(server.calls)).toEqual([
+      `GET ${VIEW_AS}`,
+      `GET ${PROFILES}`,
+      `PUT ${PROFILES}/${id}`,
+      `POST ${PROFILES}/${id}/activate`,
+    ]);
+    expect(server.rows.map((r) => [r.name, r.isActive, r.version])).toEqual([
+      ["CANDLEVIEWER DEFAULT", true, 2],
+    ]);
+    expect([keysOf(server.calls, "chart.footprint_toggle"), store.unsent("u-1")]).toEqual([
+      "Alt+Q",
+      false,
+    ]);
+  });
+
   it("on online: a change a transient failure kept is sent, the latest one only", async () => {
     const server = stubServer();
     server.refuse = () => problem(503, "store_unavailable");
@@ -490,6 +527,7 @@ describe("BQ-5: a refusal is parked, retried or re-synced by its class", () => {
     ["403 session_read_only", () => problem(403, "session_read_only")],
     ["403 with no readable body", () => new Response("<html>403</html>", { status: 403 })],
     ["408", () => new Response(null, { status: 408 })],
+    ["a bare 429, with no problem code", () => new Response(null, { status: 429 })],
     ["429 rate_limited", () => problem(429, "rate_limited")],
     ["409 idempotency_in_flight, a retryable code", () => problem(409, "idempotency_in_flight")],
     [
