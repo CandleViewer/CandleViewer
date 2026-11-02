@@ -39,14 +39,15 @@ The live check's SHEET-FIX lines are folded in, so a rebuild reproduces the boar
 Against the sheets that were rendered, the rebuilt raw sheets differ only in those values and in their notes (the
 sources line's md5 pins and the live-check lines that quote the root size).
 
-Drawn deviations, recorded in E26-D02 §16: B6 frame 16's second visually hidden box loses its bottom padding and
-border to the row's estimated h (`lower`, 256 px; folded below, redraw pending); B7 and B8 frame 12's DOM scrim label
-crosses a dimmed book row (kept).
+Drawn deviation, recorded in E26-D02 §16: B7 and B8 frame 12's DOM scrim label crosses a dimmed book row (kept). B6
+frame 16's second visually hidden box, which lost its bottom padding and border to the row's estimated h in the first
+render, is whole since the redraw (`lower` 272 px, below).
 
-## Boards-lens fold (redraw pending)
+## Boards-lens fold (redrawn)
 
-The boards lens on the drawn PNGs is folded into the kit; the PNGs are the earlier render until B4, B5, B6, B7, B8, B9
-and B10 are redrawn. B1, B2 and B3 differ only in the sources line's spec md5.
+The boards lens on the first render is folded into the kit, and B4, B5, B6, B7, B8, B9 and B10 are redrawn from it
+(E26-D02 §16, As built); their live check needed no fix. B1, B2 and B3 are the first render and differ only in the
+sources line's spec md5.
 
 - B9 frame 10: the other-sessions line (D-11) sits under the Positions row (y 88), clear of the trays.
 - B10 frame 23: the hold tray's `Pause` is T1 (no lock); `replay.degraded` gates the steps, seeks and presets.
