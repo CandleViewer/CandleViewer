@@ -22,6 +22,7 @@ Error codes referenced by callers (ticket "Technical notes"):
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -78,6 +79,10 @@ _TYPE_TO_CATEGORY = {
     "fix": Category.FIXES,
     "perf": Category.PERFORMANCE,
 }
+# #3347 (07 §3): a PR with this label and one of these types is a security fix even without a
+# `Changelog-Security:` footer; its generated line moves to Security (the footer wins).
+SECURITY_LABEL = "security"
+_SECURITY_LABEL_TYPES = frozenset({"feat", "fix", "perf"})
 _TYPE_TO_BUMP = {
     "feat": Bump.MINOR,
     "fix": Bump.PATCH,
@@ -102,6 +107,7 @@ class ParsedCommit:
     bump: Bump = Bump.NONE
     security_summary: str | None = None
     security_rejected: str | None = None  # a footer dropped (empty or failed the wording check)
+    security_label_skipped: bool = False  # labelled `security`, but the subject failed the guard
 
     def security_line(self) -> str:
         """The `Changelog-Security:` summary as a bullet ending with the PR's `(#N)` (or sha7)."""
@@ -141,11 +147,19 @@ def security_footer(visible: str) -> tuple[str | None, str | None]:
     return None, summary
 
 
-def parse_commit(sha: str, message: str) -> ParsedCommit:
+def pr_number(subject_line: str) -> int | None:
+    """The PR number a squash subject ends with: its LAST `(#N)`, or None."""
+    prs = _PR_NUMBER_RE.findall(subject_line)
+    return int(prs[-1]) if prs else None
+
+
+def parse_commit(sha: str, message: str, labels: Iterable[str] = ()) -> ParsedCommit:
     """Parse a single commit message into a `ParsedCommit`.
 
     Merge commits are recognised and excluded from changelog generation
-    (ticket test-plan fixture corpus: "merge commits").
+    (ticket test-plan fixture corpus: "merge commits"). `labels` are the merged PR's labels
+    (#3347): `security` on a non-breaking `feat`/`fix`/`perf` routes its line to Security when
+    the commit has no `Changelog-Security:` footer and the line passes the wording guard.
     """
     lines = message.splitlines()
     header = lines[0] if lines else ""
@@ -182,11 +196,25 @@ def parse_commit(sha: str, message: str) -> ParsedCommit:
         category = None
 
     kept, rejected = security_footer(_visible(body))
+    label_skipped = False
+    if (
+        SECURITY_LABEL in labels
+        and commit_type in _SECURITY_LABEL_TYPES
+        and not breaking
+        and kept is None
+        and not rejected  # an empty footer is dropped (warned), so the label still applies
+    ):
+        line = f"{scope or ''} {subject}"
+        if check_security_wording([line]).ok:
+            category = Category.SECURITY
+        else:
+            label_skipped = True
     return ParsedCommit(
         sha=sha,
         subject_line=header,
         security_summary=kept,
         security_rejected=rejected,
+        security_label_skipped=label_skipped,
         is_conventional=True,
         type=commit_type,
         scope=scope,
