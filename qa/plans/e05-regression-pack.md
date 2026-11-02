@@ -2,10 +2,16 @@
 
 Ticket: E05-Q03 (#263) for epic E05 (#30, design system). Inputs: the E05-Q01 plan and defect log
 (`docs/qa/test-plans/e05-components.md`, #261) and the E05-Q02 report (`docs/qa/a11y/e05-q02-design-system-v1.md`,
-#262). The epic run and the proposed sign-off are in `docs/qa/e05-signoff.md`. Base: `main` at `67fe8b526`.
+#262). The epic run and the proposed verdict are in `docs/qa/e05-signoff.md`. Base: `main` at `d5bc8e57e` (drafted on
+`67fe8b526`, rebased; every count below is regenerated at `1c4f51bb5`, and `packages/ui` is byte-identical
+between `1c4f51bb5` and `d5bc8e57e`).
 
-Rulings: the coordinator's BQ list for #263 (BQ-0 to BQ-15) is posted as comment 6576081782. This pack is built on its
-ORCH-defaults; **defaults built; ruling pending (comment 6576081782)**. A ruling replaces a default in place.
+Rulings: **RULED.** The coordinator's BQ list for #263 (BQ-0 to BQ-15, comment 6576081782) is ruled by the orchestrator's
+ruling of record, comment 6576569496: ACCEPT BQ-0 to BQ-2, BQ-6, BQ-7, BQ-9 and BQ-12 to BQ-15 as the defaults; OVERRIDE
+BQ-3 (counts from `git ls-tree` at the final base, reconciled with the `vr` job summary: section G), BQ-4 (no workflow
+edit, no nightly VR as a named deviation: section B), BQ-5 (F-3's red evidence is the sweep driver's heading-order
+result: section C), BQ-8 (the C-9.3 quarantine wording and the `vr/matrix.ts` quarantine gap: section F), BQ-10 and
+BQ-11 (the record's shape and a verdict that is only proposed: `docs/qa/e05-signoff.md`).
 
 The pack adds no story, no tag and no baseline, and changes no tolerance, `EXCLUDED_TAGS` entry or shard budget
 (BQ-0, BQ-6). It selects by name. Editing this document? Run its guard: `python3 -I qa/plans/_tools/e05_q03_pack_audit.py
@@ -32,48 +38,50 @@ this pack never records one as a result.**
 The ticket proposed a per-PR subset (touched components plus a smoke set: Button, Table, Dialog, ThemeSwitcher) and a
 nightly full sweep. On `main` the per-PR lane is already the full matrix: every PR that `pr.yml`'s `e2e` filter selects
 (`packages/ui/**`, `apps/web/**`, the tokens, `_job-a11y.yml`) runs the `a11y` lane, whose `storybook` job runs (b) and whose
-`vr` job runs (a) in 14 shards. The smoke set (Button 17 stories, Table 18, Dialog 13, ThemeSwitcher 12) is a subset of it.
-**Per-PR = the existing lane, unchanged.**
+`vr` job runs (a) in 14 shards (`_job-a11y.yml` :13-17, 6 min each). The smoke set (Button 17 stories, Table 18,
+Dialog 13, ThemeSwitcher 12) is a subset of it. **Per-PR = the existing lane, unchanged.**
 
 Measured on `main`'s lane (run 41349402849, #5351's head, 2026-11-01): the 14 `vr` shards took 166 s to 234 s of job wall
 each (2,699 s runner time in all; the budget is 360 s per shard, CI-A11Y-007), the `storybook` job 165 s (budget 600 s),
 and the lane 666 s of wall clock from the first job's start to the last's end. That is within the ~15 min PR budget
-(ADR-0019 decision drivers). This PR's own lane run is recorded in the sign-off record when CI has run it.
+(ADR-0019 decision drivers). At this pack's base the lane is the merge-group run 41442501010 of `1c4f51bb5`
+(2026-11-02): 14 `vr` shards green, 189 s to 270 s of job wall each (3,102 s in all, budget 360 s), the `storybook` job
+166 s (budget 600 s), 0 VR diffs. This PR's own lane run is added to the sign-off record when CI has run it.
 
-## B. Nightly sweep (BQ-4, part two): PENDING, not built
+## B. Nightly sweep (BQ-4, part two): no nightly VR, a named deviation
 
-> **Pending a ruling (BQ-4) and a `security-review` (C-10.2: a workflow file).** Nothing in this section is built.
+Ruled (6576569496, BQ-4 OVERRIDE): **no workflow edit in this PR.** The nightly is Storybook-only by design
+(`storybook-nightly.yml` :3-8, :15; `_job-a11y.yml` :22-23): it calls `_job-a11y.yml` with `storybook_only: true`, so it
+runs (b) only. A workflow edit is a C-10.2 path and new CI wiring the pack does not need, so this PR touches no C-10.2
+path and carries no `security-review` label.
 
-Fact at the base: `storybook-nightly.yml` calls `_job-a11y.yml` with `storybook_only: true`, so the nightly runs (b) only.
-VR has no nightly run, and the E05-Q02 drivers (d) run nowhere (Q02 FU-5).
-
-- **Default (proposed, not built):** `storybook-nightly.yml` also runs the `vr` compare shards (one input to
-  `_job-a11y.yml`), its pin test (`scripts/tests/test_storybook_nightly.py`) updated, in this PR or a follow-up with the
-  `security-review` label. The nightly's existing `report` job carries a red VR nightly to the tracker issue that
-  `CV_STORYBOOK_NIGHTLY_TRACKER_ISSUE` names, or opens a P1 (BQ-14); no new channel.
-- **Alternative B:** no workflow change; nightly VR is a carry, and the PR body says `Partial:` (BQ-2).
-- **Either way:** the E05-Q02 drivers stay a manual run (d); FU-5 is carried to its owner (the E05-T03 harness owner).
-
-The ticket's "failures route via the E04 alerting path" is not wired for this lane: the nightly's own `report` job is the
-route (one Deviation line, carried to the E04 owner).
+- **No nightly VR: a named deviation (AC 4), sign-off record CV-1, owner: the owner.** Every PR on the `e2e` filter
+  already runs the full VR matrix (section A); what is missing is a run with no PR. If the owner wants the ticket's
+  nightly literally, it is the one allowed second PR (the workflow edit with its `security-review`); this PR then says
+  `Refs` + `Partial:` and only the second one closes the ticket.
+- **The E05-Q02 drivers** stay a manual run (d); FU-5 is carried to its owner (the E05-T03 harness owner).
+- **A red nightly** (the Storybook leg it does run) reaches the tracker issue that `CV_STORYBOOK_NIGHTLY_TRACKER_ISSUE`
+  names, or a new P1, through the nightly's own `report` job (BQ-14); no new channel. The ticket's "failures route via
+  the E04 alerting path" is not wired for this lane (one Deviation line, carried to the E04 owner).
 
 ## C. Fixed defect to test, with the revert test (BQ-5)
 
-Every defect fixed from the E05-Q01 log (D1 to D3) and the E05-Q02 log (F-1 to F-3) maps to a named test that fails on the
-pre-fix code. The revert test was run for all six on 2026-11-02 on `67fe8b526` plus this PR's F-3 test: in a scratch
-worktree, the fix's `packages/ui/src` change was reverted, the named tests run with
+Every defect fixed from the E05-Q01 log (D1 to D3) and the E05-Q02 log (F-1 to F-3) maps to named red evidence on the
+pre-fix code: a unit test for D1 to D3, F-1 and F-2, and for F-3 the sweep driver's `heading-order` result (ruling
+6576569496, BQ-5; note 2). The unit revert tests were run for all six on 2026-11-02 on `67fe8b526` plus this PR's F-3
+test; every fix file and every named test is byte-identical at `1c4f51bb5`. In a scratch worktree, the fix's `packages/ui/src` change was reverted, the named tests run with
 `pnpm exec vitest run --project unit <files>` from `packages/ui`, the result recorded, the tree restored, and the same tests
 run again green. The revert is `git show --format= <fix sha> -- <src paths> | git apply -R` (D1: note 1), the restore
 `git checkout -- packages/ui/src && git clean -fd packages/ui/src`.
 
-| Id  | Defect (log)                                                                 | Fix               | Test (file, title)                                                                                                                                                                                                                                                                                                  | Reverted                                                                  | Red on revert                 | Green restored |
-| --- | ---------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ----------------------------- | -------------- |
-| D1  | A gated control announces nothing on a refused activation (Q01, #5131)       | #5135 `55a9e5daa` | `packages/ui/test/RbacGate.test.tsx`:112 "denied: Enter, click and a dispatched click each announce the reason once, never call the handler"; and the gated-announce tests of the eight atoms (`Button`, `Checkbox`, `ColorSwatch`, `IconButton`, `RadioGroup`, `SegmentedControl`, `Slider`, `Toggle` `.test.tsx`) | the eight atoms' announce call neutralised (see note 1)                   | 9 of 9 files, 18 of 342 tests | 342 of 342     |
-| D2  | The Dialog card overflows at 200 % zoom, its body cannot scroll (Q01, #5143) | #5149 `c61092c7f` | `packages/ui/test/dialog-css.test.ts`:79 "in the narrow query the layer has a definite row, so the card's max-height: 100% resolves (#5143)"                                                                                                                                                                        | `dialog.css` hunk reversed                                                | 1 of 12 tests                 | 12 of 12       |
-| D3  | A non-modal Drawer over the page at 720 px or less is not modal (Q01, #5144) | #5155 `b148ca470` | `packages/ui/test/Drawer.test.tsx`:576 "narrow: aria-modal, the scrim, the page inert and not scrolling" (and three more narrow tests); `packages/ui/test/InfoPanel.test.tsx`:318 "narrow: aria-modal, Tab stays inside, Esc closes and focus returns to the trigger"                                               | `Drawer.tsx`, `layers.tsx` hunks reversed, `useNarrowViewport.ts` removed | 2 of 2 files, 5 of 68 tests   | 68 of 68       |
-| F-1 | The focused SkipLink pill overlays the first header control, 2.5.8 (Q02)     | #5243 `b2126268d` | `packages/ui/test/skiplink-css.test.ts`:29 "focused: the primary pill at the control height with the CMP-039 ring"                                                                                                                                                                                                  | `skiplink.css`, `SkipLink.tsx` hunks reversed                             | 1 of 6 tests                  | 6 of 6         |
-| F-2 | ErrorState summary links under 24 px, 2.5.8 (Q02)                            | #5243 `b2126268d` | `packages/ui/test/errorstate-css.test.ts`:77 "each summary link is at least size.target.min tall (WCAG 2.5.8, list items)"                                                                                                                                                                                          | `errorstate.css` hunk reversed                                            | 1 of 12 tests                 | 12 of 12       |
-| F-3 | Typography `HeadingLevelVsStyle` jumps h1 to h4, heading-order (Q02)         | #5243 `b2126268d` | `packages/ui/test/Typography.test.tsx`:163 "never skips a heading level" (added by this PR, note 2); and the story's VR row (CI)                                                                                                                                                                                    | `Typography.stories.tsx` hunk reversed                                    | 1 of 35 tests                 | 35 of 35       |
+| Id  | Defect (log)                                                                 | Fix               | Test (file, title)                                                                                                                                                                                                                                                                                                  | Reverted                                                                  | Red on revert                         | Green restored                  |
+| --- | ---------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------- | ------------------------------- |
+| D1  | A gated control announces nothing on a refused activation (Q01, #5131)       | #5135 `55a9e5daa` | `packages/ui/test/RbacGate.test.tsx`:112 "denied: Enter, click and a dispatched click each announce the reason once, never call the handler"; and the gated-announce tests of the eight atoms (`Button`, `Checkbox`, `ColorSwatch`, `IconButton`, `RadioGroup`, `SegmentedControl`, `Slider`, `Toggle` `.test.tsx`) | the eight atoms' announce call neutralised (see note 1)                   | 9 of 9 files, 18 of 342 tests         | 342 of 342                      |
+| D2  | The Dialog card overflows at 200 % zoom, its body cannot scroll (Q01, #5143) | #5149 `c61092c7f` | `packages/ui/test/dialog-css.test.ts`:79 "in the narrow query the layer has a definite row, so the card's max-height: 100% resolves (#5143)"                                                                                                                                                                        | `dialog.css` hunk reversed                                                | 1 of 12 tests                         | 12 of 12                        |
+| D3  | A non-modal Drawer over the page at 720 px or less is not modal (Q01, #5144) | #5155 `b148ca470` | `packages/ui/test/Drawer.test.tsx`:576 "narrow: aria-modal, the scrim, the page inert and not scrolling" (and three more narrow tests); `packages/ui/test/InfoPanel.test.tsx`:318 "narrow: aria-modal, Tab stays inside, Esc closes and focus returns to the trigger"                                               | `Drawer.tsx`, `layers.tsx` hunks reversed, `useNarrowViewport.ts` removed | 2 of 2 files, 5 of 68 tests           | 68 of 68                        |
+| F-1 | The focused SkipLink pill overlays the first header control, 2.5.8 (Q02)     | #5243 `b2126268d` | `packages/ui/test/skiplink-css.test.ts`:29 "focused: the primary pill at the control height with the CMP-039 ring"                                                                                                                                                                                                  | `skiplink.css`, `SkipLink.tsx` hunks reversed                             | 1 of 6 tests                          | 6 of 6                          |
+| F-2 | ErrorState summary links under 24 px, 2.5.8 (Q02)                            | #5243 `b2126268d` | `packages/ui/test/errorstate-css.test.ts`:77 "each summary link is at least size.target.min tall (WCAG 2.5.8, list items)"                                                                                                                                                                                          | `errorstate.css` hunk reversed                                            | 1 of 12 tests                         | 12 of 12                        |
+| F-3 | Typography `HeadingLevelVsStyle` jumps h1 to h4, heading-order (Q02)         | #5243 `b2126268d` | red evidence: the E05-Q02 axe driver's `heading-order` result on `atoms-typography--heading-level-vs-style` (note 2); added by this PR: `packages/ui/test/Typography.test.tsx`:163 "never skips a heading level"                                                                                                    | `Typography.stories.tsx` hunk reversed                                    | driver: 12 of 12 cells; test: 1 of 35 | driver: 0 of 12; test: 35 of 35 |
 
 Notes:
 
@@ -81,10 +89,15 @@ Notes:
    each of the eight atoms #5135 changed, `useGatedAnnounce()` was replaced by a no-op, so a refused activation announces
    nothing, as before the fix. The failing tests include the RbacGate abuse check (section D) and every atom's
    gated-announce test.
-2. F-3 had no test that fails on the pre-fix story: axe rates `heading-order` moderate, which neither the `storybook` job
-   nor `merge --strict` fails on, and the fix sits in the story itself, so the story's play function moves with it. This
-   PR adds one assertion over every Typography story (no heading skips a level). The VR row also catches it in CI (the
-   label text changes); a local VR run is not evidence (fonts).
+2. F-3: the fix sits in the story itself, so the story's play function moves with it, and axe rates `heading-order`
+   moderate, which neither the `storybook` job nor `merge --strict` fails on; a VR row cannot be reverted and run locally
+   (README, Visual regression). The red evidence is therefore the E05-Q02 axe driver's own result (its per-cell rule ids):
+   on 2026-11-02, in a scratch worktree at `1c4f51bb5` with the #5243 `Typography.stories.tsx` hunk reversed, Storybook
+   built and the driver run with `A11Y_ONLY=typography` (9 stories, 108 cells, negative control tripped) reported
+   `heading-order` (moderate) on all 12 cells of `atoms-typography--heading-level-vs-style` (3 themes x 2 densities x
+   2 motion states) and nothing else; on the fixed story the epic sweep (sign-off record, section 3) reports 0 at every
+   impact. The new `Typography.test.tsx` assertion (no Typography story skips a heading level) is an **addition** by this
+   PR, not the red evidence the ruling names: it was red on the same revert (1 of 35) and is green restored (35 of 35).
 
 Not "fixed" and so not in the map: D4 (Checkbox `Indeterminate` shows no visible word "Mixed") and D5 (the stacked Table at
 `high-contrast` · `compact`, row fills about 1.07 : 1) are open rows of the Q01 plan, not filed (coordinator ruling
@@ -115,16 +128,25 @@ Stories the Q01 plan named for the pack exist and run in every leg: Toast `Regio
 
 The workflow is `packages/ui/README.md`, Visual regression, "Reviewing a diff" (inspect, accept through the `vr_update`
 dispatch, approve by a `vr/baselines` CODEOWNER plus `design-approved`), with this PR's addendum there: what counts as
-intentional, the flake route (C-9.3) and the sweep-finding route.
+intentional, the flake route and the sweep-finding route. A flaky or failing cell: no re-run until green; quarantine
+plus a P1 ticket per C-9.3 (`03` §14); never a tolerance raise or a baseline move (ruling 6576569496, BQ-8).
+
+**Gap, for its owner (not this PR):** C-9.3 quarantines with the `@flaky` marker, but `vr/matrix.ts` :40-43 has no
+quarantine tag: its `EXCLUDED_TAGS` holds `perf` only ("Nothing else is ever left out"). Quarantining a VR cell
+therefore needs a gate change by the VR harness's owner (E05-T04, a `vr/baselines` CODEOWNER); sign-off record CV-16.
 
 ## G. VR matrix per component (generated)
 
-Derived from `git ls-tree -r --name-only HEAD packages/ui/vr/baselines/` (`{story}--{theme}--{density}.png`); the guard
-regenerates it with `--fill`. Each story has six cells (3 themes x 2 densities, motion `reduce`).
+Derived from `git ls-tree -r --name-only HEAD packages/ui/vr/baselines/` (`{story}--{theme}--{density}.png`) at
+`1c4f51bb5`; the guard regenerates it with `--fill`. Each story has six cells (3 themes x 2 densities, motion `reduce`):
+5,736 PNGs = 956 stories x 6, in 89 components (atoms 42, molecules 36, organisms 4, foundations 3, trading 4).
+Reconciled with the `vr` job summary of run 41442501010 at the same sha: "VR matrix: 5736 cells (956 stories x 3 themes x
+2 densities)", the five `perf` stories left out (section H); the 14 shards ran 5,751 tests = 5,736 cells + 14 font
+probes (one per shard) + 1 baseline audit (shard 1), with 0 diffs.
 
 <!-- e05-vr-matrix:begin -->
 
-By tier: atoms 42 (444 stories, 2664 cells); molecules 34 (428 stories, 2568 cells); organisms 4 (21 stories, 126 cells); foundations 3 (6 stories, 36 cells); trading 1 (6 stories, 36 cells).
+By tier: atoms 42 (444 stories, 2664 cells); molecules 36 (451 stories, 2706 cells); organisms 4 (21 stories, 126 cells); foundations 3 (6 stories, 36 cells); trading 4 (34 stories, 204 cells).
 
 | Component                               | Tier        | Stories |    Cells |
 | --------------------------------------- | ----------- | ------: | -------: |
@@ -187,6 +209,7 @@ By tier: atoms 42 (444 stories, 2664 cells); molecules 34 (428 stories, 2568 cel
 | `molecules-drawer`                      | molecules   |      11 |       66 |
 | `molecules-e05-s04-theming-matrix`      | molecules   |       2 |       12 |
 | `molecules-filedrop`                    | molecules   |      12 |       72 |
+| `molecules-filterbar`                   | molecules   |      11 |       66 |
 | `molecules-formfield`                   | molecules   |      15 |       90 |
 | `molecules-formsection`                 | molecules   |      11 |       66 |
 | `molecules-fuzzylist`                   | molecules   |      13 |       78 |
@@ -196,6 +219,7 @@ By tier: atoms 42 (444 stories, 2664 cells); molecules 34 (428 stories, 2568 cel
 | `molecules-previewtile`                 | molecules   |      17 |      102 |
 | `molecules-rbacgate`                    | molecules   |      14 |       84 |
 | `molecules-searchbox`                   | molecules   |       8 |       48 |
+| `molecules-splitbutton`                 | molecules   |      12 |       72 |
 | `molecules-symbolinfopopover`           | molecules   |       8 |       48 |
 | `molecules-symbolpicker`                | molecules   |      13 |       78 |
 | `molecules-symbolsearchinput`           | molecules   |       8 |       48 |
@@ -211,8 +235,11 @@ By tier: atoms 42 (444 stories, 2664 cells); molecules 34 (428 stories, 2568 cel
 | `organisms-forbiddenstate`              | organisms   |       4 |       24 |
 | `organisms-globalerrorboundaryfallback` | organisms   |       7 |       42 |
 | `organisms-notfoundstate`               | organisms   |       3 |       18 |
+| `trading-accountmultiselect`            | trading     |      11 |       66 |
 | `trading-colorconventionlegend`         | trading     |       6 |       36 |
-| **total: 84 components**                |             | **905** | **5430** |
+| `trading-pnlbadge`                      | trading     |      13 |       78 |
+| `trading-positionmodetoggle`            | trading     |       4 |       24 |
+| **total: 89 components**                |             | **956** | **5736** |
 
 <!-- e05-vr-matrix:end -->
 

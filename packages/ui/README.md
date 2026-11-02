@@ -330,8 +330,9 @@ Routing (E05-Q03, the regression pack `qa/plans/e05-regression-pack.md`):
 - **What counts as intentional:** a change that a design ticket or the PR's `design-approved`
   names, nothing else. Any other diff is a regression, however small or plausible it looks.
 - **A flaky cell** (passes and fails on the same head), a `SETTLE` cell or a failed play: no
-  re-run until green. File a P1 ticket the same day (C-9.3) and fix the story or the component;
-  never raise the tolerance, add an exclusion tag or move a baseline to get past it.
+  re-run until green; quarantine plus a P1 ticket per C-9.3, then fix the story or the component.
+  Never a tolerance raise or a baseline move to get past it. The VR matrix has no quarantine tag
+  yet (`vr/matrix.ts`, `EXCLUDED_TAGS`): that is a gate change for its owner, recorded in the pack.
 - **A finding from the full sweep** (the pack's manual a11y run, or a diff seen outside a PR) is a
   row in that run's record, routed to the component's owner; it never becomes a baseline update in
   the PR that found it.
