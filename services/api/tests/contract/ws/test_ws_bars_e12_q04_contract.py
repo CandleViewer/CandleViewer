@@ -67,6 +67,7 @@ _DEAD_ALLOWED: Final = {
             "follow-up serves it and removes this row"
         )
         for member in (
+            "snapMeta.stale_build",
             "BarsBatch.bars[].gap_before",
             "BarsBatch.bars[].partial",
             "BarsBatch.bars[].tape_gap",
@@ -287,7 +288,9 @@ def _declared() -> set[str]:
 
 #: The `snapMeta` members a `bars` frame can carry (§13, §6.1), guarded with `BarsBatch`. `stale`
 #: is left out: it is sent only for a quarantined series, which `test_sequencing.py` drives (§7.2).
-_BARS_META: Final = ("spec_hash", "build_version", "include_delta", "coverage_holes")
+_BARS_META: Final = (
+    "spec_hash", "build_version", "include_delta", "coverage_holes", "stale_build",
+)  # fmt: skip
 #: One run: the structured payloads it counts and the envelope `meta` of every frame it received.
 Run = tuple[list[dict[str, Any]], list[dict[str, Any]]]
 

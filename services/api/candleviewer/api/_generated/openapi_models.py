@@ -1735,7 +1735,7 @@ class BarsMeta(DataMeta):
     stale_build: Annotated[
         StrictBool,
         Field(
-            description="True when a bar served was built below the running builder version, or has no recorded build version: a NULL `build_version` is unknown provenance and serves `stale_build: true` on every read path (24 §3.1). A later read may serve such a window rebuilt. Absent means `false`."
+            description="True when a bar served was built below the running builder version, or has no recorded build version: a NULL `build_version` is unknown provenance and serves `stale_build: true` on every read path (24 §3.1). An exchange kline is no built bar and never sets it. The WS `bars` snapshot's `meta.stale_build` is the same flag for the bars it sends (23 §6.1). A later read may serve such a window rebuilt. Absent means `false`."
         ),
     ] = False
 
