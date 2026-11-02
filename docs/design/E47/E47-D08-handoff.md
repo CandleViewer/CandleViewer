@@ -24,8 +24,8 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 
 | A                      | Target                   | Applied by                                         |
 | ---------------------- | ------------------------ | -------------------------------------------------- |
-| D08-A1                 | `16` §7                  | the `16` owner, at the owner's sign-off PR         |
-| D08-A2, D08-A3, D08-A5 | `05` §7, §11             | the `05` owner, at the owner's sign-off PR         |
+| D08-A1                 | `16` §7                  | E47-D11 (#1310), the pack (BQ-12; spec §0)         |
+| D08-A2, D08-A3, D08-A5 | `05` §7, §11             | E47-D11 (#1310), the pack (BQ-12; spec §0)         |
 | D08-A4                 | `05` §3.2                | the `05` owner, with E10-S02 (#305)                |
 | D08-A6, D08-A7         | REG                      | E47-S04 (#1318), the register's owner              |
 | D08-A8, D08-A9         | `16` §7.1; the token set | E47-D10 (#1309), the motion and token contribution |
@@ -65,24 +65,24 @@ Old is a verbatim fragment of the cited line at `85b6b6c1c` (D03 at `73fefc62b`;
 - [ ] Board 04: under reduce no overlay paints; the glyph changes at most twice a second; under forced colours the glyph is in system text colour.
 - [ ] Boards 05–06: a ten-event liquidation burst starts one overlay; the heatmap trail stops fading under reduce and canvas calm.
 - [ ] Board 07: replay pauses with `Space`, the tape with `P`, follow-live with its toggle; no copy says the feed paused.
-- [ ] Board 08: OS reduce plus the override off: full motion, one announcement naming the override, SCR-117's Effective line.
+- [ ] Board 08: OS reduce plus the override off: full motion, the one announcement "Reduced motion off", SCR-117's Effective line naming the choice.
 - [ ] Board 09–10: every safety signal reads by icon and word under reduce, in high contrast and in forced colours.
 - [ ] Run §E.0: the OS setting on and off over every §3 surface with video per surface, the screen-reader, keyboard-only, 200 % zoom and forced-colours passes; note any vestibular discomfort `(heuristic)` (T Test).
 - [ ] Record `approved` on #1307, or the findings `(heuristic)` with board and frame names.
 
 ## §F Consumer pointers
 
-| Consumer                 | Builds from                                         | Waits on               |
-| ------------------------ | --------------------------------------------------- | ---------------------- |
-| E47-S04 (#1318), E08-S08 | spec §4, §5                                         | D08-G3, D08-G4         |
-| E47-Q05 (#1357)          | spec §4.4, §14; §G                                  | D08-G5, D08-G6, D08-Q2 |
-| E47-Q01 (#1314)          | §G                                                  | —                      |
-| E47-D10 (#1309)          | spec §4.1, §13; D08-A8, D08-A9                      | —                      |
-| E24-D04 (#662)           | spec §6                                             | D08-G2                 |
-| E21-D05 (#505)           | spec §7, §8                                         | D08-G1, D08-G7         |
-| E22-D04 (#577)           | spec §8, W-8, W-9                                   | D08-C11, D08-Q4        |
-| E47-D07 (#1306)          | W-2 … W-4, W-8 … W-10; spec §15's announcement rule | —                      |
-| E47-D11 (#1310)          | this pack                                           | the ruling             |
+| Consumer                 | Builds from                                   | Waits on               |
+| ------------------------ | --------------------------------------------- | ---------------------- |
+| E47-S04 (#1318), E08-S08 | spec §4, §5                                   | D08-G3, D08-G4         |
+| E47-Q05 (#1357)          | spec §4.4, §14; §G                            | D08-G5, D08-G6, D08-Q2 |
+| E47-Q01 (#1314)          | §G                                            | —                      |
+| E47-D10 (#1309)          | spec §4.1, §13; D08-A8, D08-A9                | —                      |
+| E24-D04 (#662)           | spec §6                                       | D08-G2                 |
+| E21-D05 (#505)           | spec §7, §8                                   | D08-G1, D08-G7         |
+| E22-D04 (#577)           | spec §8, W-8, W-9                             | D08-C11, D08-Q4        |
+| E47-D07 (#1306)          | W-4, W-8 … W-10; spec §15's announcement rule | —                      |
+| E47-D11 (#1310)          | this pack; D08-A1 … D08-A3, D08-A5            | #5417's merge          |
 
 ## §G QA draft assertions (deterministic; the specification for the §9 gate, `05`:261)
 
@@ -119,4 +119,4 @@ The boards of spec §0 on page `E47-D08 — Motion`; frames named `<surface>/<ti
 3. 41<!--=COUNT:inv.rows--> surfaces, each with its full, canvas-calm and reduced variant, checked against its owning spec row.
 4. Per cell 500 ms; per region at most 2 combined starts a second in every theme; the 40 Hz simulation proves it with the arbiter.
 5. Every auto-mover over 5 s has a keyboard pause; pausing follow-live never reads as a paused feed.
-6. Safety signals are static by icon and word; the BQ defaults are built, the ruling pending.
+6. Safety signals are static by icon and word; the BQ list is RULED (comment 6570059961), BQ-9 overridden: the announcement keeps E05-D03's words.

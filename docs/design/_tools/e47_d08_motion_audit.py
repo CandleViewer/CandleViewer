@@ -17,8 +17,8 @@ form follows the E47-D04 tool (the same modes, anchored values, default-deny pin
    its pin (G-CITE); every "verbatim" copy string occurs on its cited line (G-QUOTE); every Old
    fragment of the hand-off's A-rows occurs verbatim on its cited line (G-AROW).
 3. **Gates.** One FAIL line per gate: G-BOTH (the spec opens with the both-modes sentence; R-1
-   states it; every §5 carrier has a hold), G-PENDING (BQ-0 ... BQ-16 once each, "default built;
-   ruling pending", the heading names comment 6569517623), G-PIN (the header names only the four
+   states it; every §5 carrier has a hold), G-PENDING (BQ-0 ... BQ-17 once each, each "RULED" with
+   the ruling's comment 6570059961 and none "ruling pending"; the heading names the ruling), G-PIN (the header names only the four
    pinned commits, each present in the object store), G-BOARDS (at most ten boards, twins at most a
    third, every board pending, the not-drawn paragraph), G-INV (every inventory row: both variants
    in every tier, "unchanged" only on a static row, a canvas row's calm cell equals its reduced
@@ -102,6 +102,8 @@ CITE_FILES = {
     "E15D14": "docs/design/E15/E15-D14.md",
     "D09E09": "docs/design/E09/E09-D09.md",
     "E11R": "docs/design/research/e11-chart-navigation-research.md",
+    "E17D02": "docs/design/E17/E17-D02.md",
+    "CAT": "docs/plan/a11y/47-audit-catalogue.md",
     "D03": "docs/design/E47/E47-D03.md",
     "D04": "docs/design/E47/E47-D04.md",
     "D05": "docs/design/E47/E47-D05.md",
@@ -118,8 +120,9 @@ FILE_BASE = {
 }
 
 BQ_LIST_ID = "6569517623"
-BQ_IDS = tuple(f"BQ-{n}" for n in range(17))
-BQ_PENDING = "default built; ruling pending"
+RULING_ID = "6570059961"  # the orchestrator's ruling of record on the BQ list
+BQ_IDS = tuple(f"BQ-{n}" for n in range(18))  # BQ-17 is the one the ruling adds
+BQ_PENDING = "ruling pending"
 BOTH = (
     "**The single most important sentence (T Tech).** The flash-rate budget applies in both"
     " motion modes"
@@ -523,12 +526,12 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "M-2",
-        "mark BQ-5 RULED without a ruling",
+        "mark BQ-5 pending after the ruling",
         "G-PENDING",
         "spec",
         "## The questions",
-        "the arbiter a G-row — default built; ruling pending",
-        "the arbiter a G-row — RULED",
+        "(E05D03:109, :270) — RULED (6570059961)",
+        "(E05D03:109, :270) — default built; ruling pending",
     ),
     Mutation(
         "M-3",
@@ -974,18 +977,20 @@ def g_pending(t: Texts) -> list[Finding]:
     head = t.spec.split("\n")[s - 1] if s else ""
     lines = t.spec.split("\n")[s:e]
     bad: list[str] = []
-    if f"defaults built; ruling pending (comment {BQ_LIST_ID})" not in head:
-        bad.append("the heading does not name the pending ruling and the list")
+    if f"RULED (comment {RULING_ID})" not in head:
+        bad.append("the heading does not name the ruling of record")
+    if BQ_LIST_ID not in "\n".join(lines):
+        bad.append("the section does not name the BQ list")
     for bq in BQ_IDS:
         rows = [ln for ln in lines if ln.startswith(f"- **{bq}**")]
         if len(rows) != 1:
             bad.append(f"{bq} appears {len(rows)} times")
-        elif BQ_PENDING not in rows[0] or "RULED" in rows[0]:
-            bad.append(f"{bq} is not marked '{BQ_PENDING}'")
+        elif RULING_ID not in rows[0] or "RULED" not in rows[0] or BQ_PENDING in rows[0]:
+            bad.append(f"{bq} is not marked RULED with comment {RULING_ID}")
     if any(
         re.match(r"- \*\*BQ-(\d+)\*\*", ln) and ln[4:9].rstrip("*") not in BQ_IDS for ln in lines
     ):
-        bad.append("a BQ outside BQ-0 ... BQ-16")
+        bad.append("a BQ outside BQ-0 ... BQ-17")
     return [("G-PENDING", b, "spec", region) for b in bad]
 
 
