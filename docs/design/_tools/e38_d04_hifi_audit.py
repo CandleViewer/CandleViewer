@@ -27,6 +27,10 @@ Gates (each FAIL led by its name):
               `color.status.info.*`.
   G-AROW      every A-row's Old text or anchor stands exactly once in its target at the base;
               an "After" anchor names its line at the base, and that line starts with the quote.
+              A row marked "Applied (PR 2)" is also read in the working tree: an Old / New
+              row's New stands once and its Old not at all; an After row's new line stands once
+              and directly follows its anchor line. Every row is marked applied but A-2, which
+              is held for PR 2's rebase (its catalogue ids).
   G-CITE      every cite in range and on a non-blank line at its ref, its content equal to the
               pins file's hash; the SHA anchors are the pinned refs.
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
@@ -38,7 +42,8 @@ Gates (each FAIL led by its name):
               on disk the PNG's IHDR width × height and sha256 equal the record; and no other
               E38-D04-*.png sits in `docs/design/E38/img/`.
   G-SCOPE     the diff against `git merge-base HEAD origin/main` touches only the spec, this
-              tool, the pins file and the E38-D04 exports in `docs/design/E38/img/`.
+              tool, the pins file, `14` and `15` (the applied A-rows) and the E38-D04 exports in
+              `docs/design/E38/img/`.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e38_d04_hifi_audit.py --check       (exit 1 on any FAIL)
@@ -63,7 +68,13 @@ ROOT = Path(__file__).resolve().parents[3]
 SPEC_REL = "docs/design/E38/E38-D04.md"
 TOOL_REL = "docs/design/_tools/e38_d04_hifi_audit.py"
 PINS_REL = "docs/design/_tools/e38_d04_ruled_pins.txt"
-OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
+TARGETS = {
+    "14": "docs/plan/14-screens-catalogue.md",
+    "15": "docs/plan/15-component-catalogue.md",
+}
+OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL, *TARGETS.values())
+APPLIED = " **Applied (PR 2).**"
+HELD = {"A-2"}  # applied at PR 2's rebase, when its catalogue ids are assigned
 BASE = "c327ed438c01c5bab9247890dd00f5dce3717f97"  # origin/main when written
 MEMO_REF = "4774b2f8cd7b67a1ee934fe88546568f7aa3e34c"  # #5451's head (E38-D01 memo)
 TOKENS = "packages/ui/tokens"
@@ -169,6 +180,7 @@ class Texts:
     changed: list[str] | None
     memo: dict[str, str | None]
     files: dict[str, bytes]
+    work: dict[str, str]
 
 
 def git(*args: str) -> str | None:
@@ -492,7 +504,41 @@ def g_arow(t: Texts, vals: dict[str, str]) -> list[str]:
             n = at(t, key).count(a)
             if n != 1:
                 bad.append(f"{aid}: {a[:40]!r} stands {n} times in `{key}`")
+        bad += applied_problems(t, aid, key, body)
     return bad
+
+
+def applied_problems(t: Texts, aid: str, key: str, body: str) -> list[str]:
+    if not body.endswith(APPLIED):
+        return [f"{aid}: not marked applied"] if aid not in HELD else []
+    if aid in HELD:
+        return [f"{aid}: marked applied, but it is held for PR 2's rebase"]
+    body = body[: -len(APPLIED)]
+    work = t.work.get(key)
+    if work is None:
+        return [f"{aid}: cannot read `{key}` in the working tree"]
+    on = re.search(r'Old: "(.+?)"\. New: "(.+)"\.?$', body)
+    if on:
+        old, new = on[1], on[2]
+        bad = (
+            []
+            if work.count(new) == 1
+            else [f"{aid}: its New stands {work.count(new)} times"]
+        )
+        if old in work:
+            bad.append(f"{aid}: its Old text still stands in `{key}`")
+        return bad
+    af = re.search(r'[Aa]fter "(.+?)" \(line[^)]*\) add the line: "(.+)"\.?$', body)
+    if af is None:
+        return [f"{aid}: marked applied, but its New text cannot be read"]
+    anchor, new = af[1], af[2]
+    ls = work.split("\n")
+    hits = [i for i, ln in enumerate(ls) if ln.startswith(anchor)]
+    if ls.count(new) != 1 or len(hits) != 1 or ls[hits[0] + 1 : hits[0] + 2] != [new]:
+        return [
+            f"{aid}: its line does not stand once, right after its anchor in `{key}`"
+        ]
+    return []
 
 
 def g_cite(t: Texts, vals: dict[str, str]) -> list[str]:
@@ -643,7 +689,12 @@ def load() -> Texts:
         if img.is_dir()
         else {}
     )
-    return Texts(spec, pins, tool, changed_paths(), {}, files)
+    work = {
+        k: (ROOT / rel).read_text(encoding="utf-8")
+        for k, rel in TARGETS.items()
+        if (ROOT / rel).exists()
+    }
+    return Texts(spec, pins, tool, changed_paths(), {}, files, work)
 
 
 def sub(old: str, new: str) -> Callable[[Texts], Texts]:
@@ -691,6 +742,18 @@ def a1_without(name: str) -> Callable[[Texts], Texts]:
         "CMP-019": ", wrapped by CMP-079 RbacGate",
     }[name]
     return sub(A1_T2, kept)
+
+
+def work_sub(key: str, old: str, new: str) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        text = t.work[key]
+        if text.count(old) != 1:
+            raise SystemExit(
+                f"self-test: `{key}` carries {old[:50]!r} {text.count(old)} times"
+            )
+        return replace(t, work={**t.work, key: text.replace(old, new)})
+
+    return f
 
 
 def with_file(name: str, data: bytes | None) -> Callable[[Texts], Texts]:
@@ -824,6 +887,39 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "a deny word in the tool's own text",
         lambda t: replace(t, tool=t.tool + "\n# " + "fl" + "ood\n"),
     ),
+    (
+        "G-AROW",
+        "A-5's line dropped from `14`",
+        work_sub("14", "\n- **Simulated trades (E38-D04):** a Simulated column", "\n"),
+    ),
+    (
+        "G-AROW",
+        "A-1's Old text back beside its New in `15`",
+        work_sub(
+            "15",
+            "- **Props**: `formats: (",
+            '`formats: ("csv"|"pdf")[]` - **Props**: `formats: (',
+        ),
+    ),
+    (
+        "G-AROW",
+        "A-7's line moved one line down",
+        work_sub(
+            "14",
+            "\n- **Live and simulated (E38-D04):**",
+            "\n\n- **Live and simulated (E38-D04):**",
+        ),
+    ),
+    (
+        "G-AROW",
+        "A-6 no longer marked applied",
+        sub('the badge in the heading."' + APPLIED, 'the badge in the heading."'),
+    ),
+    (
+        "G-AROW",
+        "A-2 marked applied while held",
+        sub(" **Held for PR 2's rebase.**", APPLIED),
+    ),
     ("G-DRAWN", "board 04's PNG one pixel wider than its record", one_pixel_wider),
     ("G-DRAWN", "board 02's PNG one byte off its sha256", one_byte_off),
     ("G-DRAWN", "boards 01 and 03 swap bytes", swap_boards),
@@ -875,8 +971,8 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ),
     (
         "G-SCOPE",
-        "a catalogue file in the diff",
-        lambda t: replace(t, changed=[*OWN_PATHS, PATHS["15"]]),
+        "another plan doc in the diff",
+        lambda t: replace(t, changed=[*OWN_PATHS, PATHS["16"]]),
     ),
     (
         "G-T2",
