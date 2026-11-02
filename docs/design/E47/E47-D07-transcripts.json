@@ -1,0 +1,613 @@
+{
+  "about": "E47-D07 (#1306) transcripts: seeded synthetic inputs named by their 24-internal-schemas types, the settings, and the expected announcer lines (t in ms, channel, class, taxonomy rows, exact text). Synthetic, never a market capture; the expected lines are written by the audit tool's --write-transcripts and re-derived by --check (G-SIM).",
+  "seed": 1306,
+  "symbol": "BTCUSDT",
+  "tick": "0.1",
+  "speech_chars_per_s": 15,
+  "speech_floor_ms": 1500,
+  "scripts": [
+    {
+      "id": "quiet",
+      "title": "Quiet market",
+      "settings": {
+        "announce_prices": "always",
+        "verbosity": "normal",
+        "cadence_ms": 2000,
+        "reduce": false
+      },
+      "duration_ms": 30000,
+      "streams": [
+        {
+          "field": "quote",
+          "input": "BestQuoteEvent",
+          "every_ms": 3000,
+          "start_ticks": 640000
+        },
+        {
+          "field": "mark",
+          "input": "TickerEvent",
+          "every_ms": 5000,
+          "start_ticks": 640003
+        },
+        {
+          "field": "tape",
+          "input": "TradeEvent",
+          "every_ms": 1000,
+          "start_ticks": 640000
+        }
+      ],
+      "events": [
+        {
+          "t": 10000,
+          "input": "OrderUpdate",
+          "taxonomy": "T-2",
+          "words": "W-2",
+          "entity": "o1",
+          "slots": {
+            "type": "Limit",
+            "side": "buy",
+            "symbol": "BTCUSDT",
+            "filled": "0.1",
+            "qty": "0.5",
+            "price": "64,000.0"
+          }
+        },
+        {
+          "t": 10400,
+          "input": "OrderUpdate",
+          "taxonomy": "T-2",
+          "words": "W-2",
+          "entity": "o1",
+          "slots": {
+            "type": "Limit",
+            "side": "buy",
+            "symbol": "BTCUSDT",
+            "filled": "0.3",
+            "qty": "0.5",
+            "price": "64,000.0"
+          }
+        },
+        {
+          "t": 11100,
+          "input": "OrderUpdate",
+          "taxonomy": "T-2",
+          "words": "W-2",
+          "entity": "o1",
+          "slots": {
+            "type": "Limit",
+            "side": "buy",
+            "symbol": "BTCUSDT",
+            "filled": "0.4",
+            "qty": "0.5",
+            "price": "64,000.0"
+          }
+        },
+        {
+          "t": 11600,
+          "input": "OrderUpdate",
+          "taxonomy": "T-1",
+          "words": "W-1",
+          "entity": "o1",
+          "slots": {
+            "type": "Limit",
+            "side": "buy",
+            "symbol": "BTCUSDT",
+            "qty": "0.5",
+            "price": "64,000.0"
+          }
+        }
+      ],
+      "expected": [
+        {
+          "t": 1000,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-35",
+          "text": "Tape: 1 trade, net buy, last 63,999.9"
+        },
+        {
+          "t": 3000,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-35",
+          "text": "Bid 63,999.9, ask 64,000.0. Tape: 2 trades, net even, last 64,000.1"
+        },
+        {
+          "t": 5000,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-31 T-35",
+          "text": "Mark 64,000.2. Tape: 2 trades, net sell, last 64,000.0"
+        },
+        {
+          "t": 7000,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-35",
+          "text": "Bid 64,000.0, ask 64,000.1. Tape: 2 trades, net even, last 64,000.0"
+        },
+        {
+          "t": 9000,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-35",
+          "text": "Bid 63,999.9, ask 64,000.0. Tape: 2 trades, net even, last 63,999.9"
+        },
+        {
+          "t": 10000,
+          "channel": "assertive",
+          "class": "significant-assertive",
+          "rows": "T-2",
+          "text": "Partially filled. Limit buy 0.1 of 0.5 BTCUSDT, average 64,000.0."
+        },
+        {
+          "t": 14334,
+          "channel": "assertive",
+          "class": "significant-assertive",
+          "rows": "T-1",
+          "text": "Filled. Limit buy 0.5 BTCUSDT at 64,000.0."
+        },
+        {
+          "t": 17134,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 63,999.9, ask 64,000.0. Mark 64,000.4. Tape: 6 trades, net buy, last 63,999.6"
+        },
+        {
+          "t": 19134,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-35",
+          "text": "Tape: 2 trades, net sell, last 63,999.6"
+        },
+        {
+          "t": 21134,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-31 T-35",
+          "text": "Mark 64,000.3. Tape: 2 trades, net buy, last 63,999.7"
+        },
+        {
+          "t": 23134,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-35",
+          "text": "Tape: 2 trades, net buy, last 63,999.9"
+        },
+        {
+          "t": 25134,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 63,999.8, ask 63,999.9. Mark 64,000.4. Tape: 2 trades, net sell, last 64,000.1"
+        },
+        {
+          "t": 27134,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-35",
+          "text": "Bid 63,999.7, ask 63,999.8. Tape: 2 trades, net even, last 64,000.2"
+        },
+        {
+          "t": 29134,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-35",
+          "text": "Tape: 2 trades, net sell, last 64,000.2"
+        }
+      ]
+    },
+    {
+      "id": "fast",
+      "title": "Fast market",
+      "settings": {
+        "announce_prices": "always",
+        "verbosity": "normal",
+        "cadence_ms": 2000,
+        "reduce": false
+      },
+      "duration_ms": 60000,
+      "streams": [
+        {
+          "field": "quote",
+          "input": "BestQuoteEvent",
+          "every_ms": 100,
+          "start_ticks": 640000
+        },
+        {
+          "field": "mark",
+          "input": "TickerEvent",
+          "every_ms": 100,
+          "start_ticks": 640005
+        },
+        {
+          "field": "tape",
+          "input": "TradeEvent",
+          "every_ms": 25,
+          "start_ticks": 640000
+        }
+      ],
+      "events": [
+        {
+          "t": 7000,
+          "input": "BigTradeEvent",
+          "taxonomy": "T-36",
+          "words": "W-33",
+          "field": "big",
+          "slots": {
+            "side": "buy",
+            "qty": "14.2",
+            "price": "64,001.3"
+          }
+        },
+        {
+          "t": 20000,
+          "input": "OrderUpdate",
+          "taxonomy": "T-1",
+          "words": "W-1",
+          "entity": "o2",
+          "slots": {
+            "type": "Market",
+            "side": "sell",
+            "qty": "0.2",
+            "symbol": "BTCUSDT",
+            "price": "64,010.0"
+          }
+        },
+        {
+          "t": 33000,
+          "input": "BigTradeEvent",
+          "taxonomy": "T-36",
+          "words": "W-33",
+          "field": "big",
+          "slots": {
+            "side": "sell",
+            "qty": "9.8",
+            "price": "63,998.7"
+          }
+        },
+        {
+          "t": 40000,
+          "input": "OrderUpdate",
+          "taxonomy": "T-3",
+          "words": "W-3",
+          "entity": "o3",
+          "slots": {
+            "type": "Limit",
+            "side": "buy",
+            "symbol": "BTCUSDT",
+            "qty": "0.5",
+            "price": "64,000.0",
+            "reason": "INSUFFICIENT_MARGIN"
+          }
+        },
+        {
+          "t": 51000,
+          "input": "BigTradeEvent",
+          "taxonomy": "T-36",
+          "words": "W-33",
+          "field": "big",
+          "slots": {
+            "side": "buy",
+            "qty": "11.0",
+            "price": "64,004.1"
+          }
+        }
+      ],
+      "expected": [
+        {
+          "t": 25,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-35",
+          "text": "Tape: 1 trade, net buy, last 63,999.9"
+        },
+        {
+          "t": 2025,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 64,000.0, ask 64,000.1. Mark 64,000.5. Tape: 80 trades, net buy, last 63,999.4"
+        },
+        {
+          "t": 4025,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 64,000.5, ask 64,000.6. Mark 64,001.3. Tape: 80 trades, net sell, last 63,998.1"
+        },
+        {
+          "t": 6025,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-31 T-35",
+          "text": "Mark 64,001.9. Tape: 80 trades, net buy, last 63,997.4"
+        },
+        {
+          "t": 8025,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-31 T-35",
+          "text": "Mark 64,001.6. Tape: 80 trades, net buy, last 63,997.2"
+        },
+        {
+          "t": 10025,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 64,000.4, ask 64,000.5. Mark 64,001.1. Tape: 80 trades, net buy, last 63,996.3"
+        },
+        {
+          "t": 12025,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 64,000.7, ask 64,000.8. Mark 64,001.8. Tape: 80 trades, net sell, last 63,995.6"
+        },
+        {
+          "t": 14025,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 63,999.7, ask 63,999.8. Mark 64,001.6. Tape: 80 trades, net even, last 63,995.0"
+        },
+        {
+          "t": 16025,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-35",
+          "text": "Bid 63,999.5, ask 63,999.6. Tape: 80 trades, net sell, last 63,993.8"
+        },
+        {
+          "t": 18025,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-35",
+          "text": "Bid 63,999.6, ask 63,999.7. Tape: 80 trades, net sell, last 63,993.9"
+        },
+        {
+          "t": 20000,
+          "channel": "assertive",
+          "class": "significant-assertive",
+          "rows": "T-1",
+          "text": "Filled. Market sell 0.2 BTCUSDT at 64,010.0."
+        },
+        {
+          "t": 22934,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 63,999.8, ask 63,999.9. Mark 64,001.6. Tape: 117 trades, net buy, last 63,992.0"
+        },
+        {
+          "t": 24934,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-31 T-35",
+          "text": "Mark 64,001.4. Tape: 80 trades, net sell, last 63,990.7"
+        },
+        {
+          "t": 26934,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 63,999.7, ask 63,999.8. Mark 64,000.9. Tape: 80 trades, net sell, last 63,992.1"
+        },
+        {
+          "t": 28934,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 63,999.4, ask 63,999.5. Mark 64,001.1. Tape: 80 trades, net sell, last 63,991.3"
+        },
+        {
+          "t": 30934,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 63,999.9, ask 64,000.0. Mark 64,000.4. Tape: 80 trades, net sell, last 63,992.1"
+        },
+        {
+          "t": 32934,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 64,000.2, ask 64,000.3. Mark 64,000.6. Tape: 80 trades, net even, last 63,992.2"
+        },
+        {
+          "t": 34934,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-35",
+          "text": "Bid 63,999.4, ask 63,999.5. Tape: 80 trades, net sell, last 63,992.8"
+        },
+        {
+          "t": 36934,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 63,999.2, ask 63,999.3. Mark 64,001.3. Tape: 80 trades, net sell, last 63,992.6"
+        },
+        {
+          "t": 38934,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 63,999.5, ask 63,999.6. Mark 64,001.2. Tape: 80 trades, net buy, last 63,994.3"
+        },
+        {
+          "t": 40000,
+          "channel": "assertive",
+          "class": "significant-assertive",
+          "rows": "T-3",
+          "text": "Rejected. Limit buy 0.5 BTCUSDT at 64,000.0. Reason: insufficient margin."
+        },
+        {
+          "t": 44867,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 63,999.2, ask 63,999.3. Mark 64,000.4. Tape: 194 trades, net sell, last 63,993.9"
+        },
+        {
+          "t": 46867,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 63,999.5, ask 63,999.6. Mark 64,000.0. Tape: 80 trades, net sell, last 63,994.1"
+        },
+        {
+          "t": 48867,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 63,999.6, ask 63,999.7. Mark 63,999.7. Tape: 80 trades, net sell, last 63,992.6"
+        },
+        {
+          "t": 50867,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 63,999.7, ask 63,999.8. Mark 63,999.5. Tape: 80 trades, net buy, last 63,992.8"
+        },
+        {
+          "t": 52867,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-31 T-35",
+          "text": "Mark 63,999.3. Tape: 80 trades, net buy, last 63,992.5"
+        },
+        {
+          "t": 54867,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 64,000.4, ask 64,000.5. Mark 63,999.6. Tape: 80 trades, net sell, last 63,992.6"
+        },
+        {
+          "t": 56867,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 64,000.3, ask 64,000.4. Mark 63,999.9. Tape: 80 trades, net sell, last 63,992.4"
+        },
+        {
+          "t": 58867,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31 T-35",
+          "text": "Bid 64,000.5, ask 64,000.6. Mark 63,999.4. Tape: 80 trades, net buy, last 63,992.8"
+        },
+        {
+          "t": 60867,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-35",
+          "text": "Bid 64,000.9, ask 64,001.0. Tape: 45 trades, net buy, last 63,993.2"
+        }
+      ]
+    },
+    {
+      "id": "incident",
+      "title": "Incident: reject, auto-flatten and disconnect inside 5 s",
+      "settings": {
+        "announce_prices": "always",
+        "verbosity": "normal",
+        "cadence_ms": 2000,
+        "reduce": false
+      },
+      "duration_ms": 25000,
+      "streams": [
+        {
+          "field": "quote",
+          "input": "BestQuoteEvent",
+          "every_ms": 100,
+          "start_ticks": 640000,
+          "to_ms": 1600
+        },
+        {
+          "field": "mark",
+          "input": "TickerEvent",
+          "every_ms": 100,
+          "start_ticks": 640005,
+          "to_ms": 1600
+        },
+        {
+          "field": "tape",
+          "input": "TradeEvent",
+          "every_ms": 25,
+          "start_ticks": 640000,
+          "to_ms": 1600
+        }
+      ],
+      "events": [
+        {
+          "t": 1000,
+          "input": "OrderUpdate",
+          "taxonomy": "T-3",
+          "words": "W-3",
+          "entity": "o4",
+          "slots": {
+            "type": "Limit",
+            "side": "buy",
+            "symbol": "BTCUSDT",
+            "qty": "0.5",
+            "price": "64,000.0",
+            "reason": "INSUFFICIENT_MARGIN"
+          }
+        },
+        {
+          "t": 1000,
+          "input": "LockoutState",
+          "taxonomy": "T-17",
+          "words": "W-5",
+          "entity": "p1",
+          "slots": {
+            "symbol": "BTCUSDT",
+            "position_side": "long",
+            "qty": "0.8",
+            "reason": "daily_loss"
+          }
+        },
+        {
+          "t": 1600,
+          "input": "connection state (client)",
+          "taxonomy": "T-23",
+          "words": "W-13",
+          "slots": {}
+        }
+      ],
+      "expected": [
+        {
+          "t": 25,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-35",
+          "text": "Tape: 1 trade, net buy, last 63,999.9"
+        },
+        {
+          "t": 1000,
+          "channel": "assertive",
+          "class": "significant-assertive",
+          "rows": "T-17",
+          "text": "Auto-flattened. BTCUSDT long 0.8 closed by the risk engine. Reason: daily loss limit."
+        },
+        {
+          "t": 6667,
+          "channel": "assertive",
+          "class": "significant-assertive",
+          "rows": "T-3",
+          "text": "Rejected. Limit buy 0.5 BTCUSDT at 64,000.0. Reason: insufficient margin."
+        },
+        {
+          "t": 11534,
+          "channel": "assertive",
+          "class": "significant-assertive",
+          "rows": "T-23",
+          "text": "Disconnected. New orders off. Cancel and close still work, confirmed over the server. Exchange-side stops still protect open positions."
+        }
+      ]
+    }
+  ]
+}
