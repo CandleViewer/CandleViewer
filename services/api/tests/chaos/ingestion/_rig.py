@@ -67,6 +67,7 @@ from candleviewer.exchange.bybit.ticker import parse_ticker_frame, ticker_topic
 
 # nosemgrep: cv-adapter-isolation reason=Q03 owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit.trades import parse_trade_frame, recent_trades_fetcher, trade_topic
+from candleviewer.ingestion import trade_stream as trade_stream_module
 from candleviewer.ingestion.book_supervisor import B14BookSupervisor
 from candleviewer.ingestion.clock import ClockGuard, rest_client_fetcher
 from candleviewer.ingestion.connection import ConnectionManager
@@ -79,10 +80,12 @@ from candleviewer.ingestion.service import IngestionService
 from candleviewer.ingestion.ticker_stream import TickerStream
 from candleviewer.ingestion.trade_stream import GapEvent, TradeStream
 from candleviewer.ingestion.watchdog import FeedHealthEvent, StalenessWatchdog
+from candleviewer.ingestion.write_behind_heal import TradeHealPorts, WriteBehindHealer
 from candleviewer.observability.context import spawn
 from candleviewer.orderbook_wiring import BookStream
 from candleviewer.settings import FeedMode
 from tests.chaos.ingestion._clock import VirtualClock
+from tests.chaos.ingestion._oracle import TradeOracle
 from tests.chaos.ingestion._stub_exchange import StubExchange
 
 #: The stub's REST base URL. Allow-listed host string only: `MockTransport`
@@ -142,6 +145,24 @@ class FlakyWriter:
         self.persisted_book_rows += 1
 
 
+class HotTradeIds:
+    """`HotTradeReader` double (#1944): what `FlakyWriter` holds, as the hot tier reads back."""
+
+    def __init__(self, writer: FlakyWriter) -> None:
+        self._writer = writer
+        self.reads = 0
+
+    async def read_trade_ids(self, symbol: str, start_us: int, end_us: int) -> set[str]:
+        self.reads += 1
+        if self._writer.down:
+            raise ConnectionError("hot tier unavailable")
+        return {
+            e.trade_id
+            for e in self._writer.persisted_trades
+            if e.symbol == symbol and start_us <= e.ts_event < end_us
+        }
+
+
 class _NullRepo:
     """Instrument repository double (Postgres is out of this suite's seam)."""
 
@@ -167,11 +188,20 @@ class Rig:
         seed: int,
         symbols: tuple[str, ...] = ("BTCUSDT",),
         conn_limit: int = OPENS_LIMIT,
+        trades_buffer: int | None = None,
+        heal: bool = False,
+        recent_page: int | None = None,
     ) -> None:
+        """`trades_buffer`: the trade write-behind's row cap (a slow store then evicts and
+        records lost runs). `heal`: compose the #1944 write-behind healers as `wire_public_ws`
+        does. `recent_page`: the venue's recent-trade page size in prints."""
         self.seed = seed
+        self._heal = heal
         self.clock = VirtualClock()
         self.rng = random.Random(seed)  # noqa: S311  (deterministic jitter)
         self.ex = StubExchange(self.clock, seed=seed)
+        if recent_page is not None:
+            self.ex.trades = TradeOracle(recent_page)
         self.host_skew_s = 0.0  # market-data host clock skew (WSL sleep)
         self.bus = Bus()
         self.env = "live"
@@ -244,7 +274,37 @@ class Rig:
         window = EventWindow(
             corrected_now_us(self.clock_guard.offset_us, self.host_now_us), self._launch_us
         )
-        self.trades = TradeStream(
+        cap = trade_stream_module.WRITE_QUEUE_MAXSIZE
+        if trades_buffer is not None:  # the module constant is read at construction only
+            trade_stream_module.WRITE_QUEUE_MAXSIZE = trades_buffer
+        try:
+            self.trades = self._make_trades(window)
+        finally:
+            trade_stream_module.WRITE_QUEUE_MAXSIZE = cap
+        self.svc.attach_trades(self.trades)
+        self.hot_ids = HotTradeIds(self.writer)
+        self.healer: WriteBehindHealer | None = None
+        self.book_healer: WriteBehindHealer | None = None
+        if heal:  # `wire_public_ws`: one healer per buffer; the trades one has its REST page
+            ports = TradeHealPorts(
+                recent_trades_fetcher(self.rest.get_public),
+                self.trades.heal_event,
+                self.writer,
+                self.hot_ids,
+            )
+            self.healer = WriteBehindHealer(
+                self.trades.write_behind,
+                table="trades",
+                trades=ports,
+                clock=self.clock,
+                sleep=self.clock.sleep,
+                rand=self.rng.random,
+            )
+            self.svc.attach_healer(self.healer)
+        self._wire_rest_of_stack(window)
+
+    def _make_trades(self, window: Any) -> TradeStream:
+        return TradeStream(
             bus=self.bus,
             env=self.env,
             set_desired=lambda t: self._set_desired("trade", t),
@@ -263,7 +323,8 @@ class Rig:
             retry_sleep=self.clock.sleep,  # #2715 unrecovered-gap retries on virtual time
             retry_rand=self.rng.random,
         )
-        self.svc.attach_trades(self.trades)
+
+    def _wire_rest_of_stack(self, window: Any) -> None:
         self.book_supervisor = B14BookSupervisor()
         self.books = BookStream(
             bus=self.bus,
@@ -302,6 +363,15 @@ class Rig:
         # #1916/#1905: per-topic dispatch lanes behind the pump; the pump touches
         # the watchdog on routing, so freshness reflects the venue.
         self.svc.attach_router(frame_route, self.watchdog.touch)
+        if self._heal:  # #1944: book runs are counted unrecoverable, never re-fetched
+            self.book_healer = WriteBehindHealer(
+                self.books.write_behind,
+                table="orderbook",
+                clock=self.clock,
+                sleep=self.clock.sleep,
+                rand=self.rng.random,
+            )
+            self.svc.attach_healer(self.book_healer)
         # ---- end of `app.wire_public_ws` -------------------------------------------------
 
         self._ui: Subscription = self.bus.subscribe(
