@@ -1,6 +1,12 @@
 """The in-memory `HotkeyProfileStore` (E10-T05, #5211), for router and contract tests, as
 `tests/watchlists/_watchlists_env.py` keeps the watchlist one. It holds the store's semantics, which
-tests/hotkey_profiles/_store_contract.py states once for it and for Postgres."""
+tests/hotkey_profiles/_store_contract.py states once for it and for Postgres.
+
+For sequential tests only. A write checks the cap, the name and the active profile before it
+awaits `write_ahead(...)` and holds no owner lock across it, so calls awaited together could break
+what Postgres's advisory lock keeps; only the Postgres module races them. It also folds names with
+`str.lower()` where Postgres uses `lower()`, which may fold a non-ASCII name differently (the
+contract's name cases are ASCII)."""
 
 from __future__ import annotations
 

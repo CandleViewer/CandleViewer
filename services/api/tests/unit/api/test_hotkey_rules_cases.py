@@ -12,6 +12,7 @@ accepts it as it is, rewriting nothing.
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import unicodedata
@@ -47,8 +48,10 @@ RULES = (
 SERVER_ONLY = {"duplicate_action", "scope_mismatch", "params_not_allowed"}
 
 
+@functools.cache
 def _scope_table() -> dict[str, str]:
-    """22's `HotkeyBinding.scope` table, read from the parsed contract."""
+    """22's `HotkeyBinding.scope` table, read from the parsed contract (once: 22 is some 24,000
+    lines of YAML, and callers only read the table)."""
     spec: Any = load_openapi_spec()
     scope = spec["components"]["schemas"]["HotkeyBinding"]["properties"]["scope"]
     return dict(re.findall(r"^\| `(\w+)` +\| `(\w+)` +\|$", scope["description"], re.M))
