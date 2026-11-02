@@ -88,7 +88,11 @@
       "plain": "Two links on the appearance settings page are hard to read in the dark and high-contrast themes.",
       "impact": "People with low vision may not see the links to this statement and to the keyboard shortcuts.",
       "workaround": "Switch to the light theme, or move to the links with Tab.",
-      "disposition": { "kind": "fix-ticket", "ticket": "E05-S04 #267" },
+      "disposition": {
+        "kind": "none",
+        "closedTicket": "E05-S04 #267",
+        "note": "fix ticket closed, finding open: unowned, so it blocks sign-off"
+      },
       "disclosure": "statement"
     },
     {
@@ -100,7 +104,11 @@
       "plain": "The outline of the connection status chip is faint in every theme.",
       "impact": "People with low vision may not see where the chip starts and ends.",
       "workaround": "Read the chip's words, which name the connection state.",
-      "disposition": { "kind": "fix-ticket", "ticket": "E10-S01 #304" },
+      "disposition": {
+        "kind": "none",
+        "closedTicket": "E10-S01 #304",
+        "note": "fix ticket closed, finding open: unowned, so it blocks sign-off"
+      },
       "disclosure": "statement"
     },
     {
@@ -124,7 +132,11 @@
       "plain": "Some settings pages can only be reached from the navigation rail.",
       "impact": "People who prefer to search for a page have only one way in.",
       "workaround": "Use the navigation rail; every item in it can be reached with Tab.",
-      "disposition": { "kind": "fix-ticket", "ticket": "E05-S03 #266" },
+      "disposition": {
+        "kind": "none",
+        "closedTicket": "E05-S03 #266",
+        "note": "fix ticket closed, finding open: unowned, so it blocks sign-off"
+      },
       "disclosure": "statement"
     }
   ]

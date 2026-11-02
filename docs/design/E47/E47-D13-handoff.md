@@ -115,10 +115,10 @@ The boards of spec §0, on page `E47-D13 — Conformance statement`; frames name
 
 ## §I Summary for #1311
 
-1. Text-first statement, report and register + hand-off + default-deny audit tool; the 10<!--=COUNT:boards--> boards of spec §0 are pending (pre-stage; BQ-0 … BQ-12 RULED as proposed, comment 6566807313; BQ-13 … BQ-16 defaults built, ruling pending; `Refs #1311` + `Partial:` until #1301 closes, then the closing keyword for this ticket).
+1. Text-first statement, report and register + hand-off + default-deny audit tool; the 10<!--=COUNT:boards--> boards of spec §0 are pending (pre-stage; BQ-0 … BQ-12 RULED as proposed, comment 6566807313; BQ-13 … BQ-16 RULED as built, default taken, comment 6567605210; `Refs #1311` + `Partial:` until #1301 closes, then the closing keyword for this ticket).
 2. The report: 55<!--=COUNT:report.rows--> rows, four words, generated from the registers by blob; the dry run committed with its banner.
 3. Supports only with every required artefact on every screen; missing evidence is said; reviewers lower, never raise.
 4. The evidence contract: ten classes, their artefact kinds and producers, carried as rows to the stories.
-5. One limitations register; 2<!--=COUNT:limits.blocked--> rows block sign-off at the base because their only owner is the audit.
+5. One limitations register; 5<!--=COUNT:limits.blocked--> rows block sign-off at the base: two patterns whose only owner is the audit, and three findings whose fix ticket closed while the finding stays open.
 6. The statement at `/accessibility`, a lazy, offline, versioned sub-view of SCR-119, read-only for every role; stale is flagged.
 7. The audit's G-CITE checks that each cited line exists and is non-blank, not that it says what is claimed; cite content is a reviewer's check.

@@ -20,8 +20,9 @@ edits (§8.3), the limitations register `docs/plan/a11y/47-limitations.json`, th
    every "verbatim" copy string occurs on its cited line (G-QUOTE); every A-row Old fragment
    occurs on its cited line (G-AROW).
 4. **Gates.** One FAIL line per gate: G-PENDING (BQ-0 ... BQ-16 once each; BQ-0 ... BQ-12 "RULED
-   as proposed (comment 6566807313)", BQ-13 ... BQ-16 "default built; ruling pending"; the heading
-   names the ruling and the list; the ruling quoted verbatim), G-BOARDS, G-ROWS (55 rows, A 31 + AA 24 as the
+   as proposed (comment 6566807313)", BQ-13 ... BQ-16 "RULED as built, default taken (comment
+   6567605210)", none "ruling pending"; the heading names both rulings and the list; the ruling
+   quoted verbatim), G-BOARDS, G-ROWS (55 rows, A 31 + AA 24 as the
    D02 catalogue tool lists them, 4.1.1 noted not rowed, levels as the four words), G-CONTRACT
    (spec §4 equals this tool's class map; every criterion in one class), G-CLAIM (no Supports
    without every required artefact on every screen and no open finding; no override raises),
@@ -118,6 +119,9 @@ RULING_ID = "6566807313"  # the ruling of record on #1311 (orchestrator, 2026-11
 RULED_MARK = f"RULED as proposed (comment {RULING_ID})"
 RULED_IDS = tuple(f"BQ-{n}" for n in range(13))  # the ruling names BQ-0 ... BQ-12
 RULING_HEAD = f"BQ-0 … BQ-12 RULED (comment {RULING_ID}, on the list {BQ_LIST_ID})"
+READ_ID = "6567605210"  # the design read of record on the PR (orchestrator, 2026-11-02 02:27Z)
+READ_MARK = f"RULED as built, default taken (comment {READ_ID})"  # BQ-13 ... BQ-16
+READ_HEAD = f"BQ-13 … BQ-16 RULED as built (comment {READ_ID})"
 RULING_TEXT = (
     "**Rulings of record — E47-D13 (#1311) BQ-0..BQ-12 (orchestrator, 01:20Z 2026-11-02, unde"
     "r the owner's 2026-10-29 delegation): all ORCH-defaults as proposed (6566521425).** Pins"
@@ -587,7 +591,12 @@ def determine(sc: str, limits: str) -> tuple[Row, bool]:
     produced = {x: sum(1 for s in screens if cell_verdict(s, x, sc)) for x in reg_kinds}
     for x in reg_kinds:
         if produced[x]:
-            evidence.append(f"t01:{x}@{sha} ({produced[x]} screens)")
+            verdicts = [cell_verdict(s, x, sc) for s in screens]
+            n_pass = sum(1 for v in verdicts if v.startswith("pass"))
+            n_fail = sum(1 for v in verdicts if v.startswith("fail"))
+            n_na = produced[x] - n_pass - n_fail
+            tally = f"{n_pass} pass, {n_fail} fail" + (f", {n_na} n/a" if n_na else "")
+            evidence.append(f"t01:{x}@{sha} ({produced[x]} screens: {tally})")
     missing_kinds = [x for x in kinds if x not in REGISTER_KINDS]
     passing = sum(
         1
@@ -770,7 +779,12 @@ def render_report(limits: str) -> str:
         d = r.get("disposition")
         dd = d if isinstance(d, dict) else {}
         kind = text_of(dd.get("kind")) or "none"
-        what = text_of(dd.get("ticket")) or text_of(dd.get("owner")) or "-"
+        closed = text_of(dd.get("closedTicket"))
+        what = (
+            text_of(dd.get("ticket"))
+            or text_of(dd.get("owner"))
+            or (f"fix ticket {closed} closed, finding open" if closed else "-")
+        )
         covers = r.get("covers")
         cov = ", ".join(x for x in covers if isinstance(x, str)) if isinstance(covers, list) else ""
         scs = r.get("sc")
@@ -1054,16 +1068,16 @@ def g_pending(t: Texts) -> list[Finding]:
     head = t.spec.split("\n")[s - 1] if s else ""
     lines = t.spec.split("\n")[s:e]
     bad: list[str] = []
-    if RULING_HEAD not in head:
-        bad.append("the heading does not name the ruling and the list")
+    if RULING_HEAD not in head or READ_HEAD not in head:
+        bad.append("the heading does not name both rulings and the list")
     if not any(ln == "> " + RULING_TEXT for ln in lines):
         bad.append("the ruling is not quoted verbatim")
     for bq in BQ_IDS:
         rows = [ln for ln in lines if ln.startswith(f"- **{bq}**")]
-        want, other = (RULED_MARK, BQ_MARK) if bq in RULED_IDS else (BQ_MARK, "RULED")
+        want, other = (RULED_MARK, READ_MARK) if bq in RULED_IDS else (READ_MARK, RULED_MARK)
         if len(rows) != 1:
             bad.append(f"{bq} appears {len(rows)} times")
-        elif want not in rows[0] or other in rows[0]:
+        elif want not in rows[0] or other in rows[0] or BQ_MARK in rows[0]:
             bad.append(f"{bq} is not marked '{want}'")
     return [("G-PENDING", b, "spec", region) for b in bad]
 
@@ -1268,6 +1282,9 @@ def g_limit(t: Texts) -> list[Finding]:
             bad.append(f"{rid}'s disposition kind is not one of the three")
         if dd.get("kind") == "fix-ticket" and text_of(dd.get("ticket")).startswith("E47-T01"):
             bad.append(f"{rid} names the audit as its fix ticket")
+        closed = text_of(dd.get("closedTicket"))
+        if closed and (dd.get("kind") != "none" or not TICKET_RE.match(closed)):
+            bad.append(f"{rid}'s closed fix ticket is not a ticket on a 'none' disposition")
         for field in ("plain", "impact", "workaround", "category", "disclosure"):
             if not text_of(r.get(field)):
                 bad.append(f"{rid} has no {field}")
@@ -1583,7 +1600,9 @@ def repin(t: Texts) -> int:
         if old.get(key) != new.get(key):
             print(f"REPIN {key[0]} {key[2]} in {key[1][:60]}".encode("ascii", "replace").decode())
     (ROOT / PIN_REL).write_text(
-        head + "".join(f"{d}\t{r}\t{loc}\t{x}\n" for d, r, loc, x in rows), encoding="utf-8"
+        head + "".join(f"{d}\t{r}\t{loc}\t{x}\n" for d, r, loc, x in rows),
+        encoding="utf-8",
+        newline="\n",
     )
     print(f"wrote {PIN_REL}: {len(rows)} units")
     return 0
@@ -1656,8 +1675,8 @@ MUTATIONS = (
         "G-ALT",
         "report",
         "",
-        "(27 screens) | keyboard equivalents (SCR-013) |",
-        "(27 screens) | |",
+        "6 fail) | keyboard equivalents (SCR-013) |",
+        "6 fail) | |",
     ),
     _m(
         "M-9",
@@ -1894,6 +1913,24 @@ MUTATIONS = (
         "Desk work at the base",
         "Desk work at base",
     ),
+    _m(
+        "M-36",
+        "unmark BQ-15's ruling",
+        "G-PENDING",
+        "spec",
+        "## The questions",
+        "— RULED as built, default taken (comment 6567605210) → §13; the tool",
+        "— default built; ruling pending → §13; the tool",
+    ),
+    _m(
+        "M-37",
+        "name a malformed closed fix ticket on A11Y-F-0029",
+        "G-LIMIT",
+        "limits",
+        "",
+        '"closedTicket": "E05-S03 #266"',
+        '"closedTicket": "#266"',
+    ),
 )
 
 
@@ -1981,9 +2018,9 @@ def fill(t: Texts) -> Texts:
         return ANCHOR_RE.sub(anchor, PLACEHOLDER_RE.sub(placeholder, text))
 
     t = replace(t, spec=sub(t.spec), hand=sub(t.hand))
-    (ROOT / SPEC_REL).write_text(t.spec, encoding="utf-8")
-    (ROOT / HAND_REL).write_text(t.hand, encoding="utf-8")
-    (ROOT / REPORT_REL).write_text(t.report, encoding="utf-8")
+    (ROOT / SPEC_REL).write_text(t.spec, encoding="utf-8", newline="\n")
+    (ROOT / HAND_REL).write_text(t.hand, encoding="utf-8", newline="\n")
+    (ROOT / REPORT_REL).write_text(t.report, encoding="utf-8", newline="\n")
     return t
 
 
