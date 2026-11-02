@@ -276,6 +276,7 @@
 ["cv_ws_subscribe_granted_unaudited_total", "counter", [], "live", "E17"]
 ["cv_ws_subscribe_narrowed_total", "counter", [], "live", "E17"]
 ["cv_ws_subscribe_total", "counter", ["topic", "result"], "live", "E17"]
+["cv_ws_subscription_quota_rejections_total", "counter", ["reason"], "live", "E21"]
 ["cv_ws_system_frames_withheld_total", "counter", ["reason"], "live", "E17"]
 ["cv_ws_tape_frames_coalesced_total", "counter", [], "live", "E22"]
 ["cv_ws_tape_prints_dropped_total", "counter", ["reason"], "live", "E22"]

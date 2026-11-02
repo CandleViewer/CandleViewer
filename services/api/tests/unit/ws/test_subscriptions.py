@@ -22,7 +22,7 @@ from candleviewer.bars.leases import SpecCaps
 from candleviewer.bars.models import BarSpec
 from candleviewer.bars.reader import BarTail
 from candleviewer.bars.series_store import Hold, SeriesStore
-from candleviewer.ws import limits
+from candleviewer.ws import limits, quota
 from candleviewer.ws._generated.error_codes import ERROR_META, WS_ERROR_CODES, ErrorCode
 from candleviewer.ws.limits import MAX_BARS_SUBSCRIPTIONS
 from candleviewer.ws.permissions import (
@@ -1308,6 +1308,7 @@ def test_the_floor_follows_the_bar_series_a_topic_names_not_its_family(
     held as a live `bars.*` one is, under the same param bounds (23 §6.1's `indicators` bullet)."""
     probe = dataclasses.replace(FAMILIES["bars"], family="probe")  # `bars`' shape, a new name
     monkeypatch.setattr("candleviewer.ws.topics.FAMILIES", {**FAMILIES, "probe": probe})
+    monkeypatch.setitem(quota.WEIGHTS, "probe", quota.WEIGHTS["bars"])  # E21-X02: its weight
     bars = _Bars()
     conn = ConnectionAuthz(_mgr(A), _services(bars=bars, qty_step=_step))
     below, at = _sub(conn, "probe.BTCUSDT.volume.9", "probe.BTCUSDT.volume.10")

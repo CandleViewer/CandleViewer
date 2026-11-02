@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import ast
 import importlib
-import importlib.util
 import json
 import re
 from collections.abc import Callable, Mapping, Sequence
@@ -185,6 +184,12 @@ def _heatmap(name: str) -> Callable[[], float]:
     return lambda: getattr(importlib.import_module("candleviewer.orderflow.heatmap"), name)
 
 
+def _point_bytes() -> float:
+    """23 16.2's quota point in bytes a second at a kind-6 row (`orderflow/heatmap.py`, #652)."""
+    heatmap = importlib.import_module("candleviewer.orderflow.heatmap")
+    return float(heatmap.QUOTA_ROWS_PER_POINT * heatmap.ROW_BYTES)
+
+
 def _unthrottled() -> float:
     from candleviewer.ws.topics import FAMILIES
 
@@ -209,6 +214,23 @@ LIMIT_ROWS: Final[dict[str, str | Sequence[str | Callable[[], float]]]] = {
         _heatmap("ROW_BYTES"),
     ],
     "`heatmap` snapshot bound": [_heatmap("HEATMAP_SNAPSHOT_MAX_COLUMNS")],
+    # #652 (E21-X02): the subscription quota (G-01, G-02's user leg) and the server's spec points.
+    "Max `heatmap.*` / connection": "limits.MAX_HEATMAP_SUBSCRIPTIONS",
+    "Max `heatmap.*` / user": "limits.MAX_HEATMAP_SUBSCRIPTIONS_PER_USER",
+    "Max `heatmap.*` specs / user": "limits.MAX_HEATMAP_SPECS_PER_USER",
+    "Heatmap specs / user / symbol": "limits.MAX_HEATMAP_SPECS_PER_USER_SYMBOL",
+    "Heatmap spec points / server": [_heatmap("HEATMAP_MAX_POINTS_PER_SERVER")],
+    "Quota points / connection": "limits.QUOTA_POINTS_PER_CONNECTION",
+    "Quota points / user": "limits.QUOTA_POINTS_PER_USER",
+    # the point: its rows a second, its bytes a second at a kind-6 row (1 KiB), and that row
+    "Quota point": [_heatmap("QUOTA_ROWS_PER_POINT"), _point_bytes, _heatmap("ROW_BYTES")],
+    "`heatmap.*` weight": [],  # stated by reference to the grid's `rows` and the throttle row
+    "Deep `book.*` weight": [
+        "limits.DEEP_BOOK_ROWS_PER_PUBLISH",
+        "limits.DEEP_BOOK_MEASURED_DEPTH",
+        _heatmap("DEEP_DEPTH"),
+        "limits.DEEP_BOOK_PUBLISHES_PER_S",
+    ],
     "`indicators` server instances": [
         _items("indicators", "instances"),
         _instance_cap("INSTANCE_CAP_PER_USER"),
@@ -261,33 +283,11 @@ def _probe(module: str, word: str) -> Callable[[], bool]:
     )
 
 
-def _heatmap_names(word: str) -> Callable[[], bool]:
-    return lambda: any(
-        word in n for n in vars(importlib.import_module("candleviewer.orderflow.heatmap"))
-    )
-
-
-def _module(name: str) -> Callable[[], bool]:
-    return lambda: importlib.util.find_spec(f"candleviewer.ws.{name}") is not None
-
-
 #: 16.2 rows the contract states and no code enforces yet: the owning ticket, and a probe that is
 #: true once code for it exists (the row must then be mapped above, so this list cannot rot).
-#: The deep-book cap (#604, E21-T01) and the heatmap spec caps and snapshot bound (#605, E21-T02)
-#: are built and mapped. The subscription quota rows are #652's (E21-X02): each probe fires once
-#: `ws.limits` or `orderflow.heatmap` names its constant, or `ws.quota` exists.
-CONTRACT_ONLY_ROWS: Final[dict[str, tuple[str, Callable[[], bool]]]] = {
-    "Max `heatmap.*` / connection": ("#652", _probe("limits", "HEATMAP_SUBSCRIPTIONS")),
-    "Max `heatmap.*` / user": ("#652", _probe("limits", "HEATMAP_SUBSCRIPTIONS")),
-    "Max `heatmap.*` specs / user": ("#652", _probe("limits", "HEATMAP_SPECS_PER_USER")),
-    "Heatmap specs / user / symbol": ("#652", _probe("limits", "SPECS_PER_USER_SYMBOL")),
-    "Heatmap spec points / server": ("#652", _heatmap_names("POINTS_PER_SERVER")),
-    "Quota points / connection": ("#652", _probe("limits", "QUOTA_POINTS")),
-    "Quota points / user": ("#652", _probe("limits", "QUOTA_POINTS")),
-    "Quota point": ("#652", _heatmap_names("QUOTA_ROWS_PER_POINT")),
-    "`heatmap.*` weight": ("#652", _module("quota")),
-    "Deep `book.*` weight": ("#652", _probe("limits", "DEEP_BOOK_ROWS")),
-}
+#: None is left: the deep-book cap (#604, E21-T01), the heatmap spec caps and snapshot bound
+#: (#605, E21-T02) and the subscription quota (#652, E21-X02) are built and mapped.
+CONTRACT_ONLY_ROWS: Final[dict[str, tuple[str, Callable[[], bool]]]] = {}
 #: 3.6 table rows: the JSON bounds of SR-184, which 16.2 does not repeat, and the JSON value bound,
 #: SR-185's number, which 16.2 states for both encodings (#4924).
 SECTION_3_6_ROWS: Final = {

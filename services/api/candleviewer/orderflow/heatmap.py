@@ -29,7 +29,8 @@ published state (`phase`, `depth`, `book`).
   reach the `liquidity` consumer (the rules side).
 - **Specs (G-02).** One state per (symbol, `depth`, `price_grouping`, `time_bucket_ms`), shared
   by its leases, a ring of at most `HEATMAP_SNAPSHOT_MAX_COLUMNS` columns; at most
-  `HEATMAP_MAX_SPECS_PER_SYMBOL` a symbol and `HEATMAP_MAX_SPECS_PER_SERVER` a server
+  `HEATMAP_MAX_SPECS_PER_SYMBOL` a symbol and `HEATMAP_MAX_SPECS_PER_SERVER` a server, whose
+  points (`spec_points`) stay within `HEATMAP_MAX_POINTS_PER_SERVER` (E21-X02, #652)
   (`subscription_limit`, `HeatmapSpecCapError`). A depth-500 spec demands the symbol's 500 tier
   (`DepthDemand`, as `book.X.500` does) and integrates nothing until the tier holds 500.
 - **Ready.** A spec's subscriptions stay `snapshot_pending` until it is ready: the instrument
@@ -72,7 +73,7 @@ from collections import deque
 from collections.abc import Awaitable, Callable, Generator, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_EVEN, Context, Decimal
-from typing import Any, Final, Protocol
+from typing import Any, Final, Literal, Protocol
 
 import numpy as np
 import structlog
@@ -87,6 +88,8 @@ from candleviewer.observability.context import spawn
 from candleviewer.orderflow import heatmap_metrics as hm
 
 FAMILY: Final = "heatmap"
+#: Which limit refused a spec (`HeatmapSpecCapError.cap`): a count cap or the server's points.
+type SpecCap = Literal["symbol", "server", "points"]
 #: 24 §6.1 `HeatmapGridSpec.column_ms`: the native column, the engine's sampling deadline.
 COLUMN_MS: Final = 100
 #: 24 §6.1 `rows`, 23 §16.2 (G-07a): the most rows a column carries.
@@ -94,6 +97,14 @@ ROWS: Final = 512
 #: 23 §16.2 (G-02): live specs a symbol, and a server, may hold.
 HEATMAP_MAX_SPECS_PER_SYMBOL: Final = 4
 HEATMAP_MAX_SPECS_PER_SERVER: Final = 32
+#: 23 §16.2 (E21-X02, #652): a quota point is this many wire rows a second, the unit of the WS
+#: subscription quota (`ws/quota.py`) and of the server's spec points below. Interim, for the
+#: Owner to ratify: each figure is a §16.2 row.
+QUOTA_ROWS_PER_POINT: Final = 64
+#: 23 §16.2 (E21-X02): the live specs' points (`spec_points`), every symbol and user together,
+#: beside the two count caps: half of the points of the case #4922 measured (32 specs at 100 ms
+#: and 512 rows). Interim, for the Owner to ratify.
+HEATMAP_MAX_POINTS_PER_SERVER: Final = 1280
 #: 23 §16.2 (G-03): the column cap of a snapshot, and of a spec's ring.
 HEATMAP_SNAPSHOT_MAX_COLUMNS: Final = 2000
 #: 23 §3.4: a kind-6 frame's header (24 B) and column prefix (24 B), and one row.
@@ -139,8 +150,13 @@ def _log() -> Any:
 
 
 class HeatmapSpecCapError(Exception):
-    """A spec past a G-02 cap (23 §16.2): refused `subscription_limit`, nothing held. The message
-    names the cap, never another user's specs (HM-I04)."""
+    """A spec past a G-02 cap or the server's spec points (23 §16.2): refused `subscription_limit`,
+    nothing held. The message names the cap, never another user's specs (HM-I04); `cap` says which
+    (`symbol`, `server` or `points`), for the gateway's refusal count."""
+
+    def __init__(self, message: str, *, cap: SpecCap) -> None:
+        super().__init__(message)
+        self.cap: SpecCap = cap
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +177,19 @@ def spec_of(symbol: str, opts: Mapping[str, Any]) -> HeatmapSpec:
         int(opts.get("price_grouping", DEFAULT_GROUPING)),
         int(opts.get("time_bucket_ms", DEFAULT_BUCKET_MS)),
     )
+
+
+def column_points(depth: int, period_ms: int) -> int:
+    """23 §16.2 (E21-X02): the quota points of columns `depth` deep sent one every `period_ms`:
+    ⌈rows x frames a second ÷ `QUOTA_ROWS_PER_POINT`⌉, rows = min(`ROWS`, 2 x depth) and frames a
+    second = 1 000 ÷ period_ms, in whole numbers (rows go up to `ROWS` around the mid: 24 §6.3)."""
+    rows = min(ROWS, 2 * depth)
+    return -(-(rows * 1000) // (period_ms * QUOTA_ROWS_PER_POINT))
+
+
+def spec_points(spec: HeatmapSpec) -> int:
+    """23 §16.2: a spec's weight against the server's spec points, its columns at its bucket."""
+    return column_points(spec.depth, spec.time_bucket_ms)
 
 
 @dataclass(frozen=True, slots=True)
@@ -875,6 +904,7 @@ class HeatmapTopic:
         clock_ms: Callable[[], float] = lambda: time.time() * 1000.0,
         max_specs_per_symbol: int = HEATMAP_MAX_SPECS_PER_SYMBOL,
         max_specs_per_server: int = HEATMAP_MAX_SPECS_PER_SERVER,
+        max_points_per_server: int = HEATMAP_MAX_POINTS_PER_SERVER,
         max_pinned: int = MAX_PINNED,
         seed_turn_s: float = SEED_TURN_S,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -891,6 +921,8 @@ class HeatmapTopic:
         self._queue_bytes, self._queue_frames = queue_bytes, queue_frames
         self._clock, self._sleep = clock_ms, sleep
         self._max_symbol, self._max_server = max_specs_per_symbol, max_specs_per_server
+        #: E21-X02 (23 §16.2): the live specs' points (`spec_points`), kept with `_take` and `_free`
+        self._max_points, self._points = max_points_per_server, 0
         self._symbols: dict[str, _SymbolState] = {}
         self._pinned: dict[str, int] = {}  # symbol -> the native depth its pin holds
         self._pin_owed: set[str] = set()  # pins whose book demand was refused (retried)
@@ -952,10 +984,20 @@ class HeatmapTopic:
         total = sum(len(s.specs) for s in self._symbols.values()) - (freed is not None)
         if on_symbol >= self._max_symbol:
             raise HeatmapSpecCapError(
-                f"At most {self._max_symbol} heatmap specs per symbol are served."
+                f"At most {self._max_symbol} heatmap specs per symbol are served.", cap="symbol"
             )
         if total >= self._max_server:
-            raise HeatmapSpecCapError(f"At most {self._max_server} heatmap specs are served.")
+            raise HeatmapSpecCapError(
+                f"At most {self._max_server} heatmap specs are served.", cap="server"
+            )
+        # E21-X02 (23 §16.2): a moving spec frees its own points first, as it frees its count.
+        points = self._points - (0 if freed is None else spec_points(freed)) + spec_points(spec)
+        if points > self._max_points:
+            raise HeatmapSpecCapError(
+                f"The server's heatmap budget of {self._max_points} points is spent; use a slower "
+                "bucket or a shallower depth.",
+                cap="points",
+            )
 
     def _symbol(self, symbol: str, depth: int, now: float) -> _SymbolState:
         st = self._symbols.get(symbol)
@@ -975,6 +1017,7 @@ class HeatmapTopic:
             self._integrate(st, now, ok=True)  # the others' open buckets up to now
             deep = self._deep(st)
             state = st.specs[spec] = _spec_state(spec, now)
+            self._points += spec_points(spec)
             if spec.depth >= DEEP_DEPTH and not deep:
                 self._call_demand("acquire", spec.symbol, DEEP_CONSUMER, DEEP_DEPTH)
             self._seed(st, state)
@@ -1035,6 +1078,7 @@ class HeatmapTopic:
         state.consumers.discard(lease.consumer)
         if not state.consumers:
             del st.specs[lease.spec]
+            self._points -= spec_points(lease.spec)  # E21-X02: its last release frees its points
             self._native_depth(st)
             if lease.spec.depth >= DEEP_DEPTH and not self._deep(st):
                 self._call_demand("release", lease.spec.symbol, DEEP_CONSUMER)
@@ -1681,9 +1725,11 @@ __all__ = [
     "COLUMN_MS",
     "DEEP_DEPTH",
     "FAMILY",
+    "HEATMAP_MAX_POINTS_PER_SERVER",
     "HEATMAP_MAX_SPECS_PER_SERVER",
     "HEATMAP_MAX_SPECS_PER_SYMBOL",
     "HEATMAP_SNAPSHOT_MAX_COLUMNS",
+    "QUOTA_ROWS_PER_POINT",
     "ROWS",
     "DepthDemand",
     "HeatmapColumn",
@@ -1693,12 +1739,15 @@ __all__ = [
     "HeatmapStore",
     "HeatmapSub",
     "HeatmapTopic",
+    "SpecCap",
+    "column_points",
     "native_count",
     "rebucket",
     "scaled_size",
     "scaled_sizes",
     "snapshot_columns",
     "spec_of",
+    "spec_points",
     "window_column",
     "wire_column",
 ]
