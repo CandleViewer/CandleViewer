@@ -2,7 +2,7 @@
 
 Components: CMP-108, CMP-111, CMP-113, CMP-227, CMP-228, CMP-229 and CMP-230. The pack is [E21-D04.md](E21-D04.md): every "A-n" below is its §C row, applied to `15` by PR 2, and every "R-n", "W-n", "C-n" or "OQ-n" is the pack's. The keyboard tables add no global binding (`05` §3.2) and leave `Esc` and `Ctrl+K` untouched (`05` §3.3). Boards are PENDING (the pack's §0): no Penpot link exists yet, and none is ever an instance URL (R32 R7).
 
-Rule: every line is `[x]` with its evidence, or `[ ]` with its reason (a PR still to land, or `N/A — <reason>`). No blank line at Done (`16` §11.4, §13.3).
+Rule: every line is `[x]` with its evidence, or `[ ]` with its reason (a PR still to land, or `N/A — <reason>`); a line that does not apply is `[x]` with `N/A — <reason>`, the E09-D07 precedent, which `16` §13.3 item 8 accepts. No blank line at Done (`16` §11.4, §13.3).
 
 ## Handoff checklist — CMP-108 DomLadderRow (E21-D04, #504)
 
@@ -16,7 +16,7 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with its reason (a PR stil
 - [x] **Essential-exceptions log** — none
 - [x] **Tokens used** — equal to A-5 after PR 2; no token invented; token sets = `packages/ui/tokens` at `9b77e6b83`
 - [x] **Data contract confirmed** — props only, from an already-filtered caller; callbacks only (A-6; R-1)
-- [x] **Contrast and CVD** — computed by the tool (pack §5.4: the text on both bar fills, the ring); no new pair for `tools/contrast/pairs.mjs`
+- [x] **Contrast and CVD** — computed by the tool (pack §5.4: the text on both bar fills, the text and the stale word on the stale surface, the ring); no new pair for `tools/contrast/pairs.mjs`
 - [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PR 3, on the boards
 - [ ] **Sign-off** — owner `approved` on #504 (pending, #2701)
 
@@ -39,20 +39,21 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with its reason (a PR stil
 
 ### Table 2 — Keyboard
 
-| Key           | Action                               | Focus after           | Global conflict?                    | Notes                        |
-| ------------- | ------------------------------------ | --------------------- | ----------------------------------- | ---------------------------- |
-| `↑` / `↓`     | previous / next row                  | the new row           | none (grid-local)                   | roving, one tab stop         |
-| `Enter`       | opens the row action menu (CMP-041)  | the menu's first item | `05`'s limit key: C-3, E21-D06 #506 | trade items T2 (R-3)         |
-| `Delete`      | cancels the own order at the row     | stays on the row      | none                                | never gated on the arm (R-4) |
-| `Shift+Enter` | opens CMP-111's reveal for the price | the reveal's heading  | PROPOSED (OQ-1)                     | E21-D06 rules it             |
-| `Esc`         | closes the menu or the reveal        | back to the row       | none (`Esc` keeps its meaning)      | —                            |
+| Key           | Action                                                       | Focus after           | Global conflict?                    | Notes                                                                       |
+| ------------- | ------------------------------------------------------------ | --------------------- | ----------------------------------- | --------------------------------------------------------------------------- |
+| `↑` / `↓`     | previous / next row                                          | the new row           | none (grid-local)                   | roving, one tab stop, keyed by price                                        |
+| `←` / `→`     | across the row's cells (D02 §9.2)                            | the next cell         | none (grid-local)                   | each a `gridcell` named by its text                                         |
+| `Enter`       | opens the row action menu (CMP-041)                          | the menu's first item | `05`'s limit key: C-3, E21-D06 #506 | trade items T2 (R-3); on an aggregate's Your-orders cell it expands CMP-230 |
+| `Delete`      | cancels the row's one own order; on an aggregate, expands it | stays on the row      | none                                | never cancels all; W-21 … W-23 once (R-5); never gated on the arm (R-4)     |
+| `Shift+Enter` | opens CMP-111's reveal for the price                         | the reveal's heading  | PROPOSED (OQ-1)                     | E21-D06 rules it                                                            |
+| `Esc`         | closes the menu or the reveal                                | back to the row       | none (`Esc` keeps its meaning)      | —                                                                           |
 
 ### Table 3 — Accessible name / role
 
-| Element  | Role            | Accessible name (source)                                       | States / properties                             |
-| -------- | --------------- | -------------------------------------------------------------- | ----------------------------------------------- |
-| the row  | row (in a grid) | the label template of pack §4.1 (W-1 is its normative example) | `aria-rowindex`; `aria-selected` on the focused |
-| size bar | none            | `aria-hidden` (the number carries the size)                    | —                                               |
+| Element  | Role            | Accessible name (source)                                       | States / properties                                                                           |
+| -------- | --------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| the row  | row (in a grid) | the label template of pack §4.1 (W-1 is its normative example) | `aria-rowindex`; no `aria-selected` (no row selection exists; focus is the roving `tabindex`) |
+| size bar | none            | `aria-hidden` (the number carries the size)                    | —                                                                                             |
 
 ### Table 5 — Live data
 
@@ -63,10 +64,12 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with its reason (a PR stil
 
 ### Density
 
-| Mode        | Row / control height                   | Padding tokens                 | Smallest target |
-| ----------- | -------------------------------------- | ------------------------------ | --------------- |
-| compact     | 24 px (`space.row.height.compact`)     | the entry's Tokens field (A-5) | 24 × 24 px      |
-| comfortable | 32 px (`space.row.height.comfortable`) | the entry's Tokens field (A-5) | 32 × 32 px      |
+Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), the values of `space.row.height.*` at `9b77e6b83`; both are minimums that grow with the text scale (R-7).
+
+| Mode        | Row / control height                   | Padding tokens                 | Smallest target                                                         |
+| ----------- | -------------------------------------- | ------------------------------ | ----------------------------------------------------------------------- |
+| compact     | 24 px (`space.row.height.compact`)     | the entry's Tokens field (A-5) | 24 × 24 px (the row; the menu items are CMP-041's, at least 24 px high) |
+| comfortable | 32 px (`space.row.height.comfortable`) | the entry's Tokens field (A-5) | 32 × 32 px                                                              |
 
 ### Essential exceptions
 
@@ -104,25 +107,26 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with its reason (a PR stil
 
 ### Table 2 — Keyboard
 
-| Key                          | Action                            | Focus after          | Global conflict? | Notes            |
-| ---------------------------- | --------------------------------- | -------------------- | ---------------- | ---------------- |
-| `Shift+Enter` (a ladder row) | opens the reveal for the price    | the region's heading | PROPOSED (OQ-1)  | E21-D06 rules it |
-| `Enter` (the pane's stop)    | opens the reveal for the grid row | the region's heading | none             | D02 §9.1         |
-| `Esc`                        | closes the reveal                 | the opener           | none             | —                |
+| Key                          | Action                                                       | Focus after                                                                                                           | Global conflict? | Notes                                                             |
+| ---------------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ---------------- | ----------------------------------------------------------------- |
+| `Shift+Enter` (a ladder row) | opens the reveal for the price                               | the region's heading                                                                                                  | PROPOSED (OQ-1)  | E21-D06 rules it                                                  |
+| `Enter` (the pane's stop)    | opens the reveal for the grid row                            | the region's heading                                                                                                  | none             | D02 §9.1                                                          |
+| `Tab`                        | heading → the table → the ladder grid; the region stays open | the next stop                                                                                                         | none             | non-modal (PROPOSED); the ladder keeps its tab stop on the opener |
+| `Esc`                        | closes the reveal (from anywhere in it)                      | the opener; if virtualised away or re-centred, the rendered row at its price, else the nearest by price; never `body` | none             | re-read = `Esc`, then reopen                                      |
 
 ### Table 3 — Accessible name / role
 
-| Element    | Role   | Accessible name (source)         | States / properties                 |
-| ---------- | ------ | -------------------------------- | ----------------------------------- |
-| the reveal | region | W-14                             | a heading with `tabindex="-1"`      |
-| sparkline  | img    | a one-sentence summary (CMP-024) | —                                   |
-| the table  | table  | W-14 (CMP-049)                   | the W-17 line; a snapshot, not live |
+| Element    | Role   | Accessible name (source) | States / properties                             |
+| ---------- | ------ | ------------------------ | ----------------------------------------------- |
+| the reveal | region | W-14                     | a heading with `tabindex="-1"`                  |
+| sparkline  | img    | W-24 (CMP-024)           | bid solid, ask dashed, each labelled at its end |
+| the table  | table  | W-25 (CMP-049)           | the W-17 line; a snapshot, not live             |
 
 ### Table 5 — Live data
 
-| Field            | Politeness | Cadence             | Coalescing | Notes                              |
-| ---------------- | ---------- | ------------------- | ---------- | ---------------------------------- |
-| the reveal table | none       | on open, on re-read | snapshot   | nothing announced per update (R-5) |
+| Field            | Politeness | Cadence                               | Coalescing | Notes                              |
+| ---------------- | ---------- | ------------------------------------- | ---------- | ---------------------------------- |
+| the reveal table | none       | on open (re-read: `Esc`, then reopen) | snapshot   | nothing announced per update (R-5) |
 
 ### Density
 
@@ -155,17 +159,17 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with its reason (a PR stil
 
 ### Table 1 — Variants × States
 
-| Variant                     | State   | Penpot variant                                                  | Story name            | Notes                |
-| --------------------------- | ------- | --------------------------------------------------------------- | --------------------- | -------------------- |
-| standard, green-bid-red-ask | default | CMP-113 · HeatmapLegend / Palette=Standard, Convention=Default  | Default               | W-10, W-11, W-12     |
-| standard, red-bid-green-ask | default | CMP-113 · HeatmapLegend / Palette=Standard, Convention=Inverted | AlternateConvention   | colour words swapped |
-| CVD                         | default | CMP-113 · HeatmapLegend / Palette=Cvd, Convention=Default       | PaletteCvd            | blue / orange        |
-| CVD, inverted               | default | CMP-113 · HeatmapLegend / Palette=Cvd, Convention=Inverted      | PaletteCvdInverted    | —                    |
-| log / linear                | default | CMP-113 · HeatmapLegend / Scale=Log                             | LogScale, LinearScale | W-13                 |
-| adaptive / locked           | default | CMP-113 · HeatmapLegend / Mode=Adaptive                         | Adaptive, Locked      | W-13                 |
-| any                         | stale   | CMP-113 · HeatmapLegend / State=Stale                           | Stale                 | —                    |
-| any                         | no data | CMP-113 · HeatmapLegend / State=NoData                          | NoData                | anchors "—"          |
-| any                         | forced  | —                                                               | ForcedColors          | pack §5.5            |
+| Variant                     | State   | Penpot variant                                                  | Story name            | Notes                               |
+| --------------------------- | ------- | --------------------------------------------------------------- | --------------------- | ----------------------------------- |
+| standard, green-bid-red-ask | default | CMP-113 · HeatmapLegend / Palette=Standard, Convention=Default  | Default               | W-10, W-11, W-12                    |
+| standard, red-bid-green-ask | default | CMP-113 · HeatmapLegend / Palette=Standard, Convention=Inverted | AlternateConvention   | colour words swapped                |
+| CVD                         | default | CMP-113 · HeatmapLegend / Palette=Cvd, Convention=Default       | PaletteCvd            | blue / orange                       |
+| CVD, inverted               | default | CMP-113 · HeatmapLegend / Palette=Cvd, Convention=Inverted      | PaletteCvdInverted    | —                                   |
+| log / linear                | default | CMP-113 · HeatmapLegend / Scale=Log                             | LogScale, LinearScale | W-13                                |
+| adaptive / locked           | default | CMP-113 · HeatmapLegend / Mode=Adaptive                         | Adaptive, Locked      | W-13                                |
+| any                         | stale   | CMP-113 · HeatmapLegend / State=Stale                           | Stale                 | —                                   |
+| any                         | no data | CMP-113 · HeatmapLegend / State=NoData                          | NoData                | anchors "—" and the words "no data" |
+| any                         | forced  | —                                                               | ForcedColors          | pack §5.5                           |
 
 ### Table 3 — Accessible name / role
 
@@ -244,9 +248,9 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with its reason (a PR stil
 
 ### Table 3 — Accessible name / role
 
-| Element  | Role | Accessible name (source)   | States / properties                   |
-| -------- | ---- | -------------------------- | ------------------------------------- |
-| the tile | img  | W-18 (words, one sentence) | never the only disclosure (`15`:2949) |
+| Element  | Role | Accessible name (source)                                        | States / properties                   |
+| -------- | ---- | --------------------------------------------------------------- | ------------------------------------- |
+| the tile | img  | W-18's template, filled from the settings (words, one sentence) | never the only disclosure (`15`:2949) |
 
 ## Handoff checklist — CMP-229 ArmToggle (E21-D04, #504)
 
@@ -272,9 +276,10 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with its reason (a PR stil
 
 ### Table 2 — Keyboard
 
-| Key            | Action                         | Focus after | Global conflict?               | Notes        |
-| -------------- | ------------------------------ | ----------- | ------------------------------ | ------------ |
-| `Ctrl+Shift+T` | re-shows W-20; changes nothing | stays       | the app-wide arm key (E30-D02) | R-3 (G-T2.3) |
+| Key                                  | Action                         | Focus after | Global conflict?                                                                                                  | Notes                                    |
+| ------------------------------------ | ------------------------------ | ----------- | ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `Enter` / `Space` (the focused pill) | re-shows W-20; changes nothing | stays       | none                                                                                                              | R-3 (G-T2.3); the path that always works |
+| `Ctrl+Shift+T`                       | re-shows W-20; changes nothing | stays       | the arm key (`14`:1214; D02:384); `05` §3.2 says `Ctrl+Shift+1`; the web build's browser can take it (D06E14:646) | R-3 (G-T2.3)                             |
 
 ## Handoff checklist — CMP-230 OwnOrderMarker (E21-D04, #504)
 
@@ -288,7 +293,7 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with its reason (a PR stil
 - [x] **Essential-exceptions log** — none
 - [x] **Tokens used** — equal to A-30 after PR 2
 - [x] **Data contract confirmed** — props only, already filtered by an account-scoped caller (A-31; pack §8)
-- [x] **Contrast and CVD** — text in `color.text.primary` / `.secondary` (pack §5.4); no new pair
+- [x] **Contrast and CVD** — text in `color.text.primary` / `.secondary`, the side word in `color.buy.default` / `color.sell.default`, all on the canvas (pack §5.4); no new pair
 - [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PR 3
 - [ ] **Sign-off** — owner `approved` on #504 (pending, #2701)
 
@@ -307,11 +312,11 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with its reason (a PR stil
 
 ### Table 2 — Keyboard
 
-| Key      | Action                               | Focus after           | Global conflict? | Notes                        |
-| -------- | ------------------------------------ | --------------------- | ---------------- | ---------------------------- |
-| `Enter`  | expands an aggregate                 | the first account row | none             | D02:340                      |
-| `Esc`    | collapses it                         | back to the cell      | none             | —                            |
-| `Delete` | cancels the order of the focused row | stays                 | none             | never gated on the arm (R-4) |
+| Key      | Action                                                                                      | Focus after           | Global conflict? | Notes                                                                   |
+| -------- | ------------------------------------------------------------------------------------------- | --------------------- | ---------------- | ----------------------------------------------------------------------- |
+| `Enter`  | expands an aggregate                                                                        | the first account row | none             | D02:340                                                                 |
+| `Esc`    | collapses it                                                                                | back to the cell      | none             | —                                                                       |
+| `Delete` | cancels a single order or the focused account row's order; on an aggregate cell, expands it | stays                 | none             | never cancels all; W-21 … W-23 once (R-5); never gated on the arm (R-4) |
 
 ### Table 3 — Accessible name / role
 
@@ -322,16 +327,19 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with its reason (a PR stil
 
 ### Table 5 — Live data
 
-| Field              | Politeness | Cadence | Coalescing        | Notes                                   |
-| ------------------ | ---------- | ------- | ----------------- | --------------------------------------- |
-| status (pending …) | none       | silent  | latest value only | the word changes; never announced (R-5) |
+| Field              | Politeness | Cadence         | Coalescing            | Notes                                                          |
+| ------------------ | ---------- | --------------- | --------------------- | -------------------------------------------------------------- |
+| status (pending …) | none       | silent          | latest value only     | the word changes; never announced (R-5)                        |
+| cancel result      | polite     | once per cancel | the latest within 5 s | W-21, then W-22 or W-23, through the panel's status node (R-5) |
 
 ### Density
 
-| Mode        | Row / control height   | Padding tokens | Smallest target |
-| ----------- | ---------------------- | -------------- | --------------- |
-| compact     | 24 px (the ladder row) | CMP-108's      | 24 × 24 px      |
-| comfortable | 32 px (the ladder row) | CMP-108's      | 32 × 32 px      |
+Row heights are CMP-108's: `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px) at `9b77e6b83`.
+
+| Mode        | Row / control height   | Padding tokens | Smallest target                                                                              |
+| ----------- | ---------------------- | -------------- | -------------------------------------------------------------------------------------------- |
+| compact     | 24 px (the ladder row) | CMP-108's      | 24 × 24 px: the count badge's expand target is the whole cell, never the badge alone (2.5.8) |
+| comfortable | 32 px (the ladder row) | CMP-108's      | 32 × 32 px                                                                                   |
 
 ### Essential exceptions
 

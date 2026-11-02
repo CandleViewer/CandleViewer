@@ -95,6 +95,12 @@ PAIRS: tuple[tuple[str, str, float], ...] = (
     ("color.text.tertiary", "color.surface.raised", 4.5),
     ("color.text.secondary", "color.surface.raised", 4.5),
     ("color.focus.ring", CANVAS, 3.0),
+    ("color.buy.default", CANVAS, 4.5),
+    ("color.sell.default", CANVAS, 4.5),
+    ("color.text.secondary", CANVAS, 4.5),
+    ("color.text.primary", "color.data-confidence.stale.surface", 4.5),
+    ("color.data-confidence.stale.text", "color.data-confidence.stale.surface", 4.5),
+    ("color.text.primary", "color.surface.raised", 4.5),
 )
 # AC 3: no CMP-111 A-row may carry the rendering contract's words.
 SPLIT_RE = re.compile(r"textur|upload|cadence|frame budget", re.IGNORECASE)
@@ -820,6 +826,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "paths",
     ),
     Mutation("M-22", "G-MUTLIST", "the list drifts", "| M-22 | G-MUTLIST", "| M-99 | G-MUTLIST"),
+    Mutation("M-23", "G-RULED", "a pin edited, its BQ line unchanged", "BQ-0 ", "BQ-0 0", "pins"),
 )
 
 
