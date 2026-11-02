@@ -364,11 +364,12 @@ async def test_a_failed_system_event_write_is_counted_and_never_holds_the_next_f
 
 
 class _Views:
-    """The two flag views `rule_switches` reads, as `FeatureFlagsRuntime` holds them."""
+    """The flag views `rule_switches` reads, as `FeatureFlagsRuntime` holds them: the two switches
+    (E35-T10) and the rollout flag (E35-T11)."""
 
-    def __init__(self, enabled: object, killed: object) -> None:
+    def __init__(self, enabled: object, killed: object, rollout: object = None) -> None:
         self.reads: list[str] = []
-        self._enabled, self._killed = enabled, killed
+        self._enabled, self._killed, self._rollout = enabled, killed, rollout
 
     def rules_enabled(self) -> bool:
         self.reads.append("rules.enabled")
@@ -378,13 +379,18 @@ class _Views:
         self.reads.append("killswitch.order_entry")
         return cast(bool, self._killed)
 
+    def rules_oms_actions(self) -> bool:
+        self.reads.append("rules.oms_actions")
+        return cast(bool, self._rollout)
+
 
 def test_the_rule_switches_read_the_two_views_and_the_shared_kill_switch_port() -> None:
     """E35-T10 (BQ-2): checks 2 and 3 read the master switch's view and the order-entry kill
     switch's view as they read, a value other than a boolean as closed; B18 through the OMS's
     shared port (`HaltingKillSwitch`, #2904), asked for the global account when an action names
-    none, so the audit-chain break halt engages it on every account; and the rollout port, off
-    until E35-T11."""
+    none, so the audit-chain break halt engages it on every account; and (E35-T11, BQ-4 of #5003)
+    the rollout port, `rules.oms_actions`' view read at each call: on only when it reads `True`,
+    so off while unread."""
     asked: list[uuid.UUID] = []
 
     def engaged_on_b(account_id: Any) -> object | None:
@@ -397,7 +403,10 @@ def test_the_rule_switches_read_the_two_views_and_the_shared_kill_switch_port() 
     assert views.reads == ["rules.enabled", "killswitch.order_entry"]
     assert (switches.kill_switch_engaged(_A), switches.kill_switch_engaged(_B)) == (False, True)
     assert switches.kill_switch_engaged(None) is False and asked[-1] == uuid.UUID(int=0)
-    assert switches.oms_actions() is False
+    assert switches.oms_actions() is False and views.reads[-1] == "rules.oms_actions"  # unread
+    for rollout, admitted in ((True, True), (False, False), ("true", False), (1, False)):
+        read = rules_oms_wiring.rule_switches(_Views(True, False, rollout), engaged_on_b)
+        assert read.oms_actions() is admitted
     halt = _Halt()
     port = HaltingKillSwitch(InterimKillSwitch(), halt)
     closed = rules_oms_wiring.rule_switches(_Views(None, None), port.refusal)
@@ -491,6 +500,44 @@ async def test_the_budget_rebuild_adapter_reads_the_counted_action_starts() -> N
     )
     assert await budget.admit(RULE, 1000.0) == "ok"  # rebuilt from the two ages, then counted
     assert len(repository.calls) == 2
+
+
+class _Notional:
+    """`SqlAlchemyRulesRepository.day_notional`, recorded."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, Any, Any]] = []
+
+    async def day_notional(self, rule_id: str, start: Any, end: Any) -> Decimal:
+        self.calls.append((rule_id, start, end))
+        return Decimal("612.5")
+
+
+async def test_the_notional_rebuild_adapter_reads_one_utc_day() -> None:
+    """24 §11.7, BQ-5 of #5003: the day's notional is asked for one rule over one UTC day, from
+    its midnight to the next, tz-aware, and comes back as the repository's `Decimal`."""
+    from datetime import UTC, date, datetime
+
+    repository = _Notional()
+    adapter = rules_oms_wiring.RuleNotionalRebuild(cast(SqlAlchemyRulesRepository, repository))
+    assert await adapter.day_notional(RULE, date(2026, 11, 1)) == Decimal("612.5")
+    assert repository.calls == [
+        (RULE, datetime(2026, 11, 1, tzinfo=UTC), datetime(2026, 11, 2, tzinfo=UTC))
+    ]
+
+
+def test_the_day_notional_read_sums_the_accepted_entries_of_the_rules_armed_runs() -> None:
+    """The read's one statement (a parts pin, as the write-ahead insert's): a rule's `action_ok`
+    events naming a notional, of its armed runs, within the day, summed in the store; no payload
+    leaves it."""
+    text = rules_sqlalchemy._DAY_NOTIONAL.text
+    for part in (
+        "SUM(CAST(e.payload->>'notional_usd' AS numeric))", "r.rule_id = CAST(:rule_id AS uuid)",
+        "r.mode = 'armed'", "e.kind = 'action_ok'", "e.payload->>'notional_usd' IS NOT NULL",
+        "e.event_ts >= CAST(:start AS timestamptz)", "e.event_ts < CAST(:end AS timestamptz)",
+    ):  # fmt: skip
+        assert part in text, part
+    assert text.startswith("SELECT COALESCE(SUM(") and "payload AS" not in text
 
 
 async def test_the_breaker_alert_writes_one_system_event_and_pages() -> None:

@@ -4550,7 +4550,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "restart",
         _L,
         "E42",
-        max_series=5,  # E35-T10: the OMS's two views, trade_groups and the two rule switches
+        max_series=6,  # the OMS's two views, trade_groups, the two rule switches (E35-T10) and
+        # the rule actions' rollout flag (E35-T11)
         exported=True,
     ),
     # --- Admin jobs (E42-T05, #966 Q10) -------------------------------------

@@ -311,19 +311,16 @@ def _runtime() -> FeatureFlagsRuntime:
 class _Views:
     rules_enabled: Callable[[], bool]
     order_entry_killed: Callable[[], bool]
-
-
-class _RolledOut(RuleSwitchesBinding):
-    """The composition root's switches with the rollout port on, as E35-T11 will bind it, so an
-    OMS action reaches the checks after check 2."""
-
-    def oms_actions(self) -> bool:
-        return True
+    #: E35-T11: the rollout flag's view, off unless a test turns it on.
+    rules_oms_actions: Callable[[], bool] = lambda: False
 
 
 def _bound(views: _Views, *, rolled_out: bool = True) -> RuleSwitchesBinding:
-    kind = _RolledOut if rolled_out else RuleSwitchesBinding
-    return kind(views, InterimKillSwitch().refusal)
+    """The composition root's switches over `views`, the rollout view on unless `rolled_out` is
+    false, so an OMS action reaches the checks after check 2 (E35-T11 reads the view)."""
+    if rolled_out:
+        views = replace(views, rules_oms_actions=lambda: True)
+    return RuleSwitchesBinding(views, InterimKillSwitch().refusal)
 
 
 async def test_an_unreadable_kill_switch_flag_blocks_as_engaged() -> None:

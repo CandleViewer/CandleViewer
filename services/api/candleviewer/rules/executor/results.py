@@ -71,8 +71,14 @@ BLOCKED_DETAIL: Final[Mapping[str, str]] = MappingProxyType(
 #: `kill_switch` with a detail of its own, so a read-only system is never reported as an engaged
 #: kill switch. PROPOSED for the owner, as `BLOCKED_DETAIL` is, under the same register.
 READ_ONLY: Final = "read_only"
+#: E35-T11 (24 §11.9 `unavailable`): an entry whose node id the OMS's rule origin refuses (not a
+#: short identifier) is `unavailable`, with a detail of its own that never holds the id. PROPOSED.
+NODE_ID: Final = "node_id"
 OMS_DETAIL: Final[Mapping[str, str]] = MappingProxyType(
-    {READ_ONLY: "Not done — the terminal is read-only, so nothing was sent."}
+    {
+        READ_ONLY: "Not done — the terminal is read-only, so nothing was sent.",
+        NODE_ID: "Not done — the action's node id is not a short identifier.",
+    }
 )
 #: A cap name `oms_cap_detail` may quote: an identifier with no digit (the register's), short
 #: enough that the sentence stays within 80 characters.

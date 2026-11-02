@@ -42,6 +42,7 @@ from candleviewer.admin.flags.catalogue import (
     ENVIRONMENT_SEEDS,
     LIVE_ENABLED,
     RULES_ENABLED,
+    RULES_OMS_ACTIONS,
     TRADING_OMS_ENABLED,
     TRADING_TRADE_GROUPS,
     default_registry,
@@ -297,9 +298,12 @@ class FeatureFlagsRuntime:
         # and engaged while unread, never through the order-entry gate (24 Sec.11.5).
         self.rules_enabled = FlagView(self, RULES_ENABLED)
         self.order_entry_killed = FlagView(self, KILL_ORDER_ENTRY)
+        # E35-T11 (#5003, BQ-4): the rollout port of rule actions that reach the OMS, off while
+        # unread and latched off if its poll dies (24 Sec.11.5 check 2).
+        self.rules_oms_actions = FlagView(self, RULES_OMS_ACTIONS)
         self._views = (
             self.oms_enabled, self.live_enabled, self.trade_groups, self.rules_enabled,
-            self.order_entry_killed,
+            self.order_entry_killed, self.rules_oms_actions,
         )  # fmt: skip
         self._build(DEFAULT_READ_BUDGET_MS)
         self.backend_connection = BackendConnectionFlag(self)
@@ -546,7 +550,7 @@ class FlagView:
 
     def _lost(self, event: str, exc: Exception) -> None:
         """A poll left the flag unread: a warning when the view turns unread, debug while it stays
-        so (five views, twelve polls a minute each, through an outage); the error's class alone."""
+        so (six views, twelve polls a minute each, through an outage); the error's class alone."""
         log = _log().debug if self._failing else _log().warning
         log(event, key=self.key, error=type(exc).__name__)
         self._failing = True

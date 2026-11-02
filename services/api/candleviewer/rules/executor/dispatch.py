@@ -31,8 +31,11 @@ DISPATCH_WORKERS: Final = 4
 AUDIT_QUEUE_BOUND: Final = 256
 AUDIT_WORKERS: Final = 1
 #: One action's whole step (its re-read, its scope re-check and audit, its records written ahead
-#: and its hand-over), above the re-read's and each write's own 2 s bound.
-ACTION_TIMEOUT_S: Final = 10.0
+#: and its hand-over), above the re-read's and each write's own 2 s bound. E35-T11 (BQ-7 of #5003):
+#: above the OMS pipeline's own bounds too, 17 s once its anchor exists (`oms.submit`), so the
+#: action's bound never cuts a submit short; the submit runs as the OMS runtime's task, which the
+#: bound never cancels, and one still running at the bound is `unknown`, never sent again.
+ACTION_TIMEOUT_S: Final = 20.0
 #: A job's kind (BQ-4): a fire; a fire the full fire queue refused, whose records go on the audit
 #: queue; or a scope-skipped evaluation's audits. A shed job is counted under its kind.
 JobKind = Literal["fire", "refused_fire", "scope_denial"]

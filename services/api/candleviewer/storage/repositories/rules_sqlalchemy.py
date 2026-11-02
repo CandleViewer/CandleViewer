@@ -17,7 +17,8 @@ fire's own run id: `record_run(run_id=...)` inserts the run with its first event
 work, and a repeat of the run or of an event's `seq` lands once (`ON CONFLICT ... DO NOTHING`);
 `close_run` sets a running run's status once. `order_action_ages` (E35-T10, BQ-7) reads them back
 for the order budget's rebuild: the ages, on the database's clock, of a rule's counted
-`action_start` events of its armed runs.
+`action_start` events of its armed runs; `day_notional` (E35-T11, BQ-5) for the notional
+allowance's: the sum of the notionals a rule's `action_ok` events of one day name.
 """
 
 from __future__ import annotations
@@ -27,6 +28,8 @@ import time
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 import sqlalchemy as sa
@@ -99,6 +102,18 @@ _ORDER_ACTION_AGES = sa.text(
     "AND e.kind = 'action_start' AND e.payload->>'action_type' = ANY(CAST(:types AS text[])) "
     "GROUP BY COALESCE(e.payload->>'dedupe_key', CAST(e.id AS text)) "
     "ORDER BY MIN(e.event_ts) DESC LIMIT :limit"
+)
+#: E35-T11 (24 Sec.11.7, BQ-5 of #5003): no migration, `ix_rr_rule_time` serves the run filter. A
+#: fire's actions end within its run's first day, so a run started the day before still counts
+#: its events of this day.
+_DAY_NOTIONAL = sa.text(
+    "SELECT COALESCE(SUM(CAST(e.payload->>'notional_usd' AS numeric)), 0) AS total "
+    "FROM rule_events e JOIN rule_runs r ON r.id = e.rule_run_id "
+    "WHERE r.rule_id = CAST(:rule_id AS uuid) AND r.mode = 'armed' "
+    "AND r.started_at >= CAST(:start AS timestamptz) - make_interval(days => 1) "
+    "AND r.started_at < CAST(:end AS timestamptz) "
+    "AND e.kind = 'action_ok' AND e.payload->>'notional_usd' IS NOT NULL "
+    "AND e.event_ts >= CAST(:start AS timestamptz) AND e.event_ts < CAST(:end AS timestamptz)"
 )
 _PRUNE = sa.text(
     "DELETE FROM rule_runs WHERE NOT matched AND status <> 'error' "
@@ -282,6 +297,15 @@ class SqlAlchemyRulesRepository:
         async with self._relational.unit_of_work() as uow:
             rows = (await uow.session.execute(_ORDER_ACTION_AGES, params)).all()
         return [float(row[0]) for row in rows]
+
+    async def day_notional(self, rule_id: str, start: datetime, end: datetime) -> Decimal:
+        """The sum of the notionals the rule's `action_ok` events of its armed runs name, written
+        in `[start, end)` (one UTC day for the allowance's rebuild, 24 Sec.11.7); 0 when none. Only
+        the sum leaves the store; no payload is returned or logged."""
+        params = {"rule_id": rule_id, "start": start, "end": end}
+        async with self._relational.unit_of_work() as uow:
+            total: object = (await uow.session.execute(_DAY_NOTIONAL, params)).scalar_one()
+        return Decimal(str(total))
 
     async def prune_unmatched(self, days: int = UNMATCHED_RETENTION_DAYS) -> PruneResult:
         """Delete non-matched, non-error runs older than `days` (events cascade).

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
+from decimal import Decimal
 from typing import Any, Final, Literal, TypeVar
 
 from candleviewer.rules.executor.ports import (
@@ -27,6 +28,7 @@ from candleviewer.rules.executor.ports import (
     RunStatus,
 )
 from candleviewer.rules.executor.results import ActionResult
+from candleviewer.rules.ir.canonical import dec_str
 
 #: Each write's own bound (BQ-9): the bound the rule-row read and the audit writer's callers use,
 #: inside the action's dispatch bound. Read at each write.
@@ -71,13 +73,21 @@ class FireRecords:
         return await send()
 
     async def answered(
-        self, result: ActionResult, journal: Mapping[str, str | None] | None = None
+        self,
+        result: ActionResult,
+        journal: Mapping[str, str | None] | None = None,
+        notional: Decimal | None = None,
     ) -> None:
         """A result's event: `action_ok` for `ok` or `simulated`, else `action_fail`, with the
-        `ActionResult` as its payload; and for an `ok` result with a `journal`, the `log` row its
-        tag rides (E35-T13, `log_journal_tag`), in the same write."""
+        `ActionResult` as its payload; for an `ok` result with a `journal`, the `log` row its tag
+        rides (E35-T13, `log_journal_tag`), in the same write; and for an `ok` entry whose answer
+        named its notional, that notional beside the result, as plain decimal text
+        (`notional_usd`), which the day's allowance is rebuilt from (24 §11.7, E35-T11): the run's
+        own record, never an audit record or a log line."""
         kind: EventKind = "action_ok" if result.outcome in ("ok", "simulated") else "action_fail"
         dump = result.model_dump(mode="json")
+        if notional is not None and result.outcome == "ok":
+            dump["notional_usd"] = dec_str(notional)
         events = [(kind, result.node_id, dump, _SEVERITY[result.outcome])]
         if journal is not None and result.outcome == "ok":
             events.append(("log", result.node_id, dict(journal), "info"))

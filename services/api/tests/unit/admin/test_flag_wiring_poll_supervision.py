@@ -18,7 +18,7 @@ from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
 from candleviewer.admin.flags import LIVE_ENABLED, MAINTENANCE_MODE, StoredFlag
-from candleviewer.admin.flags.catalogue import RULES_ENABLED
+from candleviewer.admin.flags.catalogue import RULES_ENABLED, RULES_OMS_ACTIONS
 from candleviewer.admin.flags.maintenance import KILL_ORDER_ENTRY
 from candleviewer.flags_wiring import FeatureFlagsRuntime, FlagView
 from tests.unit.admin.test_flag_wiring import _OWNER, _runtime
@@ -278,7 +278,7 @@ async def test_the_rule_switch_views_read_their_fail_closed_values_while_unread_
         view.run = run  # type: ignore[method-assign]  # the fake poll replaces it
     await runtime.start()
     polls = [t for t in runtime._view_polls if t.get_name().endswith(("rules.enabled", "_entry"))]
-    assert len(runtime._view_polls) == 5 and len(polls) == 2
+    assert len(runtime._view_polls) == 6 and len(polls) == 2
     with capture_logs() as logs:
         release.set()
         await asyncio.wait(polls)
@@ -294,5 +294,42 @@ async def test_the_rule_switch_views_read_their_fail_closed_values_while_unread_
         }  # fmt: skip
         dead = sorted(line["key"] for line in logs if line["event"] == "flag_view_poll_dead")
         assert dead == sorted((RULES_ENABLED, KILL_ORDER_ENTRY)) and _ERROR_TEXT not in repr(logs)
+    finally:
+        await runtime.stop()
+
+
+# --- The rule actions' rollout view (E35-T11, 24 Sec.11.5 check 2; BQ-4 of #5003) --------------
+
+
+async def test_the_rule_actions_rollout_view_reads_off_while_unread_and_latched() -> None:
+    """`rules.oms_actions` reads off until the store answers, the stored value once it has, and a
+    poll that dies latches it off, which no later write's hook, apply or refresh reopens, counted
+    by its key and logged CRITICAL (the sixth view)."""
+    runtime = _runtime()
+    rollout = runtime.rules_oms_actions
+    assert rollout.key == RULES_OMS_ACTIONS and rollout() is False  # unread: off
+    rollout._apply(StoredFlag(True))
+    assert rollout() is True
+    gone = _stopped(RULES_OMS_ACTIONS)
+    release = asyncio.Event()
+
+    async def run() -> None:
+        await release.wait()
+        raise RuntimeError(_ERROR_TEXT)
+
+    rollout.run = run  # type: ignore[method-assign]  # the fake poll replaces it
+    await runtime.start()
+    (poll,) = [t for t in runtime._view_polls if t.get_name().endswith(RULES_OMS_ACTIONS)]
+    with capture_logs() as logs:
+        release.set()
+        await asyncio.wait({poll})
+    try:
+        assert rollout() is False
+        await rollout.on_change(RULES_OMS_ACTIONS, None, StoredFlag(True))
+        rollout._apply(StoredFlag(True))
+        await rollout.refresh()
+        assert rollout() is False and _stopped(RULES_OMS_ACTIONS) - gone == 1
+        dead = [line["key"] for line in logs if line["event"] == "flag_view_poll_dead"]
+        assert dead == [RULES_OMS_ACTIONS] and _ERROR_TEXT not in repr(logs)
     finally:
         await runtime.stop()

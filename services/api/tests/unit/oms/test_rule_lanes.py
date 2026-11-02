@@ -398,10 +398,8 @@ def _calls(tree: ast.AST, name: str) -> list[ast.Call]:
 
 
 async def test_a_rule_lane_comes_from_the_server_never_from_the_request() -> None:
-    """The forged-origin and cross-account case: no route or WS module builds an origin, names a
-    rule's cancel reason or a lane, and only the OMS's command port builds a cancel's request; a
-    `placeOrder` body that forges an origin or a lane is refused before the pipeline, the
-    owner's and a manager's naming an account outside its grants alike."""
+    """The forged-origin case: no route or WS module builds an origin, names a rule's cancel
+    reason or a lane, and only the OMS's command port builds a cancel's request."""
     for path in sorted([*(_PKG / "api").rglob("*.py"), *(_PKG / "ws").rglob("*.py")]):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         named = [k.arg for c in _calls(tree, "SubmitContext") for k in c.keywords]
@@ -413,11 +411,24 @@ async def test_a_rule_lane_comes_from_the_server_never_from_the_request() -> Non
             assert "origin" not in keywords, path.name
             reason = keywords.get("reason")
             assert not (isinstance(reason, ast.Constant) and str(reason.value).startswith("rule"))
+
+
+@pytest.mark.parametrize("who", ["owner", "manager"])
+async def test_a_place_order_body_naming_an_origin_or_a_lane_is_refused_as_malformed(
+    who: str,
+) -> None:
+    """A `placeOrder` body that forges an origin or a lane is refused as malformed (`400`, each
+    forged member `extra_forbidden`), the owner's and a manager's alike, before any scope check
+    and before the pipeline. The cross-account case runs where the scope check runs: the route's
+    own (`tests/unit/api/test_orders_route.py`) and the rule path's check 5
+    (`tests/unit/wiring/test_rules_oms_principals.py`)."""
     forged = {"origin": "rule", "origin_ref": str(RULE), "lane": "entry", "reason": "rule"}
-    for who, body in (("owner", BODY), ("manager", BODY | {"exchange_account_id": str(uuid4())})):
-        world = World()
-        refused = await post(world, who, body=body | forged)
-        assert refused.status_code in (400, 403, 404) and world.oms.submission.submitted == []
+    world = World()
+    refused = await post(world, who, body=BODY | forged)
+    errors = {(e["field"], e["rule"]) for e in refused.json()["errors"]}
+    assert refused.status_code == 400
+    assert errors >= {(member, "extra_forbidden") for member in forged}
+    assert world.oms.submission.submitted == []
 
 
 def test_the_lane_table_names_every_reason_once() -> None:

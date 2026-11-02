@@ -416,8 +416,11 @@ from candleviewer.risk.service import RiskService
 from candleviewer.rolloff_wiring import build_rolloff_job
 from candleviewer.rules.manager import REFUSED_CAPS, Actor
 from candleviewer.rules.service import RulesService
+from candleviewer.rules_oms_orders import StoredPositionSides, rule_order_handlers
+from candleviewer.rules_oms_principals import IdentityPrincipalSource, RulePrincipals
 from candleviewer.rules_oms_wiring import (
     RuleAlerts,
+    RuleNotionalRebuild,
     rule_action_records,
     rule_metrics,
     rule_notification_handler,
@@ -3437,7 +3440,8 @@ def create_app(
     )
     # E35-T10: checks 2 and 3 read the master switch's and the order-entry kill switch's views and
     # B18 through the OMS's shared port, the #2904 audit-chain break halt folded in (G-79), so a
-    # halted rule leg is refused at check 3 (24 §11.5); the rollout port stays off (BQ-2, BQ-17).
+    # halted rule leg is refused at check 3 (24 §11.5); E35-T11: the rollout port reads the
+    # `rules.oms_actions` view at each dispatch, off while unread (BQ-4 of #5003, BQ-17 of #863).
     ctx.rules.bind(switches=rule_switches(feature_flags, kill_switch_port.refusal))
     # E35-T10: the SR-104 order budget from its two boot settings, its counts rebuilt over the rule
     # runs; a setting above its hard cap refuses start here, whatever the evaluator flag says.
@@ -3462,6 +3466,34 @@ def create_app(
             )
         }
     )
+    # E35-T11 (#5003): check 5's principals, read by user id every 250 ms by a task the rules
+    # service runs with the evaluator (BQ-6); the day's notional rebuild over the accepted entries'
+    # `action_ok` rows (BQ-5); and `place_order` and `scale_in` over the OMS runtime, each submit
+    # the runtime's own task, which the action's bound never cancels (BQ-7). The fake backend has
+    # no identity store or OMS: nothing is bound, so check 5 refuses and those types stay
+    # `unavailable`.
+    if identity is not None:
+        dsn = resolved.pg_dsn.get_secret_value()
+        rule_principals = RulePrincipals(
+            IdentityPrincipalSource(
+                identity,
+                SqlAlchemyScopeSource(SqlAlchemyRelationalRepository(dsn, "rule_principals")),
+                resolved.environment.value,
+            )
+        )
+        reads = app.state.oms_reads
+        ctx.rules.bind(
+            principal=rule_principals,
+            notional=RuleNotionalRebuild(
+                SqlAlchemyRulesRepository(SqlAlchemyRelationalRepository(dsn, "rule_notional"))
+            ),
+            handlers=rule_order_handlers(
+                lambda: oms_runtime_of(app.state),
+                oms_enabled=feature_flags.oms_enabled,
+                principals=rule_principals,
+                positions=None if reads is None else StoredPositionSides(reads),
+            ),
+        )
     rules_actor = (
         SessionRulesActorResolver(
             lambda: ctx.auth.sessions,
