@@ -557,6 +557,9 @@ class World:
     watched: list[float] = field(default_factory=list)
     watches: Beats = field(default_factory=Beats)
     binder: Binder = field(default_factory=Binder)
+    #: E29-T06 #914: `oms_handovers` and the pass's own store, None composing neither.
+    handover_store: Any = None
+    reconcile_reads: Any = None
     #: The dev-only account fixture's lane transport factory, None in production (#913 L1d).
     lane_transport: Callable[[], Transport] | None = None
     #: Account health and the gateway's hub, as the consumer takes them (E29-T05 S8b).
@@ -604,7 +607,8 @@ class World:
             anchors=store.anchors, stops=store.stops, groups=cast(GroupStores, None),
             unclaimed=unclaimed, positions=positions,
             accounts=InMemoryTradingAccountReads(*self.accounts), sweep=store, audit=audit,
-            sink=sink, lock=self.lock, release=release,
+            sink=sink, lock=self.lock, release=release, handovers=self.handover_store,
+            reconcile=self.reconcile_reads,
         )  # fmt: skip
 
     def runtime(
@@ -714,6 +718,160 @@ async def test_start_composes_the_process_environment_only_and_announces_each_in
     assert [world.gauge(name) for name in runtime_ports] == [1.0] * 11
     assert world.log == [*STARTED, *STOPPED] and port.closed  # the lock released last
     assert not b01.ports_wired()
+
+
+async def test_with_its_stores_reconciliation_composes_in_place_of_its_stand_ins() -> None:
+    """E29-T06 #914: the hand-over store and the pass's store compose reconciliation. The stream
+    takes its driver (no `NoReconciliation`) and the store (no `NoHandoverStore`), both announced
+    as real ports; B19's port is wired while the runtime runs and its jobs stop first; the port is
+    unwired at the stop, once every job is stopped."""
+    from candleviewer.oms.handovers import StoreHandovers
+    from candleviewer.statechart.bindings import b19_reconciliation as b19
+    from tests.unit.oms.test_handovers import _Store
+    from tests.unit.test_oms_reconcile_wiring import Reads
+
+    world = World(handover_store=_Store(), reconcile_reads=Reads())
+    for flag in world.flags:
+        flag.read()
+    async with started(world.runtime()) as runtime:
+        await asyncio.wait_for(runtime.wait_ready(), 10)  # a bound on the test
+        parts = runtime._composed()
+        assert parts.reconcile is not None and b19.ports_wired()
+        assert parts.stream.reconciliation is parts.reconcile.jobs
+        assert isinstance(parts.stream.stand_ins["execution_handovers"], StoreHandovers)
+        assert world.gauge("reconciliation") == world.gauge("execution_handovers") == 0.0
+        names = [name for name, _ in parts.closers]  # its jobs stop before anything they use
+        assert all(
+            names.index("reconciliation") < names.index(used)
+            for used in ("stop_gate", "machines", "commands", "trading_port", "audit")
+        )
+    assert not b19.ports_wired()
+
+
+async def test_with_the_topics_and_its_stores_the_reconciliation_closer_moves_no_other() -> None:
+    """E29-T06 #914, on a process composing all the root can hand it (the WS topics, which
+    `app.py` always hands, the tickers, the catalogue and the reconciliation stores): the
+    reconciliation closer lands by name ahead of the stop gate, after the topics' own, and every
+    other closer keeps the place it has without it, so the lane's sink still closes after the
+    machines that write to it, and the tickers' demand after the sink."""
+    from tests.unit.oms.test_handovers import _Store
+    from tests.unit.oms.test_oms_runtime_ws_topics import Topics
+    from tests.unit.test_oms_reconcile_wiring import Reads
+
+    world = World(handover_store=_Store(), reconcile_reads=Reads())
+    world.ingestion.instruments = SimpleNamespace(snapshot=lambda: {cr.SYMBOL: instrument()})
+    world.ingestion.tickers = SimpleNamespace(
+        latest=lambda _symbol: None, is_stale=lambda _symbol: False,
+        acquire=lambda _consumer, _symbol: None, release=lambda _consumer, _symbol: None,
+    )  # fmt: skip
+    async with started(world.runtime(topics=Topics())) as runtime:
+        names = [name for name, _ in runtime._composed().closers]
+    assert names == [
+        "position_sweeps", "exits", "ws_topics", "reconciliation", "stop_gate", "machines",
+        "cancel_all_folds", "sink", "ticker_demand", "commands", "private_streams",
+        "trading_port", "loop_signing", "audit", "pool", "tier_requests", "heartbeat",
+        "environment_lock",
+    ]  # fmt: skip
+
+
+async def test_with_its_stores_b1s_reconciliation_request_is_its_jobs_unknown_trigger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E29-T06 #914 (24 Sec.8.5's trigger table): the composition binds the order notices to the
+    jobs, so B1's `request_reconciliation` (an order `quarantined`, or a cancel the venue answered
+    110001) reaches the account's job as the `unknown` trigger and pages nothing. With no stores
+    it stays the unowned notice it was, paged."""
+    from candleviewer.oms.order_machine import OrderNotice
+    from candleviewer.oms.reconcile_job import ReconcileJobs
+    from tests.unit.oms.test_handovers import _Store
+    from tests.unit.test_oms_reconcile_wiring import Reads
+
+    asked: list[tuple[AccountId, str]] = []
+
+    async def trigger(self: ReconcileJobs, account: AccountId, trigger: str) -> str | None:
+        asked.append((account, trigger))
+        return None
+
+    monkeypatch.setattr(ReconcileJobs, "trigger", trigger)
+    notice = OrderNotice("request_reconciliation", UUID(int=0x0D), ACCOUNT, None, {})
+    pages: list[list[str]] = []
+    for world in (World(handover_store=_Store(), reconcile_reads=Reads()), World()):
+        async with started(world.runtime()) as runtime:
+            await runtime._composed().machines._ports.notices.notify(notice)
+        pages.append([call for call in world.pager.calls if "request_reconciliation" in call])
+    assert asked == [(AccountId(ACCOUNT), "unknown")]
+    assert pages == [[], ["order notice request_reconciliation has no owner until E29-T06"]]
+
+
+async def test_a_job_opens_at_start_only_for_an_account_that_resolves_to_a_trading_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E29-T06 #914: the start opens a job for each of the environment's accounts that resolves to
+    a trading account (an active key, not deleted); one that does not is skipped and logged by its
+    reason, never a failed start, and opens on its stream's first trigger."""
+    from candleviewer.oms.reconcile_job import ReconcileJobs
+    from tests.unit.oms.test_handovers import _Store
+    from tests.unit.test_oms_reconcile_wiring import Reads
+
+    opened: list[list[AccountId]] = []
+
+    async def start(self: ReconcileJobs, accounts: Any) -> None:
+        opened.append(list(accounts))
+
+    monkeypatch.setattr(ReconcileJobs, "start", start)
+    world = World(handover_store=_Store(), reconcile_reads=Reads())
+    keyless, deleted, unknown = (AccountId(UUID(int=n)) for n in (0xC1, 0xC2, 0xC3))
+    for account in (cr.ACCOUNT, keyless, deleted, unknown):
+        InMemorySubmissionStore(world.store).seed_account(cr.ref(account, "demo"))
+    world.accounts += [
+        TradingAccountRow(cr.ACCOUNT, "demo", cr.UIDS["demo"], False, KEY),
+        TradingAccountRow(keyless, "demo", "100002", False, None),
+        TradingAccountRow(deleted, "demo", "100003", True, KEY),
+    ]  # `unknown` has no row
+    for flag in world.flags:
+        flag.read()
+    with capture_logs() as logs:
+        async with started(world.runtime()) as runtime:
+            await asyncio.wait_for(runtime.wait_ready(), 10)  # a bound on the test
+    assert opened == [[AccountId(cr.ACCOUNT)]]
+    skipped = [(e["account_id"], e["reason"]) for e in logs
+               if e["event"] == "oms_reconcile_account_skipped"]  # fmt: skip
+    assert sorted(skipped) == sorted([
+        (str(keyless), "OrderEntryRefused"), (str(deleted), "AccountScopeDenied"),
+        (str(unknown), "AccountScopeDenied"),
+    ])  # fmt: skip
+    assert "oms_reconcile_unstarted" not in {e["event"] for e in logs}
+
+
+async def test_ready_is_set_only_after_the_jobs_start_has_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E29-T06 #914 (BQ-14, 24 Sec.8.5's trigger table): each job is sent `startup` before the OMS
+    reports ready, so `ready` is clear while the jobs' start runs and is set only after it; the
+    start never waits for a pass."""
+    from candleviewer.oms.reconcile_job import ReconcileJobs
+    from tests.unit.oms.test_handovers import _Store
+    from tests.unit.test_oms_reconcile_wiring import Reads
+
+    world = World(handover_store=_Store(), reconcile_reads=Reads())
+    runtime, real, order = world.runtime(), ReconcileJobs.start, list[str]()
+
+    async def start(self: ReconcileJobs, accounts: Any) -> None:
+        order.append("start")
+        await real(self, accounts)
+        order.append("started")
+
+    async def ready() -> None:
+        await runtime.wait_ready()
+        order.append("ready")
+
+    monkeypatch.setattr(ReconcileJobs, "start", start)
+    for flag in world.flags:
+        flag.read()
+    async with started(runtime):
+        await asyncio.wait_for(ready(), 10)  # a bound on the test
+        await until(lambda: "started" in order)
+    assert order == ["start", "started", "ready"]
 
 
 async def test_the_router_and_cancel_all_share_the_one_fold_port_over_the_lanes_own_port() -> None:

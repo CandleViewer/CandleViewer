@@ -350,6 +350,7 @@ from candleviewer.observability.support_bundle import filter_config
 from candleviewer.observability.support_bundle_wiring import build_support_bundle_service
 from candleviewer.observability.telemetry import SessionRateLimiter, TelemetrySink
 from candleviewer.oi_wiring import OiRuntime, wire_open_interest
+from candleviewer.oms.reconcile_standing import ReconcileStanding
 from candleviewer.oms.service import OmsService
 from candleviewer.oms.ws_topics import FAMILIES as OMS_FAMILIES
 from candleviewer.oms_reads_wiring import oms_reads, order_versions
@@ -2639,8 +2640,13 @@ def create_app(
     # synchronous and never flag-gated (C-2.21, C-4.14). The flag runtime holds no gate until this
     # composes it, so no holder ever takes one without the account check; the runtime and
     # `app.state` serve this one.
+    # E29-T06 #914: the reconciliation standing is an account check of that one gate
+    # (`account_stale`, 24 Sec.8.10): set before B19 locks, cleared only after it records the
+    # operator's unlock (BQ-5), read in place; the OMS runtime's jobs set it. Protective paths
+    # never reach this gate (C-2.6).
+    app.state.reconcile_standing = reconcile_standing = ReconcileStanding()
     app.state.order_entry_gate = feature_flags.compose_order_entry_gate(
-        account_health.order_entry_check
+        account_health.order_entry_check, reconcile_standing
     )
     # E28-T05 S2b (#909): the definition reads, readiness from each account row, that gate, the
     # B18 kill switch (the OMS's port, with the #2904 halt) and the live gate. No rollout flag
@@ -2701,6 +2707,7 @@ def create_app(
         lane_transport=None if account_fixture is None else account_fixture.lane_rest_transport,
         health=account_health,
         hub=ws_hub,
+        standing=reconcile_standing,
         topics=ws_oms,  # E29-T13 (#4207): its WS topics, published from its lane
         trade_groups=ws_trade_groups,
         kill_switch=kill_switch_port,  # #2904: the halt's port, shared (G-79)

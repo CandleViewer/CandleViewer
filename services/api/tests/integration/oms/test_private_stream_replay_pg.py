@@ -10,7 +10,8 @@ here a scripted session, derived in-test from the corpus's docs transcriptions a
 adapter's own parser (derived, not evidence; the recorded session is E29-K01's, #843). It holds the
 order row, a fill, a disconnect, the reconnect, a fill, a bundle of that fill again and a third,
 the `Filled` row, a position row and a wallet row. Keeping a fill until the backfill is E29-T06's
-(the ruling Q2).
+(the ruling Q2), and so are the reconciliation passes the runtime runs (#914): the port's REST
+side answers what the session reports, so they read the venue the stream does.
 
 **Scenario 8.** The position store `pg_stores` builds, over an exchange-synced clock
 (`ExchangeWallClock`) whose host time and measured offset the test moves, under the consumer as
@@ -20,8 +21,9 @@ socket takes real time, so these tests never run on fake seconds)."""
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 from collections import OrderedDict, deque
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterable, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -36,7 +38,14 @@ from pydantic import SecretStr
 from structlog.testing import capture_logs
 
 from candleviewer.domain.primitives import AccountId, Environment
-from candleviewer.exchange.base.models import AccountRef, Position, PrivateStreamStatus
+from candleviewer.exchange.base.models import (
+    AccountRef,
+    Execution,
+    Order,
+    Position,
+    PrivateEvent,
+    PrivateStreamStatus,
+)
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.fakes import FakeClockHealth
 from candleviewer.oms.repository import PositionRepository, PositionSnapshotRepository
@@ -56,7 +65,7 @@ from tests.integration.oms.test_submission_pipeline_pg import pg_dsn
 from tests.unit.exchange.bybit._private import linear_execution, linear_order, row, usdt_wallet
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms.order_rig import Pager
-from tests.unit.oms.stream_world import REFUSED, RESYNCING, opened
+from tests.unit.oms.stream_world import RESYNCING, opened
 from tests.unit.oms.submit_rig import REGISTRY, STOP, Profiles, ReadOnly
 from tests.unit.oms.test_e29_t05_acceptance import (
     FEE_RATE,
@@ -143,27 +152,104 @@ class Session:
             await self.starved.wait()
 
 
+type Truth = Order | Execution | Position
+
+
+class ReplayPort(BridgedPort):
+    """The lane's port, its REST side the venue's as the session reports it (`ReplayVenue`): an
+    account-wide open-orders read, a reconciliation pass's first (24 Sec.8.5 step 1), waits while
+    the venue holds the passes back."""
+
+    venue: ReplayVenue
+
+    async def open_orders(
+        self, account: AccountRef, symbol: Any = None, *, order_link_id: Any = None
+    ) -> Any:
+        held = self.venue.held
+        if held is not None and symbol is None and order_link_id is None:
+            await asyncio.wrap_future(held)
+        return await super().open_orders(account, symbol, order_link_id=order_link_id)
+
+    def learn(self, rows: Iterable[Truth]) -> None:
+        """The REST side takes `rows` as the session reports them: an order replaces its earlier
+        self (open, or in history once ended), a fill is listed, a position replaces its key's."""
+        for taken in rows:
+            if isinstance(taken, Order):
+                self._open.pop(taken.exchange_order_id, None)
+                self.seed_order(taken, uid=self.venue.uid)
+            elif isinstance(taken, Execution):
+                self.seed_execution(taken)
+            else:
+                self.seed_position(taken)
+
+
 @dataclass
 class ReplayVenue(BridgedVenue):
     """The adapter's service: the lane's port opens the account's stream through the lane bridge
-    it is given (`BridgedVenue`), and the registry's open answers the scripted session. The port
-    holds the account's position as the venue does, on the first process's clock, so the entry's
-    stop attach reads its stop back (24 Sec.8.8 rule 2)."""
+    it is given (`BridgedVenue`), and the registry's open answers the scripted session. The port's
+    REST side holds what the session reports at the venue by then (`truth`, then `learned`), so a
+    reconciliation pass reads the venue the stream does: the entry open, as the session's first
+    order row shows it; once its first fill lands, the fill and the position it opens, so the
+    entry's stop attach reads its stop back (24 Sec.8.8 rule 2); and the session's end. While the
+    test holds the passes back (`hold`), a pass's first read waits until it lets them go."""
 
     session: Session = field(default_factory=Session)
-    held: Position | None = None
+    truth: list[Truth] = field(default_factory=list)
+    uid: str = ""
     now_us: Callable[[], int] = lambda: 0
+    held: concurrent.futures.Future[None] | None = None
 
     def port(self, env: str) -> Port:
-        port = BridgedPort(environment=cast(Environment, env), now_us=self.now_us)
-        port.asked = []
-        if self.held is not None:
-            port.seed_position(self.held)
+        port = ReplayPort(environment=cast(Environment, env), now_us=self.now_us)
+        port.asked, port.venue = [], self
+        port.learn(self.truth)
         return port
+
+    async def learned(self, runtime: OmsRuntime, *rows: Truth) -> None:
+        """The REST side takes `rows`, on the lane, where its port answers."""
+        port = cast(ReplayPort, self.ports[-1])
+
+        async def learn() -> None:
+            port.learn(rows)
+
+        await runtime._composed().lane.call(learn())
+
+    def hold(self) -> None:
+        self.held = concurrent.futures.Future()
+
+    def release(self) -> None:
+        assert self.held is not None
+        self.held.set_result(None)
 
     async def open_private_stream(self, account: AccountRef, *, clock_offset_ms: Any = None) -> Any:
         self.opened.set()
         return self.session
+
+
+def _rest(*events: Iterable[PrivateEvent]) -> list[Truth]:
+    """What the venue's REST reads return for the session's rows: the adapter's own read of each
+    (`parsed`), so the two sides agree by construction."""
+    return [cast(Truth, event.payload) for batch in events for event in batch]
+
+
+def _passes(writer: Writer) -> list[tuple[str, str]]:
+    """Each reconciliation pass's trigger and result, from its `oms.reconcile` record (24
+    Sec.15.5), in the order the passes ended."""
+    return [
+        (fields["after_state"]["trigger"], fields["after_state"]["result"])
+        for action, fields in writer.records
+        if action == "oms.reconcile"
+    ]
+
+
+async def _rested(runtime: OmsRuntime, account: UUID) -> str | None:
+    """The state of the account's reconciliation job once it rests with nothing left to run, past
+    its record's write (the driver's own wait, on the lane, where the job runs)."""
+    parts = runtime._composed()
+    assert parts.reconcile is not None
+    jobs, account_id = parts.reconcile.jobs, AccountId(account)
+    await parts.lane.call(jobs._quiesced(jobs._jobs[account_id].interp))
+    return jobs.state(account_id)
 
 
 async def _submitted(rel: SqlAlchemyRelationalRepository, dsn: str) -> tuple[c6.Rig, UUID]:
@@ -272,12 +358,17 @@ async def _until(done: Any) -> None:
 async def test_a_private_session_replayed_across_a_mid_sequence_disconnect_misses_no_execution(
     rel: SqlAlchemyRelationalRepository, pg_dsn: str, tmp_path: Path
 ) -> None:
-    """The test plan's integration case, E29-T05's half (scenarios 2 and 4 on Postgres): a session
-    replayed through the runtime, across the lane bridge, with a disconnect in its middle, its
-    statuses as 24 Sec.14.2 rule 13 orders them. Each of its three fills is one `executions` row,
-    its order `filled` with their sum; the position row is one `ws_push` snapshot; the drop is one
-    notice; the first `live`'s request and the reconnect's are each refused (E29-T06's pass) and
-    paged once, for the episode, the only page; nothing opens the lockout."""
+    """The test plan's integration case, E29-T05's half (scenarios 2 and 4 on Postgres), with
+    E29-T06's reconciliation wired: a session replayed through the runtime, across the lane
+    bridge, with a disconnect in its middle, its statuses as 24 Sec.14.2 rule 13 orders them. Each
+    of its three fills is one `executions` row, its order `filled` with their sum; the position row
+    is one `ws_push` snapshot; the drop is one notice. The venue's REST side answers what the
+    session reports, so the passes read the venue the stream does: the startup pass, before the
+    session, finds nothing to correct; the first `live`'s request starts a pass, which the test
+    holds at its first read until the session's end is in, so the reconnect's request finds it
+    running and is skipped, never queued (24 Sec.8.5); that pass reads the session's end and finds
+    nothing to correct either. No request is refused, nothing pages and nothing opens the
+    lockout."""
     rig, order_id = await _submitted(rel, pg_dsn)
     qty, price, link, xid = _terms(pg_dsn, order_id)
     at_ms = _ms(c6._db_now(pg_dsn)) - 1_000
@@ -310,21 +401,28 @@ async def test_a_private_session_replayed_across_a_mid_sequence_disconnect_misse
         health=Tracked(accounts=frozenset({rig.account})), hub=Hub(), writer=Writer(),
         pager=Pager(), metrics=Metrics("demo"),
     )  # fmt: skip
-    held = Position(
-        account_id=rig.account, symbol="BTCUSDT", position_idx=0, side="buy", qty=qty,
-        avg_entry_price=price, mark_price=price, liq_price=None, leverage=Decimal(10),
-        unrealised_pnl=Decimal(0), cum_realised_pnl=Decimal(0), take_profit=None, stop_loss=None,
-        trailing_stop_distance=None, updated_at=rig.clock.us(),
+    first = Position(  # what e1 opens at the venue, its stop not attached yet
+        account_id=rig.account, symbol="BTCUSDT", position_idx=0, side="buy",
+        qty=qty * Decimal("0.4"), avg_entry_price=price, mark_price=price, liq_price=None,
+        leverage=Decimal(10), unrealised_pnl=Decimal(0), cum_realised_pnl=Decimal(0),
+        take_profit=None, stop_loss=None, trailing_stop_distance=None, updated_at=rig.clock.us(),
     )  # fmt: skip
-    venue = ReplayVenue(held=held, now_us=rig.clock.us)
+    entry = _rest(read(ORDERS, order("New", Decimal(0))))  # open at the venue, as at the restart
+    venue = ReplayVenue(truth=entry, uid=ref.uid, now_us=rig.clock.us)
     async with started(_runtime(rig, pg_dsn, tmp_path, venue, parts)) as runtime:
         await asyncio.wait_for(runtime.wait_ready(), BOUND_S)
         await asyncio.wait_for(venue.opened.wait(), BOUND_S)
+        await _until(lambda: len(_passes(parts.writer)) == 1)  # the startup pass, before it all
+        assert await _rested(runtime, rig.account) == "idle"  # where the next trigger is taken
+        venue.hold()  # the next pass's first read waits for the session's end
         session = venue.session
-        session.put(status("resyncing", "connected", 1))  # the stream's first `live`
+        await venue.learned(runtime, *_rest(read(FILLS, e1)), first)
+        session.put(status("resyncing", "connected", 1))  # the stream's first `live`: a pass
         session.put(*read(ORDERS, order("New", Decimal(0))), *read(FILLS, e1))
         session.put(status("down", "socket_closed", 1))  # the socket drops mid-sequence
         await session.handled()
+        ended = _rest(read(ORDERS, order("Filled", qty)), read(FILLS, e2, e3))
+        await venue.learned(runtime, *ended, *_rest(read(POSITIONS, position)))
         session.put(
             status("resyncing", "reconnected", 2), *read(FILLS, e2), *read(FILLS, e2, e3),
             *read(ORDERS, order("Filled", qty)), *read(POSITIONS, position),
@@ -332,6 +430,8 @@ async def test_a_private_session_replayed_across_a_mid_sequence_disconnect_misse
         )  # fmt: skip
         await session.handled()
         await _until(lambda: ("wallet_pushed", rig.account) in parts.health.evidence)
+        venue.release()  # the held pass reads the session's end
+        await _until(lambda: len(_passes(parts.writer)) == 2)
     executions = c6._sql(
         pg_dsn,
         "SELECT exec_id, count(*) FROM executions WHERE exchange_account_id = %s "
@@ -346,7 +446,8 @@ async def test_a_private_session_replayed_across_a_mid_sequence_disconnect_misse
     assert frames == [(RESYNCING, [str(rig.account)])]
     labels = {"env": "demo", "stage": "consumer", "outcome": "reconciliation_unavailable"}
     refused = parts.metrics.registry.get_sample_value("oms_stream_outcomes_total", labels)
-    assert (refused, parts.pager.calls) == (2.0, [REFUSED[2]])  # one page, and nothing else
+    assert (refused, parts.pager.calls) == (0.0, [])  # each request taken: nothing paged
+    assert _passes(parts.writer) == [("startup", "clean"), ("reconnect", "clean")]
     assert "oms.no_intent_detected" not in [action for action, _ in parts.writer.actions]
 
 

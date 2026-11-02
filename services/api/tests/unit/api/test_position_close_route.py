@@ -36,6 +36,7 @@ from candleviewer.oms.errors import (
 )
 from candleviewer.oms.idempotency import InFlight, KeyReuse, Replay
 from candleviewer.oms.position_writes import CLOSE_ACTION, FLATTEN_ACTION
+from candleviewer.oms.reconcile_standing import STALE_DETAIL
 from candleviewer.oms.submit import SubmitContext, SubmitOutcome
 from candleviewer.storage.repositories.idempotency_anchors import AnchorRow
 from tests.unit.api import test_order_acceptance as acc
@@ -162,10 +163,13 @@ async def test_close_position_the_oms_flag_off_does_not_refuse_a_close() -> None
 
 
 _PAUSED = OrderEntryRefusal("maintenance", "Order entry is paused for maintenance.")
+_STALE = OrderEntryRefusal("account_stale", STALE_DETAIL)  # E29-T06 #914
 
 
 @pytest.mark.parametrize(
-    "switched", [TradingDisabled(), OrderEntryRefused(_PAUSED)], ids=["freeze_or_live", "gate"]
+    "switched",
+    [TradingDisabled(), OrderEntryRefused(_PAUSED), OrderEntryRefused(_STALE)],
+    ids=["freeze_or_live", "gate", "account_stale"],
 )
 async def test_close_position_c26_freeze_live_off_or_a_paused_gate_never_refuse_a_close(
     switched: TradingDisabled,

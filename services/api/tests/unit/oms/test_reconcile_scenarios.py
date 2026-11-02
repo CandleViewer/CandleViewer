@@ -428,33 +428,36 @@ async def test_an_adopted_untracked_order_that_later_fills_is_closed_by_its_find
     _only_reads(s.world)
 
 
-async def test_an_untracked_order_filled_in_several_fills_is_never_sent_a_refused_finding(
+async def test_an_untracked_order_filled_in_several_fills_closes_with_its_fills(
     rig: Rig,
 ) -> None:
-    """B1 version 7 records an `untracked` row's `EXEC` and applies nothing, and the store takes
-    `filled` only with the row's `qty` filled, so no one fill can close an order filled in two:
-    the pass sends it no finding the store would refuse and lists it `untracked_fills_unread`, a
-    standing item, so the watermark advances (the orchestrator's ruling (iv), 24 Sec.8.5)."""
+    """B1 chart version 8 applies an `untracked` row's `EXEC` (the orchestrator's interim (iv)
+    ends, 24 Sec.8.5): the first fill goes as an `EXEC`, which leaves the row `untracked` with it
+    applied, and the second rides the `RECON_FOUND_FILLED` that closes it, as the two complete the
+    row. Both fills are stored, nothing is listed, the watermark advances and nothing is sent to
+    the venue (S9)."""
     s = Scenario(World(), rig)
     manual = await _filled_after_adoption(s, rig, "0.04", "0.06")
     stored = await rig.store.get_by_exchange_order_id(ACCOUNT, manual.exchange_order_id)
-    assert stored is not None and stored.state == "untracked"
-    assert s.record_of()["errors"] == [
-        {"step": "3b", "kind": "untracked_fills_unread", "subject": stored.order_link_id}
-    ]
+    assert stored is not None and (stored.state, stored.cum_exec_qty) == ("filled", Decimal("0.1"))
+    assert [(await rig.fills.get(ACCOUNT, i)) is not None for i in ("m1", "m2")] == [True, True]
+    assert (s.record_of()["resolved_from_history"], s.record_of()["errors"]) == (
+        [stored.order_link_id], [],
+    )  # fmt: skip
     assert (s.watermarks.advanced[-1], rig.commands.kinds()) == (s.world.now_us, [])
     _only_reads(s.world)
 
 
-async def test_an_untracked_order_filled_in_several_fills_stands_and_the_window_moves_on(
+async def test_an_untracked_order_its_fills_read_cannot_close_stands_and_the_window_moves_on(
     rig: Rig,
 ) -> None:
-    """The orchestrator's ruling (iv), 24 Sec.8.5: such an order is listed on every pass, a
-    standing item that never holds the watermark back, so each pass reads on from the last one's
-    end (less the 5 s overlap) and the window never grows. Its two fills stay in the hand-over
-    store, never applied, and nothing is sent to the venue."""
+    """24 Sec.8.5: an `untracked` order whose fills read cannot complete it (the venue counts a fill
+    no window holds) is listed `untracked_fills_unread` on every pass, a standing item that never
+    holds the watermark back, so each pass reads on from the last one's end (less the 5 s overlap)
+    and the window never grows. The fill it read stays in the hand-over store, never applied, and
+    nothing is sent to the venue."""
     s = Scenario(World(oms=KeptFills()), rig)
-    manual = await _filled_after_adoption(s, rig, "0.04", "0.06")
+    manual = await _filled_after_adoption(s, rig, "0.06")  # the 0.04 before it is never read
     for _ in range(3):
         s.world.now_us += 30_000_000
         await s.run()
@@ -466,8 +469,8 @@ async def test_an_untracked_order_filled_in_several_fills_stands_and_the_window_
     windows = [s.record_of(n)["gap_window"] for n in range(5)]
     assert s.watermarks.advanced == [end for _, end in windows]  # every pass advanced it
     assert [start for start, _ in windows[1:]] == [end - 5_000_000 for _, end in windows[:-1]]
-    assert sorted(w.execution.exec_id for w in s.world.oms.handed_fills) == ["m1", "m2"]
-    assert [await rig.fills.get(ACCOUNT, i) for i in ("m1", "m2")] == [None, None]
+    assert [w.execution.exec_id for w in s.world.oms.handed_fills] == ["m1"]
+    assert await rig.fills.get(ACCOUNT, "m1") is None
     assert rig.commands.kinds() == []
     _only_reads(s.world)
 

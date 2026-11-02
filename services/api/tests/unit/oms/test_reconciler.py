@@ -122,6 +122,19 @@ async def test_fetch_lists_an_unreadable_handover_by_its_id_as_a_standing_item()
     assert report.errors[0].standing
 
 
+async def test_an_unreadable_handover_pages_once_per_entry_and_is_listed_every_pass() -> None:
+    """24 Sec.8.5: an entry that no longer reads keeps its slot until the Owner prunes it, so the
+    pass pages P1 once for each, when it first lists it, and lists it on every pass after."""
+    w = World()
+    w.oms.unreadable = [7]
+    first, second = await w.run(), await w.run()
+    w.oms.unreadable = [7, 8]
+    third = await w.run()
+    page = ("page", "A hand-over entry no longer reads; it waits for the Owner.")
+    assert w.oms.pages == [page, page]  # entry 7 once, then entry 8 once
+    assert [len(r.errors) for r in (first, second, third)] == [1, 1, 2]
+
+
 def test_gap_window_takes_the_older_mark_less_five_seconds() -> None:
     window = gap_window(last_message_us=900_000_000, last_reconciled_us=800_000_000, now_us=10**9)
     assert window == (795_000_000, 10**9)
@@ -292,6 +305,31 @@ def test_found_sends_untracked_is_recorded_by_the_orders_state() -> None:
     ended = found_sends(r, remote(1, state="cancelled"), [], pass_id=SWEEP_ID, ts_event=NOW_US)
     assert live is not None and ended is not None
     assert [s.event for s in (*live, *ended)] == ["RECON_FOUND_LIVE", "RECON_FOUND_CANCELLED"]
+
+
+@pytest.mark.parametrize(
+    ("held", "read", "found"),
+    [
+        ("0", ("0.4", "0.6"), ["EXEC", "RECON_FOUND_FILLED"]),  # the sum completes the row
+        ("0.4", ("0.6",), ["RECON_FOUND_FILLED"]),  # over what an earlier `EXEC` applied
+        ("0.3", ("0.3", "0.4"), ["EXEC", "RECON_FOUND_FILLED"]),  # 0.3 + 0.7 = 1
+        ("0", ("0.6",), None),  # a fill the pass did not read: no finding
+        ("0", ("0.4", "0.4"), None),  # the last fill alone would not do either
+    ],
+)
+def test_found_sends_untracked_filled_tests_the_sum_of_the_fills_read(
+    held: str, read: tuple[str, ...], found: list[str] | None
+) -> None:
+    """B1 chart version 8 applies an `untracked` row's `EXEC`, so a filled order is sent its
+    `RECON_FOUND_FILLED` when the fills read, over what the row holds, complete it: their sum,
+    never the stored total and the last fill alone (#5121's code delta r2)."""
+    r = row(1, "untracked", lifecycle_state="untracked", cum_exec_qty=Decimal(held))
+    order = remote(1, state="filled", filled_qty=Decimal(1), leaves_qty=Decimal(0))
+    fills = [fill(f"e{n}", qty=Decimal(q), seq=n) for n, q in enumerate(read, start=1)]
+    sends = found_sends(r, order, fills, pass_id=SWEEP_ID, ts_event=NOW_US)
+    assert (None if sends is None else [s.event for s in sends]) == found
+    if sends is not None:  # the last fill read rides the finding that closes the row
+        assert sends[-1].payload["execution"]["exec_id"] == f"e{len(read)}"
 
 
 # --- Step 3b --------------------------------------------------------------------------------------
