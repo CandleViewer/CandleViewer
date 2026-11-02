@@ -37,6 +37,7 @@ TOKENS = ROOT / "packages" / "ui" / "tokens"
 TOOLS = ROOT / "docs" / "design" / "_tools"
 SPEC = ROOT / "docs" / "design" / "E28" / "E28-D03.md"
 SCREENS = ROOT / "docs" / "plan" / "14-screens-catalogue.md"
+E09D09 = ROOT / "docs" / "design" / "E09" / "E09-D09.md"
 CATALOGUE = ROOT / "docs" / "plan" / "15-component-catalogue.md"
 THEMES = ("dark", "light", "high-contrast")
 BAR: dict[str, float | None] = {"text": 4.5, "non-text": 3.0, "reported": None, "rejected": 4.5}
@@ -179,6 +180,7 @@ class Texts(NamedTuple):
     screens: str
     catalogue: str
     base15: str  # `15` at the merge base with origin/main (the working copy when git has no base)
+    e09: str  # E09-D09, the T2 rule §6.1 cites by line
 
 
 def git_show_base(rel: str) -> str | None:
@@ -194,7 +196,8 @@ def git_show_base(rel: str) -> str | None:
 
 def read_texts() -> Texts:
     spec, screens, cat = (p.read_text(encoding="utf-8") for p in (SPEC, SCREENS, CATALOGUE))
-    return Texts(spec, screens, cat, git_show_base("docs/plan/15-component-catalogue.md") or cat)
+    base15 = git_show_base("docs/plan/15-component-catalogue.md") or cat
+    return Texts(spec, screens, cat, base15, E09D09.read_text(encoding="utf-8"))
 
 
 def section(spec: str, start: str, end: str) -> str:
@@ -338,6 +341,8 @@ def g_pointers(t: Texts, p: list[str]) -> dict[str, Any]:
         scr, new = r[1].split()[-1], r[4].strip('"')
         m = re.match(r"after (\d+) ", r[2])
         k = int(m.group(1)) if m else 0
+        if "boards drawn on page" not in new or "to draw" in new:
+            p.append(f"[F] {r[0]}: the New text is not in its landed form (boards drawn)")
         if not new.startswith(POINTER) or r[3] != "— (no line)":
             p.append(f"[F] {r[0]}: not a pointer insertion")
             continue
@@ -366,6 +371,8 @@ T2_NEEDS = (
     "`rbac.owner_only`",
     "D03-C9",
 )
+# §6.1's E09-D09 cites, pinned: the line number and the text that must stand on it
+T2_PINS = {94: "`rbac.read_only`", 95: "`rbac.view_as`"}
 CELL_RX = re.compile(r"DS-A|SymbolMatrixCell|matrix cell|cell states|three cell")
 
 
@@ -376,6 +383,14 @@ def g_t2(t: Texts, p: list[str]) -> dict[str, Any]:
         p.append(f"[H] the T2 statement ({T2_HEAD!r}) appears {n} times, not once")
     body = section(t.spec, T2_HEAD, "\n## ")
     lost = [x for x in T2_NEEDS if x not in body]
+    e09 = t.e09.splitlines()
+    for n in sorted({int(x) for x in re.findall(r"E09-D09 :(\d+)", body)}):
+        want = T2_PINS.get(n)
+        got = e09[n - 1] if 0 < n <= len(e09) else ""
+        if want is None or want not in got:
+            p.append(
+                f"[H] §6.1 cites E09-D09 :{n}, which is not a pinned line ({want or 'unpinned'})"
+            )
     if lost:
         p.append(f"[H] §6.1 lacks {lost}")
     uncited = []
@@ -598,6 +613,11 @@ MUTATIONS: list[tuple[str, Callable[[Texts], Texts]]] = [
         sub("spec", "One notice, many pointers (G-T2.5)", "One notice, many pointers"),
     ),
     ("H: §9.1 loses its §6.1 cite", drop_cite_91),
+    ("H: a §6.1 E09-D09 cite moves to another line", sub("spec", "(E09-D09 :95)", "(E09-D09 :93)")),
+    (
+        "F: a `14` A-row back to its pre-draw wording",
+        sub("spec", "(ten boards drawn on page", "(boards to draw in PR 2 on page"),
+    ),
     (
         "I: an Old cell retyped",
         sub("spec", '"`title?` · `actions?: ReactNode`', '"`title` · `actions?: ReactNode`'),
