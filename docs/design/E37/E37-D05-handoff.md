@@ -41,9 +41,9 @@ Where each consuming story reads which part (spec section numbers).
 | CMP-079   | cited, no A-row: `allowed` · `reason` · `form?` · `noticeId?` · `children` (`15`:893)                                                                                             | wraps every T2 role leg (`D02`:131, :151)              |
 | CMP-019   | cited, no A-row: the `lock` glyph, `name` · `size` · `decorative` set to false with its `label` (`15`:241)                                                                        | leads every T2 control's full label (`D02`:131)        |
 
-## §C Copy-ready rows (applied in this PR at its closing push, after #5448 and #5495 merge; a third PR only past about 1,500 lines, BQ-01)
+## §C Copy-ready rows (applied in this PR at its closing push, after #5448 and #5495 merged; a third PR only past about 1,500 lines, BQ-01)
 
-One `15` commit with the `E37-D05 —` lead-in (E36-D03's form), then the `14` lines. Each Old text or anchor stands exactly once in its file at the base (G-SHEET checks); this PR re-reads them at its closing push after D03's `15` rows land (D05-C3). Tokens, Storybook additions, Motion and Usage are D03 §12's rows, not repeated here. Each A-row is anchored by its unique Old text or anchor (BQ-23 as ruled); D02 §17 cites CMP-238 at lines 2762–2767 of an older `15`, and its A11y line is `15`:3060 at the base.
+The `15` rows carry the `E37-D05 —` lead-in (E36-D03's form), then the `14` lines. Each Old text or anchor stands exactly once in its file at the base, and each row's new text stands exactly once in the applied `14` and `15` (G-SHEET checks both); this PR re-read the anchors on `main` at its closing push, after D03's `15` rows landed (D05-C3). Tokens, Storybook additions, Motion and Usage are D03 §12's rows, not repeated here. Each A-row is anchored by its unique Old text or anchor (BQ-23 as ruled); D02 §17 cites CMP-238 at lines 2762–2767 of an older `15`, and its A11y line is `15`:3060 at the base.
 
 - **A-1 → `15` CMP-146, Props** (D02 §17). After "`onConnect` · `readOnly?`." add: " **E37-D05 —** `onConnect(source, sourcePort, target, targetPort)`, as the shipped `GraphEdge` (memo C7); the region is described by the rule's plain-language sentence (E37-D02 §14)."
 - **A-2 → `15` CMP-146, API sketch** (D02 §17). Old: "onConnect: (source: string, target: string) => void;". New: "onConnect: (source: string, sourcePort: string, target: string, targetPort: string) => void;".
@@ -74,7 +74,7 @@ One `15` commit with the `E37-D05 —` lead-in (E36-D03's form), then the `14` l
   ```
 
 - **A-17 → `14` SCR-082, States** (D02-C8). Old: "cycle detected ("This graph has a loop — remove the connection from X to Y") ·". New: "cycle detected ("This graph has a loop — remove the connection from X to Y") · orphan or dangling ("{node} reaches no action." or "{node}: {port} input is not connected.", a warning while editing and an error on save; US-RULE-005) · conflict on save (the `412 version_conflict` dialog; US-RULE-006) ·".
-- **A-18 → `14` SCR-082, the pointer line** (`T` DoD). After "- **Design (wireframe → hi-fi, E37-D02):**" (its line, and after E37-D03's A-47 and E37-D04's A-16 lines) add the line: "- **Hand-off pack (E37-D05):** [E37-D05.md](../design/E37/E37-D05.md) (E37-D05; owner approval pending) — the frame index, the spec sheets, the token map, the copy deck and its JSON twin, the Storybook fixtures and the design acceptance checklist for E37-D06."
+- **A-18 → `14` SCR-082, the pointer line** (`T` DoD). After "- **Design (wireframe → hi-fi, E37-D02):**" (its line, and after E37-D03's A-47 line, the last pointer on `main`; E37-D04's A-16 line is not on `main` yet) add the line: "- **Hand-off pack (E37-D05):** [E37-D05.md](../design/E37/E37-D05.md) (E37-D05; owner approval pending) — the frame index, the spec sheets, the token map, the copy deck and its JSON twin, the Storybook fixtures and the design acceptance checklist for E37-D06."
 
 ## §D Storybook and the prop fixtures (BQ-19)
 

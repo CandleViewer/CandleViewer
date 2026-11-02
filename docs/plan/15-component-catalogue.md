@@ -1796,8 +1796,8 @@ interface RuleConditionRowProps {
 ### CMP-146 NodeGraphCanvas
 
 - **Tier**: Organism (rule engine, canvas-adjacent) · **Purpose**: the visual node-graph editor surface (React Flow/Rete.js-based per owner decision #11) — pan/zoom canvas hosting nodes and edges that compile to the same rule IR as CMP-145.
-- **Props**: `nodes: NodeGraphNode[]` · `edges: NodeGraphEdge[]` · `onNodesChange` · `onEdgesChange` · `onConnect` · `readOnly?`.
-- **A11y**: the canvas graph is the second-highest a11y risk after the chart engine — implements the same three-layer strategy as chart canvases: (1) DOM-mirror per node/edge (each node is _also_ a real focusable DOM element positioned via the graph library's node-renderer, not a raw canvas draw — React Flow/Rete.js both render nodes as DOM by default, which is why they were preferred candidates per research; edges get an offscreen mirrored adjacency list), (2) roving-tabindex node-to-node navigation (`Tab` enters the graph, arrow keys move between connected nodes, `Enter` opens node inspector Drawer), (3) an always-available "Switch to form view" toggle that shows the _exact same rule_ in CMP-145 as a full keyboard-operable, non-spatial alternative — this is the primary accessible-equivalent mechanism for the node-graph, mandated because free-form 2D graph manipulation cannot be made fully keyboard-equivalent to mouse drag-connect at parity speed.
+- **Props**: `nodes: NodeGraphNode[]` · `edges: NodeGraphEdge[]` · `onNodesChange` · `onEdgesChange` · `onConnect` · `readOnly?`. **E37-D05 —** `onConnect(source, sourcePort, target, targetPort)`, as the shipped `GraphEdge` (memo C7); the region is described by the rule's plain-language sentence (E37-D02 §14).
+- **A11y**: the canvas graph is the second-highest a11y risk after the chart engine — implements the same three-layer strategy as chart canvases: (1) DOM-mirror per node/edge (each node is _also_ a real focusable DOM element positioned via the graph library's node-renderer, not a raw canvas draw — React Flow/Rete.js both render nodes as DOM by default, which is why they were preferred candidates per research; edges get an offscreen mirrored adjacency list), (2) roving-tabindex node-to-node navigation (`Tab` enters the graph, arrow keys move between connected nodes, `Enter` opens node inspector Drawer), (3) an always-available "Switch to form view" toggle that shows the _exact same rule_ in CMP-145 as a full keyboard-operable, non-spatial alternative — this is the primary accessible-equivalent mechanism for every construct the form represents; for graph-only constructs the node list (`Alt+L`, E37-D02 §8) is the complete non-spatial equivalent, mandated because free-form 2D graph manipulation cannot be made fully keyboard-equivalent to mouse drag-connect at parity speed.
 - **Tokens**: `color.surface.canvas`, `color.edge.default/selected`. **E37-D03 —** canvas `color.surface.canvas`; dot grid `color.grid.line` (decorative, off at Tier C and under forced-colors); marquee `color.action.selected` tint + 1 px `color.border.selected` boundary; edges per CMP-152; the z-order ladder, the tier × zoom-band table and the measured matrix in `docs/design/E37/E37-D03.md` §5, §8, §9.1; `color.edge.*` are E37-D03 TP-1…TP-3 (alias `color.text.tertiary` / `color.border.selected` / `color.status.danger.default` until they land)
 - **Motion (E37-D03)**: M-1…M-19 of E37-D03 §7 — connect preview 0 ms, connection-made `fast` opacity fade (never a line-draw), node add / remove `fast` fade, selection and hover 0 ms flips, drag and drop 0 ms, auto-layout `motion.duration.slow` 400 ms `motion.easing.standard` stagger 0 (reduce: instant + the polite announcement), minimap tracking 0 ms, zoom / pan 0 ms, 0 flashes; the mode is `data-motion` (§7.1), never a per-component media query
 - **Usage (E37-D03)**: one rule's graph on SCR-082 only; never a chart or engine primitive; never an edge animated along its length; zoom never re-lays out text; the node list stays co-equal. The graph-only, unsupported-construct and error treatments are safety-relevant communication and are never de-emphasised, shrunk below the 24 px row or hidden by a zoom band (E37-D03 §11.2)
@@ -1820,7 +1820,7 @@ interface NodeGraphCanvasProps {
   edges: NodeGraphEdge[];
   onNodesChange: (n: NodeGraphNode[]) => void;
   onEdgesChange: (e: NodeGraphEdge[]) => void;
-  onConnect: (source: string, target: string) => void;
+  onConnect: (source: string, sourcePort: string, target: string, targetPort: string) => void;
   readOnly?: boolean;
 }
 ```
@@ -1832,7 +1832,7 @@ interface NodeGraphCanvasProps {
 
 - **Tier**: Chart-primitive/rule-primitive · **Purpose**: node-graph node type representing a rule trigger.
 - **Props**: `trigger` · `timeframe?` · `position` · `selected?`.
-- **A11y**: DOM-rendered node (see CMP-146), `role="group"` `aria-label="Trigger node: on bar close, 5m"`.
+- **A11y**: DOM-rendered node (see CMP-146), `role="group"` `aria-label="Trigger node: on bar close, 5m"`. **E37-D05 —** the header word "Check when"; one `trigger` output and no edge (the trigger is the leftmost clause, E37-D02 §5).
 - **Tokens**: `color.node.trigger`. **E37-D03 —** the shared card: `color.surface.raised` fill (`color.surface.hover` on hover), `radius.card`, 1 px `color.border.default` hairline, a 4 px `color.node.trigger` stripe on the canvas edge (pointed cap; never inset), `type.ui.caption` `color.text.secondary` type word, `type.ui.body` `color.text.primary` body, `font.family.mono` values; selected 2 px `color.border.selected`; error 2 px `color.status.danger.default` + the error glyph (D03-C8) in `color.status.danger.strong` + the word; warning 2 px `color.status.warning.default` + `warning` glyph + the word; dragging `elevation.popover`; read-only never dims; the ten states N-1…N-10 in `docs/design/E37/E37-D03.md` §3; non-colour channel per state: cap shape + glyph + word, weight, geometry, badge glyph + word
 - **Motion (E37-D03)**: M-4 add (`fast` fade in, reduce instant), M-5 remove (`fast` fade out, reduce instant), M-6 selection 0 ms, M-7 hover 0 ms, M-8 focus instant, M-9 / M-10 drag and drop 0 ms, M-13 auto-layout position 400 ms stagger 0 (reduce instant), M-17 badge swaps 0 ms
 - **Usage (E37-D03)**: the stripe, cap shape, glyph and word carry the type; never the category colour inside the body; no node-specific border or radius token; never dimmed when read-only; no disabled or running state; no output edge (the leftmost clause)
@@ -1841,9 +1841,9 @@ interface NodeGraphCanvasProps {
 
 ### CMP-148 NodeGraphNode — ConditionNode
 
-- **Tier**: Chart-primitive/rule-primitive · **Purpose**: node type representing one condition (metric/operator/value), with input/output handles for logic-gate wiring.
+- **Tier**: Chart-primitive/rule-primitive · **Purpose**: node type representing one condition (metric/operator/value), with input and output ports for logic-gate wiring (kinds comparison · arithmetic · temporal; the `graph-only` badge on a kind outside the form subset — E37-D05).
 - **Props**: `metric` · `operator` · `value` · `position` · `selected?`.
-- **A11y**: input/output connection handles are separately focusable with `aria-label` "Connect output of condition node"; connecting via keyboard: focus handle → `Enter` → arrow-select target node → `Enter` confirms (documented keyboard-connect flow, the equivalent of drag-to-connect).
+- **A11y**: input/output connection handles are separately focusable with `aria-label` "Output port, condition result, not connected" (E37-D04 A-2); connecting via keyboard: focus handle → `Enter` → arrow-select target node → `Enter` confirms (documented keyboard-connect flow, the equivalent of drag-to-connect).
 - **Tokens**: `color.node.condition`. **E37-D03 —** as CMP-147's E37-D03 row with the `color.node.condition` stripe (square cap); the `graph-only` badge `color.status.warning.strong` on `color.status.warning.subtle` + the word `color.text.primary`; ports per CMP-237
 - **Motion (E37-D03)**: as CMP-147; the badge appears as a 0 ms swap (M-17), never a flash
 - **Usage (E37-D03)**: as CMP-147. The `graph-only` and `mismatch` badges and the error outline are never de-emphasised for aesthetics: glyph + word at every tier and zoom band, the error's 2 px outline kept
@@ -1852,7 +1852,7 @@ interface NodeGraphCanvasProps {
 
 ### CMP-149 NodeGraphNode — ActionNode
 
-- **Tier**: Chart-primitive/rule-primitive · **Purpose**: node type representing an action (place order, modify SL, flatten, etc.).
+- **Tier**: Chart-primitive/rule-primitive · **Purpose**: node type representing an action (place order, modify SL, flatten, etc.). **E37-D05 —** a stop action carries "only tighten" and "Rules never loosen a stop."; `place_order` shows its non-emptiable native stop field and the other order-placing actions a read-only stop line (E37-D02 C19 / C20); no widening variant.
 - **Props**: `actionType` · `params` · `position` · `selected?`.
 - **Tokens**: `color.node.action`. **E37-D03 —** as CMP-147's E37-D03 row with the `color.node.action` stripe (rounded cap); the stop line and "Rules never loosen a stop." in `type.ui.caption` `color.text.secondary`, kept when collapsed
 - **Motion (E37-D03)**: as CMP-147
@@ -1863,7 +1863,7 @@ interface NodeGraphCanvasProps {
 ### CMP-150 NodeGraphNode — LogicGateNode (AND/OR/NOT)
 
 - **Tier**: Chart-primitive/rule-primitive · **Purpose**: explicit boolean combinator node, multiple inputs, one output — makes the AND/OR/advanced structure visually explicit (vs. the form editor's implicit grouping).
-- **Props**: `gateType: "AND"|"OR"|"NOT"` · `inputCount` · `position` · `selected?`.
+- **Props**: `gateType: "all_of" | "any_of" | "none_of" | "n_of"` · `n?` (**E37-D05 —** `none_of` and `n_of` badged `graph-only` from creation; collapse via `graph_layout.collapsed`) · `inputCount` · `position` · `selected?`.
 - **Tokens**: `color.node.logic`. **E37-D03 —** as CMP-147's E37-D03 row with the `color.node.logic` stripe (diamond notch); the `graph-only` badge from creation for `none_of` / `n_of`; the collapsed subtree reads "{n} inputs"
 - **Motion (E37-D03)**: as CMP-147; collapse / expand is a 0 ms swap (`aria-expanded`), no height animation
 - **Usage (E37-D03)**: as CMP-148 (the badge is never de-emphasised)
@@ -1872,7 +1872,7 @@ interface NodeGraphCanvasProps {
 
 ### CMP-151 NodeGraphNode — CommentNode
 
-- **Tier**: Chart-primitive/rule-primitive · **Purpose**: free-text annotation node, non-executable, for author documentation within the graph.
+- **Tier**: Chart-primitive/rule-primitive · **Purpose**: free-text annotation node, non-executable, for author documentation within the graph. **E37-D05 —** a `graph_layout.comments` entry, outside the IR and its hash; no ports.
 - **Props**: `text` · `position` · `color?`.
 - **Tokens**: `color.node.comment`. **E37-D03 —** as CMP-147's E37-D03 row with the `color.node.comment` stripe (dog-ear cap); no ports, never badged, never in error; `color.node.comment` on `color.surface.raised` measures 2.86 dark — the stripe stays on the canvas edge
 - **Motion (E37-D03)**: as CMP-147 (M-4, M-5, M-6, M-7, M-8, M-9, M-10, M-13)
@@ -1883,7 +1883,7 @@ interface NodeGraphCanvasProps {
 ### CMP-152 NodeGraphEdge
 
 - **Tier**: Chart-primitive/rule-primitive · **Purpose**: connector between two nodes; visually a bezier/orthogonal line, accessibly an entry in the mirrored adjacency list (per CMP-146).
-- **Props**: `source` · `target` · `selected?` · `label?`.
+- **Props**: `source` · `target` · `selected?` · `label?`. **E37-D05 —** `label` is the order index only (port names sit on the node); the invalid-preview state is a solid danger line with the ✕ mark.
 - **A11y**: selecting an edge (via node-then-Tab-to-edge) surfaces "Delete connection" as a keyboard-reachable action (`Delete` key with focus on edge, or via its context menu).
 - **Tokens**: `color.edge.default/selected`. **E37-D03 —** `color.edge.default` 1.5 px (TP-1 → `color.text.tertiary`), `color.edge.selected` 2 px (TP-2 → `color.border.selected`; also the solid valid preview), `color.edge.invalid` solid 1.5 px + ✕ (TP-3 → `color.status.danger.default`; also the cycle path at 2 px); hover 2 px `color.text.secondary`; focused: the path in `color.focus.ring` + the CMP-039 ring on the midpoint surrogate; Tier C 1 px; the index pill `type.ui.caption` `color.text.primary` on `color.surface.raised`; never dashed; ED-1…ED-10 in `docs/design/E37/E37-D03.md` §4.2
 - **Motion (E37-D03)**: M-1 / M-2 preview 0 ms (identical under reduce), M-3 connection-made `fast` opacity fade (reduce instant; never a line-draw), M-6 selection 0 ms, M-7 hover 0 ms, M-8 focus instant; edges re-route each frame of M-13 and never animate along their length
@@ -1898,7 +1898,7 @@ interface NodeGraphCanvasProps {
 - **Tokens**: inherits CMP-046 Drawer. **E37-D03 —** no node-graph token; the drawer's `color.surface.overlay`, `elevation.popover` (non-modal beside the canvas) and padding by `data-density` are CMP-046's
 - **Motion (E37-D03)**: M-16 — inherits CMP-046: `motion.duration.normal` slide, `motion.easing.decelerate` open / `motion.easing.accelerate` close, reduce instant; an inspector edit never re-layouts the graph
 - **Usage (E37-D03)**: never re-specify the drawer's motion or elevation; the node's details disclosure carries the id, the card never does
-- **Storybook**: TriggerNodeInspector, ConditionNodeInspector, ActionNodeInspector. **E37-D03 —** no new story; the per-type stories are D02's row; the drawer's ReducedMotion baseline is CMP-046's
+- **Storybook**: TriggerNodeInspector, ConditionNodeInspector, ActionNodeInspector. **E37-D03 —** no new story; the per-type stories are D02's row; the drawer's ReducedMotion baseline is CMP-046's **E37-D05 —** LogicGateNodeInspector, CommentNodeInspector, DetailsDisclosure, FocusReturn.
 - **Tests**: unit, visual, axe, keyboard.
 
 ### CMP-154 RuleSimulatePanel
@@ -3039,7 +3039,7 @@ This band was added during the cross-document traceability reconciliation (see `
 ### CMP-234 ValidationPanel
 
 - **Tier**: Organism (rule engine) · **Purpose**: the shared validation surface for **both** rule editors (form mode SCR-081 and graph mode SCR-082) — errors, warnings and IR-compilation diagnostics, each anchored to the offending condition row or node. **E35-D03 —** a further host: SCR-089's validation-failure list in the import dialog; each entry moves focus to the offending pre-check row (the jump-to-offender pattern).
-- **Props**: `diagnostics: {id,severity:"error"|"warning"|"info",message,anchor:{kind:"row"|"node"|"edge",id},fixHint?}[]` · `onFocusAnchor`. **E36-D03 —** `anchor` is populated with the form model's row ids by E36-T01 (memo G11: no validator diagnostic names a row today); the primary message speaks rows ("Row 2 — …"), the shipped validator text sits in a details disclosure (P10); **SCR-088's Issues segment reuses this component** (E36-D03 §5).
+- **Props**: `diagnostics: {id,severity:"error"|"warning"|"info",message,anchor:{kind:"row"|"node"|"edge",id},fixHint?}[]` · `onFocusAnchor`. **E36-D03 —** `anchor` is populated with the form model's row ids by E36-T01 (memo G11: no validator diagnostic names a row today); the primary message speaks rows ("Row 2 — …"), the shipped validator text sits in a details disclosure (P10); **SCR-088's Issues segment reuses this component** (E36-D03 §5). **E37-D05 —** on SCR-082 `anchor.kind` is `"node"` or `"edge"`, populated from the compile issues' node ids by E37-S04; a port as a third kind is PROPOSED (`DANGLING_PORT`).
 - **A11y**: a `role="log"` list ordered errors-first; each entry is a button that moves focus to the offending row/node (the sole mechanism by which a keyboard user navigates graph diagnostics); the error count is announced on every recompile. **E36-D03 —** the count change is a text swap, never a background flash (the 300 ms debounce would exceed 3 flashes / s). **E35-D03 —** in the import host (SCR-089) the log is `aria-live="off"`; the one count sentence comes from the dialog's polite region (E35-D04 F-10).
 - **Tokens**: **E36-D03 —** `color.status.danger.default` / `color.status.danger.strong`, `color.status.warning.default` / `color.status.warning.strong`, `space.3`; `color.status.warn` and the bare `color.status.danger` do not exist in `packages/ui/tokens`.
 - **Data contract**: diagnostics come from `POST /rules/validate` against the shared rule IR, so form and graph modes report **identical** diagnostics for the same rule (the round-trip invariant, OD#11).
@@ -3050,15 +3050,15 @@ This band was added during the cross-document traceability reconciliation (see `
 
 - **Tier**: Molecule (rule engine, safety-relevant) · **Purpose**: switch a rule between form and node-graph editing, carrying the shared IR across without loss (OD#11).
 - **Props**: `mode: "form"|"graph"` · `onChange` · `lossyWarning?: {constructs: string[]}` · `dirty: boolean`.
-- **A11y**: CMP-003 SegmentedControl semantics. **E36-D03 —** the switch is **allowed** (memo C10, E36-D02 §4): a construct the target editor cannot represent renders in place as the read-only card with the lead-in "Authored in the graph editor: {sentence}. Open in the graph editor to change this.", and `lossyWarning.constructs` becomes the per-construct list; the rule is never degraded silently; the round-trip indicator lives on CMP-145 (E36-D02 §16), not here.
+- **A11y**: CMP-003 SegmentedControl semantics. **E36-D03 —** the switch is **allowed** (memo C10, E36-D02 §4): a construct the target editor cannot represent renders in place as the read-only card with the lead-in "Authored in the graph editor: {sentence}. Open in the graph editor to change this.", and `lossyWarning.constructs` becomes the per-construct list; the rule is never degraded silently; the round-trip indicator lives on CMP-145 (E36-D02 §16), not here. **E37-D05 —** on SCR-082 `lossyWarning.constructs` is the "What won't round-trip" panel's rows; `dirty` prompts "Apply your changes before switching?" with Apply · Discard · Cancel; a clean switch has no confirmation.
 - **Tokens**: inherits CMP-003.
 - **Storybook**: **E36-D03 —** FormActive, GraphActive, LossyWarning, DirtyUnsaved, ReadOnlyCardInPlace.
 - **Tests**: unit, visual, axe, interaction; round-trip test (form → graph → form yields an identical IR).
 
 ### CMP-236 NodePalette
 
-- **Tier**: Organism (rule engine) · **Purpose**: the categorised, searchable palette of node types (triggers, metrics, comparators, logic gates, actions, comments) that can be dropped onto CMP-146 NodeGraphCanvas.
-- **Props**: `categories: {id,label,nodes:{type,label,description,icon}[]}[]` · `query` · `onQueryChange` · `onAddNode(type, position?)`.
+- **Tier**: Organism (rule engine) · **Purpose**: the categorised, searchable palette of node types (Triggers · Conditions · Logic · Actions · Comments — memo R4; condition kinds are sub-rows) that can be dropped onto CMP-146 NodeGraphCanvas.
+- **Props**: `categories: {id,label,nodes:{type,label,description,icon}[]}[]` · `query` · `onQueryChange` · `onAddNode(type, position?)`. **E37-D05 —** each entry gains `graphOnly` (the badge in the palette) and `needsNativeStop` (`place_order`).
 - **A11y**: adding a node must be possible **without dragging** — selecting a palette entry and pressing `Enter` inserts it connected to the current selection; every node type has a plain-language description, not just an icon.
 - **Tokens**: `color.surface.raised`, `space.2`. **E37-D03 —** entries at `size.row.height` 40 / 48 (compact / comfortable), `space.inset.sm` / `space.inset.md`; names `color.text.primary`, the type glyph `color.text.secondary` (never `color.node.*`), descriptions `color.text.secondary`; the `graph-only` badge as on the card; the CMP-039 ring
 - **Motion (E37-D03)**: category collapse / expand and search filtering are 0 ms swaps (identical under reduce); the inserted node's motion is CMP-146 M-4
@@ -3068,9 +3068,9 @@ This band was added during the cross-document traceability reconciliation (see `
 
 ### CMP-237 NodePort
 
-- **Tier**: Molecule (rule engine) · **Purpose**: the typed input/output connection point on a node, enforcing type compatibility (boolean, number, price, side, action) at connect time.
+- **Tier**: Molecule (rule engine) · **Purpose**: the typed input/output connection point on a node, enforcing type compatibility (boolean, number, price, side, action, trigger) at connect time.
 - **Props**: `kind: "in"|"out"` · `dataType: PortType` · `connected: boolean` · `label: string` · `compatible?: boolean`.
-- **A11y**: each port is individually focusable with a name stating direction, type and connection state ("Input, boolean, not connected"); connecting by keyboard is focus-port → `Enter` → focus-target-port → `Enter`, and incompatible targets are announced as such rather than merely being un-droppable.
+- **A11y**: each port is individually focusable with a name stating direction, type and connection state ("Input port, boolean, not connected"; a boolean output names its role, "condition result" or "boolean value" — E37-D04 A-2); connecting by keyboard is focus-port → `Enter` → focus-target-port → `Enter`, and incompatible targets are announced as such rather than merely being un-droppable.
 - **Tokens**: `color.port.*`, `radius.full`. **E37-D03 —** `radius.circle` (`radius.full` is declined as a duplicate); a 12 px glyph (`size.icon.sm`) on a 24 × 24 target (`size.target.min`); `color.port.ring` (TP-4 → `color.text.tertiary`) unconnected, the node's `color.node.*` fill when connected (a rule, not a token), `color.port.compatible` halo (TP-5 → `color.focus.ring`, 2 px at 16 px outer), `color.port.incompatible` ✕ (TP-6 → `color.status.danger.default`), the active-connect source ring 2 px `color.edge.selected` (static), dangling `color.status.warning.default` + `warning` glyph; PT-1…PT-16 in `docs/design/E37/E37-D03.md` §4.1; type = glyph + name, state = hollow / filled + the name's clause
 - **Motion (E37-D03)**: M-11 the source port is static (no pulse in either mode), M-12 halo / ✕ 0 ms flips, M-8 focus instant; names at Tier B / C via CMP-016 (M-18)
 - **Usage (E37-D03)**: never a hue per type or per direction; never a pulse; the halo and the focus ring never share a radius. The incompatible mark and its sentence are never softened or replaced by a tooltip-only hint
@@ -3081,12 +3081,21 @@ This band was added during the cross-document traceability reconciliation (see `
 
 - **Tier**: Molecule (rule engine) · **Purpose**: the overview/navigation minimap for large rule graphs on CMP-146.
 - **Props**: `bounds` · `viewport` · `nodes: {id,rect,severity?}[]` · `onNavigate`.
-- **A11y**: `aria-hidden` — it is a pointer convenience only; the equivalent keyboard navigation is the node list in CMP-153 NodeInspectorDrawer and the diagnostics anchors in CMP-234, both of which are complete alternatives.
+- **A11y**: `aria-hidden` — it is a pointer convenience only; the equivalent keyboard navigation is the node list (`Alt+L`, E37-D02 §8) and the diagnostics anchors in CMP-234, both of which are complete alternatives.
 - **Tokens**: `color.surface.sunken`, `color.accent.subtle`. **E37-D03 —** `color.accent.subtle` is declined (no `color.accent.*` family): the viewport rectangle is 1 px `color.border.selected` (5.94 / 3.39 / 8.08 on the well) with a `color.action.selected` tint; node rects 4 px in `color.node.*`; severity dots `color.status.danger.default` / `color.status.warning.default`; `space.inset.sm` from the canvas edges, by `data-density`; all pairs reported, never gated (`aria-hidden`)
 - **Motion (E37-D03)**: M-14 — the viewport rectangle mirrors the canvas at 0 ms (identical under reduce); rects re-render on node-count or viewport change only
 - **Usage (E37-D03)**: never the only route to a node (the node list and CMP-234 are the equivalents); never an animated viewport; never graded as gated contrast
 - **Storybook**: SmallGraph, LargeGraph, WithErrorNodes. **E37-D03 —** Compact, Comfortable
 - **Tests**: unit, visual, performance (200-node graph).
+
+### CMP-254 NodeListOutline
+
+- **Tier**: Organism (rule engine) · **Purpose**: **E37-D05 —** the rule's outline on SCR-082, co-equal with CMP-146 and never removed: a "Check when" row, the "Only if (all must be true)" rows nested by gate, the "Then, in order" rows, and the "Graph-only", "Not connected yet" and "Problems" groups; every canvas operation has a twin here (E37-D02 §8, E37-D04 §4). PROPOSED.
+- **Props**: PROPOSED, typed by E37-S05: `rule` · `selection` · `onSelect` · `onConnect(source, sourcePort, target, targetPort)` · `onDisconnect` · `onDelete` · `onRename` · `onInspect` · `onCollapse` · `onMove` · `diagnostics` · `readOnly?`.
+- **A11y**: a `region` "Outline" around the `role="tree"` "Rule outline — {name}", `treeitem` rows, `group` children, one roving stop, type-ahead; the row menu on `Shift+F10`; the connect-target picker lists every port, compatible first, with the refusal sentence beside each incompatible one; a tab under the canvas at 1280 × 800.
+- **Tokens**: `color.surface.raised`, `color.border.default`, `color.focus.ring`, `space.inset.sm`, `size.row.height`, `type.ui.body`, `type.ui.caption`.
+- **Storybook**: Outline, Tab1280, GraphOnlyGroup, ProblemsGroup, ConnectPicker, NotConnectedGroup.
+- **Tests**: unit, visual, axe, keyboard (every E37-D04 K row with an outline twin).
 
 ### CMP-239 FreshnessMarker (E08-D04, data-confidence vocabulary)
 
