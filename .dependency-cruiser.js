@@ -128,6 +128,43 @@ module.exports = {
       to: { path: "[Bb][Yy][Bb][Ii][Tt]" },
     },
     {
+      name: "chart-engine-src-relative-only",
+      severity: "error",
+      comment:
+        "C-2.16 / E11-X02 (CE-E04, CE-T20): packages/chart-engine/src imports only its own files. " +
+        "No package, workspace package (@candleviewer/protocol, ui) or Node module may enter the " +
+        "engine: it runs in a worker in the trading origin and must stay portable (ADR-0002). A " +
+        "new edge needs an ADR and a C-12.3 dependency review, not an exception here.",
+      from: { path: "^packages/chart-engine/src" },
+      to: { pathNot: "^packages/chart-engine/src/" },
+    },
+    {
+      name: "chart-engine-no-app-state",
+      severity: "error",
+      comment:
+        "C-2.16 / E11-X02 (CE-E04): the engine never reads an application store; the host owns " +
+        "app state and hands the engine typed data through its public API.",
+      from: { path: "^packages/chart-engine/src" },
+      to: {
+        path:
+          "(^|node_modules/)(zustand|jotai|redux|@reduxjs/toolkit|mobx|valtio|rxjs|xstate|" +
+          "@tanstack/[^/]+)($|/)",
+      },
+    },
+    {
+      name: "chart-engine-no-io-client",
+      severity: "error",
+      comment:
+        "C-2.16 / E11-X02 (CE-E04): the engine performs no I/O, so no HTTP, WebSocket or socket " +
+        "client may enter it; the host decodes the wire and hands the engine typed arrays.",
+      from: { path: "^packages/chart-engine/src" },
+      to: {
+        path:
+          "(^|node_modules/)(axios|ky|ofetch|undici|ws|node-fetch|cross-fetch|isomorphic-fetch|" +
+          "socket\\.io-client|eventsource)($|/)|^(node:)?(http|https|http2|net|tls|dgram|dns)$",
+      },
+    },
+    {
       name: "chart-engine-core-no-dom-host",
       severity: "error",
       comment:

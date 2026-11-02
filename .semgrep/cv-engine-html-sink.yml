@@ -1,0 +1,146 @@
+# E11-X02 (#392; F-07, CE-T11): the engine's DOM-side code (`src/host/**`, where the E11-S13 DOM
+# mirror writes, `src/api/**`, `src/index.ts`, `src/worker/host.ts`) writes text, never markup. The
+# sinks of `cv-drawings-text-to-html-sink` without its React/JSX arms (the engine has no React,
+# C-2.16), plus an inline event-handler attribute. Syntactic: a sink is flagged whatever reaches it;
+# `src/layers/drawings/**` stays with the drawings rule.
+rules:
+  - id: cv-engine-html-sink
+    languages: [typescript]
+    severity: ERROR
+    message: >-
+      CE-T11 (E11-X01 F-07): the chart engine writes markup into the page. Its DOM-side code (the
+      host, the facade and the DOM mirror) sets text only: `el.textContent = text`, one attribute
+      set from the raw value (`el.setAttribute("aria-label", text)`), or a style through the CSSOM
+      (`el.style.setProperty(name, value)`). A label, symbol or error message reaching an HTML sink
+      runs as script in the trading origin. Rule doc:
+      docs/plan/security/ci-gates-e11.md#cv-engine-html-sink.
+    metadata:
+      rule-id: cv-engine-html-sink
+      threat: CE-T11
+      finding: F-07
+      references:
+        - docs/security/threat-models/E11-chart-engine.md CE-T11 (section 6), F-07 (section 7)
+        - .semgrep/cv-drawings-text-to-html-sink.yml
+    pattern-either:
+      - pattern: $X.innerHTML = $V
+      - pattern: $X.outerHTML = $V
+      - pattern: $X.innerHTML += $V
+      - pattern: $X["innerHTML"] = $V
+      - pattern: $X["outerHTML"] = $V
+      - pattern: $X.insertAdjacentHTML(...)
+      - pattern: $X["insertAdjacentHTML"](...)
+      - pattern: $X.setHTMLUnsafe(...)
+      - pattern: $X["setHTMLUnsafe"](...)
+      - pattern: $D.parseHTMLUnsafe(...)
+      - pattern: $R.createContextualFragment(...)
+      - pattern: $R["createContextualFragment"](...)
+      - pattern: new DOMParser().parseFromString(...)
+      - pattern: $P.parseFromString($S, "text/html")
+      - patterns:
+          - pattern-either:
+              - pattern: $D.write(...)
+              - pattern: $D.writeln(...)
+              - pattern: $D?.write(...)
+              - pattern: $D?.writeln(...)
+          - metavariable-regex:
+              metavariable: $D
+              regex: '^(?:[\w$.!?]*\.)?(?:document|contentDocument|doc|ownerDocument)!?$'
+      - pattern: $X.srcdoc = $V
+      - pattern: $X["srcdoc"] = $V
+      - patterns:
+          - pattern: "Object.assign($X, ..., {..., $K: $V, ...}, ...)"
+          - metavariable-regex:
+              metavariable: $K
+              regex: '^["'']?(?:innerHTML|outerHTML|srcdoc)["'']?$'
+      # An attribute that is markup or code: `srcdoc`, and an inline handler (`onclick`).
+      - patterns:
+          - pattern-either:
+              - pattern: $X.setAttribute($N, ...)
+              - pattern: $X["setAttribute"]($N, ...)
+          - metavariable-regex:
+              metavariable: $N
+              regex: '(?i)^["''`](?:srcdoc|on[a-z]+)["''`]?$'
+      # Review m6: an attribute whose name is not a literal could be either of the above.
+      - patterns:
+          - pattern-either:
+              - pattern: $X.setAttribute($N, ...)
+              - pattern: $X["setAttribute"]($N, ...)
+          - metavariable-pattern:
+              metavariable: $N
+              patterns:
+                - pattern-not: '"..."'
+      - pattern: $X.setAttributeNS(...)
+      - pattern: $X["setAttributeNS"](...)
+      - pattern: $X.outerHTML += $V
+      - pattern: Reflect.set($X, ...)
+      # Every parser mode builds a tree from a string; svg+xml and xhtml run handlers too.
+      - pattern: $P.parseFromString(...)
+      # An element that loads or runs code, and the navigation sinks (`javascript:` URLs).
+      - patterns:
+          - pattern: $D.createElement($T, ...)
+          - metavariable-regex:
+              metavariable: $T
+              regex: '(?i)^["''`](?:script|iframe|frame|object|embed|base|link|meta)["''`]$'
+      - patterns:
+          - pattern: $X.$U = $V
+          - metavariable-regex:
+              metavariable: $U
+              regex: ^(src|href|action|formAction|location)$
+          - metavariable-pattern:
+              metavariable: $V
+              patterns:
+                - pattern-not: '"..."'
+      - pattern: location.assign(...)
+      - pattern: location.replace(...)
+      - pattern: $W.location.assign(...)
+      - pattern: $W.location.replace(...)
+      - patterns:
+          - pattern: $W.open(...)
+          - metavariable-regex:
+              metavariable: $W
+              regex: ^(window|self|globalThis|[\w$.]*defaultView!?)$
+      # CSS strings (carried from cv-drawings-text-to-html-sink): the CSSOM takes a value, not
+      # a string of rules; only `style.setProperty(name, value)` is the engine's path.
+      - patterns:
+          - pattern-either:
+              - pattern: $X.cssText = $V
+              - pattern: $X["cssText"] = $V
+              - pattern: $S.insertRule($V, ...)
+              - pattern: $S["insertRule"]($V, ...)
+              - pattern: $X.setAttribute("style", $V)
+              - pattern: $X["setAttribute"]("style", $V)
+          - pattern-not: $X.cssText = "..."
+          - pattern-not: $X["cssText"] = "..."
+          - pattern-not: $S.insertRule("...", ...)
+          - pattern-not: $S["insertRule"]("...", ...)
+          - pattern-not: $X.setAttribute("style", "...")
+          - pattern-not: $X["setAttribute"]("style", "...")
+      - patterns:
+          - pattern: $X.$H = $V
+          - metavariable-regex:
+              metavariable: $H
+              regex: ^on[a-z]+$
+          - metavariable-pattern:
+              metavariable: $V
+              patterns:
+                - pattern-either:
+                    - pattern: '"..."'
+                    - pattern: "`...`"
+                    - pattern: $A + $B
+                # A function value is a handler the bundle shipped (`r.onerror = () =>
+                # reject(new Error("..."))`): a string in its body is not handler source.
+                - pattern-not-inside: (...) => $BODY
+                - pattern-not-inside: |
+                    function (...) { ... }
+    paths:
+      include:
+        - "packages/chart-engine/src/**"
+      exclude:
+        - "packages/chart-engine/src/layers/drawings/**"
+        # Pure re-export barrels: Semgrep 1.181's TypeScript parser cannot read `export type * from`
+        # (TS 5.0) and reports a PartialParsing error, which fails the CI gate (CI-SEC-005, #3549).
+        # Neither file holds a statement this rule matches; tsc and ESLint still read both.
+        # Both files hold only re-exports. Revisit: drop these two excludes once the pinned Semgrep
+        # parses `export type *`.
+        - "packages/chart-engine/src/scene/index.ts"
+        - "packages/chart-engine/src/viewport/index.ts"

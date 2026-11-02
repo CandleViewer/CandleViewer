@@ -1,0 +1,81 @@
+# E11-X02 (#392; CE-T02, BQ-161): arithmetic on a decoded value needs `Number.isFinite` first. A NaN
+# or an Infinity from a message survives every `>` and `<` comparison (they answer false) and turns
+# a scale, an offset or a sum into NaN, which draws nothing or the wrong thing. Same sources and
+# paths as `cv-engine-typed-array-index-unchecked`; intra-procedural, so a value validated by
+# `rejectReason` and used in the runtime's handler is reported. Non-blocking (WARNING) while it
+# reports on main: docs/plan/security/ci-gates-e11.md lists the sites.
+rules:
+  - id: cv-engine-decoded-nonfinite
+    languages: [typescript]
+    severity: WARNING
+    mode: taint
+    message: >-
+      CE-T02 (E11-X01): arithmetic on a value decoded from a worker message (a `msg[...]` read,
+      `event.data`, a `DataView` float getter or a `layout` field) with no `Number.isFinite`
+      check before it. A NaN passes every comparison and poisons the result; check
+      `Number.isFinite(v)` (or the protocol's `finite(v)`) and refuse first. A deliberate exception
+      needs a CI-SEC-006 justification inline. Rule doc:
+      docs/plan/security/ci-gates-e11.md#cv-engine-decoded-nonfinite.
+    metadata:
+      rule-id: cv-engine-decoded-nonfinite
+      threat: CE-T02
+      references:
+        - docs/security/threat-models/E11-chart-engine.md CE-T02 (section 6)
+    pattern-sources:
+      - patterns:
+          - pattern: $V.$GET(...)
+          - metavariable-regex:
+              metavariable: $GET
+              regex: ^getFloat(32|64)$
+      - pattern: $EV.data
+      - patterns:
+          - pattern: $M[$K]
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(msg|message|payload|raw|cmd)$
+      - pattern: $X.layout.$F
+      - pattern: layout.$F
+    pattern-sanitizers:
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: Number.isFinite($N)
+              - pattern: finite($N, ...)
+              - pattern: Number.isSafeInteger($N)
+              - pattern: Number.isInteger($N)
+          - focus-metavariable: $N
+      - patterns:
+          - pattern-either:
+              - pattern: Number.isFinite($N)
+              - pattern: finite($N, ...)
+          - focus-metavariable: $N
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $A + $B
+              - pattern: $A - $B
+              - pattern: $A * $B
+              - pattern: $A / $B
+              - pattern: $A % $B
+              - pattern: $A ** $B
+              - pattern: $X += $A
+              - pattern: $X -= $A
+              - pattern: $X *= $A
+              - pattern: $X /= $A
+              - pattern: Math.$F(..., $A, ...)
+          - metavariable-pattern:
+              metavariable: $A
+              patterns:
+                - pattern-not: '"..."'
+          - focus-metavariable: $A
+      - patterns:
+          - pattern-either:
+              - pattern: $A + $B
+              - pattern: $A - $B
+              - pattern: $A * $B
+              - pattern: $A / $B
+          - focus-metavariable: $B
+    paths:
+      include:
+        - "packages/chart-engine/src/worker/**"
+        - "packages/chart-engine/src/model/**"

@@ -670,4 +670,32 @@ describe("the page's host env", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it("builds the inline text platform on the document's view, never on the global object", () => {
+    // E11-X02 (CE-E04): host.ts holds no alias of globalThis; the atlas's FontFace, canvas and
+    // IndexedDB come from the page the chart is mounted in, and a bare realm gets no atlas.
+    class Face {
+      load = (): Promise<void> => Promise.resolve();
+    }
+    class Offscreen {
+      getContext = (): object => ({});
+    }
+    vi.stubGlobal("FontFace", Face);
+    vi.stubGlobal("OffscreenCanvas", Offscreen);
+    vi.stubGlobal("fonts", { add: vi.fn(), delete: vi.fn() });
+    try {
+      const doc = new FakeDocument();
+      expect(defaultHostEnv(doc as unknown as Document).textPlatform?.()).toBeNull();
+      Object.assign(doc.defaultView as object, {
+        FontFace: Face,
+        OffscreenCanvas: Offscreen,
+        fonts: { add: vi.fn(), delete: vi.fn() },
+      });
+      expect(defaultHostEnv(doc as unknown as Document).textPlatform?.()).not.toBeNull();
+      doc.defaultView = null;
+      expect(defaultHostEnv(doc as unknown as Document).textPlatform?.()).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
