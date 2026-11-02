@@ -269,6 +269,32 @@ describe("SplitButton (CMP-057)", () => {
     }
   });
 
+  // G-T2.5 (E29-D02 §10.4): a scope's reason renders once, in the host's notice, which the gated primary points at.
+  it("disabledReasonId: the gated primary is described by the host's notice alone, its lock leading, named", async () => {
+    await mount(<p id="viewer-notice">Your role can&apos;t change positions.</p>);
+    const { onClick } = await render({
+      disabledReason: "Your role can't change positions.",
+      disabledReasonId: "viewer-notice",
+    });
+    const gated = page.getByRole("button", { name: "Not available Close" });
+    expect(gated).toHaveAttribute("aria-disabled", "true");
+    expect(gated).not.toBeDisabled();
+    expect(gated).toHaveAttribute("aria-describedby", "viewer-notice");
+    expect(gated).toHaveAccessibleDescription("Your role can't change positions.");
+    // No copy of its own: the one notice is the only node with the words.
+    expect(page.getAllByText("Your role can't change positions.")).toHaveLength(1);
+    clearPolite();
+    await userEvent.click(gated);
+    expect(onClick).not.toHaveBeenCalled();
+    expect(await politeText()).toBe("Your role can't change positions.");
+  });
+
+  it("disabledReasonId without a gate changes nothing", async () => {
+    await render({ disabledReasonId: "viewer-notice" });
+    expect(primary()).not.toHaveAttribute("aria-disabled");
+    expect(primary()).not.toHaveAttribute("aria-describedby");
+  });
+
   it("has no serious or critical axe violation: default, busy and gated", async () => {
     await render();
     await render({ busy: true });

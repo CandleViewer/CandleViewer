@@ -195,4 +195,74 @@ describe("table.css contract", () => {
     expect(spacer).toContain("border: 0");
     expect(find(css.normal, ".cv-table__spacer", "background")).toContain("transparent");
   });
+
+  // E29-D04 §2.7's treegrid parts: pinned columns, the totals rowgroup and the scroll margins that clear them
+  // (E29-D05 §6.2 F-01).
+  describe("pinned columns and the totals rowgroup", () => {
+    it("a pinned cell sticks at its measured start, takes its row's fill and stacks above the scrolled cells", () => {
+      expect(find(css.normal, ".cv-table [data-pin-start]", "position")).toContain(
+        "position: sticky",
+      );
+      expect(find(css.normal, '.cv-table [data-pin-start="0"]', "inset-inline-start")).toContain(
+        "inset-inline-start: 0",
+      );
+      for (const n of [1, 2, 3])
+        expect(
+          find(css.normal, `.cv-table [data-pin-start="${String(n)}"]`, "inset-inline-start"),
+        ).toContain(`var(--cv-table-pin-${String(n)}, 0)`);
+      expect(find(css.normal, ".cv-table [data-pin-end]", "inset-inline-end")).toContain(
+        "inset-inline-end: 0",
+      );
+      const body = find(css.normal, ".cv-table__cell[data-pin-start]", "background-color");
+      expect(body).toContain("background-color: inherit");
+      expect(body).toContain("z-index: 0");
+    });
+
+    it("stacking: pinned body 0 < header and totals 1 < pinned header and totals 2 < the echo", () => {
+      const layer = (selector: string): number =>
+        Number(/z-index:\s*(\d+)/.exec(find(css.normal, selector, "z-index"))?.[1] ?? Number.NaN);
+      expect(layer(".cv-table__cell[data-pin-start]")).toBe(0);
+      expect(layer(".cv-table__header")).toBe(1);
+      expect(layer(".cv-table__totals .cv-table__cell")).toBe(1);
+      expect(layer(".cv-table__header[data-pin-start]")).toBe(2);
+      expect(layer(".cv-table__totals .cv-table__cell[data-pin-start]")).toBe(2);
+      expect(layer(".cv-table__echo")).toBeGreaterThan(2);
+    });
+
+    it("a focused cell scrolls clear of the pinned columns and the pinned totals (F-01); pinned cells keep none", () => {
+      const margins = find(css.normal, ".cv-table__cell", "scroll-margin-inline-start");
+      expect(margins).toContain("scroll-margin-inline-start: var(--cv-table-pin-start, 0)");
+      expect(margins).toContain("scroll-margin-inline-end: var(--cv-table-pin-end, 0)");
+      expect(margins).toMatch(
+        /scroll-margin-block-end: calc\(\s*var\(--size-row-height\) \* var\(--cv-table-totals, 0\)/,
+      );
+      expect(
+        find(css.normal, ".cv-table__cell[data-pin-start]", "scroll-margin-inline-start"),
+      ).toContain("scroll-margin-inline-start: 0");
+      expect(
+        find(css.normal, ".cv-table__cell[data-pin-end]", "scroll-margin-inline-end"),
+      ).toContain("scroll-margin-inline-end: 0");
+    });
+
+    it("totals rows stick to the region's bottom on surface.overlay, under a border.thick border.strong rule", () => {
+      const cell = find(css.normal, ".cv-table__totals .cv-table__cell", "inset-block-end");
+      expect(cell).toContain("position: sticky");
+      expect(cell).toContain("calc(var(--size-row-height) * var(--cv-table-after, 0))");
+      expect(cell).toContain("background: var(--color-surface-overlay)");
+      expect(
+        find(
+          css.normal,
+          ".cv-table__totals .cv-table__total-row:first-child > .cv-table__cell",
+          "border-block-start",
+        ),
+      ).toContain("calc(var(--border-thick) * 1px) solid var(--color-border-strong)");
+      expect(
+        find(
+          css.forced,
+          ".cv-table__totals .cv-table__total-row:first-child > .cv-table__cell",
+          "border-block-start-color",
+        ),
+      ).toContain("CanvasText");
+    });
+  });
 });

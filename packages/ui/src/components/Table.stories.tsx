@@ -3,6 +3,7 @@ import { useState, type JSX } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { expect, userEvent, waitFor, within } from "storybook/test";
+import { Icon } from "../icons/Icon.js";
 import { EmptyState } from "./EmptyState.js";
 import type { MenuItem } from "./Menu.js";
 import {
@@ -11,6 +12,7 @@ import {
   type TableProps,
   type TableRowContext,
   type TableSort,
+  type TableTreeRow,
 } from "./Table.js";
 import { Heading } from "./Typography.js";
 
@@ -693,3 +695,336 @@ export const WindowedRows: Story = {
     );
   },
 };
+
+/*
+ * The treegrid variant (E29-D04 §2.7; D04H A-6.2 to A-6.6): account groups at level 1 holding their positions at
+ * level 2, `aria-posinset` / `aria-setsize` from the model (E29-D05 §5.3 F-03), a group row's one merged cell its
+ * rowheader and its tree cell. The host flattens the tree and owns which groups are open.
+ */
+type TreeEntry =
+  | {
+      readonly kind: "group";
+      readonly id: string;
+      readonly account: string;
+      readonly count: number;
+    }
+  | { readonly kind: "position"; readonly id: string; readonly position: Position }
+  | { readonly kind: "total"; readonly id: string; readonly count: number; readonly pnl: number };
+
+const ACCOUNTS = ["Main", "Hedge", "Swing"] as const;
+
+/** The groups in order, each with its positions, from a flat list. */
+const groupsOf = (positions: readonly Position[]): readonly (readonly [string, Position[]])[] =>
+  ACCOUNTS.map((account) => [account, positions.filter((p) => p.account === account)] as const)
+    .filter(([, members]) => members.length > 0)
+    .map(([account, members]) => [account, [...members]] as const);
+
+/** The visible tree, flattened, and each entry's place in it (from the model, never the DOM). */
+function flatten(
+  positions: readonly Position[],
+  open: ReadonlySet<string>,
+): { readonly entries: readonly TreeEntry[]; readonly places: ReadonlyMap<string, TableTreeRow> } {
+  const groups = groupsOf(positions);
+  const entries: TreeEntry[] = [];
+  const places = new Map<string, TableTreeRow>();
+  groups.forEach(([account, members], g) => {
+    const id = `group:${account}`;
+    const expanded = open.has(account);
+    entries.push({ kind: "group", id, account, count: members.length });
+    places.set(id, { level: 1, expanded, posinset: g + 1, setsize: groups.length });
+    if (!expanded) return;
+    members.forEach((position, i) => {
+      entries.push({ kind: "position", id: position.id, position });
+      places.set(position.id, { level: 2, posinset: i + 1, setsize: members.length });
+    });
+  });
+  return { entries, places };
+}
+
+const positionsWord = (n: number): string => (n === 1 ? "1 position" : `${String(n)} positions`);
+
+/** The tree's columns: CMP-049 draws their headers (numbers end-aligned); the custom rows draw every cell. */
+const treeColumns = (
+  columns: readonly TableColumn<Position>[],
+): readonly TableColumn<TreeEntry>[] =>
+  columns.map((column) => ({
+    id: column.id,
+    header: column.header,
+    cell: (entry: TreeEntry) => entry.id,
+    ...(column.numeric === undefined ? {} : { align: "end" as const }),
+    ...(column.widthEm === undefined ? {} : { widthEm: column.widthEm }),
+  }));
+
+/** A group's one merged cell is its rowheader and its tree cell: → and ←, or a click, open and close it. */
+const treeEntryRow = (entry: TreeEntry, grid: TableRowContext): JSX.Element => {
+  if (entry.kind === "group") {
+    const open = grid.rowProps["aria-expanded"] === true;
+    return (
+      <tr {...grid.rowProps}>
+        <th {...grid.cellProps(0, { header: true, span: COLUMNS.length })}>
+          <Icon name={open ? "chevron-down" : "chevron-right"} />
+          {` ${entry.account} · ${positionsWord(entry.count)}`}
+        </th>
+      </tr>
+    );
+  }
+  if (entry.kind === "total")
+    return (
+      <tr {...grid.rowProps}>
+        <th {...grid.cellProps(0, { header: true, span: 4 })}>
+          {`Total · ${positionsWord(entry.count)}`}
+        </th>
+        <td {...grid.cellProps(4, { numeric: true })}>{entry.pnl.toFixed(2)}</td>
+      </tr>
+    );
+  const p = entry.position;
+  return (
+    <tr {...grid.rowProps}>
+      <th {...grid.cellProps(0, { header: true })}>{p.symbol}</th>
+      <td {...grid.cellProps(1)}>{p.account}</td>
+      <td {...grid.cellProps(2, { numeric: true })}>{p.size}</td>
+      <td {...grid.cellProps(3, { numeric: true })}>{p.entry.toFixed(4)}</td>
+      <td {...grid.cellProps(4, { numeric: true })}>{p.pnl.toFixed(2)}</td>
+    </tr>
+  );
+};
+
+type TreeHostProps = Partial<TableProps<TreeEntry>> & {
+  readonly positions?: readonly Position[];
+  readonly initiallyOpen?: readonly string[];
+  readonly withTotals?: boolean;
+  /** A window of this many entries, with the focused row kept mounted outside it (G-01). */
+  readonly windowSize?: number;
+};
+
+/** The treegrid's host: it flattens the open groups, windows them when asked and finds any row by key. */
+function TreeHost({
+  positions = POSITIONS,
+  initiallyOpen = [],
+  withTotals = false,
+  windowSize,
+  ...props
+}: TreeHostProps): JSX.Element {
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set(initiallyOpen));
+  const [first, setFirst] = useState(0);
+  const { entries, places } = flatten(positions, open);
+  const toggle = (account: string): void => {
+    const next = new Set(open);
+    if (next.has(account)) next.delete(account);
+    else next.add(account);
+    setOpen(next);
+  };
+  const size = windowSize ?? entries.length;
+  const offset = Math.max(0, Math.min(first - 10, entries.length - size));
+  const totals: readonly TreeEntry[] = withTotals
+    ? [
+        {
+          kind: "total",
+          id: "total",
+          count: positions.length,
+          pnl: positions.reduce((sum, p) => sum + p.pnl, 0),
+        },
+      ]
+    : [];
+  return (
+    <Table<TreeEntry>
+      treegrid
+      caption={CAPTION}
+      columns={treeColumns(COLUMNS)}
+      rows={entries.slice(offset, offset + size)}
+      rowKey={(entry) => entry.id}
+      treeRow={(entry) => places.get(entry.id) ?? { level: 1, posinset: 1, setsize: 1 }}
+      onExpandedChange={(entry) => {
+        if (entry.kind === "group") toggle(entry.account);
+      }}
+      renderRow={treeEntryRow}
+      totalRows={totals}
+      {...(windowSize === undefined
+        ? {}
+        : {
+            rowWindow: { offset, total: entries.length },
+            onRowsInView: (top: number) => setFirst(top),
+            rowByKey: (key: string) => {
+              const index = entries.findIndex((entry) => entry.id === key);
+              const row = entries[index];
+              return row === undefined ? undefined : { row, index };
+            },
+          })}
+      {...props}
+    />
+  );
+}
+
+/** The cell a play's keys act on, and its row's place. */
+const focusedRow = (): HTMLElement | null =>
+  (document.activeElement as HTMLElement | null)?.closest("tr") ?? null;
+
+/**
+ * Variant=treegrid, collapsed (the APG Treegrid pattern): three account groups at level 1, each `aria-expanded` false;
+ * → on a group's cell opens it, → again moves to its first child, ← moves back to the parent, ← closes it.
+ */
+export const Treegrid: Story = {
+  render: () => <TreeHost />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const tree = canvas.getByRole("treegrid", { name: CAPTION });
+    const main = within(tree).getByRole("rowheader", { name: /Main · 2 positions/ });
+    await expect(main.closest("tr")).toHaveAttribute("aria-expanded", "false");
+    main.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    await waitFor(() => expect(main.closest("tr")).toHaveAttribute("aria-expanded", "true"));
+    await expect(main).toHaveFocus();
+    await userEvent.keyboard("{ArrowRight}");
+    await expect(focusedRow()).toHaveAttribute("aria-level", "2");
+    await userEvent.keyboard("{ArrowLeft}");
+    await expect(main).toHaveFocus();
+    await userEvent.keyboard("{ArrowLeft}");
+    await waitFor(() => expect(main.closest("tr")).toHaveAttribute("aria-expanded", "false"));
+  },
+};
+
+/** Variant=treegrid, expanded: every group open; levels, set positions and absolute row indices from the model. */
+export const TreegridExpanded: Story = {
+  render: () => <TreeHost initiallyOpen={ACCOUNTS} />,
+  play: async ({ canvasElement }) => {
+    const tree = within(canvasElement).getByRole("treegrid", { name: CAPTION });
+    const rows = within(tree).getAllByRole("row").slice(1);
+    await expect(rows.map((row) => row.getAttribute("aria-level"))).toEqual([
+      "1",
+      "2",
+      "2",
+      "1",
+      "2",
+      "2",
+      "1",
+      "2",
+    ]);
+    await expect(rows[4]).toHaveAttribute("aria-posinset", "1");
+    await expect(rows[4]).toHaveAttribute("aria-setsize", "2");
+    await expect(rows[6]).toHaveAttribute("aria-posinset", "3");
+    await expect(rows[6]).toHaveAttribute("aria-setsize", "3");
+    await expect(rows[7]).toHaveAttribute("aria-rowindex", "9");
+  },
+};
+
+/** Twelve positions on three accounts: a list wide and long enough to scroll both ways in a small box. */
+const WIDE_COLUMNS: readonly TableColumn<Position>[] = COLUMNS.map((column) => ({
+  ...column,
+  widthEm: column.id === "symbol" || column.id === "pnl" ? 10 : 9,
+}));
+const TWELVE: readonly Position[] = Array.from({ length: 12 }, (_, i) => ({
+  id: `t${String(i)}`,
+  symbol: `PAIR${String(i + 1).padStart(2, "0")}USDT`,
+  account: ACCOUNTS[i % 3] ?? "Main",
+  size: (i + 1) * 0.5,
+  entry: 100 + i * 3.25,
+  pnl: (i % 5) * 12.5 - 25,
+}));
+
+/**
+ * Pinned columns (E29-D04 §2.7; E29-D05 §6.2 F-01): the symbol and the account stay at the region's start and the
+ * last column at its end while the treegrid scrolls sideways; a focused cell scrolls clear of them.
+ */
+export const StickyLeadColumns: Story = {
+  render: () => (
+    <div style={{ width: "26rem", height: "14rem", display: "flex", flexDirection: "column" }}>
+      <TreeHost
+        positions={TWELVE}
+        initiallyOpen={ACCOUNTS}
+        columns={treeColumns(WIDE_COLUMNS)}
+        stickyFirstColumn={2}
+        stickyLastColumn
+      />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const tree = within(canvasElement).getByRole("treegrid", { name: CAPTION });
+    const region = canvasElement.querySelector<HTMLElement>(".cv-table__region");
+    const symbol = within(tree).getByRole("columnheader", { name: "Symbol" });
+    await expect(symbol).toHaveAttribute("data-pin-start", "0");
+    await expect(within(tree).getByRole("columnheader", { name: "Account" })).toHaveAttribute(
+      "data-pin-start",
+      "1",
+    );
+    await expect(
+      within(tree).getByRole("columnheader", { name: "Unrealised PnL" }),
+    ).toHaveAttribute("data-pin-end", "");
+    if (region === null || region.scrollWidth <= region.clientWidth) return; // no layout to scroll (jsdom)
+    const before = symbol.getBoundingClientRect().left;
+    region.scrollLeft = region.scrollWidth;
+    await waitFor(() => expect(symbol.getBoundingClientRect().left).toBeCloseTo(before, 0));
+  },
+};
+
+/** The trailing totals rowgroup (D04H A-6.4): pinned, after every body row, led by its rowheader; ↓ reaches it. */
+export const TotalsRowgroup: Story = {
+  render: () => (
+    <div style={{ height: "14rem", display: "flex", flexDirection: "column" }}>
+      <TreeHost positions={TWELVE} initiallyOpen={ACCOUNTS} withTotals />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const tree = within(canvasElement).getByRole("treegrid", { name: CAPTION });
+    const groups = within(tree).getAllByRole("rowgroup");
+    const totals = groups[groups.length - 1];
+    if (totals === undefined) throw new Error("no totals rowgroup");
+    const header = within(totals).getByRole("rowheader", { name: "Total · 12 positions" });
+    await expect(header.closest("tr")).toHaveAttribute("aria-rowindex", "17");
+    await expect(tree).toHaveAttribute("aria-rowcount", "17");
+    const rows = within(tree).getAllByRole("row");
+    within(rows[rows.length - 2] ?? tree)
+      .getAllByRole("gridcell")[0]
+      ?.focus();
+    await userEvent.keyboard("{ArrowDown}");
+    await expect(focusedRow()).toHaveAttribute("aria-rowindex", "17");
+  },
+};
+
+/** 288 rows: three accounts of 95 positions each, and their group rows. */
+const MANY_TREE: readonly Position[] = Array.from({ length: 285 }, (_, i) => ({
+  id: `f${String(i)}`,
+  symbol: `PAIR${String(i + 1).padStart(3, "0")}USDT`,
+  account: ACCOUNTS[i % 3] ?? "Main",
+  size: (i + 1) * 0.25,
+  entry: 100 + i * 1.75,
+  pnl: (i % 7) * 9.5 - 30,
+}));
+
+/**
+ * G-01 (E29-D05 §5.3): the focused row stays mounted when the window scrolls away from it, the one drawn row outside
+ * the window, at its absolute `aria-rowindex`; focus never falls to the page.
+ */
+export const FocusedRowOutsideWindow: Story = {
+  render: () => (
+    <div style={{ height: "14rem", display: "flex", flexDirection: "column" }}>
+      <TreeHost positions={MANY_TREE} initiallyOpen={ACCOUNTS} windowSize={40} />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const tree = within(canvasElement).getByRole("treegrid", { name: CAPTION });
+    const second = within(tree).getAllByRole("row")[2];
+    within(second ?? tree)
+      .getAllByRole("gridcell")[0]
+      ?.focus();
+    const row = focusedRow();
+    await expect(row).toHaveAttribute("aria-rowindex", "3");
+    const region = canvasElement.querySelector<HTMLElement>(".cv-table__region");
+    if (region === null || region.scrollHeight <= region.clientHeight) return; // no layout to scroll (jsdom)
+    region.scrollTop = region.scrollHeight;
+    await waitFor(() => expect(tree.querySelector('tr[aria-rowindex="289"]')).not.toBeNull());
+    await expect(row?.isConnected).toBe(true);
+    await expect(focusedRow()).toBe(row);
+    await expect(row).toHaveAttribute("aria-rowindex", "3");
+  },
+};
+
+/** The treegrid's states under the light and high-contrast themes; axe checks each theme. */
+const treeTheme = (theme: string): Story => ({
+  globals: { theme },
+  play: async () => {
+    await waitFor(() => expect(document.documentElement).toHaveAttribute("data-theme", theme));
+  },
+  render: () => <TreeHost initiallyOpen={["Main"]} withTotals />,
+});
+export const ContrastLight: Story = treeTheme("light");
+export const ContrastHighContrast: Story = treeTheme("high-contrast");

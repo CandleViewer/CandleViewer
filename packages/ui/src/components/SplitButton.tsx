@@ -45,6 +45,13 @@ interface SplitButtonBase {
    * which renders once through the panel's notice (E29-D02 §10.4; CMP-079 `form="notice"`, E05's), not per row.
    */
   readonly disabledReason?: string;
+  /**
+   * The id of the node in which the host already shows the gate's reason: a read-only scope's one notice (E29-D02
+   * §10.4, `32-design-specs.md` G-T2.5: one notice, many pointers; CMP-001's `disabledReasonId`). The gated primary is
+   * described by it alone, renders no reason node or echo of its own, and its lock leads the label, named "Not
+   * available" (rendering 2a). Without a gate it does nothing.
+   */
+  readonly disabledReasonId?: string;
   /** Both halves' CMP-001 / CMP-002 variant; default `secondary`. */
   readonly variant?: "primary" | "secondary" | "ghost";
   /** Emits `data-density` on both halves; absent = inherit. */
@@ -72,7 +79,8 @@ const sentence = (text: string | undefined): string | undefined => {
  * keep the reasons their host computes (E09-D09 §2.3): an item the row's reason also covers repeats it as its second
  * line, so the reason is never hover-only, and one it does not cover stays enabled (Chart never takes T2, E29-D02
  * §8.1). A scope's reason (a Viewer, view-as, offline, the other environment, a read-only grant) is no row's own: it
- * renders once through its notice (E29-D02 §10.4). Busy: the primary keeps its label, `aria-busy`, no lock (D04 §4.2).
+ * renders once through its notice (E29-D02 §10.4), which the gated primary points at (`disabledReasonId`, 2a). Busy:
+ * the primary keeps its label, `aria-busy`, no lock (D04 §4.2).
  */
 export function SplitButton(props: SplitButtonProps): JSX.Element {
   const {
@@ -83,6 +91,7 @@ export function SplitButton(props: SplitButtonProps): JSX.Element {
     variant = "secondary",
     density,
     announceReason,
+    disabledReasonId,
   } = props;
   const gate =
     sentence(props.disabledReason) ??
@@ -100,7 +109,12 @@ export function SplitButton(props: SplitButtonProps): JSX.Element {
       <Button
         variant={variant}
         {...dense}
-        {...(gate === undefined ? {} : { disabledReason: gate })}
+        {...(gate === undefined
+          ? {}
+          : {
+              disabledReason: gate,
+              ...(disabledReasonId === undefined ? {} : { disabledReasonId }),
+            })}
         {...(working ? { loading: true, iconLeft: "refresh" as const } : {})}
         onClick={() => primary.onClick()}
       >
