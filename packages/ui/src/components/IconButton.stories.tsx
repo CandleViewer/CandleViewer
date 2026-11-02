@@ -205,3 +205,24 @@ export const KeyboardActivation: Story = {
     await expect(args.onClick).toHaveBeenCalledTimes(2);
   },
 };
+
+/**
+ * Busy (E42-D03 U-7): the row's ⋯ while its write is in flight, named by the busy words, `aria-busy`, a spinner in
+ * place of its glyph; still a Tab stop, so focus returns to it as the dialog closes, and a press does nothing.
+ */
+export const Busy: Story = {
+  args: {
+    icon: "more-horizontal",
+    variant: "ghost",
+    label: "Actions for alex",
+    busy: "Disabling alex…",
+  },
+  play: async ({ canvasElement, args }) => {
+    const button = within(canvasElement).getByRole("button", { name: "Disabling alex…" });
+    await expect(button).toHaveAttribute("aria-busy", "true");
+    await userEvent.tab();
+    await expect(button).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    await expect(args.onClick).not.toHaveBeenCalled();
+  },
+};

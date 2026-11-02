@@ -289,6 +289,13 @@ export interface TableProps<T> {
    */
   readonly rowLabel?: ((row: T) => string) | undefined;
   /**
+   * The row's write in flight (E42-D03 U-7): its busy words ("Disabling alex…"), or `undefined`. Its actions trigger
+   * becomes CMP-002 `busy` (named by them, `aria-busy`, the same focusable element, so focus that was on it or
+   * returns to it stays), and neither its menu nor the context menu opens for that row until the words go; one open
+   * as the write starts closes. With `renderRow` no trigger is drawn, and the words only gate the context menu.
+   */
+  readonly rowBusy?: ((row: T) => string | undefined) | undefined;
+  /**
    * The host's window of a long list (grid mode; SCR-100 windows past 60 rows, E08-D07 D6): `rows` are the drawn
    * rows. Spacer rows hold the others' height, `aria-rowcount` counts the whole list and each row's `aria-rowindex`
    * is absolute. A key that moves focus past the window asks for its row through `onRowsInView`; focus lands once
@@ -969,25 +976,42 @@ interface RowMenuProps {
   /** The row's items, asked for only while its menu is open (a closed menu renders an empty, hidden surface). */
   readonly items: () => readonly MenuItem[];
   readonly label: string;
+  /** The row's write in flight: the trigger's busy words; its menu stays shut meanwhile. */
+  readonly busy: string | undefined;
   readonly tabIndex: 0 | -1 | undefined;
   readonly announceReason: (reason: string) => void;
   readonly onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
 }
 
 /** A row's actions: the CMP-002 "Actions for {row}" button opening the CMP-041 row menu. */
-function RowMenu({ items, label, tabIndex, announceReason, onKeyDown }: RowMenuProps): JSX.Element {
+function RowMenu({
+  items,
+  label,
+  busy,
+  tabIndex,
+  announceReason,
+  onKeyDown,
+}: RowMenuProps): JSX.Element {
   const [open, setOpen] = useState(false);
+  // A busy row's menu stays shut: its trigger is the same element, `aria-busy`, and its press does nothing (U-7).
+  // A request to open it meanwhile is refused here, and one open as the write starts is closed (the menu hands focus
+  // back to the trigger), so nothing opens once the words go either.
+  const idle = busy === undefined;
+  useLayoutEffect(() => {
+    if (!idle && open) setOpen(false);
+  }, [idle, open]);
   return (
     <Menu
-      open={open}
-      onOpenChange={setOpen}
-      items={open ? items() : []}
+      open={open && idle}
+      onOpenChange={(next) => setOpen(next && idle)}
+      items={open && idle ? items() : []}
       announceReason={announceReason}
       trigger={
         <IconButton
           icon="more-horizontal"
           variant="ghost"
           label={`Actions for ${label}`}
+          {...(idle ? {} : { busy })}
           tabIndex={tabIndex}
           // ↑ / ↓ move between rows here, before the menu button takes them as "open" (APG Menu Button).
           onKeyDown={(event) => {
@@ -1049,6 +1073,7 @@ export function Table<T>({
   selectDisabledReason,
   rowActions,
   rowLabel,
+  rowBusy,
   rowWindow,
   onRowsInView,
   renderRow,
@@ -1243,9 +1268,13 @@ export function Table<T>({
   // The context menu is controlled so its items are asked for only while it is open, for the row the render holds
   // (a press remembers its cell before its `contextmenu`). A row with no actions (a group header before its own menu
   // mounts) shows nothing, never an empty menu, and its request is dropped at once, so it never opens later on another.
+  // A row whose write is in flight (`rowBusy`, U-7) shows nothing the same way: a menu open as its write starts closes,
+  // and it never opens by itself once the words go.
   const [contextOpen, setContextOpen] = useState(false);
+  const activeIdle =
+    activeRow === undefined || rowBusy === undefined || !rowBusy(activeRow)?.trim();
   const contextItems =
-    contextOpen && activeRow !== undefined ? (rowActions?.(activeRow) ?? []) : [];
+    contextOpen && activeIdle && activeRow !== undefined ? (rowActions?.(activeRow) ?? []) : [];
   const contextShown = contextItems.length > 0;
   useLayoutEffect(() => {
     if (contextOpen && !contextShown) setContextOpen(false);
@@ -1647,6 +1676,7 @@ export function Table<T>({
           <RowMenu
             items={() => rowActions?.(row) ?? []}
             label={labelOf(row)}
+            busy={rowBusy?.(row)?.trim() || undefined}
             tabIndex={tabFor(r, c)}
             announceReason={say}
             onKeyDown={onGridKeyDown}
