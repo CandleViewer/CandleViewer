@@ -13,7 +13,7 @@ import hashlib
 import hmac
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -21,6 +21,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.admin import wiring
 from candleviewer.admin.wiring import build_secrets_service
+from candleviewer.audit.service import AuditService
 from candleviewer.auth.errors import MfaKeyringUnavailable, RecoveryCodeInvalid
 from candleviewer.auth.mfa_keyring import KEY_NOT_HELD
 from candleviewer.auth.mfa_service import MfaService, _hash_token
@@ -56,8 +57,9 @@ async def _switched(
 ) -> wiring.SecretsBundle:
     """M2 as the real backend wires it (the keyring's store passed), booted."""
     _real_backend(monkeypatch)
-    store, audit = InMemoryCredentialStore(), object()  # the writer the patched sink stands for
-    bundle = build_secrets_service(store, store, audit, auth_keys=keyring)  # type: ignore[arg-type]
+    store = InMemoryCredentialStore()
+    audit = cast(AuditService, object())  # the service the patched sink stands for; never started
+    bundle = build_secrets_service(store, store, audit, auth_keys=keyring)
     await bundle.lifecycle.start(_ctx(environment=keyring.env, **settings))
     return bundle
 

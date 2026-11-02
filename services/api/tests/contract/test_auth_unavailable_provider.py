@@ -8,6 +8,7 @@ all, it executes once (BQ-17). A user without a method and an existing session a
 from __future__ import annotations
 
 import base64
+import inspect
 import uuid
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -25,6 +26,7 @@ from candleviewer.audit.actions import validate_action
 from candleviewer.audit.models import AuditOutcome
 from candleviewer.auth.models import InviteCreateRequest
 from candleviewer.auth.session_service import ENROLMENT_ONLY_LIFETIME
+from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.csrf_helpers import csrf_headers
 from tests.security.auth._stack import INVITE_PW, PW, Stack, open_stack
 from tests.unit.auth.auth_fakes import make_user
@@ -188,6 +190,35 @@ def test_each_mfa_operation_answers_the_contract_s_503(
     (record,) = stack.audit.of(_ACTION)
     assert record["outcome"] is AuditOutcome.FAILURE
     assert record["after_state"] == {"operation": operation, "reason": "auth_keyring_unavailable"}
+
+
+#: The two second-factor routes, which share one per-address budget of refusals (#4664, SR-015),
+#: each with a body and the factor its failures are counted under.
+_SECOND_FACTOR: dict[str, tuple[str, dict[str, str], str]] = {
+    "authMfaVerify": ("/auth/mfa/verify", {"method": "totp", "code": "123456"}, "totp"),
+    "authMfaRecovery": (
+        "/auth/mfa/recovery", {"recovery_code": "ABCD-EFGH-JKLM"}, "recovery_code"
+    ),
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("operation", sorted(_SECOND_FACTOR))
+def test_the_503_spends_none_of_the_address_s_second_factor_budget(
+    stack: Stack, operation: str
+) -> None:
+    """AC5 at the router: the `503` is no refusal of the caller (#4664), so the budget's limit
+    plus one requests from one address while the keyring is down each answer it, never the `429`
+    of an address over its budget, and no failure is counted. `create_app` builds the router
+    with the default budget."""
+    limit: int = inspect.signature(PerIpLoginThrottle).parameters["max_attempts"].default
+    path, body, factor = _SECOND_FACTOR[operation]
+    stack.add_user("alice")
+    body = body | {"mfa_token": _password_step(stack, "alice")}
+    failures = stack.scraped("auth_login_failures_total", method=factor)
+    stack.keyring.down = DOWN
+    answers = [stack.client.post(path, json=body).status_code for _ in range(limit + 1)]
+    assert answers == [503] * (limit + 1)
+    assert stack.scraped("auth_login_failures_total", method=factor) == failures
 
 
 @pytest.mark.parametrize("operation", ["redeemInvite", "confirmInvite"])

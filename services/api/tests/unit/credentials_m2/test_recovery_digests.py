@@ -52,10 +52,11 @@ def _live_keyring(raw: bytes = KEK_V1, version: int = 1) -> tuple[InMemoryAuthKe
 
 
 async def _open(
-    keys: Any, kcv: InMemoryCredentialStore, src: _Src, env: str = "live"
+    keys: Any, kcv: InMemoryCredentialStore, src: _Src, env: str = "live", prev: _Src | None = None
 ) -> tuple[Any, RecoveryDigests | None]:
+    sources = _bound_sources(src, prev)
     return await open_recovery_digests(
-        _settings(environment=env), kcv, keys, sources=_bound_sources(src), harden=lambda: True
+        _settings(environment=env), kcv, keys, sources=sources, harden=lambda: True
     )
 
 
@@ -88,14 +89,17 @@ async def test_a_kek_that_fails_its_proof_reads_no_keyring_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """AC11: a KEK that is not the enrolled one refuses before any row is read, so no digest
-    can be computed."""
+    can be computed. The spy records a read rather than raising: `session()` would swallow it."""
     keys, _ = _live_keyring()
+    read: list[str] = []
 
     async def unread(env: str) -> list[dict[str, Any]]:
-        raise AssertionError("a keyring row was read before the KEK was proven")
+        read.append(env)
+        return []
 
     monkeypatch.setattr(keys, "rows_for", unread)
     proof, session = await _open(keys, _enrolled(KEK_V2), _Src(KEK_V1, 1))
+    assert read == []  # no keyring row was read before the KEK was proven
     assert (proof.kcv_ok, proof.reason, session) == (False, "kek_mismatch", None)
 
 
@@ -132,6 +136,22 @@ async def test_rows_left_under_the_previous_kek_without_it_are_stranded() -> Non
     old.close()
     proof, session = await _open(keys, kcv, _Src(KEK_V2, 2))
     assert (proof.kcv_ok, proof.reason, session) == (False, "auth_keyring_stranded", None)
+
+
+async def test_rows_left_under_the_previous_kek_open_with_it_supplied() -> None:
+    """After a failed re-wrap (BQ-4) the rows stay at v1 under a v2 KEK: a live break-glass run
+    given both handles, both KCVs enrolled, opens the v1 ring's recovery key, so digests match."""
+    keys, digest = _live_keyring(KEK_V1, 1)
+    kcv = _enrolled(KEK_V2, 2)
+    old = kek(KEK_V1, 1, "live")
+    kcv.kcvs[("live", 1)] = old.kcv()
+    old.close()
+    src, prev = _Src(KEK_V2, 2), _Src(KEK_V1, 1)
+    proof, session = await _open(keys, kcv, src, prev=prev)
+    assert (proof.kcv_ok, proof.version, proof.reason) == (True, 2, None) and session is not None
+    assert session.recovery_code_digests(CODE, OWNER) == (digest,)
+    assert _zeroed(src) and _zeroed(prev)  # both KEKs zeroed before the session is handed over
+    session.close()
 
 
 async def test_a_keyring_store_that_fails_is_a_failed_proof(

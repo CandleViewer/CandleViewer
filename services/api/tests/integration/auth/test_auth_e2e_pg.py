@@ -41,6 +41,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     sqlstate_of,
 )
 from scripts.seed_fixture_user import LegacyTotpSealer, seed
+from tests.unit.credentials_m2._vectors import KEK_V1
 
 pytestmark = pytest.mark.integration
 #: `SecretsService`'s keyword defaults, where `create_app` takes its hardening from.
@@ -117,7 +118,7 @@ def kek_file(tmp_path_factory: pytest.TempPathFactory) -> str:
     """#2152: the module's file KEK (32 raw bytes, mode 0400), one for every boot of the module:
     the first boot enrols it and imports the env keys, the later ones open that keyring."""
     kek = tmp_path_factory.mktemp("kek").resolve() / "kek"
-    kek.write_bytes(os.urandom(32))
+    kek.write_bytes(KEK_V1)  # a fixed test vector (C-13.5), never a key
     kek.chmod(0o400)
     return str(kek)
 

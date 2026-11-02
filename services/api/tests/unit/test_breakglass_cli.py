@@ -31,8 +31,14 @@ from candleviewer.audit.journal import RunLockHeld, hold_run_lock, journal_dir
 from candleviewer.audit.wal import AuditWal
 from candleviewer.audit.writer import AuditWriter
 from candleviewer.observability.logging import configure_logging, reset_logging
-from candleviewer.secrets import KekCheckResult, open_recovery_digests, prove_kek_possession
+from candleviewer.secrets import (
+    KekCheckResult,
+    RecoveryDigests,
+    open_recovery_digests,
+    prove_kek_possession,
+)
 from candleviewer.secrets._kek import LoadedKek
+from candleviewer.secrets.errors import AuthKeyringUnavailable
 from candleviewer.secrets.store import InMemoryAuthKeyStore, InMemoryCredentialStore
 from candleviewer.settings import Environment, Settings
 from tests.unit.audit.audit_fakes import FakeAuditRepository
@@ -377,6 +383,36 @@ async def test_a_live_keyring_problem_refuses_as_an_unproven_kek_before_the_code
     status, operator = await _run(settings, stores)
     assert status is X.KEK_UNPROVEN and stores.owners.hashes == []
     assert any("kek_unproven: auth_keyring_missing" in line for line in operator.lines)
+
+
+def _digests(fill: int) -> RecoveryDigests:
+    """M2's digest session over a fixed test key (C-13.5), never a real one."""
+    return RecoveryDigests(bytearray([fill]) * 32)
+
+
+def test_the_live_hold_closes_the_session_it_replaces() -> None:
+    """#2152 BQ-11: `hold` zeroes the session it held before, so a run never keeps two keys, and
+    the reset digests with the new one until the run closes it."""
+    held, first, second = breakglass_wiring._LiveDigests(), _digests(1), _digests(2)
+    held.hold(first)
+    held.hold(second)
+    with pytest.raises(AuthKeyringUnavailable, match=r"^auth_keyring_closed$"):
+        first.recovery_code_digests(_CODE, _OWNER_ID)
+    expected = second.recovery_code_digests(_CODE, _OWNER_ID)
+    assert held.recovery_code_digests(_CODE, _OWNER_ID) == expected != ()
+    held.close()
+    with pytest.raises(AuthKeyringUnavailable, match=r"^auth_keyring_closed$"):
+        second.recovery_code_digests(_CODE, _OWNER_ID)
+
+
+def test_a_session_closed_under_the_hold_matches_no_code() -> None:
+    """Fail closed: with no session, or one closed under the hold (its `auth_keyring_closed`
+    refusal), the reset gets no digest, so the operator's code matches no row."""
+    held, session = breakglass_wiring._LiveDigests(), _digests(3)
+    assert held.recovery_code_digests(_CODE, _OWNER_ID) == ()
+    held.hold(session)
+    session.close()
+    assert held.recovery_code_digests(_CODE, _OWNER_ID) == ()
 
 
 @pytest.mark.parametrize("stuck", [False, True], ids=["released", "release-fails"])
