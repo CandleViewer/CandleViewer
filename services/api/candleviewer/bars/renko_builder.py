@@ -230,6 +230,16 @@ class RenkoBarBuilder:
     def on_clock(self, now_us: TsUs) -> Sequence[BarUpdate]:
         return _NONE  # bricks never close on the clock
 
+    def closed_through(self) -> int:
+        """The highest brick `index` closed, -1 for none (#2933 restore check). The forming
+        brick takes `_next` and a closed brick advances it, so the forming one is never counted."""
+        return self._next - 1
+
+    def forming_open_us(self) -> int | None:
+        """The forming run's first trade time, the stored open time of every brick it closes;
+        None for none (#2933 restore check)."""
+        return None if self._cur is None else self._cur.first_ts
+
     def snapshot(self) -> BuilderState:
         """Versioned orjson state; carries the prevailing direction and the frozen width (BI-5)."""
         doc = {

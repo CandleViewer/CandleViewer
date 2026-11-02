@@ -7,6 +7,8 @@ dropped and counted (SR-E12-11). Rows at an older `build_version` than the runni
 served as-is and a rebuild is scheduled **once** per `(symbol, spec_hash)` window, not per poll.
 `read_tail` (E12-T06, #2195) is the WS snapshot store's one bounded newest-first read: closed,
 tape-built bars only, oldest first, inside a `ts` window measured back from the wall clock.
+`read_after` (#2933) is the restore check's: the bars of one generation above an index, read
+from a point the blob names, failing closed.
 """
 
 from __future__ import annotations
@@ -225,9 +227,44 @@ def build_tail_scan_bound_query(
     return sql, (ts_param(from_us),)
 
 
+#: The most stored bars `read_after` returns (#2933); its statement asks for one more, so a read
+#: that finds more is known to be cut and reads as incomplete. A restore check, not a client read.
+MAX_AFTER_ROWS: Final = MAX_TAIL
+
+
+def build_after_query(
+    kind: str,
+    symbol: str,
+    bar_param: str,
+    generation: int,
+    after_index: int,
+    from_us: int,
+    *,
+    now_us: int,
+) -> tuple[str, tuple[object, ...]]:
+    """`read_after`'s one statement (#2933): the rows of one series and generation with an
+    `index` above `after_index`, at or after `from_us`, oldest `ts` first, `MAX_AFTER_ROWS + 1` at
+    most. Its one sort key is the designated timestamp, a forward scan that stops at the limit;
+    the caller orders the rows by `index`. Every value is a bind; the window check is the tail
+    statements'."""
+    if kind not in _FAMILIES:  # the closed allow-list the table name comes from
+        raise ValueError(f"unknown bar kind {kind!r}")
+    _check_window(kind, from_us, now_us)
+    sql = (
+        f"SELECT * FROM bars_{kind} WHERE symbol = $1 AND bar_param = $2 AND ts >= $3 "  # noqa: S608  # nosec B608 reason=table-from-closed-allowlist owner=@CandleViewer/backend
+        f"AND {_GEN} = $4 AND {_IDX} > $5 ORDER BY ts LIMIT {int(MAX_AFTER_ROWS) + 1}"
+    )
+    return sql, (symbol, bar_param, ts_param(from_us), generation, after_index)
+
+
+def _in_window(kind: str, from_us: int, now_us: int) -> bool:
+    """SR-E12-02: does a read from `from_us` start inside its kind's window cap?"""
+    return from_us >= now_us - (MAX_TIME_WINDOW_US if kind == "time" else MAX_NON_TIME_WINDOW_US)
+
+
 def _check_window(kind: str, from_us: int, now_us: int) -> None:
     """SR-E12-02, where the SQL is built: no statement starts before its kind's window cap."""
-    if from_us < now_us - (MAX_TIME_WINDOW_US if kind == "time" else MAX_NON_TIME_WINDOW_US):
+    if not _in_window(kind, from_us, now_us):
         raise ValueError(f"from_us is older than the {kind} bars window cap (SR-E12-02)")
 
 
@@ -506,6 +543,51 @@ class BarReader:
             bars, skipped=skipped + malformed, builds=builds, dropped=dropped, since_us=since,
             fetched=len(raw), bounded=bounded,
         )  # fmt: skip
+
+    async def read_after(
+        self, symbol: str, spec: BarSpec, generation: int, after_index: int, from_us: int
+    ) -> StoredRun:
+        """The stored closed bars of one series and generation with an `index` above
+        `after_index`, at or after `from_us`, ordered by `index` (#2933: a restore checks them
+        against its blob plus the tape). Anchored at the blob, not at now: one bounded statement
+        (`build_after_query`), under the caller's timeout. It fails closed: a read it cannot
+        finish, or a row it cannot use, is `complete=False`, never a shorter run. That is a
+        start older than the kind's SR-E12-02 window cap (no statement is sent), more than
+        `MAX_AFTER_ROWS` rows, a row the integrity check withholds (SR-E12-11), or one that is
+        not a closed tape-built bar of the generation or does not parse."""
+        now = self._now_us()
+        if not _in_window(spec.kind, from_us, now):
+            return StoredRun([], complete=False)
+        sql, params = build_after_query(
+            spec.kind, symbol, bar_param_for(spec), generation, after_index, from_us, now_us=now
+        )
+        raw = await self._conn.fetch(sql, *params)
+        if len(raw) > MAX_AFTER_ROWS:
+            return StoredRun([], complete=False)
+        bars: list[Bar] = []
+        for n, row in enumerate(raw):
+            if n and n % TAIL_YIELD_EVERY == 0:
+                await asyncio.sleep(0)  # C-2.17, as `read_tail`
+            if _untrusted(row, spec):
+                return StoredRun([], complete=False)
+            try:
+                got = _tail_bar(row, spec)
+            except (ArithmeticError, ValueError, TypeError, BarPersistError):
+                return StoredRun([], complete=False)
+            if got is None or got[0] != generation or got[1].index <= after_index:
+                return StoredRun([], complete=False)
+            bars.append(got[1])
+        bars.sort(key=lambda b: b.index)
+        return StoredRun(bars)
+
+
+@dataclass(frozen=True, slots=True)
+class StoredRun:
+    """`read_after` result: closed bars ordered by `index`. `complete=False`: the read could not
+    say which bars are stored (its caller refuses what it checks), and `bars` is empty."""
+
+    bars: list[Bar]
+    complete: bool = True
 
 
 @dataclass(frozen=True, slots=True)

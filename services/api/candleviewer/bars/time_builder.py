@@ -346,6 +346,15 @@ class TimeBarBuilder:
         self._prune()
         return out
 
+    def closed_through(self) -> int:
+        """The highest `index` this builder has closed, -1 for none (#2933 restore check). A
+        closed bar can still be amended inside the late window; it stays closed."""
+        return self._next_index - (2 if self._cur is not None else 1)
+
+    def forming_open_us(self) -> int | None:
+        """The open time of the bar in formation, None for none (#2933 restore check)."""
+        return None if self._cur is None else self._cur.open_time
+
     def snapshot(self) -> BuilderState:
         """Versioned JSON draft (Decimals as strings) inside the `BuilderState` envelope.
 

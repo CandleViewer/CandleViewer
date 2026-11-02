@@ -1677,6 +1677,9 @@ def create_app(
         series=bars_series,
         publisher=publisher,
         indicators=indicators,
+        # #2933: a restore is checked against the bars stored after its blob, on REST's
+        # connection.
+        stored_after=bars_reader.read_after if bars_reader is not None else None,
     )
     # #2487: quarantined, or the symbol's tape past the watchdog's trade limit (§6, §7.2).
     stale = series_stale(ctx, app.state.bars_runtime.builder_set.quarantined)

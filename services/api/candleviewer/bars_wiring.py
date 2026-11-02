@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any, Final, Protocol
 
 import structlog
 
-from candleviewer.bars.builder_set import BarBuilderSet, production_factory
+from candleviewer.bars.builder_set import BarBuilderSet, StoredAfter, production_factory
 from candleviewer.bars.emit import BarSink, EmitRouter, WriterSink
 from candleviewer.bars.heal_driver import HealDriver
 from candleviewer.bars.kline_rows import PrecedenceHealth
@@ -239,11 +239,13 @@ def wire_bars(
     series: SeriesStore | None = None,
     publisher: BarSink | None = None,
     indicators: IndicatorSink | None = None,
+    stored_after: StoredAfter | None = None,
 ) -> BarsRuntime:
     """Build the set + writer, attach the set to `ctx.bars`, return the lifecycle owner. `series`,
     `publisher` (the WS sinks) and `indicators` (the engine) are emitted to before the writer, in
     that order (module docstring); `reader_stop` closes the series store's own reader connection
-    after `sink_stop`; the runtime owns a heal driver over `series` and stops `indicators`."""
+    after `sink_stop`; the runtime owns a heal driver over `series` and stops `indicators`.
+    `stored_after` reads the stored bars a restored series' blob is checked against (#2933)."""
     if inner_sink is None:
         logger().warning(
             "bars_rows_not_persisted",
@@ -259,6 +261,7 @@ def wire_bars(
         ),
         StateStore(root),
         tape=StorageTape(ctx, now_us, tick_size),
+        stored=stored_after,
         now_us=now_us,
         factory=production_factory(tick_size, renko_enabled=ctx.settings.bars_renko_enabled),
     )

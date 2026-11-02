@@ -156,6 +156,14 @@ class _ActivityBuilder:
     def on_clock(self, now_us: TsUs) -> Sequence[BarUpdate]:
         return _NONE
 
+    def closed_through(self) -> int:
+        """The highest `index` this builder has closed, -1 for none (#2933 restore check)."""
+        return self._next_index - (2 if self._cur is not None else 1)
+
+    def forming_open_us(self) -> int | None:
+        """The bar in formation's first trade time, its stored open time; None for none (#2933)."""
+        return None if self._cur is None else self._cur.first_ts
+
     def snapshot(self) -> BuilderState:
         """Versioned orjson draft, same envelope as `TimeBarBuilder.snapshot` (#1987)."""
         doc = {"cur": None if self._cur is None else self._cur.dump(), "next": self._next_index}

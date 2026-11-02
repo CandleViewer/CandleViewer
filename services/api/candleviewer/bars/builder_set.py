@@ -47,7 +47,11 @@ no catalogue lifecycle (B1-B20), so lease state is plain bookkeeping in `leases.
   sets the generation floor. A blob whose replay meets a print the builder refuses (SR-E12-15's
   per-print cap) or raises on is refused too (`replay_refused`, #2762), else it could never be
   caught up. Its log line names the class of the builder's error (`error_type`), so a cap refusal
-  can be told from a builder defect.
+  can be told from a builder defect. A blob that storage is ahead of is refused too
+  (`storage_ahead`, #2933): the recorder lost trades after the watermark, so the blob plus the
+  tape cannot rebuild every bar stored in its generation above the blob's last closed index
+  (`_storage_ahead`), and live trades would re-emit stored `(generation, index)` keys with
+  other content.
 - **Generation (#2662).** A fresh builder restarts `index` at 0, so a cold start begins a new
   generation (epoch): `max(now_ms, floor + 1)`. `now_ms` is the set's injected UTC wall clock
   (`now_us // 1000`). `floor` is the highest generation known for the series: the one a blob
@@ -77,7 +81,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import OrderedDict, deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
@@ -89,6 +93,7 @@ from candleviewer.bars.activity_builders import TickBarBuilder, VolumeBarBuilder
 from candleviewer.bars.emit import EmitRouter
 from candleviewer.bars.errors import BarsError, BarServiceStopping, BarSpecError
 from candleviewer.bars.leases import DEFAULT_CAPS, SpecCaps, SpecLeases
+from candleviewer.bars.limits import QUERY_TIMEOUT_S
 from candleviewer.bars.metrics import (
     bar_builder_cold_start_seconds,
     bar_builder_cold_starts_total,
@@ -101,7 +106,8 @@ from candleviewer.bars.metrics import (
     bars_gap_detected_total,
     bars_restore_gap_total,
 )
-from candleviewer.bars.models import BarBuilder, BarSpec, BarUpdate
+from candleviewer.bars.models import Bar, BarBuilder, BarSpec, BarUpdate
+from candleviewer.bars.reader import StoredRun
 from candleviewer.bars.renko_builder import RenkoBarBuilder
 from candleviewer.bars.rows import MAX_GENERATION
 from candleviewer.bars.state_store import StateStore, StoredState, Watermark
@@ -210,6 +216,49 @@ class TapeSource(Protocol):
 
 
 @runtime_checkable
+class ClosedFrontier(Protocol):
+    """A builder that reports where its closed bars end (#2933). Every production builder does;
+    one that does not skips the storage check on restore."""
+
+    def closed_through(self) -> int:
+        """The highest `index` closed, -1 for none."""
+        ...
+
+    def forming_open_us(self) -> int | None:
+        """The stored `ts` (open time) of the bar in formation, None for none: no later bar of
+        the series opens before it."""
+        ...
+
+
+#: `(symbol, spec, generation, after_index, from_us) -> ` the stored closed bars of that
+#: generation with an `index` above `after_index`, at or after `from_us`, by `index`, or an
+#: incomplete run (#2933). `BarReader.read_after` is the one in production.
+StoredAfter = Callable[[str, BarSpec, int, int, int], Awaitable[StoredRun]]
+
+
+def _content(bar: Bar) -> tuple[int, int, int]:
+    """What a stored row and a rebuilt bar must share to be the same bar: its span and its
+    trade count, exact on both sides (prices and sizes are DOUBLE in storage)."""
+    return bar.open_time, bar.close_time, bar.trade_count
+
+
+def _scratch[T](step: Callable[[T], Sequence[BarUpdate]], arg: T) -> Sequence[BarUpdate]:
+    """One scratch-builder step; a print it refuses or raises on refuses the blob, as in
+    `_catch_up` (#2762)."""
+    try:
+        return step(arg)
+    except Exception as exc:
+        raise _ReplayRefused from exc
+
+
+def _note(closes: dict[int, tuple[int, int, int]], ups: Sequence[BarUpdate], after: int) -> None:
+    """Record each close above `after` among `ups`, the newest per `index` (an amend replaces)."""
+    for u in ups:
+        if u.kind == "close" and u.bar.index > after:
+            closes[u.bar.index] = _content(u.bar)
+
+
+@runtime_checkable
 class GapAware(Protocol):
     """A builder that can carry an unrecovered tape gap onto its next bar (#529)."""
 
@@ -278,6 +327,7 @@ class BarBuilderSet:
         store: StateStore,
         *,
         tape: TapeSource | None = None,
+        stored: StoredAfter | None = None,
         now_us: Callable[[], int],
         caps: SpecCaps = DEFAULT_CAPS,
         factory: BuilderFactory = default_factory,
@@ -287,6 +337,7 @@ class BarBuilderSet:
     ) -> None:
         self._bus, self._env, self._router, self._store = bus, env, router, store
         self._tape, self._now, self._factory = tape, now_us, factory
+        self._after = stored
         self._persist_every, self._tick_s, self._sleep = persist_every_us, tick_s, sleep
         self._leases = SpecLeases(caps)
         self._lanes: dict[str, _Lane] = {}
@@ -574,6 +625,12 @@ class BarBuilderSet:
                 builder.restore(stored.state)
             except _RESTORE_ERRORS:
                 stored, reason, builder = None, "restore_failed", self._factory(spec, symbol)
+        if (
+            stored is not None
+            and wm is not None
+            and await self._storage_ahead(spec, symbol, stored)
+        ):
+            stored, reason, builder = None, "storage_ahead", self._factory(spec, symbol)
         if reason not in _QUIET_REASONS:
             # Not deleted: the cold start's floor record overwrites it below, and if that write
             # fails the refused blob stays on disk and keeps supplying its floor.
@@ -637,6 +694,80 @@ class BarBuilderSet:
                 await self._catch_up(entry, skip, t)
         bar_builder_cold_start_seconds.observe(time.perf_counter() - t0)
         return entry
+
+    async def _storage_ahead(self, spec: BarSpec, symbol: str, stored: StoredState) -> bool:
+        """Does storage hold a bar of the blob's generation that the blob plus the tape cannot
+        reproduce (#2933)? The recorder can lose trades after the watermark while its head
+        stays past it, so `ahead_of_tape` passes, and live trades would then re-emit stored
+        `(generation, index)` keys with other content.
+
+        A scratch builder takes the blob. Every stored closed bar of the generation above its
+        `closed_through()` is read (`stored`, `BarReader.read_after`: anchored at the blob, from
+        its forming bar's open time or the watermark, whichever is earlier, so the clock at
+        restore does not matter; one bounded statement under `QUERY_TIMEOUT_S`). A read that
+        cannot say which bars are stored (`complete=False`: its row limit, the window cap, a
+        withheld or unreadable row) refuses the blob: unknown fails closed. Then the scratch
+        builder takes the tape after the watermark, in `ts` order, until it has closed the
+        newest stored `index` (it stops there: no later trade can change a bar it closed), and
+        the clock to now if the tape ran out first (a time bar the clock closed). It records
+        each close, the newest per `index`. The blob is refused when any stored bar is one it
+        did not close, or closed with another span or trade count. It emits nothing, so a
+        refused blob has re-emitted nothing.
+
+        The lane's ring is not replayed. On a restart the ring holds only trades that came
+        after the crash. On an in-process re-lease it can hold trades this process applied and
+        stored that the tape writer has not landed yet: the check then refuses a good blob,
+        rare and safe (the series cold-starts in a new generation). Cost: a second tape read,
+        under the lane lock, on a restore with bars stored after the blob, to the newest one.
+        A failing or timed-out stored read refuses the blob (fail closed, `storage_ahead`, logged
+        with `error_type` only; cancellation propagates); a failing tape read still raises and the
+        blob stays. The 2 s read budget includes waiting on REST's connection lock. A final blob
+        older than the SR-E12-02 window cap is refused without a read. Rare, safe false refusals,
+        each costing a new generation and no data: the live builder dropped a late trade
+        (`late_window` / `empty_interval`) that the ts-ordered replay applies; activity-bar
+        trades arrived out of ts order across a bar boundary; more than 1,000 bars were stored
+        between the last periodic save and the crash. The scratch builder is a production
+        builder, so its closes are counted in the builder metrics and its first-bar log lines
+        repeat the live builder's: the factory takes no option to build one without them."""
+        wm = stored.watermark
+        if self._after is None or wm is None:
+            return False
+        scratch = self._factory(spec, symbol)
+        if not isinstance(scratch, ClosedFrontier):
+            return False
+        scratch.restore(stored.state)  # the live builder took this state already
+        after, forming = scratch.closed_through(), scratch.forming_open_us()
+        from_us = wm.ts_us if forming is None else min(forming, wm.ts_us)
+        try:
+            async with asyncio.timeout(QUERY_TIMEOUT_S):
+                run = await self._after(symbol, spec, stored.generation, after, from_us)
+        except Exception as exc:  # unknown fails closed; CancelledError is not an Exception
+            _log().warning("bars_storage_read_failed", symbol=symbol, error_type=type(exc).__name__)
+            return True
+        if not run.complete:
+            return True
+        if not run.bars:
+            return False
+        newest = run.bars[-1].index
+        closes: dict[int, tuple[int, int, int]] = {}
+        if self._tape is not None:  # a tape error raises as it is (the blob stays)
+            skip = _Mark(wm.ts_us, wm.ids)
+            tape = self._tape.since(symbol, wm.ts_us)
+            try:
+                async for t in tape:
+                    if not skip.covers(t.ts_event, t.trade_id):
+                        _note(closes, _scratch(scratch.on_trade, t), after)
+                        skip.advance(t.ts_event, t.trade_id)
+                        if scratch.closed_through() >= newest:
+                            break
+            finally:
+                if isinstance(tape, AsyncGenerator):
+                    await tape.aclose()
+        if scratch.closed_through() < newest:
+            _note(closes, _scratch(scratch.on_clock, self._now()), after)
+            if scratch.closed_through() < newest:
+                return True
+        return any(closes.get(b.index) != _content(b) for b in run.bars)
 
     def _discarded(self, symbol: str, spec_hash: str, reason: str, error_type: str = "") -> None:
         """A blob (or a floor read from one) that could not be used: counted, logged, flagged.
