@@ -6701,7 +6701,7 @@ export interface paths {
     put?: never;
     /**
      * Invite a user
-     * @description Creates a user in `invited` state and returns a one-time invite link valid for 72 h. No password is set by the owner.
+     * @description Requires step-up `users`. Creates a user in `invited` state and returns a one-time invite link valid for 72 h. No password is set by the owner. `mfa_required: false` is refused with `422` (`detail: invalid invite request`, C-12.2) and nothing is stored.
      */
     post: operations["createUser"];
     delete?: never;
@@ -6777,9 +6777,15 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Revoke open invites and mint a new link (shown once) */
+    /**
+     * Revoke open invites and mint a new link (shown once)
+     * @description Requires step-up `users`. Without a live one the call is `403 step_up_required`, after RBAC and the target's lookup (`404`).
+     */
     post: operations["reissueInvite"];
-    /** Revoke the pending invitation */
+    /**
+     * Revoke the pending invitation
+     * @description Requires step-up `users`. Without a live one the call is `403 step_up_required`, after RBAC and the target's lookup (`404`).
+     */
     delete: operations["revokeInvite"];
     options?: never;
     head?: never;
@@ -8189,8 +8195,12 @@ export interface components {
       display_name?: string;
       /** Format: email */
       email: string;
-      /** @default true */
-      mfa_required: boolean;
+      /**
+       * @description TOTP is mandatory for every user (C-12.2); `false` is `422 validation_failed`.
+       * @default true
+       * @enum {boolean}
+       */
+      mfa_required: true;
       /** @description Invites grant `viewer` only (#2109); the owner promotes after activation. */
       roles: "viewer"[];
       username: string;
@@ -22938,6 +22948,7 @@ export interface operations {
           "application/json": components["schemas"]["UserWithInvite"];
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
@@ -23171,7 +23182,8 @@ export interface operations {
         };
         content?: never;
       };
-      403: components["responses"]["CsrfTokenInvalid"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -23203,7 +23215,8 @@ export interface operations {
         };
         content?: never;
       };
-      403: components["responses"]["CsrfTokenInvalid"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       503: components["responses"]["ServiceUnavailable"];
     };

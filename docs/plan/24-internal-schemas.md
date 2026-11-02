@@ -6787,6 +6787,15 @@ The orchestrator assigned this number on 2026-11-02 (ruling of record on #5331, 
 - Two settings are PROPOSED to this document's owner: `admin_area_coalesce_seconds` (300 s default, 0 = record every request, max 3600) and the 4096-key bound on open windows (the oldest window's summary is written on eviction; a full map records every request).
 - No `22` change, no migration, no new action.
 
+### 19.99 2026-11-02 — 22 `createUser`, `reissueInvite`, `revokeInvite`: `mfa_required` is always true, and the invite step-up is declared (E09 / E42-X01, #3086)
+
+The orchestrator assigned this number on 2026-11-02 (17:44Z); it is kept through every rebase.
+
+- Contract first (C-6.1), in the first of the change's two commits. The server model (`Literal[True]`) and its red-first test follow in the second commit.
+- 22 `CreateUserRequest.mfa_required` becomes `{type: boolean, enum: [true], default: true}`, matching `UpdateUserRequest` (C-12.2, SR-020: TOTP for every user). `false` is refused `422` before the step-up demand, and nothing is stored. The field is kept rather than dropped, so a client that sends `true` is unaffected.
+- `createUser`, `reissueInvite` and `revokeInvite` declare "Requires step-up `users`" and the `403: Forbidden` and `401: Unauthorized` responses, as `updateUser` / `deleteUser` / `setUserRoles` do. The routes were already step-up gated in code (`HANDLER_GATED_ROUTES`), so nothing changes on the wire. On reissue and revoke, RBAC and the target's `404` come before the gate. Their `403` ref moves from `CsrfTokenInvalid` to `Forbidden`, which still documents `csrf_token_invalid`. It does not carry the `Retry-After` header the CSRF budget sends.
+- `packages/protocol` is regenerated. There is no new `x-error-codes` entry, WS frame, migration, chart or `machine_hash` change.
+
 ### 19.103 2026-11-03 — §9.2 the snapshot bound of a leg's `profile_snapshot` (E28-T01, #3969)
 
 This is the number the orchestrator assigned on 2026-11-03 (02:42Z); it keeps it through its rebases.
