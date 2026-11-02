@@ -161,6 +161,19 @@ read -rs -p 'cv_ro password: ' RO_PW; echo
 unset OWNER_PW APP_PW RO_PW
 ```
 
+The bootstrap also creates the backup sidecar's roles, `cv_backup` and `cv_restore` (ADR-0041;
+`21-database-schema.md` §1.1, "Backup roles"); their passwords, `backup_pw` and `restore_pw`, are
+optional and the block above sets neither. Without `backup_pw`, `cv_backup` is created `NOLOGIN`
+with no password: it exists for its grants and nothing can log in as it, and a later bootstrap run
+leaves an existing role as it is. Once the sidecar's secret mount holds its password, a superuser
+gives it its login, with the password typed at a hidden prompt as above and never on a command line:
+
+```sql
+ALTER ROLE cv_backup LOGIN PASSWORD '<from the secret mount>';
+```
+
+`cv_restore` stays `NOLOGIN` either way; only a restore job's host-side step enables its login.
+
 Then apply both schemas by hand, once (`docs/ops/runbooks/storage-migrate.md`; `--build` rebuilds
 `migrate` from this checkout, as that runbook does). Step 4's `up` runs the step again before it
 starts `api`, because `api` waits for `migrate`, so this is the run whose exit status you read:

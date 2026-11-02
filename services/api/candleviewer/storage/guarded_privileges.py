@@ -8,29 +8,37 @@ what the revisions' upgrades revoke from `cv_app`. The tripwire
 the two differ: a REVOKE with no entry, an entry with no REVOKE, or one that a later upgrade
 grants back. A column grant (`GRANT UPDATE (replayed_at)`, 0033) gives no table privilege back.
 
-The login must also be a member of none of `PRIVILEGED_ROLES` (ADR-0041 section 1): `cv_backup`
-and `cv_restore`, the backup sidecar's dump and restore roles, and `cv_owner`, the objects' owner.
-A membership would hand the API a database-wide read or the owner's rights, the audit tables'
-included (C-5.7). The same read reports each membership (`pg_has_role(..., 'MEMBER')`, direct or
-inherited) and the check judges it as it judges a held pair.
+The login must also be a member of none of `REFUSED_ROLES` (ADR-0041 section 1): the
+`PRIVILEGED_ROLES` `cv_backup` and `cv_restore`, the backup sidecar's dump and restore roles, and
+`cv_owner`, the objects' owner, and the `BUILTIN_DATA_ROLES`, Postgres's built-in read-all and
+write-all roles. A membership would hand the API a database-wide read or write or the owner's
+rights, the audit tables' included (C-5.7). The same read reports each membership
+(`pg_has_role(..., 'MEMBER')`, direct or inherited) and the check judges it as it judges a held
+pair. A backup role that is `NOLOGIN` is safe: the check reads the login's memberships, never
+whether a refused role exists or can log in. In `live` a superuser login is refused in its own
+right too (one more count), whatever it holds, and so is one that holds the `REFUSED_ATTRIBUTES`
+(`rolreplication`, `rolbypassrls`, `rolcreaterole`, `rolcreatedb`, read on the same row as
+`rolsuper`), one more count each; outside `live` they are judged like a membership, and the
+log line names the attributes only. The built-in roles that reach the server's files and programs
+(`pg_read_server_files`, `pg_write_server_files`, `pg_execute_server_program`) are refused too.
 
 `check_guarded_privileges` runs once at start-up, from `StorageService.start()` on the real
 backend once the tiers answer, on the storage tier's own connection, so it reads the role the app
 runs as. One statement asks `has_table_privilege(current_user, ...)` for every pinned pair, each
 table looked up in schema `public` whatever the login's `search_path`
 (`repositories.guarded_privileges_sqlalchemy`). In `live`, a held pair, a pinned table missing
-from `public` (its pairs cannot be checked), a membership of a privileged role or a check that
-cannot run refuses the start (`GuardedPrivilegesHeld`: fail closed). Elsewhere each is logged at
-ERROR and counted in `cv_db_guarded_privileges_held`, where a pair that could not be checked
-counts as held, and each membership as one more, the
-counts go to `StorageService.tier_health()` (`/readyz` is degraded while either is above 0) and
-the start goes on. A superuser, or the owner of a table (the dev compose `cv` login, a test
-container's superuser, `cv_owner`), holds every privilege there, and a superuser is a member
-of every role: outside `live` that is logged once with `exempt=True`, and neither its pairs nor its
-memberships are a violation. The log lines and the error name tables and
-privileges, never the role, the DSN or a driver's message (C-12.6); `login_kind` says only
-whether the login is a superuser, an owner or the runtime role. No driver import: the tripwire
-and the check read this module without a database.
+from `public` (its pairs cannot be checked), a membership of a refused role, a superuser login or
+a check that cannot run refuses the start (`GuardedPrivilegesHeld`: fail closed). Elsewhere each
+is logged at ERROR and counted in `cv_db_guarded_privileges_held`, where a pair that could not be
+checked counts as held, and each membership as one more, the counts go to
+`StorageService.tier_health()` (`/readyz` is degraded while either is above 0) and the start goes
+on. A superuser, or the owner of a table (the dev compose `cv` login, a test container's
+superuser, `cv_owner`), holds every privilege there, and a superuser is a member of every role:
+outside `live` that is logged once with `exempt=True`, and neither its pairs nor its memberships
+nor the superuser itself are a violation. The log lines and the error name tables, privileges and
+refused roles, never the login's role, the DSN or a driver's message (C-12.6); `login_kind` says
+only whether the login is a superuser, an owner or the runtime role. No driver import: the
+tripwire and the check read this module without a database.
 """
 
 from __future__ import annotations
@@ -80,9 +88,22 @@ GUARDED_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
 )
 #: Every pinned (table, privilege) pair, sorted: the order the check asks for them.
 GUARDED_PAIRS: Final = tuple(sorted((t, p) for t, ps in GUARDED_PRIVILEGES.items() for p in ps))
-#: The roles the API's login must not be a member of (ADR-0041 section 1), sorted: the backup
-#: sidecar's dump and restore roles, and the objects' owner.
+#: The backup sidecar's dump and restore roles, and the objects' owner (ADR-0041 section 1).
 PRIVILEGED_ROLES: Final = ("cv_backup", "cv_owner", "cv_restore")
+#: Postgres's built-in read-all and write-all roles (Postgres 14+; one absent is no membership).
+BUILTIN_DATA_ROLES: Final = (
+    "pg_execute_server_program",
+    "pg_read_all_data",
+    "pg_read_server_files",
+    "pg_write_all_data",
+    "pg_write_server_files",
+)
+#: The role attributes the API's login must not hold besides `rolsuper`, sorted: each reaches past
+#: the pinned tables (replication streams every table, bypassrls skips row security, createrole
+#: and createdb mint roles and databases).
+REFUSED_ATTRIBUTES: Final = ("bypassrls", "createdb", "createrole", "replication")
+#: Every role the API's login must not be a member of, sorted: the order the read reports them.
+REFUSED_ROLES: Final = tuple(sorted(PRIVILEGED_ROLES + BUILTIN_DATA_ROLES))
 
 
 def _log() -> Any:
@@ -103,13 +124,14 @@ class HeldPrivilege:
 @dataclass(frozen=True, slots=True)
 class PrivilegeReport:
     """What one read found: whether the role is a superuser, the pinned pairs it holds, the
-    pinned tables missing from schema `public`, whose pairs it could not check, and the
-    `PRIVILEGED_ROLES` it is a member of, sorted."""
+    pinned tables missing from schema `public`, whose pairs it could not check, the
+    `REFUSED_ROLES` it is a member of, sorted, and the `REFUSED_ATTRIBUTES` it holds, sorted."""
 
     superuser: bool
     held: tuple[HeldPrivilege, ...]
     missing: tuple[str, ...]
     member_of: tuple[str, ...] = ()
+    attributes: tuple[str, ...] = ()
 
     @property
     def tables_present(self) -> int:
@@ -146,7 +168,12 @@ async def check_guarded_privileges(
         )
     found = report.held if live else tuple(h for h in report.held if not h.via_owner)
     members = () if exempt else report.member_of
+    attributes = () if exempt else report.attributes
     problems: list[str] = []
+    superuser = report.superuser and live  # outside `live` a superuser is exempt (above)
+    if superuser:
+        _log().error("storage_guarded_privileges_superuser", login_kind=login_kind, refused=live)
+        problems.append("the runtime role is a superuser")
     if found:
         names = [f"{h.table}.{h.privilege}" for h in found]
         _log().error(
@@ -161,6 +188,14 @@ async def check_guarded_privileges(
             refused=live,
         )
         problems.append("the runtime role is a member of: " + ", ".join(members))
+    if attributes:
+        _log().error(
+            "storage_guarded_privileges_role_attributes",
+            attributes=list(attributes),
+            login_kind=login_kind,
+            refused=live,
+        )
+        problems.append("the runtime role holds the role attributes: " + ", ".join(attributes))
     if report.missing:
         missing = list(report.missing)
         _log().error(
@@ -175,7 +210,7 @@ async def check_guarded_privileges(
             "storage_guarded_privileges_checked", pairs=len(GUARDED_PAIRS), tables_present=present
         )
     unchecked_pairs = sum(len(GUARDED_PRIVILEGES.get(t, frozenset())) for t in report.missing)
-    held = len(found) + unchecked_pairs + len(members)
+    held = len(found) + unchecked_pairs + len(members) + len(attributes) + int(superuser)
     return _judged(gauge, held, len(report.missing), live=live, problem="; ".join(problems))
 
 

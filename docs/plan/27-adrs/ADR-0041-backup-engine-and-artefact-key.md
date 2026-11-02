@@ -111,9 +111,10 @@ which alone carry the Postgres client tools and the age implementation. The API 
   if that step is missed, so the sidecar's stored password opens nothing between jobs. This relies on `pg_hba.conf`
   requiring `scram-sha-256` for `cv_restore`, since `VALID UNTIL` applies to password authentication only and an
   expiry closes no open session. The API refuses to start when its own login is a member of `cv_backup`, `cv_restore`
-  or the owner role (a synchronous fail-closed check, C-2.21). Both credentials exist only in the sidecar, as password
-  files on secret mounts readable by its user alone. The API process never holds an owner, restore or dump DSN and
-  never uses `cv_app` for this (`21` §1.1). The roles' grants land in B1's single revision (C-5.3); passwords never
+  or the owner role (a synchronous fail-closed check, C-2.21); the same check also refuses a superuser login and a
+  login that is a member of the database's built-in read-all or write-all role. Both credentials exist only in the
+  sidecar, as password files on secret mounts readable by its user alone. The API process never holds an owner,
+  restore or dump DSN and never uses `cv_app` for this (`21` §1.1). The roles' grants land in B1's single revision (C-5.3); passwords never
   appear in a migration.
 - **The sidecar records nothing.** It never connects as `cv_app`, writes no catalogue row and no audit record; the
   E42-T05 services record every step, as the ports require.
@@ -278,6 +279,9 @@ Negative and risks:
 | B1b | the sidecar core (config, protocol, server, run record, floor); both socket clients; verify and remove; the identity module                                                       | `Refs #3319`, `Partial:` |
 | B1c | the run path (`pg_dump`, `config_bundle`, the age tool); the image, its pins and the CI scans                                                                                     | `Refs #3319`, `Partial:` |
 | B2  | scheduler and `start_scheduled`; BK-9d and the refused chain; the unwired executor; the latch; `absent()` guards for the v1 kinds (after #5433); the flip of `BACKUPS_CATALOGUED` | `Closes #3319`           |
+
+B1a's bootstrap passwords are optional: without one, `cv_backup` is created `NOLOGIN` and a superuser gives it its
+login later (`docs/ops/runbooks/demo-host.md` section 3).
 
 Each code PR stays at or under about 1,500 counted lines with `large-pr-approved` asked in advance, and all three
 carry `security-review`. Code branch: `feat/e45-backup-engine` (C-4.4). Alert thresholds are measured and proposed in

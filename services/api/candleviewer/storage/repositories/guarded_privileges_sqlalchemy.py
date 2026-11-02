@@ -7,9 +7,12 @@ path hides is still checked and one missing from `public` is `present = false`, 
 checked. `has_table_privilege(current_user, ...)` says whether the role the app logs in as holds a
 pair; `via_owner` is `pg_has_role(current_user, <the table's owner>, 'USAGE')`: the role owns the
 table or has its owner's privileges, as a superuser has every role's. `member_of`, the same on
-every row, lists the `PRIVILEGED_ROLES` that exist and that the role is a member of, directly or
-through another role (`pg_has_role(..., 'MEMBER')`; a superuser is a member of every role), bound
-as a third text array; a role that does not exist is no membership.
+every row, lists the `REFUSED_ROLES` (the backup and owner roles and the built-in read-all and
+write-all roles) that exist and that the role is a member of, directly or through another role
+(`pg_has_role(..., 'MEMBER')`; a superuser is a member of every role), bound as a third text
+array; a role that does not exist is no membership, and whether one can log in is not read. The
+same row's `attributes` lists the `REFUSED_ATTRIBUTES` (`rolreplication`, `rolbypassrls`,
+`rolcreaterole`, `rolcreatedb`) the login holds, read next to `rolsuper`.
 """
 
 from __future__ import annotations
@@ -21,7 +24,7 @@ import sqlalchemy as sa
 from candleviewer.storage.guarded_privileges import (
     GUARDED_PAIRS,
     GUARDED_PRIVILEGES,
-    PRIVILEGED_ROLES,
+    REFUSED_ROLES,
     HeldPrivilege,
     PrivilegeReport,
 )
@@ -34,6 +37,11 @@ _HELD: Final = sa.text(
     "c.oid IS NOT NULL AND has_table_privilege(current_user, c.oid, g.priv) AS held, "
     "c.oid IS NOT NULL AND pg_has_role(current_user, c.relowner, 'USAGE') AS via_owner, "
     "(SELECT r.rolsuper FROM pg_roles r WHERE r.rolname = current_user) AS superuser, "
+    "(SELECT array_remove(ARRAY[CASE WHEN r.rolbypassrls THEN 'bypassrls' END, "
+    "CASE WHEN r.rolcreatedb THEN 'createdb' END, "
+    "CASE WHEN r.rolcreaterole THEN 'createrole' END, "
+    "CASE WHEN r.rolreplication THEN 'replication' END], NULL) "
+    "FROM pg_roles r WHERE r.rolname = current_user) AS attributes, "
     "ARRAY(SELECT m.rolname::text FROM pg_roles m "
     "WHERE m.rolname = ANY(CAST(:roles AS text[])) "
     "AND pg_has_role(current_user, m.oid, 'MEMBER') ORDER BY 1) AS member_of "
@@ -57,7 +65,7 @@ class SqlAlchemyGuardedPrivileges:
         params = {
             "tables": [table for table, _ in GUARDED_PAIRS],
             "privileges": [privilege for _, privilege in GUARDED_PAIRS],
-            "roles": list(PRIVILEGED_ROLES),
+            "roles": list(REFUSED_ROLES),
         }
         async with self._relational.unit_of_work() as uow:  # a read: nothing to commit
             rows = (await uow.session.execute(_HELD, params)).mappings().all()
@@ -71,4 +79,5 @@ class SqlAlchemyGuardedPrivileges:
             ),
             missing=tuple(sorted(GUARDED_PRIVILEGES.keys() - present)),
             member_of=tuple(sorted({str(r) for row in rows for r in row["member_of"] or ()})),
+            attributes=tuple(sorted({str(a) for row in rows for a in row["attributes"] or ()})),
         )

@@ -2,8 +2,8 @@
 --
 -- Idempotent cluster/role bootstrap for the Postgres relational tier
 -- (`docs/plan/21-database-schema.md` Sec.1.1). Creates the three roles the
--- rest of the schema assumes exist (and the backup sidecar's two, below) — `cv_owner` (DDL, runs migrations),
--- `cv_app` (DML only, no DDL — the runtime role every request handler
+-- rest of the schema assumes exist (and the backup sidecar's two, below) — `cv_owner` (DDL,
+-- runs migrations), `cv_app` (DML only, no DDL — the runtime role every request handler
 -- connects as), `cv_ro` (read-only, the only role the DuckDB `postgres`
 -- attachment in Sec.5.5 may use) — plus the default-privilege grants that
 -- make every *future* table automatically visible to `cv_app`/`cv_ro`
