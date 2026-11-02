@@ -87,6 +87,23 @@ def test_wire_invalid_pairs_rejected_with_sentence(bar_type: str, param: str, ma
 
 
 @pytest.mark.parametrize(
+    ("bar_type", "param", "probe"),
+    [
+        ("\x1b[31mX\x1b[0m" + "b" * 10_000, "5", "\x1b"),  # unsupported bar_type, 10 kB
+        ("time", "\x1b[2J7", "\x1b"),  # an unsupported interval carrying a terminal escape
+        ("tick", "5\x00<x>", "<x>"),  # a NUL and markup in a non-numeric param
+        ("volume", "zz\u202ezz", "\u202e"),  # a bidi override
+    ],
+)
+def test_wire_rejection_never_echoes_the_input(bar_type: str, param: str, probe: str) -> None:
+    """#2160: the 422 sentence names the field and the accepted values, never the raw input."""
+    with pytest.raises(BarSpecError) as exc:
+        from_wire(bar_type, param)
+    text = str(exc.value)
+    assert probe not in text and param not in text and text.isprintable()
+
+
+@pytest.mark.parametrize(
     ("spec", "match"),
     [
         (BarSpec(kind="time", interval_ms=60_000, price_source="mark"), "price_source"),
