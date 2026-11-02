@@ -673,6 +673,11 @@
               "default": false,
               "description": "snapshots: true when the topic's state may be behind the live market (§7.2). Absent means false. Never on a d.",
               "type": "boolean"
+            },
+            "stale_build": {
+              "default": false,
+              "description": "bars snapshots: true when a bar sent was built below the running builder version or has no recorded one (NULL, unknown provenance); REST `BarsMeta.stale_build` with the same meaning (22, §6.1, #5396). The forming bar counts as the running build. Unrelated to `stale`. Repeated on every chunk of a chunked set (§3.6). Absent means false. Never on a d.",
+              "type": "boolean"
             }
           },
           "type": "object"
