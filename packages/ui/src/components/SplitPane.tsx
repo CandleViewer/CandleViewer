@@ -23,7 +23,10 @@ export interface SplitPaneProps {
   labels: readonly string[];
   /** Commits a move of separator `index` by `delta` (a share; + grows the cell before it). */
   onResize: (index: number, delta: number) => void;
-  /** `Home` on any separator: equal sizes for every cell (E15-D04 §6); without it, the pair. */
+  /**
+   * `Home` on any separator: equal sizes for every cell (E15-D04 §6); without it, the pair only.
+   * Arrow keys are physical, not mirrored for RTL (the app is LTR only).
+   */
   onEqualise?: () => void;
   /** Says "Minimum size." once per stop (SR-08), into the app's one polite region. */
   onAnnounce?: (text: string) => void;
