@@ -15,7 +15,11 @@ route tree, auth/RBAC guards and env badge are E10's scope.
   further, and one that held it routes to sign-in. A logout's `2xx` forgets it
   but does not route its own tab: the sign-out UI routes that one to sign-in
   after `apiFetch` of the logout.
-- `meCache.ts`: the `/me` claims the route guards read.
+- `meCache.ts`: the `/me` claims the route guards and the rail read. Every
+  client-side navigation re-reads `/me` (a burst within `CLAIMS_MAX_AGE_MS`,
+  250 ms, shares one request) and the rail subscribes, so a server-side role
+  change applies on the next navigation (#5405). A failed read keeps the old
+  claims; the server stays the boundary.
 
 Known gap, server-side (#2712 changes no server code):
 

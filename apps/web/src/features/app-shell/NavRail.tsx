@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, type CSSProperties, type JSX } from "react";
 import { NavLink, useNavigate } from "react-router";
 import { Icon } from "@candleviewer/ui";
-import { getMeClaims } from "../../lib/auth/meCache";
+import { useMeClaims } from "../../lib/auth/meCache";
 import { registerCommand } from "../../keymap/KeymapHost";
 import { ROUTE_MANIFEST } from "../../routes/manifest";
 import { evaluateAccess, type MeClaims } from "../../routes/rbac";
@@ -95,10 +95,9 @@ export function NavRail({
   reduceMotion = false,
 }: NavRailProps): JSX.Element {
   const navigate = useNavigate();
-  // Read at render: main.tsx runs the bootstrap (which sets the claims) before the router mounts.
-  // A role change after that shows on the next claims object only; the server's 403 is the
-  // boundary, and the live update is E10-T04's subscription (no reactive source exists yet).
-  const claims = getMeClaims();
+  // Subscribed (#5405): a role or grant change the loaders read from `/me` re-renders the rail at
+  // that navigation, not only on reload. The server's 403 stays the boundary.
+  const claims = useMeClaims();
   const items = useMemo(() => visibleNavItems(claims), [claims]);
   const list = useRef<HTMLUListElement>(null);
 

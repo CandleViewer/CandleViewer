@@ -27,7 +27,7 @@ import { SetupChecklistCard } from "../features/onboarding/SetupChecklistCard";
 import { HotkeyEditor } from "../keymap/HotkeyEditor";
 import { AccessibilitySettingsScreen } from "../features/a11y-preferences/AccessibilitySettingsScreen";
 import { SessionsSection } from "../features/session/SessionsSection";
-import { getMeClaims } from "../lib/auth/meCache";
+import { getMeClaims, refreshMeClaims } from "../lib/auth/meCache";
 import { ShellLayout } from "../features/app-shell/ShellLayout";
 import { ScreenRoot } from "../features/app-shell/ScreenRoot";
 
@@ -79,7 +79,9 @@ function buildRoutes(): RouteObject[] {
     errorElement: <RouteErrorElement />,
     // D-01 (WCAG 2.4.2): the page title `syncDocumentTitle` applies on every navigation
     handle: { title: ROUTE_TITLES[entry.id] } satisfies TitleHandle,
-    loader: ({ request }) => {
+    loader: async ({ request }) => {
+      // #5405: every navigation guards on the current claims, re-read past their staleness bound.
+      await refreshMeClaims();
       guardRoute(entry.id, entry.access, request.url);
       // R-100 `/terminal` always redirects to the user's last-used or
       // default layout (`12-sitemap.md` §2 note on R-100).
@@ -111,7 +113,10 @@ function buildRoutes(): RouteObject[] {
         {
           path: "*",
           errorElement: <RouteErrorElement />,
-          loader: ({ request }) => guardUnknownRoute(request.url),
+          loader: async ({ request }) => {
+            await refreshMeClaims();
+            return guardUnknownRoute(request.url);
+          },
         },
       ],
     },
@@ -121,7 +126,8 @@ function buildRoutes(): RouteObject[] {
   // Documented redirects (`12-sitemap.md` §8: fresh install / unauthenticated root).
   routes.push({
     path: "/",
-    loader: () => {
+    loader: async () => {
+      await refreshMeClaims();
       const claims = getMeClaims();
       if (claims.role === null && !claims.authenticated) {
         return redirect("/login");

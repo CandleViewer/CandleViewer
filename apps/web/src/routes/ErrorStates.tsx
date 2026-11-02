@@ -7,7 +7,7 @@ import {
 } from "@candleviewer/ui";
 import { ScreenRoot } from "../features/app-shell/ScreenRoot";
 import { visibleNavItems } from "../features/app-shell/NavRail";
-import { getMeClaims } from "../lib/auth/meCache";
+import { useMeClaims } from "../lib/auth/meCache";
 
 /** The packaged states take the app's router link through their link slot. */
 const routerLink: RenderLink = ({ href, className, children }) => (
@@ -36,7 +36,7 @@ export function ForbiddenState(): JSX.Element {
  */
 export function NotFoundState(): JSX.Element {
   const { pathname } = useLocation();
-  const tryRoutes = visibleNavItems(getMeClaims()).map((item) => ({
+  const tryRoutes = visibleNavItems(useMeClaims()).map((item) => ({
     label: item.label,
     href: item.to,
   }));
