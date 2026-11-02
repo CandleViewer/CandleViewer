@@ -15,7 +15,8 @@ The memo pin (MEMO_HEAD) re-pins to the memo PR's merge commit when it merges; B
 rebase. The BQ list (BQ_LIST_ID) is ruled by RULING_ID (ACCEPT 15 of 16, OVERRIDE BQ-2): the spec's
 BQ heading reads RULED and `--repin-ruled` refreshes the sidecar. The BQ-2 override lets this ticket
 add exactly one pointer line under SCR-038 and one under SCR-039 in `14` (POINTER_REL); G-UNTOUCHED
-checks that diff line by line against BASE.
+checks that diff line by line against the merge-base with origin/main (BASE when that is absent),
+so the gate holds on a rebased or merged tree, not only at the pinned base.
 """
 
 from __future__ import annotations
@@ -246,8 +247,15 @@ def backlog_keys() -> frozenset[str]:
     return frozenset(TICKET.findall(out))
 
 
-def changed_paths() -> list[str]:
-    _, tracked = git("diff", "--name-only", BASE, "--")
+def diff_base() -> str:
+    """The merge-base with origin/main, so a merged or rebased tree diffs only this branch's own
+    changes; BASE when origin/main (or a merge-base with it) is absent."""
+    code, out = git("merge-base", "HEAD", "origin/main")
+    return out.strip() if code == 0 and out.strip() else BASE
+
+
+def changed_paths(rev: str) -> list[str]:
+    _, tracked = git("diff", "--name-only", rev, "--")
     _, untracked = git("ls-files", "--others", "--exclude-standard")
     return sorted({p for p in (tracked + untracked).splitlines() if p})
 
@@ -261,14 +269,15 @@ def build_ctx() -> Ctx:
     spec = read(SPEC_REL)
     docs = {m.group("nn") or m.group("named") for m in CITE.finditer(spec)}
     docs |= {d for d, _, _ in KEY_CITES}
+    rev = diff_base()
     return Ctx(
         spec=spec,
         pins=read(PIN_REL),
         tool=read(TOOL_REL),
-        changed=changed_paths(),
+        changed=changed_paths(rev),
         sources=load_sources(docs),
         keys=backlog_keys(),
-        pointer=((show(BASE, POINTER_REL) or "").splitlines(), read(POINTER_REL).splitlines()),
+        pointer=((show(rev, POINTER_REL) or "").splitlines(), read(POINTER_REL).splitlines()),
     )
 
 
@@ -625,7 +634,7 @@ def pointer_diff(c: Ctx) -> list[str]:
     """The BQ-2 override: exactly one inserted pointer line under SCR-038 and one under SCR-039."""
     base, cur = c.pointer
     if not base or not cur:
-        return [f"{POINTER_REL} not readable at {BASE} and in the worktree"]
+        return [f"{POINTER_REL} not readable at the diff base and in the worktree"]
     bad: list[str] = []
     inserted: list[int] = []
     for op, i1, i2, j1, j2 in difflib.SequenceMatcher(
