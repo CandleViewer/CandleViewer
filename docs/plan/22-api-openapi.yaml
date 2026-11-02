@@ -2455,6 +2455,26 @@ paths:
       tags: [users]
       operationId: listUsers
       summary: List users
+      description: >
+        Every user `getUser` answers, the Owner included, whatever the status: a user whose purge
+        has run is a `disabled` row with its surrogate username and email, and a soft-deleted user
+        is never listed. The list is ordered by `created_at` ascending, then `id` ascending; a page
+        resumes strictly after the last row of the page before it (`meta.next_cursor`), so a user
+        created while the list is read lands on a later page and no row repeats. `status` keeps
+        the users in that status; `role` keeps a user who holds that role among the roles that
+        have not expired; `q` keeps a user whose username or email holds it, case-insensitive,
+        with `%` and `_` taken literally. Each parameter is sent at most once. The cursor is bound
+        to the caller and to `status`, `role` and `q` as sent, for one hour: one that is
+        malformed, expired, or issued to another caller or for other filters is
+        `400 invalid_cursor`. `400 validation_failed` answers a `limit` outside 1 to 500, a
+        `status` or `role` outside its enum, a `q` over 120 characters or holding a NUL character,
+        or a parameter sent twice; the problem names the field, never the value. Authorisation
+        comes first, so a caller without `users:read` gets one `403` whatever the query: the
+        refusal is audited (`rbac.denied`), and when that record cannot be written it is answered
+        `503 audit_unavailable` and nothing is read. `503 store_unavailable` when the users cannot
+        be read. Both carry `Retry-After`. A served read writes no audit record. In a view-as
+        session the "Scope" rule of `info.description` answers it `403 forbidden`: no target
+        holds `users:read`. An undeclared query parameter is ignored, as on every list.
       parameters:
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
@@ -2480,6 +2500,8 @@ paths:
                   - type: object
                     properties:
                       items: { type: array, items: { $ref: "#/components/schemas/User" } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
