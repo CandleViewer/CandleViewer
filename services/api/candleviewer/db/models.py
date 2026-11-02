@@ -2117,7 +2117,7 @@ watchlists = Table(
     Index("ux_wl_name", "user_id", text("lower(name)"), unique=True),
 )
 
-#: `hotkey_profiles` (E10-T05 #5211, revision 0062_hotkey_profiles): 21 Sec.3.8.5. `bindings` is one
+#: `hotkey_profiles` (E10-T05 #5211, revision 0064_hotkey_profiles): 21 Sec.3.8.5. `bindings` is one
 #: jsonb object of command id to binding; scope, `requires_arm` and `confirm` are derived on read.
 hotkey_profiles = Table(
     "hotkey_profiles",

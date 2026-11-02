@@ -1,4 +1,4 @@
-"""Postgres `HotkeyProfileStore` (migration `0062_hotkey_profiles`, E10-T05, #5211; 21 Sec.3.8.5).
+"""Postgres `HotkeyProfileStore` (migration `0064_hotkey_profiles`, E10-T05, #5211; 21 Sec.3.8.5).
 
 Static, parameterised `sa.text` only (literal SQL, so each statement repeats the column list), and
 every statement names the owner (`owner_user_id = CAST(:owner AS uuid)`; the INSERT binds it, the

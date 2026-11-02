@@ -1,7 +1,7 @@
 """hotkey_profiles (E10-T05, #5211)
 
-Revision ID: 0062_hotkey_profiles
-Revises: 0061_password_history
+Revision ID: 0064_hotkey_profiles
+Revises: 0063_rule_version_account_refs
 Create Date: 2026-10-31
 
 Purely additive (C-5.1): `docs/plan/21-database-schema.md` Sec.3.8.5 verbatim, the profiles
@@ -23,9 +23,10 @@ under the owner's advisory lock.
 * The downgrade (C-5.2) locks the table and refuses while any profile exists, since dropping it
   would lose users' profiles; an empty table is dropped.
 
-Its number is 0062, as the orchestrator ruled (2026-11-01): `0060` and `0061`, two other lanes'
-revisions, merged ahead of it, so it revises `0061_password_history` (#2110 / #2330), the head it
-was rebased onto (C-5.3); the lockfile entry pins it.
+Its number is 0064, as the orchestrator ruled (2026-11-02): it was 0062 on `0061_password_history`
+until #5359's `0063_rule_version_account_refs`, on the same parent, merged first, so it revises
+that head and takes the next number, keeping the chain monotonic (C-5.3); the lockfile entry pins
+it.
 """
 
 from __future__ import annotations
@@ -34,8 +35,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0062_hotkey_profiles"
-down_revision: str | None = "0061_password_history"
+revision: str = "0064_hotkey_profiles"
+down_revision: str | None = "0063_rule_version_account_refs"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -76,7 +77,7 @@ LOCK TABLE hotkey_profiles IN SHARE MODE;
 DO $BODY$
 BEGIN
   IF EXISTS (SELECT 1 FROM hotkey_profiles) THEN
-    RAISE EXCEPTION '0062_hotkey_profiles downgrade refused: hotkey_profiles holds users'' hotkey profiles, which dropping the table would lose. Fix forward with a new revision instead (C-5.2)';
+    RAISE EXCEPTION '0064_hotkey_profiles downgrade refused: hotkey_profiles holds users'' hotkey profiles, which dropping the table would lose. Fix forward with a new revision instead (C-5.2)';
   END IF;
 END $BODY$;
 DROP TABLE hotkey_profiles;

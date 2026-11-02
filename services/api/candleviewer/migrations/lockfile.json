@@ -307,10 +307,10 @@
       "sha256": "374f7a1416b688467ce15d37634a98b23555998ce33cc2ba46f4ce71858d3788",
       "down_revision": "0061_password_history"
     },
-    "0062_hotkey_profiles": {
-      "path": "services/api/candleviewer/migrations/versions/0062_hotkey_profiles.py",
-      "sha256": "b4f58f38aa0078ccd9b87268936d9e472d24baf7e9ddfb59b5e22d9c30f03b28",
-      "down_revision": "0061_password_history"
+    "0064_hotkey_profiles": {
+      "path": "services/api/candleviewer/migrations/versions/0064_hotkey_profiles.py",
+      "sha256": "496f7fc9ea86e6f668e4414cbd4ce15670df17ec3fe15919b41cd54eff1457ef",
+      "down_revision": "0063_rule_version_account_refs"
     }
   }
 }

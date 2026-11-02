@@ -114,7 +114,7 @@ def test_metadata_declares_every_table_from_0001() -> None:
         "oms_handovers",
         # #2110 / #2330 (0061_password_history)
         "password_history",
-        # E10-T05 (0062_hotkey_profiles)
+        # E10-T05 (0064_hotkey_profiles)
         "hotkey_profiles",
     }
     actual = {t.name for t in metadata.sorted_tables}
