@@ -11,7 +11,8 @@
 // spacing CSS px; `u_geom[1]` = (DPR, plot top, plot bottom) in device px; the seam spans top to
 // bottom. Mirrors `src/layers/candle/geometry.ts` line for line. E12-S09: `u_geom[1].w` is the
 // candle tier (BQ-04): from L1 every wick is a hairline and an up body is outline-only from 2
-// device px, else `dash.1-1` (v_outline 3, by window row).
+// device px, else `dash.1-1` (v_outline 3, by window row); parts 7 / 8 draw an L2 `ColumnStrip`
+// entry (BQ-03): a_ohlc = (first open, max high, min low, last close), a_meta = column << 4 | dir.
 // `u_palette` = up, down, wick, up tint, down tint, neutral (E12-D06 §2-§4, §9).
 export const CANDLE = {
   name: "candle",
@@ -63,7 +64,7 @@ void main() {
     gl_Position = vec4(2.0, 2.0, 0.0, 1.0);
     return;
   }
-  int mark = a_meta >> 4;
+  int mark = part >= 7 ? a_meta & 3 : a_meta >> 4;
   int dir = mark & 3;
   bool colourUp = (mark & 32) != 0;
   float h = u_geom[0].y;
@@ -74,7 +75,21 @@ void main() {
   float y0;
   float y1;
   v_outline = 0;
-  if (part == 4) {
+  if (part >= 7) {
+    // E12-S09: an L2 column entry, a hairline at its device column; the span's O = C is a dot.
+    x0 = float(a_meta >> 4);
+    w = h;
+    if (part == 7) {
+      y0 = yOf(a_ohlc.z);
+      y1 = yOf(a_ohlc.y);
+    } else if (a_ohlc.x == a_ohlc.w) {
+      y0 = floor(yOf(a_ohlc.x) - h * 0.5 + 0.5);
+      y1 = y0 + h;
+    } else {
+      y0 = yOf(a_ohlc.x);
+      y1 = yOf(a_ohlc.w);
+    }
+  } else if (part == 4) {
     // BQ-8: the slot's left edge, a hairline over the plot rect: u_geom[1].y / .z are its top and
     // bottom edges in device px (the canvas height when .z is 0, no plot set).
     x0 = floor(centre - u_k.x * 0.5 - h * 0.5 + 0.5);
@@ -122,11 +137,13 @@ void main() {
   // colour-up; else doji and zero-range neutral, up or down.
   int row = base == 0 || part == 4
     ? 2
-    : part == 6 && dir != 3 ? (colourUp ? 0 : 1) : dir >= 2 ? 2 : dir;
+    : part == 7 ? 5 : part == 6 && dir != 3 ? (colourUp ? 0 : 1) : dir >= 2 ? 2 : dir;
   v_color = u_palette[row];
   v_fill = v_color;
   int outline = w >= 3.0 * u_geom[1].x ? 2 : 1; // D06 §3.2: every side from 3 CSS px
-  if (part == 1 && dir == 0) {
+  if (part == 8) {
+    if (dir == 0) v_outline = 3; // D06 §5.4: the up span is dash.1-1
+  } else if (part == 1 && dir == 0) {
     if (u_geom[1].w < 1.0) {
       v_fill = u_palette[3];
       v_outline = outline;

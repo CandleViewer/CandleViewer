@@ -84,7 +84,7 @@ function readSketch(): { declared: string[]; text: string } {
 
 const surface = readSurface();
 /** Root exports the rulings of record add outside the §8 sketch (E11-T09 is told of each). */
-const RULED_ADDITIONS = ["toTicks"]; // E12-S06 BQ-10
+const RULED_ADDITIONS = ["lodDisclosure", "toTicks"]; // E12-S09 BQ-08, E12-S06 BQ-10
 
 describe("Scenario: The package builds and exports the designed surface", () => {
   it("exports exactly the frozen name list (a widening shows up in review)", () => {
@@ -146,6 +146,7 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       "Viewport",
       "VisibleWindow",
       "createChart",
+      "lodDisclosure", // E12-S09 BQ-08: ruled additive
       "toTicks", // E12-S06 BQ-10: ruled additive
     ]);
   });
@@ -162,8 +163,8 @@ describe("Scenario: The package builds and exports the designed surface", () => 
     expect(outside).toEqual(RULED_ADDITIONS);
   });
 
-  it("has two runtime exports: createChart with the §8 signature, and toTicks (BQ-10)", () => {
-    expect(Object.keys(root).sort()).toEqual(["createChart", "toTicks"]);
+  it("has three runtime exports: createChart (§8), toTicks (BQ-10), lodDisclosure (BQ-08)", () => {
+    expect(Object.keys(root).sort()).toEqual(["createChart", "lodDisclosure", "toTicks"]);
     expect(surface.print("createChart")).toBe("(opts: ChartOptions) => Chart");
     expect(surface.print("toTicks")).toBe(
       "(price: number, priceOrigin: number, tickSize: number) => number",

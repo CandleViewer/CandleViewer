@@ -194,7 +194,7 @@ export class Canvas2DBackend implements RenderBackend {
    * body's tint is `sub` 1 in the tint bucket, after its outline's; a hollow body (E12-S07) is
    * `sub` 1 alone, its outline without the interior; the OHLC ticks are the open (0) and close
    * (1) quads. The seam reads its own `[0, instances)` entries. E12-S09: an L1 up body is `sub` 1
-   * alone when outline-only, else `sub` 0 dashed.
+   * alone when outline-only, else `sub` 0 dashed; an L2 column entry's dir is its meta's low bits.
    */
   private candles(blk: BatchUniforms, ints: Int32Array, i: number): void {
     const part = blk.ints[0] ?? 0; // scalar locals: no per-frame array
@@ -203,11 +203,13 @@ export class Canvas2DBackend implements RenderBackend {
     const seam = part === CANDLE_PART.seam;
     const n = seam ? (blk.instances ?? 0) : (blk.ints[3] ?? 0);
     const pal = blk.palette;
+    const column = part >= CANDLE_PART.columnWick;
     const body = blk.geom[GEOM.body] ?? 1; // an up / hollow body's width: the fill mode's input
     for (let j = 0; j < n; j += 1) {
       const at = (seam ? j : (head + j) & mask) * CANDLE_STRIDE;
       if (at < 0 || at + CANDLE_STRIDE > ints.length) break; // a ring shorter than its block
-      const mark = (ints[at + 4] ?? 0) >> 4;
+      const meta = ints[at + 4] ?? 0;
+      const mark = column ? meta & 3 : meta >> 4;
       const row = partColor(part, mark);
       const bucket = this.bucketOf(PROGRAM.candle, pal, row * 4, 0);
       const mode = fillMode(part, mark, body, blk.geom);

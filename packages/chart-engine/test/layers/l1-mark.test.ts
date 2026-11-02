@@ -105,6 +105,10 @@ describe("twin ↔ shader: the shader carries each rule the twin computes", () =
   it.each([
     ["the tier is u_geom[1].w; from L1 every wick a hairline", v, "u_geom[1].w >= 1.0\n      ? h"],
     ["an L1 up body: outline-only from 2 px, else the dash", v, "w >= 2.0 ? outline + 4 : 3"],
+    ["the L2 entry's dir and column from a_meta", v, "part >= 7 ? a_meta & 3 : a_meta >> 4"],
+    ["the L2 entry sits at its device column", v, "x0 = float(a_meta >> 4);"],
+    ["the L2 wick in the neutral tint (row 5)", v, "part == 7 ? 5"],
+    ["the L2 up span dashed", v, "if (dir == 0) v_outline = 3;"],
     ["the dash by window row", f, "mod(floor(gl_FragCoord.y), 2.0) >= 1.0) discard"],
   ])("%s", (_, src, line) => {
     expect(src).toContain(line);
