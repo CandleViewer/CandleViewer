@@ -12,13 +12,16 @@ Usage:
   python3 -I docs/design/_tools/e19_d02_wires_audit.py --repin-ruled  rewrite the BQ-section pins
 
 The memo pin (MEMO_HEAD) re-pins to the memo PR's merge commit when it merges; BASE moves with a
-rebase. RULING_ID stays None until the BQ list (BQ_LIST_ID) is ruled; then the spec's BQ heading
-flips to RULED and `--repin-ruled` refreshes the sidecar.
+rebase. The BQ list (BQ_LIST_ID) is ruled by RULING_ID (ACCEPT 15 of 16, OVERRIDE BQ-2): the spec's
+BQ heading reads RULED and `--repin-ruled` refreshes the sidecar. The BQ-2 override lets this ticket
+add exactly one pointer line under SCR-038 and one under SCR-039 in `14` (POINTER_REL); G-UNTOUCHED
+checks that diff line by line against BASE.
 """
 
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import re
 import subprocess
@@ -32,11 +35,17 @@ SPEC_REL = "docs/design/E19/E19-D02.md"
 TOOL_REL = "docs/design/_tools/e19_d02_wires_audit.py"
 PIN_REL = "docs/design/_tools/e19_d02_ruled_pins.txt"
 OWN_PATHS = (SPEC_REL, TOOL_REL, PIN_REL)
+POINTER_REL = "docs/plan/14-screens-catalogue.md"
+POINTER_LINE = re.compile(
+    r"^- \*\*Wireframes \(E19-D02\):\*\* \[E19-D02\.md\]\(\.\./design/E19/E19-D02\.md\) "
+)
+POINTER_SCREENS = ("### SCR-038 ", "### SCR-039 ")
 BASE = "67fe8b526"
 MEMO_HEAD = "94975537511c"
 MEMO_REL = "docs/design/research/e19-profiles.md"
 BQ_LIST_ID = "6576276164"
-RULING_ID: str | None = None
+RULING_ID: str | None = "6576655478"
+RULED_OVERRIDES = frozenset({2})
 BOARD_CAP = 10
 WALK_CAP = 10
 BQ_COUNT = 16
@@ -178,6 +187,7 @@ class Ctx:
     changed: list[str]
     sources: dict[str, list[str]] = field(default_factory=dict)
     keys: frozenset[str] = frozenset()
+    pointer: tuple[list[str], list[str]] = field(default_factory=lambda: ([], []))
 
 
 @dataclass
@@ -258,6 +268,7 @@ def build_ctx() -> Ctx:
         changed=changed_paths(),
         sources=load_sources(docs),
         keys=backlog_keys(),
+        pointer=((show(BASE, POINTER_REL) or "").splitlines(), read(POINTER_REL).splitlines()),
     )
 
 
@@ -374,9 +385,15 @@ def g_bq(c: Ctx) -> list[str]:
     bullets = re.findall(r"^- \*\*BQ-(\d+) — [^*]+\.\*\* (.*)$", body, re.MULTILINE)
     if [int(n) for n, _ in bullets] != list(range(BQ_COUNT)):
         bad.append(f"BQ bullets must be BQ-0 … BQ-{BQ_COUNT - 1} in order")
+    if RULING_ID is not None and (BQ_LIST_ID not in body or f"comment {RULING_ID}" not in body):
+        bad.append(f"the BQ section must cite the list {BQ_LIST_ID} and the ruling {RULING_ID}")
     for n, text in bullets:
         if RULING_ID is None and not text.startswith("ORCH-default:"):
             bad.append(f"BQ-{n} must state its ORCH-default")
+        if RULING_ID is not None:
+            verdict = "OVERRIDE" if int(n) in RULED_OVERRIDES else "ACCEPT"
+            if not text.startswith(f"RULED: {verdict}."):
+                bad.append(f"BQ-{n} must open with 'RULED: {verdict}.' (comment {RULING_ID})")
         if "Built as:" not in text:
             bad.append(f"BQ-{n} must say what is built")
     return bad
@@ -604,10 +621,40 @@ def g_heur(c: Ctx) -> list[str]:
     return bad if rows else ["no heuristic table"]
 
 
+def pointer_diff(c: Ctx) -> list[str]:
+    """The BQ-2 override: exactly one inserted pointer line under SCR-038 and one under SCR-039."""
+    base, cur = c.pointer
+    if not base or not cur:
+        return [f"{POINTER_REL} not readable at {BASE} and in the worktree"]
+    bad: list[str] = []
+    inserted: list[int] = []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(
+        None, base, cur, autojunk=False
+    ).get_opcodes():
+        if op == "insert":
+            inserted += range(j1, j2)
+        elif op != "equal":
+            bad.append(
+                f"{POINTER_REL}: base lines {i1 + 1}–{i2} {op}d; only insertions are allowed"
+            )
+    screens: list[str] = []
+    for j in inserted:
+        if not POINTER_LINE.match(cur[j]):
+            bad.append(f"{POINTER_REL}:{j + 1} is not an E19-D02 pointer line")
+        heads = [ln for ln in cur[:j] if ln.startswith("### ")]
+        screens.append(heads[-1] if heads else "")
+    got = [next((s for s in POINTER_SCREENS if h.startswith(s)), h) for h in screens]
+    if got != list(POINTER_SCREENS):
+        bad.append(f"{POINTER_REL}: the pointer lines must be one under SCR-038, one under SCR-039")
+    return bad
+
+
 def g_untouched(c: Ctx) -> list[str]:
     bad: list[str] = []
     for p in c.changed:
-        if p not in OWN_PATHS:
+        if p == POINTER_REL:
+            bad += pointer_diff(c)
+        elif p not in OWN_PATHS:
             bad.append(f"{p} changed; this ticket writes only {', '.join(OWN_PATHS)}")
         elif p.startswith(UNTOUCHED_PREFIXES):
             bad.append(f"{p} is an owner document")
@@ -709,7 +756,18 @@ def set_pins(c: Ctx) -> Ctx:
 
 
 def add_changed(c: Ctx) -> Ctx:
-    return replace(c, changed=[*c.changed, "docs/plan/14-screens-catalogue.md"])
+    return replace(c, changed=[*c.changed, "docs/plan/22-api-openapi.yaml"])
+
+
+def extra_pointer(c: Ctx) -> Ctx:
+    base, cur = c.pointer
+    if not cur:
+        raise ValueError(f"{POINTER_REL} not loaded")
+    return replace(
+        c,
+        changed=sorted({*c.changed, POINTER_REL}),
+        pointer=(base, [*cur, "- **Wireframes (E19-D02):** a requirement change"]),
+    )
 
 
 def drift_source(c: Ctx) -> Ctx:
@@ -768,6 +826,15 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Ctx], Ctx]], ...] = (
     ("M-27", "G-PUBLIC", sub_spec("**Inputs pinned.**", _HOST + " **Inputs pinned.**")),
     ("M-28", "G-PUBLIC", sub_spec("\n## 1. Purpose", _HEAD + "\n## 1. Purpose")),
     ("M-29", "G-COMMENT", sub_spec("**Inputs pinned.**", "<!-- a\nnote --> **Inputs pinned.**")),
+    ("M-30", "G-UNTOUCHED", extra_pointer),
+    (
+        "M-31",
+        "G-BQ",
+        sub_both(
+            "**BQ-2 — files, tool, owner documents.** RULED: OVERRIDE.",
+            "**BQ-2 — files, tool, owner documents.** RULED: ACCEPT.",
+        ),
+    ),
 )
 
 
