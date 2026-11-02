@@ -583,7 +583,7 @@ class SqlAlchemyWorkspaceRepository:
             raise WorkspaceNotFoundError("layout")
         return WriteResult(row, True)
 
-    async def soft_delete_layout(self, owner: str, workspace_id: str, layout_id: str) -> None:
+    async def soft_delete_layout(self, owner: str, workspace_id: str, layout_id: str) -> int:
         ids = {"wid": workspace_id, "owner": owner, "lid": layout_id}
         async with self._relational.unit_of_work() as uow:
             await uow.session.execute(_LOCK_USER, {"owner": owner})  # serialises the purge below
@@ -594,8 +594,9 @@ class SqlAlchemyWorkspaceRepository:
             await uow.session.execute(
                 _DRAWINGS_SOFT_DELETE, {"ids": [layout_id], "owner": owner, "ts": ts}
             )
-            await self._purge_early_layouts(uow, owner)
+            purged = await self._purge_early_layouts(uow, owner)
             await uow.commit()
+        return purged
 
     # ---- retention -----------------------------------------------------------------------
     async def purge_deleted(self, older_than_days: int, limit: int) -> int:

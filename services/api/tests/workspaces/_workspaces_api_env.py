@@ -117,6 +117,8 @@ class FakeWorkspaceRepo:
         self.tick = 0
         self.drawings_under: dict[str, int] = {}  # live drawings per workspace, for the record
         self.write_ahead_timeout_s = WRITE_AHEAD_TIMEOUT_S  # the SQL store's bound on the record
+        self.purge_early = 0  # soft-deleted layouts a layout delete purges past the bound
+        self.purge_early_workspace = (0, 0)  # (workspaces, layouts) a workspace delete purges
 
     def _call(self, name: str, **kw: Any) -> None:
         self.calls.append((name, kw))
@@ -211,11 +213,13 @@ class FakeWorkspaceRepo:
             raise WorkspaceConflictError("name_taken", "name")
         return WriteResult(self._put_layout(owner, wid, lid, f, row.created_at), True)
 
-    async def soft_delete_layout(self, owner: str, wid: str, lid: str) -> None:
+    async def soft_delete_layout(self, owner: str, wid: str, lid: str) -> int:
+        """As the SQL store; answers `purge_early` as the count of layouts it purged early."""
         self._call("soft_delete_layout", owner=owner, wid=wid, lid=lid)
         if self._lay(owner, lid, wid) is None:
             raise WorkspaceNotFoundError("layout")
         self.deleted.add(lid)
+        return self.purge_early
 
     async def exists_for_other_owner(
         self, owner: str, kind: Literal["workspace", "layout"], object_id: str
@@ -272,7 +276,9 @@ class FakeWorkspaceRepo:
         if len(self._live_of(owner)) == 1:
             raise WorkspaceConflictError("last_workspace", "workspaceId")
         layouts = tuple(r.id for r in self.layouts_of(owner, wid))
-        done = WorkspaceDeletion(wid, layouts, self.drawings_under.get(wid, 0), 0, 0)
+        done = WorkspaceDeletion(
+            wid, layouts, self.drawings_under.get(wid, 0), *self.purge_early_workspace
+        )
         await bounded_write_ahead(write_ahead(done), self.write_ahead_timeout_s)
         self.deleted.update((wid, *layouts))
         return done

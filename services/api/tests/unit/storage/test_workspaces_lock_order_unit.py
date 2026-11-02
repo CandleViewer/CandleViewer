@@ -228,8 +228,9 @@ async def test_workspace_delete_whose_record_raises_never_commits() -> None:
 
 
 async def test_layout_delete_takes_the_user_lock_and_purges_past_the_deleted_bound() -> None:
-    rel = _Rel({"_WS_LOCK": [_WS], "_LAY_LOCK": [{"id": "l1"}], "_LAY_SOFT_DELETE": [{"ts": _T}]})
-    await _repo(rel).soft_delete_layout("o", "w", "l1")
+    rel = _Rel({"_WS_LOCK": [_WS], "_LAY_LOCK": [{"id": "l1"}], "_LAY_SOFT_DELETE": [{"ts": _T}],
+                "_PURGE_EARLY_LAYOUTS": [{"id": "x"}, {"id": "y"}]})  # fmt: skip
+    assert await _repo(rel).soft_delete_layout("o", "w", "l1") == 2  # the early-purge count
     assert rel.names() == ["_LOCK_USER", "_WS_LOCK", "_LAY_LOCK", "_LAY_SOFT_DELETE",
                            "_DRAWINGS_SOFT_DELETE", "_PURGE_EARLY_LAYOUTS"]  # fmt: skip
     assert rel.calls[-1][1] == {"owner": "o", "keep": MAX_DELETED_LAYOUTS} and rel.commits == 1

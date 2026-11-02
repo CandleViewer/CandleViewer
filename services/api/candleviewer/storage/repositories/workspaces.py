@@ -224,9 +224,10 @@ class WorkspaceRepository(Protocol):
         """Full pane-set replacement in one transaction; a failure leaves the stored set intact."""
         ...
 
-    async def soft_delete_layout(self, owner: str, workspace_id: str, layout_id: str) -> None:
+    async def soft_delete_layout(self, owner: str, workspace_id: str, layout_id: str) -> int:
         """Stamp the layout and its drawings deleted and purge the caller's oldest soft-deleted
-        layouts past `MAX_DELETED_LAYOUTS` (SR-E15-05), in one transaction."""
+        layouts past `MAX_DELETED_LAYOUTS` (SR-E15-05), in one transaction; return how many
+        layouts that purged early (0 within the bound)."""
         ...
 
     async def exists_for_other_owner(

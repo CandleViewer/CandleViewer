@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 from prometheus_client import REGISTRY
+from structlog.testing import capture_logs
 
 from candleviewer.api.drawings_limiter import DrawingsWriteLimiter
 from candleviewer.api.workspaces import WRITE_BURST, WRITES_PER_MINUTE
@@ -26,8 +27,10 @@ from tests._corpus import rest
 from tests.workspaces._workspaces_api_env import (
     LAYOUT,
     MISSING,
+    PERMS,
     USER_A,
     USER_B,
+    VIEWER,
     Env,
     wire,
 )
@@ -151,6 +154,28 @@ def test_every_write_route_is_refused_once_the_bucket_is_empty_and_reads_are_not
     assert env.c.get(f"/workspaces/{wid}").status_code == 200
 
 
+def test_a_viewers_refused_writes_take_no_token_from_the_write_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SR-E15-04: the bucket is keyed by the caller's user id and taken after the permission
+    check, so a Viewer's `403`s, more of them than the burst, spend none of that user's tokens:
+    once the same user holds `workspaces:write`, a full burst of writes lands, then `429`."""
+    clock, metrics = _Clock(), _Metrics()
+    env = Env(limiter=_bucket(clock), metrics=metrics)
+    wid = env.create("Keep")["id"]
+    env.as_user(VIEWER)
+    for _ in range(WRITE_BURST + 2):
+        assert env.c.post("/workspaces", json=wire({"name": "V"})).status_code == 403
+        assert env.c.delete(f"/workspaces/{wid}").status_code == 403
+    assert metrics.rate_limited.seen == []  # refused for permission, never for the bucket
+    monkeypatch.setitem(PERMS, VIEWER, {"workspaces:read", "workspaces:write"})
+    for i in range(WRITE_BURST):
+        assert env.c.post("/workspaces", json=wire({"name": f"V{i}"})).status_code == 201
+    assert _limited(env.c.post("/workspaces", json=wire({"name": "Late"})))
+    env.as_user(USER_A)  # another user's bucket: one write spent by the setup above
+    assert env.c.post("/workspaces", json=wire({"name": "Mine"})).status_code == 201
+
+
 # -- SR-E15-17: the delete record ------------------------------------------------------------
 
 
@@ -209,6 +234,64 @@ def test_workspace_delete_whose_record_outlives_its_bound_is_503_audit_unavailab
     assert r.status_code == 503 and r.json()["code"] == "audit_unavailable"
     assert r.headers["Retry-After"] == "5"
     assert env.c.get(f"/workspaces/{wid}").status_code == 200
+
+
+def test_cross_user_workspace_delete_writes_no_record_and_purges_nothing() -> None:
+    """D18 and SR-E15-05: user A deleting user B's workspace id is B's uniform `404`; the store
+    refuses it before any stamp or write-ahead, so no `workspace.deleted` record is written and
+    none of B's rows, live or soft-deleted, change (the denial is `rbac.denied`). The store-level
+    purge scoping is pinned in `tests/integration/storage/test_workspaces_repository.py` (the IDOR
+    matrix and `test_purge_never_touches_another_owners_rows`)."""
+    env = Env().as_user(USER_B)
+    env.create("Keep")
+    theirs = env.create()["id"]
+    lid = env.make_layout(theirs, hotkey_slot=None)["id"]
+    gone = env.create("Gone")["id"]
+    assert env.c.delete(f"/workspaces/{gone}").status_code == 204  # B's own soft-deleted row
+    rows, layouts, deleted = dict(env.repo.rows), dict(env.repo.layouts), set(env.repo.deleted)
+    records = len(env.audit.calls)
+    env.as_user(USER_A)
+    r = env.c.delete(f"/workspaces/{theirs}")
+    assert r.status_code == 404 and r.json()["code"] == "not_found"
+    new = env.audit.calls[records:]
+    assert [c["action"] for c in new] == ["rbac.denied"]
+    assert (env.repo.rows, env.repo.layouts, env.repo.deleted) == (rows, layouts, deleted)
+    env.as_user(USER_B)
+    assert env.c.get(f"/workspaces/{theirs}/layouts/{lid}").status_code == 200
+
+
+def test_layout_delete_returns_and_logs_its_early_purge_count() -> None:
+    """SR-E15-05: the store answers how many soft-deleted layouts the delete purged past the
+    bound, and the router logs it by count and kind (ids as the neighbouring logs, no names);
+    a delete within the bound logs no purge."""
+    env = Env()
+    wid = env.create()["id"]
+    first, second = (env.make_layout(wid, name=n, hotkey_slot=None)["id"] for n in ("L1", "L2"))
+    with capture_logs() as logs:
+        assert env.c.delete(f"/workspaces/{wid}/layouts/{first}").status_code == 204
+        env.repo.purge_early = 3
+        assert env.c.delete(f"/workspaces/{wid}/layouts/{second}").status_code == 204
+    purges = [e for e in logs if e["event"] == "workspace_rows_purged_early"]
+    assert len(purges) == 1
+    assert {k: purges[0][k] for k in ("count", "kind", "user_id")} == {
+        "count": 3, "kind": "layout", "user_id": str(USER_A),
+    }  # fmt: skip
+    assert "L1" not in repr(logs) and "L2" not in repr(logs)
+
+
+def test_workspace_delete_logs_its_early_purges_by_kind() -> None:
+    """SR-E15-05: a workspace delete logs the same event per kind it purged past the bound, so a
+    search for `workspace_rows_purged_early` finds every early purge."""
+    env = Env()
+    env.create("Keep")
+    wid = env.create()["id"]
+    env.repo.purge_early_workspace = (2, 5)
+    with capture_logs() as logs:
+        assert env.c.delete(f"/workspaces/{wid}").status_code == 204
+    purges = sorted(
+        (e["kind"], e["count"]) for e in logs if e["event"] == "workspace_rows_purged_early"
+    )
+    assert purges == [("layout", 5), ("workspace", 2)]
 
 
 # -- names: zero-width and BOM ---------------------------------------------------------------

@@ -12,9 +12,9 @@ under the shared `alert_denied_audit_held*` event names. A write's denial is alw
 Every foreign-id denial, read or write, held or written, counts once in `authz_denied_total`, as
 the drawings router's do (SR-125).
 Writes are not audited (D20), except a workspace delete: one `workspace.deleted` record, written
-ahead in the deleting transaction, carrying ids and counts only (SR-E15-17, C-2.9); a record that
-is not written is `503 audit_unavailable` and nothing changes. Bodies are read raw so the byte and
-depth caps run before pydantic.
+ahead (durable before the deleting transaction commits), carrying ids and counts only (SR-E15-17,
+C-2.9); a record that is not written is `503 audit_unavailable` and nothing changes. Bodies are
+read raw so the byte and depth caps run before pydantic.
 Every write takes a token of the caller's write bucket (SR-E15-04: `WRITE_BURST`, refilled at
 `WRITES_PER_MINUTE`) after the permission check: none left is `429 rate_limited` with
 `Retry-After`, counted in `cv_workspace_rate_limited_total{resource}`, never queued.
@@ -849,6 +849,9 @@ def make_workspaces_router(
                     layout_count=len(done.layout_ids), drawing_count=done.drawing_count,
                     purged_workspaces=done.purged_workspaces,
                     purged_layouts=done.purged_layouts)  # fmt: skip
+        for kind, n in (("workspace", done.purged_workspaces), ("layout", done.purged_layouts)):
+            if n:  # SR-E15-05: the same event a layout delete's early purge logs
+                _log().info("workspace_rows_purged_early", user_id=owner, kind=kind, count=n)
         return kept(k, Response(status_code=204))
 
     async def miss(p: AuditPrincipal, wid: str, lid: str | None, mode: str) -> _Problem:
@@ -980,10 +983,12 @@ def make_workspaces_router(
         if (k := keyed(request, owner, "deleteLayout")).hit is not None:
             return k.hit
         try:
-            await store().soft_delete_layout(owner, wid, lid)
+            purged = await store().soft_delete_layout(owner, wid, lid)
         except WorkspaceNotFoundError:
             raise await miss(principal, wid, lid, "write") from None
         _log().info("layout_deleted", user_id=owner, workspace_id=wid, layout_id=lid)
+        if purged:  # SR-E15-05: the caller's oldest soft-deleted layouts past the bound
+            _log().info("workspace_rows_purged_early", user_id=owner, kind="layout", count=purged)
         return kept(k, Response(status_code=204))
 
     return router

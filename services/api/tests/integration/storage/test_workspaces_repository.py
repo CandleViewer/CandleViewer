@@ -702,12 +702,14 @@ async def test_soft_deleted_layouts_past_the_bound_purge_oldest_first_in_the_del
     a = _user(pg_dsn)
     wid = await _new_ws(repo, a)
     made: list[str] = []
+    purged: list[int] = []
     for _ in range(MAX_DELETED_LAYOUTS + 2):
         lid = str(uuid.uuid4())
         await repo.create_layout(a, wid, lid, _lay(None, 1))
-        await repo.soft_delete_layout(a, wid, lid)
+        purged.append(await repo.soft_delete_layout(a, wid, lid))
         made.append(lid)
     assert _deleted(pg_dsn, "layouts", a) == made[2:]
+    assert purged == [0] * MAX_DELETED_LAYOUTS + [1, 1]  # each delete's early-purge count
 
 
 async def test_soft_deleted_workspaces_past_the_bound_purge_oldest_first_and_count_it(

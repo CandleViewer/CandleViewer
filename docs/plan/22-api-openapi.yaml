@@ -10393,10 +10393,11 @@ paths:
         precondition. Missing, already deleted or another user's: the same `404`. `Idempotency-Key`
         as on `createWorkspace` (a replay returns the stored `204`).
 
-        Audited (SR-E15-17, C-2.9): one `workspace.deleted` record, written ahead in the deleting
-        transaction, carrying the ids and counts of the layouts and drawings it stamps deleted and
-        of the rows it purges early, never a name or content (`24` §15.5). A record that cannot be
-        written is `503 audit_unavailable` and nothing changes; a replay writes no second record.
+        Audited (SR-E15-17, C-2.9): one `workspace.deleted` record, written ahead (durable before
+        the deleting transaction commits), carrying the ids and counts of the layouts and drawings
+        it stamps deleted and of the rows it purges early, never a name or content (`24` §15.5). A
+        record that cannot be written is `503 audit_unavailable` and nothing changes; a replay
+        writes no second record.
 
         Soft-deleted rows per user (SR-E15-05): a user keeps at most 128 soft-deleted workspaces and
         128 soft-deleted layouts awaiting the 90-day purge (4x the live caps). A delete is never
