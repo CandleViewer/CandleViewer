@@ -741,12 +741,15 @@ ran.
 - **CI-A11Y-008** (the VR fonts are not pinned): the `vr` job's font step could not install
   `fonts-inter` or `fonts-jetbrains-mono` at the versions it pins (noble's release pocket), or
   fontconfig has no `Inter` or `JetBrains Mono` family after the install, so the shard would draw
-  the token families in a substitute and fail every cell. Before each `apt-get` the step waits up to
-  120 s for apt's lists lock, dpkg's locks and the archives lock (`sudo fuser`, a warning names
+  the token families in a substitute and fail every cell. The step first stops the image's apt
+  background units for the life of the job (`apt-daily.timer`, `apt-daily-upgrade.timer`, their
+  services and `unattended-upgrades.service`; stopped, never masked), and a warning names any that
+  were running (#5530). Before each `apt-get` the step then waits up to
+  300 s for apt's lists lock, dpkg's locks and the archives lock (`sudo fuser`, a warning names
   the seconds waited, and another says when `fuser` is missing and the wait is skipped;
   `DPkg::Lock::Timeout` covers only dpkg's), then tries `update` and `install` three times each,
-  20 s apart, with a warning per failed try; a lock still held after 120 s fails with this code and
-  says so. The step's worst case, 2 × (3 × (120 + 60) + 40) s, is longer than the shard's
+  20 s apart, with a warning per failed try; a lock still held after 300 s fails with this code and
+  says so. The step's worst case, 2 × (3 × (300 + 60) + 40) s, is longer than the shard's
   `timeout-minutes`, which alone bounds it and fails closed. A held lock is usually an `apt-get` an earlier step left: `playwright_browsers.sh` kills
   its bounded commands as a whole process group (`setsid`) since #5275, because coreutils `timeout`
   left `install-deps`' root `apt-get` running past the bound (`sudo` ignores a signal from its
