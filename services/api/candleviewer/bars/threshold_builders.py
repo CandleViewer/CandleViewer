@@ -112,7 +112,7 @@ class DeltaBarBuilder(_ThresholdBuilder):
         if closed:
             self._n_bars += 1
             _check_rate(self, self._n_trades)
-        return (self._emit(d, closed=closed),)
+        return self._settle(d, closed)
 
 
 class RangeBarBuilder(_ThresholdBuilder):
@@ -153,7 +153,7 @@ class RangeBarBuilder(_ThresholdBuilder):
         self._n_trades += 1
         span = d.high - d.low
         if span < self._width:
-            return (self._emit(d, closed=False),)
+            return self._settle(d, False)
         self._carry = d.close
         if span >= self._two_widths:
             self._gap = True
@@ -162,9 +162,9 @@ class RangeBarBuilder(_ThresholdBuilder):
         _check_rate(self, self._n_trades)
         return (self._emit(d, closed=True),)
 
-    def _emit(self, d: _Draft, closed: bool, split: str | None = None) -> RangeBarUpdate:
-        u = super()._emit(d, closed, split)
-        return RangeBarUpdate.model_construct(kind=u.kind, bar=u.bar, open_source_ts=self._open_src)
+    def _make(self, kind: str, d: _Draft, closed: bool, split: str | None) -> RangeBarUpdate:
+        bar = d.to_bar(self._hash, self.symbol, closed)  # a range bar never splits a print
+        return RangeBarUpdate.model_construct(kind=kind, bar=bar, open_source_ts=self._open_src)
 
     def snapshot(self) -> BuilderState:
         s = super().snapshot()

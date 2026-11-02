@@ -1,7 +1,9 @@
 """Tick and volume bar builders (`24-internal-schemas.md` §3.3, ticket E12-S02).
 
 Hot path (C-2.20): plain synchronous code, no statechart. Both builders reuse the
-`time_builder._Draft` accumulator and materialise a frozen `Bar` only on emit.
+`time_builder._Draft` accumulator and materialise a frozen `Bar` only for an `open` or a `close`
+(§3.2, #2022): a trade that only extends the open bar returns nothing, and `forming()` gives the
+open bar on demand through the same `_Draft.to_bar` as a close.
 
 Shared rules (tick and volume bars are activity bars, not time-aligned):
 - `open_time`/`close_time` are the `ts_event` of the first/last trade in the bar (event order
@@ -29,7 +31,7 @@ SR-E12-15: one print closes at most `MAX_BRICKS_PER_TRADE` bars (the remainder t
 bar is not a close). The check comes before any state changes, and a print over it raises
 `BarsError`, as the renko builder does: the builder is left as if the print never arrived, and on
 the live path `BarBuilderSet` quarantines, counts and logs the series. Tick, delta and range bars
-never split a trade, so each emits one update per print and needs no such check.
+never split a trade, so each folds a print into at most one bar and needs no such check.
 
 The bound is exact for thresholds of at most 25 significant digits (the wire takes whole numbers up
 to 10^12); a 26 to 28 digit threshold built directly can close one bar more or fewer, and can
@@ -144,14 +146,33 @@ class _ActivityBuilder:
         floor_us` carries `gap_before`. See `TimeBarBuilder.mark_gap`."""
         self._gap_floor, self._gap_pending = floor_us, True
 
+    def _make(self, kind: str, d: _Draft, closed: bool, split: str | None) -> ActivityBarUpdate:
+        """Materialise `d` (no state change): the one path for an emission and `forming()`."""
+        bar = d.to_bar(self._hash, self.symbol, closed)
+        return ActivityBarUpdate.model_construct(kind=kind, bar=bar, split_from_trade_id=split)
+
     def _emit(self, d: _Draft, closed: bool, split: str | None = None) -> ActivityBarUpdate:
         d.open_time, d.close_time = d.first_ts, d.last_ts
         kind = "close" if closed else ("open" if d.count == 1 else "update")
-        bar = d.to_bar(self._hash, self.symbol, closed)
         if closed:
             self._cur = None
             self._built.inc()
-        return ActivityBarUpdate.model_construct(kind=kind, bar=bar, split_from_trade_id=split)
+        return self._make(kind, d, closed, split)
+
+    def _settle(self, d: _Draft, closed: bool) -> Sequence[BarUpdate]:
+        """After a print: emit an `open` or a `close`; a print that only extends the open bar
+        keeps the draft's times current (what `snapshot()` stores) and returns nothing (#2022)."""
+        if closed or d.count == 1:
+            return (self._emit(d, closed),)
+        d.open_time, d.close_time = d.first_ts, d.last_ts
+        return _NONE
+
+    def forming(self) -> BarUpdate | None:
+        """The open bar as the `update` a print extending it used to emit, or None (§3.2, #2022).
+        No state change: `_settle` and `_emit` keep the draft's times current, so it is read as
+        is. A sample never takes a split, so its `split_from_trade_id` is None."""
+        d = self._cur
+        return None if d is None else self._make("update", d, False, None)
 
     def on_clock(self, now_us: TsUs) -> Sequence[BarUpdate]:
         return _NONE
@@ -191,7 +212,7 @@ class TickBarBuilder(_ActivityBuilder):
         self._guard(t)
         d = self._draft(t)
         d.apply(t)
-        return (self._emit(d, closed=d.count >= self._n),)
+        return self._settle(d, d.count >= self._n)
 
 
 class VolumeBarBuilder(_ActivityBuilder):
@@ -223,7 +244,7 @@ class VolumeBarBuilder(_ActivityBuilder):
         d = self._draft(t)
         if rem < room:  # common path: no close, no split
             d.fold(px, rem, ts, seq, buy)
-            return (self._emit(d, closed=False),)
+            return self._settle(d, False)
         split = t.trade_id if rem > room else None
         out: list[BarUpdate] = []
         while True:  # bounded: one iteration per close (at most the cap), plus one for a remainder
