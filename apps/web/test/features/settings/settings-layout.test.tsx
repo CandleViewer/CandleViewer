@@ -111,6 +111,16 @@ describe("SettingsNavView", () => {
       "/settings/hotkeys",
     );
   });
+
+  it("removes its key listener on unmount", () => {
+    const { unmount } = render(<SettingsNavView current="hotkeys" />);
+    const nav = screen.getByRole("navigation", { name: "Settings" });
+    const list = within(nav).getByRole("list");
+    const link = within(nav).getByRole("link", { name: "Hotkeys" });
+    expect(fireEvent.keyDown(link, { key: "ArrowDown" })).toBe(false); // handled: default prevented
+    unmount();
+    expect(fireEvent.keyDown(list, { key: "ArrowDown" })).toBe(true); // no listener left
+  });
 });
 
 describe("settings search", () => {
@@ -126,6 +136,25 @@ describe("settings search", () => {
   });
 
   beforeEach(() => vi.useFakeTimers());
+
+  it("cancels the pending announcement on unmount", () => {
+    render(<ShellAnnouncer />);
+    const layout = render(
+      <MemoryRouter initialEntries={["/settings/appearance"]}>
+        <SettingsLayout>
+          <h1>Appearance</h1>
+        </SettingsLayout>
+      </MemoryRouter>,
+    );
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search settings" }), {
+      target: { value: "motion" },
+    });
+    layout.unmount();
+    act(() => {
+      vi.advanceTimersByTime(SEARCH_SAY_MS * 2);
+    });
+    expect(screen.queryByText(/^2 results: /)).toBeNull();
+  });
 
   it("announces the count once, after typing stops, with each section path", () => {
     view();
@@ -211,6 +240,24 @@ describe("reset preview", () => {
     expect(screen.getByText("Appearance reset: 1 setting restored.")).toBeInTheDocument();
   });
 
+  it("stops listening for Esc once unmounted", () => {
+    const onCancel = vi.fn();
+    const { unmount } = render(
+      <ResetPreview
+        sectionLabel="Appearance"
+        items={items}
+        onConfirm={() => undefined}
+        onCancel={onCancel}
+      />,
+    );
+    const preview = screen.getByRole("region", { name: /to defaults/ });
+    fireEvent.keyDown(preview, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    unmount();
+    fireEvent.keyDown(preview, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
   it("with nothing to change the confirm is disabled with its reason", () => {
     render(
       <ResetPreview
@@ -227,13 +274,13 @@ describe("reset preview", () => {
 });
 
 describe("scope text", () => {
-  it("is always a term of the SCR-110 vocabulary or the pending-ruling placeholder", () => {
+  it("is always a term of the SCR-110 vocabulary or the per-device term", () => {
     const allowed: readonly string[] = Object.values(SCOPE_VOCABULARY);
     expect(SETTINGS.length).toBeGreaterThan(0);
     for (const setting of SETTINGS) expect(allowed).toContain(setting.scope);
   });
 
-  it("per-user server settings read Per user; device-only ones read the placeholder", () => {
+  it("per-user server settings read Per user; device-only ones read Per device", () => {
     const scopeOf = (id: string): string => settingEntry(id).scope;
     expect(scopeOf("reduced-motion")).toBe("Per user");
     expect(scopeOf("active-sessions")).toBe("Per user");
