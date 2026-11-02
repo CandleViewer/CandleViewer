@@ -27,13 +27,11 @@ Gates (each FAIL led by its name):
               `color.status.info.*`.
   G-AROW      every A-row's Old text or anchor stands exactly once in its target at the base;
               an "After" anchor names its line at the base, and that line starts with the quote.
-              A row marked "Applied (PR 2)" is also read in the working tree, by place: it names
-              its CMP / SCR entry; an Old / New row's New stands once, on the line that held its
-              Old at the base (that line with Old -> New) and inside its entry, and its Old not
-              at all; an After row's new line stands once, directly after its anchor line, inside
-              its entry. Every row is marked applied but A-2, which is held for PR 2's rebase
-              (its catalogue ids): its tail is exactly the held mark and no word "applied" (any
-              case, any wording) stands in its row.
+              A row marked "Applied (PR 2)" is also read in the working tree: an Old / New
+              row's New stands once, on its Old's base line, and its Old not at all; an After
+              row's line stands once, right after its anchor; each inside its CMP / SCR entry.
+              All but A-2 are applied; A-2 is held (tail the held mark, no "applied" in its row)
+              until `15` holds #5482's `### CMP-254`, which means the rebase is done.
   G-CITE      every cite in range and on a non-blank line at its ref, its content equal to the
               pins file's hash; the SHA anchors are the pinned refs.
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
@@ -78,6 +76,7 @@ TARGETS = {
 OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL, *TARGETS.values())
 APPLIED = " **Applied (PR 2).**"
 HELD_MARK = " **Held for PR 2's rebase.**"
+REBASED = "\n### CMP-254 "  # #5482's first entry: on the base, A-2 is due
 HELD = {"A-2"}  # applied at PR 2's rebase, when its catalogue ids are assigned
 BASE = "c327ed438c01c5bab9247890dd00f5dce3717f97"  # origin/main when written
 MEMO_REF = "4774b2f8cd7b67a1ee934fe88546568f7aa3e34c"  # #5451's head (E38-D01 memo)
@@ -486,7 +485,7 @@ def g_arow(t: Texts, vals: dict[str, str]) -> list[str]:
         m = re.match(r"- \*\*(A-\d+) \u2192 `(\d\d)`(?: ((?:CMP|SCR)-\d+))?", ln)
         if not m:
             continue
-        aid, key, owner = m[1], m[2], m[3]
+        aid, key, owner = m[1], m[2], m[3] or ""
         body = ln[m.end() :]
         anchors = re.findall(r'Old: "(.+?)"\. New:', body)
         after = re.findall(
@@ -512,28 +511,16 @@ def g_arow(t: Texts, vals: dict[str, str]) -> list[str]:
     return bad
 
 
-def entry_span(text: str, owner: str) -> tuple[int, int] | None:
-    """The line range [i, j) of the `### <owner>` entry: its heading to the next heading."""
-    ls = text.split("\n")
-    hs = [i for i, ln in enumerate(ls) if re.match(rf"### {owner}\b", ln)]
-    if len(hs) != 1:
-        return None
-    j = next(
-        (k for k in range(hs[0] + 1, len(ls)) if ls[k].startswith(("### ", "## "))),
-        len(ls),
-    )
-    return hs[0], j
+def inside(ls: list[str], i: int, own: str) -> bool:
+    head = next((x for x in reversed(ls[:i]) if x.startswith(("### ", "## "))), "")
+    return bool(own) and re.match(rf"### {own}\b", head) is not None
 
 
-def applied_problems(
-    t: Texts, aid: str, key: str, owner: str | None, body: str
-) -> list[str]:
+def applied_problems(t: Texts, aid: str, key: str, own: str, body: str) -> list[str]:
     if aid in HELD:
-        bad = (
-            []
-            if body.endswith(HELD_MARK)
-            else [f"{aid}: its tail is not the held mark"]
-        )
+        bad = [] if body.endswith(HELD_MARK) else [f"{aid}: no held mark"]
+        if REBASED in t.work.get(key, ""):
+            bad.append(f"{aid}: still held, but `{key}` holds #5482's CMP-254")
         if re.search(r"\bapplied\b", body, re.IGNORECASE):
             bad.append(f"{aid}: marked applied, but it is held for PR 2's rebase")
         return bad
@@ -543,9 +530,6 @@ def applied_problems(
     work = t.work.get(key)
     if work is None:
         return [f"{aid}: cannot read `{key}` in the working tree"]
-    span = entry_span(work, owner) if owner else None
-    if span is None:
-        return [f"{aid}: names no CMP / SCR entry that stands once in `{key}`"]
     wl = work.split("\n")
     on = re.search(r'Old: "(.+?)"\. New: "(.+)"\.?$', body)
     if on:
@@ -561,8 +545,8 @@ def applied_problems(
         hits = [i for i, ln in enumerate(wl) if new in ln]
         if len(was) != 1 or len(hits) != 1 or wl[hits[0]] != was[0].replace(old, new):
             bad.append(f"{aid}: its New is not on the line that held its Old")
-        elif not span[0] < hits[0] < span[1]:
-            bad.append(f"{aid}: its New stands outside {owner} in `{key}`")
+        elif not inside(wl, hits[0], own):
+            bad.append(f"{aid}: its New stands outside {own or 'its entry'}")
         return bad
     af = re.search(r'[Aa]fter "(.+?)" \(line[^)]*\) add the line: "(.+)"\.?$', body)
     if af is None:
@@ -573,8 +557,8 @@ def applied_problems(
         return [
             f"{aid}: its line does not stand once, right after its anchor in `{key}`"
         ]
-    if not span[0] < hits[0] + 1 < span[1]:
-        return [f"{aid}: its line stands outside {owner} in `{key}`"]
+    if not inside(wl, hits[0] + 1, own):
+        return [f"{aid}: its line stands outside {own or 'its entry'}"]
     return []
 
 
@@ -807,6 +791,14 @@ A1_NEW = '`formats: ("csv"|"pdf"|"parquet")[]` (E38-D04: Parquet for the journal
 CMP100 = "\n### CMP-100 PriceInput\n"
 
 
+def a2_says_applied(t: Texts) -> Texts:
+    return sub("assigned at PR 2's rebase onto", "applied in PR 2 onto")(t)
+
+
+def rebased_onto_5482(t: Texts) -> Texts:
+    return replace(t, work={**t.work, "15": t.work["15"] + "\n### CMP-254 X\n"})
+
+
 def a1_new_under_cmp100(t: Texts) -> Texts:
     t = work_sub("15", A1_NEW, '`formats: ("csv")[]`')(t)
     return work_sub("15", CMP100, CMP100 + "\n- " + A1_NEW + "\n")(t)
@@ -820,11 +812,7 @@ def a1_line_under_cmp100(t: Texts) -> Texts:
 
 def a8_above_scr099(t: Texts) -> Texts:
     ls = t.work["14"].split("\n")
-    i = next(
-        k
-        for k, ln in enumerate(ls)
-        if ln.startswith("- **Simulated framing (E38-D04):**")
-    )
+    i = next(k for k, ln in enumerate(ls) if ln.startswith("- **Simulated framing"))
     h = next(k for k, ln in enumerate(ls) if ln.startswith("### SCR-099"))
     pair = ls[i - 1 : i + 1]
     rest = ls[: i - 1] + ls[i + 1 :]
@@ -1040,23 +1028,12 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "another plan doc in the diff",
         lambda t: replace(t, changed=[*OWN_PATHS, PATHS["16"]]),
     ),
-    (
-        "G-AROW",
-        "A-2's tail reworded to Applied in PR 2",
-        sub(HELD_MARK, " **Applied in PR 2.**"),
-    ),
-    (
-        "G-AROW",
-        "A-2 keeps its held mark, but its row says applied",
-        sub("the ids are assigned at PR 2's rebase.", "the ids are applied in PR 2."),
-    ),
-    (
-        "G-AROW",
-        "A-1's New moved under CMP-100, CMP-099 left without parquet",
-        a1_new_under_cmp100,
-    ),
+    ("G-AROW", "A-2's tail: Applied in PR 2", sub(HELD_MARK, " **Applied in PR 2.**")),
+    ("G-AROW", "A-2 held, its row says applied", a2_says_applied),
+    ("G-AROW", "A-1's New under CMP-100, CMP-099 csv only", a1_new_under_cmp100),
     ("G-AROW", "A-1's whole line moved under CMP-100", a1_line_under_cmp100),
     ("G-AROW", "A-8's anchor and line moved above SCR-099", a8_above_scr099),
+    ("G-AROW", "rebased onto #5482's CMP-254 with A-2 still held", rebased_onto_5482),
     (
         "G-T2",
         "§10.1 without CMP-079",
