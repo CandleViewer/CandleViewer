@@ -65,7 +65,7 @@ Usage (from the repo root):
   python3 -I docs/design/_tools/e38_d06_handoff_audit.py --stage full --self-test
   python3 -I docs/design/_tools/e38_d06_handoff_audit.py --stage full --repin-ruled
   (--check exits 1 on any FAIL; --repin-ruled is the pins file's only writer and runs
-  in the full stage only)
+  in the full stage only, refusing when the pack is missing; the self-test probes it)
 """
 
 from __future__ import annotations
@@ -1036,6 +1036,28 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts], tuple[str, ...]], ...
 )
 
 
+def repin_refusal(t: Texts) -> str | None:
+    """Why --repin-ruled must not write: the deck stage, or the pack missing."""
+    if t.stage != FULL:
+        return "the deck stage has no pack to pin"
+    if SPEC_REL not in t.present:
+        return f"{SPEC_REL} is missing: no pack to pin"
+    return None
+
+
+def repin_probes(base: Texts) -> list[tuple[str, bool]]:
+    """P-1 and P-2: --repin-ruled refuses without the pack and writes only with it."""
+    if base.stage == DECK:
+        return [("P-1 --repin-ruled refuses in the deck stage", repin_refusal(base) is not None)]
+    return [
+        (
+            "P-1 --repin-ruled refuses with the pack missing",
+            bool(repin_refusal(absent(SPEC_REL)(base))),
+        ),
+        ("P-2 --repin-ruled proceeds with the pack present", repin_refusal(base) is None),
+    ]
+
+
 def selftest(stage: str) -> tuple[bool, list[str]]:
     loaded = load(stage)
     base = replace(loaded, changed=list(owned(stage)))
@@ -1059,6 +1081,9 @@ def selftest(stage: str) -> tuple[bool, list[str]]:
     ok &= not missing
     if missing:
         out.append(f"FAIL no mutation for {', '.join(missing)}")
+    for what, good in repin_probes(base):
+        ok &= good
+        out.append(f"{'ok  ' if good else 'FAIL'} {what}")
     now = load(stage)
     restored = (now.spec, now.deck) == before
     ok &= restored
@@ -1080,11 +1105,12 @@ def main(argv: list[str]) -> int:
         ok, lines = selftest(a.stage)
         print("\n".join(lines))
         return 0 if ok else 1
-    if a.repin_ruled and a.stage != FULL:
-        print("refused: the deck stage has no pack to pin")
-        return 1
     t = load(a.stage)
     if a.repin_ruled:
+        why = repin_refusal(t)
+        if why:
+            print(f"refused: {why}")
+            return 1
         hashes, bad = cite_hashes(t)
         if bad:
             print(f"refused: {bad[0]}")
