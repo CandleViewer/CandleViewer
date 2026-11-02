@@ -392,7 +392,7 @@ export interface SnapMeta {
    */
   stale?: boolean;
   /**
-   * bars snapshots: the ranges within the snapshot's span that the server could not serve, listed so a client never reads that span as complete (§6.1, #5396). The same key and item shape as REST `DataMeta.coverage_holes` (22). Repeated on every chunk of a chunked set (§3.6). Absent means none recorded. Never on a d.
+   * bars snapshots: the ranges within the snapshot's span that the server could not serve, listed so a client never reads that span as complete (§6.1, #5396). The same key and item shape as REST `DataMeta.coverage_holes` (22). Sorted, at most 12 entries: past that the oldest are joined into one range, which may cover bars sent. Repeated on every chunk of a chunked set (§3.6). Absent means none recorded. Never on a d.
    */
   coverage_holes?: {
     /**
@@ -619,7 +619,7 @@ export interface SnapMeta {
    */
   stale?: boolean;
   /**
-   * bars snapshots: the ranges within the snapshot's span that the server could not serve, listed so a client never reads that span as complete (§6.1, #5396). The same key and item shape as REST `DataMeta.coverage_holes` (22). Repeated on every chunk of a chunked set (§3.6). Absent means none recorded. Never on a d.
+   * bars snapshots: the ranges within the snapshot's span that the server could not serve, listed so a client never reads that span as complete (§6.1, #5396). The same key and item shape as REST `DataMeta.coverage_holes` (22). Sorted, at most 12 entries: past that the oldest are joined into one range, which may cover bars sent. Repeated on every chunk of a chunked set (§3.6). Absent means none recorded. Never on a d.
    */
   coverage_holes?: {
     /**
