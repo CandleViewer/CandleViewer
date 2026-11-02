@@ -4,13 +4,14 @@ and the LOD change.
 
 Standalone, offline, stdlib only; it runs no repo code and is run with `python3 -I`. It reads the
 spec and the pins file from the working tree, and every cited file AS TEXT with `git show` at the
-pinned base (`BASE`), except E12-D08, read at #243's head (`D08_REF`) until #243 merges (BQ-02).
+pinned base (`BASE`), except E12-D08, read at #5425's head (`D08_REF`) until #5425 merges (BQ-02).
 Default-deny: a gate that cannot read its input FAILs.
 
 Gates (each FAIL led by its name):
   G-MOMENT   §2's rows M-01 ... M-08, in order, each complete: a property, a token or "a cut" in
              Duration and Easing, a reduce cell, a carrier, a budget in ms, a source; the four
-             moments (a) ... (d) present.
+             moments (a) ... (d) present; M-06's and M-08's carriers name their view-as T2
+             (BQ-15).
   G-TOKEN    every `motion.*` name the spec writes resolves in `primitives.tokens.json` at the
              base; every DUR anchor is that token's value.
   G-BUDGET   every BUD anchor re-derived from the cited texts and the tokens (the switch room, the
@@ -19,7 +20,8 @@ Gates (each FAIL led by its name):
              pins file's hash (a moved or edited line FAILs until re-pointed by content and
              `--repin-ruled` re-pins it); the SHA anchors are the pinned refs.
   G-HYGIENE  no closing keyword, local path, URL or host, agent name, double-brace slot or
-             public-text deny word in the spec; no unknown anchor key.
+             public-text deny word in the spec; no hard-coded `16` block number "§7.3" (BQ-18:
+             numbered at PR 2's rebase); no unknown anchor key.
   G-SCOPE    the diff against `git merge-base HEAD origin/main` touches only the spec, this tool
              and the pins file.
 
@@ -49,9 +51,7 @@ TOOL_REL = "docs/design/_tools/e12_d10_motion_audit.py"
 PINS_REL = "docs/design/_tools/e12_d10_ruled_pins.txt"
 OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
 BASE = "90a710c4fdedd084ebf0c48a29f316aec7e253fe"  # origin/main when written (re-pinned by content)
-D08_REF = (
-    "d6b9d459af8c7563e34a41b45474d02f5ff6cb68"  # #243's head (r4); re-pinned to main at its merge
-)
+D08_REF = "d6b9d459af8c7563e34a41b45474d02f5ff6cb68"  # #5425's head (#243's boards PR, r4); re-pinned to main at its merge
 TOK_REL = "packages/ui/tokens/primitives.tokens.json"
 PATHS: dict[str, str] = {
     "05": "docs/plan/05-accessibility-standard.md",
@@ -73,7 +73,9 @@ PATHS: dict[str, str] = {
     "E08D11": "docs/design/E08/E08-D11.md",
     "E47D08": "docs/design/E47/E47-D08.md",
 }
-E47_REF = "307dffee24811c9fd7a99d7753c427573e858b13"  # #5444's head; re-pinned at its merge
+E47_REF = (
+    "307dffee24811c9fd7a99d7753c427573e858b13"  # #5444's head; re-pinned at its merge
+)
 REF_OF = {"D08": D08_REF, "E47D08": E47_REF}  # every other key is read at BASE
 DASH = "\u2013"  # the en dash of a cited range
 CITE = re.compile(
@@ -81,8 +83,12 @@ CITE = re.compile(
     r"(\d+(?:\u2013\d+)?(?:, :\d+(?:\u2013\d+)?)*)"
 )
 ANCHOR = re.compile(r"`?([^\s<|(`]+)`?<!--=([A-Z]+:[A-Za-z0-9.]+)-->")
-CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE)
-LOCAL_PATH = re.compile("/" + "home/|/Users/|[A-Za-z]:\\\\|\\bwt-" + "notes\\b")  # assembled
+CLOSING = re.compile(
+    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE
+)
+LOCAL_PATH = re.compile(
+    "/" + "home/|/Users/|[A-Za-z]:\\\\|\\bwt-" + "notes\\b"
+)  # assembled
 AGENT_NAME = re.compile(r"\b[a-z]{2,4}-worker-\d\b")
 URL_OR_HOST = re.compile(r"https?://|penpot\.[a-z]|team-id=|file-id=", re.IGNORECASE)
 # assembled, so the list never spells the words it refuses
@@ -102,8 +108,11 @@ DENY = (
     "gh" + "sa",
     "pre-" + "auth",
 )
-MS_LITERAL = re.compile(r"(?<![\w.>])\d[\d.,]*\s?ms\b")  # an anchored value ends "-->" before " ms"
+MS_LITERAL = re.compile(
+    r"(?<![\w.>])\d[\d.,]*\s?ms\b"
+)  # an anchored value ends "-->" before " ms"
 MOMENTS = ("(a)", "(b)", "(c)", "(d)")
+T2_ROWS = ("M-06", "M-08")  # BQ-15: the rows that show `Retry` / `Cancel` under view-as
 
 
 @dataclass(frozen=True)
@@ -117,8 +126,8 @@ class Texts:
 def git(*args: str) -> str | None:
     try:
         # git with fixed arguments and no shell; the only external program the audit runs
-        r = subprocess.run(  # noqa: S603
-            ["git", "-C", str(ROOT), *args],  # noqa: S607
+        r = subprocess.run(
+            ["git", "-C", str(ROOT), *args],
             capture_output=True,
             check=False,
         )
@@ -196,7 +205,11 @@ def tokens(t: Texts) -> set[str]:
 
 
 def compute(t: Texts) -> dict[str, str]:
-    v: dict[str, str] = {"SHA:BASE": BASE[:10], "SHA:D08": D08_REF[:10], "SHA:E47D08": E47_REF[:10]}
+    v: dict[str, str] = {
+        "SHA:BASE": BASE[:10],
+        "SHA:D08": D08_REF[:10],
+        "SHA:E47D08": E47_REF[:10],
+    }
     dur = durations(t)
     for k, ms in dur.items():
         v[f"DUR:{k}"] = str(ms)
@@ -299,6 +312,9 @@ def g_moment(t: Texts, vals: dict[str, str]) -> list[str]:
             bad.append(f"{r[0]}: no budget in ms")
         if not src:
             bad.append(f"{r[0]}: no source")
+    for r in rows:
+        if r[0] in T2_ROWS and len(r) > 6 and "view-as T2" not in r[6]:
+            bad.append(f"{r[0]}: its carrier does not name the view-as T2 (BQ-15)")
     got = " ".join(r[1] for r in rows if len(r) > 1)
     for mo in MOMENTS:
         if mo not in got:
@@ -332,7 +348,9 @@ def g_cite(t: Texts, vals: dict[str, str]) -> list[str]:
     pinned = parse_pins(t.pins)
     for label, h in hashes.items():
         if label not in pinned:
-            bad.append(f"cite {label} is unpinned: verify it by content, then --repin-ruled")
+            bad.append(
+                f"cite {label} is unpinned: verify it by content, then --repin-ruled"
+            )
         elif pinned[label] != h:
             bad.append(
                 f"cite {label}: the line at its base is not the pinned content (moved or edited)"
@@ -356,6 +374,8 @@ def g_hygiene(t: Texts, vals: dict[str, str]) -> list[str]:
                 bad.append(f"spec:{i} carries {what}")
         if "{{" in ln:
             bad.append(f"spec:{i} carries a double-brace slot")
+        if "§7.3" in ln:
+            bad.append(f"spec:{i} hard-codes the `16` block as §7.3 (BQ-18)")
         hit = next((d for d in DENY if d in low), None)
         if hit:
             bad.append(f"spec:{i} carries a public-text deny word")
@@ -419,14 +439,20 @@ def changed_paths() -> list[str] | None:
 
 def load() -> Texts:
     spec = (ROOT / SPEC_REL).read_text(encoding="utf-8")
-    pins = (ROOT / PINS_REL).read_text(encoding="utf-8") if (ROOT / PINS_REL).exists() else ""
+    pins = (
+        (ROOT / PINS_REL).read_text(encoding="utf-8")
+        if (ROOT / PINS_REL).exists()
+        else ""
+    )
     return Texts(spec, pins, changed_paths(), {})
 
 
 def sub(old: str, new: str) -> Callable[[Texts], Texts]:
     def f(t: Texts) -> Texts:
         if t.spec.count(old) != 1:
-            raise SystemExit(f"self-test: the spec carries {old[:50]!r} {t.spec.count(old)} times")
+            raise SystemExit(
+                f"self-test: the spec carries {old[:50]!r} {t.spec.count(old)} times"
+            )
         return replace(t, spec=t.spec.replace(old, new))
 
     return f
@@ -435,7 +461,8 @@ def sub(old: str, new: str) -> Callable[[Texts], Texts]:
 def drop_row(lead: str) -> Callable[[Texts], Texts]:
     def f(t: Texts) -> Texts:
         return replace(
-            t, spec="\n".join(ln for ln in t.spec.split("\n") if not ln.startswith(lead))
+            t,
+            spec="\n".join(ln for ln in t.spec.split("\n") if not ln.startswith(lead)),
         )
 
     return f
@@ -468,7 +495,11 @@ def blank_cell(row: str, col: int) -> Callable[[Texts], Texts]:
 MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-MOMENT", "blank M-05's reduce cell", blank_cell("M-05", 5)),
     ("G-MOMENT", "drop moment (d)'s row", drop_row("| M-02 ")),
-    ("G-TOKEN", "misspell a duration token", set_cell("M-07", 3, "`motion.duration.normel`")),
+    (
+        "G-TOKEN",
+        "misspell a duration token",
+        set_cell("M-07", 3, "`motion.duration.normel`"),
+    ),
     (
         "G-BUDGET",
         "type 400 for the progress slack",
@@ -487,14 +518,31 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     (
         "G-TOKEN",
         "type a millisecond literal",
-        sub("0<!--=DUR:instant--> ms of engine frame time (§8)", "0 ms of engine frame time (§8)"),
+        sub(
+            "0<!--=DUR:instant--> ms of engine frame time (§8)",
+            "0 ms of engine frame time (§8)",
+        ),
     ),
     (
         "G-HYGIENE",
         "write a closing keyword against #245",
         sub("carries the closing line.", "carries the closing line. Closes #245."),
     ),
-    ("G-SCOPE", "touch `16` in the diff", lambda t: replace(t, changed=[*OWN_PATHS, PATHS["16"]])),
+    (
+        "G-SCOPE",
+        "touch `16` in the diff",
+        lambda t: replace(t, changed=[*OWN_PATHS, PATHS["16"]]),
+    ),
+    (
+        "G-HYGIENE",
+        "hard-code the `16` block as §7.3",
+        sub("a `16` §7.n block, numbered at PR 2's rebase,", "a `16` §7.3 block,"),
+    ),
+    (
+        "G-MOMENT",
+        "drop M-06's view-as T2 naming",
+        sub("; its `Retry` / `Cancel` under view-as T2 (§11)", ""),
+    ),
 )
 
 
@@ -502,7 +550,9 @@ def selftest() -> tuple[bool, list[str]]:
     base = replace(load(), changed=list(OWN_PATHS))
     before = base.spec
     found = audit(base)
-    out = [f"self-test: baseline {len(found)} FAIL"] + [f"  baseline {g}: {m}" for g, m in found]
+    out = [f"self-test: baseline {len(found)} FAIL"] + [
+        f"  baseline {g}: {m}" for g, m in found
+    ]
     ok = not found
     for i, (gate, what, fn) in enumerate(MUTATIONS, 1):
         gates = sorted({g for g, _ in audit(fn(base))})
