@@ -80,6 +80,41 @@ class FakeUserRepository(UserRepository):
         rows[user_id] = user.model_copy(update=update)
         return lock_until if rows is self.users else None
 
+    async def reserve_login_attempt(
+        self, user_id: str, *, lockout_threshold: int, lock_duration: timedelta, now: datetime
+    ) -> tuple[int, datetime | None] | None:
+        # #2802: the lock check, the increment and the lock decision in one synchronous step, as
+        # the SQL's conditional update. An id with no row does the same work on the stand-in.
+        user = self.users.get(user_id)
+        rows = self.users if user is not None else self._discarded
+        if user is None:
+            user = _ABSENT_ROW
+        if user.locked_until is not None and user.locked_until > now:
+            return None
+        slot = user.failed_login_count + 1
+        lock_until = now + lock_duration if slot >= lockout_threshold else None
+        update: dict[str, object] = {"failed_login_count": slot}
+        if lock_until is not None:
+            update["locked_until"] = lock_until
+        rows[user_id] = user.model_copy(update=update)
+        return (slot, lock_until) if rows is self.users else None
+
+    async def settle_login_attempt(
+        self, user_id: str, *, slot: int, complete: bool, now: datetime
+    ) -> bool:
+        user = self.users.get(user_id)
+        if user is None:
+            return False
+        own = user.failed_login_count == slot
+        if user.locked_until is not None and user.locked_until > now and not own:
+            return False  # another attempt's lock landed while this one was in flight
+        count = 0 if complete else max(user.failed_login_count - 1, 0)
+        locked = None if complete or own else user.locked_until
+        self.users[user_id] = user.model_copy(
+            update={"failed_login_count": count, "locked_until": locked}
+        )
+        return True
+
     async def rehash_password(
         self, user_id: str, *, password_hash: str, algo_params: dict[str, int]
     ) -> None:

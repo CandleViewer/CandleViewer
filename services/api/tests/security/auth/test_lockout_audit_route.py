@@ -1,7 +1,9 @@
 """SR-015/SR-016: audit records emitted by `/auth/login` under concurrent failures.
 
-Documented behaviour: `auth.account_locked` is emitted once per *refused* attempt (the account
-already locked at request start), whose answer is the one 401 of every failed sign-in (SR-014).
+Documented behaviour: `auth.account_locked` is emitted once per *refused* attempt: one whose
+reservation is refused because the account is already locked, or a correct password whose settle
+is refused because another attempt's lock landed while it was in flight (#2802). Its answer is the
+one 401 of every failed sign-in (SR-014).
 The request whose failure trips the lock returns that 401 too and is audited as
 `auth.login_failed`; so a burst of exactly LOCKOUT_THRESHOLD concurrent wrong passwords yields
 zero `account_locked` records, and every later attempt yields one.

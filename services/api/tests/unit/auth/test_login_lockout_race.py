@@ -3,7 +3,8 @@
 Scope: the in-memory fake repository is atomic by construction (no `await` between
 read and write), so these tests do NOT prove the real repository is race-safe; they
 check `LoginService` ordering/lock semantics only (it must delegate the increment
-to the repository and never compute counts from a stale user snapshot). The real
+to the repository and never compute counts from a stale user snapshot). #2802: the count is
+reserved before the verify, so a burst has exactly LOCKOUT_THRESHOLD attempts counted. The real
 lost-update race is covered against Postgres in
 `tests/integration/auth/test_login_lockout_race_pg.py` (CI only; no docker locally).
 """
@@ -28,23 +29,25 @@ _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 class _RecordingRepository(FakeUserRepository):
-    """Fake that records every `record_login_failure` outcome."""
+    """Fake that records every granted `reserve_login_attempt` (#2802: the count is taken
+    before the verify, so a granted reservation is a counted attempt)."""
 
     def __init__(self) -> None:
         super().__init__()
         self.failure_counts: list[int] = []
         self.lock_transitions = 0
 
-    async def record_login_failure(
+    async def reserve_login_attempt(
         self, user_id: str, *, lockout_threshold: int, lock_duration: timedelta, now: datetime
-    ) -> datetime | None:
+    ) -> tuple[int, datetime | None] | None:
         was_locked = self.users[user_id].locked_until is not None
-        result = await super().record_login_failure(
+        result = await super().reserve_login_attempt(
             user_id, lockout_threshold=lockout_threshold, lock_duration=lock_duration, now=now
         )
-        self.failure_counts.append(self.users[user_id].failed_login_count)
-        if result is not None and not was_locked:
-            self.lock_transitions += 1
+        if result is not None:
+            self.failure_counts.append(self.users[user_id].failed_login_count)
+            if result[1] is not None and not was_locked:
+                self.lock_transitions += 1
         return result
 
 

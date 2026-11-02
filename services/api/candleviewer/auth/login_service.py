@@ -11,7 +11,9 @@
   placeholder record (`_ABSENT_USER`, the nil UUID and the dummy hash) through
   the one lock check, verify call and failure block a wrong password takes;
 - disabled account -> `AccountDisabled`, only ever raised *after* a correct password;
-- five consecutive failures -> `AccountLocked` for 15 minutes, persisted across restarts;
+- five consecutive failures -> `AccountLocked` for 15 minutes, persisted across restarts; each
+  attempt is counted, and the lock applied, before its password is verified, and a correct
+  password in flight when the lock landed is refused (#2802);
 - a user without `mfa_required` (C-12.2 forbids it) -> `MfaNotRequired`, after the password;
 - a per-IP throttle independent of the per-account one (ticket "Scope /
   Deliverables": "one attacker cannot lock every account");
@@ -88,7 +90,7 @@ LOGIN_BUSY_RETRY_AFTER_S = 1
 Clock = Callable[[], datetime]
 
 #: The id of the placeholder record below: the nil UUID, never a real user (user ids are
-#: server-generated uuid4), so `UserRepository.record_login_failure` for it changes no row.
+#: server-generated uuid4), so `UserRepository.reserve_login_attempt` for it changes no row.
 ABSENT_USER_ID = uuid.UUID(int=0)
 
 #: What an unknown identifier is checked as, so both failure paths perform the same steps.
@@ -183,23 +185,29 @@ class LoginService:
     async def _check_credentials(
         self, request: LoginRequest, *, source_ip: str
     ) -> MfaChallengeResult | EnrolmentOnlyLogin:
-        if self._per_ip_throttle.is_blocked(source_ip):
-            # Per-IP throttle failures are indistinguishable from a wrong
-            # password to the caller: same exception type *and* same
-            # message as every other `InvalidCredentials` raise in this
-            # method, so the response body never leaks which of the several
-            # failure reasons actually applied.
+        # #2802: the address reserves the attempt before any password is checked, so a burst
+        # from one address has at most its budget checked. A refusal is indistinguishable from
+        # a wrong password to the caller: same exception type *and* same message as every other
+        # `InvalidCredentials` raise here, so the response never leaks which reason applied.
+        reservation = self._per_ip_throttle.try_reserve(source_ip)
+        if reservation is None:
             raise InvalidCredentials("Username or password is incorrect")
 
-        # #4663: take a verification place without waiting, or refuse at once. The place is
-        # given back on every way out of the check, a cancellation included.
+        # #4663: take a verification place without waiting, or refuse at once (not a failed
+        # attempt, so the address reservation is given back). The place is given back on every
+        # way out of the check, a cancellation included.
         if not self._admission.try_enter():
+            self._per_ip_throttle.release(source_ip, reservation)
             auth_login_verify_refused_total.inc()
             raise SignInBusy(LOGIN_BUSY_RETRY_AFTER_S)
         try:
-            return await self._verify_admitted(request, source_ip=source_ip)
+            result = await self._verify_admitted(request, source_ip=source_ip)
         finally:
             self._admission.leave()
+        # Every refusal keeps the address reservation as one failure from this address; a
+        # sign-in that succeeded gives it back.
+        self._per_ip_throttle.release(source_ip, reservation)
+        return result
 
     async def _verify_admitted(
         self, request: LoginRequest, *, source_ip: str
@@ -211,32 +219,57 @@ class LoginService:
         known = found is not None and found.id != ABSENT_USER_ID
         user = found if found is not None and known else _ABSENT_USER
 
-        now = self._clock()
-        if user.locked_until is not None and user.locked_until > now:
-            # Still run the full Argon2id verification (against the real
-            # hash) before reporting the lock, so a locked account's
-            # response takes the same wall-clock time and the same
-            # information shape as a wrong-password failure — this branch
-            # must never answer faster than a wrong password does, so its
-            # answer never shows that the account exists and is locked.
-            await self._hasher.verify(user.password_hash, request.password)
-            # #4663: an attempt at a locked account is a failed attempt from this address, so
-            # repeated attempts from one address are refused by the throttle above and take
-            # no verification place.
-            self._per_ip_throttle.record_failure(source_ip)
+        # #2802: the account reserves the attempt (counted, and locked at the threshold) before
+        # the password is verified; only an attempt holding a reservation is verified against
+        # the account's hash. The placeholder's id has no row and holds none, yet takes the same
+        # steps and always fails below.
+        slot = await self._repository.reserve_login_attempt(
+            str(user.id),
+            lockout_threshold=LOCKOUT_THRESHOLD,
+            lock_duration=LOCKOUT_DURATION,
+            now=self._clock(),
+        )
+        if known and slot is None:
+            # Locked (or the row is gone). The same Argon2id work as any attempt, against the
+            # dummy hash, so this answer is never faster than a wrong password and shows nothing;
+            # the real hash is never checked, so a locked account gives no further guess. The
+            # address reservation stands: an attempt at a locked account is a failure from it.
+            await self._hasher.verify_dummy(request.password)
             raise AccountLocked()
 
-        password_ok = await self._hasher.verify(user.password_hash, request.password)
-        if not (known and password_ok):
-            self._per_ip_throttle.record_failure(source_ip)
-            await self._on_failure(user)
-            raise InvalidCredentials("Username or password is incorrect")
+        # #2802: a lock this attempt's reservation applied is counted once: by `_on_failure`, or,
+        # if the attempt ends (cancelled, or the verify or settle raised) before either that or
+        # the settle that clears it, on the way out below, with the error propagated.
+        lock_uncounted = slot is not None and slot[1] is not None
+        try:
+            password_ok = await self._hasher.verify(user.password_hash, request.password)
+            if not (known and password_ok) or slot is None:
+                lock_uncounted = False
+                self._on_failure(slot)
+                raise InvalidCredentials("Username or password is incorrect")
 
-        # Password verified. A disabled user is refused only now, after the one verify every
-        # attempt takes; the router answers it as a wrong password (SR-014, #4961).
+            # Password verified. Settle the reservation unless another attempt's lock landed
+            # while this one was in flight: then even the correct password is refused, so nothing
+            # signs in after the lock. Only the enrolment-only sign-in ends here (the count is
+            # reset, as `record_login_success` does); every other outcome gives the reservation
+            # back (#2695: with a second factor still to pass the count is kept; `MfaService`
+            # resets it).
+            complete = (
+                user.status is UserStatus.ACTIVE and user.mfa_required and not user.mfa_methods
+            )
+            settled = await self._repository.settle_login_attempt(
+                str(user.id), slot=slot[0], complete=complete, now=self._clock()
+            )
+            lock_uncounted = False
+        finally:
+            if lock_uncounted:
+                auth_lockouts_total.inc()
+        if not settled:
+            raise AccountLocked()
+
+        # A disabled user is refused only now, after the one verify every attempt takes; the
+        # router answers it as a wrong password (SR-014, #4961).
         if user.status is UserStatus.DISABLED:
-            # Every refusal is one failure from this address, whatever the account's state.
-            self._per_ip_throttle.record_failure(source_ip)
             raise AccountDisabled("Account disabled - contact the owner")
 
         if not user.mfa_required:
@@ -245,7 +278,6 @@ class LoginService:
             # closed: never fabricate a session shape for it, and answer it as a wrong password
             # (SR-014, #4961), held to the same floor, and counted from this address as any
             # refusal is. Like every refusal, it comes before the success-path work below.
-            self._per_ip_throttle.record_failure(source_ip)
             raise MfaNotRequired()
 
         if self._hasher.needs_rehash(user.password_hash, DEFAULT_ARGON2_PARAMS):
@@ -258,8 +290,7 @@ class LoginService:
             # #2295 (Q6): TOTP is mandatory (C-12.2), so the password alone opens
             # only an enrolment-only session (never enrolled, or after an owner
             # reset or a recovery sign-in). The router mints it; no challenge row.
-            # No second factor follows, so this sign-in is complete: reset the count.
-            await self._repository.record_login_success(str(user.id))
+            # No second factor follows, so this sign-in is complete: the settle reset the count.
             return EnrolmentOnlyLogin(user_id=user.id)
         # #2695: with a second factor still to pass, the account count is kept; `MfaService`
         # resets it once the sign-in completes, and counts each refused code on it.
@@ -286,25 +317,14 @@ class LoginService:
             expires_in=300,
         )
 
-    async def _on_failure(self, user: UserRecord) -> None:
-        # The increment and the lock decision are one atomic repository
-        # operation (see `UserRepository.record_login_failure`) — this
-        # method never reads `user.failed_login_count` to compute the new
-        # count itself, because that snapshot can be stale under concurrent
-        # requests (two parallel wrong-password attempts both reading
-        # count=4 would each compute new_count=5 independently but only one
-        # UPDATE would actually observe count=4, silently losing a failure
-        # and letting an attacker get more than `LOCKOUT_THRESHOLD` guesses
-        # in before the account locks).
-        locked_until = await self._repository.record_login_failure(
-            str(user.id),
-            lockout_threshold=LOCKOUT_THRESHOLD,
-            lock_duration=LOCKOUT_DURATION,
-            now=self._clock(),
-        )
-        if locked_until is not None:
+    def _on_failure(self, slot: tuple[int, datetime | None] | None) -> None:
+        # #2802: the failure was counted by the attempt's reservation, taken before the verify in
+        # one atomic repository statement (`UserRepository.reserve_login_attempt`), never from a
+        # (possibly stale) `UserRecord` snapshot, so a burst cannot lose a count or get more than
+        # `LOCKOUT_THRESHOLD` guesses before the lock. Nothing is written here.
+        if slot is not None and slot[1] is not None:
             # SR-125: this failure left the account locked: the fifth, or the first after an
-            # expired lock. The repository returns the lock for every count at or above the
-            # threshold, so a burst of parallel failures counts each. Attempts refused while
-            # locked never get here; `StepUpService` counts the locks its own failures apply.
+            # expired lock. One reservation per lock is granted, so a burst counts one lock.
+            # Attempts refused while locked never get here; `StepUpService` counts the locks its
+            # own failures apply.
             auth_lockouts_total.inc()

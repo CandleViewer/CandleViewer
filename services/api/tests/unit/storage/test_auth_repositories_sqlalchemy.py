@@ -74,6 +74,35 @@ async def test_login_failure_is_one_atomic_conditional_update() -> None:
     assert params["threshold"] == 5 and got == _NOW
 
 
+async def test_login_reserve_is_one_atomic_update_granted_only_while_unlocked() -> None:
+    rel = _Rel([_row(slot=5, locked_until=_NOW)])
+    repo = SqlAlchemyUserRepository(rel, dict, clock=lambda: _NOW)  # type: ignore[arg-type]  # fake
+    got = await repo.reserve_login_attempt(
+        "u", lockout_threshold=5, lock_duration=timedelta(minutes=15), now=_NOW
+    )
+    sql, params = rel.calls[0]
+    assert "failed_login_count + 1" in sql and "locked_until <=" in sql and "RETURNING" in sql
+    assert params["id"] == "u" and params["now"] == _NOW and got == (5, _NOW)
+
+
+async def test_login_reserve_refused_while_locked_returns_none() -> None:
+    repo = SqlAlchemyUserRepository(_Rel([]), dict, clock=lambda: _NOW)  # type: ignore[arg-type]  # fake
+    got = await repo.reserve_login_attempt(
+        "u", lockout_threshold=5, lock_duration=timedelta(minutes=15), now=_NOW
+    )
+    assert got is None
+
+
+@pytest.mark.parametrize(("rows", "settled"), [([_row(id="u")], True), ([], False)])
+async def test_login_settle_is_one_conditional_update(rows: list[Any], settled: bool) -> None:
+    rel = _Rel(rows)
+    repo = SqlAlchemyUserRepository(rel, dict, clock=lambda: _NOW)  # type: ignore[arg-type]  # fake
+    got = await repo.settle_login_attempt("u", slot=3, complete=True, now=_NOW)
+    sql, params = rel.calls[0]
+    assert "failed_login_count = :slot" in sql and "RETURNING" in sql
+    assert params == {"id": "u", "slot": 3, "complete": True, "now": _NOW} and got is settled
+
+
 async def test_find_by_identifier_unknown_returns_none_and_is_parameterised() -> None:
     rel = _Rel([])
     repo = SqlAlchemyUserRepository(rel, dict, clock=lambda: _NOW)  # type: ignore[arg-type]  # fake

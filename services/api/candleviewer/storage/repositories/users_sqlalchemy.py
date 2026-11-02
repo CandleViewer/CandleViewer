@@ -4,7 +4,8 @@
 Lives in M10 so `candleviewer.auth` never imports a storage driver (ADR-0003).
 Every statement is static, parameterised SQL; no password material is ever
 returned beyond the stored Argon2id digest `LoginService` must verify.
-Lockout increment-and-lock is one atomic `UPDATE ... RETURNING`.
+Lockout increment-and-lock is one atomic `UPDATE ... RETURNING`, and so is the sign-in's
+reservation of an attempt before its password is verified (#2802).
 
 `SqlAlchemyUserAdminStore` (E42-T09, #2649) is the `User` read model behind `getUser` and the
 locked update behind `updateUser`: never `password_hash`, and one transaction per change (R7). It
@@ -94,6 +95,33 @@ _FAILURE_SQL = sa.text("""
                           THEN CAST(:lock_until AS timestamptz) ELSE locked_until END
     WHERE id = CAST(:id AS uuid) AND id <> CAST(:absent AS uuid)
     RETURNING CASE WHEN failed_login_count >= :threshold THEN locked_until END AS locked_until
+    """)
+#: #2802: `_FAILURE_SQL` taken before the password is verified, granted only while the row is not
+#: locked. Postgres re-reads the row it waited on, so a burst gets one grant per threshold crossing.
+_RESERVE_SQL = sa.text("""
+    UPDATE users SET
+      failed_login_count = failed_login_count + 1,
+      locked_until = CASE WHEN failed_login_count + 1 >= :threshold
+                          THEN CAST(:lock_until AS timestamptz) ELSE locked_until END
+    WHERE id = CAST(:id AS uuid) AND id <> CAST(:absent AS uuid)
+      AND (locked_until IS NULL OR locked_until <= CAST(:now AS timestamptz))
+    RETURNING failed_login_count AS slot,
+              CASE WHEN failed_login_count >= :threshold THEN locked_until END AS locked_until
+    """)
+#: #2802: a correct password settles its reservation unless another attempt's lock landed (the
+#: row is locked and the count moved past this attempt's slot): reset, or give the slot back.
+_SETTLE_SQL = sa.text("""
+    UPDATE users SET
+      failed_login_count = CASE WHEN CAST(:complete AS boolean) THEN 0
+                                ELSE GREATEST(failed_login_count - 1, 0) END,
+      locked_until = CASE WHEN CAST(:complete AS boolean) OR failed_login_count = :slot
+                          THEN NULL ELSE locked_until END,
+      last_login_at = CASE WHEN CAST(:complete AS boolean) THEN CAST(:now AS timestamptz)
+                           ELSE last_login_at END
+    WHERE id = CAST(:id AS uuid)
+      AND (locked_until IS NULL OR locked_until <= CAST(:now AS timestamptz)
+           OR failed_login_count = :slot)
+    RETURNING id
     """)
 #: The nil UUID: `LoginService`'s placeholder id for an unknown identifier. Never a real user
 #: (ids are server-generated uuid4), and the failure update never matches it, so a failed sign-in
@@ -199,6 +227,32 @@ class SqlAlchemyUserRepository:
             ).first()
             await uow.commit()
         return None if row is None else row._mapping["locked_until"]
+
+    async def reserve_login_attempt(
+        self, user_id: str, *, lockout_threshold: int, lock_duration: timedelta, now: datetime
+    ) -> tuple[int, datetime | None] | None:
+        params = {
+            "id": user_id,
+            "absent": _ABSENT_ID,
+            "threshold": lockout_threshold,
+            "lock_until": now + lock_duration,
+            "now": now,
+        }
+        async with self._relational.unit_of_work() as uow:
+            row = (await uow.session.execute(_RESERVE_SQL, params)).first()
+            await uow.commit()
+        if row is None:
+            return None
+        return int(row._mapping["slot"]), row._mapping["locked_until"]
+
+    async def settle_login_attempt(
+        self, user_id: str, *, slot: int, complete: bool, now: datetime
+    ) -> bool:
+        params = {"id": user_id, "slot": slot, "complete": complete, "now": now}
+        async with self._relational.unit_of_work() as uow:
+            row = (await uow.session.execute(_SETTLE_SQL, params)).first()
+            await uow.commit()
+        return row is not None
 
     async def recent_password_hashes(self, user_id: str, *, limit: int) -> tuple[str, ...]:
         """The user's newest retired hashes, newest first, at most *limit* (#2110)."""

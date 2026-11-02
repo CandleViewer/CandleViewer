@@ -58,6 +58,26 @@ class PerIpLoginThrottle:
             del self._attempts[oldest_ip]
         self._attempts.setdefault(source_ip, deque()).append(self._clock())
 
+    def try_reserve(self, source_ip: str) -> float | None:
+        """#2802: count an attempt *before* its password is checked, or refuse it (`None`) when
+        the address is at its budget. The check and the count are one step (neither awaits, and
+        the event loop is single-threaded), so a burst never has more than `max_attempts`
+        attempts checked. Returns the reservation, which `release` gives back on a success."""
+        if self.is_blocked(source_ip):
+            return None
+        self.record_failure(source_ip)
+        return self._attempts[source_ip][-1]
+
+    def release(self, source_ip: str, reservation: float) -> None:
+        """#2802: give back a reservation from `try_reserve` (a successful sign-in is not a
+        failure). A reservation that already left the window is gone; nothing changes then."""
+        bucket = self._attempts.get(source_ip)
+        if bucket is None or reservation not in bucket:
+            return
+        bucket.remove(reservation)  # equal timestamps are interchangeable: any one of them
+        if not bucket:
+            del self._attempts[source_ip]
+
     def retry_after_s(self, source_ip: str) -> int:
         """Whole seconds until the oldest counted attempt leaves the window
         (the `Retry-After` value for a blocked key); 0 when not blocked."""

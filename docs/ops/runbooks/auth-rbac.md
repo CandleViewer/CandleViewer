@@ -135,7 +135,8 @@ curl -s http://127.0.0.1:9108/metrics | grep '^auth_lockouts_total'
 ```
 
 Expected: one line `auth_lockouts_total{env="<env>"} <n>`. `n` counts from API process start, so
-compare it before and after; a burst of parallel wrong passwords can add more than 1 for one lock. The
+compare it before and after; one lock adds exactly 1, even under a burst of parallel wrong
+passwords, because exactly one reservation is granted per threshold crossing (#2802). The
 `AuthLockouts` rule (`infra/prometheus/alerts/system_ticket.yml`) reads it:
 `increase(auth_lockouts_total[10m]) > 0`.
 

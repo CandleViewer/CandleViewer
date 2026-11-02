@@ -73,6 +73,33 @@ class UserRepository(Protocol):
         so both failure arms answer alike."""
         ...
 
+    async def reserve_login_attempt(
+        self, user_id: str, *, lockout_threshold: int, lock_duration: timedelta, now: datetime
+    ) -> tuple[int, datetime | None] | None:
+        """#2802: count a sign-in attempt *before* its password is verified, in one atomic
+        statement: while the row is not locked (`locked_until` null or not after *now*), add 1
+        to `failed_login_count` and, when the new count reaches `lockout_threshold`, set
+        `locked_until = now + lock_duration` (the `record_login_failure` statement plus the lock
+        condition). Returns `(slot, locked_until)`: the new count, and the lock this attempt
+        applied (`None` below the threshold). `None`, with nothing changed, while the account is
+        locked or has no row (the placeholder id included). The lock condition is re-read under
+        the row lock, so at most one reservation per threshold crossing is granted and every
+        later one is refused until the lock expires."""
+        ...
+
+    async def settle_login_attempt(
+        self, user_id: str, *, slot: int, complete: bool, now: datetime
+    ) -> bool:
+        """#2802: a correct password settles its reservation from `reserve_login_attempt`, in
+        one conditional statement, only while no other attempt has locked the row: it is not
+        locked, or the lock is this attempt's own (`failed_login_count` still equals *slot*).
+        *complete* (the sign-in ends here) does what `record_login_success` does; otherwise
+        (a second factor follows, or the sign-in is refused after the password) the reservation
+        is given back: the count drops by 1 and this attempt's own lock is cleared. `False`,
+        with nothing changed, when another attempt's lock landed while this one was in
+        flight: the caller refuses even the correct password."""
+        ...
+
     async def rehash_password(
         self, user_id: str, *, password_hash: str, algo_params: dict[str, int]
     ) -> None:

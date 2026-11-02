@@ -92,6 +92,20 @@ class _SpyRepository(FakeUserRepository):
             user_id, lockout_threshold=lockout_threshold, lock_duration=lock_duration, now=now
         )
 
+    async def reserve_login_attempt(
+        self, user_id: str, *, lockout_threshold: int, lock_duration: timedelta, now: datetime
+    ) -> tuple[int, datetime | None] | None:
+        self.events.append(("reserve_login_attempt", lockout_threshold, lock_duration, now))
+        return await super().reserve_login_attempt(
+            user_id, lockout_threshold=lockout_threshold, lock_duration=lock_duration, now=now
+        )
+
+    async def settle_login_attempt(
+        self, user_id: str, *, slot: int, complete: bool, now: datetime
+    ) -> bool:
+        self.events.append(("settle_login_attempt", slot, complete))
+        return await super().settle_login_attempt(user_id, slot=slot, complete=complete, now=now)
+
 
 class _SpyHasher(Hasher):
     """Records each verify with the Argon2id parameters of its target; never hashes."""
@@ -194,12 +208,11 @@ async def test_login_unknown_and_wrong_password_make_the_same_calls(real_hash: s
     assert unknown == wrong
     assert [e[0] for e in unknown] == [
         "is_blocked",
+        "record_failure",  # #2802: the address reserves the attempt before any check
         "find_by_identifier",
         "clock",
+        "reserve_login_attempt",  # #2802: so does the account, before the verify
         "verify",
-        "record_failure",
-        "clock",
-        "record_login_failure",
         "sleep",
     ]
 
@@ -228,8 +241,8 @@ async def test_login_unknown_identifier_fails_even_when_verify_matches(real_hash
 
     await _failed_login(service, "ghost")
 
-    assert ("record_login_success",) not in events
-    assert [e[0] for e in events[-2:]] == ["record_login_failure", "sleep"]
+    assert not [e for e in events if e[0] in ("record_login_success", "settle_login_attempt")]
+    assert [e[0] for e in events[-3:]] == ["reserve_login_attempt", "verify", "sleep"]
 
 
 async def test_login_record_carrying_the_placeholder_id_never_signs_in(real_hash: str) -> None:
@@ -263,10 +276,17 @@ async def test_login_success_path_is_unchanged(real_hash: str) -> None:
     assert isinstance(result, MfaChallengeResult)
     assert [e[0] for e in events] == [
         "is_blocked",
+        "record_failure",
         "find_by_identifier",
         "clock",
+        "reserve_login_attempt",
         "verify",
-    ]  # #2695: no reset before the second factor; `MfaService` resets on its success
+        "clock",
+        "settle_login_attempt",
+    ]
+    # #2695: no reset before the second factor (`MfaService` resets on its success); the
+    # reservation is only given back (#2802).
+    assert events[-1] == ("settle_login_attempt", 1, False)
 
 
 @pytest.fixture
@@ -400,7 +420,7 @@ async def test_login_failure_write_happens_before_the_wait(real_hash: str, ident
 
     names = [e[0] for e in events]
     assert names.index("record_failure") < names.index("sleep")
-    assert names.index("record_login_failure") < names.index("sleep")
+    assert names.index("reserve_login_attempt") < names.index("sleep")
     assert names[-1] == "sleep"
 
 
@@ -472,7 +492,8 @@ async def test_login_cancellation_during_the_wait_propagates(real_hash: str) -> 
     with pytest.raises(asyncio.CancelledError):
         await attempt
     assert attempt.cancelled()
-    assert ("record_login_failure",) == events[-2][:1]  # the write was already done
+    names = [e[0] for e in events]  # the write was already done, before the verify (#2802)
+    assert names.index("reserve_login_attempt") < names.index("verify") < names.index("sleep")
 
 
 # --- #4961 (SR-014): every account state at sign-in has the wrong password's timing class ------
