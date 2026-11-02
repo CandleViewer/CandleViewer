@@ -1,0 +1,5 @@
+[
+  ["E26-D02 local · dark", "color.replay.border", "color", "{palette.purple.400}"],
+  ["E26-D02 local · light", "color.replay.border", "color", "{palette.purple.600}"],
+  ["E26-D02 local · hc", "color.replay.border", "color", "{palette.purple.400}"]
+]
