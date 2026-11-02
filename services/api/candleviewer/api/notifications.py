@@ -138,7 +138,7 @@ def dump(r: NotificationRow) -> dict[str, Any]:
     """`Notification`, field by field: no source payload, details or exchange text."""
     severity = _ORDER_SEVERITY.get(r.event, "info") if r.nkind == "order" else r.severity
     route = _ROUTE.get(r.nkind)
-    symbol = r.symbol if r.symbol is not None and _SYMBOL.match(r.symbol) else None
+    symbol = r.symbol if r.symbol is not None and _SYMBOL.fullmatch(r.symbol) else None
     return {
         "id": notification_id(r.src, r.src_id), "kind": r.nkind,
         "severity": severity or "info", "title": _title(r), "body": r.body,
