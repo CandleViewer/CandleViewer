@@ -23,7 +23,8 @@ Order of refusal (each before any storage read except where noted):
    closed with 503) -> 422 `bar_window_too_large`. Anything narrower is paged by rows: an
    uncursored request is the first page, a non-time read asks for `limit + 1` rows and a time
    read for `limit + 1 + _SAME_OPEN_ROOM`, plus one re-read of a single open time of at most
-   `SAME_OPEN_REREAD` rows when every row read shares it (bounded work, 22 `getBars`), and a
+   `SAME_OPEN_REREAD` rows when every row read shares it and fewer than that were read
+   (bounded work, 22 `getBars`), and a
    server-issued `next_cursor` is returned whenever more rows remain.
 
 The cursor is bound to `(bars, symbol, bar_type:param)` (`api.market_response`), so a klines
@@ -220,7 +221,8 @@ def _window_too_large(detail: str) -> JSONResponse:
 #: share an open time collapse into one (a kline row, a tape row, a rebuilt generation). 22.
 _SAME_OPEN_ROOM: Final = 8
 #: Time bars: when every row a read fetched shares one open time, that open time is re-read
-#: alone, at most this many rows; rows past them are not considered (22 `getBars`).
+#: alone, at most this many rows (22 `getBars`). A read of this many rows or more (`limit` >= 503)
+#: is not repeated: it already holds as many, and its fetched rows are the ones considered.
 SAME_OPEN_REREAD: Final = 512
 
 
@@ -467,6 +469,8 @@ def make_market_bars_router(
         # current generation, m1). Its bars beyond storage are read after the page (include_open).
         tail: LiveTail | None = None
         if live_series is not None and spec.kind == "time":
+            # Read before storage and again after it (include_open); a swap between the two
+            # (mn-3) refuses the second one's rows, below.
             tail = live_series(symbol, spec, None)
         first_us = start_us if after_us is None else max(start_us, after_us + 1)
         try:
@@ -527,6 +531,12 @@ def make_market_bars_router(
         elif live_series is not None and next_cursor is None:  # the last page only
             floor = at_key if at_key is not None else (first_us, -1, -1)
             got = live_series(symbol, spec, rows[-1].ts_us if rows else first_us)
+            if (spec.kind == "time" and tail is not None and got is not None
+                    and got.generation != tail.generation):  # fmt: skip
+                # The series swapped generation during the storage read: the rows above were
+                # collapsed to `tail.generation`, so live rows of another one are not appended
+                # (mn-3). Never a duplicate open time either way (`live_rows` skips served ones).
+                got = None
             pending = [] if got is None else live_rows(got, spec, first_us, end_us, rows, floor)
             live = pending[: max(0, limit - len(rows))]
             rows += live

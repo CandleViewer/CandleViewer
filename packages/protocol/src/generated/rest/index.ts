@@ -3647,8 +3647,9 @@ export interface paths {
      *     than `limit` bars while `next_cursor` is set. A non-time read fetches at most
      *     `limit + 1` stored rows. A time-bar read fetches at most `limit + 9` (the row that opens
      *     the next page plus 8 rows of room for rows that share an open time) and, only when every
-     *     row it fetched shares one open time, re-reads that open time alone, at most 512 rows. So
-     *     the work per request is bounded whatever the window. `bar_window_too_large` (422) is
+     *     row it fetched shares one open time and it fetched fewer than 512 rows (`limit` under
+     *     503), re-reads that open time alone, at most 512 rows. So the work per request is
+     *     bounded whatever the window. `bar_window_too_large` (422) is
      *     reserved for the hard window caps (E12 STRIDE SR-E12-02): time bars span at most 400
      *     days; non-time bars at most 31 days and an estimated 250 000 bars. Cursor semantics are
      *     stated once, on the `MarketCursor` parameter. A page that would exceed the response
@@ -3663,8 +3664,12 @@ export interface paths {
      *     the generation of the newest tape-built row the read fetched (the highest `generation`
      *     among those at its open time). Only then, as a deterministic tiebreak and not an order
      *     (`generation` is opaque, `Bar.generation`), the highest `generation` and then the highest
-     *     `index`. Only the first 512 rows at one open time, in stored order, are considered. The
-     *     `t` cursor neither repeats nor skips an open time across pages.
+     *     `index`. Only the rows the read fetched, in stored order, are considered: at most
+     *     `max(512, limit + 9)` at one open time. When no live generation is known, the newest
+     *     tape-built row's generation stands in for it. This is interim, until the ADR-0033
+     *     generation pointer exists, and during a rebuild it can select the rebuild's
+     *     not-yet-flipped generation. It is a known limitation owned by #535. The `t` cursor
+     *     neither repeats nor skips an open time across pages.
      *
      *     **Integrity and provenance (#5396).** Each bar carries `gap_before`, `partial` and
      *     `tape_gap` (`Bar`), the flags its stored row holds: a bar that may not match the tape
