@@ -119,7 +119,10 @@ class RangeBarBuilder(_ThresholdBuilder):
     """`BarBuilder` for `kind="range"`; `tick_size_of` returns None for an unknown symbol."""
 
     _kind = "range"
-    _legacy_gap_is_tape = False  # a pre-#5396 blob's `gap_before` may be a price jump
+    # A pre-#5396 blob's `gap_before` may be a price jump or a tape gap: ambiguous, so restore
+    # keeps it and also sets `tape_gap` (as the time builder does), never under-reporting loss.
+    _legacy_gap_is_tape = False
+    _legacy_gap_ambiguous = True
 
     def __init__(
         self, spec: BarSpec, symbol: str, tick_size_of: Callable[[str], Decimal | None]
