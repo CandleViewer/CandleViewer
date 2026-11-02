@@ -338,6 +338,7 @@ exports, added in #3189) needs that package built: `turbo run test` builds the d
 | ---------------------------- | --------------------------------------------- |
 | Run Electron against dev web | `pnpm --filter @candleviewer/desktop dev`     |
 | Package                      | `pnpm --filter @candleviewer/desktop package` |
+| Shell perf benches (E10-Q04) | `pnpm --filter @candleviewer/desktop perf`    |
 
 ### `packages/chart-engine`
 
@@ -384,6 +385,7 @@ handoff that still names `black --check .` is stale (#4229): run `ruff format --
 | Storybook play functions + axe (headless Chromium)                  | `pnpm --filter @candleviewer/ui storybook:test`                                                               |
 | Visual regression: every story x theme x density vs its baseline    | `pnpm --filter @candleviewer/ui vr`                                                                           |
 | Rewrite the VR baselines (CI refuses it outside the a11y dispatch)  | `pnpm --filter @candleviewer/ui vr:update`                                                                    |
+| Palette filter perf budget (calibrated `perf` vitest project)       | `pnpm --filter @candleviewer/ui test:perf`                                                                    |
 | Load test (WS profiles A, B, C; also selfcheck, w5, judge, repro)   | `cd services/api && K6_BIN=<absolute path of the pinned k6 v2.3.0> uv run python -m bench.ws.runner run A`    |
 | Ingestion soak                                                      | `locust -f tests/load/ingestion_soak.py`                                                                      |
 | Chaos suite                                                         | `pnpm chaos`                                                                                                  |
