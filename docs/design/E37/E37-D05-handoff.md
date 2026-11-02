@@ -39,9 +39,9 @@ Where each consuming story reads which part (spec section numbers).
 | CMP-157   | `value` · `onChange` · `category?` (`15`:1917; no A-row)                                                                                                                          | cited owner: E36-D03's entry, built by E36-S01         |
 | CMP-254   | PROPOSED (A-16): `rule` · `selection` · `onSelect` · `onConnect` · `onDisconnect` · `onDelete` · `onRename` · `onInspect` · `onCollapse` · `onMove` · `diagnostics` · `readOnly?` | E37-S05 types them                                     |
 
-## §C Copy-ready rows (applied only by the closing PR, after #5448 and #5495 merge; never in this PR)
+## §C Copy-ready rows (applied in this PR at its closing push, after #5448 and #5495 merge; a third PR only past about 1,500 lines, BQ-01)
 
-One `15` commit with the `E37-D05 —` lead-in (E36-D03's form), then the `14` lines. Each Old text or anchor stands exactly once in its file at the base (G-SHEET checks); the A-row PR re-reads them after D03's `15` rows land (D05-C3). Tokens, Storybook additions, Motion and Usage are D03 §12's rows, not repeated here. Each A-row is anchored by its unique Old text or anchor (BQ-23 as ruled); D02 §17 cites CMP-238 at lines 2762–2767 of an older `15`, and its A11y line is `15`:3060 at the base.
+One `15` commit with the `E37-D05 —` lead-in (E36-D03's form), then the `14` lines. Each Old text or anchor stands exactly once in its file at the base (G-SHEET checks); this PR re-reads them at its closing push after D03's `15` rows land (D05-C3). Tokens, Storybook additions, Motion and Usage are D03 §12's rows, not repeated here. Each A-row is anchored by its unique Old text or anchor (BQ-23 as ruled); D02 §17 cites CMP-238 at lines 2762–2767 of an older `15`, and its A11y line is `15`:3060 at the base.
 
 - **A-1 → `15` CMP-146, Props** (D02 §17). After "`onConnect` · `readOnly?`." add: " **E37-D05 —** `onConnect(source, sourcePort, target, targetPort)`, as the shipped `GraphEdge` (memo C7); the region is described by the rule's plain-language sentence (E37-D02 §14)."
 - **A-2 → `15` CMP-146, API sketch** (D02 §17). Old: "onConnect: (source: string, target: string) => void;". New: "onConnect: (source: string, sourcePort: string, target: string, targetPort: string) => void;".
@@ -58,7 +58,7 @@ One `15` commit with the `E37-D05 —` lead-in (E36-D03's form), then the `14` l
 - **A-13 → `15` CMP-236, Purpose and Props** (D02 §17). Old: "(triggers, metrics, comparators, logic gates, actions, comments)". New: "(Triggers · Conditions · Logic · Actions · Comments — memo R4; condition kinds are sub-rows)". After "`onAddNode(type, position?)`." add: " **E37-D05 —** each entry gains `graphOnly` (the badge in the palette) and `needsNativeStop` (`place_order`)."
 - **A-14 → `15` CMP-237, Purpose and A11y** (D02 §17; D04 A-2). Old: "(boolean, number, price, side, action)". New: "(boolean, number, price, side, action, trigger)". Old: "("Input, boolean, not connected")". New: "("Input port, boolean, not connected"; a boolean output names its role, "condition result" or "boolean value" — E37-D04 A-2)".
 - **A-15 → `15` CMP-238, A11y** (D04 A-18, F-30). Old: "the node list in CMP-153 NodeInspectorDrawer". New: "the node list (`Alt+L`, E37-D02 §8)".
-- **A-16 → `15`, the new entry** (D02 §17; D02-G5; the id re-checked at the closing PR, D05-Q1). Before "### CMP-239 FreshnessMarker (E08-D04, data-confidence vocabulary)" add the block below and one blank line.
+- **A-16 → `15`, the new entry** (D02 §17; D02-G5; the id re-checked at this PR's closing push, D05-Q1). Before "### CMP-239 FreshnessMarker (E08-D04, data-confidence vocabulary)" add the block below and one blank line.
 
   ```text
   ### CMP-254 NodeListOutline
