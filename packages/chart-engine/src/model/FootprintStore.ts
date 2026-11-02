@@ -6,7 +6,8 @@ import { ModelCounters, type MutationRange, RangeSlot } from "./counters.js";
 
 /** 1 << 22 cells × 18 B ≈ 75 MB: the per-store byte ceiling (a larger declared count is refused). */
 export const DEFAULT_MAX_CELLS = 1 << 22;
-const CELL_BYTES = 4 + 4 + 4 + 4 + 2;
+/** barIndex 4 + priceLevel 4 + bid 4 + ask 4 + tradeCount 2 bytes per cell (26 §7). */
+export const CELL_BYTES = 4 + 4 + 4 + 4 + 2;
 
 /** §8 `FootprintData`, structurally. */
 export interface FootprintBatch {

@@ -49,6 +49,8 @@ import { plotWidthOf } from "../interaction/wheel.js";
 import * as scene from "../scene/index.js";
 import { performanceStageMarker, type PerformanceTimeline } from "../scene/stage-marks.js";
 import { AtlasService, type AtlasCounters, type AtlasDetails } from "../text/atlas.js";
+import { MemoryAccount } from "../memory/MemoryAccount.js";
+import { MemorySampler } from "../memory/MemorySampler.js";
 import type { ChartFont, TextPlatform } from "../text/platform.js";
 import {
   AutoScaler,
@@ -152,6 +154,10 @@ export interface RenderRuntime {
   graph(id: ChartId): scene.SceneGraph | undefined;
   /** Internal (E12-S07): the series-kind metrics, per chart. */
   seriesMetrics(id: ChartId): Readonly<SeriesMetrics> | undefined;
+  /** Internal (E11-S15, BQ-S15-01): a chart's `MemoryAccount`, which the store owners join. */
+  memoryAccount(id: ChartId): MemoryAccount | undefined;
+  /** Internal (E11-S15, BQ-S15-12): the chart's sampler of that account (the governor's input). */
+  memorySampler(id: ChartId): MemorySampler | undefined;
 }
 
 /** Upper bounds of `series_type_switch_duration_ms`' buckets (the 100 ms budget is one); the last is open. */
@@ -226,6 +232,10 @@ interface Instance {
    * The clip space, picking and the transform use it, never the padding.
    */
   readonly exact: { width: number; height: number };
+  /** What the memory governor samples (26 §7): GL buffers and textures, the default framebuffer. */
+  readonly memory: MemoryAccount;
+  /** Reads `memory` on the 1 s frame-stats tick every `memory.sampleIntervalMs`, and on resize. */
+  readonly sampler: MemorySampler;
   readonly dprListeners: Set<(from: number, to: number) => void>;
   readonly resizes: ResizeCounters;
   loss: ContextLoss | null;
@@ -513,6 +523,23 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   }
 
   /**
+   * The chart's live memory sources (26 §7, BQ-S15-01): the backend's GL buffers and textures, and
+   * the default framebuffer (RGBA8, the backing store) once a context holds one. Each reads the
+   * instance on demand, so a sample allocates nothing.
+   */
+  function registerMemory(inst: Instance): void {
+    inst.memory.register({
+      id: "gl",
+      bytes: () => (inst.gpu.backend?.gpuMemoryMbEstimate ?? 0) * 2 ** 20,
+    });
+    inst.memory.register({
+      id: "framebuffer",
+      bytes: () =>
+        inst.gpu.backend === undefined ? 0 : inst.canvas.width * inst.canvas.height * 4,
+    });
+  }
+
+  /**
    * A `resize` (E11-S10): 0 on either axis suspends the chart with nothing allocated (BQ-147);
    * otherwise the backing store is set (counted only when it changes), and a DPR change marks
    * every pane LAYOUT and STYLE and tells the listeners before the next frame (BQ-152).
@@ -535,6 +562,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       if (c.width !== bw) c.width = bw;
       if (c.height !== bh) c.height = bh;
       inst.resizes.reallocations += 1;
+      inst.sampler.sample(deps.now()); // 26 §7: a backingStorePx change is sampled at once
     }
     inst.viewport.setPanePlot(0, 0, h);
     moved(inst, inst.viewport.setSize(plotWidthOf(w, inst.layout.priceGutter), h, dpr));
@@ -961,6 +989,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         () => prepare(inst),
       );
       scene.layout.setSize(w, h);
+      const memory = old?.memory ?? new MemoryAccount();
       const inst: Instance = {
         ...scene,
         slot,
@@ -1000,6 +1029,10 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         suspended: false,
         dpr: msg.dpr,
         exact: { width: c.width, height: c.height },
+        // The degraded-2d re-init keeps the account (and any store joined to it); the GL and
+        // framebuffer sources are re-registered against the new instance below.
+        memory,
+        sampler: old?.sampler ?? new MemorySampler(memory, msg.config.sampleIntervalMs),
         dprListeners: old?.dprListeners ?? new Set(),
         resizes: old?.resizes ?? { reallocations: 0, dprChanges: 0, lastDpr: msg.dpr },
         loss: null,
@@ -1036,6 +1069,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       if (msg.config.bench && deps.timeline !== undefined) {
         inst.scheduler.marks = performanceStageMarker(deps.timeline);
       }
+      registerMemory(inst);
       charts.set(msg.id, inst);
       touch(inst);
       return;
@@ -1198,6 +1232,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     }
     if (inst.config.bench || end - inst.lastFrameAt >= FRAME_SAMPLE_MS) {
       inst.lastFrameAt = end;
+      inst.sampler.tick(end); // the 1 s tick; it samples only every memory.sampleIntervalMs
       deps.post({
         t: "frame",
         id: inst.id,
@@ -1276,6 +1311,8 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       return set && (() => void set.delete(cb));
     },
     resizeCounters: (id) => charts.get(id)?.resizes,
+    memoryAccount: (id) => charts.get(id)?.memory,
+    memorySampler: (id) => charts.get(id)?.sampler,
     atlasCounters: () => atlas?.counters ?? null,
     series: (id, sid) => charts.get(id)?.series.get(sid),
     dataRejected: (id) => charts.get(id)?.dataRejected,

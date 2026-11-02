@@ -8,6 +8,14 @@
 export { createChart } from "./api/chart.js";
 // E12-S06 (BQ-10, additive): the checked price → tick narrowing the data binding must use (F-01).
 export { toTicks } from "./worker/protocol.js";
+export {
+  DEFAULT_LOOKBACK_DAYS,
+  MAX_BARS_CEILING,
+  MEMORY_BUDGET_CEILING_MB,
+  MEMORY_BUDGET_FLOOR_MB,
+} from "./memory/config.js";
+export { estimateLoad } from "./memory/Estimator.js";
+export type { LoadEstimate, LoadEstimateParams } from "./memory/Estimator.js";
 export type {
   BarView,
   BubbleOptions,

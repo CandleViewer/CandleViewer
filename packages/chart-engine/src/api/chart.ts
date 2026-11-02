@@ -9,6 +9,13 @@ import { readReducedMotion, watchMotion } from "../host/motion.js";
 import { watchSize } from "../host/resize.js";
 import { PRICE_GUTTER_PX } from "../scene/layout-engine.js";
 import {
+  boundedInt,
+  MAX_BARS_CEILING,
+  MEMORY_BUDGET_CEILING_MB,
+  MEMORY_BUDGET_FLOOR_MB,
+} from "../memory/config.js";
+import { MEMORY_SAMPLE_INTERVAL_MS } from "../memory/MemorySampler.js";
+import {
   captureInput,
   createChartHost,
   defaultHostEnv,
@@ -72,14 +79,6 @@ const copyDetails = (d: ErrorDetails | DegradeDetails): ErrorDetails =>
 
 type Listener<E extends keyof ChartEvents> = (p: ChartEvents[E]) => void;
 
-function positiveInt(value: number | undefined, fallback: number, name: string): number {
-  if (value === undefined) return fallback;
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new RangeError(`chart-engine: ${name} must be a positive integer`);
-  }
-  return value;
-}
-
 /**
  * Mounts a chart into `opts.container` and returns its facade synchronously (§8). Capability
  * detection is lazy (first frame or `getStats`), so no caller needs to await anything.
@@ -93,9 +92,23 @@ export function createChart(opts: ChartOptions): Chart {
  * separate build entry the app never imports, passes `true` (E11-T06).
  */
 export function openChart(opts: ChartOptions, bench: boolean): Chart {
-  // The hard ceilings are checked up front (E11-T01 security notes: no unbounded allocation).
-  positiveInt(opts.maxBars, CHART_DEFAULTS.maxBars, "maxBars");
-  positiveInt(opts.memoryBudgetMb, CHART_DEFAULTS.memoryBudgetMb, "memoryBudgetMb");
+  // The hard ceilings are checked up front, before anything mounts (F-08, 26 §8: no unbounded
+  // allocation and no budget below one framebuffer plus the atlas).
+  boundedInt(opts.maxBars, CHART_DEFAULTS.maxBars, 1, MAX_BARS_CEILING, "maxBars");
+  boundedInt(
+    opts.memoryBudgetMb,
+    CHART_DEFAULTS.memoryBudgetMb,
+    MEMORY_BUDGET_FLOOR_MB,
+    MEMORY_BUDGET_CEILING_MB,
+    "memoryBudgetMb",
+  );
+  const sampleIntervalMs = boundedInt(
+    opts.memory?.sampleIntervalMs,
+    MEMORY_SAMPLE_INTERVAL_MS,
+    1,
+    Number.MAX_SAFE_INTEGER,
+    "memory.sampleIntervalMs",
+  );
 
   const surface = mountSurface(opts.container);
   const doc = opts.container.ownerDocument;
@@ -229,6 +242,7 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
     syncGroup: opts.syncGroup ?? null,
     timeZone: opts.timeZone ?? CHART_DEFAULTS.timeZone,
     reducedMotion,
+    sampleIntervalMs,
     ...(opts.fonts !== undefined && { fonts: opts.fonts }),
     // Bench mode (every-frame `frame`, the LOD trace, the stage marks) has no §8 option: BQ-18.
     bench,

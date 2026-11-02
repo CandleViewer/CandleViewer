@@ -135,6 +135,23 @@ describe("createChart facade", () => {
     expect(() => mount({ maxBars: 10, memoryBudgetMb: 64 }).dispose()).not.toThrow();
   });
 
+  it("enforces the F-08 ceilings and the 64 MiB floor before mounting (E11-S15, 26 §8)", () => {
+    expect(() => mount({ maxBars: 2 ** 21 + 1 })).toThrow(RangeError);
+    expect(() => mount({ memoryBudgetMb: 4097 })).toThrow(RangeError);
+    expect(() => mount({ memoryBudgetMb: 63 })).toThrow(RangeError); // accepted before E11-S15
+    expect(container.children).toHaveLength(0);
+    expect(() => mount({ maxBars: 2 ** 21, memoryBudgetMb: 4096 }).dispose()).not.toThrow();
+  });
+
+  it("validates memory.sampleIntervalMs like the other memory options, before mounting", () => {
+    for (const bad of [0, -1, 0.5, Number.NaN, Infinity, 2 ** 53]) {
+      expect(() => mount({ memory: { sampleIntervalMs: bad } })).toThrow(RangeError);
+    }
+    expect(container.children).toHaveLength(0);
+    const ok = { sampleIntervalMs: 1, viewportWindowMultiplier: 3 };
+    expect(() => mount({ memory: ok }).dispose()).not.toThrow();
+  });
+
   it("mounts a DOM mirror root in the container for keyboard focus", () => {
     const chart = mount();
     const root = chart.getDomMirrorRoot() as unknown as FakeElement;

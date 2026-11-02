@@ -3,6 +3,12 @@
 // malformed batches are rejected at the worker boundary and hostile values at the store boundary,
 // both before any write. Fault classes are described by class only (public repo, BQ-14).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createChart } from "../../src/api/chart.js";
+import {
+  MAX_BARS_CEILING,
+  MEMORY_BUDGET_CEILING_MB,
+  MEMORY_BUDGET_FLOOR_MB,
+} from "../../src/memory/index.js";
 import { BarStore, ModelRejection, type RejectReason } from "../../src/model/index.js";
 import { createChartHost, MAX_QUEUED, MAX_UNACKED, type ChartHost } from "../../src/worker/host.js";
 import {
@@ -11,7 +17,7 @@ import {
   type StoreId,
   type ToWorker,
 } from "../../src/worker/protocol.js";
-import { asHtml, FakeDocument } from "../api/fake-dom.js";
+import { asHtml, FakeDocument, fakeContainer } from "../api/fake-dom.js";
 import { bars, snapshot } from "../model/fixtures.js";
 import { fakeEnv, FakeWorker } from "../worker/fake-worker.js";
 import {
@@ -195,7 +201,59 @@ describe("Scenario: Malformed frames are rejected without collateral damage (G4,
   it.todo(
     "G4 hostile values reach the store through the runtime's data path (pending: E12-T06 #399, bars seam wiring)",
   );
-  it.todo("G4 the memoryBudgetMb ceiling holds under adversarial input (pending: E11-S15 #448)");
+  it("G4 the memoryBudgetMb and maxBars ceilings hold under adversarial input (E11-S15, F-08)", () => {
+    const theme = {
+      palette: "default",
+      convention: "standard",
+      colors: { "color.chart.background": "#0b0e11" },
+    } as const;
+    const hostileBudget = [
+      Number.NaN,
+      Infinity,
+      -Infinity,
+      -1,
+      0,
+      -0,
+      1,
+      63,
+      63.999,
+      64.5,
+      4097,
+      2 ** 31,
+      1e308,
+    ];
+    const hostileBars = [
+      Number.NaN,
+      Infinity,
+      -1,
+      0,
+      0.5,
+      MAX_BARS_CEILING + 1,
+      2 ** 26,
+      2 ** 53,
+      1e308,
+    ];
+    for (const seed of SEEDS) {
+      const r = rng(seed);
+      const box = fakeContainer(400, 300);
+      const opts =
+        r.next() < 0.5
+          ? { memoryBudgetMb: r.pick(hostileBudget), maxBars: r.int(1, MAX_BARS_CEILING) }
+          : { maxBars: r.pick(hostileBars), memoryBudgetMb: r.int(64, 4096) };
+      expect(() => createChart({ container: asHtml(box), theme, ...opts }), `seed ${seed}`).toThrow(
+        RangeError,
+      );
+      expect(box.children, `seed ${seed}: nothing mounted`).toHaveLength(0);
+    }
+    // The boundaries themselves are accepted.
+    for (const [memoryBudgetMb, maxBars] of [
+      [MEMORY_BUDGET_FLOOR_MB, 1],
+      [MEMORY_BUDGET_CEILING_MB, MAX_BARS_CEILING],
+    ] as const) {
+      const box = fakeContainer(400, 300);
+      createChart({ container: asHtml(box), theme, memoryBudgetMb, maxBars }).dispose();
+    }
+  });
   it.todo(
     "G4 pixels, not a fake-GL digest, unchanged after a rejected batch (pending: E11-T08 #391)",
   );
