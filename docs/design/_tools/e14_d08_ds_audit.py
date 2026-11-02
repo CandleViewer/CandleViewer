@@ -1580,7 +1580,7 @@ def g_entry(t: Texts) -> list[Finding]:
         for mark, label, rest in checks:
             if not re.match(r"(?:and the \*\*.+?\*\* )?— \S", rest):
                 bad.append(f"{cid}: '{label}' has no evidence or reason")
-            if label in PR3_ONLY and mark != " ":
+            if label in PR3_ONLY and mark != " " and (board_mode(t.spec) != "drawn" or label == "Sign-off"):
                 bad.append(f"{cid}: '{label}' is ticked; it lands with PR 3 (or after)")
         t1 = table_after(p, "Variant")
         names = {x.strip() for r in t1 for x in r[3].split(",") if len(r) > 3}
@@ -1739,6 +1739,11 @@ def blob(t: Texts, rel: str) -> bytes | None:
         return (ROOT / rel).read_bytes()
     except OSError:
         return None
+
+
+def board_exports_only(spec: str) -> set[str]:
+    """The ten exports alone (board 06's slug itself ends in `-greyscale`, so a name is not enough)."""
+    return {m[4] for r in board_rows(spec) if len(r) > 5 for m in [DRAWN.fullmatch(r[5])] if m}
 
 
 def board_exports(spec: str) -> list[str]:
@@ -2006,10 +2011,28 @@ def fake_png(w: int, h: int, tag: str) -> bytes:
             + h.to_bytes(4, "big") + b"\x08\x06\x00\x00\x00" + tag.encode())  # fmt: skip
 
 
+def pending_view(t: Texts) -> Texts:
+    """§14 as before the draw: every Status cell "to draw (PR 3)", the drawn paragraph removed, the
+    pins re-written for the view (the mutations start from it, whatever the working tree holds)."""
+    ls = [ln for ln in lines_of(t.spec) if not ln.startswith("Drawn ")]
+    for i, ln in enumerate(ls):
+        cells = split_row(ln) if ln.startswith("| ") else []
+        if len(cells) == 6 and re.fullmatch(r"\d\d", cells[0]) and cells[1].startswith("`E14-D08 /"):
+            cells[5] = STATUS_PENDING
+            ls[i] = "| " + " | ".join(cells) + " |"
+    spec = re.sub(r"\n{3,}", "\n\n", "\n".join(ls))
+    hand = t.hand
+    for label in PR3_ONLY:  # nothing PR 3 alone may tick stays ticked before the draw
+        hand = hand.replace(f"- [x] **{label}**", f"- [ ] **{label}**")
+    v = replace(t, spec=spec, hand=hand, blobs={}, changed=[SPEC_REL])
+    return replace(v, pins=write_pins(all_units(v.spec, v.hand), cite_hashes(v.env, v.spec, v.hand)))
+
+
 def drawn_view(t: Texts, only: str | None = None) -> Texts:
     """The PR 3 view: §14's Status cells drawn (all, or `only` one), every export and render a fake
     PNG of 2032 x 1800 in the overlay, the page id and the render list under the register, the
     exports in the diff and the pins re-written for the view (the positive control N-1)."""
+    t = pending_view(t)
     blobs: dict[str, bytes] = {}
     ls = lines_of(t.spec)
     renders: list[str] = []
@@ -2044,12 +2067,13 @@ def drawn_view(t: Texts, only: str | None = None) -> Texts:
     return replace(v, pins=write_pins(all_units(v.spec, v.hand), cite_hashes(v.env, v.spec, v.hand)))
 
 
-RENDER_NAME = re.compile(r"-(?:greyscale|deuteranopia)\\.png$")
+RENDER_NAME = re.compile(r"-(?:greyscale|deuteranopia)\.png$")
 
 
 def swap_blobs(t: Texts, a: str, b: str) -> Texts:
     assert t.blobs is not None
-    ka, kb = (next(k for k in t.blobs if f"E14-D08-{n}-" in k and not RENDER_NAME.search(k)) for n in (a, b))
+    exports = {DRAWN.fullmatch(r[5])[5]: DRAWN.fullmatch(r[5])[4] for r in board_rows(t.spec) if len(r) > 5 and DRAWN.fullmatch(r[5])}
+    ka, kb = exports[a], exports[b]
     blobs = dict(t.blobs)
     blobs[ka], blobs[kb] = t.blobs[kb], t.blobs[ka]
     return replace(t, blobs=blobs)
@@ -2057,7 +2081,7 @@ def swap_blobs(t: Texts, a: str, b: str) -> Texts:
 
 def alter_render(t: Texts) -> Texts:
     assert t.blobs is not None
-    k = next(k for k in t.blobs if k.endswith("-greyscale.png"))
+    k = next(k for k in t.blobs if RENDER_NAME.search(k) and k not in board_exports_only(t.spec))
     blobs = dict(t.blobs)
     blobs[k] = blobs[k] + b"x"
     return replace(t, blobs=blobs)
@@ -2103,7 +2127,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     M("G-BOARDS", "a render's bytes that are not the sha256 §14 lists for it",
       lambda t: alter_render(drawn_view(t))),
     M("G-SCOPE", "commit an export while every board is PENDING",
-      lambda t: replace(t, changed=[*OWN_PATHS, IMG_DIR + "E14-D08-01-x.png"])),
+      lambda t: replace(pending_view(t), changed=[*OWN_PATHS, IMG_DIR + "E14-D08-01-x.png"])),
     M("G-SCOPE", "touch `15` after PR 2 landed §C",
       lambda t: replace(t, changed=[*OWN_PATHS, CAT_REL])),
     M("G-RULED-PIN", "re-word one pinned sentence of §5",
