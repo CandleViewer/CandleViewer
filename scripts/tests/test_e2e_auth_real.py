@@ -177,7 +177,8 @@ def test_teardown_runs_last_always_and_removes_the_database_and_every_directory_
     made = _step("Make this run's")["run"]
     (made_dirs,) = re.findall(r'mkdir -p ((?:"\$RUNNER_TEMP/[\w-]+"\s*)+)', made)
     names = set(re.findall(r'"\$RUNNER_TEMP/([\w-]+)"', made_dirs))
-    assert names == {"cv", "cv-lane", "cv-clock"}  # the seeds and users, the lane key, the clock
+    # the seeds and users, the lane key, the clock, the KEK (#2152)
+    assert names == {"cv", "cv-lane", "cv-clock", "cv-kek"}
     assert set(re.findall(r'"\$RUNNER_TEMP/([\w-]+)"', removed)) == names
 
 
@@ -231,6 +232,21 @@ def test_one_upload_and_no_secret_made_or_traced_beside_the_pinned_ones() -> Non
     assert text.count('"$GITHUB_ENV"') <= 1  # and nothing else names the file quoted
     assert len(re.findall(r"\bsecret\b", made)) == 2  # its definition and the loop's call
     assert len(re.findall(r"openssl rand -hex 32", text)) == 2  # secret() and the lane key
+    assert len(re.findall(r"openssl rand 32 ", text)) == 1  # the run's file KEK (#2152)
+
+
+def test_the_api_s_file_kek_is_the_run_s_own_raw_0400_and_never_printed() -> None:
+    """#2152 (BQ-12): MFA needs a KEK from the switch-over on. The run makes one, 32 raw bytes in a
+    file of mode 0400 and a directory of its own, and the API reads it as a testnet file KEK at
+    version 1; the first boot then imports both env keys, so the seeded methods keep working. No
+    step prints it, and the API never logs a KEK, so the text scan has nothing to look for."""
+    made = _step("Make this run's")["run"]
+    assert '(umask 277 && openssl rand 32 > "$RUNNER_TEMP/cv-kek/kek")' in made
+    api = _step("Start the API")["env"]
+    assert (api["CV_KEK_SOURCE"], api["CV_KEK_VERSION"]) == ("file", "1")
+    assert api["CV_KEK_HANDLE"] == "${{ runner.temp }}/cv-kek/kek"
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert not re.search(r"(cat|base64|xxd|od|hexdump)\b[^\n]*cv-kek", text)
 
 
 def test_the_text_only_check_admits_four_kinds_of_file_and_fails_the_step_on_any_other() -> None:

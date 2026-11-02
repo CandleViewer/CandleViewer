@@ -75,13 +75,17 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          mkdir -p "$RUNNER_TEMP/cv" "$RUNNER_TEMP/cv-lane" "$RUNNER_TEMP/cv-clock"
+          mkdir -p "$RUNNER_TEMP/cv" "$RUNNER_TEMP/cv-lane" "$RUNNER_TEMP/cv-clock" "$RUNNER_TEMP/cv-kek"
           secret() { v=$(openssl rand -hex 32); echo "::add-mask::$v"; echo "$1=$v" >> "$GITHUB_ENV"; }
           for name in POSTGRES_PASSWORD CV_AUTH_PEPPER CV_AUTH_TOTP_KEY_HEX \
             CV_AUTH_RECOVERY_HMAC_KEY_HEX CV_AUTH_CSRF_KEY_HEX CV_E2E_REAL_PASSWORD; do secret "$name"; done
           # The audit lane key (ADR-0037 decision 6), mode 0400 in a directory of its own.
           (umask 277 && openssl rand -hex 32 > "$RUNNER_TEMP/cv-lane/lane.key")
           echo "::add-mask::$(cat "$RUNNER_TEMP/cv-lane/lane.key")"
+          # #2152 (BQ-12): the run's file KEK, 32 raw bytes, mode 0400, in a directory of its own,
+          # never printed. The API's first boot enrols it and imports both env keys above as the
+          # testnet auth keyring, which still opens the seeds the fixture users get below (AC3).
+          (umask 277 && openssl rand 32 > "$RUNNER_TEMP/cv-kek/kek")
 
       - name: Start Postgres and QuestDB (the compose data stores, loopback only)
         # Bounded: the slowest healthcheck (QuestDB's) gives up after about two minutes.
@@ -124,6 +128,10 @@ jobs:
           CV_BIND_HOST: 127.0.0.1
           CV_BIND_PORT: "8000"
           CV_METRICS_BIND: 127.0.0.1:9108
+          # #2152: MFA's keyring opens under the run's file KEK (allowed outside live).
+          CV_KEK_SOURCE: file
+          CV_KEK_HANDLE: ${{ runner.temp }}/cv-kek/kek
+          CV_KEK_VERSION: "1"
           # #2086: auth time is real UTC plus this file's offset, which the clock specs move forward.
           CV_TEST_CLOCK: "true"
           CV_TEST_CLOCK_FILE: ${{ runner.temp }}/cv-clock/offset
@@ -224,7 +232,7 @@ jobs:
         if: always()
         run: |
           docker compose down -v || true
-          rm -rf "$RUNNER_TEMP/cv" "$RUNNER_TEMP/cv-lane" "$RUNNER_TEMP/cv-clock" || true
+          rm -rf "$RUNNER_TEMP/cv" "$RUNNER_TEMP/cv-lane" "$RUNNER_TEMP/cv-clock" "$RUNNER_TEMP/cv-kek" || true
 
   report:
     needs: e2e-auth-real

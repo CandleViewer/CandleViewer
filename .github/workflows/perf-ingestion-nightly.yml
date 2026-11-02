@@ -275,12 +275,16 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          mkdir -p "$RUNNER_TEMP/cv" "$RUNNER_TEMP/cv-lane"
+          mkdir -p "$RUNNER_TEMP/cv" "$RUNNER_TEMP/cv-lane" "$RUNNER_TEMP/cv-kek"
           secret() { v=$(openssl rand -hex 32); echo "::add-mask::$v"; echo "$1=$v" >> "$GITHUB_ENV"; }
           for name in POSTGRES_PASSWORD CV_AUTH_PEPPER CV_AUTH_TOTP_KEY_HEX \
             CV_AUTH_RECOVERY_HMAC_KEY_HEX CV_AUTH_CSRF_KEY_HEX CV_PERF_PASSWORD; do secret "$name"; done
           # The audit lane key, in a directory of its own (as dast-admin-nightly.yml makes it).
           (umask 277 && openssl rand -hex 32 > "$RUNNER_TEMP/cv-lane/lane.key")
+          # #2152 (BQ-12): the run's file KEK, 32 raw bytes, mode 0400, in a directory of its own,
+          # never printed. The API's first boot enrols it and imports both env keys above as the
+          # testnet auth keyring, which still opens the fixture users' seeds (AC3).
+          (umask 277 && openssl rand 32 > "$RUNNER_TEMP/cv-kek/kek")
       - name: Start Postgres and QuestDB (the compose data stores, loopback only)
         run: docker compose -f infra/compose/docker-compose.yml --profile core up -d --wait postgres questdb
       - name: Migrate, then seed one Owner per VU, each with a fresh TOTP method (testnet)
@@ -312,6 +316,10 @@ jobs:
           CV_ENVIRONMENT: testnet
           CV_STORAGE_BACKEND: real
           CV_FEED: synthetic
+          # #2152: MFA's keyring opens under the run's file KEK (allowed outside live).
+          CV_KEK_SOURCE: file
+          CV_KEK_HANDLE: ${{ runner.temp }}/cv-kek/kek
+          CV_KEK_VERSION: "1"
           CV_AUTH_PERF_ENABLED: "true" # #2097: refused unless testnet with no exchange key
           CV_QUESTDB_PG: 127.0.0.1:8812
           CV_QUESTDB_ILP: 127.0.0.1:9009

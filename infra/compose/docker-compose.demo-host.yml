@@ -45,8 +45,12 @@ services:
       CV_KEK_VERSION: ${CV_KEK_VERSION:?set in infra/compose/.env}
       CV_AUTH_PEPPER: ${CV_AUTH_PEPPER:?set in infra/compose/.env}
       CV_AUTH_CSRF_KEY_HEX: ${CV_AUTH_CSRF_KEY_HEX:?set in infra/compose/.env}
-      CV_AUTH_TOTP_KEY_HEX: ${CV_AUTH_TOTP_KEY_HEX:?set in infra/compose/.env}
-      CV_AUTH_RECOVERY_HMAC_KEY_HEX: ${CV_AUTH_RECOVERY_HMAC_KEY_HEX:?set in infra/compose/.env}
+      # #2152 (BQ-10, D3): the old env auth keys, optional. cv-api imports both once, at its
+      # first boot with neither auth_keys row, as the demo keyring, which keeps the enrolments made
+      # under them; later boots warn and ignore them. Scrub both from infra/compose/.env after that
+      # boot (runbook kek-custody.md "Auth keyring"): a dump plus .env opens nothing then (AC12).
+      CV_AUTH_TOTP_KEY_HEX: ${CV_AUTH_TOTP_KEY_HEX:-}
+      CV_AUTH_RECOVERY_HMAC_KEY_HEX: ${CV_AUTH_RECOVERY_HMAC_KEY_HEX:-}
       # Must hold cv-internal (172.28.0.0/24): the healthcheck and the host's loopback publish
       # reach the api from it, and MeshOnly refuses every other source but loopback.
       CV_MESH_CIDRS_CSV: ${CV_MESH_CIDRS_CSV:?set in infra/compose/.env}
