@@ -265,6 +265,8 @@ LIMIT_ROWS: Final[dict[str, str | Sequence[str | Callable[[], float]]]] = {
     "Rebuild budget (§7.5)": "limits.REBUILD_MAX_PER_TOPIC limits.REBUILD_MAX_PER_CONNECTION "
     "limits.REBUILD_MAX_PER_USER limits.REBUILD_WINDOW_S",
     "`ws.subscribe.denied` records": "limits.DENIAL_AUDITS_PER_WINDOW limits.DENIAL_AUDIT_WINDOW_S",
+    # #652 (E21-X02, G-10): a class change's and a drop's log line share the drop line's window.
+    "Degradation log lines": "pipeline.OVERFLOW_LOG_WINDOW_S",
     "Heartbeat interval / timeout": "lifecycle.HEARTBEAT_INTERVAL_S lifecycle.HEARTBEAT_TIMEOUT_S",
     "Auth timeout": "limits.AUTH_TIMEOUT_S lifecycle.MAX_AUTH_FAILURES limits.AUTH_CALL_TIMEOUT_S",
     "Replay `history` caps": [

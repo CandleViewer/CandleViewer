@@ -3761,8 +3761,17 @@ export interface paths {
      *     60 000 ms still does not fit, or the price span of the window exceeds 512 rows, the
      *     response holds the newest columns that fit and `next_cursor` continues with the older
      *     remainder (newest first, for progressive scroll-back). At most 2 backfills per user run
-     *     at once; another answers `429 rate_limited` with `Retry-After`. A client that aborts the
-     *     request ends its storage reads.
+     *     at once, counted for the acting user (the viewer while viewing as another user); another
+     *     answers `429 rate_limited` with `Retry-After`. A client that aborts the request ends its
+     *     storage reads.
+     *
+     *     **Bounds (E21-X02, #652).** Checked before any storage read: `to - from` is at most 400
+     *     days, and `to` is at most one `time_bucket_ms` past the server's clock (an omitted `to`
+     *     is the server's clock); a window outside either bound answers `400 invalid_time_range`.
+     *     Only minutes inside the recorded range are rebuilt (24 §6.3): a bucket past it reads
+     *     `samples` 0. The folds of a backfill and the encoding of its response run on a bounded
+     *     executor of their own, at most 2 at once for the whole server and never on the event
+     *     loop, and the response body is streamed.
      */
     get: operations["getHeatmap"];
     put?: never;
@@ -18887,6 +18896,7 @@ export interface operations {
           "application/json": components["schemas"]["HeatmapResponse"];
         };
       };
+      400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
