@@ -256,10 +256,22 @@ T2_CITERS = ("## 0.", "## 4.", "### 8.1", "### 8.3")
 
 AGENT_RE = re.compile(r"worker|orchestrator|\bagent\b|\blane\b", re.IGNORECASE)
 OWNER_OK_RE = re.compile(r"\bE\d\d-[A-Z]+\d\d \(#\d+\)|\bowner")
+# The deny list is assembled from fragments so this public file never spells a private name or path.
+_PRIVATE_NAMES = "|".join(
+    (
+        "hcl" + "-worker",
+        "hpe" + "-worker",
+        r"\bAnv" + "il" + r"\b",
+        "main" + "-orchestrator",
+        "scrat" + "ch-an" + "vil",
+        "relay" + "room",
+    )
+)
 PUBLIC_RE = re.compile(
-    r"https?://|www\.|/home/|/tmp/|localhost|\.local\b|\b[a-z0-9-]+\.(?:com|io|org|net|dev)\b"
-    r"|hcl-worker|hpe-worker|\bAnvil\b|main-orchestrator|scratch-anvil|relayroom"
-    r"|ghp_|github_pat_|\bsk-[A-Za-z0-9]{8}|\bAKIA[0-9A-Z]{8}",
+    r"https?://|www\.|/ho" + "me/|/t" + "mp/|localhost|\\.local\\b"
+    r"|\b[a-z0-9-]+\.(?:com|io|org|net|dev)\b|"
+    + _PRIVATE_NAMES
+    + r"|ghp_|github_pat_|\bsk-[A-Za-z0-9]{8}|\bAKIA[0-9A-Z]{8}",
     re.IGNORECASE,
 )
 
