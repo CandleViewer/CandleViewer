@@ -84,7 +84,8 @@
               "execTime": "1792139400002",
               "execType": "Trade",
               "feeRate": "0.00055",
-              "seq": 1000001
+              "seq": 1000001,
+              "closedSize": ""
             },
             {
               "symbol": "BTCUSDT",
@@ -105,7 +106,8 @@
               "execTime": "1792140000003",
               "execType": "Trade",
               "feeRate": "0.00055",
-              "seq": 1000002
+              "seq": 1000002,
+              "closedSize": "0.001"
             }
           ]
         }

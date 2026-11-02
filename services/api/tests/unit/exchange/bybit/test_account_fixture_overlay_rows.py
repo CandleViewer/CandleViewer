@@ -6,19 +6,21 @@ pack's resolver at the pack's reference `now` and pins that every row it seeds:
 
 - names every field the adapter's row model requires (`PositionRow`, `OrderRow`, `ExecutionRow`)
   and no field that model does not know;
-- carries fixed venue times at or before the reply that serves it (the resolver re-times the
-  reply's `time` and no row field), with `createdTime` at or before `updatedTime`;
+- carries fixed venue times at or before the reply that serves it, with `createdTime` at or before
+  `updatedTime`, and keeps them when the stub's clock moves on (the resolver re-times the reply's
+  `time` and no row field);
 - is read by the real trading port into the neutral `Position`, `Order` and `Execution`, and by
   the exposure read behind the consequence route.
 
-The row models stay strict: a position row without one of its required fields is refused. The
-venue is an `httpx.MockTransport` over the pack's own replies (C-13.5); nothing leaves the process.
+The row models stay strict: a position or order row without its native stop, or a position row
+without its realised PnL, is refused. The venue is an `httpx.MockTransport` over the pack's own
+replies (C-13.5); nothing leaves the process.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from datetime import UTC, datetime
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Final
 from uuid import UUID
@@ -38,18 +40,23 @@ from tests.unit.exchange.bybit._trading import DAY_US, Venue, account, make_port
 NOW: Final = datetime(2026, 10, 16, 9, 0, tzinfo=UTC)
 NOW_MS: Final = 1_792_141_200_000
 NOW_US: Final = NOW_MS * 1000
+A_DAY: Final = timedelta(days=1)
+#: BTCUSDT's tick (the pack's README): every native stop sits on it.
+TICK: Final = Decimal("0.10")
 
 POSITION_OVERLAY: Final = "open_position_btcusdt_5x_sl"
 ORDERS_OVERLAY: Final = "working_orders_2"
 HISTORY_OVERLAY: Final = "history_round_trip"
 POSITION_LIST: Final = "GET /v5/position/list"
+ORDERS_LIST: Final = "GET /v5/order/realtime"
 
 type RowModel = type[tp.PositionRow] | type[tp.OrderRow] | type[tp.ExecutionRow]
+type Read = Callable[..., Awaitable[Sequence[object]]]
 
 #: Each list read an overlay seeds, with the adapter's model of one of its rows.
 ROW_MODELS: Final[Mapping[str, RowModel]] = {
     POSITION_LIST: tp.PositionRow,
-    "GET /v5/order/realtime": tp.OrderRow,
+    ORDERS_LIST: tp.OrderRow,
     "GET /v5/order/history": tp.OrderRow,
     "GET /v5/execution/list": tp.ExecutionRow,
 }
@@ -93,12 +100,23 @@ def _pair_id(pair: tuple[str, str]) -> str:
 
 PAIR_IDS: Final = [_pair_id(pair) for pair in PAIRS]
 
+#: The fields whose absence the adapter refuses: the native stop of a position and of an order,
+#: which the reconciler's judgement of C-2.6 reads, and a position's realised PnL. Each case is the
+#: port read of the rows an overlay seeds and the field to strip from the first of them.
+STRICT: Final[list[tuple[str, str, Read, str]]] = [
+    (POSITION_OVERLAY, POSITION_LIST, BybitTradingPort.positions, "cumRealisedPnl"),
+    (POSITION_OVERLAY, POSITION_LIST, BybitTradingPort.positions, "stopLoss"),
+    (ORDERS_OVERLAY, ORDERS_LIST, BybitTradingPort.open_orders, "stopLoss"),
+]
+STRICT_IDS: Final = [f"{read.__name__}-{field}" for _, _, read, field in STRICT]
 
-def _served(overlays: Sequence[str], call: str) -> dict[str, Any]:
-    """The reply the pack serves for `call` with `overlays` seeded: a fresh dict on every call."""
+
+def _served(overlays: Sequence[str], call: str, *, now: datetime = NOW) -> dict[str, Any]:
+    """The reply the pack serves for `call` with `overlays` seeded, the scenario started at `now`:
+    a fresh dict on every call."""
     method, path = call.split(" ", 1)
     body: dict[str, Any] = (
-        load("compliant", now=NOW, overlays=overlays).reply(method, path, body=None).body
+        load("compliant", now=now, overlays=overlays).reply(method, path, body=None).body
     )
     return body
 
@@ -202,6 +220,15 @@ def test_an_overlay_row_never_dates_itself_after_its_reply(overlay: str, call: s
             assert times["createdTime"] <= times["updatedTime"], f"{where} updates before it exists"
 
 
+@pytest.mark.parametrize(("overlay", "call"), PAIRS, ids=PAIR_IDS)
+def test_an_overlay_row_does_not_move_with_the_clock(overlay: str, call: str) -> None:
+    at_now = _served([overlay], call)
+    a_day_on = _served([overlay], call, now=NOW + A_DAY)
+    # The resolver re-times the reply's `time` and no row field.
+    assert a_day_on["time"] - at_now["time"] == A_DAY // timedelta(milliseconds=1)
+    assert _rows(a_day_on) == _rows(at_now)
+
+
 # -- the rows through the real trading port and the exposure read --------------------------------
 
 
@@ -214,18 +241,19 @@ async def test_the_port_reads_the_position_overlay() -> None:
     assert position.side == "buy"
     assert position.qty == Decimal("0.001")
     assert position.leverage == Decimal(5)
-    # A long's native stop-loss sits below its entry (C-2.6).
+    # A long's native stop-loss sits below its entry, on the tick (C-2.6).
     assert position.stop_loss == Decimal(row["stopLoss"])
     assert position.avg_entry_price is not None
     assert position.stop_loss is not None
     assert position.stop_loss < position.avg_entry_price
+    assert position.stop_loss % TICK == 0
     assert position.cum_realised_pnl == Decimal(row["cumRealisedPnl"])
     # The row's time is in milliseconds; the neutral model counts microseconds.
     assert position.updated_at == int(row["updatedTime"]) * 1000
 
 
 async def test_the_port_reads_the_working_order_overlay() -> None:
-    rows = _rows(_served([ORDERS_OVERLAY], "GET /v5/order/realtime"))
+    rows = _rows(_served([ORDERS_OVERLAY], ORDERS_LIST))
 
     orders = await make_port(_venue(ORDERS_OVERLAY)).open_orders(account())
 
@@ -236,16 +264,18 @@ async def test_the_port_reads_the_working_order_overlay() -> None:
     }
     assert [o.stop_loss for o in orders] == [Decimal(row["stopLoss"]) for row in rows]
     for order in orders:
-        # Each resting buy opens a position, so it carries a native stop below its price (C-2.6).
+        # Each resting buy opens a position, so it carries a native stop below its price, on the
+        # tick (C-2.6).
         assert order.stop_loss is not None
         assert order.price is not None
         assert order.stop_loss < order.price
+        assert order.stop_loss % TICK == 0
         assert order.updated_at is not None
         assert order.created_at <= order.updated_at
 
 
 async def test_the_port_reads_the_history_overlay() -> None:
-    port = make_port(_venue(HISTORY_OVERLAY))
+    port = make_port(_venue(HISTORY_OVERLAY), now_us=lambda: NOW_US)
 
     orders = await port.order_history(account())
     fills = await port.executions(account(), NOW_US - DAY_US, NOW_US)
@@ -258,9 +288,12 @@ async def test_the_port_reads_the_history_overlay() -> None:
     assert opening.stop_loss is not None
     assert opening.avg_fill_price is not None
     assert opening.stop_loss < opening.avg_fill_price
+    assert opening.stop_loss % TICK == 0
     assert closing.stop_loss is None
     assert [fill.exec_type for fill in fills] == ["trade", "trade"]
     assert {fill.fee_rate for fill in fills} == {Decimal("0.00055")}
+    # The reducing fill carries the PnL of the size it closed (24 §8.1); the opening fill none.
+    assert [fill.closed_pnl for fill in fills] == [None, Decimal("0.01")]
     assert [fill.exchange_order_id for fill in fills] == [o.exchange_order_id for o in orders]
 
 
@@ -281,13 +314,16 @@ async def test_the_exposure_read_sees_the_seeded_position_and_orders() -> None:
 # -- the models stay strict ----------------------------------------------------------------------
 
 
-async def test_a_position_row_without_a_required_field_is_refused() -> None:
-    path = _path(POSITION_LIST)
-    served = _served([POSITION_OVERLAY], POSITION_LIST)
-    [position] = await make_port(Venue().on(path, served)).positions(account())
-    assert position.symbol == "BTCUSDT"  # the row as the pack serves it reads
+@pytest.mark.parametrize(("overlay", "call", "read", "field"), STRICT, ids=STRICT_IDS)
+async def test_a_row_without_its_stop_or_realised_pnl_is_refused(
+    overlay: str, call: str, read: Read, field: str
+) -> None:
+    path = _path(call)
+    served = _served([overlay], call)
+    got = await read(make_port(Venue().on(path, served)), account())
+    assert len(got) == len(_rows(served))  # the rows as the pack serves them read
 
-    stripped = _served([POSITION_OVERLAY], POSITION_LIST)
-    del _rows(stripped)[0]["cumRealisedPnl"]
+    stripped = _served([overlay], call)
+    del _rows(stripped)[0][field]
     with pytest.raises(UnknownStateError):
-        await make_port(Venue().on(path, stripped)).positions(account())
+        await read(make_port(Venue().on(path, stripped)), account())
