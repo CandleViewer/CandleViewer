@@ -519,6 +519,8 @@ function SymbolSearchDialog({ index, opener, open, mainRef }: DialogProps): JSX.
             open
             aria-label={COPY.actions(menu.item.label)}
             items={actions(menu.item)}
+            // A T2 item's reason goes through CMP-160's region: the surface has one polite region (§9.2).
+            announceReason={say}
             onOpenChange={(next) => {
               if (!next) setMenu(null);
             }}
