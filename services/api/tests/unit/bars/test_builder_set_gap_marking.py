@@ -402,11 +402,12 @@ def test_tape_gap_survives_a_snapshot_and_an_older_blob_restores_unflagged(name:
     doc = json.loads(state.blob)
     assert doc["tape_gap"]
     later = _tape()[2]
-    for blob, want in ((state.blob, True), (json.dumps(doc | {"tape_gap": []}).encode(), False)):
+    legacy = {k: v for k, v in doc.items() if k != "tape_gap"}
+    for blob, want in ((state.blob, True), (json.dumps(legacy).encode(), False)):
         restored = _builder(name)
         restored.restore(state.model_copy(update={"blob": blob}))
         bars = [u.bar for u in restored.on_trade(later)]
         assert bars[0].tape_gap is want, (name, want)
     plain = _builder(name)
     plain.on_trade(_tape()[0])
-    assert "tape_gap" not in json.loads(plain.snapshot().blob)  # no mark: the older bytes
+    assert json.loads(plain.snapshot().blob)["tape_gap"] == []  # no mark: the key, empty

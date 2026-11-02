@@ -263,6 +263,15 @@ class TestGetKlinesReadService:
         empty = _client(_FakeCache()).get("/market/klines", params=self._P).json()
         assert empty["meta"]["sources"] == [] and "recording_started_at" in empty["meta"]
 
+    def test_cache_only_page_carries_the_running_build_and_is_not_stale(self) -> None:
+        """#5396: hot-cache klines are no built bar: `build_version` is the running one."""
+        from candleviewer.bars.rows import BUILD_VERSIONS
+
+        cache = _FakeCache(rows=[_FakeRow(ts_us=0), _FakeRow(ts_us=60_000_000)])
+        meta = _client(cache).get("/market/klines", params=self._P).json()["meta"]
+        assert meta["build_version"] == BUILD_VERSIONS["time"]
+        assert meta.get("stale_build", False) is False
+
     def test_provider_returning_none_falls_back_to_cache(self) -> None:
         body = self._client_with(None).get("/market/klines", params=self._P).json()
         assert body["meta"]["sources"] == []
