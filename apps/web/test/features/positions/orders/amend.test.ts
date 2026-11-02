@@ -55,6 +55,12 @@ function row(id: string, wire: Record<string, unknown> = {}, dir = directory()):
   if (mapped === null) throw new Error(`no row for ${id}`);
   return mapped;
 }
+/** A golden step as a snapshot carries it: no `change` key at all, as `ws_topics.py` builds one. */
+function asRead(item: WsOrder): WsOrder {
+  const read = { ...item };
+  delete read.change;
+  return read;
+}
 /** A golden delta's item for `id`. */
 const step = (name: DeltaCase, id = ETH): WsOrder => wsItem(deltaBody(name), id);
 
@@ -352,7 +358,8 @@ describe("Unknown, reconciliation and the stale bound (D01 D4 × Unknown)", () =
 
   it("a snapshot showing the requested value confirms only once the 202 took it (a missed accept frame)", () => {
     const counted = pending({ sawPending: true });
-    const read = { ...step("amend_accepted"), change: null };
+    const read = asRead(step("amend_accepted"));
+    expect(read).not.toHaveProperty("change");
     const early = onItem(counted, read, "snap");
     expect(early.resolution).toBeNull();
     expect(early.next?.held?.via).toBe("snap");

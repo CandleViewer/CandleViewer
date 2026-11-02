@@ -149,6 +149,22 @@ describe("a press: the commit's last guards, then one amend (P3-BQ-1, P3-BQ-5)",
     expect(h.amendOrder).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["armed, then not", ["arm-token-1", null], [{ kind: "sent" }, { why: "arm" }], ["arm-token-1"]],
+    ["not, then armed", [null, "arm-token-2"], [{ why: "arm" }, { kind: "sent" }], ["arm-token-2"]],
+  ] as const)(
+    "two presses on one account across a token change, %s: each commit reads its own (M13-memo)",
+    (_, tokens, results, sentWith) => {
+      let token: string | null = tokens[0];
+      const h = harness({ arm: { token: () => token } });
+      // COND's price and ENTRY's quantity raised: both risk-increasing, both on LIVE Sub-1
+      expect(h.store.press(row(COND), "price", "64530.0")).toMatchObject(results[0]);
+      token = tokens[1];
+      expect(h.store.press(row(ENTRY), "qty", "0.200")).toMatchObject(results[1]);
+      expect(h.amendOrder.mock.calls.map((call) => call[3]?.arm)).toEqual(sentWith);
+    },
+  );
+
   it("a cut and a take-profit's price go without the token, whatever the session holds (M7, M8, M11)", () => {
     const h = harness();
     h.store.press(row(ENTRY), "qty", "0.100");

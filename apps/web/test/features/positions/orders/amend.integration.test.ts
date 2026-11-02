@@ -6,7 +6,8 @@
  * missed accept frame, and the stale bound (P3-BQ-7: confirmed or rejected only on the venue's word).
  *
  * Two frames are goldens re-stamped as PR2's tests re-stamp them: the accepted ETH step read again by
- * reconciliation (`change: "reconcile"`) and by a snapshot (no `change`, as `ws_topics.py` builds one).
+ * reconciliation (`change: "reconcile"`) and by a snapshot (no `change` key, as `ws_topics.py`
+ * builds one).
  */
 import { act } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
@@ -26,6 +27,7 @@ import {
   type ArmTokenSource,
 } from "../../../../src/features/positions/orders/model/amend";
 import { editGate } from "../../../../src/features/positions/orders/model/gates";
+import type { WsOrder } from "../../../../src/features/positions/orders/model/orderRow";
 import {
   createOrdersStore,
   type OrdersStore,
@@ -101,11 +103,17 @@ function press(id: string, field: "price" | "trigger_price" | "qty", requested: 
   if (row === undefined) throw new Error(`no row for ${id}`);
   return amends.press(row, field, requested);
 }
-/** The golden's accepted ETH step as a later read gives it: a reconcile step, or a snapshot's item. */
-const reread = (change: "reconcile" | null): Readonly<Record<string, unknown>> => {
-  const accepted = wsItem(deltaBody("amend_accepted"), ETH);
-  return { ...accepted, change, updated_at_ms: accepted.updated_at_ms + 4_000 };
-};
+/**
+ * The golden's accepted ETH step as a later read gives it: a reconcile step, or a snapshot's item,
+ * which carries no `change` key at all (`ws_topics.py` omits it).
+ */
+function reread(change: "reconcile" | null): WsOrder {
+  const item = { ...wsItem(deltaBody("amend_accepted"), ETH) };
+  item.updated_at_ms += 4_000;
+  if (change === null) delete item.change;
+  else item.change = change;
+  return item;
+}
 
 /** The live view: the feed, its stores, the snapshot; the session's arm is `arm`. */
 async function open(arm: ArmTokenSource = ARMED): Promise<void> {
