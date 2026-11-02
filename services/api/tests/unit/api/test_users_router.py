@@ -27,6 +27,8 @@ from candleviewer.storage.errors import ActorNotAuthorised, WriteAheadTimeout
 OWNER = uuid.uuid4()
 TARGET = uuid.uuid4()
 SESSION = uuid.UUID(int=4174)  # the session behind `Bearer tok`
+#: The session store's clock (#2101): a fixed instant, never compared here (C-13.7).
+_NOW = datetime(2026, 10, 31, 12, 0, tzinfo=UTC)
 _Hook = Callable[[frozenset[str]], Awaitable[None]]
 
 
@@ -112,7 +114,7 @@ class _Sessions:
         return ()
 
     def now(self) -> datetime:
-        return datetime.now(UTC)
+        return _NOW
 
     async def revoke_all(self, user_id: str, **_kw: Any) -> tuple[Any, ...]:
         return ()

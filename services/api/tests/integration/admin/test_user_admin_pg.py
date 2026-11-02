@@ -160,7 +160,7 @@ class _Elevated:
         return ()
 
     def now(self) -> datetime:
-        return datetime.now(UTC)
+        return _NOW
 
     async def revoke_all(self, user_id: str, **_: Any) -> tuple[Any, ...]:
         return ()
