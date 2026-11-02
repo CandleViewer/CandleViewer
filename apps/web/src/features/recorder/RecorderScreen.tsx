@@ -30,13 +30,19 @@ import {
   PageHeader,
   Skeleton,
   Text,
-  type FilterBarFilter,
 } from "@candleviewer/ui";
 import { reportRecorder } from "./analytics";
 import { CompactNow } from "./CompactNow";
 import { DECK, TEXT, fill } from "./copy";
 import { useRecorderExtensions } from "./extensions";
-import { AUTO_FILTER, DEEP_FILTERS, PINNED_FILTER, type GridSort, type RowContext } from "./grid";
+import {
+  AUTO_FILTER,
+  DEEP_FILTERS,
+  PINNED_FILTER,
+  type GridSort,
+  type RecorderFilter,
+  type RowContext,
+} from "./grid";
 import {
   buildRows,
   createBatchAnnouncer,
@@ -117,7 +123,7 @@ export function RecorderScreen({
   const extensions = useRecorderExtensions();
   const data = useRecorderData(dataOptions);
   const names = useInstruments(instruments);
-  const [filters, setFilters] = useState<readonly FilterBarFilter[]>([]);
+  const [filters, setFilters] = useState<readonly RecorderFilter[]>([]);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<GridSort | undefined>(undefined);
   const [adding, setAdding] = useState(false);
@@ -259,7 +265,7 @@ export function RecorderScreen({
     if (done.recovered || gone) focusLanding(document.getElementById(RECORDER_H1_ID));
   }, [retries]);
   /** Applies chips for their fields, in place of what those fields held: a value is never ORed with one it replaces. */
-  const applyFilters = (more: readonly FilterBarFilter[]): void =>
+  const applyFilters = (more: readonly RecorderFilter[]): void =>
     setFilters((prev) => [...prev.filter((p) => !more.some((m) => m.field === p.field)), ...more]);
   const suggested = (action: string): void => {
     if (action === SHORTEN) {

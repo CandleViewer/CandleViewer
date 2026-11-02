@@ -21,6 +21,8 @@ export const PAGE_TEXT = {
   grid: "Recorded symbols",
   /** D02 §1: the search box. */
   search: "Filter symbols",
+  /** D02 §1: CMP-055's add control, a CMP-041 menu of the filter fields (BQ-10). */
+  addFilter: "Add filter",
   /** D02 §1: the disk card's entry points to SCR-141 and SCR-142 (BQ-11: shown once registered). */
   retentionPolicy: "Retention policy",
   storageDetails: "Storage details",
@@ -98,9 +100,9 @@ export const STREAM_LABELS: Readonly<Record<StreamKind, string>> = {
 };
 
 /**
- * The FilterBar's fields (BQ-10: Reason, State, Pinned, Needs attention, each with a value submenu;
- * D02 §8.3's "Reduce depth" filters by Depth). Field names are D02 §1's; the values are PROPOSED
- * (owner E16-D02), the state values the leading words of D02 §4.1's state words.
+ * The filter fields "Add filter" offers (BQ-10: Reason, State, Pinned, Needs attention, each with a
+ * value submenu; D02 §8.3's "Reduce depth" filters by Depth). Field names are D02 §1's; the values
+ * are PROPOSED (owner E16-D02), the state values the leading words of D02 §4.1's state words.
  */
 export const FILTER_TEXT = {
   reason: { label: "Reason", values: { manual: "Manual", auto: "Auto" } },

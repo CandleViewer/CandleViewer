@@ -1,6 +1,6 @@
 /**
  * SCR-140's recorded-symbols grid (E16-D02 §1, §4, §5, §6.2, §6.3, §9.1, §10; E16-D06 KB-02, FM-01
- * to FM-06, T2-01, T2-02; BQ-9, BQ-10): the symbol search and the FilterBar's chips, then CMP-049 in
+ * to FM-06, T2-01, T2-02; BQ-9, BQ-10): the symbol search and CMP-055's chips, then CMP-049 in
  * grid mode over #5146's `renderRow`, one CMP-177 row per symbol, sortable by Symbol, Since and Size,
  * on D02 §1's column plan for its width (the narrow seven below the nine's 72 em). Nothing re-sorts
  * while the page is open: values change in place, a new row joins the end. Stop opens its
@@ -9,10 +9,10 @@
  * and grid line is said once, politely, through the page's announcer (`say`), which the
  * GatedAnnounceProvider routes the atoms' presses to; a refusal of a row's add shows in the grid's echo
  * at the point of action. A settled search or a chip change says how many rows it shows when that
- * changed, joined with the bar's own sentence; with none shown, CMP-026 `filtered-empty` offers Clear
- * filters.
+ * changed: the filter row's one voice, as CMP-055 has no live region of its own; with none shown,
+ * CMP-026 `filtered-empty` offers Clear filters.
  */
-import { useCallback, useEffect, useRef, useState, type JSX, type RefObject } from "react";
+import { useEffect, useRef, useState, type JSX, type RefObject } from "react";
 import {
   EmptyState,
   FilterBar,
@@ -21,21 +21,23 @@ import {
   SearchBox,
   Table,
   recorderStatusColumns,
-  type FilterBarFilter,
   type RecorderStatusRowData,
   type TableRowContext,
 } from "@candleviewer/ui";
+import { AddFilterMenu } from "./AddFilterMenu";
 import { reportRecorder } from "./analytics";
 import {
   DEFAULT_DEPTH,
   DEFAULT_RETENTION_DAYS,
   DEFAULT_STREAMS,
-  FILTER_FIELDS,
+  chipLabel,
+  filterKey,
   nextOrder,
   rowData,
   rowMatches,
   type GridOrder,
   type GridSort,
+  type RecorderFilter,
   type RowContext,
 } from "./grid";
 import type { RecorderRow } from "./model";
@@ -133,8 +135,8 @@ export interface RecorderGridProps {
   readonly listed: ReadonlyMap<string, RecordedSymbol>;
   /** When the newest `recorder` frame was read (a refused stop waits for the next). */
   readonly frameAtMs: number | null;
-  readonly filters: readonly FilterBarFilter[];
-  readonly onFiltersChange: (next: readonly FilterBarFilter[]) => void;
+  readonly filters: readonly RecorderFilter[];
+  readonly onFiltersChange: (next: readonly RecorderFilter[]) => void;
   readonly query: string;
   readonly onQueryChange: (next: string) => void;
   readonly sort: GridSort | undefined;
@@ -200,45 +202,30 @@ export function RecorderGrid({
   const probe = useRef<HTMLSpanElement>(null);
   const narrow = useNarrowPlan(host, probe);
 
-  // The result count (D-5309-02): once per settled query or chip change, when the rows shown changed. The bar's own
-  // sentence of a chip change is held for it, so the two are one line and never overwrite each other in the shell's
-  // one polite region; a sentence no change follows (a refused press) is said on its own. What "changed" means is
-  // judged against the rows as they are when the selection changes (C-5309-d01): the previous selection counted again
-  // on today's rows, so rows that loaded or joined since it was counted, the first load included, are in it.
+  // The result count (D-5309-02): once per settled query or chip change, when the rows shown changed. It is the filter
+  // row's one voice (a1): CMP-055 and Add filter have no live region of their own, so a chip that changes no count is
+  // silent. What "changed" means is judged against the rows as they are when the selection changes (C-5309-d01): the
+  // previous selection counted again on today's rows, so rows that loaded or joined since it was counted, the first
+  // load included, are in it.
   const settled = useSettled(query);
-  const selection = `${settled.trim().toUpperCase()}\n${filters.map((f) => `${f.field}=${f.value}`).join("&")}`;
+  const selection = `${settled.trim().toUpperCase()}\n${filters.map(filterKey).join("&")}`;
   const total = rows.filter((row) => row.reason !== null).length;
   const counted = useRef<{
     readonly selection: string;
     readonly query: string;
-    readonly filters: readonly FilterBarFilter[];
+    readonly filters: readonly RecorderFilter[];
   } | null>(null);
-  const barSaid = useRef<string | null>(null);
-  const sayForBar = useCallback(
-    (text: string): void => {
-      barSaid.current = text;
-      queueMicrotask(() => {
-        if (barSaid.current !== text) return; // joined with the count by now
-        barSaid.current = null;
-        say(text);
-      });
-    },
-    [say],
-  );
   const latest = useRef({ rows, shown: shown.length, total, say, query, filters });
   latest.current = { rows, shown: shown.length, total, say, query, filters };
   useEffect(() => {
     const now = latest.current;
     const was = counted.current;
     counted.current = { selection, query: now.query, filters: now.filters };
-    const sentence = barSaid.current;
-    barSaid.current = null;
     const changed =
       was !== null &&
       was.selection !== selection &&
       now.rows.filter((row) => rowMatches(row, was.filters, was.query)).length !== now.shown;
-    const words = [sentence, changed ? shownLine(now.shown, now.total) : null].filter(Boolean);
-    if (words.length > 0) now.say(words.join(" "));
+    if (changed) now.say(shownLine(now.shown, now.total));
   }, [selection]);
 
   const clearFilters = (): void => {
@@ -318,10 +305,13 @@ export function RecorderGrid({
             onClear={() => onQueryChange("")}
           />
           <FilterBar
-            fields={FILTER_FIELDS}
-            value={filters}
-            onChange={onFiltersChange}
-            announce={sayForBar}
+            filters={filters.map((filter) => ({
+              id: filterKey(filter),
+              label: chipLabel(filter),
+              onRemove: () => onFiltersChange(filters.filter((each) => each !== filter)),
+            }))}
+            onClearAll={() => onFiltersChange([])}
+            addFilter={<AddFilterMenu filters={filters} onChange={onFiltersChange} />}
           />
         </div>
         {/* Isolated, so the menu (menu.css:7: no z-index) paints over the sticky header (table.css: z-index 1). */}

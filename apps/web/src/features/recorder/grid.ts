@@ -1,9 +1,9 @@
 /**
- * SCR-140's grid, the pure part (E16-S01; E16-D02 §1, §4, §5, §9.1; BQ-10): the FilterBar's fields
- * and their match, the symbol search, the sort by Symbol, Since or Size and the order the grid
- * keeps while the page is open, and a model row in CMP-177's props. No React.
+ * SCR-140's grid, the pure part (E16-S01; E16-D02 §1, §4, §5, §9.1; BQ-10): the filter fields "Add
+ * filter" offers, their chips and their match, the symbol search, the sort by Symbol, Since or Size
+ * and the order the grid keeps while the page is open, and a model row in CMP-177's props. No React.
  */
-import type { FilterBarField, FilterBarFilter, RecorderStatusRowData } from "@candleviewer/ui";
+import type { RecorderStatusRowData } from "@candleviewer/ui";
 import type { generated } from "@candleviewer/protocol";
 import { fill } from "./copy";
 import { formatDuration, formatHourMinute, type DiskLevel, type RecorderRow } from "./model";
@@ -29,29 +29,52 @@ export const DEFAULT_RETENTION_DAYS = 30;
 export const RETENTION_MIN_DAYS = 1;
 export const RETENTION_MAX_DAYS = 3650;
 
+/** A field "Add filter" offers (`id`, the key; `label`, "State"), opening a submenu of its values. */
+export interface RecorderFilterField {
+  readonly id: string;
+  readonly label: string;
+  readonly options: readonly { readonly value: string; readonly label: string }[];
+}
+
+/** An active filter, one CMP-055 chip: one value of one field. A pair appears at most once. */
+export interface RecorderFilter {
+  readonly field: string;
+  readonly value: string;
+}
+
 type FieldId = keyof typeof FILTER_TEXT;
-const field = (id: FieldId): FilterBarField => ({
+const field = (id: FieldId): RecorderFilterField => ({
   id,
   label: FILTER_TEXT[id].label,
   options: Object.entries(FILTER_TEXT[id].values).map(([value, label]) => ({ value, label })),
 });
 /** "Add filter"'s menu, in order (BQ-10, and D02 §8.3's Depth for "Reduce depth"). */
-export const FILTER_FIELDS: readonly FilterBarField[] = (
+export const FILTER_FIELDS: readonly RecorderFilterField[] = (
   ["reason", "state", "pinned", "attention", "depth"] as const
 ).map(field);
 /** D02 §5.2: the summary's "{m} auto-recorded" applies this chip. */
-export const AUTO_FILTER: FilterBarFilter = { field: "reason", value: "auto" };
-export const PINNED_FILTER: FilterBarFilter = { field: "pinned", value: "yes" };
+export const AUTO_FILTER: RecorderFilter = { field: "reason", value: "auto" };
+export const PINNED_FILTER: RecorderFilter = { field: "pinned", value: "yes" };
 /** D02 §8.3's "Reduce depth": the rows at depth 500 or 200. */
-export const DEEP_FILTERS: readonly FilterBarFilter[] = [
+export const DEEP_FILTERS: readonly RecorderFilter[] = [
   { field: "depth", value: "500" },
   { field: "depth", value: "200" },
 ];
 
+/** A filter's key, one per pair ("reason=auto"; no field id holds "="): the chip's id and the menu's check. */
+export const filterKey = (filter: RecorderFilter): string => `${filter.field}=${filter.value}`;
+
+/** A chip's words, "{field}: {value}" ("Reason: Auto"); a pair no field offers reads as its keys. */
+export function chipLabel(filter: RecorderFilter): string {
+  const offered = FILTER_FIELDS.find((each) => each.id === filter.field);
+  const option = offered?.options.find((each) => each.value === filter.value);
+  return `${offered?.label ?? filter.field}: ${option?.label ?? filter.value}`;
+}
+
 /** BQ-10: degraded, gated, silent, error or refused. */
 const ATTENTION: ReadonlySet<string> = new Set(["degraded", "gated", "silent", "error", "refused"]);
 
-/** A row's value for a field, as the FilterBar's option values spell it. */
+/** A row's value for a field, as the fields' option values spell it. */
 function valueOf(row: RecorderRow, id: string): string {
   switch (id) {
     case "reason":
@@ -75,7 +98,7 @@ function valueOf(row: RecorderRow, id: string): string {
  */
 export function rowMatches(
   row: RecorderRow,
-  filters: readonly FilterBarFilter[],
+  filters: readonly RecorderFilter[],
   query: string,
 ): boolean {
   const needle = query.trim().toUpperCase();
