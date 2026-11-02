@@ -310,14 +310,14 @@ export function fromRows(plan: BulkPlan, outcomes: ReadonlyMap<string, CancelOut
   };
 }
 
-/** Sends a plan: no request for an empty one, `MAX_IN_FLIGHT` at once on the per-row route. */
-export async function runPlan(
-  plan: BulkPlan,
-  writes: OrdersWrites,
-  signal?: AbortSignal,
-): Promise<BulkResult> {
+/**
+ * Sends a plan to its end: no request for an empty one, `MAX_IN_FLIGHT` at once on the per-row
+ * route. A confirmed plan takes no abort signal, so every target is sent and answered whatever the
+ * screen does meanwhile (D02 §8.3, never silently dropped; N-M1).
+ */
+export async function runPlan(plan: BulkPlan, writes: OrdersWrites): Promise<BulkResult> {
   if (plan.route.kind === "cancel_all") {
-    return fromCancelAll(plan, await writes.cancelAllOrders(plan.route.request, signal));
+    return fromCancelAll(plan, await writes.cancelAllOrders(plan.route.request));
   }
   const outcomes = new Map<string, CancelOutcome>();
   let next = 0;
@@ -325,7 +325,7 @@ export async function runPlan(
     while (next < plan.targets.length) {
       const row = plan.targets[next];
       next += 1;
-      if (row !== undefined) outcomes.set(row.id, await writes.cancelOrder(row.id, signal));
+      if (row !== undefined) outcomes.set(row.id, await writes.cancelOrder(row.id));
     }
   };
   const lanes = Math.min(MAX_IN_FLIGHT, plan.targets.length);

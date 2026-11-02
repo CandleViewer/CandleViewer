@@ -509,6 +509,22 @@ describe("runPlan", () => {
     ]);
   });
 
+  it("a confirmed plan runs to its end: no send carries an abort signal (N-M1)", async () => {
+    const accepted: CancelOutcome = { kind: "accepted", lifecycle: null };
+    const cancelOrder = vi.fn<OrdersWrites["cancelOrder"]>(async () => accepted);
+    const cancelAllOrders = vi.fn<OrdersWrites["cancelAllOrders"]>(async () => ({
+      kind: "ok",
+      results: [],
+    }));
+    const rows = Array.from({ length: 6 }, (_, i) => entryOn(SUB1, i + 1));
+    await runPlan(planSelected(rows, gateOf), { cancelOrder, cancelAllOrders });
+    await runPlan(planAllInView(rows, [], gateOf), { cancelOrder, cancelAllOrders });
+    expect(cancelOrder).toHaveBeenCalledTimes(6);
+    expect(cancelAllOrders).toHaveBeenCalledTimes(1);
+    const signals = [...cancelOrder.mock.calls, ...cancelAllOrders.mock.calls].map((c) => c[1]);
+    expect(signals).toEqual(Array.from({ length: 7 }, () => undefined));
+  });
+
   it("an empty plan sends nothing", async () => {
     const { writes, cancelled } = recording();
     const result = await runPlan(planSelected([row(STOP)], gateOf), writes);
