@@ -12,7 +12,13 @@
  * silently empty shell; preferences/keymap failures are non-fatal (a broken
  * keymap must not block login).
  */
-import { setMeClaims } from "../../lib/auth/meCache.js";
+import {
+  MeSignedOutError,
+  setMeClaims,
+  setMeClaimsReader,
+  type MeClaimsReader,
+} from "../../lib/auth/meCache.js";
+import { accessToken } from "../../lib/auth/accessToken.js";
 import type { MeClaims, Role } from "../../routes/rbac.js";
 import { HttpError, HttpTimeoutError, fetchJson } from "./httpClient.js";
 import {
@@ -86,6 +92,10 @@ export async function runBootstrap(deps: BootstrapDeps = {}): Promise<void> {
 
   const me = meResult.value;
   setMeClaims(meToClaims(me));
+  // #5405: a later navigation re-reads `/me` past the claims' staleness bound, so a role or grant
+  // the server changed applies without a reload; the shell's `me` and environment follow the
+  // same answer, so the environment badge never disagrees with `me`.
+  setMeClaimsReader(createMeClaimsReader(fetchImpl));
   setShellState({
     me,
     // Environment comes from `/me` (`session.environment`) or the WS
@@ -112,6 +122,40 @@ export async function runBootstrap(deps: BootstrapDeps = {}): Promise<void> {
 
   setShellState({ bootstrap: { kind: "ready" } });
   markShellStage(SHELL_PERF_MARKS.bootstrapReady);
+}
+
+/**
+ * The route loaders' `/me` re-read (#5405). It is `quiet`: a lost session's `401` does not make the
+ * token holder route to sign-in from the page being left (the loader runs before the navigation
+ * commits); the reader answers `MeSignedOutError` and the guard routes with the destination as
+ * `next`. Only a session the holder found gone is a sign-out: a `401` it could not cure because its
+ * refresh failed (a network error, a timeout, a 5xx, a malformed bundle) or found the session
+ * idle-locked (the lock overlay answers that), or an idle lock's own `401`, rejects as any other
+ * failure does, and the cached claims stay.
+ */
+export function createMeClaimsReader(fetchImpl?: typeof fetch): MeClaimsReader {
+  return async () => {
+    let next: Me;
+    try {
+      next = await fetchJson<Me>("/api/v1/me", {
+        timeoutMs: BOOTSTRAP_TIMEOUT_MS,
+        fetchImpl,
+        quiet: true,
+      });
+    } catch (error) {
+      if (
+        error instanceof HttpError &&
+        error.status === 401 &&
+        error.code !== "session_idle_locked" &&
+        accessToken.isSignedOut()
+      ) {
+        throw new MeSignedOutError();
+      }
+      throw error;
+    }
+    setShellState({ me: next, environment: next.session?.environment ?? "unknown" });
+    return meToClaims(next);
+  };
 }
 
 function classifyMeFailure(reason: unknown): BootstrapPhase {

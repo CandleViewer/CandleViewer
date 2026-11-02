@@ -470,6 +470,52 @@ describe("a lost session goes back to sign-in", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1); // no session: a refused call asks nothing again
   });
 
+  // #5405: the route loaders' `/me` re-read runs before the navigation commits, so the holder's route
+  // would carry the page being left; it routes itself, to the destination, from the 401 it is answered.
+  it("a quiet call whose refresh finds the session lost answers its 401 and does not route", async () => {
+    holder.set(bundle(1));
+    transport.mockResolvedValue(refused("token_expired")); // a stale bearer: a refresh may cure it
+    fetchMock.mockResolvedValueOnce(refused("refresh_token_invalid"));
+    expect(holder.isSignedOut()).toBe(false);
+    const res = await holder.send("/api/v1/me", {}, transport, { quiet: true });
+    expect(res.status).toBe(401);
+    expect(toSignIn).not.toHaveBeenCalled();
+    expect(holder.isSignedOut()).toBe(true); // the caller's cue to route itself
+    await expect(holder.getToken()).resolves.toEqual({ kind: "unavailable" }); // forgotten all the same
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  // #5405: a 401 the refresh could not cure is not a sign-out unless the refresh found the session lost
+  it.each<[string, () => Promise<Response>]>([
+    ["fails on the network", () => Promise.reject(new TypeError("Failed to fetch"))],
+    ["answers a 5xx", () => Promise.resolve(json(503, { code: "unavailable" }))],
+    ["finds the session idle-locked", () => Promise.resolve(refused("session_idle_locked"))],
+  ])(
+    "a quiet call whose refresh %s answers its 401, signs nothing out and does not route",
+    async (_name, answer) => {
+      holder.set(bundle(1));
+      transport.mockResolvedValue(refused("token_expired"));
+      fetchMock.mockImplementationOnce(answer);
+      const res = await holder.send("/api/v1/me", {}, transport, { quiet: true });
+      expect(res.status).toBe(401);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(holder.isSignedOut()).toBe(false);
+      expect(toSignIn).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a loud call that shares the quiet call's refresh still routes to sign-in", async () => {
+    holder.set(bundle(1));
+    transport.mockResolvedValue(refused("token_expired"));
+    fetchMock.mockImplementationOnce(() => later(50, () => refused("refresh_token_invalid")));
+    const quiet = holder.send("/api/v1/me", {}, transport, { quiet: true });
+    const loud = holder.send("/api/v1/orders", {}, transport);
+    await vi.advanceTimersByTimeAsync(50);
+    await Promise.all([quiet, loud]);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // one refresh, shared
+    expect(toSignIn).toHaveBeenCalledTimes(1);
+  });
+
   it("an unlock's 2xx after a refresh that called a locked session lost lets the next ask refresh", async () => {
     fetchMock.mockResolvedValueOnce(refused("refresh_token_invalid")); // a server from before #3331
     await expect(holder.refresh()).resolves.toBe("lost");

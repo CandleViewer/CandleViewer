@@ -6,7 +6,13 @@ import {
   runBootstrap,
 } from "../../../src/shell/bootstrap/bootstrap.js";
 import { getShellState, resetShellState } from "../../../src/shell/bootstrap/store.js";
-import { getMeClaims, resetMeClaims } from "../../../src/lib/auth/meCache.js";
+import { REFRESH_SENT_KEY, accessToken } from "../../../src/lib/auth/accessToken.js";
+import {
+  CLAIMS_MAX_AGE_MS,
+  getMeClaims,
+  refreshMeClaims,
+  resetMeClaims,
+} from "../../../src/lib/auth/meCache.js";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -61,6 +67,106 @@ describe("runBootstrap", () => {
     await runBootstrap({ fetchImpl });
     expect(getMeClaims()).toMatchObject({ authenticated: true, role: "owner" });
   });
+
+  // #5405: the registered reader re-reads `/me` past the bound and keeps the shell in step.
+  it("registers a /me reader that updates the claims, the shell's me and its environment", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-02T00:00:00Z"));
+      let body: unknown = ME_BODY;
+      const fetchImpl = vi.fn().mockImplementation((path: string) => {
+        if (path === "/api/v1/me") return Promise.resolve(jsonResponse(body));
+        return Promise.resolve(jsonResponse({}));
+      });
+      await runBootstrap({ fetchImpl });
+      body = {
+        ...ME_BODY,
+        role: "viewer",
+        user: { ...ME_BODY.user, roles: ["viewer"] },
+        session: { ...ME_BODY.session, environment: "live" },
+      };
+      vi.setSystemTime(Date.now() + CLAIMS_MAX_AGE_MS);
+      await refreshMeClaims();
+      expect(fetchImpl.mock.calls.filter(([p]) => p === "/api/v1/me")).toHaveLength(2);
+      expect(getMeClaims()).toMatchObject({ authenticated: true, role: "viewer" });
+      expect(getShellState().me).toMatchObject({ role: "viewer" });
+      expect(getShellState().environment).toBe("live");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // #5405: the re-read is quiet; a lost session is the reader's answer, never the holder's route. Only
+  // a refresh that finds the session lost signs it out: one that fails or finds it locked keeps the claims.
+  const lost = (): Promise<Response> =>
+    Promise.resolve(jsonResponse({ code: "refresh_token_invalid" }, 401));
+  it.each<[string, string, () => Promise<Response>, boolean, boolean]>([
+    ["a revoked session", "session_revoked", lost, false, false],
+    ["an expired token whose refresh finds the session lost", "token_expired", lost, false, false],
+    [
+      "an expired token whose refresh fails on the network",
+      "token_expired",
+      () => Promise.reject(new TypeError("Failed to fetch")),
+      true,
+      false,
+    ],
+    [
+      "an expired token whose refresh answers a 5xx",
+      "token_expired",
+      () => Promise.resolve(jsonResponse({ code: "unavailable" }, 503)),
+      true,
+      false,
+    ],
+    [
+      "an expired token whose refresh finds the session idle-locked",
+      "token_expired",
+      () => Promise.resolve(jsonResponse({ code: "session_idle_locked" }, 401)),
+      true,
+      true,
+    ],
+    ["an idle lock", "session_idle_locked", lost, true, true],
+  ])(
+    "the /me reader on %s: a sign-out sets no claims and routes nothing; a blip or a lock keeps them",
+    async (_name, code, refresh, kept, locked) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const assign = vi.fn();
+      const onLocked = vi.fn();
+      const unsubscribe = accessToken.onLocked(onLocked);
+      const { origin } = window.location;
+      vi.stubGlobal("location", {
+        origin,
+        href: `${origin}/terminal/last`,
+        pathname: "/terminal/last",
+        search: "",
+        assign,
+      });
+      vi.stubGlobal("fetch", vi.fn(refresh));
+      try {
+        vi.setSystemTime(new Date("2026-11-02T00:00:00Z"));
+        let revoked = false;
+        const fetchImpl = vi.fn().mockImplementation((path: string) => {
+          if (path !== "/api/v1/me") return Promise.resolve(jsonResponse({}));
+          return Promise.resolve(revoked ? jsonResponse({ code }, 401) : jsonResponse(ME_BODY));
+        });
+        await runBootstrap({ fetchImpl });
+        accessToken.set({ access_token: "probe-held-x", token_type: "Bearer", expires_in: 600 });
+        revoked = true;
+        vi.setSystemTime(Date.now() + CLAIMS_MAX_AGE_MS);
+        await refreshMeClaims();
+        expect(getMeClaims()).toMatchObject(
+          kept ? { authenticated: true, role: "owner" } : { authenticated: false },
+        );
+        expect(assign).not.toHaveBeenCalled();
+        expect(onLocked.mock.calls.length > 0).toBe(locked); // the SCR-005 overlay's cue
+      } finally {
+        unsubscribe();
+        accessToken.clear();
+        localStorage.removeItem(REFRESH_SENT_KEY); // the mark of a refresh no test answered
+        vi.unstubAllGlobals();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("sets bootstrap to failed with http_error reason on a /me 500", async () => {
     const fetchImpl = vi.fn().mockImplementation((path: string) => {

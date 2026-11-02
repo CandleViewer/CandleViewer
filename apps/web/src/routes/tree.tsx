@@ -27,7 +27,7 @@ import { SetupChecklistCard } from "../features/onboarding/SetupChecklistCard";
 import { HotkeyEditor } from "../keymap/HotkeyEditor";
 import { AccessibilitySettingsScreen } from "../features/a11y-preferences/AccessibilitySettingsScreen";
 import { SessionsSection } from "../features/session/SessionsSection";
-import { getMeClaims } from "../lib/auth/meCache";
+import { getMeClaims, refreshMeClaims } from "../lib/auth/meCache";
 import { ShellLayout } from "../features/app-shell/ShellLayout";
 import { ScreenRoot } from "../features/app-shell/ScreenRoot";
 
@@ -80,8 +80,9 @@ function buildRoutes(): RouteObject[] {
     errorElement: <RouteErrorElement />,
     // D-01 (WCAG 2.4.2): the page title `syncDocumentTitle` applies on every navigation
     handle: { title: ROUTE_TITLES[entry.id] } satisfies TitleHandle,
-    loader: ({ request }) => {
-      guardRoute(entry.id, entry.access, request.url);
+    loader: async ({ request }) => {
+      // The aliases redirect before the guard: each target has the alias's access and guards
+      // itself, so a sign-in it sends the user to carries the real page as `next` (#5405).
       // R-100 `/terminal` always redirects to the user's last-used or
       // default layout (`12-sitemap.md` §2 note on R-100).
       if (entry.id === "R-100") return redirect("/terminal/last");
@@ -93,6 +94,9 @@ function buildRoutes(): RouteObject[] {
       // R-002 `/login/2fa`: SCR-002 is a step inside R-001 (#2711 BQ-02); its challenge handle exists
       // only in that step's memory, so a direct load has none and starts at SCR-001, with no query.
       if (entry.id === "R-002") return redirect("/login");
+      // #5405: every navigation guards on the current claims, re-read past their staleness bound.
+      await refreshMeClaims();
+      guardRoute(entry.id, entry.access, request.url);
       return null;
     },
   });
@@ -112,7 +116,10 @@ function buildRoutes(): RouteObject[] {
         {
           path: "*",
           errorElement: <RouteErrorElement />,
-          loader: ({ request }) => guardUnknownRoute(request.url),
+          loader: async ({ request }) => {
+            await refreshMeClaims();
+            return guardUnknownRoute(request.url);
+          },
         },
       ],
     },
@@ -122,7 +129,8 @@ function buildRoutes(): RouteObject[] {
   // Documented redirects (`12-sitemap.md` §8: fresh install / unauthenticated root).
   routes.push({
     path: "/",
-    loader: () => {
+    loader: async () => {
+      await refreshMeClaims();
       const claims = getMeClaims();
       if (claims.role === null && !claims.authenticated) {
         return redirect("/login");
