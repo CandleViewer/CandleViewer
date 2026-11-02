@@ -37,7 +37,7 @@
 | ST5  | A reset confirm, in two framings: TradingView-style ("all paper data will be deleted") and the report's CA-7 and CA-8                                                               | Probe 5      |
 | ST5b | The account drawer in a LIVE session in two treatments: the reset control hidden (US-PAPER-006) and the reset disabled with the environment reason (`14` §0.5 #5, E09-D09's T2)     | Probe 5b     |
 | ST6  | A parity report list with three items (one fresh, one stale after 90 days, one runtime candidate) and a demo-only rejection drawer                                                  | Probe 6      |
-| ST7  | Greyscale and three CVD renders of ST2's frames (`cvd_sim.py`; tritan by the report's §8 method)                                                                                    | Task 5       |
+| ST7  | Greyscale and three CVD versions of ST2's treatments, their colours from `docs/research/_tools/cvd_simulate.py` (`simulate`), as the report's §8                                    | Task 5       |
 
 ## 4. Session script (45 minutes)
 
@@ -80,5 +80,5 @@ the report's F-id.
 - [ ] F1 and OQ-4: the first LIVE order after a switch always confirmed
 - [ ] §5's six framing rules for simulated results
 - [ ] OQ-1 and OQ-2 owners named
-- [ ] P-1 to P-3 written into `32`, or declined
+- [ ] P-1 and P-2 written into `32` by E38-X01, or declined
 - [ ] The session run scheduled once the prerequisites in §2 are merged

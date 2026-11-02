@@ -29,6 +29,8 @@
      (BQ-06).
   7. **Blockers.** E30-X01 (#920), E30-K01 (#852) and E29-K01 (#843) were still open; work proceeded under an
      **orchestrator waiver**, not owner approval (BQ-03, RULED (orchestrator, issue comment 6572970059, 2026-11-02)).
+  8. **Report path.** The AC1 path `E38-paper-parity.md` is used literally, unlike the folder's lowercase `eNN-`
+     files (`e33-…`, `e35-…`); the protocol keeps the lowercase form (BQ-02).
 - **In plain words.** The plan already makes DEMO/LIVE a word, a weight and a glyph, not a colour (E10-D03 §3). The
   research risk is elsewhere:
   - **What traders look at.** They read the ticket and the confirm restatement, not the band (§2, §3).
@@ -58,6 +60,8 @@
 5. **Paper P&L uses the live code path and never aggregates into live statistics** (US-PAPER-005). Paper and replay
    are an `ExecutionMode`, not an `Environment` (`24`:87–94).
 6. **Live is unreachable until R4** (`30`:423). Everything up to R3 runs on Bybit demo.
+7. **Testnet is out of the E38 UI** (`20`:860, owner decision 8): connectivity smoke tests only, so no E38 surface
+   draws a TESTNET state.
 
 ## Acceptance-criteria trace (issue #1002)
 
@@ -96,7 +100,7 @@ session protocol and (3) an owner walkthrough checklist. Every repository claim 
 | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | SC-1 | The typed word is `LIVE` (SCR-074, `14`:1770; CMP-074, `15`:838), but flow 13 accepts "account name or 'LIVE'" (`13`:418)                                                                                              | type `LIVE`; the modal restates the accounts but never asks for an account name                                                                                                                                                                |
 | SC-2 | struck (BQ-12): SCR-074's "step-up required in both cases" (`14`:1761) means the owner and a grant-enabled manager, not both directions                                                                                | the typed confirm and step-up apply only when switching to live (`22`:14080; `13`:432); to demo is a click-confirm                                                                                                                             |
-| SC-3 | Flow 13 keeps a read-only "Demo positions" section visible in Live (`13`:430); SCR-074 says demo orders stay on demo; C-2.11 separates state and chrome                                                                | no demo rows on a live session's trading surfaces; the switch modal lists what stays on DEMO, and the badge menu states the count in words                                                                                                     |
+| SC-3 | Flow 13 keeps a read-only "Demo positions" section visible in Live (`13`:430); SCR-074 says demo orders stay on demo; C-2.11 separates state and chrome                                                                | no demo rows on a live session's trading surfaces; the switch modal lists what stays on DEMO, and the badge menu states the count in words (that line and its count PROPOSED; D02 places them)                                                 |
 | SC-4 | The environment is per session (SCR-074; `22`:14074), per process (`CV_ENV`, `20`:882), and E10-D03 §3.5 draws "a two-environment owner session" with both pills                                                       | one environment per session, read from the server (SR-179); the two-pill case goes to the E10 and E39 owners (OQ-1)                                                                                                                            |
 | SC-5 | not new (BQ-15): `color.env.live` equals `color.sell.default` in dark by design (E30-D01 F5; E10-D03 §11.2), against `16`:58's "reused nowhere else"                                                                   | cited, not re-found; E30-D04 owns the treatment (H10); no token change                                                                                                                                                                         |
 | SC-6 | "Paper": `20`:860 calls demo "the paper/rehearsal environment"; US-PAPER-004 means the local simulator; `24` makes paper an execution mode orthogonal to the environment                                               | DEMO = the Bybit demo environment, on the env badge only; SIMULATED = a fill from the local matcher, its own carrier; "paper" stays in the owner's nouns (US-PAPER-006, SCR-099's title, E38-D03's panel); binding copy is D03 / D04's (BQ-16) |
@@ -246,13 +250,16 @@ fill.
 - **Rejected for D02 (AC3):** any treatment that tells DEMO from LIVE by the accent hue or fill alone. The hue
   survives all three CVD simulations (ΔE76 above 90), but in greyscale the two accents are near-equal. E10-D03's pill
   passes because the word, the weight (DEMO medium, LIVE bold) and the glyph (outline vs filled dot) carry it.
-- **Not a new finding (BQ-15):** `color.env.live` equals `color.sell.default` and `color.candle.down` in dark and
-  light. That is recorded by design in E30-D01 F5 and E10-D03 §11.2: the badge sits on the chrome, sell on the ticket,
+- **Not a new finding (BQ-15):** `color.env.live` equals `color.sell.default` in dark and light, and
+  `color.candle.down` in all three themes (only sell separates in hc). That is recorded by design in E30-D01 F5 and E10-D03 §11.2: the badge sits on the chrome, sell on the ticket,
   never one beside the other. E30-D04 owns the treatment (H10). No token change is proposed here.
 - **For D02 to keep:** in hc, danger and LIVE fall under the JND for protanopia and deuteranopia (2.56 / 3.83), so a
   danger banner must never carry the environment by hue next to a LIVE badge.
 
 ## 9. Findings register (all `(heuristic)`), prioritised
+
+F3 is withdrawn (BQ-15: LIVE = sell red is cited, not found, §8); the other ids keep their numbers because the PR text
+cites them.
 
 | F   | Finding                                                                                                        | Pri | Confidence | Owner                    |
 | --- | -------------------------------------------------------------------------------------------------------------- | --- | ---------- | ------------------------ |
@@ -304,8 +311,8 @@ count where the switch is abandoned and whether the assumptions are read. No iss
 
 ### 10d. Accessibility notes for D05
 
-- The band is a `role="status"` landmark, and each panel's accessible name carries the environment ("Order ticket
-  – LIVE – Main", `14`:1790).
+- The band is a `role="status"` landmark, and each panel's accessible name carries the environment ('Order ticket - LIVE - Main',
+  `14`:1790, verbatim).
 - The switch confirmation is announced assertively, once (`05`:152).
 - The "LIVE since" line is never in a live region.
 - The typed gate is keyboard-operable with no timing trap (`05`:33, :97).
