@@ -11,8 +11,8 @@ CDO acknowledgement is **owner approval pending** (§9).
 
 - **Agent-run, not a human pass.** The rater is an agent. Nothing here is a designer's side-by-side judgement of the
   build against a board; "looks right" at a glance in light and high contrast is not claimed.
-- **Audited tree:** `main` at `16d70feed92578bd0d5583688f5d71975d4b976d` (64 component sources, 69 story
-  files, 62 component stylesheets, 4,614 VR baselines). CMP-062 ThemeSwitcher, CMP-063 DensityToggle and CMP-228
+- **Audited tree:** `main` at `16d70feed92578bd0d5583688f5d71975d4b976d` (64 component sources, 67 story
+  files under `packages/ui/src/components` (71 across `packages/ui/src`), 62 component stylesheets, 4,614 VR baselines). CMP-062 ThemeSwitcher, CMP-063 DensityToggle and CMP-228
   PreviewTile are on `main` since #5221; the parts that live only in E05-S04 slice H (#5237: the RbacGate forms, the
   density menu, the matrix) were read from that slice and are not on `main`. Line references below are to this tree;
   re-check them at READY.
