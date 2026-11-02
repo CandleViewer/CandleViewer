@@ -8,7 +8,7 @@ measuring modules the spec names: `contrast_ratio()` of `docs/design/_tools/cont
 and `simulate()` / `delta_e76()` of `docs/research/_tools/cvd_simulate.py`, loaded by path.
 
 Gates (one PASS or FAIL line each): G-CITE, G-QUOTE, G-VERSION, G-AC, G-CHECKLIST, G-STATES,
-G-AD, G-T2, G-T2LEN, G-TOKENS, G-COLUMNS, G-CONTRAST, G-CVD, G-DOM, G-ENV, G-BOARDS, G-PENDING, G-RULED,
+G-AD, G-T2, G-T2LEN, G-TOKENS, G-COLUMNS, G-CONTRAST, G-CVD, G-DOM, G-ENV, G-BOARDS, G-RULING, G-RULED,
 G-NOCLOSE, G-PUBLIC, G-UNTOUCHED and G-MUTLIST (the spec's section 16.3 equals this tool's list).
 
 Pins (G-RULED): every bullet of the BQ section is pinned by its sha256 in
@@ -44,7 +44,9 @@ ROOT = Path(__file__).resolve().parents[3]
 BASE = "67fe8b526"  # origin/main when the spec was written; every plan cite is read here
 M_HEAD = "934a56142"  # PR #5382 (E21-D01) head; re-pinned to its merge commit when it merges
 M_PR = "#5382"
-RULING_PENDING = "6576276584"  # the BQ list on #440; the ruling will answer it
+BQ_LIST = "6576276584"  # the BQ list on #440
+RULING = "6576656158"  # the orchestrator's ruling of record on it (2026-11-02 12:03Z)
+OVERRIDDEN = ("BQ-4", "BQ-7")  # the ruling overrides these two defaults; the rest are accepted
 
 SPEC_REL = "docs/design/E21/E21-D02.md"
 TOOL_REL = "docs/design/_tools/e21_d02_scr050_audit.py"
@@ -112,6 +114,8 @@ PAIRS: tuple[tuple[str, str, float], ...] = (
 )
 COLUMNS = 6  # section 2.3's ladder columns; the heatmap pane is not one
 T2_LEN_ROWS = ("W-3", "W-20")
+# G-T2.4 as ruled for W-20 (6576656158): no screen or ticket name in a T2 reason.
+NAME_RE = re.compile(r"\b(?:SCR-\d+|E\d\d(?:-[A-Z]\d+)?|heatmap|ladder|DOM)\b", re.IGNORECASE)
 T2_MARKERS = (
     "G-T2.1a",
     "G-T2.1b",
@@ -131,7 +135,7 @@ T2_MARKERS = (
 
 # Deny lists are assembled from fragments so this file never matches itself.
 _KW = "|".join(("clo" + "se[sd]?", "fix" + "(?:e[sd])?", "resol" + "ve[sd]?"))
-KEYWORD_RE = re.compile(rf"\b(?:{_KW}):?\s+#\d+", re.IGNORECASE)
+KEYWORD_RE = re.compile(rf"\b(?:{_KW}):?\s*#\d+", re.IGNORECASE)
 HEADING_RE = re.compile(
     r"^#+\s*" + "What" + r" this\b[^\n]*\b" + "fix" + "es", re.IGNORECASE | re.MULTILINE
 )
@@ -508,6 +512,8 @@ def g_t2len(t: Texts) -> list[Finding]:
             s = unquote(r[2])
             if len(s) > 60 or not s.endswith(".") or ". " in s or re.search(r"\d", s):
                 bad.append(f"{r[0]} ({len(s)} chars)")
+            elif NAME_RE.search(s):
+                bad.append(f"{r[0]} names a screen or ticket")
     return [("G-T2LEN", "; ".join(bad))] if bad else []
 
 
@@ -654,17 +660,21 @@ def g_boards(t: Texts) -> list[Finding]:
     return [("G-BOARDS", "; ".join(bad))] if bad else []
 
 
-def g_pending(t: Texts) -> list[Finding]:
-    head = (
-        f"## The questions BQ-0 … BQ-15 — defaults built; ruling pending (comment {RULING_PENDING})"
-    )
+def g_ruling(t: Texts) -> list[Finding]:
+    head = f"## The questions BQ-0 … BQ-15 — RULED (orchestrator, comment {RULING})"
     bad = [] if head in t.spec.split("\n") else ["heading"]
+    body = section(t.spec, "## The questions BQ-0")
+    if f"comment {BQ_LIST}" not in body or "ACCEPT 14 of 16; OVERRIDE BQ-4 and BQ-7" not in body:
+        bad.append("the ruling is not quoted")
     bullets = bq_bullets(t.spec)
     ids = [m.group(1) for b in bullets if (m := re.match(r"- \*\*(BQ-\d+)", b))]
     if ids != [f"BQ-{n}" for n in range(16)]:
         bad.append(f"ids {ids}")
-    bad += [b[:12] for b in bullets if "Default built:" not in b or "RULED" in b]
-    return [("G-PENDING", "; ".join(bad))] if bad else []
+    for b, bid in zip(bullets, ids):
+        want = "RULED (override" if bid in OVERRIDDEN else "RULED (accepted"
+        if want not in b or "Default built:" in b:
+            bad.append(b[:12])
+    return [("G-RULING", "; ".join(bad))] if bad else []
 
 
 def g_ruled(t: Texts) -> list[Finding]:
@@ -757,8 +767,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         "M-9",
         "G-T2LEN",
         "W-20 over 60 characters",
-        '"Ladder trading comes later; cancel and close work as usual."',
-        '"Ladder trading comes later in a later epic; cancel and close work as usual."',
+        '"Orders from here come later; cancel and close work as usual."',
+        '"Orders from here come later in a later epic; cancel and close work as usual."',
     ),
     Mutation(
         "M-10",
@@ -793,17 +803,17 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "M-16",
-        "G-PENDING",
-        "the heading claims a ruling",
+        "G-RULING",
+        "the heading reverts to pending",
+        "RULED (orchestrator, comment 6576656158)",
         "defaults built; ruling pending (comment 6576276584)",
-        "RULED (comment 6576276584)",
     ),
     Mutation(
         "M-17",
         "G-RULED",
         "a BQ default edited without a re-pin",
-        "Default built: 10 boards, 3 with a light twin",
-        "Default built: 9 boards, 3 with a light twin",
+        "(accepted, with a rider): 10 boards, 3 with a light twin",
+        "(accepted, with a rider): 9 boards, 3 with a light twin",
     ),
     Mutation(
         "M-18",
@@ -811,6 +821,13 @@ MUTATIONS: tuple[Mutation, ...] = (
         "a closing keyword",
         "### 16.1 Version line\n",
         "### 16.1 Version line\n\n" + "Clo" + "ses #440.\n",
+    ),
+    Mutation(
+        "M-26",
+        "G-NOCLOSE",
+        "a closing keyword with no space",
+        "### 16.1 Version line\n",
+        "### 16.1 Version line\n\n" + "Fix" + "es#440.\n",
     ),
     Mutation(
         "M-19",
@@ -857,6 +874,20 @@ MUTATIONS: tuple[Mutation, ...] = (
         "### 2.3 The ladder (right; six columns",
         "### 2.3 The ladder (right; seven columns",
     ),
+    Mutation(
+        "M-27",
+        "G-T2LEN",
+        "W-3 names the screen",
+        '"The deepest book tier isn\'t available here."',
+        '"The deepest book tier isn\'t on the ladder."',
+    ),
+    Mutation(
+        "M-28",
+        "G-RULING",
+        "the ruling's overrides unquoted",
+        "ACCEPT 14 of 16; OVERRIDE BQ-4 and BQ-7",
+        "ACCEPT 16 of 16",
+    ),
 )
 
 
@@ -888,7 +919,7 @@ GATES: tuple[Callable[[Texts], list[Finding]], ...] = (
     g_dom,
     g_env,
     g_boards,
-    g_pending,
+    g_ruling,
     g_ruled,
     g_noclose,
     g_public,
