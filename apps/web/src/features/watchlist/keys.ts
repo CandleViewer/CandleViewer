@@ -3,10 +3,13 @@
  * `data-keymap-context="Watchlist"`, whose rows in `keymap.json` are the panel's own keys: `Del` removes the focused
  * row, `Alt+↑/↓` move it, `Ctrl+F` focuses the filter, each remappable in SCR-113 as any view's key is. The focused
  * row runs its key itself, by the binding the profile holds now (`rowKeyOf`, CMP-161's `keyOf`), with its T2 echo and
- * its held-key rules; the filter key is the view's own (`boundTo`). The context's handlers take the key, so the window
- * keymap neither runs another view's command on it (the rules editor's "Reorder down" on `Alt+↓`) nor reports one; a
- * key pressed off a row is said to need one ("Move row up is not available here (Watchlist view): …"). `Enter` and
- * `Ctrl+C` stay CMP-161's own and the arrows CMP-049's: a `Ctrl+C` row would report every copy outside the panel.
+ * its held-key rules, and a body row is one with `aria-rowindex` from 2 (the header row is 1). The filter key is the
+ * command's own: it focuses the filter of the panel that has focus, from anywhere in it (its tab strip included), and
+ * is valid only where the panel draws one; with the panel loading, failed or holding no list the key is not taken and
+ * the browser's find opens (C-5335-d01). The context's handlers take the key, so the window keymap neither runs
+ * another view's command on it (the rules editor's "Reorder down" on `Alt+↓`) nor reports one; a key pressed off a row
+ * is said to need one ("Move row up is not available here (Watchlist view): …"). `Enter` and `Ctrl+C` stay CMP-161's
+ * own and the arrows CMP-049's: a `Ctrl+C` row would report every copy outside the panel.
  *
  * SCR-101 is a modal whose keys are its own (KB-21, KB-22: `F2`, `Del`, `Alt+↑/↓` in its lists, grid and columns): its
  * root stops every key typed in it but `Esc` and a Global chord (`stopManagerKeys`), as SCR-102's does (E08-D05 §8).
@@ -30,7 +33,7 @@ export type RowKey = keyof typeof ROW_COMMANDS;
 const FILTER_COMMAND = "watchlist.filter";
 
 /** Whether `event` is `command`'s binding as the profile holds it now; an unbound command takes no key. */
-export function boundTo(event: KeyEventLike, command: string): boolean {
+function boundTo(event: KeyEventLike, command: string): boolean {
   const binding = getBindings().get(command) ?? bindingFor(command);
   return binding !== "" && eventBinding(event) === binding;
 }
@@ -42,14 +45,30 @@ export function rowKeyOf(event: KeyEventLike): RowKey | null {
   return null;
 }
 
-/** Focus on a row of a watchlist's grid: where the row keys run. */
-const onRow = (): boolean =>
-  document.activeElement?.closest(
+/**
+ * Focus on a symbol's row of a watchlist's grid: where the row keys run. The header row is `aria-rowindex` 1 and the
+ * empty list's state row is 2, with no row header (CMP-161's symbol is a `th scope="row"`, as the DS Table draws it).
+ */
+const onRow = (): boolean => {
+  const row = document.activeElement?.closest(
     `[data-keymap-context="${WATCHLIST_CONTEXT}"] tr[aria-rowindex]`,
-  ) != null;
+  );
+  if (row === null || row === undefined) return false;
+  return (
+    Number(row.getAttribute("aria-rowindex")) >= 2 && row.querySelector('th[scope="row"]') !== null
+  );
+};
 
-/** The row (or the view) ran the key: the context only takes it. */
+/** The filter of the Watchlist panel that has focus: the search box its list view draws, none until it has a list. */
+const panelFilter = (): HTMLInputElement | null =>
+  document.activeElement
+    ?.closest(`[data-keymap-context="${WATCHLIST_CONTEXT}"]`)
+    ?.querySelector<HTMLInputElement>('input[type="search"]') ?? null;
+
+/** The row ran the key: the context only takes it. */
 const taken = (): void => undefined;
+
+const focusFilter = (): void => panelFilter()?.focus();
 
 let panels = 0;
 let release: (() => void) | null = null;
@@ -61,7 +80,7 @@ export function useWatchlistKeys(): void {
     if (panels === 1) {
       const offs = [
         ...Object.values(ROW_COMMANDS).map((id) => registerCommand(id, taken, onRow)),
-        registerCommand(FILTER_COMMAND, taken),
+        registerCommand(FILTER_COMMAND, focusFilter, () => panelFilter() !== null),
       ];
       release = () => offs.forEach((off) => off());
     }
