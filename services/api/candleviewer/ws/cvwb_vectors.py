@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import struct
-from typing import Any
+from typing import Any, Final
 
 from candleviewer.ws.binary import (
     BARS,
@@ -137,8 +137,7 @@ def vector_frames() -> list[tuple[str, Frame]]:
             ),
         ),
         # #5396 (section 3.4): kind-4 `flags` bit1 `gap_before`, bit2 `partial` and bit3 `tape_gap`,
-        # set on a forming bar; a decoder reads `confirm` from bit0 alone (exposing bits 1-3 is
-        # #5396's follow-up).
+        # set on a forming bar; `confirm` is bit0 alone, and each flag is read from its own bit.
         ("bars_flags_gap_partial", Frame(BARS, ((*bar[:11], 0b0000_1110),), 0, 2, 3, 0)),
         # Reserved bits 4-7 set beside bit0: ignored on receive, the bar reads as closed.
         ("bars_flags_reserved_bits", Frame(BARS, ((*bar[:11], 0xF0 | 0b1),), 0, 2, 3, 0)),
@@ -344,6 +343,18 @@ def _unscale(value: int, scale: int) -> str:
     return f"{sign}{whole}" if scale == 0 else f"{sign}{whole}.{frac:0{scale}d}"
 
 
+#: Kind-4 `flags` bits 1-3 (section 3.4, #5396), each a section 14.3 item flag; bits 4-7 ignored.
+_BAR_FLAG_BITS: Final = (("gap_before", 0b10), ("partial", 0b100), ("tape_gap", 0b1000))
+
+
+def _bar_flags(flags: int, item: dict[str, Any]) -> dict[str, Any]:
+    """`item` with each flag set in `flags` named `true`; a clear one is absent (false)."""
+    for name, bit in _BAR_FLAG_BITS:
+        if flags & bit:
+            item[name] = True
+    return item
+
+
 def structured(f: Frame) -> dict[str, Any]:
     """Section 14 item form of ``f`` (one payload; topic fields like symbol are not on the wire)."""
     ps, qs, base = f.price_scale, f.qty_scale, f.ts_base_ms
@@ -379,20 +390,23 @@ def structured(f: Frame) -> dict[str, Any]:
         ]
     elif f.body_kind == BARS:
         out["bars"] = [
-            {
-                "generation": (r[0]),
-                "index": (r[1]),
-                "t_ms": (base + r[2]),
-                "o": p(r[3]),
-                "h": p(r[4]),
-                "l": p(r[5]),
-                "c": p(r[6]),
-                "v": q(r[7]),
-                "turnover": q(r[8]),
-                "trades": r[9],
-                "delta": q(r[10]),
-                "confirm": bool(r[11] & 1),
-            }
+            _bar_flags(
+                r[11],
+                {
+                    "generation": (r[0]),
+                    "index": (r[1]),
+                    "t_ms": (base + r[2]),
+                    "o": p(r[3]),
+                    "h": p(r[4]),
+                    "l": p(r[5]),
+                    "c": p(r[6]),
+                    "v": q(r[7]),
+                    "turnover": q(r[8]),
+                    "trades": r[9],
+                    "delta": q(r[10]),
+                    "confirm": bool(r[11] & 1),
+                },
+            )
             for r in f.records
         ]
         out["coalesced"] = bool(f.flags & 0b10)

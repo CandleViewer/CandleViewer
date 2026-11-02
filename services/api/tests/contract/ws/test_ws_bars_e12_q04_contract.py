@@ -61,18 +61,10 @@ _DEAD_ALLOWED: Final = {
         "never sent per bar: the client sums `delta` (23 §6.1 include_delta); dropping it from "
         "the schema would break cv.v1 (C-6.3)"
     ),
-    **{
-        member: (
-            "#5396 contract first (C-6.1): declared before the server sends it; #5396's "
-            "follow-up serves it and removes this row"
-        )
-        for member in (
-            "snapMeta.stale_build",
-            "BarsBatch.bars[].gap_before",
-            "BarsBatch.bars[].partial",
-            "BarsBatch.bars[].tape_gap",
-        )
-    },
+    "snapMeta.stale_build": (
+        "#5396 contract first (C-6.1): declared before the server sends it; #5396's "
+        "follow-up serves it and removes this row"
+    ),
 }
 
 
@@ -82,6 +74,12 @@ def _emissions(spec: BarSpec, start: int, stop: int) -> list[list[BarUpdate]]:
     builder: Any = (TimeBarBuilder if spec.kind == "time" else TickBarBuilder)(spec, "BTCUSDT")
     out = [[*builder.on_trade(t), *builder.on_clock(t.ts_event)] for t in _TAPE[:stop]]
     return [emission for emission in out[start:] if emission]
+
+
+def _marked(update: BarUpdate) -> BarUpdate:
+    """`update` with its bar marked `gap_before` and `tape_gap` (#5396, §14.3)."""
+    flags = {"gap_before": True, "tape_gap": True}
+    return update.model_copy(update={"bar": update.bar.model_copy(update=flags)})
 
 
 def _hydrate(rig: _Rig, spec: BarSpec) -> Hold:
@@ -340,7 +338,9 @@ def _member_run(root: Path) -> Run:
     with h.connect(rig.w) as c:
         c.sub({"ch": CH, "opts": {"encoding": "structured", "include_delta": True}})
         frames.append(c.next_of("snap"))
-        for emission in _emissions(_MINUTE, 0, 5):
+        emissions = _emissions(_MINUTE, 0, 5)
+        emissions[-1] = [_marked(u) for u in emissions[-1]]  # #5396: the tape records no gap
+        for emission in emissions:
             rig.emit(_MINUTE, *emission)
             frames.append(c.next_of("d"))
     binary: list[dict[str, Any]] = []
