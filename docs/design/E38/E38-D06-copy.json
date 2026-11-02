@@ -3,7 +3,7 @@
   "version": "v1",
   "base": "b005ce6105",
   "header": "The copy deck is the source for the i18n string ids; v1 is English-only and no string is hardcoded",
-  "statuses": "merged = verbatim in a merged source at the base; RULED = an unmerged parent's text its BQ ruling settled (`ruling`); PROPOSED = owner approval pending. A safety string carries `frozen`, a group of the `frozen` table that lists it in its `ids`, and ships byte for byte. The ids are i18n key names only. D05's A-n marks (`pending`) are read at #5514's head (#1076) and never pinned.",
+  "statuses": "merged = verbatim in a merged source at the base; RULED = an unmerged parent's text its BQ ruling settled (`ruling`); PROPOSED = owner approval pending. A safety string carries `frozen`, a group of the `frozen` table that lists it in its `ids`, and ships byte for byte. The ids are i18n key names only. D05's A-n marks (`pending`) are read at #5514's head (#1076), pinned by content if it merges as is, and re-pinned at its merge.",
   "required": {
     "demo_rest_only": "env.popover.demo_statement",
     "not_a_backtest_guarantee": "sim.caveat"
@@ -185,7 +185,7 @@
       "kind": "name",
       "owner": "E38-D04",
       "status": "PROPOSED",
-      "source": "D05:342",
+      "source": "D05:344",
       "announce": "none",
       "pending": "D05 A-5"
     },
@@ -278,7 +278,7 @@
       "kind": "title",
       "owner": "E38-D02",
       "status": "PROPOSED",
-      "source": "D05:341",
+      "source": "D05:343",
       "announce": "none",
       "pending": "D05 A-4",
       "frozen": "FZ-02"
@@ -380,7 +380,7 @@
       "kind": "title",
       "owner": "E38-D02",
       "status": "PROPOSED",
-      "source": "D05:341",
+      "source": "D05:343",
       "announce": "none",
       "pending": "D05 A-4"
     },
@@ -399,7 +399,7 @@
       "kind": "button",
       "owner": "E38-D02",
       "status": "PROPOSED",
-      "source": "D05:341",
+      "source": "D05:343",
       "announce": "none",
       "pending": "D05 A-4"
     },
@@ -584,7 +584,7 @@
       "kind": "field",
       "owner": "E38-D03",
       "status": "PROPOSED",
-      "source": "D05:343",
+      "source": "D05:345",
       "announce": "none",
       "pending": "D05 A-6"
     },
@@ -1037,7 +1037,7 @@
       "kind": "name",
       "owner": "E38-D04",
       "status": "PROPOSED",
-      "source": "D05:348",
+      "source": "D05:350",
       "announce": "none",
       "pending": "D05 A-11"
     },
@@ -1047,7 +1047,7 @@
       "kind": "status",
       "owner": "E38-D04",
       "status": "PROPOSED",
-      "source": "D05:348",
+      "source": "D05:350",
       "announce": "polite",
       "pending": "D05 A-11"
     },
@@ -1085,7 +1085,7 @@
       "kind": "name",
       "owner": "E38-D03",
       "status": "PROPOSED",
-      "source": "D05:346",
+      "source": "D05:348",
       "announce": "none",
       "pending": "D05 A-9"
     },
@@ -1115,7 +1115,7 @@
       "kind": "title",
       "owner": "E38-D03",
       "status": "PROPOSED",
-      "source": "D05:344",
+      "source": "D05:346",
       "announce": "none",
       "pending": "D05 A-7",
       "frozen": "FZ-06"
@@ -1136,7 +1136,7 @@
       "kind": "button",
       "owner": "E38-D03",
       "status": "PROPOSED",
-      "source": "D05:344",
+      "source": "D05:346",
       "announce": "none",
       "pending": "D05 A-7",
       "frozen": "FZ-06"
@@ -1147,7 +1147,7 @@
       "kind": "title",
       "owner": "E38-D03",
       "status": "PROPOSED",
-      "source": "D05:344",
+      "source": "D05:346",
       "announce": "none",
       "pending": "D05 A-7",
       "frozen": "FZ-06"
@@ -1168,7 +1168,7 @@
       "kind": "button",
       "owner": "E38-D03",
       "status": "PROPOSED",
-      "source": "D05:344",
+      "source": "D05:346",
       "announce": "none",
       "pending": "D05 A-7",
       "frozen": "FZ-06"
@@ -1179,7 +1179,7 @@
       "kind": "title",
       "owner": "E38-D03",
       "status": "PROPOSED",
-      "source": "D05:344",
+      "source": "D05:346",
       "announce": "assertive",
       "pending": "D05 A-7",
       "frozen": "FZ-06"
@@ -1373,7 +1373,7 @@
       "kind": "button",
       "owner": "E38-D03",
       "status": "PROPOSED",
-      "source": "D05:353",
+      "source": "D05:355",
       "announce": "none",
       "pending": "D05 A-17"
     },
@@ -1383,7 +1383,7 @@
       "kind": "button",
       "owner": "E38-D03",
       "status": "PROPOSED",
-      "source": "D05:353",
+      "source": "D05:355",
       "announce": "none",
       "pending": "D05 A-17"
     },
@@ -1393,7 +1393,7 @@
       "kind": "title",
       "owner": "E38-D03",
       "status": "PROPOSED",
-      "source": "D05:347",
+      "source": "D05:349",
       "announce": "none",
       "pending": "D05 A-10"
     },
@@ -1403,7 +1403,7 @@
       "kind": "field",
       "owner": "E38-D03",
       "status": "PROPOSED",
-      "source": "D05:347",
+      "source": "D05:349",
       "announce": "none",
       "pending": "D05 A-10"
     },
@@ -1413,7 +1413,7 @@
       "kind": "error",
       "owner": "E38-D03",
       "status": "PROPOSED",
-      "source": "D05:347",
+      "source": "D05:349",
       "announce": "polite",
       "pending": "D05 A-10"
     },
@@ -1478,7 +1478,7 @@
       "kind": "link",
       "owner": "E38-D03",
       "status": "PROPOSED",
-      "source": "D05:353",
+      "source": "D05:355",
       "announce": "none",
       "pending": "D05 A-17"
     }
