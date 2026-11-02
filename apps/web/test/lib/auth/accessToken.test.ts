@@ -608,6 +608,7 @@ describe("every response that carries a token bundle hands it to the holder", ()
     "/api/v1/auth/mfa/verify",
     "/api/v1/auth/mfa/recovery",
     "/api/v1/auth/mfa/enroll/confirm",
+    "/api/v1/auth/password", // #2110: the rotated replacement session
   ])("%s", async (path) => {
     fetchMock.mockResolvedValueOnce(refreshed(3));
     await apiFetch(path, { method: "POST", body: "{}" });
@@ -620,6 +621,7 @@ describe("every response that carries a token bundle hands it to the holder", ()
     ["/api/v1/auth/mfa/recovery", false],
     ["/api/v1/auth/mfa/enroll/confirm", true],
     ["/api/v1/auth/step-up", true],
+    ["/api/v1/auth/password", true],
   ])("%s carries the bearer: %s (pre-session calls get none)", async (path, carries) => {
     holder.set(bundle(1));
     await holder.send(path, { method: "POST" }, transport);
@@ -998,11 +1000,17 @@ describe("onLocked: SCR-005 hears of an idle lock (#1640)", () => {
     transport.mockResolvedValueOnce(refused("session_idle_locked"));
     expect((await holder.send("/api/v1/x", {}, transport)).status).toBe(401);
     expect(listener).toHaveBeenCalledTimes(1);
+    // a minting call's idle lock too (#2110: PUT /auth/password runs under the refresh lock)
+    transport.mockResolvedValueOnce(refused("session_idle_locked"));
+    await holder.send("/api/v1/auth/password", { method: "PUT" }, transport);
+    expect(listener).toHaveBeenCalledTimes(2);
     for (const res of [refused("unlock_invalid"), json(403, { code: "forbidden" }), noContent()]) {
       transport.mockResolvedValueOnce(res);
       await holder.send("/api/v1/auth/unlock", { method: "POST" }, transport);
     }
-    expect(listener).toHaveBeenCalledTimes(1);
+    transport.mockResolvedValueOnce(refused("current_password_invalid"));
+    await holder.send("/api/v1/auth/password", { method: "PUT" }, transport);
+    expect(listener).toHaveBeenCalledTimes(2);
   });
 
   it("an unsubscribed listener hears nothing, and one that throws fails neither the call nor the rest", async () => {

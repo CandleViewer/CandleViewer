@@ -3,7 +3,7 @@
  * /auth/mfa/verify, /auth/mfa/recovery).
  */
 
-import type { generated } from "@candleviewer/protocol";
+import type { ErrorCode, generated } from "@candleviewer/protocol";
 import { apiFetch } from "../../lib/http/csrfFetch";
 
 const BASE = "/api/v1";
@@ -150,34 +150,108 @@ export function verifyRecovery(mfaToken: string, recoveryCode: string): Promise<
   );
 }
 
-export type ChangePasswordOutcome = "ok" | "reused" | "breached" | "invalid" | "unreachable";
+type ChangePasswordBody = Schemas["ChangePasswordRequest"];
+type Problem = Schemas["Problem"];
 
+/** Why the server refused the new password (`04-security-program.md` §6.3.1), one W-string each. */
+export type PasswordRefusal =
+  "breached" | "reused" | "too_short" | "too_long" | "identity" | "other";
+
+/**
+ * The answer to `PUT /auth/password` (`authChangePassword`), keyed on the problem `code` and
+ * `errors[].rule`, never on `detail` (E09-D05 §6.1, BQ-21).
+ */
+export type ChangePasswordOutcome =
+  /** `200`: the replacement session's token bundle is already held (`accessToken`, MINTING). */
+  | { readonly kind: "changed" }
+  /** `403 current_password_invalid`, or `409`: the password it was checked against changed meanwhile. */
+  | { readonly kind: "current_invalid" }
+  | { readonly kind: "refused"; readonly reason: PasswordRefusal }
+  | { readonly kind: "rate_limited"; readonly retryAfterS: number }
+  /** `403 session_read_only` (D09:273). */
+  | { readonly kind: "read_only" }
+  /** `403 mfa_enrollment_required`: the second factor comes first (E09-D05 §3.3). */
+  | { readonly kind: "enrolment_required" }
+  /** `401`: the session is gone (D08:127). */
+  | { readonly kind: "signed_out" }
+  /** `401 session_idle_locked`: the session lives on, locked; SCR-005 unlocks it, nothing is cleared. */
+  | { readonly kind: "locked" }
+  /**
+   * `503 store_unavailable`: the rotation may have failed after the new password was committed (`22`
+   * route `503`: "sign in again with it"), so the change is never re-sent; the client signs in again.
+   */
+  | { readonly kind: "sign_in_again" }
+  /** Any other `403` (view-as is not reachable before the shell, E09-D05 §8). */
+  | { readonly kind: "not_allowed" }
+  | { readonly kind: "unreachable" };
+
+const POLICY_RULES: Readonly<Record<string, PasswordRefusal>> = {
+  min_length: "too_short",
+  contains_identity: "identity",
+};
+
+function refusalOf(problem: Partial<Problem>): PasswordRefusal {
+  const code = problem.code as ErrorCode | undefined;
+  if (code === "password_breached") return "breached";
+  if (code === "password_reused") return "reused";
+  const rules = (problem.errors ?? [])
+    .filter((e) => e.field === undefined || e.field === "new_password")
+    .map((e) => e.rule ?? "");
+  if (code === "password_policy") {
+    const rule = rules.find((r) => Object.hasOwn(POLICY_RULES, r));
+    return rule === undefined ? "other" : (POLICY_RULES[rule] ?? "other");
+  }
+  if (code === "validation_failed" && rules.includes("max_length")) return "too_long";
+  return "other";
+}
+
+/** `PUT /auth/password`. The rotated session's bundle is adopted by `apiFetch` (#2110, SR-013). */
 export async function changePassword(
   current: string,
   next: string,
 ): Promise<ChangePasswordOutcome> {
+  const body: ChangePasswordBody = { current_password: current, new_password: next };
   let res: Response;
   try {
     res = await apiFetch(`${BASE}/auth/password`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ current_password: current, new_password: next }),
+      body: JSON.stringify(body),
     });
   } catch {
-    return "unreachable";
+    return { kind: "unreachable" };
   }
-  if (res.ok) return "ok";
-  if (res.status >= 500) return "unreachable";
-  let code = "";
+  if (res.ok) return { kind: "changed" };
+  if (res.status === 429) return { kind: "rate_limited", retryAfterS: retryAfter(res) };
+  if (res.status === 409) return { kind: "current_invalid" };
+  let problem: Partial<Problem> = {};
   try {
-    const b = (await res.json()) as { code?: string; detail?: string };
-    code = `${b.code ?? ""} ${b.detail ?? ""}`.toLowerCase();
+    const parsed: unknown = await res.json();
+    if (typeof parsed === "object" && parsed !== null) problem = parsed as Partial<Problem>;
   } catch {
-    code = "";
+    problem = {};
   }
-  if (code.includes("reuse") || code.includes("previous")) return "reused";
-  if (code.includes("breach")) return "breached";
-  return "invalid";
+  const code = problem.code as ErrorCode | undefined;
+  if (res.status === 401) {
+    return code === "session_idle_locked" ? { kind: "locked" } : { kind: "signed_out" };
+  }
+  if (res.status === 403) {
+    if (code === "current_password_invalid") return { kind: "current_invalid" };
+    if (code === "session_read_only") return { kind: "read_only" };
+    if (code === "mfa_enrollment_required") return { kind: "enrolment_required" };
+    // a CSRF refusal apiFetch could not recover from is the 503 row (E09-D05 §6.1)
+    return code === "csrf_token_invalid" ? { kind: "unreachable" } : { kind: "not_allowed" };
+  }
+  if (res.status === 422) {
+    // a current password the schema refuses (over 512 characters) cannot be the right one
+    const errors = problem.errors ?? [];
+    const currentOnly = errors.length > 0 && errors.every((e) => e.field === "current_password");
+    if (code === "validation_failed" && currentOnly) return { kind: "current_invalid" };
+    return { kind: "refused", reason: refusalOf(problem) };
+  }
+  // `audit_unavailable` changed nothing: W-18 and Retry; `store_unavailable` may follow a commit
+  if (res.status === 503 && code === "store_unavailable") return { kind: "sign_in_again" };
+  return { kind: "unreachable" };
 }
 
 export function formatRemaining(totalSeconds: number): string {
