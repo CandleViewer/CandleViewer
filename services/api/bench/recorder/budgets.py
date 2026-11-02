@@ -26,6 +26,15 @@ GB_PER_DAY_TOLERANCE = 0.20
 RATE_FLOOR = 0.95
 
 
+#: Budgets per runner class (#5333 ruling). Every class judges the same thresholds: flush p95 and
+#: RSS keep the product values, and zero drops, reconciliation and (reported) WAL residue are hard
+#: or reported identically. Only the load differs, and the rate floor is relative to the profile's
+#: own target, so a scaled profile cannot pass by running lighter than it names.
+#: profile -> runner class. "bench" = the self-hosted bench runner in a quiet window (50 k msg/s
+#: is the product budget); "hosted" = `ubuntu-latest`, a scaled profile; "smoke" = a unit-test run.
+RUNNER_CLASSES: dict[str, str] = {"full": "bench", "hosted": "hosted", "smoke": "smoke"}
+
+
 @dataclass(slots=True)
 class RunResult:
     """What one harness run measured. Samples are taken at flush boundaries (see `harness`)."""
@@ -137,18 +146,21 @@ def check_gb_per_day(
     )  # fmt: skip
 
 
-def check_rate(achieved: float, target: float, floor: float = RATE_FLOOR) -> Check:
+def check_rate(achieved: float, target: float, floor: float = RATE_FLOOR, note: str = "") -> Check:
     """The run produced the load it names: a slow generator never passes as a light load."""
     limit = target * floor
-    return Check("achieved_rate", "E16-Q04 load", achieved, limit, "msg/s", achieved >= limit)
+    return Check("achieved_rate", "E16-Q04 load", achieved, limit, "msg/s", achieved >= limit,
+                 note=note)  # fmt: skip
 
 
 def ingest_verdict(r: RunResult) -> Verdict:
-    """The 50k msg/s ingest load: flush p95, the memory ceiling, the rate it reached, no loss,
-    and (reported) the rows it left in its WAL."""
+    """The ingest load (the 50k msg/s product budget, scaled per runner class): flush p95, the
+    memory ceiling, the rate it reached, no loss, and (reported) the rows it left in its WAL."""
     v = Verdict("recorder_ingest")
+    klass = RUNNER_CLASSES.get(r.profile)
+    rate_note = f"runner class {klass}" if klass else ""
     for c in (
-        check_rate(r.achieved_msgs_per_s, r.target_msgs_per_s),
+        check_rate(r.achieved_msgs_per_s, r.target_msgs_per_s, note=rate_note),
         check_flush(r.flush_ms),
         check_memory(r.rss_bytes),
         check_drops(r.dropped_rows),

@@ -235,7 +235,10 @@ means the pinned-bytes assertion stopped proving anything, not that pins were lo
 `area/auth-rbac`; nightly at 03:51 UTC and on dispatch), `chaos-ws-nightly.yml` (`chaos-ws`,
 labels `qa`, `area/backend-platform`, `priority/p1`), `perf-recorder-nightly.yml`
 (`perf-recorder`, labels `perf`, `area/recorder-replay`; nightly at 02:47 UTC and on dispatch,
-E16-Q04) and `chaos-recorder-nightly.yml` (`chaos-recorder`, labels `qa`, `area/recorder-replay`,
+E16-Q04; its ingest leg runs the scaled `hosted` profile at 20 000 msg/s on `ubuntu-latest`, and the
+50 000 msg/s `full` product budget is judged on the bench runner class; a dispatch with
+`ingest_profile=full` here runs on `ubuntu-latest` and measures the hosted ceiling only, #5333)
+and `chaos-recorder-nightly.yml` (`chaos-recorder`, labels `qa`, `area/recorder-replay`,
 `priority/p1`; nightly at 03:33 UTC and on dispatch, E16-Q04) report a red signal through
 `_nightly-issue.yml`, from scheduled and manual runs alike; `dast-admin` and `e2e-auth-real` report
 from `main` only, so a dispatch on a branch files nothing. Its `report` job comments on the

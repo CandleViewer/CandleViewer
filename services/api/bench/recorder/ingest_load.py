@@ -3,9 +3,13 @@
 Asserts (exit 1 on any): p95 flush < 50 ms, process RSS <= 512 MiB, the rate reached (>= 95 % of
 the target), zero dropped rows and produced == written + gap-accounted rows. The run is on wall
 time; `--ilp 127.0.0.1:9009` writes to a local QuestDB (the CI pipeline's container), without it a
-counting in-memory sink stands in. `smoke` is the PR-cheap scale (200 msg/s for 3 s).
+counting in-memory sink stands in. `smoke` is the PR-cheap scale (200 msg/s for 3 s); `hosted` is
+the scaled 20 000 msg/s profile for `ubuntu-latest` (the nightly default, #5333); `full` is the
+50 000 msg/s product budget, judged on the bench runner class.
 
     uv run python -m bench.recorder.ingest_load --profile smoke
+    uv run python -m bench.recorder.ingest_load --profile hosted --ilp 127.0.0.1:9009 \\
+        --out bench/reports/recorder_ingest.json
     uv run python -m bench.recorder.ingest_load --profile full --ilp 127.0.0.1:9009 \\
         --out bench/reports/recorder_ingest.json
     uv run python -m bench.recorder.ingest_load --msgs-per-s 1000 --duration-s 5   # ad hoc
@@ -29,9 +33,15 @@ from bench.ingestion.config import machine_profile
 from bench.recorder.budgets import ingest_verdict
 from bench.recorder.harness import LoadConfig, finish, load_baseline, record_baseline, run
 
-#: (msgs/s, seconds, symbols). Full = the ticket's 50k msg/s for 10 minutes.
+#: (msgs/s, seconds, symbols). Full = the ticket's 50k msg/s for 10 minutes, the product budget,
+#: judged on the bench runner in a quiet window. Hosted = the scaled profile of the 4-vCPU
+#: `ubuntu-latest` runner class (#5333 ruling): the 2026-11-01 full run reached only 33 676 msg/s
+#: there (CPU-bound generator + writer + QuestDB on one box), so 20 000 msg/s (~60 % of that
+#: ceiling) leaves headroom for neighbour noise. Same symbols and duration; flush p95 and RSS keep
+#: the product thresholds (budgets.RUNNER_CLASSES).
 PROFILES: Final[dict[str, tuple[float, float, tuple[str, ...]]]] = {
     "smoke": (200.0, 3.0, ("BTCUSDT", "ETHUSDT")),
+    "hosted": (20_000.0, 600.0, ("BTCUSDT", "ETHUSDT", "SOLUSDT")),
     "full": (50_000.0, 600.0, ("BTCUSDT", "ETHUSDT", "SOLUSDT")),
 }
 BASELINE: Final = "recorder_ingest"

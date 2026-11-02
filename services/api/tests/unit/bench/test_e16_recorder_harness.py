@@ -268,3 +268,15 @@ def test_ingest_load_smoke_passes_at_tiny_scale(tmp_path: Path) -> None:
     run = json.loads(out.read_text())["run"]
     assert run["produced_rows"] == run["written_rows"] and run["dropped_rows"] == {}
     assert run["recovered_rows"] == {}
+
+
+def test_ingest_profiles_name_a_hosted_scaled_profile_beside_the_product_one() -> None:
+    from bench.recorder.budgets import RUNNER_CLASSES
+
+    hosted, full = ingest_load.PROFILES["hosted"], ingest_load.PROFILES["full"]
+    assert full[0] == 50_000.0 and 0 < hosted[0] < full[0]
+    assert hosted[1:] == full[1:] and set(ingest_load.PROFILES) <= set(RUNNER_CLASSES)
+    assert ingest_load.parse(["--profile", "hosted"]).profile == "hosted"
+    committed = harness.load_baseline(ingest_load.BASELINE)["budgets"]["runner_classes"]
+    assert committed["hosted"]["msgs_per_s"] == hosted[0]
+    assert committed["bench"]["msgs_per_s"] == full[0]
