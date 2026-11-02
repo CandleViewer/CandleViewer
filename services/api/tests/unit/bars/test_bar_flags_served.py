@@ -28,6 +28,7 @@ from candleviewer.bars.rows import (
 )
 from candleviewer.bars.time_builder import TimeBarBuilder
 from candleviewer.exchange.base.models import KlineEvent
+from candleviewer.storage.repositories.rows import KlineRow
 from candleviewer.ws.bars_wire import bar_item, bars_frames, covering_scales, item_bar
 from candleviewer.ws.binary import decode, encode
 from candleviewer.ws.cvwb_vectors import structured
@@ -246,6 +247,21 @@ def test_bar_flags_provenance_a_klines_only_page_carries_the_running_build() -> 
     assert [r.build_version for r in rows] == [BUILD_VERSIONS["time"]] * 2
     assert _prov(rows) == {
         "spec_hash": SPEC.spec_hash, "build_version": _RUNNING, "stale_build": False
+    }  # fmt: skip
+
+
+def test_bar_flags_provenance_hot_cache_klines_are_no_built_bar() -> None:
+    """A hot-cache `KlineRow` has neither `tape_built` nor `build_version`: it is no built bar, so
+    a klines-only page carries the running version and is not stale (the owner ruling, #5396)."""
+    rows = [
+        KlineRow(
+            ts_us=T0 + i * MIN, symbol=SYM, interval="1", open="1", high="2", low="1", close="2",
+            volume="1", turnover="2", confirmed=True,
+        )
+        for i in range(2)
+    ]  # fmt: skip
+    assert bars_provenance(rows, spec_hash="h", running=3) == {
+        "spec_hash": "h", "build_version": 3, "stale_build": False
     }  # fmt: skip
 
 

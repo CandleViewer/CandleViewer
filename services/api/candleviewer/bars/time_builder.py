@@ -220,10 +220,10 @@ _SLOTS: Final = tuple(n for n in _Draft.__slots__ if n != "tape_gap")
 
 
 def with_tape_gaps(doc: dict[str, Any], drafts: Sequence[_Draft | None]) -> dict[str, Any]:
-    """`doc` with a `tape_gap` key naming the `index` of each draft that holds it (#5396), or
-    `doc` unchanged when none does, so a blob with no mark is byte-identical to an older one."""
-    marks = [d.index for d in drafts if d is not None and d.tape_gap]
-    return {**doc, "tape_gap": marks} if marks else doc
+    """`doc` with a `tape_gap` key naming the `index` of each draft that holds it (#5396); the key
+    is always written, empty when none does. A blob without it is a legacy one (`gap_before` may
+    also have marked a tape gap); a reader before #5396 ignores the extra key."""
+    return {**doc, "tape_gap": [d.index for d in drafts if d is not None and d.tape_gap]}
 
 
 def restore_tape_gaps(
@@ -246,21 +246,35 @@ def restore_tape_gaps(
             d.tape_gap = True
 
 
-def restore_legacy_time_gaps(doc: dict[str, Any], drafts: Sequence[_Draft | None]) -> None:
-    """A blob without a `tape_gap` key predates #5396, when `gap_before` also marked a tape gap.
-    An empty interval leaves the draft's `open_time` after the previous bar's `close_time`, and
-    the first bar has no previous one, so a `gap_before` draft that starts exactly at the previous
-    draft's `close_time` (or is the first) can only be a tape gap: it moves to `tape_gap`. One
-    whose predecessor was pruned, or that starts later, stays as stored (it may be both)."""
+def restore_legacy_time_gaps(
+    doc: dict[str, Any], cur: _Draft | None, closed: Sequence[_Draft]
+) -> None:
+    """A blob without a `tape_gap` key predates #5396 (new code always writes it, empty or not),
+    when `gap_before` also marked a tape gap. An empty interval leaves a draft's `open_time` after
+    the previous bar's `close_time`; the first bar has no previous one. So a `gap_before` draft
+    that starts exactly at the previous bar's `close_time` (or is the first) can only be a tape
+    gap: it moves to `tape_gap`. The previous bar's close is the closed predecessor's, or for the
+    open draft the blob's `last_close` once the predecessor is pruned. Any other `gap_before`
+    draft (an empty interval precedes it, and a tape gap may too) is ambiguous: it keeps
+    `gap_before` and also takes `tape_gap`, so data loss is never under-reported."""
     if "tape_gap" in doc:
         return
-    by_index = {d.index: d for d in drafts if d is not None}
-    for d in by_index.values():
+    by_index = {d.index: d for d in closed}
+    for d in [*closed, *([cur] if cur is not None else [])]:
         if not d.gap_before:
             continue
         prev = by_index.get(d.index - 1)
-        if (prev is None and d.index == 0) or (prev is not None and prev.close_time == d.open_time):
+        prev_close: int | None = None
+        if prev is not None:
+            prev_close = prev.close_time
+        elif d is cur:
+            prev_close = doc.get("last_close")
+        if (d.index == 0 and prev is None) or (
+            prev_close is not None and prev_close == d.open_time
+        ):
             d.tape_gap, d.gap_before = True, False
+        else:
+            d.tape_gap = True
 
 
 #: Slots stored as JSON ints/bools; every other slot is a Decimal rendered as a string.
@@ -434,6 +448,6 @@ class TimeBarBuilder:
         self._next_index = doc["next_index"]
         self._last_close = doc["last_close"]
         self._watermark = doc["watermark"]
-        restore_legacy_time_gaps(doc, [self._cur, *self._closed])
+        restore_legacy_time_gaps(doc, self._cur, self._closed)
         restore_tape_gaps(doc, [self._cur, *self._closed])
         self._last_seq = state.last_trade_seq

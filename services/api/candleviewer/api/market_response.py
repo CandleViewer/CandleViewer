@@ -389,8 +389,9 @@ def bars_provenance(rows: Iterable[object], *, spec_hash: str, running: int) -> 
     `build_version`, the lowest recorded among them (a row with none is left out of the minimum;
     absent when none of them records one; `running` when no built bar is served); and
     `stale_build`, true when one was built below `running` or records no version. An exchange
-    kline (a row with `tape_built` false) is no built bar and counts for none."""
-    built = [r for r in rows if getattr(r, "tape_built", True) is not False]
+    kline is no built bar and counts for none: a row counts only when it says `tape_built` is true
+    (a stored built bar does; a hot-cache `KlineRow` has no such attribute)."""
+    built = [r for r in rows if getattr(r, "tape_built", False) is True]
     versions = [getattr(r, "build_version", None) for r in built]
     known = [v for v in versions if isinstance(v, int)]
     meta: dict[str, object] = {"spec_hash": spec_hash}
