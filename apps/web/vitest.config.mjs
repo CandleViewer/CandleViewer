@@ -39,6 +39,10 @@ export default defineConfig({
         replacement: resolve(import.meta.dirname, "../../packages/chart-engine/src/compat.ts"),
       },
       {
+        find: /^@candleviewer\/dock$/,
+        replacement: resolve(import.meta.dirname, "../../packages/dock/src/index.ts"),
+      },
+      {
         find: "@candleviewer/protocol",
         replacement: resolve(import.meta.dirname, "../../packages/protocol/src/index.ts"),
       },
@@ -60,9 +64,10 @@ export default defineConfig({
         branches: 70,
       },
     },
-    // Two projects: `unit` (the default run, under V8 coverage) and `fuzz` (#415: the nightly
-    // mutation fuzz of the WS codec; no PR lane runs it). Each names its own `include`: with
-    // `extends: true` a root-level one would be concatenated into both.
+    // Three projects: `unit` (the default run, under V8 coverage), `perf` (E15-T02's wall-clock
+    // budgets, no coverage) and `fuzz` (#415: the nightly mutation fuzz of the WS codec; no PR lane
+    // runs it). Each names its own `include`: with `extends: true` a root-level one would be
+    // concatenated into every project.
     projects: [
       {
         extends: true,
@@ -71,7 +76,20 @@ export default defineConfig({
           environment: "jsdom",
           setupFiles: ["./test/setup.ts"],
           include: ["test/**/*.test.{ts,tsx}"],
-          exclude: ["test/**/*.fuzz.test.ts"],
+          exclude: ["test/**/*.fuzz.test.ts", "test/**/*.perf.test.{ts,tsx}"],
+        },
+      },
+      {
+        // E15-T02: wall-clock budgets (the dock's preset apply and panel mount), WITHOUT coverage.
+        extends: true,
+        test: {
+          name: "perf",
+          environment: "jsdom",
+          setupFiles: ["./test/setup.ts", "../../packages/config/src/perf-calibration-setup.mjs"],
+          include: ["test/**/*.perf.test.{ts,tsx}"],
+          testTimeout: 60_000,
+          // C-9.3: a wall-clock budget may retry twice on the shared runner; the budget never moves.
+          retry: 2,
         },
       },
       {

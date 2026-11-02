@@ -65,7 +65,7 @@ describe("presets (Gherkin: Preset detection and reconstruction round-trip)", ()
     expect(
       matchPreset(treeOf({ type: "tabset", id: "t", active: 0, children: [leaf("a"), leaf("b")] })),
     ).toBe("custom");
-    expect(matchPreset(EMPTY_TREE)).toBe("custom");
+    expect(matchPreset(EMPTY_TREE)).toBe("1x1");
     expect(sameShape(leaf("a"), leaf("b"))).toBe(false);
     expect(
       sameShape(

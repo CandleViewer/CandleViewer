@@ -1,0 +1,180 @@
+/* CMP-080 DockPanel, CMP-081 DockGrid, CMP-082 PanelHeader, CMP-083 SplitPane (E15-T02; E15-D13 tokens). */
+.cv-dockgrid {
+  box-sizing: border-box;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-surface-app);
+}
+
+.cv-dockgrid > * {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The split: cells share the space by their fractions; the gutter is the separator's visible width. */
+.cv-splitpane {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.cv-splitpane[data-direction="column"] {
+  flex-direction: column;
+}
+
+.cv-splitpane__cell {
+  display: flex;
+  flex-basis: 0;
+  flex-shrink: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.cv-splitpane__cell > * {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The separator: the gutter drawn, a hit band of size.dock.splitter.hit centred on it (never < 24 px). */
+.cv-splitpane__separator {
+  position: relative;
+  flex: none;
+  outline: none;
+  background: var(--color-surface-app);
+  touch-action: none;
+}
+
+.cv-splitpane[data-direction="row"] > .cv-splitpane__separator {
+  width: var(--space-dockgrid-gutter);
+  cursor: col-resize;
+}
+
+.cv-splitpane[data-direction="column"] > .cv-splitpane__separator {
+  height: var(--space-dockgrid-gutter);
+  cursor: row-resize;
+}
+
+.cv-splitpane__separator::before {
+  position: absolute;
+  inset: 0;
+  content: "";
+  z-index: 1;
+}
+
+.cv-splitpane[data-direction="row"] > .cv-splitpane__separator::before {
+  inset-inline: calc((var(--size-dock-splitter-hit) - var(--space-dockgrid-gutter)) / -2);
+}
+
+.cv-splitpane[data-direction="column"] > .cv-splitpane__separator::before {
+  inset-block: calc((var(--size-dock-splitter-hit) - var(--space-dockgrid-gutter)) / -2);
+}
+
+.cv-splitpane__separator::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: var(--color-border-default);
+}
+
+.cv-splitpane__separator:hover::after {
+  background: var(--color-text-tertiary);
+}
+
+.cv-splitpane__separator:focus-visible::after {
+  background: var(--color-focus-ring);
+  box-shadow: 0 0 0 calc(var(--border-hairline) * 1px) var(--color-surface-canvas);
+}
+
+/* The panel: focus is a frame painted inside the box, never a size or elevation change (N-1). */
+.cv-dockpanel {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-canvas);
+  box-shadow: var(--elevation-card);
+  overflow: hidden;
+}
+
+.cv-dockpanel[data-focused]::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  pointer-events: none;
+  border: calc(var(--border-panel-focus) * 1px) solid var(--color-focus-ring);
+  border-radius: inherit;
+}
+
+.cv-dockpanel__body {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.cv-panelheader {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  min-height: var(--size-control-height);
+  padding-inline: var(--space-inset-md);
+  border-block-end: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+  background: var(--color-surface-raised);
+  color: var(--color-text-primary);
+}
+
+.cv-dockpanel[data-focused] .cv-panelheader {
+  box-shadow: inset 0 calc(var(--border-thick) * 1px) 0 var(--color-focus-ring);
+}
+
+.cv-panelheader__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cv-panelheader__actions {
+  display: flex;
+  gap: var(--space-inset-xs);
+}
+
+.cv-panelheader__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+}
+
+@media (forced-colors: active) {
+  .cv-splitpane__separator::after {
+    background: CanvasText;
+  }
+
+  .cv-splitpane__separator:focus-visible::after {
+    background: Highlight;
+  }
+
+  .cv-dockpanel[data-focused]::after {
+    border-color: Highlight;
+  }
+}

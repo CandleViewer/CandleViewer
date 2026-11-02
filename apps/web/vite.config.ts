@@ -44,6 +44,10 @@ export default defineConfig({
         replacement: resolve(import.meta.dirname, "../../packages/chart-engine/src/compat.ts"),
       },
       {
+        find: /^@candleviewer\/dock$/,
+        replacement: resolve(import.meta.dirname, "../../packages/dock/src/index.ts"),
+      },
+      {
         find: "@candleviewer/protocol",
         replacement: resolve(import.meta.dirname, "../../packages/protocol/src/index.ts"),
       },
