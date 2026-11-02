@@ -38,8 +38,12 @@ Gates (each FAIL led by its name):
              every `motion.*` name it writes resolves; `14` carries exactly one SCR-054 pointer to the
              spec, directly under the "Hi-fi (E24-D03)" line; neither carries a closing keyword or a
              deny word. Both are read from the working tree.
+  G-DRAWN    the board record (§0.1, PR 2): six rows, each "drawn (r1)" with a board id, W x H,
+             descendants and a PNG sha256; each export docs/design/E24/img/E24-D04-NN-<slug>.png
+             exists in the working tree with exactly that sha256 and that PNG size; no other
+             E24-D04-*.png is there; the as-built paragraph names the page and its page id.
   G-SCOPE    the diff against `git merge-base HEAD origin/main` touches only the spec, this tool,
-             the pins file and (applied mode) `16` and `14`.
+             the pins file, (applied mode) `16` and `14`, and the six exports.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e24_d04_motion_a11y_audit.py --check      (exit 1 on any FAIL)
@@ -90,6 +94,15 @@ AROW_POINTER = (
     "- **Motion and accessibility review (E24-D04):** [E24-D04.md](../design/E24/E24-D04.md)"
 )
 AROW_HIFI = "- **Hi-fi (E24-D03):** [E24-D03.md](../design/E24/E24-D03.md)"
+IMG_DIR = "docs/design/E24/img"
+PNG_RX = re.compile(r"E24-D04-\d\d-[a-z0-9-]+\.png")
+DRAWN_RX = re.compile(
+    r"^drawn \(r1\): ([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}) · (\d+) × (\d+) · (\d+) · ([0-9a-f]{64})$"
+)
+PAGE_RX = re.compile(
+    r"\*\*As built \(r1\)\.\*\* Page E24-D04 Annotation layer, page id "
+    r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\."
+)
 REDUCE_AS = (
     ("identical", "the same"),
     ("removed", "none"),
@@ -155,6 +168,7 @@ class Texts:
     changed: list[str] | None
     memo: dict[str, str | None]
     arows: dict[str, str]
+    pngs: dict[str, bytes]
 
 
 def git(*args: str) -> str | None:
@@ -559,12 +573,57 @@ def g_arows(t: Texts, vals: dict[str, str]) -> list[str]:
     return bad
 
 
+def png_size(raw: bytes) -> tuple[int, int] | None:
+    if raw[:8] != b"\x89PNG\r\n\x1a\n" or raw[12:16] != b"IHDR":
+        return None
+    return int.from_bytes(raw[16:20], "big"), int.from_bytes(raw[20:24], "big")
+
+
+def g_drawn(t: Texts, vals: dict[str, str]) -> list[str]:
+    """§0.1's board record against the exports in the working tree (PR 2, after the draw)."""
+    i, j = t.spec.find("\n### 0.1 "), t.spec.find("\n## 1. ")
+    sec = t.spec[i:j] if 0 <= i < j else ""
+    bad: list[str] = []
+    rows = [[c.replace("`", "") for c in r] for r in table_rows(sec, "0")]
+    if [r[0] for r in rows] != [f"0{k}" for k in range(1, 7)]:
+        bad.append(f"§0.1's board rows are {[r[0] for r in rows]}, not 01 ... 06")
+    want: set[str] = set()
+    for r in rows:
+        name = f"E24-D04-{r[0]}-{r[1]}.png"
+        want.add(name)
+        m = DRAWN_RX.fullmatch(r[-1])
+        if not m:
+            bad.append(
+                f"board {r[0]}: its Status is not 'drawn (r1): id · W × H · descendants · sha256'"
+            )
+            continue
+        raw = t.pngs.get(name)
+        if raw is None:
+            bad.append(f"board {r[0]}: {IMG_DIR}/{name} is missing")
+            continue
+        if hashlib.sha256(raw).hexdigest() != m[5]:
+            bad.append(f"board {r[0]}: {name}'s sha256 is not the recorded one")
+        if png_size(raw) != (int(m[2]), int(m[3])):
+            bad.append(f"board {r[0]}: {name} is {png_size(raw)}, the record says {m[2]} × {m[3]}")
+    for extra in sorted(set(t.pngs) - want):
+        bad.append(f"{IMG_DIR}/{extra} is an E24-D04 export §0.1 does not record")
+    if not PAGE_RX.search(sec.replace("`", "")):
+        bad.append("§0.1's as-built paragraph does not name the page and its page id")
+    return bad
+
+
 def g_scope(t: Texts, vals: dict[str, str]) -> list[str]:
     if t.changed is None:
         return ["cannot list the changed paths (git failed)"]
     allowed = OWN_PATHS + AROW_PATHS
-    own = ", ".join(allowed)
-    return [f"{p} is touched; this ticket owns {own}" for p in t.changed if p not in allowed]
+    own = ", ".join(allowed) + f", {IMG_DIR}/E24-D04-NN-<slug>.png"
+
+    def ok(p: str) -> bool:
+        return p in allowed or (
+            p.startswith(IMG_DIR + "/") and bool(PNG_RX.fullmatch(p[len(IMG_DIR) + 1 :]))
+        )
+
+    return [f"{p} is touched; this ticket owns {own}" for p in t.changed if not ok(p)]
 
 
 def anchor_problems(t: Texts, vals: dict[str, str], prefix: str) -> list[str]:
@@ -578,7 +637,7 @@ def anchor_problems(t: Texts, vals: dict[str, str], prefix: str) -> list[str]:
 GATES: dict[str, Callable[[Texts, dict[str, str]], list[str]]] = {
     "G-MOMENT": g_moment, "G-TOKEN": g_token, "G-BUDGET": g_budget, "G-CADENCE": g_cadence,
     "G-LIVE": g_live, "G-ANNOT": g_annot, "G-CITE": g_cite, "G-HYGIENE": g_hygiene,
-    "G-AROWS": g_arows, "G-SCOPE": g_scope,
+    "G-AROWS": g_arows, "G-DRAWN": g_drawn, "G-SCOPE": g_scope,
 }  # fmt: skip
 
 
@@ -611,7 +670,11 @@ def load() -> Texts:
     pins = (ROOT / PINS_REL).read_text(encoding="utf-8") if (ROOT / PINS_REL).exists() else ""
     tool = (ROOT / TOOL_REL).read_text(encoding="utf-8")
     arows = {k: (ROOT / PATHS[k]).read_text(encoding="utf-8") for k in ("16", "14")}
-    return Texts(spec, pins, tool, changed_paths(), {}, arows)
+    img = ROOT / IMG_DIR
+    pngs = (
+        {p.name: p.read_bytes() for p in sorted(img.glob("E24-D04-*.png"))} if img.is_dir() else {}
+    )
+    return Texts(spec, pins, tool, changed_paths(), {}, arows, pngs)
 
 
 def sub(old: str, new: str) -> Callable[[Texts], Texts]:
@@ -670,11 +733,18 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-AROWS", "drop M-05 from `16`'s table", lambda t: replace(t, arows={**t.arows, "16": re.sub(r"\n\| M-05 stale[^\n]*", "", t.arows["16"])})),
     ("G-AROWS", "give M-05 a cut in `16`'s Reduce column", sub_in("16", "| instant                                |", "| a cut                                  |")),
     ("G-AROWS", "drop the SCR-054 pointer from `14`", lambda t: replace(t, arows={**t.arows, "14": t.arows["14"].replace(AROW_POINTER, "- **Motion:**")})),
+    ("G-DRAWN", "record a wrong sha256 for board 03", sub("`687873aff468de90569d", "`787873aff468de90569d")),
+    ("G-DRAWN", "record a wrong height for board 01", sub("· 2032 × 2443 ·", "· 2032 × 2444 ·")),
+    ("G-DRAWN", "change one byte of board 05's PNG", lambda t: replace(t, pngs={**t.pngs, "E24-D04-05-a11y-settings-t2.png": t.pngs["E24-D04-05-a11y-settings-t2.png"][:-1] + b"\0"})),
+    ("G-DRAWN", "add an E24-D04 export the record does not name", lambda t: replace(t, pngs={**t.pngs, "E24-D04-07-extra.png": b""})),
+    ("G-DRAWN", "drop the page id from the as-built paragraph", sub("page id `b96edf38-8e58-8006-8008-e2d74e25e66a`", "page id pending")),
 )  # fmt: skip
 
 
 def selftest() -> tuple[bool, list[str]]:
-    base = replace(load(), changed=[*OWN_PATHS, *AROW_PATHS])
+    base = replace(
+        load(), changed=[*OWN_PATHS, *AROW_PATHS, *(f"{IMG_DIR}/{p}" for p in load().pngs)]
+    )
     before = base.spec
     found = audit(base)
     out = [f"self-test: baseline {len(found)} FAIL"] + [f"  baseline {g}: {m}" for g, m in found]
