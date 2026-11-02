@@ -1,0 +1,17 @@
+# E21-D04 ruled pins: sha256[:16] of each BQ bullet; written by --repin-ruled only
+BQ-0 b43b737e400f77e7
+BQ-1 49a16a18dac1ac72
+BQ-2 a2f937e51c3a4279
+BQ-3 155af58b5e1c3d4f
+BQ-4 344841585d016892
+BQ-5 678ef6dadf031cbd
+BQ-6 c5c197e254e7f6e4
+BQ-7 c988444e78dbe39e
+BQ-8 d9ed8f6d7d285c39
+BQ-9 cc7fffc2994dcbf7
+BQ-10 074b987792647e25
+BQ-11 089d5936d98ffc7c
+BQ-12 0f49f844c6d63b06
+BQ-13 17927f96e9db56a9
+BQ-14 e71f6230dc2be34e
+BQ-15 b558270bce43e01e
