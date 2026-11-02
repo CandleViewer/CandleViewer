@@ -40,7 +40,7 @@ Gates (each FAIL led by its name):
              every `motion.*` name it writes resolves; `14` carries exactly one SCR-054 pointer to the
              spec, directly under the "Hi-fi (E24-D03)" line; neither carries a closing keyword or a
              deny word. Both are read from the working tree.
-  G-DRAWN    the board record (§0.1, PR 2): six rows, each "drawn (r1)" with a board id (six
+  G-DRAWN    the board record (§0.1, PR 2): six rows, each "drawn (rN)" with a board id (six
              distinct ids), W x H,
              descendants and a PNG sha256; each export docs/design/E24/img/E24-D04-NN-<slug>.png
              exists in the working tree with exactly that sha256 and that PNG size; no other
@@ -100,10 +100,10 @@ AROW_HIFI = "- **Hi-fi (E24-D03):** [E24-D03.md](../design/E24/E24-D03.md)"
 IMG_DIR = "docs/design/E24/img"
 PNG_RX = re.compile(r"E24-D04-\d\d-[a-z0-9-]+\.png")
 DRAWN_RX = re.compile(
-    r"^drawn \(r1\): ([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}) · (\d+) × (\d+) · (\d+) · ([0-9a-f]{64})$"
+    r"^drawn \(r\d+\): ([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}) · (\d+) × (\d+) · (\d+) · ([0-9a-f]{64})$"
 )
 PAGE_RX = re.compile(
-    r"\*\*As built \(r1\)\.\*\* Page E24-D04 Annotation layer, page id "
+    r"\*\*As built \(r\d+(?:, r\d+)*\)\.\*\* Page E24-D04 Annotation layer, page id "
     r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\."
 )
 REDUCE_AS = (
@@ -618,7 +618,7 @@ def g_drawn(t: Texts, vals: dict[str, str]) -> list[str]:
         m = DRAWN_RX.fullmatch(r[-1])
         if not m:
             bad.append(
-                f"board {r[0]}: its Status is not 'drawn (r1): id · W × H · descendants · sha256'"
+                f"board {r[0]}: its Status is not 'drawn (rN): id · W × H · descendants · sha256'"
             )
             continue
         raw = t.pngs.get(name)
@@ -763,7 +763,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-DRAWN", "add an E24-D04 export the record does not name", lambda t: replace(t, pngs={**t.pngs, "E24-D04-07-extra.png": b""})),
     ("G-DRAWN", "drop the page id from the as-built paragraph", sub("page id `b96edf38-8e58-8006-8008-e2d74e25e66a`", "page id pending")),
     ("G-AROWS", "give M-05's Enter in `16` a duration §2 does not name", sub_in("16", "data ink 1.00 → 0.85 over `normal` / `standard`", "data ink 1.00 → 0.85 over `slow` / `standard`")),
-    ("G-DRAWN", "give board 02 board 01's id", sub("drawn (r1): `b96edf38-8e58-8006-8008-e2d7701a8814`", "drawn (r1): `b96edf38-8e58-8006-8008-e2d74e3697a3`")),
+    ("G-DRAWN", "give board 02 board 01's id", sub("drawn (r2): `b96edf38-8e58-8006-8008-e2de792f4444`", "drawn (r2): `b96edf38-8e58-8006-8008-e2de41735bab`")),
 )  # fmt: skip
 
 
