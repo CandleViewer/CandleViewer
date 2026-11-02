@@ -4,14 +4,17 @@
  * its outcome (never T2), a full one T2 with D10's words, "New watchlist with ETHUSDT" with no list, and the item T2
  * without `workspaces:write`.
  */
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { MenuItem } from "@candleviewer/ui";
-import type { Watchlist } from "../../../src/features/watchlist/listEdits";
+import type { SaveError, SaveOutcome, Watchlist } from "../../../src/features/watchlist/listEdits";
 import {
+  useWatchlistChooser,
   watchlistChooserItem,
   type ChooserActions,
   type ChooserLists,
 } from "../../../src/features/watchlist/searchChooser";
+import type { ManagerApi } from "../../../src/features/watchlist/watchlistApi";
 
 const list = (name: string, symbols: readonly string[], id: string): Watchlist => ({
   id,
@@ -111,4 +114,83 @@ describe("SCR-102's 'Add to watchlist…'", () => {
       { label: "Watchlists could not be loaded.", disabled: true },
     ]);
   });
+});
+
+describe("SCR-102's chooser says each outcome once (C-5335-d05)", () => {
+  /** The REST client as the chooser sees it; `over` answers the calls a case is about. */
+  const client = (over: Partial<ManagerApi>): ManagerApi => ({
+    list: async () => [MAJORS],
+    replace: async (current, next) => ({
+      kind: "saved",
+      list: { ...current, symbols: [...next.symbols], version: current.version + 1 },
+    }),
+    create: async (input) => ({
+      kind: "saved",
+      list: list(input.name, input.symbols, "n"),
+    }),
+    remove: async () => ({ kind: "deleted" }),
+    ...over,
+  });
+  const answers = (kind: SaveError) => async (): Promise<SaveOutcome> => ({ kind });
+  const HOLDER = list("Majors", ["BTCUSDT", "XRPUSDT"], "m");
+  type Case = readonly [name: string, over: Partial<ManagerApi>, words: string, item: string];
+  const cases: readonly Case[] = [
+    ["a list added to", {}, "Added XRPUSDT to Majors.", "Majors, 2 symbols"],
+    [
+      "a 412",
+      { replace: answers("conflict") },
+      "Majors changed in another window.",
+      "Majors, 2 symbols",
+    ],
+    [
+      "a 403",
+      { replace: answers("refused") },
+      "Not sent — your access changed.",
+      "Majors, 2 symbols",
+    ],
+    [
+      "a 503",
+      { replace: answers("failed") },
+      "Could not add XRPUSDT to Majors.",
+      "Majors, 2 symbols",
+    ],
+    [
+      "a list that holds it",
+      { list: async () => [HOLDER] },
+      "XRPUSDT is already on Majors.",
+      "Majors, 2 symbols · has XRPUSDT",
+    ],
+    [
+      "a new list",
+      { list: async () => [] },
+      "Added XRPUSDT to Watchlist.",
+      "New watchlist with XRPUSDT",
+    ],
+    [
+      "a taken name",
+      { list: async () => [], create: answers("name_taken") },
+      "A watchlist named Watchlist already exists.",
+      "New watchlist with XRPUSDT",
+    ],
+  ];
+
+  it.each(cases)(
+    "%s: one line said, once, and focus returned once",
+    async (_name, over, words, item) => {
+      const say = vi.fn<(text: string) => void>();
+      const done = vi.fn<() => void>();
+      const api = client(over);
+      const { result } = renderHook(() =>
+        useWatchlistChooser(true, { writable: true, say, done, api }),
+      );
+      await waitFor(() => expect(sub(result.current("XRPUSDT"))[0]?.label).toBe(item));
+      run(sub(result.current("XRPUSDT"))[0]);
+      await waitFor(() => expect(say).toHaveBeenCalled());
+      await act(async () => {
+        await Promise.resolve(); // a second say would have landed by now
+      });
+      expect(say).toHaveBeenCalledExactlyOnceWith(words);
+      expect(done).toHaveBeenCalledOnce();
+    },
+  );
 });

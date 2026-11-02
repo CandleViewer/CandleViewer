@@ -1491,11 +1491,27 @@ describe("SCR-102's 'Add to watchlist…' (E08-S08, #4702; E08-D05 §6.3, E08-D0
     writer();
     const fake = server([MAJORS]);
     const lists = await chooser(await menuOn());
+    // Every write into CMP-160's region (a second `say()` of the same words re-keys its node): `said()` reads only the
+    // last text, which a second say would leave as it is.
+    const region = screen
+      .getByRole("dialog", { name: "Symbol search" })
+      .querySelector('[data-cmp="CMP-160"] > [role="status"]');
+    if (region === null) throw new Error("no polite region");
+    const writes: (string | null)[] = [];
+    const watch = new MutationObserver((records) => {
+      for (const record of records)
+        for (const node of record.addedNodes) writes.push(node.textContent);
+    });
+    watch.observe(region, { childList: true, subtree: true });
+    onTestFinished(() => watch.disconnect());
     fake.fail(status);
     press(within(lists).getByRole("menuitem", { name: "Majors, 1 symbol" }));
     await act(() => new Promise<void>((done) => setTimeout(done, 0)));
     expect(fake.writes).toHaveLength(1);
     expect(said()).toBe(words);
+    for (const record of watch.takeRecords())
+      for (const node of record.addedNodes) writes.push(node.textContent);
+    expect(writes.filter((text) => text === words)).toEqual([words]);
   });
 
   it("a name taken meanwhile (409) on the new list says so", async () => {
