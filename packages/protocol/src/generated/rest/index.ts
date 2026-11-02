@@ -7113,6 +7113,12 @@ export interface paths {
      *     `Idempotency-Replayed: true`. The replay fingerprint covers the method, path and body, so
      *     the same key with another request is `409 idempotency_key_reuse`. Replay storage is in
      *     memory, best-effort and bounded; correctness never depends on it.
+     *
+     *     Write rate limit (SR-E15-04, #5449): every `createWorkspace`, `updateWorkspace`,
+     *     `deleteWorkspace`, `createLayout`, `updateLayout` and `deleteLayout` call takes one token of
+     *     its caller's bucket of 30, refilled at 120 a minute, after the permission check. A call
+     *     that finds no token is `429 rate_limited` with `Retry-After` in whole seconds (at least 1)
+     *     and `retry_after_seconds`; nothing is queued or written, and the refusal is counted.
      */
     post: operations["createWorkspace"];
     delete?: never;
@@ -7152,8 +7158,10 @@ export interface paths {
      *     unparseable.
      *
      *     Evaluation order for `/workspaces*` (not `exportWorkspace`, E15-S07) and `/layout-presets`
-     *     (steps that do not apply are skipped): `401`; `403` (permission, CSRF); `413`; `422` (path,
-     *     query, headers, body); `400 invalid_cursor` (lists); `Idempotency-Key` replay (stored 2xx +
+     *     (steps that do not apply are skipped): `401`; `403` (permission, CSRF); `429 rate_limited`
+     *     (writes); `413`; `422` (path, query, headers, body; on a layout write the pane symbols'
+     *     catalogue check comes last, `503 instrument_cache_unavailable` before `unknown_symbol`);
+     *     `400 invalid_cursor` (lists); `Idempotency-Key` replay (stored 2xx +
      *     `Idempotency-Replayed: true`) or `409 idempotency_key_reuse`; `404` (missing,
      *     soft-deleted or another user's, identical); no-op `200` (the body changes nothing: unchanged
      *     token, no write, even when `If-Match` is stale or unparseable, as the change is already
@@ -7170,6 +7178,16 @@ export interface paths {
      *     workspace.", SCR-025), and nothing changes. Deleting the default leaves no default. No
      *     precondition. Missing, already deleted or another user's: the same `404`. `Idempotency-Key`
      *     as on `createWorkspace` (a replay returns the stored `204`).
+     *
+     *     Audited (SR-E15-17, C-2.9): one `workspace.deleted` record, written ahead in the deleting
+     *     transaction, carrying the ids and counts of the layouts and drawings it stamps deleted and
+     *     of the rows it purges early, never a name or content (`24` §15.5). A record that cannot be
+     *     written is `503 audit_unavailable` and nothing changes; a replay writes no second record.
+     *
+     *     Soft-deleted rows per user (SR-E15-05): a user keeps at most 128 soft-deleted workspaces and
+     *     128 soft-deleted layouts awaiting the 90-day purge (4x the live caps). A delete is never
+     *     refused for it: past either bound the deleting transaction hard-deletes the user's oldest
+     *     soft-deleted rows first (`21` §3.8.1); a row with anything live below it is kept.
      */
     delete: operations["deleteWorkspace"];
     options?: never;
@@ -7225,7 +7243,10 @@ export interface paths {
      *     `422 validation_failed` lists up to 20 `errors[]`, naming a pane by array position (e.g.
      *     `panes.2.slot_index`): rule `duplicate_slot`, the enums, the tree rules of `LayoutGridSpec`
      *     (plus `grid_spec_required` for `custom` and `grid_spec_not_allowed` otherwise) and the pane
-     *     rules of `PaneKind`, `PaneConfig`, `PaneIntervalCode` and `LayoutPaneInput`. `409 conflict`:
+     *     rules of `PaneKind`, `PaneConfig`, `PaneIntervalCode` and `LayoutPaneInput`, then rule
+     *     `unknown_symbol` for a pane `symbol` the instrument catalogue does not list as a trading
+     *     USDT perpetual (`503 instrument_cache_unavailable` while no catalogue is loaded, nothing
+     *     written). `409 conflict`:
      *     rule `name_taken`, `hotkey_slot_taken`, `limit_reached` (32 live layouts) or
      *     `concurrent_update`. `is_default: true` clears the previous default layout in the same
      *     transaction. A workspace that is missing, soft-deleted or another user's returns the same
@@ -7268,7 +7289,8 @@ export interface paths {
      *     `updated_at` token versions the aggregate, so a pane-only change also changes it.
      *     `If-Match`, the no-op rule and `412 version_conflict` work as on `updateWorkspace`; after a
      *     `412` the stored layout is unchanged and the client re-reads it with `getLayout`. `404` as
-     *     on `getLayout`; `409`, `422` and the 128 KiB limit as on `createLayout`.
+     *     on `getLayout`; `409`, `422` and the 128 KiB limit as on `createLayout`. The catalogue
+     *     check judges only the pane symbols the stored layout does not hold yet.
      */
     put: operations["updateLayout"];
     post?: never;
@@ -7276,7 +7298,9 @@ export interface paths {
      * Delete a layout
      * @description Soft delete in one transaction: the layout and its drawings get the same `deleted_at`;
      *     retention purges them later. No precondition. A workspace may be left with no layouts or no
-     *     default. `404` as on `getLayout`; `Idempotency-Key` as on `createWorkspace`.
+     *     default. `404` as on `getLayout`; `Idempotency-Key` as on `createWorkspace`. The same
+     *     transaction keeps the caller within the soft-deleted layouts bound, oldest purged first, as
+     *     on `deleteWorkspace`.
      */
     delete: operations["deleteLayout"];
     options?: never;
@@ -9735,7 +9759,7 @@ export interface components {
       /** @description Unique within the layout (`422` rule `duplicate_slot`). */
       slot_index: number;
       /**
-       * @description Bound symbol, market panes only: a Bybit USDT linear perpetual symbol of at most 20 characters (the DB `symbol_code` domain). It is not checked against the instrument catalogue. A non-null symbol on a live layout counts as chart-open for auto-recording.
+       * @description Bound symbol, market panes only: a Bybit USDT linear perpetual symbol of at most 20 characters (the DB `symbol_code` domain). A write checks it against the instrument catalogue (a listed, trading USDT perpetual), else `422 validation_failed` rule `unknown_symbol` naming `panes.<i>.symbol`; while no catalogue is loaded the write is `503 instrument_cache_unavailable`. A replace judges only the symbols its stored layout does not hold yet. A non-null symbol on a live layout counts as chart-open for auto-recording.
        * @default null
        */
       symbol: string | null;
@@ -12790,8 +12814,9 @@ export interface components {
      *     `NaN` and `Infinity` are rejected; a string that cannot be encoded as UTF-8 (a lone
      *     surrogate) is rule `invalid_unicode`. `name` is at most 40 characters as sent (rule
      *     `string_too_long`), then sanitised: U+0000-U+001F, U+007F-U+009F, U+2028, U+2029, U+061C,
-     *     U+200E, U+200F, U+202A-U+202E and U+2066-U+2069 are removed, then surrounding whitespace is
-     *     trimmed; nothing else is altered. Empty after sanitising is rule `string_too_short`. Reads
+     *     U+200E, U+200F, U+202A-U+202E, U+2066-U+2069, the zero-width U+200B-U+200D and U+FEFF
+     *     (the byte order mark) are removed, then surrounding whitespace is trimmed; nothing else is
+     *     altered. Empty after sanitising is rule `string_too_short`. Reads
      *     return the sanitised name.
      */
     WorkspaceInput: {
@@ -23834,6 +23859,7 @@ export interface operations {
       409: components["responses"]["Conflict"];
       413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -23907,6 +23933,7 @@ export interface operations {
       412: components["responses"]["PreconditionFailed"];
       413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -23953,7 +23980,17 @@ export interface operations {
         };
       };
       422: components["responses"]["UnprocessableEntity"];
-      503: components["responses"]["ServiceUnavailable"];
+      429: components["responses"]["RateLimited"];
+      /** @description Unavailable, nothing changed; retry after `Retry-After`. `code: audit_unavailable` when the `workspace.deleted` record could not be written (C-2.9); `code: store_unavailable` as on every route. */
+      503: {
+        headers: {
+          "Retry-After": components["headers"]["RetryAfter"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
     };
   };
   exportWorkspace: {
@@ -24075,7 +24112,17 @@ export interface operations {
           "application/problem+json": components["schemas"]["Problem"];
         };
       };
-      503: components["responses"]["ServiceUnavailable"];
+      429: components["responses"]["RateLimited"];
+      /** @description Unavailable, nothing written; retry after `Retry-After`. `code: instrument_cache_unavailable` while no instrument catalogue is loaded and a pane symbol must be judged; `code: store_unavailable` as on every route. */
+      503: {
+        headers: {
+          "Retry-After": components["headers"]["RetryAfter"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
     };
   };
   getLayout: {
@@ -24151,7 +24198,17 @@ export interface operations {
       412: components["responses"]["PreconditionFailed"];
       413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["UnprocessableEntity"];
-      503: components["responses"]["ServiceUnavailable"];
+      429: components["responses"]["RateLimited"];
+      /** @description Unavailable, nothing written; retry after `Retry-After`. `code: instrument_cache_unavailable` while no instrument catalogue is loaded and a pane symbol must be judged; `code: store_unavailable` as on every route. */
+      503: {
+        headers: {
+          "Retry-After": components["headers"]["RetryAfter"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
     };
   };
   deleteLayout: {
@@ -24190,6 +24247,7 @@ export interface operations {
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };

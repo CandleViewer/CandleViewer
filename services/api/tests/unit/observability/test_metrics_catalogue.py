@@ -737,6 +737,7 @@ def test_workspaces_catalogue_caps_equal_the_closed_label_sets() -> None:
     caps = {s.name: s.max_series for s in CATALOGUE}
     assert caps["cv_workspace_users"] == len(USER_BUCKETS)
     assert caps["cv_workspaces_purged_total"] == caps["cv_workspace_conflicts_total"] == len(KINDS)
+    assert caps["cv_workspace_rate_limited_total"] == len(KINDS)  # #5449: workspace|layout
     assert caps["cv_workspace_request_seconds"] == len(OPERATIONS)
     panes = next(s for s in CATALOGUE if s.name == "cv_layout_panes")
     assert panes.buckets == (0, 1, 2, 4, 8, 12, 16)

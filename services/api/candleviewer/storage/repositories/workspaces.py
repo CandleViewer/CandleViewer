@@ -13,9 +13,16 @@ token versions the aggregate (row + panes); the workspace token versions metadat
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal, Protocol
+from typing import Any, Final, Literal, Protocol
+
+#: SR-E15-05: soft-deleted rows a user keeps awaiting the 90-day purge, 4x the live caps (32
+#: workspaces; 32 layouts per workspace). Past either bound the deleting transaction hard-deletes
+#: that user's oldest soft-deleted rows first; a delete is never refused for it.
+MAX_DELETED_WORKSPACES: Final = 4 * 32
+MAX_DELETED_LAYOUTS: Final = 4 * 32
 
 
 def format_token(value: datetime) -> str:
@@ -140,6 +147,24 @@ class WriteResult[T]:
     changed: bool  # False = the body equalled the stored state; nothing was written (D13)
 
 
+@dataclass(frozen=True, slots=True)
+class WorkspaceDeletion:
+    """What one workspace soft delete stamped, by ids and counts (never names or content): its
+    live layouts and their live drawings, and the oldest soft-deleted rows purged early to keep
+    the caller under `MAX_DELETED_WORKSPACES` / `MAX_DELETED_LAYOUTS` (SR-E15-05)."""
+
+    workspace_id: str
+    layout_ids: tuple[str, ...]
+    drawing_count: int
+    purged_workspaces: int
+    purged_layouts: int
+
+
+#: The write-ahead record of a workspace delete (C-2.9): awaited inside the deleting transaction
+#: after its statements and before its commit; a hook that raises rolls the delete back.
+WorkspaceDeleteWriteAhead = Callable[[WorkspaceDeletion], Awaitable[None]]
+
+
 class WorkspaceRepository(Protocol):
     async def list_workspaces(
         self, owner: str, *, after: tuple[int, str] | None, limit: int
@@ -166,7 +191,12 @@ class WorkspaceRepository(Protocol):
         if_match: datetime | None,
     ) -> WriteResult[WorkspaceRow]: ...
 
-    async def soft_delete_workspace(self, owner: str, workspace_id: str) -> None: ...
+    async def soft_delete_workspace(
+        self, owner: str, workspace_id: str, *, write_ahead: WorkspaceDeleteWriteAhead
+    ) -> WorkspaceDeletion:
+        """Stamp the workspace, its live layouts and their drawings deleted, purge the caller's
+        oldest soft-deleted rows past the SR-E15-05 bounds, await `write_ahead`, then commit."""
+        ...
 
     async def list_layouts(
         self, owner: str, workspace_id: str, *, after_id: str | None, limit: int
@@ -194,7 +224,10 @@ class WorkspaceRepository(Protocol):
         """Full pane-set replacement in one transaction; a failure leaves the stored set intact."""
         ...
 
-    async def soft_delete_layout(self, owner: str, workspace_id: str, layout_id: str) -> None: ...
+    async def soft_delete_layout(self, owner: str, workspace_id: str, layout_id: str) -> None:
+        """Stamp the layout and its drawings deleted and purge the caller's oldest soft-deleted
+        layouts past `MAX_DELETED_LAYOUTS` (SR-E15-05), in one transaction."""
+        ...
 
     async def exists_for_other_owner(
         self, owner: str, kind: Literal["workspace", "layout"], object_id: str
@@ -226,7 +259,8 @@ class WorkspaceRepository(Protocol):
 
 
 __all__ = [
-    "LayoutFields", "LayoutRow", "PaneFields", "WorkspaceConflictError", "WorkspaceDetailRow",
-    "WorkspaceFields", "WorkspaceNotFoundError", "WorkspaceRepository", "WorkspaceRow",
-    "WorkspaceVersionConflictError", "WriteResult", "format_token",
+    "MAX_DELETED_LAYOUTS", "MAX_DELETED_WORKSPACES", "LayoutFields", "LayoutRow", "PaneFields",
+    "WorkspaceConflictError", "WorkspaceDeleteWriteAhead", "WorkspaceDeletion",
+    "WorkspaceDetailRow", "WorkspaceFields", "WorkspaceNotFoundError", "WorkspaceRepository",
+    "WorkspaceRow", "WorkspaceVersionConflictError", "WriteResult", "format_token",
 ]  # fmt: skip

@@ -7,7 +7,16 @@ import json
 from typing import Any
 
 import pytest
-from _workspaces_api_env import LAYOUT, MISSING, USER_A, USER_B, Env, contract_valid, wire
+from _workspaces_api_env import (
+    CATALOGUE,
+    LAYOUT,
+    MISSING,
+    USER_A,
+    USER_B,
+    Env,
+    contract_valid,
+    wire,
+)
 
 from candleviewer.api.workspaces import CURSOR_TTL_S, encode_cursor, make_workspaces_router
 from candleviewer.api.workspaces_presets import LAYOUT_PRESETS
@@ -249,7 +258,11 @@ def _clocked(env: Env) -> Any:
             return AuditPrincipal(env.user, "u", frozenset(PERMS[env.user]), session_id=None)
 
     app = FastAPI()
-    app.include_router(make_workspaces_router(lambda: env.repo, R(), env.audit, clock=lambda: NOW))
+    app.include_router(
+        make_workspaces_router(
+            lambda: env.repo, R(), env.audit, catalogue=lambda: CATALOGUE, clock=lambda: NOW
+        )
+    )
     return TestClient(app)
 
 

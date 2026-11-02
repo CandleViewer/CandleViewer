@@ -46,7 +46,11 @@ from candleviewer.storage.repositories.drawings_sqlalchemy import SqlAlchemyDraw
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
-from candleviewer.storage.repositories.workspaces import LayoutFields, WorkspaceFields
+from candleviewer.storage.repositories.workspaces import (
+    LayoutFields,
+    WorkspaceDeletion,
+    WorkspaceFields,
+)
 from candleviewer.storage.repositories.workspaces_sqlalchemy import SqlAlchemyWorkspaceRepository
 
 pytestmark = pytest.mark.integration
@@ -58,6 +62,10 @@ DEADLOCK_ROUNDS = 3  # per writer and release timing
 DEADLOCK_MS = 100  # `deadlock_timeout` on the race engines (`_fast_deadlock_check`)
 _POLL_TIMEOUT_S = 30  # fails a missed wait fast; polls stop as soon as their condition holds
 Repos = tuple[SqlAlchemyDrawingRepository, SqlAlchemyWorkspaceRepository, str, str]
+
+
+async def _no_record(_deletion: WorkspaceDeletion) -> None:
+    """The write-ahead hook a store-level test passes: the record is the router's test."""
 
 
 @pytest.fixture(scope="module")
@@ -332,7 +340,9 @@ async def test_a_two_layout_batch_racing_a_workspace_soft_delete_never_leaves_a_
                     third.execute("SELECT 1 FROM drawings WHERE id = %s FOR UPDATE", (old,))
                 checks[0] = 0
                 batch = _outcome(drawings.apply_batch(owner, ops))
-                delete = _outcome(workspaces.soft_delete_workspace(owner, wid))
+                delete = _outcome(
+                    workspaces.soft_delete_workspace(owner, wid, write_ahead=_no_record)
+                )
                 sides = [(batch, "drawings-race"), (delete, "workspaces-race")]
                 async with asyncio.TaskGroup() as tg:  # a 40P01, 503 or other error escapes
                     tasks = []
@@ -384,7 +394,7 @@ async def test_two_layout_writers_lock_in_id_order_so_a_batch_never_deadlocks(
             ops: list[BatchOp] = [CreateOp(new, _f(lo)), UpdateOp(old, token, _f(hi))]
             take = LayoutFields("a", "1x1", None, True, False, False, None, True, ())
             write = (
-                workspaces.soft_delete_workspace(owner, wid)
+                workspaces.soft_delete_workspace(owner, wid, write_ahead=_no_record)
                 if writer == "delete"
                 else workspaces.replace_layout(owner, wid, hi, take, if_match=None)
             )

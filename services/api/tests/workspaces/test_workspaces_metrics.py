@@ -54,7 +54,14 @@ def _client(m: WorkspacesMetrics | None) -> tuple[TestClient, FakeWorkspaceRepo]
 
     app = FastAPI()
     app.include_router(
-        make_workspaces_router(lambda: repo, _Resolver(), fakes.Audit(), metrics=m, timer=_Tick())
+        make_workspaces_router(
+            lambda: repo,
+            _Resolver(),
+            fakes.Audit(),
+            catalogue=lambda: fakes.CATALOGUE,
+            metrics=m,
+            timer=_Tick(),
+        )
     )
     return TestClient(app), repo
 
@@ -116,7 +123,7 @@ def test_duration_is_recorded_per_operation_with_the_fake_clock() -> None:
 
 def test_every_operation_name_is_a_real_route_name() -> None:
     c, _ = _client(None)
-    fresh = make_workspaces_router(lambda: None, None, fakes.Audit())
+    fresh = make_workspaces_router(lambda: None, None, fakes.Audit(), catalogue=lambda: None)
     names = {getattr(r, "name", "") for r in fresh.routes}
     assert names == set(OPERATIONS) and c is not None
 

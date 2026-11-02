@@ -2231,7 +2231,7 @@
           },
           "symbol": {
             "default": null,
-            "description": "Bound symbol, market panes only: a Bybit USDT linear perpetual symbol of at most 20 characters (the DB `symbol_code` domain). It is not checked against the instrument catalogue. A non-null symbol on a live layout counts as chart-open for auto-recording.",
+            "description": "Bound symbol, market panes only: a Bybit USDT linear perpetual symbol of at most 20 characters (the DB `symbol_code` domain). A write checks it against the instrument catalogue (a listed, trading USDT perpetual), else `422 validation_failed` rule `unknown_symbol` naming `panes.<i>.symbol`; while no catalogue is loaded the write is `503 instrument_cache_unavailable`. A replace judges only the symbols its stored layout does not hold yet. A non-null symbol on a live layout counts as chart-open for auto-recording.",
             "pattern": "^[A-Z0-9]{2,16}USDT$",
             "type": [
               "string",
@@ -3469,7 +3469,7 @@
       },
       "WorkspaceInput": {
         "additionalProperties": false,
-        "description": "Writable workspace fields. `PUT` is a full replacement: an omitted field takes its default,\nand an explicit `null` is refused (`422`).\n\nObservable validation (all `422 validation_failed`): JSON nesting depth must be at most 16;\n`NaN` and `Infinity` are rejected; a string that cannot be encoded as UTF-8 (a lone\nsurrogate) is rule `invalid_unicode`. `name` is at most 40 characters as sent (rule\n`string_too_long`), then sanitised: U+0000-U+001F, U+007F-U+009F, U+2028, U+2029, U+061C,\nU+200E, U+200F, U+202A-U+202E and U+2066-U+2069 are removed, then surrounding whitespace is\ntrimmed; nothing else is altered. Empty after sanitising is rule `string_too_short`. Reads\nreturn the sanitised name.\n",
+        "description": "Writable workspace fields. `PUT` is a full replacement: an omitted field takes its default,\nand an explicit `null` is refused (`422`).\n\nObservable validation (all `422 validation_failed`): JSON nesting depth must be at most 16;\n`NaN` and `Infinity` are rejected; a string that cannot be encoded as UTF-8 (a lone\nsurrogate) is rule `invalid_unicode`. `name` is at most 40 characters as sent (rule\n`string_too_long`), then sanitised: U+0000-U+001F, U+007F-U+009F, U+2028, U+2029, U+061C,\nU+200E, U+200F, U+202A-U+202E, U+2066-U+2069, the zero-width U+200B-U+200D and U+FEFF\n(the byte order mark) are removed, then surrounding whitespace is trimmed; nothing else is\naltered. Empty after sanitising is rule `string_too_short`. Reads\nreturn the sanitised name.\n",
         "properties": {
           "icon_token": {
             "allOf": [
@@ -7564,7 +7564,7 @@
         }
       },
       "post": {
-        "description": "The server mints a UUIDv7 `id`. `409 conflict`: rule `name_taken` (names are unique per\nuser, case-insensitive, among live workspaces), `limit_reached` (32 live workspaces) or\n`concurrent_update` (a racing write; retry). `is_default: true` clears the previous default\nin the same transaction (its token changes); `false` touches no other workspace, and a user\nmay have no default.\n\nBodies over 4 KiB are refused with `413` (`payload_too_large`). The `ETag` header carries\nthe `updated_at` token for `If-Match`. `Idempotency-Key` is accepted, never required\n(`x-idempotency: optional`): the same key and request replay the stored 2xx response with\n`Idempotency-Replayed: true`. The replay fingerprint covers the method, path and body, so\nthe same key with another request is `409 idempotency_key_reuse`. Replay storage is in\nmemory, best-effort and bounded; correctness never depends on it.\n",
+        "description": "The server mints a UUIDv7 `id`. `409 conflict`: rule `name_taken` (names are unique per\nuser, case-insensitive, among live workspaces), `limit_reached` (32 live workspaces) or\n`concurrent_update` (a racing write; retry). `is_default: true` clears the previous default\nin the same transaction (its token changes); `false` touches no other workspace, and a user\nmay have no default.\n\nBodies over 4 KiB are refused with `413` (`payload_too_large`). The `ETag` header carries\nthe `updated_at` token for `If-Match`. `Idempotency-Key` is accepted, never required\n(`x-idempotency: optional`): the same key and request replay the stored 2xx response with\n`Idempotency-Replayed: true`. The replay fingerprint covers the method, path and body, so\nthe same key with another request is `409 idempotency_key_reuse`. Replay storage is in\nmemory, best-effort and bounded; correctness never depends on it.\n\nWrite rate limit (SR-E15-04, #5449): every `createWorkspace`, `updateWorkspace`,\n`deleteWorkspace`, `createLayout`, `updateLayout` and `deleteLayout` call takes one token of\nits caller's bucket of 30, refilled at 120 a minute, after the permission check. A call\nthat finds no token is `429 rate_limited` with `Retry-After` in whole seconds (at least 1)\nand `retry_after_seconds`; nothing is queued or written, and the refusal is counted.\n",
         "operationId": "createWorkspace",
         "parameters": [
           {
@@ -7626,6 +7626,9 @@
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
           },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
           }
@@ -7645,7 +7648,7 @@
     },
     "/workspaces/{workspaceId}": {
       "delete": {
-        "description": "Soft delete in one transaction: the workspace, its live layouts and their drawings get the\nsame `deleted_at`; retention purges them later. Deleting the caller's **last** live\nworkspace is `409 conflict` with `errors[0].rule = last_workspace` (\"You need at least one\nworkspace.\", SCR-025), and nothing changes. Deleting the default leaves no default. No\nprecondition. Missing, already deleted or another user's: the same `404`. `Idempotency-Key`\nas on `createWorkspace` (a replay returns the stored `204`).\n",
+        "description": "Soft delete in one transaction: the workspace, its live layouts and their drawings get the\nsame `deleted_at`; retention purges them later. Deleting the caller's **last** live\nworkspace is `409 conflict` with `errors[0].rule = last_workspace` (\"You need at least one\nworkspace.\", SCR-025), and nothing changes. Deleting the default leaves no default. No\nprecondition. Missing, already deleted or another user's: the same `404`. `Idempotency-Key`\nas on `createWorkspace` (a replay returns the stored `204`).\n\nAudited (SR-E15-17, C-2.9): one `workspace.deleted` record, written ahead in the deleting\ntransaction, carrying the ids and counts of the layouts and drawings it stamps deleted and\nof the rows it purges early, never a name or content (`24` §15.5). A record that cannot be\nwritten is `503 audit_unavailable` and nothing changes; a replay writes no second record.\n\nSoft-deleted rows per user (SR-E15-05): a user keeps at most 128 soft-deleted workspaces and\n128 soft-deleted layouts awaiting the 90-day purge (4x the live caps). A delete is never\nrefused for it: past either bound the deleting transaction hard-deletes the user's oldest\nsoft-deleted rows first (`21` §3.8.1); a row with anything live below it is kept.\n",
         "operationId": "deleteWorkspace",
         "parameters": [
           {
@@ -7705,8 +7708,23 @@
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
           },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
           "503": {
-            "$ref": "#/components/responses/ServiceUnavailable"
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unavailable, nothing changed; retry after `Retry-After`. `code: audit_unavailable` when the `workspace.deleted` record could not be written (C-2.9); `code: store_unavailable` as on every route.",
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              }
+            }
           }
         },
         "summary": "Delete a workspace and its layouts",
@@ -7768,7 +7786,7 @@
         }
       ],
       "put": {
-        "description": "Full replacement of `WorkspaceInput` (an omitted field takes its default); layouts are\nuntouched and do not change this token. `409` and the 4 KiB limit as on `createWorkspace`.\n\n`ETag` is the quoted token, `\"<updated_at>\"`, a strong validator. `If-Match` is optional\n(absent: the last write wins) and takes that value; a `W/` prefix or the bare token is\naccepted on input only, as leniency. Any other value, including `*` and a list of tags, is\nunparseable.\n\nEvaluation order for `/workspaces*` (not `exportWorkspace`, E15-S07) and `/layout-presets`\n(steps that do not apply are skipped): `401`; `403` (permission, CSRF); `413`; `422` (path,\nquery, headers, body); `400 invalid_cursor` (lists); `Idempotency-Key` replay (stored 2xx +\n`Idempotency-Replayed: true`) or `409 idempotency_key_reuse`; `404` (missing,\nsoft-deleted or another user's, identical); no-op `200` (the body changes nothing: unchanged\ntoken, no write, even when `If-Match` is stale or unparseable, as the change is already\napplied, RFC 9110 §13.1.1); `412 version_conflict` (stale or unparseable `If-Match`, nothing\nwritten); `409`; the write. `503 store_unavailable` when storage fails.\n",
+        "description": "Full replacement of `WorkspaceInput` (an omitted field takes its default); layouts are\nuntouched and do not change this token. `409` and the 4 KiB limit as on `createWorkspace`.\n\n`ETag` is the quoted token, `\"<updated_at>\"`, a strong validator. `If-Match` is optional\n(absent: the last write wins) and takes that value; a `W/` prefix or the bare token is\naccepted on input only, as leniency. Any other value, including `*` and a list of tags, is\nunparseable.\n\nEvaluation order for `/workspaces*` (not `exportWorkspace`, E15-S07) and `/layout-presets`\n(steps that do not apply are skipped): `401`; `403` (permission, CSRF); `429 rate_limited`\n(writes); `413`; `422` (path, query, headers, body; on a layout write the pane symbols'\ncatalogue check comes last, `503 instrument_cache_unavailable` before `unknown_symbol`);\n`400 invalid_cursor` (lists); `Idempotency-Key` replay (stored 2xx +\n`Idempotency-Replayed: true`) or `409 idempotency_key_reuse`; `404` (missing,\nsoft-deleted or another user's, identical); no-op `200` (the body changes nothing: unchanged\ntoken, no write, even when `If-Match` is stale or unparseable, as the change is already\napplied, RFC 9110 §13.1.1); `412 version_conflict` (stale or unparseable `If-Match`, nothing\nwritten); `409`; the write. `503 store_unavailable` when storage fails.\n",
         "operationId": "updateWorkspace",
         "parameters": [
           {
@@ -7824,6 +7842,9 @@
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
@@ -7964,7 +7985,7 @@
         }
       ],
       "post": {
-        "description": "A layout is a grid of up to 16 panes, persisted verbatim so the Electron shell restores the\nexact arrangement. The server mints a UUIDv7 `id`; the pane set is validated as a whole and\nwritten in the same transaction.\n\n`422 validation_failed` lists up to 20 `errors[]`, naming a pane by array position (e.g.\n`panes.2.slot_index`): rule `duplicate_slot`, the enums, the tree rules of `LayoutGridSpec`\n(plus `grid_spec_required` for `custom` and `grid_spec_not_allowed` otherwise) and the pane\nrules of `PaneKind`, `PaneConfig`, `PaneIntervalCode` and `LayoutPaneInput`. `409 conflict`:\nrule `name_taken`, `hotkey_slot_taken`, `limit_reached` (32 live layouts) or\n`concurrent_update`. `is_default: true` clears the previous default layout in the same\ntransaction. A workspace that is missing, soft-deleted or another user's returns the same\n`404`.\n\nBodies over 128 KiB are refused with `413` (`payload_too_large`). The `ETag` header carries\nthe `updated_at` token. `Idempotency-Key` behaves as on `createWorkspace`.\n",
+        "description": "A layout is a grid of up to 16 panes, persisted verbatim so the Electron shell restores the\nexact arrangement. The server mints a UUIDv7 `id`; the pane set is validated as a whole and\nwritten in the same transaction.\n\n`422 validation_failed` lists up to 20 `errors[]`, naming a pane by array position (e.g.\n`panes.2.slot_index`): rule `duplicate_slot`, the enums, the tree rules of `LayoutGridSpec`\n(plus `grid_spec_required` for `custom` and `grid_spec_not_allowed` otherwise) and the pane\nrules of `PaneKind`, `PaneConfig`, `PaneIntervalCode` and `LayoutPaneInput`, then rule\n`unknown_symbol` for a pane `symbol` the instrument catalogue does not list as a trading\nUSDT perpetual (`503 instrument_cache_unavailable` while no catalogue is loaded, nothing\nwritten). `409 conflict`:\nrule `name_taken`, `hotkey_slot_taken`, `limit_reached` (32 live layouts) or\n`concurrent_update`. `is_default: true` clears the previous default layout in the same\ntransaction. A workspace that is missing, soft-deleted or another user's returns the same\n`404`.\n\nBodies over 128 KiB are refused with `413` (`payload_too_large`). The `ETag` header carries\nthe `updated_at` token. `Idempotency-Key` behaves as on `createWorkspace`.\n",
         "operationId": "createLayout",
         "parameters": [
           {
@@ -8150,8 +8171,23 @@
             },
             "description": "Semantically invalid layout. `code: validation_failed`; each entry of `errors[]` names the offending field, a pane by its array position."
           },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
           "503": {
-            "$ref": "#/components/responses/ServiceUnavailable"
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unavailable, nothing written; retry after `Retry-After`. `code: instrument_cache_unavailable` while no instrument catalogue is loaded and a pane symbol must be judged; `code: store_unavailable` as on every route.",
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              }
+            }
           }
         },
         "summary": "Create a layout (pane grid)",
@@ -8169,7 +8205,7 @@
     },
     "/workspaces/{workspaceId}/layouts/{layoutId}": {
       "delete": {
-        "description": "Soft delete in one transaction: the layout and its drawings get the same `deleted_at`;\nretention purges them later. No precondition. A workspace may be left with no layouts or no\ndefault. `404` as on `getLayout`; `Idempotency-Key` as on `createWorkspace`.\n",
+        "description": "Soft delete in one transaction: the layout and its drawings get the same `deleted_at`;\nretention purges them later. No precondition. A workspace may be left with no layouts or no\ndefault. `404` as on `getLayout`; `Idempotency-Key` as on `createWorkspace`. The same\ntransaction keeps the caller within the soft-deleted layouts bound, oldest purged first, as\non `deleteWorkspace`.\n",
         "operationId": "deleteLayout",
         "parameters": [
           {
@@ -8202,6 +8238,9 @@
           },
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
@@ -8274,7 +8313,7 @@
         }
       ],
       "put": {
-        "description": "Called on pane rearrangement with a 2-second debounce. `If-Match` prevents a stale tab from\nclobbering a newer arrangement made in another window.\n\nFull replacement of the layout **and its whole pane set** in one transaction, validated as\non `createLayout` before anything is written; partial application is impossible. The\n`updated_at` token versions the aggregate, so a pane-only change also changes it.\n`If-Match`, the no-op rule and `412 version_conflict` work as on `updateWorkspace`; after a\n`412` the stored layout is unchanged and the client re-reads it with `getLayout`. `404` as\non `getLayout`; `409`, `422` and the 128 KiB limit as on `createLayout`.\n",
+        "description": "Called on pane rearrangement with a 2-second debounce. `If-Match` prevents a stale tab from\nclobbering a newer arrangement made in another window.\n\nFull replacement of the layout **and its whole pane set** in one transaction, validated as\non `createLayout` before anything is written; partial application is impossible. The\n`updated_at` token versions the aggregate, so a pane-only change also changes it.\n`If-Match`, the no-op rule and `412 version_conflict` work as on `updateWorkspace`; after a\n`412` the stored layout is unchanged and the client re-reads it with `getLayout`. `404` as\non `getLayout`; `409`, `422` and the 128 KiB limit as on `createLayout`. The catalogue\ncheck judges only the pane symbols the stored layout does not hold yet.\n",
         "operationId": "updateLayout",
         "parameters": [
           {
@@ -8331,8 +8370,23 @@
           "422": {
             "$ref": "#/components/responses/UnprocessableEntity"
           },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
           "503": {
-            "$ref": "#/components/responses/ServiceUnavailable"
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unavailable, nothing written; retry after `Retry-After`. `code: instrument_cache_unavailable` while no instrument catalogue is loaded and a pane symbol must be judged; `code: store_unavailable` as on every route.",
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              }
+            }
           }
         },
         "summary": "Replace a layout",

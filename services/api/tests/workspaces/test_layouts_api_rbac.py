@@ -3,11 +3,12 @@ layout route and the real `create_app()` behind CSRF (session-resolved callers).
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import _workspaces_api_env as fakes
 import pytest
-from _workspaces_api_env import LAYOUT, MISSING, SID, USER_A, USER_B, VIEWER, Env, wire
+from _workspaces_api_env import CATALOGUE, LAYOUT, MISSING, SID, USER_A, USER_B, VIEWER, Env, wire
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -146,7 +147,11 @@ def test_store_unavailable_is_503(method: str, path: str, body: Any, fault: Any)
 
     if fault is None:
         app = FastAPI()
-        app.include_router(make_workspaces_router(lambda: None, _resolver(env), env.audit))
+        app.include_router(
+            make_workspaces_router(
+                lambda: None, _resolver(env), env.audit, catalogue=lambda: CATALOGUE
+            )
+        )
         env.c = TestClient(app)
     else:
         for name in ("list_workspaces", "list_layouts", "create_layout", "get_layout",
@@ -198,6 +203,8 @@ def test_create_app_serves_workspaces_and_layouts_behind_csrf(
     app.state.app_context.auth._sessions = fakes.Sessions()
     app.state.app_context.auth._repository = FullUsers()  # #2295: classified as full
     writer = app.state.app_context.audit._writer = fakes.Audit()
+    # #5449: pane symbols are judged by the ingestion catalogue `/watchlists` reads
+    app.state.app_context.ingestion.instruments = SimpleNamespace(snapshot=lambda: CATALOGUE)
     h, peer = {"Authorization": "Bearer tok-a"}, ("127.0.0.1", 50000)
     c = arm_csrf(TestClient(app, client=peer), app.state.csrf_codec, SID)
     gone = f"/workspaces/{MISSING}/layouts"

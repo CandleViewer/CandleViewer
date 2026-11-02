@@ -9,10 +9,21 @@ repeated foreign-id reads stay a 404 each, but cannot flood the audit log, and t
 caller earns carries the count the budget held back. The budget is per acting user across
 target owners: a held record keeps only its count, not its object id. Held counts are logged
 under the shared `alert_denied_audit_held*` event names. A write's denial is always recorded.
-Writes are not audited (D20). Bodies are read raw so the byte and depth caps run before pydantic.
-Evaluation order (D13): 401, 403, 413, 422, 400, 404, no-op 200, 412, 409, write (the last four
-are the repository's, in one transaction). Logs carry ids, counts and outcomes, never content.
-Viewer writes return 403: Viewer is read-only (owner decision on #1778).
+Every foreign-id denial, read or write, held or written, counts once in `authz_denied_total`, as
+the drawings router's do (SR-125).
+Writes are not audited (D20), except a workspace delete: one `workspace.deleted` record, written
+ahead in the deleting transaction, carrying ids and counts only (SR-E15-17, C-2.9); a record that
+is not written is `503 audit_unavailable` and nothing changes. Bodies are read raw so the byte and
+depth caps run before pydantic.
+Every write takes a token of the caller's write bucket (SR-E15-04: `WRITE_BURST`, refilled at
+`WRITES_PER_MINUTE`) after the permission check: none left is `429 rate_limited` with
+`Retry-After`, counted in `cv_workspace_rate_limited_total{resource}`, never queued.
+A layout write's pane symbols are judged against the instrument catalogue after the schema:
+`503 instrument_cache_unavailable` while none is loaded, then `422 unknown_symbol`; a replace
+judges only the symbols its stored layout does not hold yet.
+Evaluation order (D13): 401, 403, 429, 413, 422, 400, 404, no-op 200, 412, 409, write (the last
+four are the repository's, in one transaction). Logs carry ids, counts and outcomes, never
+content. Viewer writes return 403: Viewer is read-only (owner decision on #1778).
 """
 
 import base64
@@ -32,7 +43,9 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from candleviewer.accounts.profiles import is_trading_usdt_perpetual
 from candleviewer.api.alert_deliveries import DenialBudget
+from candleviewer.api.drawings_limiter import DrawingsWriteLimiter
 from candleviewer.api.drawings_models import MAX_JSON_DEPTH, format_errors
 from candleviewer.api.idempotency import (
     IdempotencyCache,
@@ -49,18 +62,22 @@ from candleviewer.api.workspaces_models import (
 )
 from candleviewer.api.workspaces_presets import LAYOUT_PRESETS
 from candleviewer.audit.access import AuditPrincipal
+from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission, Scope
+from candleviewer.auth.metrics import count_authz_denial
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
+from candleviewer.domain.events import Instrument
 from candleviewer.ingestion.ticker_stream import uuid7
 from candleviewer.observability.metrics import BoundedMetric
 from candleviewer.observability.redaction import redact_structure
-from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.errors import StorageTierUnavailable, WriteAheadTimeout
 from candleviewer.storage.repositories.workspaces import (
     LayoutFields,
     LayoutRow,
     PaneFields,
     WorkspaceConflictError,
+    WorkspaceDeletion,
     WorkspaceFields,
     WorkspaceNotFoundError,
     WorkspaceRepository,
@@ -68,6 +85,12 @@ from candleviewer.storage.repositories.workspaces import (
     WorkspaceVersionConflictError,
 )
 from candleviewer.ws.limits import json_depth_exceeds
+
+#: SR-E15-04 (E15 threat model Sec.3 "Writes per user"): every `/workspaces*` write takes one token
+#: of its caller's bucket of `WRITE_BURST`, refilled at `WRITES_PER_MINUTE` a minute
+#: (`DrawingsWriteLimiter`'s token bucket, #2727, with this router's own state).
+WRITES_PER_MINUTE: Final = 120
+WRITE_BURST: Final = 30
 
 #: The registered `x-error-codes` this router emits: code -> (status, catalogue title).
 _CODES: Final[dict[str, tuple[int, str]]] = {
@@ -80,7 +103,18 @@ _CODES: Final[dict[str, tuple[int, str]]] = {
     "version_conflict": (412, "If-Match / ETag precondition failed"),
     "payload_too_large": (413, "Request body or batch exceeds the operation's size ceiling"),
     "validation_failed": (422, "Request body or parameters failed schema validation"),
+    "rate_limited": (429, "Per-user API rate limit exceeded"),
     "store_unavailable": (503, "QuestDB / Postgres / Parquet tier unavailable"),
+    "audit_unavailable": (
+        503,
+        "Write-ahead audit record could not be written (or no audit backend is wired); "
+        "refused, fail closed (C-2.9)",
+    ),
+    "instrument_cache_unavailable": (
+        503,
+        "Instrument cache is stale and could not be refreshed in time to check the exchange's "
+        "limits",
+    ),
 }
 _TOKEN: Final = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z")
 _PERMISSIONS: Final = {p.value: p for p in Permission}
@@ -88,6 +122,8 @@ CURSOR_TTL_S: Final = 3600
 _MAX_CURSOR: Final = 512
 _LENGTH: Final = re.compile(r"[0-9]{1,19}")
 _RETRY_AFTER_S: Final = 5
+#: `Retry-After` of `503 instrument_cache_unavailable`, as the watchlist and profile writes answer.
+_CATALOGUE_RETRY_S: Final = 2
 #: Driver errors that mean "the database is unreachable or timed out". `api` may not import a
 #: storage driver (ADR-0003), so they are recognised by class identity, not imported; the
 #: repository does not translate them (S3). Integrity/Programming/Data errors are bugs: 500.
@@ -151,6 +187,16 @@ class _Emitter(Protocol):
     async def emit(self, action: str, **kwargs: Any) -> None: ...
 
 
+class InstrumentLookup(Protocol):
+    """The instrument catalogue's snapshot (`CatalogueSnapshot`), as `/watchlists` judges by."""
+
+    def get(self, symbol: str) -> Instrument | None: ...
+
+
+class WorkspaceAuditRefused(Exception):
+    """A `workspace.deleted` record was not written: the delete rolled back (503)."""
+
+
 class _Resolver(Protocol):
     """`SessionAuditPrincipalResolver`: bearer -> `AuditPrincipal`; `None` = no verified session."""
 
@@ -177,12 +223,16 @@ class _Problem(Exception):
     def response(self) -> JSONResponse:
         body = {"type": f"https://candleviewer.local/errors/{self.code}", "title": self.title,
                 "status": self.status, "code": self.code, "detail": self.detail}  # fmt: skip
-        headers = {"Retry-After": str(_RETRY_AFTER_S)} if self.code == "store_unavailable" else {}
+        retry = self.extra.get("retry_after_seconds")
+        if retry is None and self.status == 503:
+            retry = _RETRY_AFTER_S
+        headers = {} if retry is None else {"Retry-After": str(retry)}
         return JSONResponse(body | self.extra, self.status, headers, "application/problem+json")
 
 
 class _ProblemRoute(APIRoute):
-    """`_Problem` -> its response; a store I/O failure -> 503 `store_unavailable`."""
+    """`_Problem` -> its response; a write-ahead record not written in its bound -> 503
+    `audit_unavailable`; a store I/O failure -> 503 `store_unavailable`."""
 
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         inner = super().get_route_handler()
@@ -192,6 +242,12 @@ class _ProblemRoute(APIRoute):
                 return await inner(request)
             except _Problem as p:
                 return p.response()
+            except (WorkspaceAuditRefused, WriteAheadTimeout) as exc:  # rolled back: fail closed
+                # before the outage branch: a write-ahead timeout is a `TimeoutError` (`OSError`)
+                cause = exc.__cause__ if isinstance(exc, WorkspaceAuditRefused) else exc
+                _log().error("workspaces_audit_unavailable", error=type(cause).__name__)
+                detail = "The audit record could not be written; nothing was changed."
+                return _Problem("audit_unavailable", detail).response()
             except Exception as exc:  # re-raised below unless it is a store outage
                 if not _is_outage(exc):
                     raise
@@ -217,7 +273,7 @@ OPERATIONS: Final = (
 
 
 class WorkspacesMetricsLike(Protocol):
-    """`WorkspacesMetrics` (`app.state.workspaces_metrics`); the router records these three."""
+    """`WorkspacesMetrics` (`app.state.workspaces_metrics`); the router records these four."""
 
     @property
     def conflicts(self) -> BoundedMetric: ...  # cv_workspace_conflicts_total{resource}
@@ -227,6 +283,9 @@ class WorkspacesMetricsLike(Protocol):
 
     @property
     def request_seconds(self) -> BoundedMetric: ...  # cv_workspace_request_seconds{operation}
+
+    @property
+    def rate_limited(self) -> BoundedMetric | None: ...  # cv_workspace_rate_limited_total{resource}
 
 
 def _log() -> Any:
@@ -483,17 +542,45 @@ def _workspace_fields(body: WorkspaceIn) -> WorkspaceFields:
     return WorkspaceFields(**body.db_values())
 
 
+def _symbol_errors(
+    panes: list[tuple[int, str]], listed: Callable[[str], bool]
+) -> list[dict[str, str]]:
+    """`unknown_symbol` for each `(array position, symbol)` the catalogue does not list."""
+    message = "{} is not a trading USDT perpetual of the instrument catalogue."
+    return [
+        _rule(f"panes.{i}.symbol", "unknown_symbol", message.format(symbol))
+        for i, symbol in panes
+        if not listed(symbol)
+    ]
+
+
+def _held_symbols(row: LayoutRow) -> list[str]:
+    """The symbols a stored layout's panes hold (a replace does not judge them again)."""
+    return [p.symbol for p in row.panes if p.symbol is not None]
+
+
+def _deletion_state(d: WorkspaceDeletion) -> dict[str, Any]:
+    """`workspace.deleted` state: ids and counts of what the delete stamped and purged."""
+    return {
+        "layout_ids": list(d.layout_ids), "layout_count": len(d.layout_ids),
+        "drawing_count": d.drawing_count, "purged_workspaces": d.purged_workspaces,
+        "purged_layouts": d.purged_layouts,
+    }  # fmt: skip
+
+
 def make_workspaces_router(
     repo_provider: Callable[[], WorkspaceRepository | None],
     principal_resolver: _Resolver | None,
     audit: _Emitter,
     *,
+    catalogue: Callable[[], InstrumentLookup | None],
     clock: Callable[[], float] = time.time,
     new_id: Callable[[], UUID] = _new_id,
     metrics: WorkspacesMetricsLike | None = None,
     timer: Callable[[], float] = time.perf_counter,
     idempotency: IdempotencyCache | None = None,
     denials: DenialBudget | None = None,
+    write_limiter: DrawingsWriteLimiter | None = None,
 ) -> APIRouter:
     """`audit` is mandatory (a denial must leave its `rbac.denied` record). No resolver (no
     identity store: nothing can verify a session) fails closed with 401; no store with 503.
@@ -502,11 +589,18 @@ def make_workspaces_router(
     nothing. `idempotency` is this router's own Idempotency-Key LRU (D23; the helper is shared,
     ruling Q5, the instance is not): a new one if None, separate from the /drawings cache.
     `denials` budgets the read paths' `rbac.denied` records per acting user (a new
-    `DenialBudget` with the shipped bound if None)."""
+    `DenialBudget` with the shipped bound if None). `catalogue` answers the instrument snapshot a
+    pane symbol is judged by (None while none is loaded). `write_limiter` is the per-user write
+    bucket (SR-E15-04); None builds this router's own with `WRITE_BURST` / `WRITES_PER_MINUTE`."""
     if audit is None:
         raise TypeError("make_workspaces_router: an audit emitter is required")
     cache = IdempotencyCache() if idempotency is None else idempotency
     budget = DenialBudget() if denials is None else denials
+    limiter = (
+        DrawingsWriteLimiter(per_minute=WRITES_PER_MINUTE, burst=WRITE_BURST)
+        if write_limiter is None
+        else write_limiter
+    )
 
     class _TimedRoute(_ProblemRoute):
         def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
@@ -534,6 +628,15 @@ def make_workspaces_router(
         if metrics is not None:
             metrics.layout_panes.child().observe(count)
 
+    def rate_limited(resource: _Kind) -> None:
+        """One refused write, counted; a failing metric never changes the answer."""
+        if metrics is None or (counter := metrics.rate_limited) is None:
+            return
+        try:
+            counter.labels(resource).inc()
+        except Exception as exc:  # the refusal is already decided
+            _log().warning("workspaces_rate_limit_metric_failed", error=type(exc).__name__)
+
     async def caller(request: Request, permission: Permission) -> AuditPrincipal:
         got: object = None if principal_resolver is None else principal_resolver.resolve(request)
         if inspect.isawaitable(got):
@@ -554,6 +657,53 @@ def make_workspaces_router(
             raise _Problem("forbidden", f"Requires {permission.value}.",
                            required_permissions=[permission.value]) from None  # fmt: skip
         return got
+
+    async def writer(request: Request, resource: _Kind) -> AuditPrincipal:
+        """The caller of a write, holding `workspaces:write` and one write token (SR-E15-04)."""
+        principal = await caller(request, Permission.WORKSPACES_WRITE)
+        if (retry := limiter.try_take(str(principal.user_id))) is not None:
+            rate_limited(resource)
+            msg = f"Workspace and layout writes are limited per user; retry in {retry} s."
+            raise _Problem("rate_limited", msg, retry_after_seconds=retry)
+        return principal
+
+    def judge_symbols(body: LayoutIn, held: frozenset[str] = frozenset()) -> None:
+        """Pane symbols the catalogue must list (after the schema): those `held` (the stored
+        layout's) excepted. None to judge reads no catalogue; no catalogue loaded is `503
+        instrument_cache_unavailable`, an unlisted symbol `422 unknown_symbol`."""
+        new = [(i, p.symbol) for i, p in enumerate(body.panes)
+               if p.symbol is not None and p.symbol not in held]  # fmt: skip
+        if not new:
+            return
+        snap = catalogue()
+        if snap is None:
+            detail = "The instrument catalogue is not loaded; nothing was saved."
+            raise _Problem("instrument_cache_unavailable", detail,
+                           retry_after_seconds=_CATALOGUE_RETRY_S)  # fmt: skip
+
+        def listed(symbol: str) -> bool:
+            found = snap.get(symbol)
+            return found is not None and is_trading_usdt_perpetual(found)
+
+        if errors := _symbol_errors(new, listed):
+            raise _invalid(errors)
+
+    def delete_record(p: AuditPrincipal) -> Callable[[WorkspaceDeletion], Awaitable[None]]:
+        """The `workspace.deleted` write-ahead record, awaited by the store before it commits."""
+
+        async def record(d: WorkspaceDeletion) -> None:
+            try:
+                await audit.emit(
+                    "workspace.deleted", actor_label=str(p.actor_id), actor_user_id=p.actor_id,
+                    actor_ip=p.ip, session_id=p.session_id, request_id=p.request_id,
+                    object_kind="workspace", object_id=d.workspace_id,
+                    outcome=AuditOutcome.SUCCESS, severity=Severity.INFO,
+                    before_state=None, after_state=_deletion_state(d),
+                )  # fmt: skip
+            except (AuditError, RuntimeError) as exc:  # RuntimeError: no writer started
+                raise WorkspaceAuditRefused from exc
+
+        return record
 
     def keyed(request: Request, owner: str, operation: str, raw: bytes = b"") -> _Keyed:
         """D23/D13: the optional `Idempotency-Key` (malformed: 422, at the header step) and the
@@ -578,11 +728,14 @@ def make_workspaces_router(
         return repo
 
     async def deny(p: AuditPrincipal, kind: _Kind, oid: str, mode: str) -> None:
-        """One `rbac.denied` record for a live foreign id, the viewer's while viewing (#3085).
+        """One `rbac.denied` record for a live foreign id, the viewer's while viewing (#3085),
+        counted first in `authz_denied_total` whether or not its record is written (SR-125).
         A read's record is within the acting user's denial budget: past it the denial is counted,
         not written, and the next record carries the count (`after_state.suppressed_before`); a
         record that is not written gives its slot and its count back."""
         who = str(p.actor_id)
+        permission = Permission.WORKSPACES_READ if mode == "read" else Permission.WORKSPACES_WRITE
+        count_authz_denial(permission.value, _snapshot(p).roles)  # SR-125, held or written
         carried: int | None = 0
         if mode == "read" and (carried := budget.admit(who)) is None:
             return
@@ -639,7 +792,7 @@ def make_workspaces_router(
 
     @router.post("/workspaces")
     async def create_workspace(request: Request) -> Response:
-        owner = str((await caller(request, Permission.WORKSPACES_WRITE)).user_id)
+        owner = str((await writer(request, "workspace")).user_id)
         raw = await _read_capped(request, MAX_WORKSPACE_BODY_BYTES)
         body = _parse(WorkspaceIn, _text(raw))
         if (k := keyed(request, owner, "createWorkspace", raw)).hit is not None:
@@ -655,7 +808,7 @@ def make_workspaces_router(
     async def update_workspace(
         request: Request, workspace_id: Annotated[str, Path(alias="workspaceId")]
     ) -> Response:
-        principal = await caller(request, Permission.WORKSPACES_WRITE)
+        principal = await writer(request, "workspace")
         owner = str(principal.user_id)
         raw = await _read_capped(request, MAX_WORKSPACE_BODY_BYTES)
         wid = _uuid("workspaceId", workspace_id)
@@ -680,17 +833,22 @@ def make_workspaces_router(
     async def delete_workspace(
         request: Request, workspace_id: Annotated[str, Path(alias="workspaceId")]
     ) -> Response:
-        principal = await caller(request, Permission.WORKSPACES_WRITE)
+        principal = await writer(request, "workspace")
         owner, wid = str(principal.user_id), _uuid("workspaceId", workspace_id)
         if (k := keyed(request, owner, "deleteWorkspace")).hit is not None:
             return k.hit
         try:
-            await store().soft_delete_workspace(owner, wid)
+            done = await store().soft_delete_workspace(
+                owner, wid, write_ahead=delete_record(principal)
+            )
         except WorkspaceNotFoundError:
             raise await not_found(principal, "workspace", wid, "write") from None
         except WorkspaceConflictError as exc:
             raise _conflict(exc) from None
-        _log().info("workspace_deleted", user_id=owner, workspace_id=wid)
+        _log().info("workspace_deleted", user_id=owner, workspace_id=wid,
+                    layout_count=len(done.layout_ids), drawing_count=done.drawing_count,
+                    purged_workspaces=done.purged_workspaces,
+                    purged_layouts=done.purged_layouts)  # fmt: skip
         return kept(k, Response(status_code=204))
 
     async def miss(p: AuditPrincipal, wid: str, lid: str | None, mode: str) -> _Problem:
@@ -746,11 +904,12 @@ def make_workspaces_router(
     async def create_layout(
         request: Request, workspace_id: Annotated[str, Path(alias="workspaceId")]
     ) -> Response:
-        principal = await caller(request, Permission.WORKSPACES_WRITE)
+        principal = await writer(request, "layout")
         owner = str(principal.user_id)
         raw = await _read_capped(request, MAX_LAYOUT_BODY_BYTES)
         wid = _uuid("workspaceId", workspace_id)
         body = _parse(LayoutIn, _text(raw))
+        judge_symbols(body)
         if (k := keyed(request, owner, "createLayout", raw)).hit is not None:
             return k.hit
         try:
@@ -784,11 +943,14 @@ def make_workspaces_router(
         workspace_id: Annotated[str, Path(alias="workspaceId")],
         layout_id: Annotated[str, Path(alias="layoutId")],
     ) -> Response:
-        principal = await caller(request, Permission.WORKSPACES_WRITE)
+        principal = await writer(request, "layout")
         owner = str(principal.user_id)
         raw = await _read_capped(request, MAX_LAYOUT_BODY_BYTES)
         wid, lid = _uuid("workspaceId", workspace_id), _uuid("layoutId", layout_id)
         body = _parse(LayoutIn, _text(raw))
+        if any(p.symbol is not None for p in body.panes):
+            stored = await store().get_layout(owner, wid, lid)  # missing: judged whole, then 404
+            judge_symbols(body, frozenset(() if stored is None else _held_symbols(stored)))
         if_match = _if_match(request)
         try:
             done = await store().replace_layout(
@@ -812,7 +974,7 @@ def make_workspaces_router(
         workspace_id: Annotated[str, Path(alias="workspaceId")],
         layout_id: Annotated[str, Path(alias="layoutId")],
     ) -> Response:
-        principal = await caller(request, Permission.WORKSPACES_WRITE)
+        principal = await writer(request, "layout")
         owner, wid = str(principal.user_id), _uuid("workspaceId", workspace_id)
         lid = _uuid("layoutId", layout_id)
         if (k := keyed(request, owner, "deleteLayout")).hit is not None:
@@ -840,6 +1002,10 @@ class _Keyed:
 __all__ = [
     "CURSOR_TTL_S",
     "OPERATIONS",
+    "WRITES_PER_MINUTE",
+    "WRITE_BURST",
+    "InstrumentLookup",
+    "WorkspaceAuditRefused",
     "WorkspacesMetricsLike",
     "decode_cursor",
     "encode_cursor",
