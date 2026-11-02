@@ -1488,6 +1488,50 @@ docker compose -f infra/compose/docker-compose.yml --profile core --profile obs 
 curl -s "http://${CV_METRICS_BIND:-127.0.0.1:9108}/metrics" | grep '^cv_ws_audit_failures_total'  # the private metrics listener, not the API port
 ```
 
+<a id="alert-wssubscriptionquotarefusals"></a>
+
+### WsSubscriptionQuotaRefusals
+
+| Element               | Detail                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | The subscription quota (`23-ws-protocol.md` §16.2) refused more than 10 `sub` entries or `ctl` frames in every 10-minute window for 15 minutes (`cv_ws_subscription_quota_rejections_total{reason}`, E21-X02 #652). Ticket. A burst lasts one window and stays silent.                                                                                                                                                                                                  |
+| 2. User impact        | The refused deep books or heatmaps are not served to that user; the web client shows its capacity notice and does not ask for them again. The user's other subscriptions, and every other user, are served.                                                                                                                                                                                                                                                             |
+| 3. What is still safe | Order entry (REST), the private topics and every subscription already held. A refused entry takes nothing first: no upstream reference, lease or series hold is taken for it.                                                                                                                                                                                                                                                                                           |
+| 5. Remediation        | Read the reason first. From one user (`points_connection`, `points_user`, `heatmap_connection`, `heatmap_user`, `heatmap_specs_user`, `heatmap_specs_symbol`): a workspace past its quota; the user closes panes or lowers depth. From many users, or `heatmap_specs_server` / `points_server`: the interim values are too tight for real use; take the profile (users, panes, depths, buckets) to the Owner on #2701. A value changes only with its §16.2 row (C-6.1). |
+| 6. Escalation         | The Owner when real use is refused (a false refusal is a defect, #652); the security reviewer when one user's refusals keep coming at a steady rate.                                                                                                                                                                                                                                                                                                                    |
+| 7. Verify recovery    | `increase(cv_ws_subscription_quota_rejections_total[10m])` back at or under 10 under every reason; the alert then clears, and the users' panes are served.                                                                                                                                                                                                                                                                                                              |
+
+The log line that names each refusal is `ws subscription quota refused` (`connection_id`, `user_id`, `reason`, `ch`), within its connection's refusal-log budget (a `capped` line ends a window's run).
+
+**4. First three diagnostic commands** (run from the repo root; expected healthy result: a few refusals at most in 10 minutes, under any reason.)
+
+```bash
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=sum by (reason) (increase(cv_ws_subscription_quota_rejections_total[30m]))'
+docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 30m api | grep 'ws subscription quota refused' | tail -30
+curl -s "http://${CV_METRICS_BIND:-127.0.0.1:9108}/metrics" | grep '^cv_ws_subscription_quota_rejections_total'  # the private metrics listener, not the API port
+```
+
+<a id="alert-wsaccountscopedenied"></a>
+
+### WsAccountScopeDenied
+
+| Element               | Detail                                                                                                                                                                                                                                                                                                                                                                                   |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | At least one `sub` entry was refused `account_scope_denied` in the last 15 minutes (`cv_ws_subscribe_total{result="account_scope_denied"}`, E21-X02 #652): every account it named is outside its caller's grant (`23-ws-protocol.md` §6.2). Ticket. Like `WsAuditWriteFailed`, it is held firing for 9 h 30 m after its window (`keep_firing_for`), so a night refusal is sent at 07:00. |
+| 2. User impact        | None: the refused entry is answered with the error and nothing of those accounts is sent; the caller's other subscriptions are served.                                                                                                                                                                                                                                                   |
+| 3. What is still safe | Every account's data reaches only the subscriptions in that account's scope (23 §6.2); the refusal is audited (`ws.subscribe.denied`), and an entry naming a granted account beside a foreign one is narrowed to the granted one, not refused.                                                                                                                                           |
+| 5. Remediation        | Find the `ws.subscribe.denied` rows of the window (user, session, connection). A grant withdrawn while a client re-subscribed explains one or two right after an owner change; any other is a frame the web client does not send: treat it as a probe, record the user and session on the incident, and revoke the session if it goes on.                                                |
+| 6. Escalation         | The security reviewer for any refusal that a grant change does not explain; the Owner when one user's refusals go on.                                                                                                                                                                                                                                                                    |
+| 7. Verify recovery    | `increase(cv_ws_subscribe_total{result="account_scope_denied"}[15m])` back at 0, then the 9 h 30 m hold: the alert resolves about 9 h 45 m after the last refusal. After a Prometheus restart the hold is gone: read `increase(cv_ws_subscribe_total{result="account_scope_denied"}[10h])` once for a night refusal.                                                                     |
+
+**4. First three diagnostic commands** (run from the repo root; expected healthy result: no `account_scope_denied` in the window and no new `ws.subscribe.denied` rows naming one.)
+
+```bash
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=sum by (topic) (increase(cv_ws_subscribe_total{result="account_scope_denied"}[1h]))'
+docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 1h api | grep -E 'ws subscribe-denied audit|ws.subscribe.denied' | tail -30
+curl -s "http://${CV_METRICS_BIND:-127.0.0.1:9108}/metrics" | grep '^cv_ws_subscribe_total{.*account_scope_denied'  # the private metrics listener, not the API port
+```
+
 <a id="alert-expectedmetricmissing"></a>
 
 ### ExpectedMetricMissing (all `ExpectedMetricMissing*` guards)

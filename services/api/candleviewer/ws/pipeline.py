@@ -44,6 +44,14 @@ no inbound traffic for 45 s still closes `heartbeat_timeout` (§9.1). E17-T06 co
 connection under its class in `cv_ws_connection_class` until `release`, and each classification
 observes the depth it read; `Pacer` counts merged windows and each RTT sample (`ws/pacing.py`).
 
+The degradation record (E21-X02, #652; 23 §8.4, §16.2): a class change writes one `warning` line,
+`ws connection class changed`, naming the connection, the acting user, the class it left and the
+class it entered, the families it degrades and the wall time; a step 1 drop's `ws overflow drop`
+names the acting user, the families it shed and the wall time beside its #571 fields. Each kind
+logs at most once per connection per `OVERFLOW_LOG_WINDOW_S` on the gateway's clock, the next
+counting the lines held back (`suppressed`); the events are counted in full per process
+(`cv_ws_connection_class`, `cv_ws_overflow_total`). No audit row is written.
+
 The frame cost series (E17-T06, `cv_ws_frame_encode_seconds` and `cv_ws_frame_bytes`) see that one
 encode. For a data frame the hub stamped (`received`: one frame of a subscription in
 `SAMPLE_EVERY`) the serialiser alone is timed with `perf_counter` and its output sized at its wire
@@ -140,7 +148,8 @@ CLOSE_FLUSH_DEADLINE: Final = "close_flush_deadline"
 #: §4.3: the close audit's `trigger` for an expired flush when step 3 gave none.
 FLUSH_DEADLINE_TRIGGER: Final = "flush_deadline"
 #: #571: `ws overflow drop` logs at most one line per connection per this many seconds, and names
-#: at most this many of the topics step 1 shed, largest first (as the `bye.hint`).
+#: at most this many of the topics step 1 shed, largest first (as the `bye.hint`). E21-X02 (23
+#: §16.2 "Degradation log lines"): `ws connection class changed` keeps the same window.
 OVERFLOW_LOG_WINDOW_S: Final = 10.0
 OVERFLOW_LOG_TOPICS: Final = 5
 #: The frame types the server sends (§13.1): a log line names one of these, else `other`.
@@ -410,10 +419,13 @@ class ConnectionPipeline:
         pending = pacer.pending_bytes
         cv_ws_queue_bytes.observe(queue.bytes + pending)  # E17-T06: the depth this sample reads
         cv_ws_queue_frames.observe(len(queue))
+        before = self._counted
         notice = pacer.classify(queue.pct(pending), self._live.values(), now)
         if pacer.cls is not self._counted:
             self._count_as(pacer.cls)
         if notice is not None:
+            with contextlib.suppress(Exception):  # a failing logger changes nothing
+                self._class_changed(before, notice)
             self._apply(ladder.check(self._live.values()))  # `apply` may have folded a window
             notify(notice)  # never dropped: over the budget, it closes (§8.4 step 3)
         if self.terminal is not None:
@@ -612,7 +624,35 @@ class ConnectionPipeline:
             queue_pct_after=self.queue.pct(self.ladder.pacer.pending_bytes if self.ladder else 0),
             trigger=event.trigger or "budget",
             suppressed=held,
+            actor_user_id=self._actor(),
+            families=_families(event.topics),
+            at_ms=self._wall_ms(),
         )
+
+    def _class_changed(self, before: ConnectionClass | None, notice: Mapping[str, Any]) -> None:
+        """E21-X02 (G-10): `ws connection class changed`, capped as `ws overflow drop` is (module
+        docstring): the class left and the class entered, and the families the new class degrades
+        (its notice's `degraded_topics`). Never a frame or a payload."""
+        held = self._quiet(("class", "change"), self._clock(), OVERFLOW_LOG_WINDOW_S)
+        if held is None:
+            return
+        applied = notice.get("applied")
+        degraded = applied.get("degraded_topics", ()) if isinstance(applied, Mapping) else ()
+        _log().warning(
+            "ws connection class changed",
+            connection_id=self._connection_id,
+            actor_user_id=self._actor(),
+            class_from=None if before is None else before.value,
+            class_to=str(notice.get("class")),
+            families=_families(degraded),
+            at_ms=self._wall_ms(),
+            suppressed=held,
+        )
+
+    def _actor(self) -> str | None:
+        """The acting user of the attached connection (§9.6: the viewer while viewing as another
+        user), for its degradation lines; None before `attach`."""
+        return None if self._attached is None else str(self._attached[0].actor_user_id)
 
     def _step3(self, trigger: str | None, topics: tuple[str, ...]) -> None:
         self.trigger = trigger
@@ -739,6 +779,13 @@ class ConnectionPipeline:
             "t": t if isinstance(t, str) and t in _SERVER_TYPES else "other",
             "family": family if family is None or family in FAMILIES else "other",
         }
+
+
+def _families(channels: Iterable[str]) -> list[str]:
+    """The topic families of `channels`, sorted, each a registry family or `other`."""
+    return sorted(
+        {f if f in FAMILIES else "other" for f in (ch.split(".", 1)[0] for ch in channels)}
+    )
 
 
 def _droppable(frame: Mapping[str, Any]) -> Key | None:
