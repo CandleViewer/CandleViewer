@@ -66,6 +66,18 @@ export function chipWord(p: ConnectionStatusProps): string {
   }
 }
 
+/**
+ * The word as the name says it (DF-24, CP-7; E17-D02 §10 A "Connection: Stale 7 seconds, …"): a
+ * stale age spelled out, whose visible "Stale 7 s" stays part of it (SC 2.5.3); every other word
+ * is its own name.
+ */
+function spokenWord(p: ConnectionStatusProps): string {
+  const plain = p.upstreamDown !== true && p.serverStale !== true;
+  if (p.status !== "stale" || !plain || p.staleAgeMs === undefined) return chipWord(p);
+  const s = Math.floor(p.staleAgeMs / 1000);
+  return `Stale ${s} ${s === 1 ? "second" : "seconds"}`;
+}
+
 /** "13:42:05", UTC. */
 const utc = (ms: number): string => new Date(ms).toISOString().slice(11, 19);
 
@@ -119,11 +131,11 @@ function useCrossFade(status: ConnectionChipStatus): CSSProperties {
  * CMP-076 ConnectionStatus (#304 S3; E17-D02 §5): props only; glyph + word + fill, never colour
  * alone; **owns no live region** (§11: the shell announcer does).
  *
- * Deferred: the details popover (a later #304 slice, once the `connection_quality` numbers reach
- * the client) and the tooltip (CMP-016 Tooltip, E05-S02 #265); until then the UTC time is in the
- * name and a `title`, and there is no `aria-haspopup`. It stays the merged spec's native `<button>`
- * with no action yet: a Tab stop keeps the name and time reachable from the keyboard, and the
- * popover slice adds the action without changing the Tab order.
+ * Deferred (the rest of E08-D14 DF-24, carried by #5345): the details popover (the
+ * `connection_quality` numbers now reach the shell store) and the tooltip (CMP-016 Tooltip); until
+ * then the UTC time is in the name and a `title`, and there is no `aria-haspopup`. It stays the
+ * merged spec's native `<button>` with no action yet: a Tab stop keeps the name and time reachable
+ * from the keyboard, and the popover adds the action without changing the Tab order.
  *
  * Focus is the CMP-039 ring (`useFocusRing()`, #304 S10, BQ-05). The hairline border is decoration:
  * the word and the glyph identify the control (SC 1.4.11 needs no 3:1 boundary; BQ-04, pending the
@@ -142,7 +154,7 @@ export function ConnectionStatus(props: ConnectionStatusProps): JSX.Element {
   const at = lastGoodTs === null ? null : utc(lastGoodTs);
   // SC 2.5.3: the visible words lead; "last data" is said once ("…, last data 00:12 ago, 13:42:05 UTC").
   const time = at === null ? null : age === null ? `last data ${at} UTC` : `${at} UTC`;
-  const name = [`Connection: ${word}`, age, time];
+  const name = [`Connection: ${spokenWord(props)}`, age, time];
   const [glyph, fill, ink] = LOOK[status === "stale" && props.strong === true ? "strong" : status];
   const ring = useFocusRing();
   const fade = useCrossFade(status);
