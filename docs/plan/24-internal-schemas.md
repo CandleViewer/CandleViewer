@@ -6779,6 +6779,15 @@ The orchestrator assigned this number on #5396 (2026-11-01, 23:30Z); its ruling 
 - 22 `exportWorkspace` is refused in a live view-as context: `403 view_as_read_only` with its `admin.view_as_refused` record, as a write is, though it is a read, because a bundle is a copy of the target's workspace that leaves the view. The "View-as session" text of `info.description` gains a "Refused reads" bullet that names it, and the `Forbidden` response text names it beside the state-changing operations. A held context refuses every read already.
 - No new `x-error-codes` entry, schema member or operation, so the `openapi_pending` baselines do not move; no WS, table, column, chart or `machine_hash` change, and no migration.
 
+### 19.85 2026-11-02 — 23 §3.4, §5.4, §6.1, §10.2, §16.2: the subscription quota and the heatmap decoder bounds, contract first (E21-X02, #652)
+
+This is the number the orchestrator assigned on 2026-11-02 (10:44Z), above `main`'s last entry, §19.76, and every number already assigned to a change in flight; it keeps it through its rebases.
+
+- The orchestrator's ruling of record on #652 (BQ-1 to BQ-16), contract first (C-6.1), in the first commit of the change.
+- 23 §16.2 gains the subscription quota's rows, each interim for the Owner to ratify: `heatmap.*` subscriptions per connection and per user, distinct heatmap specs per user and per user and symbol, the server's heatmap spec points, quota points per connection and per user, the quota point and the two weights, and a table of worked weights. §5.4: a `ctl` past a quota is refused `subscription_limit` and changes nothing. The `book` and `heatmap` notes of §6.1 point at the quota, and §10.2's `subscription_limit` row names it. No error code, schema member, enum value or `welcome.limits` key is added.
+- 23 §3.4: both decoders refuse a kind-6 `row_count` above the grid's `rows` and a `price_step` of zero or less as `frame_malformed`. Under C-6.3 this is additive, not a framing change: §3.4 already bounds `row_count` by the grid's `rows` and no producer sends a column whose step is not positive, so no conforming frame is refused, and neither the CVWB layout nor the `cv.v1` wire-contract golden moves.
+- No table, column, chart or `machine_hash` change, and no migration.
+
 ### 19.89 2026-11-02 — §15.5: admin-area reads coalesced per window (E42-T01, #5331)
 
 The orchestrator assigned this number on 2026-11-02 (ruling of record on #5331, BQ-1 to BQ-13).
