@@ -217,15 +217,15 @@ describe("kind-4 flag bits beyond bit0 (§3.4, #5396)", () => {
     return v;
   };
   it.each([
-    ["bars_flags_gap_partial", 0b0000_0110, false],
-    ["bars_flags_reserved_bits", 0xf9, true],
+    ["bars_flags_gap_partial", 0b0000_1110, false],
+    ["bars_flags_reserved_bits", 0xf1, true],
   ] as const)("%s decodes ok and reads confirmed from bit0 alone", (name, flags, confirmed) => {
     const v = named(name);
     expect(v.records[0]?.[11]).toBe(String(flags));
     expect(decodeBars(bytes(v.hex)).bars.map((b) => b.confirmed)).toEqual([confirmed]);
     expect(seeds.find((s) => s.name === `valid-${name}`)?.expect).toBe("ok");
   });
-  it("ignores reserved bits 3-7: the bar decodes as the same record with bit0 only", () => {
+  it("ignores reserved bits 4-7: the bar decodes as the same record with bit0 only", () => {
     const buf = bytes(named("bars_flags_reserved_bits").hex);
     const plain = buf.slice();
     plain[24 + 80] = 0b1;

@@ -4516,9 +4516,9 @@ paths:
         returns 422 `response_too_large`.
 
         **Integrity and provenance (#5396).** As on `/market/bars`: each bar carries
-        `gap_before` and `partial` (both `false` on a bar not built from the tape), and `meta`
-        (`BarsMeta`) carries `spec_hash`, `build_version` and `stale`. Optional and additive
-        (C-6.3).
+        `gap_before`, `partial` and `tape_gap` (all `false` on a bar not built from the tape),
+        and `meta` (`BarsMeta`) carries `spec_hash`, `build_version` and `stale_build`.
+        Optional and additive (C-6.3).
       parameters:
         - $ref: "#/components/parameters/SymbolQuery"
         - name: interval
@@ -4656,12 +4656,13 @@ paths:
         `MarketCursor` parameter. A page that would exceed the response ceiling (SR-E12-01)
         returns 422 `response_too_large`.
 
-        **Integrity and provenance (#5396).** Each bar carries `gap_before` and `partial`
-        (`Bar`), the flags its stored row holds, so a bar that may not match a complete tape
-        window is marked as such. `meta` (`BarsMeta`) carries the series' `spec_hash`, the
-        lowest `build_version` among the bars served and `stale`, as the WS `bars` snapshot
-        does (23 §6.1). A range of the window the server cannot serve is listed in
-        `meta.coverage_holes`. All of these are optional and additive (C-6.3).
+        **Integrity and provenance (#5396).** Each bar carries `gap_before`, `partial` and
+        `tape_gap` (`Bar`), the flags its stored row holds: a bar that may not match the tape
+        for its window is marked `tape_gap` (or `partial`), and a range of the window the
+        server cannot serve is listed in `meta.coverage_holes`. `meta` (`BarsMeta`) carries the
+        series' `spec_hash` and the lowest `build_version` among the bars served, as the WS
+        `bars` snapshot does (23 §6.1), and `stale_build`. All of these are optional and
+        additive (C-6.3).
       parameters:
         - $ref: "#/components/parameters/SymbolQuery"
         - name: bar_type
@@ -20241,12 +20242,12 @@ components:
           type: boolean
           default: false
           description: >-
-            True when a gap precedes this bar: the recorded trade tape had a gap before the bar's
-            first print, or the builder marked a discontinuity before it (24 §3.3), so the bar
-            may be incomplete at its start. The same flag as the stored row's `gap_before`
-            (21 §4.8) and the WS `bars` item's (23 §14.3). Absent means `false`: a bar not built
-            from the tape (a `kline` row) and a row stored before the column existed both read
-            `false`. Optional, additive (C-6.3).
+            True when a discontinuity in the series precedes this bar (24 §3.3): for a time bar,
+            one or more intervals with no print before it; for a range bar, a price jump of at
+            least two range widths into it. It describes the series' shape, not data loss: a
+            recorded-tape gap is `tape_gap`. The same flag as the stored row's `gap_before`
+            (21 §4.8) and the WS `bars` item's (23 §14.3). Absent means `false`. Optional,
+            additive (C-6.3).
         partial:
           type: boolean
           default: false
@@ -20254,8 +20255,21 @@ components:
             True when the bar is not built from a complete tape window (24 §3.1), such as the
             first bar a builder forms after it starts inside the bar's window, so its open,
             volume and order flow may cover only part of the bar. The same flag as the stored
-            row's `partial` (21 §4.8) and the WS `bars` item's (23 §14.3). Absent means `false`,
-            as for `gap_before`. Optional, additive (C-6.3).
+            row's `partial` (21 §4.8) and the WS `bars` item's (23 §14.3). Absent means
+            `false`. Optional, additive (C-6.3).
+        tape_gap:
+          type: boolean
+          default: false
+          description: >-
+            True when the recorded trade tape had a gap affecting this bar (the #5338 marker,
+            24 §3.1), so prints may be missing from it and it may not match the exchange's tape
+            for its window. This is the per-bar data-loss marker that the E12 integrity
+            statement binds to (#538: served bars match the tape or are marked); a range the
+            server cannot serve at all is listed in `meta.coverage_holes` instead. The same flag
+            as the stored row's `tape_gap` (21 §4.8) and the WS `bars` item's (23 §14.3). Absent
+            means `false`: no marker recorded, which is how a bar not built from the tape (a
+            `kline` row) and a row stored before the column existed read. Optional, additive
+            (C-6.3).
         delta: { oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }] }
         cvd: { oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }] }
         min_delta: { oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }] }
@@ -20271,10 +20285,12 @@ components:
         meta: { $ref: "#/components/schemas/BarsMeta" }
     BarsMeta:
       description: >-
-        `DataMeta` extended with the build provenance of the bars served (SR-E12-14), named as
-        the WS `bars` snapshot `meta` names it (23 §6.1, §13 `snapMeta`), so REST and WS state
-        it the same way. Every member added here is optional and additive (C-6.3): an answer
-        without them is read as `stale: false` with its build provenance unknown.
+        `DataMeta` extended with the build provenance of the bars served (SR-E12-14).
+        `spec_hash` and `build_version` are named and bounded as the WS `bars` snapshot `meta`
+        names them (23 §6.1, §13 `snapMeta`); `stale_build` is REST's own and is unrelated to
+        the WS snapshot's `meta.stale` (a feed behind the live market), which REST does not
+        carry. Every member added here is optional and additive (C-6.3): an answer without
+        them is read as `stale_build: false` with its build provenance unknown.
       allOf:
         - $ref: "#/components/schemas/DataMeta"
         - type: object
@@ -20292,13 +20308,14 @@ components:
                 The lowest bar builder version among the bars served, by the WS `bars` snapshot
                 rule (23 §6.1): a served bar is never traced to newer code than the code that
                 built it. A page with no bar carries the running version.
-            stale:
+            stale_build:
               type: boolean
               default: false
               description: >-
-                True when a bar served was built below the running builder version, so
-                `build_version` is below the running one and a later read may serve that window
-                rebuilt. Absent means `false`.
+                True when a bar served was built below the running builder version, or has no
+                recorded build version: a NULL `build_version` is unknown provenance and serves
+                `stale_build: true` on every read path (24 §3.1). A later read may serve such a
+                window rebuilt. Absent means `false`.
     FootprintCell:
       type: object
       required: [price, bid_volume, ask_volume]
@@ -20327,6 +20344,10 @@ components:
         stack_size: { type: integer }
         estimated: { type: boolean, default: false }
     FootprintBar:
+      description: >-
+        A `Bar` with its footprint. The `Bar` flags `gap_before`, `partial` and `tape_gap` are
+        not yet sent here (#5396 serves them on `/market/bars` and `/market/klines` first); a
+        client reads them as absent, so `false`.
       allOf:
         - $ref: "#/components/schemas/Bar"
         - type: object
@@ -25050,7 +25071,13 @@ components:
         symbol: { $ref: "#/components/schemas/Symbol" }
         from: { type: string, format: date-time }
         to: { type: string, format: date-time }
-        bars: { type: array, items: { $ref: "#/components/schemas/Bar" } }
+        bars:
+          type: array
+          description: >-
+            The trade's bars. The `Bar` flags `gap_before`, `partial` and `tape_gap` are not yet
+            sent here (#5396 serves them on `/market/bars` and `/market/klines` first); a client
+            reads them as absent, so `false`.
+          items: { $ref: "#/components/schemas/Bar" }
         footprint: { type: array, items: { $ref: "#/components/schemas/FootprintBar" } }
         executions: { type: array, items: { $ref: "#/components/schemas/Execution" } }
         markers:

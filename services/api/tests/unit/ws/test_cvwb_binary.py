@@ -338,13 +338,13 @@ def test_footprint_group_flags_map_bit0_to_confirm_and_ignore_reserved_bits(
 
 @pytest.mark.parametrize(
     ("name", "flags", "confirm"),
-    [("bars_flags_gap_partial", 0b0000_0110, False), ("bars_flags_reserved_bits", 0xF9, True)],
+    [("bars_flags_gap_partial", 0b0000_1110, False), ("bars_flags_reserved_bits", 0xF1, True)],
 )
 def test_bars_flags_vector_reads_confirm_from_bit0_alone(
     name: str, flags: int, confirm: bool
 ) -> None:
-    """#5396 golden vectors (section 3.4): kind-4 `flags` bit1 `gap_before` / bit2 `partial`, and
-    reserved bits 3-7, decode as `ok`, keep the byte as sent, and leave `confirm` on bit0."""
+    """#5396 golden vectors (section 3.4): kind-4 `flags` bit1 `gap_before` / bit2 `partial` / bit3
+    `tape_gap`, and reserved bits 4-7, decode as `ok`, keep the byte as sent, `confirm` on bit0."""
     raw = encode(dict(cvwb_vectors.vector_frames())[name])
     decoded = decode(raw)
     assert decoded.records[0][-1] == flags
@@ -355,7 +355,7 @@ def test_bars_flags_vector_reads_confirm_from_bit0_alone(
 
 
 def test_bars_reserved_flag_bits_are_ignored_on_receive() -> None:
-    """Bits 3-7 change nothing a decoder reports: the twin equals the same bar with bit0 only."""
+    """Bits 4-7 change nothing a decoder reports: the twin equals the same bar with bit0 only."""
     frame = dict(cvwb_vectors.vector_frames())["bars_flags_reserved_bits"]
     plain = Frame(BARS, ((*frame.records[0][:11], 0b1),), 0, 2, 3, 0)
     assert cvwb_vectors.structured(decode(encode(frame))) == cvwb_vectors.structured(

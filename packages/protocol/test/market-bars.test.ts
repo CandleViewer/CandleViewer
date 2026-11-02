@@ -45,15 +45,19 @@ describe("klines and bars pages (consumer side, 22-api-openapi /market/klines, /
     // REST types a member with a `default` as present; the WS item keeps it optional.
     expectTypeOf<Bar["gap_before"]>().toEqualTypeOf<boolean>();
     expectTypeOf<Bar["partial"]>().toEqualTypeOf<boolean>();
+    expectTypeOf<Bar["tape_gap"]>().toEqualTypeOf<boolean>();
     expectTypeOf<WsBar["gap_before"]>().toEqualTypeOf<boolean | undefined>();
     expectTypeOf<WsBar["partial"]>().toEqualTypeOf<boolean | undefined>();
+    expectTypeOf<WsBar["tape_gap"]>().toEqualTypeOf<boolean | undefined>();
   });
 
   it("reads build provenance from the page meta, named as the WS snapshot's (#5396)", () => {
     expectTypeOf<Page["meta"]>().toEqualTypeOf<Schemas["BarsMeta"]>();
     expectTypeOf<Page["meta"]["spec_hash"]>().toEqualTypeOf<string | undefined>();
     expectTypeOf<Page["meta"]["build_version"]>().toEqualTypeOf<number | undefined>();
-    expectTypeOf<Page["meta"]["stale"]>().toEqualTypeOf<boolean>();
+    expectTypeOf<Page["meta"]["stale_build"]>().toEqualTypeOf<boolean>();
+    // One key, one meaning: REST carries no WS-style feed `stale`.
+    expectTypeOf<Page["meta"]>().not.toHaveProperty("stale");
     expectTypeOf<Page["meta"]["coverage_holes"]>().toEqualTypeOf<
       Schemas["DataMeta"]["coverage_holes"]
     >();
