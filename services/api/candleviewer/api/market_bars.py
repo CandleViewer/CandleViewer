@@ -30,6 +30,11 @@ cursor (open time is unique per interval; kline rows have a NULL `index`). Non-t
 by the stored key `(ts, generation, index)` and the cursor carries that key (#2017), so
 equal-`ts` siblings (one print -> N volume bars / renko bricks) are each served exactly once
 across page boundaries. Every stored bar carries `index` and `generation` when the row has one.
+
+Coverage holes (#5396, 24 §19.81): a closed bar the server did not store (`bars.write_holes`) is
+listed in `meta.coverage_holes` while it is not stored: the recorded ranges inside the page's span
+(from the page's first position to the next page's, or to `to`), minus the bars the page serves,
+at most `MAX_COVERAGE_HOLES` entries. The key is absent when there is none.
 """
 
 from __future__ import annotations
@@ -55,6 +60,7 @@ from candleviewer.api.market_response import (
     encode_cursor,
     encode_key_cursor,
     kline_response,
+    merge_coverage_holes,
     problem,
     serialize_bar,
     with_recording_started_at,
@@ -75,8 +81,9 @@ from candleviewer.bars.metrics import (
     record_page,
 )
 from candleviewer.bars.models import BarSpec
-from candleviewer.bars.reader import BarKey, BarPage, row_key, stored_bar
+from candleviewer.bars.reader import BarKey, BarPage, StoredBar, row_key, stored_bar
 from candleviewer.bars.spec import PARAM_MAX_LEN, check_param_bounds, from_wire, qty_step_for
+from candleviewer.bars.write_holes import Present, WriteHoleLedger
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.models import TimeRange
 from candleviewer.storage.repositories.rows import TradeTotals
@@ -202,11 +209,13 @@ def make_market_bars_router(
     symbol_listed: Callable[[str], bool] | None = None,
     qty_step: Callable[[str], Decimal | None] | None = None,
     now_us: Callable[[], int],
+    write_holes: WriteHoleLedger | None = None,
 ) -> APIRouter:
     """Bind `GET /market/bars`. `reader_provider()` is resolved per request (the bars reader
     exists only once a real QuestDB is composed); `None` -> 503. `symbol_listed=None` fails
     closed (503), never open, and so does `trade_totals=None` for non-time bars. `qty_step` is the
-    catalogue's lot step for the `volume`/`delta` floor (SR-E12-03); with none, they are refused."""
+    catalogue's lot step for the `volume`/`delta` floor (SR-E12-03); with none, they are refused.
+    `write_holes` lists the closed bars not stored in `meta.coverage_holes` (module docstring)."""
     router = APIRouter(tags=["market-data"])
 
     async def _authorize(request: Request) -> None:
@@ -375,8 +384,10 @@ def make_market_bars_router(
         # (even the page's last) is stepped over, never ends the series.
         rows = [stored_bar(r) for r in page.rows]
         next_cursor: str | None = None
+        page_to = end_us  # where the next page starts (the span `meta.coverage_holes` covers)
         if spec.kind != "time":
             if page.next_key is not None:  # keyset: the extra row opens the next page
+                page_to = page.next_key[0]
                 rows = [s for s, r in zip(rows, page.rows, strict=True)
                         if row_key(r) < page.next_key]  # fmt: skip
                 next_cursor = encode_key_cursor(scope, page.next_key)
@@ -388,6 +399,7 @@ def make_market_bars_router(
                 rows = rows[:limit]
                 resume = rows[-1].ts_us + 1
             next_cursor = encode_cursor(scope, resume)
+            page_to = resume
         if not include_open:
             rows = [r for r in rows if r.confirmed]  # only the newest bar can be forming
         sources = (["tape"] if any(r.tape_built for r in rows) else []) + (
@@ -395,14 +407,35 @@ def make_market_bars_router(
         record_page("bars", len(rows), sources)
         _log().info("market_bars_served", symbol=symbol, bar_type=bar_type,
                     spec_hash=spec.spec_hash, tiers=sources, rows=len(rows))  # fmt: skip
+        holes: list[dict[str, int]] | None = None
+        if write_holes is not None:
+            if at_key is not None:
+                page_from = at_key[0]
+            else:
+                page_from = start_us if after_us is None else max(start_us, after_us + 1)
+            holes = merge_coverage_holes(write_holes.holes_for(
+                symbol, spec.spec_hash, page_from, page_to, _present(spec, rows),
+            )) or None  # fmt: skip
         meta = build_meta(count=len(rows), next_cursor=next_cursor, sources=sources,
-                          recording_started_at_us=started, generated_at_us=now_us())  # fmt: skip
+                          recording_started_at_us=started, generated_at_us=now_us(),
+                          coverage_holes=holes)  # fmt: skip
         return kline_response(
             symbol=symbol, interval=param, bar_type=bar_type,
             bars=[serialize_bar(r, include_delta=include_delta) for r in rows], meta=meta,
         )  # fmt: skip
 
     return router
+
+
+def _present(spec: BarSpec, rows: list[StoredBar]) -> list[Present]:
+    """The bars a page serves, as the hole ledger keys them: a time bar spans its interval, any
+    other bar `[open, close + 1)`."""
+    if spec.kind == "time":
+        width = int(spec.param_value) * 1000
+        return [Present(r.generation, r.index, r.ts_us, r.ts_us + width) for r in rows]
+    return [Present(r.generation, r.index, r.ts_us,
+                    (r.ts_us if r.close_ts_us is None else r.close_ts_us) + 1)
+            for r in rows]  # fmt: skip
 
 
 __all__ = [

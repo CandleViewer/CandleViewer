@@ -35,7 +35,8 @@ import numpy as np
 import orjson
 from fastapi.responses import JSONResponse, Response
 
-from candleviewer.bars.limits import RESPONSE_MAX_BYTES
+from candleviewer.bars.limits import MAX_COVERAGE_HOLES, RESPONSE_MAX_BYTES
+from candleviewer.bars.write_holes import cap_spans, join_spans
 
 _PROBLEM_MEDIA: Final = "application/problem+json"
 _ERR_BASE: Final = "https://candleviewer.local/errors/"
@@ -316,6 +317,10 @@ class BarSegments:
             left -= len(part)
         self._segs, self._n = kept, sum(map(len, kept))
 
+    def row_open_times(self) -> list[int]:
+        """The open times of the bars held as rows (an emitted-JSON page exposes none)."""
+        return [r.ts_us for seg in self._segs if isinstance(seg, list) for r in seg]
+
     def last_ts_us(self) -> int:
         """`ts` of the newest bar; the page must not be empty."""
         seg = self._segs[-1]
@@ -355,6 +360,21 @@ def build_meta(
     if coverage_holes is not None:
         meta["coverage_holes"] = coverage_holes
     return meta
+
+
+def merge_coverage_holes(
+    *lists: Iterable[dict[str, int]] | Iterable[tuple[int, int]], limit: int = MAX_COVERAGE_HOLES
+) -> list[dict[str, int]]:
+    """`meta.coverage_holes` from several sources (#5396): `{start_us, end_us}` dicts or
+    `(start, end)` pairs, sorted, overlapping and touching ranges joined, at most `limit` entries:
+    past it the oldest are joined into one range (it may cover served bars; it never leaves a
+    hole out)."""
+    spans: list[tuple[int, int]] = []
+    for holes in lists:
+        for h in holes:
+            spans.append((h["start_us"], h["end_us"]) if isinstance(h, dict) else h)
+    joined = cap_spans(join_spans(s for s in spans if s[0] < s[1]), limit)
+    return [{"start_us": start, "end_us": end} for start, end in joined]
 
 
 def kline_response(
@@ -401,6 +421,7 @@ __all__ = [
     "iso_us",
     "iso_us_many",
     "kline_response",
+    "merge_coverage_holes",
     "problem",
     "serialize_bar",
     "serialize_bars",
