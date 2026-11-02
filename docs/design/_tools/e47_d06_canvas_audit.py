@@ -30,8 +30,9 @@ values, the default-deny pins and the mutations).
    for the canvas alone), G-PUBLIC (no URL, host or local path), G-UNMERGED (no link to
    an unmerged pack), G-KEYWORD (no closing keyword followed by an issue number), G-HEUR, G-WALK
    (at most ten items), G-OWNER (G-ledger owners are tickets or owners, never an agent),
-   G-UNTOUCHED (only this ticket's files differ from the merge base with origin/main), G-BUDGET
-   and G-MUTLIST (§15 equals this tool's list).
+   G-UNTOUCHED (only this ticket's files differ from the merge base with origin/main), G-BUDGET,
+   G-MUTLIST (§15 equals this tool's list) and G-APPLY (the hand-off's §B is a three-column table
+   whose rows name every §C A-row exactly once, each with a ticket or the owner as its applier).
 4. **Pins (G-RULED).** Every non-blank line of the BQ section is pinned in
    `e47_d06_ruled_pins.txt`; `--repin-ruled` is the only writer and refuses while a placeholder
    is unfilled. A pin finding while another gate FAILs in the BQ section prints as NOTE.
@@ -107,6 +108,7 @@ FILE_BASE = {
     CITE_FILES["CAT"]: D02_MERGE,
     REGISTER_REL: D02_MERGE,
     **{v[0]: v[1] for v in INFLIGHT.values()},
+    PLAN["26"]: "720684e7f",  # #5386 moved `26`'s lines; its cites are re-pinned by content here
 }
 
 BQ_LIST_ID = "6569517180"  # the BQ list on #1305
@@ -442,8 +444,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-KEYWORD",
         "write a closing keyword in §17.3",
         "spec",
-        "then the closing keyword for this ticket;",
-        "then Clo" + "ses #1305;",
+        "never the closing keyword;",
+        "never Clo" + "ses #1305;",
     ),
     Mutation(
         "M-21",
@@ -502,6 +504,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "re-pinned to its merge commit when it merges",
         "re-pinned to its merge commit when it merges ([E47-D04](E47-D04.md))",
     ),
+    Mutation("M-29", "G-APPLY", "paste §C cells into D06-A16's §B row", "hand", "", ""),
 )
 
 
@@ -542,6 +545,8 @@ def apply_mutation(t: Texts, m: Mutation) -> Texts:
         text = row_sub(text, "P-3", 4, "")
     elif m.mid == "M-14":
         text = re.sub(r"(\| chart +\| drawing surrogates +\| )200 ", r"\g<1>300 ", text, count=1)
+    elif m.mid == "M-29":
+        text = row_sub(text, "D06-A16", 2, '`context` | "validWhen": "chart panel focused"')
     elif m.mid == "M-26":
         text = text + "\n" * (SPEC_BUDGET + 1)
     else:
@@ -910,6 +915,42 @@ def g_mutlist(t: Texts) -> list[Finding]:
     return []
 
 
+APPLY_HEAD = ["A", "Target", "Applied by"]
+
+
+def a_ids(cell: str) -> list[str]:
+    """The A-row ids of a §B cell: `D06-A1 … D06-A7, D06-A12` expands the range."""
+    out: list[str] = []
+    for part in cell.split(","):
+        m = re.fullmatch(r"\s*D06-A(\d+)(?:\s*…\s*D06-A(\d+))?\s*", part)
+        if not m:
+            return [f"?{part.strip()}"]
+        lo = int(m.group(1))
+        hi = int(m.group(2)) if m.group(2) else lo
+        out += [f"D06-A{n}" for n in range(lo, hi + 1)]
+    return out
+
+
+def g_apply(t: Texts) -> list[Finding]:
+    _, _, region = section(t.hand, "## §B")
+    rows = first_table(t.hand, "## §B")
+    bad: list[str] = []
+    if not rows or rows[0] != APPLY_HEAD:
+        bad.append("the §B header is not A | Target | Applied by")
+    want = [r[0] for r in first_table(t.hand, "## §C")[1:]]
+    seen: list[str] = []
+    for r in rows[1:]:
+        if len(r) != 3:
+            bad.append(f"the §B row {r[0]} has {len(r)} cells, not 3")
+            continue
+        seen += a_ids(r[0])
+        if AGENT_RE.search(r[2]) or not OWNER_OK_RE.search(r[2]):
+            bad.append(f"the §B row {r[0]} names no ticket or owner as its applier")
+    if sorted(seen) != sorted(want):
+        bad.append("§B does not name every §C A-row exactly once")
+    return [("G-APPLY", b, "hand", region) for b in bad]
+
+
 def findings(t: Texts, values: Values) -> list[Finding]:
     out: list[Finding] = []
     out += g_anchor(t, values) + g_marker(t) + g_cite(t) + g_quote(t) + g_arow(t)
@@ -919,7 +960,7 @@ def findings(t: Texts, values: Values) -> list[Finding]:
     out += g_lines(t, "G-PUBLIC", lambda ln: bool(URL_RE.search(ln)), "a URL, host or path")
     out += g_lines(t, "G-UNMERGED", lambda ln: bool(UNMERGED_RE.search(ln)), "an unmerged link")
     out += g_keyword(t) + g_heur(t) + g_walk(t) + g_owner(t) + g_untouched(t)
-    out += g_budget(t) + g_mutlist(t)
+    out += g_budget(t) + g_mutlist(t) + g_apply(t)
     return out
 
 

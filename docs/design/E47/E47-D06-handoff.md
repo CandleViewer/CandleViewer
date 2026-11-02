@@ -1,6 +1,6 @@
 # E47-D06 — Hand-off (`16` §11.4; the canvas accessibility layers)
 
-Components: **CMP-049 Table** in grid mode with **CMP-055 FilterBar**, **CMP-056 ColumnPicker**, **CMP-053 Pagination** and **CMP-099 PrintExportBar** (the one table shell, spec §6.1), **CMP-028 Banner** (the stale banner, §6.5), **CMP-026 EmptyState** (§6.6), **CMP-180 ChartRoot** (the mirror container and the canvas label, §3, §8), the canvas primitives **CMP-109**, **CMP-110**, **CMP-111**, **CMP-112**, **CMP-183** … **CMP-187** (§2), **CMP-108 DomLadderRow** and **CMP-225 DeepStatsStrip** (native DOM), **CMP-227 EstimatedBadge** (R-5), **CMP-079 RbacGate** with the **CMP-019 Icon** `lock` glyph (the T2 controls, rendering 2a and the one-notice form: spec §10's T2 paragraph; board 08), **CMP-041 Menu** (the row actions), **CMP-039 FocusRing**. Spec: [E47-D06.md](E47-D06.md). Owner approval pending (#2701).
+Components: **CMP-049 Table** in grid mode with **CMP-055 FilterBar**, **CMP-056 ColumnPicker**, **CMP-053 Pagination** and **CMP-099 PrintExportBar** (the one table shell, spec §6.1), **CMP-028 Banner** (the stale banner, §6.5), **CMP-026 EmptyState** (§6.6), **CMP-180 ChartRoot** (the mirror container and the canvas label, §3, §8), the canvas primitives **CMP-109**, **CMP-110**, **CMP-111**, **CMP-112**, **CMP-183** … **CMP-187** (§2), **CMP-108 DomLadderRow** and **CMP-225 DeepStatsStrip** (native DOM), **CMP-227 EstimatedBadge** (R-5), **CMP-079 RbacGate** with the **CMP-019 Icon** `lock` glyph (the T2 controls, rendering 2a and the one-notice form: spec §10's T2 paragraph; board 06), **CMP-041 Menu** (the row actions), **CMP-039 FocusRing**. Spec: [E47-D06.md](E47-D06.md). Owner approval pending (#2701).
 
 ## §A Hand-off checklist (`16` §11.4)
 
@@ -14,7 +14,7 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 | Accessible name and role | [x] spec §5                                                                                                                      | [x] spec §5, §8                                                                          | [x] spec §10 (full label, `aria-disabled`) |
 | Live data                | [x] spec §6.4 (in place), §6.5 (stale)                                                                                           | [x] spec §8 (cadence, feed clause)                                                       | [x] none                                   |
 | Motion pair              | [x] none                                                                                                                         | [x] none                                                                                 | [x] none                                   |
-| Density notes            | [x] spec §6.7 (200 %, 400 %, text scale)                                                                                         | [x] spec §4 (the ceiling)                                                                | [x] none                                   |
+| Density notes            | [x] spec §6.7 (200 %, 400 %, text scale)                                                                                         | [x] spec §4 (the caps side by side, never summed)                                        | [x] none                                   |
 | Essential exceptions     | [x] none (R-1)                                                                                                                   | [x] none (R-1)                                                                           | [x] none                                   |
 | Tokens used              | [x] D04E11's                                                                                                                     | [x] none new                                                                             | [x] `color.text.tertiary`, `.secondary`    |
 | Data contract            | [ ] NO: D06-G2, D06-G4, D06-G5                                                                                                   | [ ] NO: D06-G1, D06-G3                                                                   | [x] the session's permissions              |
@@ -24,13 +24,13 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 
 ## §B Who applies what
 
-| A                                 | Target                                                     | Applied by                                                          |
-| --------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------- |
-| D06-A1 … D06-A7, D06-A12, D06-A17 | `05` §6 (the normative expansion, T DoD; the reason names) | E47-D11 (#1310), the hand-off pack (the ruling's cross-list)        |
-| D06-A8 … D06-A11                  | `15` CMP-109, CMP-184, CMP-185, CMP-111                    | E47-D10 (#1309), the CMP contribution                               |
-| D06-A13 … D06-A15                 | `14` SCR-050, SCR-052, SCR-045                             | the `14` owner, at the owner's sign-off PR                          |
-| D06-A16                           | the keymap                                                 | `context`, `validWhen`, `visibleControl` (KM:337, :339, :342, :343) | "validWhen": "chart panel focused" | `context` each inventory panel's; "validWhen": "an inventory panel focused"; `visibleControl` "Table switch in each inventory panel header" (E47-D06 §7); `Shift+R` is `chart.table_refresh`, D04E11's G-4 (D04E11:273), not re-added here |
-| D06-A18                           | D04E11 §13 (the two table payloads)                        | E47-D11 (#1310), the hand-off pack                                  |
+| A                                 | Target                                                     | Applied by                                                   |
+| --------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------ |
+| D06-A1 … D06-A7, D06-A12, D06-A17 | `05` §6 (the normative expansion, T DoD; the reason names) | E47-D11 (#1310), the hand-off pack (the ruling's cross-list) |
+| D06-A8 … D06-A11                  | `15` CMP-109, CMP-184, CMP-185, CMP-111                    | E47-D10 (#1309), the CMP contribution                        |
+| D06-A13 … D06-A15                 | `14` SCR-050, SCR-052, SCR-045                             | the `14` owner, at the owner's sign-off PR                   |
+| D06-A16                           | the keymap (KM:337, :339, :342, :343)                      | E47-S08 (#1322), the keymap build (spec §7, §17.2)           |
+| D06-A18                           | D04E11 §13 (the two table payloads)                        | E47-D11 (#1310), the hand-off pack                           |
 
 ## §C Copy-ready rows (PROPOSED)
 
@@ -59,13 +59,13 @@ Old is a verbatim fragment of the cited line at `85b6b6c1c` (the tool checks it)
 
 ## §D Storybook story lists (each story per theme and density, `15`:41)
 
-| Component              | Stories                                                                                                                                          |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| CMP-049 Table (shells) | ProfileTable · TpoPeriods · LadderTableDepthSort · LadderMyLevels · HeatmapLevels · HeatmapHistory · CvdTable                                    |
-| CMP-049 Table (states) | StaleBanner per surface · FeedStale · Empty · NoData · FilteredToZero · LoadMore · PatchInPlace · OrderHeldWhileFocused · PauseUpdates · Zoom400 |
-| CMP-180 ChartRoot      | the merged list + DistantJumpRewindow · CanvasLabelStale                                                                                         |
-| CMP-112 BigTradeBubble | the merged list + SparseSetWindowed                                                                                                              |
-| CMP-079 RbacGate       | the merged list + LadderTradeKeysOneNotice · RowActionsT2 (Create alert, Add note, Replay from here) · MyLevelsFilterT2 · ExportCsvT2            |
+| Component              | Stories                                                                                                                                                 |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CMP-049 Table (shells) | ProfileTable · TpoPeriods · LadderTableDepthSort · LadderMyLevels · HeatmapLevels · HeatmapHistory · CvdTable                                           |
+| CMP-049 Table (states) | StaleBanner per surface · FeedStale · Empty · NoData · FilteredToZero · LoadMore · PatchInPlace · OrderHeldWhileFocused · PauseUpdates · Zoom400        |
+| CMP-180 ChartRoot      | the merged list + DistantJumpRewindow · CanvasLabelStale                                                                                                |
+| CMP-112 BigTradeBubble | the merged list + SparseSetWindowed                                                                                                                     |
+| CMP-079 RbacGate       | the merged list + LadderTradeKeysOneNotice · RowActionsT2 (Create alert, Add note, Replay from here) · MyLevelsFilterT2 · ExportCsvT2 · ViewAsOneNotice |
 
 ## §E Owner walkthrough checklist (each frame a 1280 × 800 window; compact density)
 
@@ -74,7 +74,7 @@ Old is a verbatim fragment of the cited line at `85b6b6c1c` (the tool checks it)
 - [ ] Board 03: the profile table names POC, VAH and VAL in words; the In VA filter narrows rows only.
 - [ ] Board 04: sorted by cumulative depth with My levels only, a tick changes values and nothing else.
 - [ ] Board 05: the stale banner names the unit and offers `Shift+R`; a stale feed says "as of".
-- [ ] Board 06: the switch sits in each panel header; a gated row action keeps its label and says why.
+- [ ] Board 06: the switch sits in each panel header; a gated row action keeps its label and says why; under view-as one notice serves them all.
 - [ ] Board 07: the footprint bar's five values appear in the mirror label and the table row.
 - [ ] Record `approved` on #1305, or the findings `(heuristic)` with board and frame names.
 
@@ -97,7 +97,7 @@ The oracle is spec §9, one row per visual datum. For a fixed recorded fixture, 
 
 | QA   | Given / when                                                                                                                       | Then (assert)                                                                                                             |
 | ---- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| QA-1 | the fixture's footprint bar with an estimated, imbalanced level; read P-1 … P-5                                                    | bid, ask, delta with `+` / `−`, the flag word and "estimated, {reason}" equal in the label and the table                  |
+| QA-1 | the fixture's footprint bar with an estimated, imbalanced level; read P-1 … P-5                                                    | bid, ask, delta with `+` / `−`, the flag word and "Estimated, {display name}" equal in the label and the table            |
 | QA-2 | the ladder table sorted by cumulative depth, My levels only, focus on a row; replay one tick                                       | the same row node keeps focus and its `aria-rowindex`; the sort and filter state are unchanged; no row node was recreated |
 | QA-3 | open the CVD table on a bar, then pan the chart past it                                                                            | the banner names the bar; `Shift+R` focuses the current bar's row; the banner is gone                                     |
 | QA-4 | load 100,000 bars, measure the accessibility tree; jump to the first bar                                                           | the mirror's materialised units stay within §4's chart caps before and after; one range label                             |
@@ -112,20 +112,20 @@ Two screen readers (NVDA with Firefox, JAWS with Chrome) on a coded prototype of
 
 The boards of spec §0, on page `E47-D06 — Canvas accessibility`; frames named `<surface>/<state> · <theme>`. Data: a seeded synthetic stream declared synthetic on every board's face; only the instrument's tick size comes from a recorded fixture.
 
-| Board | Frames                                                                                                               |
-| ----- | -------------------------------------------------------------------------------------------------------------------- |
-| 01    | `inventory/sheet · dark`                                                                                             |
-| 02    | `grammar/cursor-window · dark`, `grammar/sparse-set · dark`, `grammar/targets · dark`                                |
-| 03    | `profile/sorted · dark`, `profile/in-va · dark`                                                                      |
-| 04    | `ladder/depth-sort-my-levels · dark`, `ladder/patch-tick · dark`                                                     |
-| 05    | `states/stale · dark`, `states/feed-stale · dark`, `states/empty · dark`, `states/filtered · dark`                   |
-| 06    | `headers/switches · dark`, `headers/t2-row-action · dark`, `headers/t2-export · dark`, `ladder/t2-trade-keys · dark` |
-| 07    | `parity/footprint-bar · dark`                                                                                        |
-| 08    | `profile/sorted · light`, `profile/in-va · light`                                                                    |
+| Board | Frames                                                                                                                                                                                  |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 01    | `inventory/sheet · dark`                                                                                                                                                                |
+| 02    | `grammar/cursor-window · dark`, `grammar/sparse-set · dark`, `grammar/targets · dark`                                                                                                   |
+| 03    | `profile/sorted · dark`, `profile/in-va · dark`                                                                                                                                         |
+| 04    | `ladder/depth-sort-my-levels · dark`, `ladder/patch-tick · dark`                                                                                                                        |
+| 05    | `states/stale · dark`, `states/feed-stale · dark`, `states/empty · dark`, `states/no-data · dark`, `states/filtered · dark`, `states/load-more · dark`                                  |
+| 06    | `headers/switches · dark`, `headers/t2-row-action · dark`, `headers/t2-my-levels · dark`, `headers/t2-export · dark`, `ladder/t2-trade-keys · dark`, `headers/t2-view-as-notice · dark` |
+| 07    | `parity/footprint-bar · dark`                                                                                                                                                           |
+| 08    | `profile/sorted · light`, `profile/in-va · light`                                                                                                                                       |
 
 ## §J Summary for #1305
 
-1. Text-first four-layer spec + hand-off + default-deny audit tool; 8<!--=COUNT:boards--> boards PENDING, drawn later in this PR; BQ-0 … BQ-15 RULED (comment 6570047499); `Refs` + `Partial:` until E47-D02 and E47-D04 merge, then `Closes` for this ticket.
+1. Text-first four-layer spec + hand-off + default-deny audit tool; 8<!--=COUNT:boards--> boards PENDING, drawn in their own PR, which carries the ticket's closing keyword (comment 6573532736); BQ-0 … BQ-15 RULED (comment 6570047499); this text PR is `Refs` + `Partial:`.
 2. 15<!--=COUNT:inv--> surfaces, each with its mirror unit, live-region class, table and canvas label; native DOM surfaces meet layers 1 and 3 by the element; no exemption.
 3. Two grammars: a cursor window for dense surfaces, a sparse surrogate set for sparse ones; 24 px, aligned, never `display:none`.
 4. The merged caps side by side, never summed; the analogous rows PROPOSED; a distant jump re-windows (14.3 ms once, one frame of skew; its latency PROPOSED for E46) and announces its range once.
