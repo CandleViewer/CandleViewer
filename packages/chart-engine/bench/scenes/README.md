@@ -10,6 +10,7 @@ Except `atlas-build.ts`: E11-S11 production bench code over `src/text`, driven b
 Except `candle-ring.ts` and `candle-series.ts`: E12-S06 production bench code over `src/layers`, `src/model` and `src/gl`, driven by Vitest.
 Except `lut-gen.ts`: E11-T04 production bench code over `src/theme`, driven by Vitest (BQ-T04-09).
 Except `a11y-window.ts`: E11-S13 production bench code over `src/a11y` and the render runtime, driven by Vitest (BQ-S13-01).
+Except `dom-mirror.ts`: E11-S13 production bench code over `src/a11y`, driven by Vitest (BQ-S13-14).
 
 This directory is **throwaway prototype code** for the M0 spike ticket E06-K02
 ("Prototype scene A: 100k-bar model, visible-window draw and LOD ladder"). It

@@ -10,7 +10,7 @@ import type { CapabilityReport, FromWorker } from "./protocol.js";
 /** The dedicated-worker scope members used here (typed structurally: no WebWorker lib). */
 interface WorkerScope {
   onmessage: ((ev: { data: unknown }) => void) | null;
-  postMessage(msg: FromWorker): void;
+  postMessage(msg: FromWorker, transfer?: ArrayBuffer[]): void;
   requestAnimationFrame?: (cb: () => void) => number;
   OffscreenCanvas?: new (w: number, h: number) => { getContext(id: string): unknown };
 }
@@ -32,7 +32,8 @@ export function probeWorker(scope: WorkerScope): CapabilityReport {
 export function startWorker(scope: WorkerScope): void {
   const runtime = createRenderRuntime({
     runMode: "worker",
-    post: (msg) => scope.postMessage(msg),
+    post: (msg, transfer) =>
+      transfer === undefined ? scope.postMessage(msg) : scope.postMessage(msg, transfer),
     requestFrame: (cb) => {
       if (typeof scope.requestAnimationFrame === "function") scope.requestAnimationFrame(cb);
       else setTimeout(cb, 16);

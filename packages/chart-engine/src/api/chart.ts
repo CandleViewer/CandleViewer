@@ -9,6 +9,8 @@ import {
   sameView,
   type A11yUpdate,
 } from "../a11y/window.js";
+import { DomMirror, type MirrorNode } from "../a11y/DomMirror.js";
+import { readA11yRows } from "../a11y/rows.js";
 import { mountSurface, probeRenderProfile } from "../host/mount.js";
 import { createScaleBadge } from "../host/scale-badge.js";
 import { readReducedMotion, watchMotion } from "../host/motion.js";
@@ -88,6 +90,12 @@ function positiveInt(value: number | undefined, fallback: number, name: string):
 }
 
 /**
+ * An element as the mirror's structural node. It has every member at run time; tsc cannot relate
+ * the DOM's generic `appendChild<T extends Node>` to the structural signature (E11-S13 PR-2).
+ */
+const asMirror = (el: HTMLElement): MirrorNode => el as unknown as MirrorNode;
+
+/**
  * Mounts a chart into `opts.container` and returns its facade synchronously (§8). Capability
  * detection is lazy (first frame or `getStats`), so no caller needs to await anything.
  */
@@ -96,7 +104,8 @@ export function createChart(opts: ChartOptions): Chart {
   positiveInt(opts.maxBars, CHART_DEFAULTS.maxBars, "maxBars");
   positiveInt(opts.memoryBudgetMb, CHART_DEFAULTS.memoryBudgetMb, "memoryBudgetMb");
 
-  const surface = mountSurface(opts.container);
+  const mirrorOn = opts.a11y?.mirror === true; // BQ-S13-15: one default-off flag
+  const surface = mountSurface(opts.container, mirrorOn);
   const doc = opts.container.ownerDocument;
   const listeners = new Map<keyof ChartEvents, Set<Listener<keyof ChartEvents>>>();
   const panes: PaneInternal[] = [];
@@ -110,6 +119,26 @@ export function createChart(opts: ChartOptions): Chart {
   // E11-S13: the cache of the last `a11y` message the synchronous getters read (E06-D03 D9).
   let a11y: A11yUpdate | null = null;
   const a11yListeners = new Set<A11yWindowListener>();
+  // E11-S13 PR-2: the mirror writes on the page's frame, one batch per frame (26 §12).
+  const view = doc.defaultView;
+  const mirror = mirrorOn
+    ? new DomMirror({
+        root: asMirror(surface.mirrorRoot),
+        createElement: (tag) => asMirror(doc.createElement(tag)),
+        schedule: (cb) =>
+          typeof view?.requestAnimationFrame === "function"
+            ? void view.requestAnimationFrame(cb)
+            : void setTimeout(cb, 16),
+        now: () => performance.now(),
+        setTimer: (cb, ms) => {
+          const t = setTimeout(cb, ms);
+          return () => clearTimeout(t);
+        },
+        setCanvasLabel: (text) => surface.setCanvasLabel(text),
+        locale: opts.locale ?? "en-GB",
+        timeZone: opts.timeZone ?? "UTC",
+      })
+    : null;
 
   function emit<E extends keyof ChartEvents>(e: E, payload: ChartEvents[E]): void {
     const set = listeners.get(e);
@@ -202,10 +231,13 @@ export function createChart(opts: ChartOptions): Chart {
         if (update === null) return; // an older worker's summary-only message: keep the cache
         const prev = a11y?.window;
         a11y = update;
+        // 26 §8: rows are null unless `a11y.mirror` is on, whatever the worker sent.
+        const rows = mirrorOn ? readA11yRows(msg.rows) : null;
+        mirror?.update(update.window, rows, msg.barCount ?? update.window.lastBar + 1);
         // A hover-only summary change never reaches the window's listeners (E06-D03 D6).
         const same = prev !== undefined && sameCursorWindow(prev, update.window);
         if (same && sameView(prev, update.window)) return;
-        for (const cb of [...a11yListeners]) cb(update.window, null, update.origin);
+        for (const cb of [...a11yListeners]) cb(update.window, rows, update.origin);
         return;
       }
       default:
@@ -231,6 +263,7 @@ export function createChart(opts: ChartOptions): Chart {
     ...(opts.fonts !== undefined && { fonts: opts.fonts }),
     // Bench mode (every-frame `frame`, the C-Q02-1 LOD trace) has no §8 option: README BQ-18.
     bench: false,
+    a11yMirror: mirrorOn,
     listener: {
       deliver: onWorker,
       lost(final: boolean, correlationId: string): void {
@@ -373,6 +406,7 @@ export function createChart(opts: ChartOptions): Chart {
       detachInput();
       detachSize();
       detachMotion();
+      mirror?.dispose();
       badge.dispose();
       host.dispose();
       surface.unmount();

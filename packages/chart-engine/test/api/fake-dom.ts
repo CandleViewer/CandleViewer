@@ -75,6 +75,28 @@ export class FakeElement extends FakeTarget {
     return this.attributes.get(name) ?? null;
   }
 
+  removeAttribute(name: string): void {
+    this.attributes.delete(name);
+  }
+
+  /** E11-S13: markup is never written into the mirror (textContent only); any write is counted. */
+  static markupWrites = 0;
+  set innerHTML(_v: string) {
+    FakeElement.markupWrites += 1;
+  }
+  get innerHTML(): string {
+    return "";
+  }
+  set outerHTML(_v: string) {
+    FakeElement.markupWrites += 1;
+  }
+  get outerHTML(): string {
+    return "";
+  }
+  insertAdjacentHTML(): void {
+    FakeElement.markupWrites += 1;
+  }
+
   /** Pointer ids captured by `setPointerCapture` (E11-S04), in order. */
   readonly captured: number[] = [];
 

@@ -4,7 +4,7 @@
 // markers, each as the narrowest shape the engine needs today (package README "Design deltas").
 // Types only: no React, no DOM globals, no I/O here (C-2.16). `HTMLElement` is a type reference.
 
-import type { A11yWindow, CursorOrigin } from "../a11y/window.js";
+import type { A11yRows, A11yWindow, CursorOrigin } from "../a11y/window.js";
 import type { DataRange, InstanceRing, SeriesProjection } from "../layers/plugin-api.js";
 
 // ---- §8 verbatim ----------------------------------------------------------
@@ -22,6 +22,9 @@ export interface ChartOptions {
   // Design delta BQ-258 (E11-S11): the design fonts' bytes for the SDF atlas (C-2.16: the
   // engine fetches nothing). Copied per chart; absent means no atlas is built.
   fonts?: readonly { family: string; weight: number; bytes: ArrayBuffer; version?: string }[];
+  // Design delta BQ-S13-15 (E11-S13 PR-2, C-4.13): the DOM mirror, the `application` root and the
+  // canvas `img` label, default off until E11-S13's last PR flips it; off keeps today's a11y tree.
+  a11y?: { readonly mirror?: boolean };
 }
 
 export interface Chart {
@@ -572,28 +575,13 @@ export interface FocusedUnit {
   readonly priceLevel?: number;
 }
 
-export type { A11yWindow, CandleTier, CursorOrigin, FootprintTier } from "../a11y/window.js";
-/**
- * E06-D03 D9 `A11yRows`: the mirror window's struct-of-arrays, prices as ticks from
- * `priceOrigin` exactly as `CandleData`. Declared now; the worker sends rows from E11-S13 PR-2,
- * so the feed passes null until then.
- */
-export interface A11yRows {
-  readonly firstBar: number;
-  readonly count: number;
-  readonly shifted: number;
-  readonly dirty: Uint16Array;
-  readonly time: Float64Array;
-  readonly open: Int32Array;
-  readonly high: Int32Array;
-  readonly low: Int32Array;
-  readonly close: Int32Array;
-  readonly volume: Float32Array;
-  readonly delta: Float32Array;
-  readonly priceOrigin: number;
-  readonly tickSize: number;
-  readonly priceDecimals: number;
-}
+export type {
+  A11yRows,
+  A11yWindow,
+  CandleTier,
+  CursorOrigin,
+  FootprintTier,
+} from "../a11y/window.js";
 
 export type A11yWindowListener = (
   w: A11yWindow,

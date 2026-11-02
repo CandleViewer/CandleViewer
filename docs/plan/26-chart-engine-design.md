@@ -437,6 +437,8 @@ Shipped by E11-S08 PR 2 (package README BQ-134 to BQ-136), additive: `command { 
 
 Shipped by E11-S13 PR-1 (package README BQ-S13-01), additive: `a11y` keeps `cursorSummary` and adds E06-D03 D9's window (`firstBar`, `lastBar`, `viewFirstBar`, `viewLastBar`, `cursorBar`, `cursorTime`, `footprintTier`, `candleTier`, `barsPerColumn`), `origin` and `viewTimeStart`/`viewTimeEnd`, all optional on the type; the main thread decodes them with `readA11yUpdate` and keeps its cache when they are absent (an older worker). It posts on the frame the cursor window, the visible range or the summary changes (edge-triggered, ≤ 1 per frame), so the query surface stays frame-synchronized (05 §6.1); a slower cadence such as E47-D06 R-6's (#5443 head 7a9002db, if it merges as is) is consumer-side, in the label and table writers. `onA11yWindowChange` fires only when the window or the visible range changed, never for a hover-only summary (E06-D03 D6). `rows` and `cursorCells` follow with the mirror and the data cursor.
 
+Shipped by E11-S13 PR-2 (package README BQ-S13-14 and BQ-S13-15), additive: `a11y` gains `barCount` (the loaded series' length, the mirror's `aria-rowcount`) and, only when `init.config.a11yMirror` is set (the `ChartOptions.a11y.mirror` flag), `rows`, E06-D03 D9's `A11yRows` for the mirror window, its buffers transferred with the message; a `bars` batch re-posts them on its frame though the window did not move.
+
 Contract for E11-S12 (#418 PR-0, BQ-S12-10), additive: `command { k: "setLod" }` gains `auto: true`, which drops a pin set by `{ candles, footprint }` and hands both tiers back to their drivers (§3.6). The `viewport` message gains `lod { candles, footprint, barsPerColumn, aggregated }`, sent on any change of these values (edge-triggered, ≤ 1/frame), so the DOM never waits for the 1/s `frame` sample to report a tier or ratio.
 
 Shipped by E11-S10 PR 1 (package README BQ-147, BQ-148 and BQ-153), additive: `resize` sizes are CSS px equal to `backing / dpr` and may be 0 (finite, ≥ 0; dpr > 0), which suspends the chart until a non-zero size; `ExportRejectReason` gains `suspended`; `frame` gains `dpr` and `backingStorePx` (`[width, height]` in device px).
@@ -486,6 +488,7 @@ export interface ChartOptions {
   maxBars?: number; // default 200_000
   memoryBudgetMb?: number; // default 600
   fonts?: readonly { family: string; weight: number; bytes: ArrayBuffer; version?: string }[]; // SDF atlas (E11-S11 BQ-258)
+  a11y?: { readonly mirror?: boolean }; // E11-S13 BQ-S13-15: the DOM mirror flag, default off (C-4.13)
 }
 
 export interface Chart {
@@ -507,7 +510,7 @@ export interface Chart {
   getFocusedUnit(): FocusedUnit | null;
   // E11-S13 (E06-D03 D9, additive): the a11y window from the last `a11y` message, and its feed.
   // A11yWindow (its FootprintTier and CandleTier), A11yRows and CursorOrigin are D9's; the rows
-  // are null until the mirror ships. A11yWindowListener is
+  // are null unless `a11y.mirror` is on (E11-S13 PR-2). A11yWindowListener is
   // (w: A11yWindow, rows: A11yRows | null, origin: CursorOrigin) => void.
   getA11yWindow(): A11yWindow;
   onA11yWindowChange(cb: A11yWindowListener): Unsubscribe;
@@ -805,6 +808,8 @@ Per `05-accessibility-standard.md` (WCAG 2.2 AA), a canvas cannot be the whole s
 - **Motion**: the resolved motion mode of the `16-design-system-brief.md` §4 runtime contract (E05-T02, `packages/ui/src/theme/`: `data-motion` on the document root and the `candleviewer:themechange` event's `detail.motion` = `reduce`; the in-app override wins over `prefers-reduced-motion` in both directions; §7 owns the motion-safe/reduce pairs) disables momentum, fades and transitions (instant snapping instead). _Shipped for momentum (E11-S04 PR 2, package README BQ-104 / BQ-105): the host reads `data-motion` at mount and forwards each change; a `[data-cv-keyboard-help]` node in the DOM mirror lists the keys and, under reduce, says that inertia is off._
 - **Contrast**: all engine-rendered text is generated from design tokens that pass 4.5:1 against their cell backgrounds; the theme validator in `packages/ui` fails CI if a token pair regresses.
 - **Zoom/reflow**: the chart honours browser zoom to 200 % by scaling density classes rather than clipping content.
+
+_Shipped behind the default-off `ChartOptions.a11y.mirror` flag (E11-S13 PR-2, package README BQ-S13-14 and BQ-S13-15; E47-D06 R-3, R-6, §4 and §8 at #5443 head 7a9002db, if it merges as is): `src/a11y/DomMirror.ts` writes the hidden table labelled "Bars around the cursor" (E06-D03 D4; 7 cells per row, the time cell a `th scope="row"`, a bar-keyed pool, `aria-rowcount`/`aria-rowindex`, `aria-current` on the cursor row, `textContent` only, one batched write per page frame (no per-frame closure; one string per changed cell and the row buffers per a11y message), at most 200 rows and 1,611 nodes) and rolls the canvas `img` label at the R-6 cadence (a fixed 2 s; the public `a11y.ambientCadenceMs` option is PR-3's); the host wraps the canvas and mirror in the `role="application"` root with `aria-roledescription="trading chart"` (E11-D07 §2, PROPOSED until E11-Q05) and gives the canvas `tabindex="-1"` (D4); the root's single tab stop, the describedby hint and the keys are PR-3's. With the flag off the tree is unchanged (`aria-hidden` canvas). The label's symbol and interval prefix, the copy and the feed-state clause are PR-3's. One mirror snapshot holds under `full`, `reduced` and `degraded-2d` (contract test). Counters: `mirror_nodes`, `mirror_update_ms`, `desync_detected`, `mirror_rewindows` (D06-G1)._
 
 ---
 
