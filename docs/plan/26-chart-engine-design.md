@@ -439,6 +439,8 @@ Shipped by E11-S05 PR 1 (package README BQ-115 and BQ-124), additive: `command {
 
 Shipped by E11-S08 PR 2 (package README BQ-134 to BQ-136), additive: `command { k: "pickAt", x, y, pointer?, reqId? }` (`pointer` one of `mouse`, `pen`, `touch`; a safe-integer `reqId`) always answers with one `pick`, echoing `reqId`; `pick` gains `part?` (`body` or `handle`), `handle?` and `reqId?`, and carries `bar` and `price` (the bar index and integer tick level under the point) on every reply, with kind `none` on a miss and `axis` in a gutter. Hover picks come from `input` moves, edge-triggered; a new `input` row type `leave = 7` (a mouse or pen `pointerleave`, `pointer` input only) clears hover with one `objectId: null` when an object was hovered. `cell` stays absent (E18).
 
+Shipped by E11-S13 PR-1 (package README BQ-S13-01), additive: `a11y` keeps `cursorSummary` and adds E06-D03 D9's window (`firstBar`, `lastBar`, `viewFirstBar`, `viewLastBar`, `cursorBar`, `cursorTime`, `footprintTier`, `candleTier`, `barsPerColumn`), `origin` and `viewTimeStart`/`viewTimeEnd`, all optional on the type; the main thread decodes them with `readA11yUpdate` and keeps its cache when they are absent (an older worker). It posts on the frame the cursor window, the visible range or the summary changes (edge-triggered, ≤ 1 per frame), so the query surface stays frame-synchronized (05 §6.1); a slower cadence such as E47-D06 R-6's (#5443 head 7a9002db, if it merges as is) is consumer-side, in the label and table writers. `onA11yWindowChange` fires only when the window or the visible range changed, never for a hover-only summary (E06-D03 D6). `rows` and `cursorCells` follow with the mirror and the data cursor.
+
 Contract for E11-S12 (#418 PR-0, BQ-S12-10), additive: `command { k: "setLod" }` gains `auto: true`, which drops a pin set by `{ candles, footprint }` and hands both tiers back to their drivers (§3.6). The `viewport` message gains `lod { candles, footprint, barsPerColumn, aggregated }`, sent on any change of these values (edge-triggered, ≤ 1/frame), so the DOM never waits for the 1/s `frame` sample to report a tier or ratio.
 
 Shipped by E11-S10 PR 1 (package README BQ-147, BQ-148 and BQ-153), additive: `resize` sizes are CSS px equal to `backing / dpr` and may be 0 (finite, ≥ 0; dpr > 0), which suspends the chart until a non-zero size; `ExportRejectReason` gains `suspended`; `frame` gains `dpr` and `backingStorePx` (`[width, height]` in device px).
@@ -511,6 +513,12 @@ export interface Chart {
   getDomMirrorRoot(): HTMLElement;
   getVisibleWindow(): VisibleWindow | null;
   getFocusedUnit(): FocusedUnit | null;
+  // E11-S13 (E06-D03 D9, additive): the a11y window from the last `a11y` message, and its feed.
+  // A11yWindow (its FootprintTier and CandleTier), A11yRows and CursorOrigin are D9's; the rows
+  // are null until the mirror ships. A11yWindowListener is
+  // (w: A11yWindow, rows: A11yRows | null, origin: CursorOrigin) => void.
+  getA11yWindow(): A11yWindow;
+  onA11yWindowChange(cb: A11yWindowListener): Unsubscribe;
 }
 
 // Mounts into `container` and returns synchronously; capability detection is lazy (E11-T01).

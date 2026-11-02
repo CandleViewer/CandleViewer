@@ -11,6 +11,7 @@ import type {
 import type { LossDetails } from "../gl/context-loss.js";
 import type { AtlasDetails } from "../text/atlas.js";
 import type { ChartFont } from "../text/platform.js";
+import type { A11yWindow, CursorOrigin } from "../a11y/window.js";
 import { INT32_TICKS } from "../viewport/transform.js";
 
 export type { CapabilityReport, DegradeReason, ReducedCapability, RenderProfile };
@@ -219,6 +220,19 @@ export type ToWorker =
       readonly crosshair: number | null;
     };
 
+/**
+ * E11-S13 (E06-D03 D9, additive to §6's `{ cursorSummary }`): the window, its origin and the
+ * visible range's times. Optional on the type so an older worker's message stays valid; the main
+ * thread reads it through `readA11yUpdate`, which keeps its cache when they are absent.
+ */
+export type A11yWire = Partial<
+  A11yWindow & {
+    readonly origin: CursorOrigin;
+    readonly viewTimeStart: number;
+    readonly viewTimeEnd: number;
+  }
+>;
+
 export interface LodLevels {
   readonly candles: 0 | 1 | 2;
   readonly footprint: 0 | 1 | 2 | 3;
@@ -284,7 +298,7 @@ export type FromWorker =
       /** Percent / indexed: the anchor bar's close in ticks; null when none. */
       readonly anchorTick: number | null;
     }
-  | { readonly t: "a11y"; readonly id: ChartId; readonly cursorSummary: string }
+  | ({ readonly t: "a11y"; readonly id: ChartId; readonly cursorSummary: string } & A11yWire)
   /**
    * E12-S06 (BQ-9, additive): the main series' visible range holds no bar (`empty`) or some
    * (`ready`); posted on a change only. While empty the engine draws no grid; SCR-047 is the app's.

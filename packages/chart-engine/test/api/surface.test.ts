@@ -89,19 +89,25 @@ const RULED_ADDITIONS = ["toTicks"]; // E12-S06 BQ-10
 describe("Scenario: The package builds and exports the designed surface", () => {
   it("exports exactly the frozen name list (a widening shows up in review)", () => {
     expect(surface.names).toEqual([
+      "A11yRows",
+      "A11yWindow",
+      "A11yWindowListener",
       "BarView",
       "BubbleOptions",
       "CandleData",
       "CandleOptions",
+      "CandleTier",
       "Chart",
       "ChartEvents",
       "ChartOptions",
+      "CursorOrigin",
       "Density",
       "Drawing",
       "FocusedUnit",
       "FootprintCellRef",
       "FootprintData",
       "FootprintOptions",
+      "FootprintTier",
       "FrameStats",
       "HeatmapColumnData",
       "HeatmapOptions",
@@ -201,14 +207,16 @@ describe("Scenario: The package builds and exports the designed surface", () => 
     ]);
   });
 
-  it("keeps the Chart and Pane members of §8 (plus BQ-3's accessibility queries)", () => {
+  it("keeps the Chart and Pane members of §8 (plus BQ-3's and BQ-S13-01's a11y queries)", () => {
     expect(Object.keys(surface.members("Chart")).sort()).toEqual([
       "addPane",
       "dispose",
+      "getA11yWindow",
       "getDomMirrorRoot",
       "getFocusedUnit",
       "getStats",
       "getVisibleWindow",
+      "onA11yWindowChange",
       "panes",
       "removePane",
       "setDensity",
