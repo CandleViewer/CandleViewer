@@ -4,9 +4,10 @@
 Standalone, offline, stdlib only; run it with `python3 -I`. It reads the pack, the copy
 deck and the pins file from the working tree, and every cited file AS TEXT with
 `git show`: the plan docs, E09-D09, E10-D03, E10-D04, the design-spec rules and the
-sprint calendar at the pinned base (`BASE`), and the five unmerged parents at their
-pinned heads (`REF_OF`): the E38-D01 memo at #5451's, E38-D02 at #5494's, E38-D03 at
-#5493's, E38-D04 at #5490's and E38-D05 at #5514's head (#1076), each "if it merges as is".
+sprint calendar at the pinned base (`BASE`), and the five parents at their pinned refs
+(`REF_OF`): the E38-D01 memo at #5451's head, E38-D02 at #5494's, E38-D03 at #5493's and
+E38-D04 at #5490's, each "if it merges as is", and E38-D05 (#1076) at #5514's merge,
+merged as `fc1ddb3a5`.
 For the token names it imports `packages/ui/tokens/tests/verify_tokens.py` (the token
 loader) from the working tree and never re-implements it. Default-deny: a gate that
 cannot read its input FAILs.
@@ -23,7 +24,7 @@ One status vocabulary (the orchestrator's ruling on BQ-07, shared with E37): `me
 (verbatim in a merged source at the base), `RULED` (an unmerged parent's text that its
 BQ ruling settled, named in `ruling`), `PROPOSED` (owner approval pending). A safety
 string carries `frozen`, a group id (`FZ-nn`) of the deck's `frozen` table; ids are key
-names only. D05 (#5514) is pinned at its PR's head like the other parents (R6).
+names only. D05 is pinned at #5514's merge commit, merged as `fc1ddb3a5` (R6).
 
 Gates (each FAIL led by its name):
   G-STATES     every state id of D02's and D03's state tables, every frame name of
@@ -101,7 +102,7 @@ D01_REF = "4774b2f8cd7b67a1ee934fe88546568f7aa3e34c"  # #5451's head (the memo)
 D02_REF = "292ce7953775deabf4ffde139db2a887be9592e8"  # #5494's head (E38-D02)
 D03_REF = "75c776d82236961a8af1fbafa47d217bb82f6720"  # #5493's design-approved head
 D04_REF = "2c47253340e130e6b88d25ed209fd1666e01418d"  # #5490's head (E38-D04)
-D05_REF = "d8fe49a1b38795e7933fcd3dc6943a9b361699a6"  # #5514's head (E38-D05)
+D05_REF = "fc1ddb3a5405cec783cc479b97ceb5deaea4a4ee"  # #5514's merge (E38-D05)
 TOKENS = ROOT / "packages" / "ui" / "tokens"
 PATHS: dict[str, str] = {
     "00": "docs/plan/00-planning-brief.md",
@@ -1015,7 +1016,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts], tuple[str, ...]], ...
     (
         "G-COPY",
         "a count typed by hand",
-        sub("Of 148<!--=COPY:total-->", "Of 149<!--=COPY:total-->"),
+        sub("Of 149<!--=COPY:total-->", "Of 150<!--=COPY:total-->"),
         FULL_ONLY,
     ),
     (

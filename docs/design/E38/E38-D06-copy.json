@@ -3,7 +3,7 @@
   "version": "v1",
   "base": "b005ce6105",
   "header": "The copy deck is the source for the i18n string ids; v1 is English-only and no string is hardcoded",
-  "statuses": "merged = verbatim in a merged source at the base; RULED = an unmerged parent's text its BQ ruling settled (`ruling`); PROPOSED = owner approval pending. A safety string carries `frozen`, a group of the `frozen` table that lists it in its `ids`, and ships byte for byte. The ids are i18n key names only. D05's A-n marks (`pending`) are read at #5514's head (#1076), pinned by content if it merges as is, and re-pinned at its merge.",
+  "statuses": "merged = verbatim in a merged source at the base; RULED = an unmerged parent's text its BQ ruling settled (`ruling`); PROPOSED = owner approval pending. A safety string carries `frozen`, a group of the `frozen` table that lists it in its `ids`, and ships byte for byte. The ids are i18n key names only. D05's A-n marks (`pending`) are read at #5514's merge, merged as `fc1ddb3a5` (#1076), and pinned by content.",
   "required": {
     "demo_rest_only": "env.popover.demo_statement",
     "not_a_backtest_guarantee": "sim.caveat"
@@ -29,7 +29,7 @@
     },
     "FZ-03": {
       "what": "the switch outcome",
-      "ids": ["env.switched.banner_live", "env.failed.fallback"]
+      "ids": ["env.switched.banner_live", "env.failed.fallback", "env.failed.timeout"]
     },
     "FZ-04": {
       "what": "every not-permitted and blocked reason",
@@ -459,6 +459,17 @@
       "source": "D02:170",
       "announce": "assertive",
       "frozen": "FZ-03"
+    },
+    "env.failed.timeout": {
+      "string": "The switch didn't finish in time.",
+      "screen": "SCR-074",
+      "kind": "error",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D05:342",
+      "announce": "assertive",
+      "frozen": "FZ-03",
+      "pending": "D05 A-3"
     },
     "env.blocked.reason": {
       "string": "2 algos are running: BTC trail, ETH OCO. Stop them or let them finish before switching.",
