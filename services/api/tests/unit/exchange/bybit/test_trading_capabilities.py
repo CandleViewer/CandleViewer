@@ -177,14 +177,17 @@ def test_no_endpoint_moves_money_or_touches_a_key() -> None:
 def test_endpoint_classes_and_lanes_follow_rule_12() -> None:
     by_class = {(e.endpoint_class, e.lane) for e in ENDPOINTS.values() if e.method == "GET"}
     assert by_class == {(EndpointClass.ACCOUNT, "poll")}
-    exits = {n: (ENDPOINTS[n].endpoint_class, ENDPOINTS[n].lane) for n in ("cancel_order",
-             "cancel_all", "set_trading_stop")}  # fmt: skip
+    exits = {n: (ENDPOINTS[n].endpoint_class, ENDPOINTS[n].lane) for n in ("cancel_all",
+             "set_trading_stop")}  # fmt: skip
     assert exits == {
-        "cancel_order": (EndpointClass.ORDER, "critical"),
         "cancel_all": (EndpointClass.ORDER, "critical"),
         "set_trading_stop": (EndpointClass.POSITION, "critical"),
     }
-    by_request = {n: ENDPOINTS[n] for n in ("place_order", "place_batch", "amend_order")}
+    #: a cancel's lane is its request's, `critical` unless a rule's own cancel names `entry`
+    #: (24 Sec.14.2 rule 12, Sec.8.4 item 3): `CancelOrderRequest`'s default keeps AC-31
+    by_request = {
+        n: ENDPOINTS[n] for n in ("place_order", "place_batch", "amend_order", "cancel_order")
+    }
     assert all(
         e.endpoint_class is EndpointClass.ORDER and e.lane is None for e in by_request.values()
     )

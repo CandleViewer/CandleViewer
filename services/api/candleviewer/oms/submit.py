@@ -85,6 +85,12 @@ the anchor service's `stuck_after_s` (`CV_OMS_INFLIGHT_STUCK_S`, 30 s by default
 threshold a repeat meets, so a repeat meets the outcome this request records, or with a
 `place_wait_s` that does not outlast the command port's deadline (`submit_timeout_s`; the default
 adds B1's turn to it), so the first answer can be the create's own (D-2B2-01).
+A rule action's request (`SubmitContext.origin`, built by the composition root's rule adapter,
+never by a route) runs every step as a route's does, but for six things (24 Sec.8.4
+"Rule-originated orders"): an entry's group is the rule's, `abort_on_first`; the order's row names
+its origin and rule; it rides the `entry` lane, a reduce-only order included; its records are the
+rule's; a risk refusal names its cap (`RiskRefused.cap`), as a route's does in process too; and
+an entry's first answer carries its sized notional (`SubmitOutcome.notional_usd`).
 Logs carry ids, codes and state names, never a price, a size, the key or the fingerprint (21
 Sec.12, C-12.6).
 """
@@ -129,6 +135,7 @@ from candleviewer.domain.primitives import (
     GroupId,
     Px,
     Qty,
+    RuleId,
     Side,
     Symbol,
     UserId,
@@ -214,6 +221,7 @@ from .ports import (
     RequestObject,
     RequestQtySizer,
     RequestRecord,
+    RuleOrigin,
     SizedOrder,
     SizingRequest,
     StopOffset,
@@ -417,6 +425,15 @@ class SubmitContext:
     #: order-entry gate pass at step 6 and at `SEND` (`_switched_off`); the environment lock's
     #: fence, the serving loop's stall, RBAC, scope and every other step still refuse.
     protective: bool = False
+    #: The rule a rule action's request comes from (24 Sec.8.4 "Rule-originated orders"), built in
+    #: code by the composition root's rule adapter, never from request data: `None` on every
+    #: route. It writes the group's and the order's origin, rides the `entry` lane and names the
+    #: rule in the request's records; it never takes the routes' protective carve-out.
+    origin: RuleOrigin | None = None
+
+    def __post_init__(self) -> None:
+        if self.origin is not None and self.protective:
+            raise ValueError("a rule's request is never a route's protective close")
 
     @property
     def anchored_ref(self) -> UUID:
@@ -447,7 +464,10 @@ class SubmitOutcome:
     rows in their current state: a `202` repeat carries its order's reconciled state in
     `lifecycle`, or `RECONCILING` while B1 has not resolved the order (C-2.10, never an assumed
     success). The ids name the rows the request created: the order and, for an entry, its group (a
-    replay names what its anchor names)."""
+    replay names what its anchor names). A rule's entry's first answer carries its order's
+    notional (`notional_usd`: the size step's quantity times the reference price it sized at, which
+    the rule action's handler hands to the rule's allowance, 24 Sec.8.4), never logged (C-12.6); a
+    route's answer, a reduce-only order's and a replay carry none."""
 
     status: AnchorStatus
     anchor_id: UUID
@@ -459,6 +479,7 @@ class SubmitOutcome:
     retry_after_s: int | None = None
     replayed: bool = False
     written: WrittenRows | None = field(default=None, repr=False)
+    notional_usd: Decimal | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if self.status not in _CODES or self.code != _CODES[self.status]:
@@ -478,6 +499,14 @@ class SubmitOutcome:
             group_id = None if rows.group is None else rows.group.id
             if self.replayed or (rows.order.id, group_id) != (self.order_id, self.trade_group_id):
                 raise ValueError("a first answer carries the rows it names, a replay none")
+        notional = self.notional_usd
+        if notional is not None and (
+            self.replayed
+            or self.trade_group_id is None
+            or not notional.is_finite()
+            or notional <= 0
+        ):
+            raise ValueError("an entry's first answer carries its notional, above zero")
 
     def anchor_outcome(self, decided_at: datetime) -> AnchorOutcome:
         """The answer as the anchor records it (21 Sec.3.3.10 "Writes")."""
@@ -554,11 +583,25 @@ class _Trace:
 _STATUSES: Final[Mapping[int, AnchorStatus]] = MappingProxyType({202: 202, 429: 429, 502: 502})
 
 
-def _lane(request: OrderRequest) -> OrderLane:
-    """The order's rate lane, as the command port sends the create (`commands.place_request`):
-    `critical` only for a reduce-only order whose intent reduces (SR-E29-01; the reserve is the
-    exits', C-12.7), else `entry`."""
+def _lane(request: OrderRequest, origin: RuleOrigin | None) -> OrderLane:
+    """The order's rate lane, as the command port sends the create (`commands.place_request`): a
+    rule's order rides `entry`, a reduce-only one included, so a rule never draws on the reserve
+    (24 Sec.8.4 "Rule-originated orders" item 3, C-12.7); any other is `critical` only when it is
+    reduce-only and its intent reduces (SR-E29-01; the reserve is the exits'), else `entry`."""
+    if origin is not None:
+        return "entry"
     return "critical" if request.reduce_only and request.intent in REDUCING_INTENTS else "entry"
+
+
+def _notional(trace: _Trace) -> Decimal | None:
+    """A rule's entry's notional as the size step sized it (24 Sec.8.4 "Rule-originated orders"
+    item 6): its quantity times the reference price it sized at, exact. None for a route's request,
+    whose answer is unchanged, and for a reduce-only order, which the size step does not size."""
+    size = trace.size
+    if trace.context.origin is None or size is None:
+        return None
+    with localcontext(_EXACT):
+        return size.qty * size.reference
 
 
 def entry_order_id(group_id: UUID) -> UUID:
@@ -835,13 +878,13 @@ class OrderSubmission:
             _log().info(
                 "oms_submit_risk_refused", account_id=str(request.account_id), code=decision.code
             )
-            raise RiskRefused()
+            raise RiskRefused(cap=decision.cap)
         trace.step = "switches"
         switched_off = self._switched_off(trace, account)
         if switched_off is not None:
             raise switched_off
         trace.step = "rate"
-        reading = self._router.headroom(account, _lane(request))
+        reading = self._router.headroom(account, _lane(request, trace.context.origin))
         if not reading.available:
             self._rate_rejected.inc()
             raise RateBudgetExceeded(retry_after_s=reading.retry_after_s or 1)
@@ -1125,8 +1168,10 @@ class OrderSubmission:
     ) -> _Rows:
         """The order's ids, its `order_link_id` (24 Sec.8.3: an entry's from its new group, a
         reduce-only order's from its own id) and the rows its first persist writes. An entry's
-        order id is named from its group's (`entry_order_id`)."""
-        request = trace.request
+        order id is named from its group's (`entry_order_id`). A rule's order, an entry's or a
+        reduce-only one's, records its origin and its rule (21 Sec.3.3.4 "Origin"), which a
+        create a restart resumes reads for its lane (`commands.place_request`)."""
+        request, origin = trace.request, trace.context.origin
         group_id = None if request.reduce_only else GroupId(uuid4())
         order_id = uuid4() if group_id is None else entry_order_id(group_id)
         anchor_id = uuid4()
@@ -1164,6 +1209,8 @@ class OrderSubmission:
             state="pending_submit",
             lifecycle_state="validated",
             trade_group_leg_id=leg_id,
+            origin=None if origin is None else "rule",
+            origin_ref=None if origin is None else str(origin.rule_id),
         )
         trace.order = order
         first = self._first_persist(trace, account, sized, profile, order, anchor_id, group_id)
@@ -1182,7 +1229,9 @@ class OrderSubmission:
         """The rows written with the order (24 Sec.8.4 step 5): for an entry its one-leg group,
         the leg sized from the profile, its stop-loss and take-profit requests and the anchor
         naming the group; for a reduce-only order the anchor naming the order alone, as 2a's
-        first persist records no stop for it (Q-O)."""
+        first persist records no stop for it (Q-O). A rule's entry writes its group as the
+        rule's, `abort_on_first` (24 Sec.8.4 "Rule-originated orders" item 1, Sec.9.5); a
+        route's as `manual`, `best_effort`."""
         context = trace.context
         hook = self._write_ahead(trace, sized.effect)
         if group_id is None:
@@ -1194,6 +1243,7 @@ class OrderSubmission:
         trigger = request.trigger
         if size is None:  # the size step sized every entry
             raise ValueError("an entry is recorded with its size")
+        origin = context.origin
         try:
             draft = TradeGroupDraft(
                 group_id=group_id,
@@ -1204,13 +1254,13 @@ class OrderSubmission:
                 symbol=request.symbol,
                 side=request.side,
                 status="submitting",
-                leg_failure_policy="best_effort",
+                leg_failure_policy="best_effort" if origin is None else "abort_on_first",
                 algo="none",
                 algo_params=None,
                 note=request.note,
-                origin="manual",
-                rule_id=None,
-                rule_run_id=None,
+                origin="manual" if origin is None else "rule",
+                rule_id=None if origin is None else RuleId(origin.rule_id),
+                rule_run_id=None if origin is None else origin.run_id,
                 definition_id=None,
                 requested_qty_mode=size.mode,
                 requested_qty_value=size.value,
@@ -1432,7 +1482,8 @@ class OrderSubmission:
     ) -> list[RequestRecord | KeyedRecord]:
         """`orders.submit` for the order, `trade_group.submit` for an entry's group, and each
         recorded stop's request (`sl.attached`, `tp.modified`), keyed by its row, which names the
-        record (21 Sec.3.3.11 "Audit"). Ids, names and states only (C-12.6)."""
+        record (21 Sec.3.3.11 "Audit"). Ids, names and states only (C-12.6). A rule's request
+        marks each with its origin, so each is the rule's record (24 Sec.15.5)."""
         row, group, context = persisted.order, persisted.group, trace.context
         group_id = None if group is None else str(group.group.id)
         detail: dict[str, str | None] = {
@@ -1490,6 +1541,7 @@ class OrderSubmission:
                     },
                     request_id=context.request_id,
                     actor=context.actor,
+                    origin=context.origin,
                 )
             )
         return records
@@ -1499,9 +1551,10 @@ class OrderSubmission:
     async def _send(self, trace: _Trace, rows: _Rows, account: AccountRef) -> PlaceWatch:
         """`SEND` once the command port holds the order. One that did not commit sent nothing: the
         order is abandoned and the request refused; one whose outcome is unknown is followed once
-        the rebuilt order has left `validated` (module docstring, step 10). The step's actor
-        (`user`) and the group draft's origin (`manual`, `_first_persist`) are manual-only until
-        M15 (`rules`) submits through the pipeline, as `SubmitActor` already allows."""
+        the rebuilt order has left `validated` (module docstring, step 10). The step's actor is
+        `user` for every request, a rule's too: B1 takes `SEND` from any source on a `validated`
+        order (S9 gates an `untracked` one alone), and a rule's request is marked by its rows'
+        origin (`_rows`, `_first_persist`), never by the step's actor."""
         order = rows.order
         carrier = inject_context({})  # `oms.send`'s, which B1's invoke runs outside (20 Sec.12.3)
         watch = self._commands.expect(order, request_id=trace.context.request_id, carrier=carrier)
@@ -1583,7 +1636,7 @@ class OrderSubmission:
             _log().warning("oms_submit_answer_late", order_link_id=order.order_link_id)
         else:
             lifecycle = await self._lifecycle(order)
-        outcome = _outcome(rows, lifecycle, answer)
+        outcome = _outcome(rows, lifecycle, answer, _notional(trace))
         await self._decide(rows, outcome)
         await self._settle_group(rows, lifecycle, answer)
         await self._audit_outcome(trace, rows, outcome)
@@ -1769,6 +1822,7 @@ class OrderSubmission:
             actor=context.actor,
             detail=dict(detail),
             request_id=context.request_id,
+            origin=context.origin,
         )
 
     async def _store_read[T](self, call: Awaitable[T]) -> T:
@@ -1796,22 +1850,26 @@ class OrderSubmission:
             _log().critical("oms_pager_failed", summary=summary, failure=type(exc).__name__)
 
 
-def _outcome(rows: _Rows, lifecycle: str, answer: Mapping[str, Any] | None) -> SubmitOutcome:
+def _outcome(
+    rows: _Rows, lifecycle: str, answer: Mapping[str, Any] | None, notional: Decimal | None
+) -> SubmitOutcome:
     """Step 11's answer from the state B1 recorded (24 Sec.8.4 point 6): `rejected` is a 429 for a
     refused rate token, else a 502 with the exchange's return code; any other state is a 202. Each
-    carries the rows the first persist wrote."""
+    carries the rows the first persist wrote, and a rule's entry's its sized `notional`."""
     order_id, group_id, anchor_id = rows.order.id, rows.group_id, rows.anchor_id
     written = WrittenRows(rows.order, rows.first.group, rows.first.legs)
     if lifecycle != "rejected":
-        return SubmitOutcome(202, anchor_id, order_id, group_id, lifecycle, written=written)
+        return SubmitOutcome(
+            202, anchor_id, order_id, group_id, lifecycle, written=written, notional_usd=notional
+        )
     if answer is not None and answer.get("error_code") == _RATE_CODE:
         return SubmitOutcome(
             429, anchor_id, order_id, group_id, lifecycle, RATE_LIMITED,
-            retry_after_s=_retry_after(answer), written=written,
+            retry_after_s=_retry_after(answer), written=written, notional_usd=notional,
         )  # fmt: skip
     return SubmitOutcome(
         502, anchor_id, order_id, group_id, lifecycle, EXCHANGE_ERROR, _ret_code(answer),
-        written=written,
+        written=written, notional_usd=notional,
     )  # fmt: skip
 
 

@@ -168,7 +168,8 @@ def test_round_trip_restores_0029s_types_and_indexes(pg_dsn: str, seeded: bool) 
     assert labels["order_state"] == models.ORDER_STATES[:12]
     assert labels["order_event_kind"] == models.ORDER_EVENT_KINDS[:14]
     assert "order_lifecycle_state" not in labels and len(labels) == 3  # nothing renamed is left
-    assert shape == [row for row in head[1] if row[0] not in ("lifecycle_state", "provenance")]
+    later = ("lifecycle_state", "provenance", "origin", "origin_ref")  # the later revisions'
+    assert shape == [row for row in head[1] if row[0] not in later]
     assert _predicate(indexes["ix_orders_open"]) == OPEN_STATES - set(models.ORDER_STATES[12:])
     assert _predicate(indexes["ix_orders_untracked"]) == {"untracked"}
     assert (kept, events) == (([("accepted", 1)], [("ack", "accepted")]) if seeded else ([], []))

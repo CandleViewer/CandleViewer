@@ -102,7 +102,9 @@ type RateLane = Literal["critical", "entry", "poll"]
 exits and stop writes, `entry` for new exposure and amends, `poll` for reads."""
 
 type OrderLane = Literal["critical", "entry"]
-"""The lanes a create or an amend may take: the OMS sets it by the order's effect (SR-E29-01)."""
+"""The lanes a create, an amend or a cancel may take: the OMS sets a create's and an amend's by the
+order's effect (SR-E29-01), and a cancel's by its reason, `critical` but for a rule's own cancel
+(24 Sec.8.4 "Rule-originated orders" item 3)."""
 
 type OrderKind = Literal[
     "order",
@@ -423,7 +425,10 @@ class AmendOrderRequest(BaseModel):
 
 
 class CancelOrderRequest(BaseModel):
-    """Cancel one order by client or exchange id (`POST /v5/order/cancel`)."""
+    """Cancel one order by client or exchange id (`POST /v5/order/cancel`). `lane` is the rate
+    lane it goes in (24 Sec.14.2 rule 12): `critical`, the protective default every caller that
+    names none keeps (AC-31), and `entry` only for a rule's own cancel, which the OMS names (24
+    Sec.8.4 "Rule-originated orders" item 3, C-12.7)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -431,6 +436,7 @@ class CancelOrderRequest(BaseModel):
     symbol: Symbol
     order_link_id: OrderLinkId | None = None
     exchange_order_id: str | None = None
+    lane: OrderLane = "critical"
 
 
 class TradingStopRequest(BaseModel):

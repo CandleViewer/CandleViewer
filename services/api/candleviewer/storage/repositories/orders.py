@@ -39,6 +39,7 @@ connection or waiting for the pool, so the OMS bounds every call with `asyncio.t
 
 from __future__ import annotations
 
+import re
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field, fields
 from datetime import datetime
@@ -83,6 +84,10 @@ IdempotencyState = Literal["unsent", "in_flight", "acked", "failed"]
 #: and never changed: the OMS's own submission, a reconciliation adoption, or a recorded stop's
 #: TP/SL order (24 Sec.8.3 rule 7).
 OrderProvenance = Literal["placed", "reconciliation", "recorded_stop"]
+#: Where an order's intent came from (24 Sec.8.1 `Order.origin`; 21 Sec.3.3.4 `ord_origin`), set
+#: by its writer at insert from the server-only `SubmitContext.origin`, never from a request, and
+#: never changed: only a rule's orders set it today (`rule`), every other writer leaves it NULL.
+OrderOrigin = Literal["ticket", "chart", "dom", "hotkey", "rule", "algo_child", "api"]
 #: How a step settles its entry's recorded stops (21 Sec.3.3.11's table, E29-T04): `answered` once
 #: the entry is accepted or fills, `void` only once the exchange confirms it ended unfilled; a step
 #: that leaves them waiting for the complete read (24 Sec.8.8 rule 6) names neither.
@@ -132,6 +137,13 @@ FILL_KINDS: Final = frozenset[OrderEventKind]({"fill", "partial_fill"})
 _LITERALS: Final = tuple(map(get_args, (OrderState, OrderState, OrderEventKind, OrderEventSource)))
 _IDEMPOTENCY_STATES: Final = frozenset(get_args(IdempotencyState))
 _ENTRY_STOP_SETTLES: Final = frozenset(get_args(EntryStopSettle))
+_ORIGINS: Final = frozenset(get_args(OrderOrigin))
+#: `ord_origin_ref`'s `rule` arm (21 Sec.3.3.4): the rule's id as canonical lower-case UUID text.
+_RULE_REF: Final = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+#: The longest text the store admits as `origin_ref` for an origin other than `rule`, whose third
+#: CHECK arm leaves it free (21 Sec.3.3.4): a parent order's id is 36 characters. The CHECK takes
+#: the same bound with the next revision that touches `orders`, before another origin has a writer.
+MAX_ORIGIN_REF_CHARS: Final = 64
 #: The order terms an accepted amend may change (22-api-openapi.yaml `AmendOrderRequest`).
 AMENDABLE: Final = ("qty", "price", "trigger_price", "take_profit", "stop_loss")
 #: The unique index that makes `order_link_id` an idempotency key (21 Sec.3.3.4).
@@ -179,6 +191,26 @@ def require_exchange_order_id(value: object) -> None:
         raise ValueError(f"an order id is text of 1 to {MAX_EXCHANGE_ORDER_ID_CHARS} characters")
 
 
+def require_origin(origin: object, origin_ref: object) -> None:
+    """`ValueError`, before any statement, unless the pair passes `ord_origin` and
+    `ord_origin_ref` (21 Sec.3.3.4): no origin and no ref; `rule` with the rule's id as canonical
+    lower-case UUID text; or another of 24 Sec.8.1's values with text of at most
+    `MAX_ORIGIN_REF_CHARS` characters or none, a bound the store holds ahead of the CHECK. Names
+    no value."""
+    if origin_ref is not None and not isinstance(origin_ref, str):
+        raise ValueError("origin_ref is text or None")
+    if origin is None:
+        if origin_ref is not None:
+            raise ValueError("an order with no origin names no origin_ref")
+        return
+    if not isinstance(origin, str) or origin not in _ORIGINS:
+        raise ValueError("origin is one of 24 Sec.8.1's values")
+    if origin == "rule" and (origin_ref is None or _RULE_REF.fullmatch(origin_ref) is None):
+        raise ValueError("a rule's order names its rule's id as canonical UUID text")
+    if origin_ref is not None and len(origin_ref) > MAX_ORIGIN_REF_CHARS:
+        raise ValueError(f"origin_ref is at most {MAX_ORIGIN_REF_CHARS} characters")
+
+
 def check_fields(
     row: object, money: Mapping[str, tuple[int, int]], stamps: tuple[str, ...]
 ) -> None:
@@ -198,7 +230,8 @@ def check_fields(
 class NewOrder:
     """An `orders` row to insert. The id is final (24 Sec.8.3 rules 1 and 4); `leaves_qty` and
     `created_ts` are the database's. The fill fields and `exchange_order_id` let reconciliation
-    insert an adopted exchange order as it stands (21 Sec.3.3.4 "Adopted rows")."""
+    insert an adopted exchange order as it stands (21 Sec.3.3.4 "Adopted rows"). `origin` and
+    `origin_ref` are the server's (21 Sec.3.3.4 "Origin"), held to the table's CHECKs here."""
 
     id: UUID
     exchange_account_id: UUID
@@ -233,10 +266,13 @@ class NewOrder:
     is_paper: bool = False
     lifecycle_state: LifecycleState | None = None
     provenance: OrderProvenance = "placed"
+    origin: OrderOrigin | None = None
+    origin_ref: str | None = None
 
     def __post_init__(self) -> None:
         check_fields(self, _NEW_ORDER_MONEY, _NEW_ORDER_STAMPS)
         require_lifecycle(self.lifecycle_state, self.state)
+        require_origin(self.origin, self.origin_ref)
 
 
 #: The position side an order of each side closes: a recorded stop's TP/SL order is on the side
@@ -397,7 +433,9 @@ class OrderTransition:
 
 @dataclass(frozen=True, slots=True)
 class OrderRow:
-    """One `orders` row, every column (an explicit allow-list, pinned to the table by a test)."""
+    """One `orders` row, every column (an explicit allow-list, pinned to the table by a test).
+    `origin` and `origin_ref`, the last two, default to NULL as their columns do, and are held to
+    the table's CHECKs (`require_origin`)."""
 
     id: UUID
     trade_group_leg_id: UUID | None
@@ -440,6 +478,11 @@ class OrderRow:
     is_paper: bool
     lifecycle_state: LifecycleState | None
     provenance: OrderProvenance
+    origin: OrderOrigin | None = None
+    origin_ref: str | None = None
+
+    def __post_init__(self) -> None:
+        require_origin(self.origin, self.origin_ref)
 
 
 @dataclass(frozen=True, slots=True)

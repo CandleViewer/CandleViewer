@@ -3,9 +3,11 @@
 The order path's invariants (`docs/security/threat-models/E29-oms.md` §11.1, #2877), each
 pinned by a test under `tests/unit/exchange/bybit/test_trading_*.py`:
 
-1. The `orderLinkId` guard covers creates only (the REST client, OM-D09); cancel and
-   `cancel-all` go on the order class in the `critical` lane, and an amend by `orderId` on the
-   order class in its request's lane, `critical` when the OMS sets it (AC-31, SR-E29-14).
+1. The `orderLinkId` guard covers creates only (the REST client, OM-D09); `cancel-all` goes on
+   the order class in the `critical` lane, and a cancel and an amend by `orderId` on the order
+   class in their request's lane: a cancel's `critical` unless the OMS names `entry` for a rule's
+   own cancel (24 Sec.8.4 item 3, RE-D6), an amend's `critical` when the OMS sets it (AC-31,
+   SR-E29-14).
 2. Every account's client draws on the process's one governor (OM-D08, ruling R5); each
    attempt of a call takes its own token, and the lane's wait bounds the whole call, retries
    included (T04's rate step, 24 §8.7).
@@ -143,7 +145,7 @@ def logger() -> Any:
 @dataclass(frozen=True, slots=True)
 class Endpoint:
     """One call of the port: its route, its endpoint class and its lane (`None`: the
-    request's own, set by the OMS by effect, SR-E29-01)."""
+    request's own, set by the OMS, by effect, SR-E29-01, or a cancel's by its reason)."""
 
     method: Literal["GET", "POST"]
     path: str
@@ -161,7 +163,7 @@ ENDPOINTS: Final[Mapping[str, Endpoint]] = MappingProxyType(
         "place_order": Endpoint("POST", "/v5/order/create", _ORDER, None),
         "place_batch": Endpoint("POST", "/v5/order/create-batch", _ORDER, None),
         "amend_order": Endpoint("POST", "/v5/order/amend", _ORDER, None),
-        "cancel_order": Endpoint("POST", "/v5/order/cancel", _ORDER, "critical"),
+        "cancel_order": Endpoint("POST", "/v5/order/cancel", _ORDER, None),
         "cancel_all": Endpoint("POST", "/v5/order/cancel-all", _ORDER, "critical"),
         "set_trading_stop": Endpoint("POST", "/v5/position/trading-stop", _POSITION, "critical"),
         "set_leverage": Endpoint("POST", "/v5/position/set-leverage", _POSITION, "entry"),
@@ -263,8 +265,9 @@ def _venue_answer(error: ExchangeError, *, create: bool) -> ExchangeError | None
 
 def _lane(endpoint: Endpoint, requested: RateLane | None) -> RateLane:
     """The lane a call goes in, named in one place: the endpoint table's, or for a create, a
-    batch or an amend (no lane in the table) the request's own, which the OMS sets by effect
-    (SR-E29-01). A call that names both, or neither, is a defect of the port: refused."""
+    batch, an amend or a cancel (no lane in the table) the request's own, which the OMS sets: a
+    create's and an amend's by effect (SR-E29-01), a cancel's by its reason (24 Sec.8.4 item 3).
+    A call that names both, or neither, is a defect of the port: refused."""
     if endpoint.lane is None and requested is not None:
         return requested
     if endpoint.lane is not None and requested is None:
@@ -625,7 +628,7 @@ class BybitTradingPort:
         self._check_environment(req.account)
         check_exit_ids(req.order_link_id, req.exchange_order_id)
         body = _cancel_body(req)
-        answer = await self._trade("cancel_order", req.account, body=body)
+        answer = await self._trade("cancel_order", req.account, lane=req.lane, body=body)
         fields = rec.request_fields(body)
         if answer.refusal is not None:  # named as an accepted cancel names it (rule 11)
             named = req.order_link_id

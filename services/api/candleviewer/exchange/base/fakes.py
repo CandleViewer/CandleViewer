@@ -471,7 +471,7 @@ class FakeTradingPort:
 
     async def cancel_order(self, req: CancelOrderRequest) -> OrderAck:
         check_exit_ids(req.order_link_id, req.exchange_order_id)
-        self._enter("cancel_order", req.account, req, "critical")
+        self._enter("cancel_order", req.account, req, req.lane)  # the request's, as the venue's
         named = req.order_link_id  # as the exchange adapter names a refused cancel
         if named is None and req.exchange_order_id:
             named = ext_key(req.exchange_order_id)
