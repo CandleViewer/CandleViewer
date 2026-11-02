@@ -34,11 +34,14 @@ Gates (each FAIL led by its name):
              the pins file; no unknown anchor key.
   G-AROWS    applied mode (PR 2): `16` carries exactly one §7.n "Derivatives panel motion (E24-D04; ...)"
              block, the last §7 block, numbered one past the block before it and named by §17's A-1;
-             its table runs M-01 ... M-07 in §2's order with each Reduce cell agreeing with §2's, and
+             its table runs M-01 ... M-07 in §2's order with each Reduce cell agreeing with §2's, each
+             Enter cell naming §2's Duration and Easing tokens as one short-form pair ("`fast` /
+             `accelerate`") or, for two cuts, reading "one frame" or "a text swap", and
              every `motion.*` name it writes resolves; `14` carries exactly one SCR-054 pointer to the
              spec, directly under the "Hi-fi (E24-D03)" line; neither carries a closing keyword or a
              deny word. Both are read from the working tree.
-  G-DRAWN    the board record (§0.1, PR 2): six rows, each "drawn (r1)" with a board id, W x H,
+  G-DRAWN    the board record (§0.1, PR 2): six rows, each "drawn (r1)" with a board id (six
+             distinct ids), W x H,
              descendants and a PNG sha256; each export docs/design/E24/img/E24-D04-NN-<slug>.png
              exists in the working tree with exactly that sha256 and that PNG size; no other
              E24-D04-*.png is there; the as-built paragraph names the page and its page id.
@@ -519,6 +522,20 @@ def g_hygiene(t: Texts, vals: dict[str, str]) -> list[str]:
     return bad
 
 
+def enter_ok(enter: str, dur: str, ease: str, known: set[str]) -> bool:
+    """`16`'s Enter cell against §2's Duration and Easing: two resolving tokens by their short forms
+    as one pair (`motion.duration.fast`, `motion.easing.accelerate` -> "`fast` / `accelerate`"); two
+    cuts read "one frame" or "a text swap". A pair mixing a token and a cut, or naming a token that
+    does not resolve, is left to G-MOMENT, G-TOKEN and G-CADENCE (it passes here)."""
+    d, e = dur.strip().strip("`"), ease.strip().strip("`")
+    if d == "a cut" and e == "a cut":
+        return "one frame" in enter or "a text swap" in enter
+    if d in known and e in known:
+        pair = f"`{d.split('.')[-1]}` / `{e.split('.')[-1]}`"  # "over `normal` / `standard`"
+        return pair in enter
+    return True
+
+
 def g_arows(t: Texts, vals: dict[str, str]) -> list[str]:
     """Applied mode: §17's A-1 in `16` §7 and A-2 in `14` SCR-054, read from the working tree."""
     bad: list[str] = []
@@ -537,6 +554,8 @@ def g_arows(t: Texts, vals: dict[str, str]) -> list[str]:
     blk = sec[sec.find(f"### 7.{n} ") :]
     rows = table_rows(blk, "M-0")
     want = {r[0]: r[5] for r in moment_rows(t) if len(r) == 9}
+    durs = {r[0]: r[3] for r in moment_rows(t) if len(r) == 9}
+    eases = {r[0]: r[4] for r in moment_rows(t) if len(r) == 9}
     if [r[0].split(" ")[0] for r in rows] != list(want):
         bad.append(f"`16` §7.{n}'s rows are {[r[0][:4] for r in rows]}, not §2's {list(want)}")
     for r in rows:
@@ -548,6 +567,8 @@ def g_arows(t: Texts, vals: dict[str, str]) -> list[str]:
             bad.append(
                 f"`16` §7.{n} {mid}: Reduce {r[2] if len(r) > 2 else ''!r} disagrees with §2"
             )
+        elif not enter_ok(r[1], durs.get(mid, ""), eases.get(mid, ""), tokens(t)):
+            bad.append(f"`16` §7.{n} {mid}: Enter {r[1]!r} does not carry §2's Duration and Easing")
     for base, alts in re.findall(r"`(motion\.[a-z]+)\.\{([a-z,]+)\}`", blk):
         for a in alts.split(","):
             if f"{base}.{a}" not in tokens(t):
@@ -588,6 +609,9 @@ def g_drawn(t: Texts, vals: dict[str, str]) -> list[str]:
     if [r[0] for r in rows] != [f"0{k}" for k in range(1, 7)]:
         bad.append(f"§0.1's board rows are {[r[0] for r in rows]}, not 01 ... 06")
     want: set[str] = set()
+    ids = [m[1] for r in rows if (m := DRAWN_RX.fullmatch(r[-1]))]
+    if len(set(ids)) != len(ids):
+        bad.append(f"§0.1 records {len(ids)} board ids, {len(set(ids))} distinct, not six")
     for r in rows:
         name = f"E24-D04-{r[0]}-{r[1]}.png"
         want.add(name)
@@ -738,6 +762,8 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-DRAWN", "change one byte of board 05's PNG", lambda t: replace(t, pngs={**t.pngs, "E24-D04-05-a11y-settings-t2.png": t.pngs["E24-D04-05-a11y-settings-t2.png"][:-1] + b"\0"})),
     ("G-DRAWN", "add an E24-D04 export the record does not name", lambda t: replace(t, pngs={**t.pngs, "E24-D04-07-extra.png": b""})),
     ("G-DRAWN", "drop the page id from the as-built paragraph", sub("page id `b96edf38-8e58-8006-8008-e2d74e25e66a`", "page id pending")),
+    ("G-AROWS", "give M-05's Enter in `16` a duration §2 does not name", sub_in("16", "data ink 1.00 → 0.85 over `normal` / `standard`", "data ink 1.00 → 0.85 over `slow` / `standard`")),
+    ("G-DRAWN", "give board 02 board 01's id", sub("drawn (r1): `b96edf38-8e58-8006-8008-e2d7701a8814`", "drawn (r1): `b96edf38-8e58-8006-8008-e2d74e3697a3`")),
 )  # fmt: skip
 
 
