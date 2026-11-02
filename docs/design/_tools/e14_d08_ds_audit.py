@@ -2,7 +2,8 @@
 """E14-D08 (#352) audit: the design-system pack for the drawing primitives.
 
 Standalone, offline, stdlib only; it executes no repo code and runs under `python3 -I`. It reads AS
-TEXT at the pinned base (`git merge-base HEAD origin/main`, via `git show BASE:<path>`) the plan
+TEXT at the pinned base (`BASE` below, via `git show BASE:<path>`; the diff gate alone uses `git merge-base
+HEAD origin/main`) the plan
 texts (`05`, `11`, `14`, `15`, `16`, `21`, `22`, `26`), the merged E14 design docs (D02 ... D07 and
 their hand-offs), E13-D03, E11-D05, E37-D03, E12-D09, the token JSON (`themes.json` layering:
 dark = primitives + semantic-dark, light = + semantic-light, hc = + semantic-hc), `pairs.mjs`, the
@@ -95,6 +96,9 @@ DS_SRC = "packages/ui/tokens"
 PAIRS_REL = "tools/contrast/pairs.mjs"
 RGBA_REL = "tools/style-dictionary/formats/json-flat-rgba.js"
 CVD_REL = "docs/design/_tools/cvd_sim.py"
+# the base every text is read at: origin/main when last re-pinned (re-pinned by content, never by a rebase: the boards cite
+# the merge-base); the diff gate (G-SCOPE) reads `git merge-base HEAD origin/main`, as #243's tool does
+BASE = "cf9d5ec165ceb62ba9b29e16b43fa3021d653255"
 IMG_DIR = "docs/design/E14/img/"
 SHEETS_DIR = "docs/design/_tools/sheets/e14-d08/"  # a committed board script, the drawn mode only
 STATUS_PENDING = "to draw (PR 3)"  # §14's Status cell before the draw
@@ -1935,13 +1939,15 @@ def apply_rows(text: str, rows: list[dict[str, object]]) -> tuple[str, list[str]
 
 
 def load() -> Texts:
-    base = merge_base()
-    if base is None:
+    mb = merge_base()
+    if mb is None:
         raise SystemExit("`git merge-base HEAD origin/main` does not resolve; fetch origin first")
-    env = Env(base, {})
+    if git_raw("cat-file", "-e", f"{BASE}^{{commit}}") is None:
+        raise SystemExit(f"the pinned base {BASE[:10]} is not in this clone; fetch origin first")
+    env = Env(BASE, {})
     spec, hand = read_raw(SPEC_REL), read_raw(HAND_REL)
     pins = read_raw(PINS_REL) if (ROOT / PINS_REL).exists() else ""
-    t = Texts(env, spec, hand, pins, read_raw(CAT_REL), read_raw(SCR_REL), changed_paths(base), {})
+    t = Texts(env, spec, hand, pins, read_raw(CAT_REL), read_raw(SCR_REL), changed_paths(mb), {})
     return replace(t, values=compute(env, spec, hand))
 
 
