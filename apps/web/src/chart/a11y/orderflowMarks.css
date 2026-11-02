@@ -1,0 +1,125 @@
+/*
+ * The order-flow marks and the ladder surrogate (E47-S02, #1358 BQ-08/BQ-09). Tokens only: the palette is E47-S06's,
+ * consumed, never changed. Every hue here reinforces a channel the markup already carries (a sign, a glyph, a word, a
+ * column, a dashed border), so grayscale, high contrast and forced colours lose nothing.
+ */
+
+.cv-of-signed {
+  display: inline-flex;
+  gap: var(--space-inset-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.cv-of-signed--up {
+  color: var(--color-buy-default);
+}
+
+.cv-of-signed--down {
+  color: var(--color-sell-default);
+}
+
+/* The imbalance pattern: a dashed border plus the corner glyph; the hue is the third channel, not the only one. */
+.cv-of-imbalance,
+.cv-of-cell--imbalance {
+  border: calc(var(--border-thick) * 1px) dashed var(--color-footprint-imbalance);
+  border-radius: var(--radius-control);
+}
+
+.cv-of-imbalance {
+  display: inline-flex;
+  gap: var(--space-inset-xs);
+  padding: 0 var(--space-inset-xs);
+}
+
+.cv-of-cell {
+  display: inline-flex;
+  gap: var(--space-inset-sm);
+  align-items: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.cv-of-side--bid,
+.cv-of-side--buy {
+  color: var(--color-buy-default);
+}
+
+.cv-of-side--ask,
+.cv-of-side--sell {
+  color: var(--color-sell-default);
+}
+
+.cv-of-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-inset-xs) var(--space-inset-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--color-text-secondary);
+}
+
+.cv-of-legend__swatch {
+  display: inline-block;
+  inline-size: var(--space-inset-sm);
+  block-size: var(--space-inset-sm);
+  margin-inline-end: var(--space-inset-xs);
+}
+
+.cv-of-legend__swatch--bid {
+  background: var(--color-heatmap-bid-5);
+}
+
+.cv-of-legend__swatch--ask {
+  background: var(--color-heatmap-ask-5);
+}
+
+/* A ladder row is the target: 24 x 24 CSS px at least at default zoom (SC 2.5.8, 05 §3.4.7). Bids left, asks right. */
+.cv-of-ladder__cell {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto;
+  gap: var(--space-inset-sm);
+  align-items: center;
+  min-block-size: var(--size-target-min);
+  min-inline-size: var(--size-target-min);
+  padding: 0 var(--space-inset-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+}
+
+.cv-of-ladder__bid {
+  justify-self: start;
+}
+
+.cv-of-ladder__ask {
+  justify-self: end;
+}
+
+/* Own orders and position: words in a bordered chip, so the state is seen without its name or its hue. */
+.cv-of-ladder__mine {
+  display: inline-flex;
+  gap: var(--space-inset-xs);
+}
+
+.cv-of-ladder__own,
+.cv-of-ladder__position {
+  padding: 0 var(--space-inset-xs);
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+}
+
+.cv-of-ladder__empty {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+@media (forced-colors: active) {
+  .cv-of-imbalance,
+  .cv-of-cell--imbalance {
+    border-color: CanvasText;
+  }
+
+  .cv-of-legend__swatch {
+    forced-color-adjust: none;
+    border: calc(var(--border-hairline) * 1px) solid CanvasText;
+  }
+}

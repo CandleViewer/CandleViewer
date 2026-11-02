@@ -42,6 +42,7 @@ import {
   type LevelFields,
 } from "./series";
 import { politeToShell } from "./politeWriter";
+import { clampIndex as clamp, drawnRange, needsRecentre } from "./compositeGrid";
 import { buildTsv } from "./tsv";
 import "./chartTable.css";
 
@@ -86,7 +87,6 @@ export const defaultClipboard = (text: string): Promise<void> => {
     ? Promise.reject(new Error("clipboard unavailable"))
     : clipboard.writeText(text);
 };
-const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v, lo), hi);
 /** The time column: `→` here expands, `←` collapses (E11-D04 §17.1). */
 const TIME_COL = 1;
 
@@ -155,8 +155,7 @@ export function ChartDataTable(props: ChartDataTableProps): JSX.Element {
   };
   const absOf = (bar: number): number =>
     expanded !== null && bar > expanded ? bar + levelRows : bar;
-  const first = clamp(view.first - WINDOW_BUFFER, 0, Math.max(total - 1, 0));
-  const last = clamp(view.last + WINDOW_BUFFER, 0, Math.max(total - 1, 0));
+  const { first, last } = drawnRange(view, total, WINDOW_BUFFER);
   const rows: Item[] = [];
   for (let abs = first; abs <= last && abs < total; abs++) rows.push(itemAt(abs));
   const levelRowId = (level: number): string => `${baseId}-level-${level}`;
@@ -339,8 +338,7 @@ export function ChartDataTable(props: ChartDataTableProps): JSX.Element {
     if (!extending.current) anchor.current = bar;
     // `aria-rowindex` counts the header row and from 1: the body's first row is 2.
     const abs = Number(tr.getAttribute("aria-rowindex")) - 2;
-    if (abs - first < WINDOW_BUFFER / 2 || last - abs < WINDOW_BUFFER / 2)
-      setView({ first: abs, last: abs });
+    if (needsRecentre(abs, { first, last }, WINDOW_BUFFER)) setView({ first: abs, last: abs });
   };
 
   const columns: TableColumn<Item>[] = [EXPANDER_HEADER, ...BAR_HEADERS].map((header, i) => ({
