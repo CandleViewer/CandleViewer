@@ -22,6 +22,10 @@ Only the composition root sees the bus, the storage tier and the bars module tog
   transport, PG-wire) -> the series store's own PG-wire connection (`reader_stop`, #2787 D2-G2),
   each stop hook (the sink's and the reader's) isolated: the next still runs after an exception
   (logged) or a cancellation (raised).
+* Write holes (#5396): with a real row sink, a `WriteHoleLedger` under `bars_state_root` records
+  every closed bar not stored (the writer's terminal outcomes and `WriterSink`'s), loaded before
+  the writer starts and flushed after it stops. The fake backend has none: it stores no bar, so
+  it serves no bar history to mark.
 * `StorageTape` reads the trades table through `MarketDataRepository.read_trades` (no SQL here).
 """
 
@@ -42,6 +46,7 @@ from candleviewer.bars.heal_driver import HealDriver
 from candleviewer.bars.kline_rows import PrecedenceHealth
 from candleviewer.bars.series_store import SeriesStore
 from candleviewer.bars.state_store import StateStore
+from candleviewer.bars.write_holes import WriteHoleLedger
 from candleviewer.bars.writer import BarWriter, RowSink, default_is_permanent
 from candleviewer.exchange.base.models import TradeEvent
 from candleviewer.ingestion.ticker_stream import uuid7
@@ -167,7 +172,9 @@ class BarsRuntime:
         reader_stop: Callable[[], Awaitable[None]] | None = None,
         heal: HealDriver | None = None,
         indicators: Stoppable | None = None,
+        holes: WriteHoleLedger | None = None,
     ) -> None:
+        self.holes = holes
         self.precedence = precedence if precedence is not None else PrecedenceHealth()
         self.heal = heal
         self.indicators = indicators
@@ -184,6 +191,8 @@ class BarsRuntime:
         self._root.mkdir(parents=True, exist_ok=True, mode=0o700)
         if sys.platform != "win32":  # blobs hold trade-derived state: owner-only
             os.chmod(self._root, 0o700)
+        if self.holes is not None:  # before any write can record or clear a hole
+            await self.holes.load()
         await self.writer.start()
         await self.builder_set.start()
         if self.heal is not None:
@@ -213,6 +222,8 @@ class BarsRuntime:
         remaining = await self.writer.stop()
         if remaining:
             logger().error("bars_writer_rows_unwritten_at_shutdown", remaining=remaining)
+        if self.holes is not None:  # the writer's `shutdown` holes included
+            await self._run_hook(self.holes.flush, "bars_write_holes_flush_failed")
         try:
             await self._run_hook(self._sink_stop, "bars_sink_stop_failed")
         finally:  # a cancellation in the sink's close still closes the store's connection
@@ -249,13 +260,17 @@ def wire_bars(
             "bars_rows_not_persisted",
             reason="no hot-tier row sink composed (non-QuestDB storage backend); bar rows dropped",
         )
-    writer = BarWriter(GuardedRowSink(ctx, inner_sink), is_permanent=_permanent)
     root = Path(ctx.settings.bars_state_root)
+    holes = WriteHoleLedger(root) if inner_sink is not None else None
+    writer = BarWriter(GuardedRowSink(ctx, inner_sink), is_permanent=_permanent, holes=holes)
     builder_set = BarBuilderSet(
         ctx.bus.bus,
         ctx.settings.environment.value,
         EmitRouter(
-            [*(s for s in (series, publisher, indicators) if s is not None), WriterSink(writer)]
+            [
+                *(s for s in (series, publisher, indicators) if s is not None),
+                WriterSink(writer, holes=holes),
+            ]
         ),
         StateStore(root),
         tape=StorageTape(ctx, now_us, tick_size),
@@ -266,5 +281,5 @@ def wire_bars(
     heal = HealDriver(series) if series is not None else None
     return BarsRuntime(
         builder_set, writer, root, sink_stop, sink_degraded, reader_stop=reader_stop, heal=heal,
-        indicators=indicators,
+        indicators=indicators, holes=holes,
     )  # fmt: skip

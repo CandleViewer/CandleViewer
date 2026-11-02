@@ -9,7 +9,8 @@ Backpressure policy (20 §4.2, `Bars lane → sinks`): `emit` awaits each sink i
 `timeout_s` per sink. A slow sink slows the symbol's fan-out loop and, through its `NEVER_DROP`
 bus queue, the trade publisher, but for at most `timeout_s` per emission. After that the
 emission is skipped for that sink, counted and reported as degraded health. Trades are never
-dropped. A bar row the writer misses is healed by its next amend or by a rebuild (ADR-0033).
+dropped. A closed bar the writer does not take is recorded as a coverage hole (#5396,
+`WriterSink`), served until stored and queued for heal by a rebuild (ADR-0033).
 A sink that raises is counted (`bar_emit_sink_errors_total{reason=<sink>}`) and logged; the
 other sinks still get the emission, and
 `CancelledError` is never swallowed.
@@ -32,8 +33,11 @@ from typing import Final, Protocol
 
 import structlog
 
+from candleviewer.bars.errors import BarsError
 from candleviewer.bars.metrics import bar_emit_sink_errors_total
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
+from candleviewer.bars.rows import bar_param_for
+from candleviewer.bars.write_holes import HoleKey, HoleRecorder
 
 #: Per-sink emit bound (§4.2 `Bars lane → sinks` row).
 SINK_TIMEOUT_S: Final = 5.0
@@ -65,19 +69,49 @@ class WriterSink:
 
     Forming-bar `open`/`update` emissions are for the live wire only: writing one row per trade
     would multiply the QuestDB write rate by the trade rate for no reader.
+
+    #5396: when `submit` does not complete, the emission's closed bars are recorded in `holes`
+    before the exception propagates: `sink_timeout` for a cancellation (the router's per-sink
+    bound, or a stop), `refused` for any other exception. The recording is synchronous, so a
+    cancellation cannot interrupt it. A bar the writer queued before that is cleared again when
+    it is stored.
     """
 
     name = "questdb"
 
-    def __init__(self, writer: BarSubmitter) -> None:
+    def __init__(self, writer: BarSubmitter, *, holes: HoleRecorder | None = None) -> None:
         self._writer = writer
+        self._holes = holes
 
     async def emit(self, emission: BarEmission) -> None:
         closed = [u.bar for u in emission.updates if u.kind == "close"]
-        if closed:
+        if not closed:
+            return
+        try:
             await self._writer.submit(
                 closed, emission.spec, source="tape", generation=emission.generation
             )
+        except asyncio.CancelledError:
+            self._record(closed, emission, "sink_timeout")
+            raise
+        except Exception:
+            self._record(closed, emission, "refused")
+            raise
+
+    def _record(self, closed: list[Bar], emission: BarEmission, reason: str) -> None:
+        if self._holes is None:
+            return
+        spec, gen = emission.spec, emission.generation
+        try:
+            param = bar_param_for(spec)
+        except BarsError:  # a spec with no stored form: its key still names the series
+            param = ""
+        keys = [
+            HoleKey(b.symbol, spec.spec_hash, spec.kind, param, gen, b.index, b.open_time,
+                    b.close_time + 1)
+            for b in closed if not b.synthetic
+        ]  # fmt: skip
+        self._holes.lost(keys, reason)
 
 
 class EmitRouter:
