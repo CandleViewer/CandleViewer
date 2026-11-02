@@ -6,7 +6,8 @@ audited after the grant, each record ahead of its change (`auth.session_revoked`
 `REVOKE`, then `auth.session_created`); the audit writer's readiness is checked before any
 factor; a refused rotation or grant record ends the grant (`503`), and a void row names what it
 ends; a lost claim, a failed mint or a failed family link voids the announced session (`401`),
-the unlinked one revoked first; a void that is lost too is counted. Over
+the unlinked one revoked first; a void that is lost too is counted; a grant the claim no longer
+holds is echoed and elevates nothing. Over
 `test_step_up_router._build`: the real `StepUpService`, `SessionService` and B16 chart on the
 in-memory rows.
 """
@@ -148,6 +149,34 @@ async def test_step_up_rotation_drops_the_pending_challenge() -> None:
     assert ok.status_code == 200
     (new,) = _live(c, user)
     assert not [k for k in new.step_up_elevations if k.startswith("pending:")]
+
+
+async def test_step_up_echoes_a_grant_its_claim_no_longer_holds_and_the_next_call_is_challenged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The `200` echoes the grant as the step-up made it. A grant the claimed row no longer
+    holds (ended between the grant and the claim) is carried nowhere, and the server reads the
+    session's row on every elevated request, so the next `users` call is challenged."""
+    c, em, seed, clock, user = await _build()
+    (old,) = _live(c, user)
+    rows, emit = _rows(c), em.emit
+
+    async def ended_before_the_claim(action: str, **kw: Any) -> None:
+        await emit(action, **kw)
+        if action == "auth.session_created":  # the last record ahead of the claim
+            await rows.update_step_up_state(str(old.id), lambda state: ({}, state[1], state[2]))
+
+    monkeypatch.setattr(em, "emit", ended_before_the_claim)
+
+    ok = c.post("/auth/step-up", headers=_H, json=_users_body(seed, clock))
+
+    assert ok.status_code == 200
+    until = (clock.now + GRACE_WINDOW).isoformat()
+    assert (ok.json()["elevated_until"], ok.json()["step_up_expires_at"]) == (until, until)
+    (new,) = _live(c, user)
+    assert new.step_up_elevations == {}
+    r = c.post(f"/users/{uuid.uuid4()}/invite", headers=_rotated(ok))
+    assert (r.status_code, r.json()["code"]) == (403, "step_up_required")
 
 
 async def test_step_up_audits_the_rotation_after_the_grant_each_record_ahead() -> None:
