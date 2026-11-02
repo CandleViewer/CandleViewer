@@ -27,12 +27,25 @@ Gates (each FAIL led by its name):
               `color.status.info.*`.
   G-AROW      every A-row's Old text or anchor stands exactly once in its target at the base;
               an "After" anchor names its line at the base, and that line starts with the quote.
+              A row marked "Applied (PR 2)" is also read in the working tree: an Old / New
+              row's New stands once, on its Old's base line, and its Old not at all; an After
+              row's line stands once, right after its anchor; each inside its CMP / SCR entry.
+              All but A-2 are applied; A-2 is held (tail the held mark, no "applied" in its row)
+              until `15` holds an id of #5482's band (a `### CMP-NNN` with NNN ≥ 254), which
+              means the rebase is done.
   G-CITE      every cite in range and on a non-blank line at its ref, its content equal to the
               pins file's hash; the SHA anchors are the pinned refs.
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
               public-text deny word in the spec, this tool or the pins file; no unknown anchor.
+  G-DRAWN     §0 is pending ("to draw in PR 2" with no board table, PR 1) or drawn (PR 2).
+              Drawn: §0 names the page id; every board bullet ends "drawn, board NN" with NN a
+              row of the board table; each board row's Status is `drawn (r<n>)` with its board
+              id and export, the export's number and slug agree with the row's board name, and
+              on disk the PNG's IHDR width × height and sha256 equal the record; and no other
+              E38-D04-*.png sits in `docs/design/E38/img/`.
   G-SCOPE     the diff against `git merge-base HEAD origin/main` touches only the spec, this
-              tool and the pins file.
+              tool, the pins file, `14` and `15` (the applied A-rows) and the E38-D04 exports in
+              `docs/design/E38/img/`.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e38_d04_hifi_audit.py --check       (exit 1 on any FAIL)
@@ -57,10 +70,29 @@ ROOT = Path(__file__).resolve().parents[3]
 SPEC_REL = "docs/design/E38/E38-D04.md"
 TOOL_REL = "docs/design/_tools/e38_d04_hifi_audit.py"
 PINS_REL = "docs/design/_tools/e38_d04_ruled_pins.txt"
-OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
+TARGETS = {
+    "14": "docs/plan/14-screens-catalogue.md",
+    "15": "docs/plan/15-component-catalogue.md",
+}
+OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL, *TARGETS.values())
+APPLIED = " **Applied (PR 2).**"
+HELD_MARK = " **Held for PR 2's rebase.**"
+REBASED = re.compile(r"^### CMP-(\d+) ", re.MULTILINE)
+BAND = 254  # #5482's band starts here (E28-D03); an id at or above it on the base: A-2 is due
+HELD = {"A-2"}  # applied at PR 2's rebase, when its catalogue ids are assigned
 BASE = "c327ed438c01c5bab9247890dd00f5dce3717f97"  # origin/main when written
 MEMO_REF = "4774b2f8cd7b67a1ee934fe88546568f7aa3e34c"  # #5451's head (E38-D01 memo)
 TOKENS = "packages/ui/tokens"
+IMG_REL = "docs/design/E38/img"
+IMG = re.compile(r"docs/design/E38/img/E38-D04-\d\d-[a-z0-9-]+\.png")
+PENDING = "to draw in PR 2"
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+DRAWN = re.compile(
+    rf"drawn \(r\d+\): board id `{UUID}`, "
+    r"`docs/design/E38/img/(E38-D04-(\d\d)-([a-z0-9-]+)\.png)` "
+    r"\((\d+) × (\d+), sha256 `([0-9a-f]{64})`\)"
+)
+BULLET = re.compile(r"^- (\d\d) (.+)$", re.MULTILINE)
 PATHS: dict[str, str] = {
     "05": "docs/plan/05-accessibility-standard.md",
     "11": "docs/plan/11-user-stories.md",
@@ -152,6 +184,8 @@ class Texts:
     tool: str
     changed: list[str] | None
     memo: dict[str, str | None]
+    files: dict[str, bytes]
+    work: dict[str, str]
 
 
 def git(*args: str) -> str | None:
@@ -450,10 +484,10 @@ VERBATIM = re.compile(r"verbatim \(`DS`:(\d+)\u2013(\d+)\): (.+?)(?:\. | \(|\.$)
 def g_arow(t: Texts, vals: dict[str, str]) -> list[str]:
     bad = []
     for ln in section(t.spec, "## 13.").split("\n"):
-        m = re.match(r"- \*\*(A-\d+) \u2192 `(\d\d)`", ln)
+        m = re.match(r"- \*\*(A-\d+) \u2192 `(\d\d)`(?: ((?:CMP|SCR)-\d+))?", ln)
         if not m:
             continue
-        aid, key = m[1], m[2]
+        aid, key, owner = m[1], m[2], m[3] or ""
         body = ln[m.end() :]
         anchors = re.findall(r'Old: "(.+?)"\. New:', body)
         after = re.findall(
@@ -475,7 +509,60 @@ def g_arow(t: Texts, vals: dict[str, str]) -> list[str]:
             n = at(t, key).count(a)
             if n != 1:
                 bad.append(f"{aid}: {a[:40]!r} stands {n} times in `{key}`")
+        bad += applied_problems(t, aid, key, owner, body)
     return bad
+
+
+def inside(ls: list[str], i: int, own: str) -> bool:
+    head = next((x for x in reversed(ls[:i]) if x.startswith(("### ", "## "))), "")
+    return bool(own) and re.match(rf"### {own}\b", head) is not None
+
+
+def applied_problems(t: Texts, aid: str, key: str, own: str, body: str) -> list[str]:
+    if aid in HELD:
+        bad = [] if body.endswith(HELD_MARK) else [f"{aid}: no held mark"]
+        ids = [int(n) for n in REBASED.findall(t.work.get(key, ""))]
+        if any(n >= BAND for n in ids):
+            bad.append(f"{aid}: still held, but `{key}` holds an id of #5482's band")
+        if re.search(r"\bapplied\b", body, re.IGNORECASE):
+            bad.append(f"{aid}: marked applied, but it is held for PR 2's rebase")
+        return bad
+    if not body.endswith(APPLIED):
+        return [f"{aid}: not marked applied"]
+    body = body[: -len(APPLIED)]
+    work = t.work.get(key)
+    if work is None:
+        return [f"{aid}: cannot read `{key}` in the working tree"]
+    wl = work.split("\n")
+    on = re.search(r'Old: "(.+?)"\. New: "(.+)"\.?$', body)
+    if on:
+        old, new = on[1], on[2]
+        bad = (
+            []
+            if work.count(new) == 1
+            else [f"{aid}: its New stands {work.count(new)} times"]
+        )
+        if old in work:
+            bad.append(f"{aid}: its Old text still stands in `{key}`")
+        was = [ln for ln in at(t, key).split("\n") if old in ln]
+        hits = [i for i, ln in enumerate(wl) if new in ln]
+        if len(was) != 1 or len(hits) != 1 or wl[hits[0]] != was[0].replace(old, new):
+            bad.append(f"{aid}: its New is not on the line that held its Old")
+        elif not inside(wl, hits[0], own):
+            bad.append(f"{aid}: its New stands outside {own or 'its entry'}")
+        return bad
+    af = re.search(r'[Aa]fter "(.+?)" \(line[^)]*\) add the line: "(.+)"\.?$', body)
+    if af is None:
+        return [f"{aid}: marked applied, but its New text cannot be read"]
+    anchor, new = af[1], af[2]
+    hits = [i for i, ln in enumerate(wl) if ln.startswith(anchor)]
+    if wl.count(new) != 1 or len(hits) != 1 or wl[hits[0] + 1 : hits[0] + 2] != [new]:
+        return [
+            f"{aid}: its line does not stand once, right after its anchor in `{key}`"
+        ]
+    if not inside(wl, hits[0] + 1, own):
+        return [f"{aid}: its line stands outside {own or 'its entry'}"]
+    return []
 
 
 def g_cite(t: Texts, vals: dict[str, str]) -> list[str]:
@@ -519,10 +606,62 @@ def g_scope(t: Texts, vals: dict[str, str]) -> list[str]:
     if t.changed is None:
         return ["cannot list the changed paths (git failed)"]
     return [
-        f"{p} is touched; this ticket owns {', '.join(OWN_PATHS)}"
+        f"{p} is touched; this ticket owns {', '.join(OWN_PATHS)} and the E38-D04 exports"
         for p in t.changed
-        if p not in OWN_PATHS
+        if p not in OWN_PATHS and not IMG.fullmatch(p)
     ]
+
+
+def png_size(data: bytes) -> tuple[int, int] | None:
+    if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        return None
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def g_drawn(t: Texts, vals: dict[str, str]) -> list[str]:
+    s0 = section(t.spec, "## 0.")
+    head = s0.strip().split("\n", 1)[0]
+    bullets = BULLET.findall(s0)
+    boards = [
+        cells(ln) for ln in s0.split("\n") if re.match(r"\| \d\d +\|", ln.strip())
+    ]
+    if not bullets:
+        return ["§0 lists no boards"]
+    if PENDING in head and not boards:
+        return []  # PR 1: nothing drawn yet
+    bad = []
+    if PENDING in head:
+        bad.append(f"a mix: §0's heading still reads {PENDING!r}")
+    if not re.search(rf"page id `{UUID}`", s0):
+        bad.append("drawn, but §0 names no page id")
+    nos = {r[0] for r in boards}
+    for no, text in bullets:
+        m = re.search(r": drawn, board (\d\d);?\.?$", text)
+        if m is None or m[1] != no or no not in nos:
+            bad.append(f"bullet {no}: names no drawn board of the board table")
+    listed: set[str] = set()
+    for r in boards:
+        m = DRAWN.fullmatch(r[4]) if len(r) == 5 else None
+        if m is None:
+            bad.append(f"board {r[0]}: Status is not the drawn form")
+            continue
+        name, no, slug, sha = m[1], m[2], m[3], m[6]
+        listed.add(name)
+        if no != r[0] or r[1] != f"`E38-D04 / {no} {slug}`":
+            bad.append(f"board {r[0]}: the export names another board or slug")
+        data = t.files.get(name)
+        if (
+            data is None
+            or hashlib.sha256(data).hexdigest() != sha
+            or png_size(data) != (int(m[4]), int(m[5]))
+        ):
+            bad.append(f"board {r[0]}: {name} is missing or not its W × H and sha256")
+    if len(boards) != len(bullets):
+        bad.append(f"{len(bullets)} board bullets but {len(boards)} board rows")
+    stray = sorted(set(t.files) - listed)
+    if stray:
+        bad.append(f"E38-D04 PNGs on disk that §0 does not list: {stray}")
+    return bad
 
 
 GATES: dict[str, Callable[[Texts, dict[str, str]], list[str]]] = {
@@ -534,6 +673,7 @@ GATES: dict[str, Callable[[Texts, dict[str, str]], list[str]]] = {
     "G-AROW": g_arow,
     "G-CITE": g_cite,
     "G-HYGIENE": g_hygiene,
+    "G-DRAWN": g_drawn,
     "G-SCOPE": g_scope,
 }
 
@@ -567,7 +707,18 @@ def load() -> Texts:
         else ""
     )
     tool = (ROOT / TOOL_REL).read_text(encoding="utf-8")
-    return Texts(spec, pins, tool, changed_paths(), {})
+    img = ROOT / IMG_REL
+    files = (
+        {f.name: f.read_bytes() for f in sorted(img.glob("E38-D04-*.png"))}
+        if img.is_dir()
+        else {}
+    )
+    work = {
+        k: (ROOT / rel).read_text(encoding="utf-8")
+        for k, rel in TARGETS.items()
+        if (ROOT / rel).exists()
+    }
+    return Texts(spec, pins, tool, changed_paths(), {}, files, work)
 
 
 def sub(old: str, new: str) -> Callable[[Texts], Texts]:
@@ -605,16 +756,105 @@ def drop_row(row: str) -> Callable[[Texts], Texts]:
     return f
 
 
+def work_sub(key: str, old: str, new: str) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        text = t.work[key]
+        if text.count(old) != 1:
+            raise SystemExit(
+                f"self-test: `{key}` carries {old[:50]!r} {text.count(old)} times"
+            )
+        return replace(t, work={**t.work, key: text.replace(old, new)})
+
+    return f
+
+
+def with_file(name: str, data: bytes | None) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        files = {k: v for k, v in t.files.items() if k != name}
+        if data is not None:
+            files[name] = data
+        return replace(t, files=files)
+
+    return f
+
+
 A1_T2 = ", wrapped by CMP-079 RbacGate and led by the CMP-019 `lock`"
+A1_NEW = (
+    '`formats: ("csv"|"pdf"|"parquet")[]` (E38-D04: Parquet for the journal and simulated'
+    " exports, matching E41; without `journal:read` each format button is T2"
+    f"{A1_T2}, E38-D04 §10.1)"
+)
+CMP100 = "\n### CMP-100 PriceInput\n"
+
+
+def a2_says_applied(t: Texts) -> Texts:
+    return sub("assigned at PR 2's rebase onto", "applied in PR 2 onto")(t)
+
+
+def rebased_onto_5482(t: Texts) -> Texts:
+    """#5482's first id moved: its band starts at CMP-255, not CMP-254."""
+    return replace(t, work={**t.work, "15": t.work["15"] + "\n### CMP-255 X\n"})
 
 
 def a1_without(name: str) -> Callable[[Texts], Texts]:
-    """A-1 loses one of its two T2 components."""
+    """A-1 loses one T2 component in the spec and in `15` together, so only G-T2 sees it."""
     kept = {
         "CMP-079": ", led by the CMP-019 `lock`",
         "CMP-019": ", wrapped by CMP-079 RbacGate",
     }[name]
-    return sub(A1_T2, kept)
+
+    def f(t: Texts) -> Texts:
+        return work_sub("15", A1_T2, kept)(sub(A1_T2, kept)(t))
+
+    return f
+
+
+def a1_new_under_cmp100(t: Texts) -> Texts:
+    t = work_sub("15", A1_NEW, '`formats: ("csv")[]`')(t)
+    return work_sub("15", CMP100, CMP100 + "\n- " + A1_NEW + "\n")(t)
+
+
+def a1_line_under_cmp100(t: Texts) -> Texts:
+    line = next(ln for ln in t.work["15"].split("\n") if A1_NEW in ln)
+    t = work_sub("15", "\n" + line + "\n", "\n")(t)
+    return work_sub("15", CMP100, CMP100 + "\n" + line + "\n")(t)
+
+
+def a8_above_scr099(t: Texts) -> Texts:
+    ls = t.work["14"].split("\n")
+    i = next(k for k, ln in enumerate(ls) if ln.startswith("- **Simulated framing"))
+    h = next(k for k, ln in enumerate(ls) if ln.startswith("### SCR-099"))
+    pair = ls[i - 1 : i + 1]
+    rest = ls[: i - 1] + ls[i + 1 :]
+    rest[h:h] = [*pair, ""]
+    return replace(t, work={**t.work, "14": "\n".join(rest)})
+
+
+def one_pixel_wider(t: Texts) -> Texts:
+    """Board 04's IHDR width plus one; the record's sha256 moves to match, so only the size is off."""
+    name = "E38-D04-04-demo-simulated-pair.png"
+    data = bytearray(t.files[name])
+    data[16:20] = (int.from_bytes(data[16:20], "big") + 1).to_bytes(4, "big")
+    old = hashlib.sha256(t.files[name]).hexdigest()
+    new = hashlib.sha256(bytes(data)).hexdigest()
+    return replace(
+        t, spec=t.spec.replace(old, new, 1), files={**t.files, name: bytes(data)}
+    )
+
+
+def one_byte_off(t: Texts) -> Texts:
+    """Board 02's last byte changed: its size stands, its sha256 does not."""
+    name = "E38-D04-02-placement-sheet.png"
+    data = bytearray(t.files[name])
+    data[-1] ^= 0x01
+    return replace(t, files={**t.files, name: bytes(data)})
+
+
+def swap_boards(t: Texts) -> Texts:
+    """Boards 01 and 03 swap bytes: both sizes and sha256 then disagree with the record."""
+    a = "E38-D04-01-badge-sheet.png"
+    b = "E38-D04-03-disclosure-block.png"
+    return replace(t, files={**t.files, a: t.files[b], b: t.files[a]})
 
 
 MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
@@ -712,9 +952,101 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         lambda t: replace(t, tool=t.tool + "\n# " + "fl" + "ood\n"),
     ),
     (
+        "G-AROW",
+        "A-5's line dropped from `14`",
+        work_sub("14", "\n- **Simulated trades (E38-D04):** a Simulated column", "\n"),
+    ),
+    (
+        "G-AROW",
+        "A-1's Old text back beside its New in `15`",
+        work_sub(
+            "15",
+            "- **Props**: `formats: (",
+            '`formats: ("csv"|"pdf")[]` - **Props**: `formats: (',
+        ),
+    ),
+    (
+        "G-AROW",
+        "A-7's line moved one line down",
+        work_sub(
+            "14",
+            "\n- **Live and simulated (E38-D04):**",
+            "\n\n- **Live and simulated (E38-D04):**",
+        ),
+    ),
+    (
+        "G-AROW",
+        "A-6 no longer marked applied",
+        sub('the badge in the heading."' + APPLIED, 'the badge in the heading."'),
+    ),
+    (
+        "G-AROW",
+        "A-2 marked applied while held",
+        sub(HELD_MARK, APPLIED),
+    ),
+    ("G-DRAWN", "board 04's PNG one pixel wider than its record", one_pixel_wider),
+    ("G-DRAWN", "board 02's PNG one byte off its sha256", one_byte_off),
+    ("G-DRAWN", "boards 01 and 03 swap bytes", swap_boards),
+    (
+        "G-DRAWN",
+        "a board's PNG missing on disk",
+        with_file("E38-D04-03-disclosure-block.png", None),
+    ),
+    (
+        "G-DRAWN",
+        "an extra E38-D04 PNG on disk",
+        with_file("E38-D04-05-extra.png", b"\x89PNG\r\n\x1a\n"),
+    ),
+    (
+        "G-DRAWN",
+        "§0's heading back to pending (a mix)",
+        sub(
+            "## 0. The boards (Penpot) — drawn",
+            "## 0. The boards (Penpot) — to draw in PR 2",
+        ),
+    ),
+    (
+        "G-DRAWN",
+        "a bullet names a board not drawn",
+        sub(
+            "orthogonality note: drawn, board 04.",
+            "orthogonality note: drawn, board 05.",
+        ),
+    ),
+    (
+        "G-DRAWN",
+        "a board row's name off its export's slug",
+        sub("`E38-D04 / 02 placement-sheet`", "`E38-D04 / 02 placement-grid`"),
+    ),
+    (
+        "G-DRAWN",
+        "the page id dropped",
+        lambda t: replace(
+            t, spec=re.sub(rf"page id `{UUID}`", "page id pending", t.spec)
+        ),
+    ),
+    ("G-DRAWN", "a board row dropped", drop_row("04")),
+    (
         "G-SCOPE",
-        "a catalogue file in the diff",
-        lambda t: replace(t, changed=[*OWN_PATHS, PATHS["15"]]),
+        "another ticket's export in the diff",
+        lambda t: replace(
+            t, changed=[*OWN_PATHS, "docs/design/E38/img/E38-D02-01-x.png"]
+        ),
+    ),
+    (
+        "G-SCOPE",
+        "another plan doc in the diff",
+        lambda t: replace(t, changed=[*OWN_PATHS, PATHS["16"]]),
+    ),
+    ("G-AROW", "A-2's tail: Applied in PR 2", sub(HELD_MARK, " **Applied in PR 2.**")),
+    ("G-AROW", "A-2 held, its row says applied", a2_says_applied),
+    ("G-AROW", "A-1's New under CMP-100, CMP-099 csv only", a1_new_under_cmp100),
+    ("G-AROW", "A-1's whole line moved under CMP-100", a1_line_under_cmp100),
+    ("G-AROW", "A-8's anchor and line moved above SCR-099", a8_above_scr099),
+    (
+        "G-AROW",
+        "rebased onto #5482's band (CMP-255) with A-2 still held",
+        rebased_onto_5482,
     ),
     (
         "G-T2",
@@ -742,8 +1074,8 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "a G-T2.3 quote off its DS text",
         sub("one polite announcement (", "an announcement ("),
     ),
-    ("G-T2", "A-1 without CMP-079", a1_without("CMP-079")),
-    ("G-T2", "A-1 without CMP-019", a1_without("CMP-019")),
+    ("G-T2", "A-1 without CMP-079 (spec and `15`)", a1_without("CMP-079")),
+    ("G-T2", "A-1 without CMP-019 (spec and `15`)", a1_without("CMP-019")),
 )
 
 

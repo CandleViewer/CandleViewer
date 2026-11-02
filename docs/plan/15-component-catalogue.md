@@ -1099,7 +1099,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-099 PrintExportBar
 
 - **Tier**: Molecule · **Purpose**: export controls (CSV/PDF) for journal and strategy reports. Not used for the audit log, whose export is one signed format of a time window run as a job behind a step-up (`docs/design/E42/E42-D04.md` §8).
-- **Props**: `formats: ("csv"|"pdf")[]` · `onExport(format)` · `loading?`.
+- **Props**: `formats: ("csv"|"pdf"|"parquet")[]` (E38-D04: Parquet for the journal and simulated exports, matching E41; without `journal:read` each format button is T2, wrapped by CMP-079 RbacGate and led by the CMP-019 `lock`, E38-D04 §10.1) · `onExport(format)` · `loading?`.
 - **A11y**: each format is a distinct labelled button, loading state per CMP-038.
 - **Tokens**: inherits CMP-001.
 - **Storybook**: Default, Exporting.

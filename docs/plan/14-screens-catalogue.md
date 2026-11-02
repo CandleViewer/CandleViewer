@@ -1551,6 +1551,7 @@ Drag preview                Drop zones
 - **Hi-fi spec:** [E29-D02.md](../design/E29/E29-D02.md) (E29-D02; the five tabs, every catalogued state, the inline-amend pending and rejected treatment, row actions and confirms, keyboard model, redlines and measured contrast; Penpot page `E29-D02`; 21 board exports in `docs/design/E29/img/E29-D02-NN-<slug>.png`; owner approval pending).
 - **Hand-off pack:** [E29-D06.md](../design/E29/E29-D06.md) v1 (E29-D06; owner approval pending) (a11y contract: E29-D05).
 - **Design sign-off acceptance checklist:** [ ] positions, working orders, fills and algos tabs drawn [ ] full column set with units and side as text [ ] inline SL/TP edit and its confirmation drawn [ ] close-position (market/limit/%) controls with confirmation [ ] account filter and aggregate-vs-split view [ ] DEMO/LIVE badge per row when mixed environments are visible [ ] empty, loading, stale and 'position state unknown (feed down)' states drawn [ ] every mutating control confirmed to emit an audit event
+- **Simulated rows (E38-D04):** the `SIM` column and the SIMULATED badge in the heading while a simulated row is shown.
 
 ### SCR-064 — Position SL/TP editor (modal)
 
@@ -1830,6 +1831,7 @@ Drag preview                Drop zones
 - **Hi-fi (E29-D03):** [E29-D03.md](../design/E29/E29-D03.md) §3 (the drawer in every state: order, trade-group and closed-position scopes, per-fill rows, the average with the maker/taker split, slippage where an intent exists, fan-out by account, CSV export, the empty states), §10.1 (this checklist item by item); boards 01, 02 and 05–07 on Penpot page `E29-D03` (03 and 04 not drawn — the text is binding; the exports in `docs/design/E29/img/`).
 - **Hand-off pack:** [E29-D06.md](../design/E29/E29-D06.md) v1 (E29-D06; owner approval pending) (a11y contract: E29-D05).
 - **Design sign-off acceptance checklist:** [ ] per-fill rows (time, price, qty, fee, fee currency, liquidity flag, order id, exec id) drawn [ ] aggregation to an average price with the maker/taker split [ ] slippage vs intended price shown where an intent exists [ ] fan-out grouping by account [ ] CSV export [ ] empty state
+- **Simulated fills (E38-D04):** the badge in the heading of a simulated fill.
 
 ### SCR-079 — Account detail drawer (trading-side)
 
@@ -2173,6 +2175,7 @@ Drag preview                Drop zones
 - **Performance:** Cursor-paginated, virtualised table over `GET /api/v1/journal/trades`; 10k trades scroll without exceeding 8 ms scripting per frame; aggregate stats are computed server-side, never client-side over the full set.
 - **Analytics/audit:** `journal.note_added`, `journal.tag_added`, `journal.tag_removed`, `journal.trade_excluded`, `journal.rating_set` - **audited** (journal content is user-authored evidence and must be tamper-evident); analytics: `journal.list_viewed`, `journal.filtered`, `journal.exported`.
 - **Design sign-off acceptance checklist:** [ ] columns (open/close time, symbol, side, size, entry, exit, PnL, R, fees, account, environment, tags, rating) drawn [ ] DEMO and LIVE trades are visibly separated and never aggregated together [ ] filters (date, symbol, account, environment, tag, outcome) [ ] bulk tagging [ ] empty state tied to recording/trading start [ ] export
+- **Simulated trades (E38-D04):** a Simulated column and filter chip; the badge in the heading while shown.
 
 ### SCR-094 — Trade detail / post-mortem
 
@@ -2197,6 +2200,7 @@ Drag preview                Drop zones
 - **Performance:** The post-mortem chart replays from recorded history; opening a trade detail renders its context window in <=1.5 s, and falls back to a clear 'context not recorded' state rather than a spinner.
 - **Analytics/audit:** `journal.detail_viewed`, `journal.note_added` (audited), `journal.screenshot_exported`, `journal.replay_from_trade` (analytics).
 - **Design sign-off acceptance checklist:** [ ] entry/exit markers on a context chart with the footprint available [ ] the full fill list [ ] the rule/algo/manual attribution of every action taken [ ] notes and tags editor [ ] R-multiple, MAE/MFE and time-in-trade shown with units [ ] 'context not recorded' state [ ] link into replay at the trade's timestamp
+- **Simulated trades (E38-D04):** the badge in the heading.
 
 ### SCR-095 — Journal analytics dashboard
 
@@ -2209,6 +2213,7 @@ Drag preview                Drop zones
 - **Stories:** US-JRN-006, US-JRN-007, US-JRN-008, US-JRN-010.
 - **Analytics/audit:** `journal.analytics_viewed`, `journal.analytics_filtered`, `journal.analytics_exported`, `journal.cohort_changed` (analytics only - read-only surface).
 - **Design sign-off acceptance checklist:** [ ] the metric set drawn (win rate, expectancy, avg R, profit factor, max drawdown, streaks, by-symbol, by-hour, by-tag, by-account, by-rule) [ ] DEMO excluded by default with an explicit toggle [ ] every chart has a table alternative [ ] small-sample warning ('12 trades - not statistically meaningful') [ ] date-range and cohort controls [ ] empty state
+- **Live and simulated (E38-D04):** one data set at a time, Live by default; a view switch Live · Simulated; a comparison draws two labelled series, never one total.
 
 ### SCR-096 — Journal tag manager
 
@@ -2274,6 +2279,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `replay.results_viewed`, `replay.results_exported`, `replay.results_promoted_to_journal` (the last writes journal entries flagged `simulated=true` - audited as `journal.simulated_import`).
 - **UX research:** [replay-study-sessions.md](../research/ux/replay-study-sessions.md) (E26-D01; paper trading in replay as the real ticket in a distinct state §3.7, the fill-model honesty finding F25).
 - **Design sign-off acceptance checklist:** [ ] every figure carries the 'simulated' framing [ ] fill-model assumptions are stated explicitly (queue position, latency, slippage model) [ ] per-trade list with entry/exit and R [ ] comparison against the same period's real trades is opt-in and clearly separated [ ] export [ ] 'these results are not a backtest guarantee' caveat
+- **Simulated framing (E38-D04):** the badge, FillModelDisclosure and the rows R-1 … R-7 of `docs/design/E38/E38-D04.md` §8; the frames are E26-D04's.
 
 ---
 
