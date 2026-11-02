@@ -101,19 +101,6 @@ _IS_MARKED = sa.text(
     "FROM user_invites i WHERE i.id = CAST(:iid AS uuid)"
 )
 
-_COLS = (
-    "i.id::text AS id, i.user_id::text AS user_id, i.role::text AS role, "
-    "u.username::text AS username, u.email::text AS email, u.display_name, "
-    "u.status::text AS user_status, i.expires_at, i.consumed_at, i.revoked_at, "
-    "i.created_at, i.pending_password_hash"
-)
-_FROM = "FROM user_invites i JOIN users u ON u.id = i.user_id AND u.deleted_at IS NULL"
-
-
-def _sql(template: str) -> sa.TextClause:
-    # Only the static column/from fragments above are substituted, never caller data.
-    return sa.text(template.replace("@C@", _COLS).replace("@F@", _FROM))
-
 
 INSERT_INVITED_USER = sa.text(
     "INSERT INTO users (id, email, username, display_name, password_hash, status, "
@@ -135,7 +122,13 @@ _INSERT_INVITE_NOW = sa.text(
     "VALUES (CAST(:iid AS uuid), CAST(:id AS uuid), CAST(:role AS role_name), :th, "
     "CAST(:by AS uuid), :exp)"
 )
-_FIND = _sql("SELECT @C@ @F@ WHERE i.token_hash = :h")
+_FIND = sa.text(
+    "SELECT i.id::text AS id, i.user_id::text AS user_id, i.role::text AS role, "
+    "u.username::text AS username, u.email::text AS email, u.display_name, "
+    "u.status::text AS user_status, i.expires_at, i.consumed_at, i.revoked_at, "
+    "i.created_at, i.pending_password_hash FROM user_invites i JOIN users u ON "
+    "u.id = i.user_id AND u.deleted_at IS NULL WHERE i.token_hash = :h"
+)
 _CONSUME = sa.text(
     "WITH c AS (UPDATE user_invites SET consumed_at = :now, pending_password_hash = :pp "
     "WHERE token_hash = :h AND consumed_at IS NULL AND revoked_at IS NULL "
@@ -158,11 +151,21 @@ _IS_INVITED = sa.text(
     "WHERE u.id = CAST(:id AS uuid) AND u.status = 'invited' AND u.deleted_at IS NULL "
     "ORDER BY i.created_at DESC LIMIT 1"
 )
-_PENDING = _sql(
-    "SELECT @C@ @F@ WHERE i.consumed_at IS NULL AND i.revoked_at IS NULL "
-    "AND u.status = 'invited' ORDER BY i.created_at DESC"
+_PENDING = sa.text(
+    "SELECT i.id::text AS id, i.user_id::text AS user_id, i.role::text AS role, "
+    "u.username::text AS username, u.email::text AS email, u.display_name, "
+    "u.status::text AS user_status, i.expires_at, i.consumed_at, i.revoked_at, "
+    "i.created_at, i.pending_password_hash FROM user_invites i JOIN users u ON "
+    "u.id = i.user_id AND u.deleted_at IS NULL WHERE i.consumed_at IS NULL AND "
+    "i.revoked_at IS NULL AND u.status = 'invited' ORDER BY i.created_at DESC"
 )
-_FIND_BY_ID = _sql("SELECT @C@ @F@ WHERE i.id = CAST(:iid AS uuid)")
+_FIND_BY_ID = sa.text(
+    "SELECT i.id::text AS id, i.user_id::text AS user_id, i.role::text AS role, "
+    "u.username::text AS username, u.email::text AS email, u.display_name, "
+    "u.status::text AS user_status, i.expires_at, i.consumed_at, i.revoked_at, "
+    "i.created_at, i.pending_password_hash FROM user_invites i JOIN users u ON "
+    "u.id = i.user_id AND u.deleted_at IS NULL WHERE i.id = CAST(:iid AS uuid)"
+)
 
 
 _DOWNGRADE_INVITES = sa.text(
@@ -266,10 +269,14 @@ class SqlAlchemyInviteRepository:
 
     async def find_consumed_for_user(self, user_id: uuid.UUID) -> Any:
         rows = await self._rows(
-            _sql(
-                "SELECT @C@ @F@ WHERE i.user_id = CAST(:id AS uuid) AND i.consumed_at IS NOT NULL "
-                "AND i.revoked_at IS NULL AND u.status = 'invited' "
-                "ORDER BY i.created_at DESC LIMIT 1"
+            sa.text(
+                "SELECT i.id::text AS id, i.user_id::text AS user_id, i.role::text AS role, "
+                "u.username::text AS username, u.email::text AS email, u.display_name, "
+                "u.status::text AS user_status, i.expires_at, i.consumed_at, i.revoked_at, "
+                "i.created_at, i.pending_password_hash FROM user_invites i JOIN users u ON "
+                "u.id = i.user_id AND u.deleted_at IS NULL WHERE i.user_id = CAST(:id AS uuid) "
+                "AND i.consumed_at IS NOT NULL AND i.revoked_at IS NULL AND u.status = "
+                "'invited' ORDER BY i.created_at DESC LIMIT 1"
             ),
             {"id": str(user_id)},
         )

@@ -23,17 +23,9 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
 
-_METHOD_COLS = (
-    "id::text AS id, user_id::text AS user_id, kind::text AS kind, label, secret_enc, "
-    "secret_key_ref, last_accepted_time_step, confirmed_at, last_used_at, created_at, "
-    "revoked_at"
-)
-_CHALLENGE_COLS = (
-    "id::text AS id, user_id::text AS user_id, convert_from(nonce, 'UTF8') AS mfa_token_hash, "
-    "purpose, attempts, satisfied_at, expires_at, created_at"
-)
 #: #2295: a method `m` that may still be confirmed: never confirmed (every confirmation
-#: records the accepted step), not revoked, and its user's latest method.
+#: records the accepted step), not revoked, and its user's latest method. Each statement writes
+#: it out (no splicing); the unit tests pin that.
 _CONFIRMABLE = (
     "m.user_id = CAST(:u AS uuid) AND m.confirmed_at IS NULL AND m.revoked_at IS NULL "
     "AND m.last_accepted_time_step IS NULL AND NOT EXISTS (SELECT 1 FROM mfa_methods n "
@@ -41,23 +33,31 @@ _CONFIRMABLE = (
 )
 
 
-def _sql(template: str) -> sa.TextClause:
-    # Only the static fragments above are substituted, never caller data.
-    return sa.text(
-        template.replace("@M@", _METHOD_COLS)
-        .replace("@C@", _CHALLENGE_COLS)
-        .replace("@P@", _CONFIRMABLE)
-    )
-
-
-_CREATE_METHOD = _sql(
-    "INSERT INTO mfa_methods (id, user_id, kind, label, secret_enc, secret_key_ref) "
-    "VALUES (CAST(:id AS uuid), CAST(:u AS uuid), 'totp', :label, :enc, :ref) RETURNING @M@"
+_CREATE_METHOD = sa.text(
+    "INSERT INTO mfa_methods (id, user_id, kind, label, secret_enc, "
+    "secret_key_ref) VALUES (CAST(:id AS uuid), CAST(:u AS uuid), 'totp', :label, "
+    ":enc, :ref) RETURNING id::text AS id, user_id::text AS user_id, kind::text AS "
+    "kind, label, secret_enc, secret_key_ref, last_accepted_time_step, "
+    "confirmed_at, last_used_at, created_at, revoked_at"
 )
-_FIND_PENDING = _sql("SELECT @M@ FROM mfa_methods m WHERE m.id = CAST(:id AS uuid) AND @P@")
-_CLAIM = _sql(
+_FIND_PENDING = sa.text(
+    "SELECT id::text AS id, user_id::text AS user_id, kind::text AS kind, label, "
+    "secret_enc, secret_key_ref, last_accepted_time_step, confirmed_at, "
+    "last_used_at, created_at, revoked_at FROM mfa_methods m WHERE m.id = CAST(:id "
+    "AS uuid) AND m.user_id = CAST(:u AS uuid) AND m.confirmed_at IS NULL AND "
+    "m.revoked_at IS NULL AND m.last_accepted_time_step IS NULL AND NOT EXISTS "
+    "(SELECT 1 FROM mfa_methods n WHERE n.user_id = m.user_id AND n.created_at > "
+    "m.created_at)"
+)
+_CLAIM = sa.text(
     "UPDATE mfa_methods m SET confirmed_at = :now, last_accepted_time_step = :step "
-    "WHERE m.id = CAST(:id AS uuid) AND @P@ RETURNING @M@"
+    "WHERE m.id = CAST(:id AS uuid) AND m.user_id = CAST(:u AS uuid) AND "
+    "m.confirmed_at IS NULL AND m.revoked_at IS NULL AND m.last_accepted_time_step "
+    "IS NULL AND NOT EXISTS (SELECT 1 FROM mfa_methods n WHERE n.user_id = "
+    "m.user_id AND n.created_at > m.created_at) RETURNING id::text AS id, "
+    "user_id::text AS user_id, kind::text AS kind, label, secret_enc, "
+    "secret_key_ref, last_accepted_time_step, confirmed_at, last_used_at, "
+    "created_at, revoked_at"
 )
 _REVOKE_OTHER_TOTP = sa.text(
     "UPDATE mfa_methods SET revoked_at = :now WHERE user_id = CAST(:u AS uuid) "
@@ -67,13 +67,19 @@ _SUPERSEDE = sa.text(
     "UPDATE mfa_methods SET revoked_at = :now WHERE user_id = CAST(:u AS uuid) "
     "AND confirmed_at IS NULL AND revoked_at IS NULL"
 )
-_ACTIVE_TOTP = _sql(
-    "SELECT @M@ FROM mfa_methods WHERE user_id = CAST(:u AS uuid) AND kind = 'totp' "
-    "AND confirmed_at IS NOT NULL AND revoked_at IS NULL ORDER BY created_at DESC"
+_ACTIVE_TOTP = sa.text(
+    "SELECT id::text AS id, user_id::text AS user_id, kind::text AS kind, label, "
+    "secret_enc, secret_key_ref, last_accepted_time_step, confirmed_at, "
+    "last_used_at, created_at, revoked_at FROM mfa_methods WHERE user_id = CAST(:u "
+    "AS uuid) AND kind = 'totp' AND confirmed_at IS NOT NULL AND revoked_at IS "
+    "NULL ORDER BY created_at DESC"
 )
-_ACTIVE_ALL = _sql(
-    "SELECT @M@ FROM mfa_methods WHERE user_id = CAST(:u AS uuid) "
-    "AND confirmed_at IS NOT NULL AND revoked_at IS NULL ORDER BY created_at DESC"
+_ACTIVE_ALL = sa.text(
+    "SELECT id::text AS id, user_id::text AS user_id, kind::text AS kind, label, "
+    "secret_enc, secret_key_ref, last_accepted_time_step, confirmed_at, "
+    "last_used_at, created_at, revoked_at FROM mfa_methods WHERE user_id = CAST(:u "
+    "AS uuid) AND confirmed_at IS NOT NULL AND revoked_at IS NULL ORDER BY "
+    "created_at DESC"
 )
 _TIME_STEP = sa.text(
     "UPDATE mfa_methods SET last_accepted_time_step = :step WHERE id = CAST(:id AS uuid) "
@@ -81,13 +87,18 @@ _TIME_STEP = sa.text(
 )
 _REVOKE = sa.text("UPDATE mfa_methods SET revoked_at = :now WHERE id = CAST(:id AS uuid)")
 _TOUCH = sa.text("UPDATE mfa_methods SET last_used_at = :now WHERE id = CAST(:id AS uuid)")
-_CH_CREATE = _sql(
+_CH_CREATE = sa.text(
     "INSERT INTO mfa_challenges (id, user_id, kind, nonce, purpose, expires_at) "
-    "VALUES (CAST(:id AS uuid), CAST(:u AS uuid), 'totp', convert_to(:h, 'UTF8'), :purpose, "
-    ":exp) RETURNING @C@"
+    "VALUES (CAST(:id AS uuid), CAST(:u AS uuid), 'totp', convert_to(:h, 'UTF8'), "
+    ":purpose, :exp) RETURNING id::text AS id, user_id::text AS user_id, "
+    "convert_from(nonce, 'UTF8') AS mfa_token_hash, purpose, attempts, "
+    "satisfied_at, expires_at, created_at"
 )
-_CH_FIND = _sql(
-    "SELECT @C@ FROM mfa_challenges WHERE nonce = convert_to(:h, 'UTF8') AND satisfied_at IS NULL"
+_CH_FIND = sa.text(
+    "SELECT id::text AS id, user_id::text AS user_id, convert_from(nonce, 'UTF8') "
+    "AS mfa_token_hash, purpose, attempts, satisfied_at, expires_at, created_at "
+    "FROM mfa_challenges WHERE nonce = convert_to(:h, 'UTF8') AND satisfied_at IS "
+    "NULL"
 )
 _CH_ATTEMPT = sa.text(
     "UPDATE mfa_challenges SET attempts = LEAST(attempts + 1, 10) "

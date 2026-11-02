@@ -267,6 +267,27 @@ async def test_a_refresh_carries_the_context_and_its_rotated_copy_is_never_due(p
 
 # -- the due read's plan: one rotated copy per refresh during a view (M6) ---------------------
 
+# A whole literal pinned to the shipped statement by the assertion in the plan test.
+_EXPLAIN_VIEW_AS_DUE = sa.text(
+    "EXPLAIN (FORMAT JSON) SELECT id::text AS id, user_id::text AS user_id, "
+    "refresh_token_hash, access_token_jti::text AS access_token_jti, "
+    "issued_at, last_seen_at, expires_at, revoked_at, revoked_reason, "
+    "ip::text AS ip, user_agent, device_label, is_electron, "
+    "mfa_satisfied_at, idle_timeout_s, step_up_elevations::text AS "
+    "step_up_elevations, step_up_failures, readonly_until, "
+    "view_as_context_id::text AS view_as_context_id, "
+    "view_as_target_user_id::text AS view_as_target_user_id, "
+    "view_as_started_at, view_as_expires_at, view_as_ended_at, "
+    "view_as_end_recorded_at, view_as_cleared_at, view_as_end_reason, "
+    "locked_at, unlocked_at FROM sessions s WHERE s.view_as_context_id IS "
+    "NOT NULL AND s.view_as_end_recorded_at IS NULL AND (s.view_as_ended_at "
+    "IS NOT NULL OR s.view_as_expires_at <= :now OR s.revoked_at IS NOT "
+    "NULL OR s.expires_at <= :now) AND (s.revoked_reason IS DISTINCT FROM "
+    "'rotated' OR NOT EXISTS (SELECT 1 FROM sessions o WHERE "
+    "o.view_as_context_id = s.view_as_context_id AND (o.revoked_reason IS "
+    "DISTINCT FROM 'rotated' OR o.revoked_at IS NULL OR o.revoked_at > "
+    ":cutoff))) ORDER BY s.view_as_expires_at LIMIT :limit"
+)
 _PILE = """
 INSERT INTO sessions (id, user_id, refresh_token_hash, issued_at, last_seen_at, expires_at,
     revoked_at, revoked_reason, view_as_context_id, view_as_target_user_id, view_as_started_at,
@@ -317,9 +338,8 @@ async def test_the_due_read_can_run_on_its_indexes_past_a_pile_of_rotated_copies
     try:
         async with engine.begin() as conn:
             await conn.execute(_NO_SCAN_NO_SORT)
-            # Built only from a fixed literal and the shipped statement's text; no input.
-            # nosemgrep: avoid-sqlalchemy-text reason=explain-sql owner=@basiltt review=2027-03-25
-            explain = sa.text("EXPLAIN (FORMAT JSON) " + mod._VIEW_AS_DUE_SQL.text)
+            explain = _EXPLAIN_VIEW_AS_DUE
+            assert explain.text == "EXPLAIN (FORMAT JSON) " + mod._VIEW_AS_DUE_SQL.text
             nodes = _nodes((await conn.execute(explain, params)).scalar_one())
             due = (await conn.execute(mod._VIEW_AS_DUE_SQL, params)).all()
     finally:

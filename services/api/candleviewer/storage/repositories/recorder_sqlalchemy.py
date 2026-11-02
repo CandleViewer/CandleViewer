@@ -46,29 +46,20 @@ HARD_DEFAULT_RETAIN_DAYS = 30
 #: (soft), or `absent` (no active manual row).
 ManualCleared = Literal["demoted", "removed", "absent"]
 
-_RS_COLS = (
-    "id::text AS id, symbol::text AS symbol, env::text AS env, reason::text AS reason, "
-    "reason_refs, streams::text[] AS streams, orderbook_depth, pinned, retention_days, "
-    "priority, added_by::text AS added_by, auto_added_at, created_at, removed_at"
-)
-
-
-def _with_cols(sql: str) -> str:
-    """Splice the constant column list into a SELECT template."""
-    return sql.replace("@C@", _RS_COLS)
-
 
 _LIST = sa.text(
-    _with_cols(
-        "SELECT @C@ FROM recorded_symbols WHERE env = CAST(:env AS exchange_env) "
-        "AND removed_at IS NULL ORDER BY priority, symbol"
-    )
+    "SELECT id::text AS id, symbol::text AS symbol, env::text AS env, reason::text "
+    "AS reason, reason_refs, streams::text[] AS streams, orderbook_depth, pinned, "
+    "retention_days, priority, added_by::text AS added_by, auto_added_at, "
+    "created_at, removed_at FROM recorded_symbols WHERE env = CAST(:env AS "
+    "exchange_env) AND removed_at IS NULL ORDER BY priority, symbol"
 )
 _GET = sa.text(
-    _with_cols(
-        "SELECT @C@ FROM recorded_symbols WHERE symbol = :symbol "
-        "AND env = CAST(:env AS exchange_env) AND removed_at IS NULL"
-    )
+    "SELECT id::text AS id, symbol::text AS symbol, env::text AS env, reason::text "
+    "AS reason, reason_refs, streams::text[] AS streams, orderbook_depth, pinned, "
+    "retention_days, priority, added_by::text AS added_by, auto_added_at, "
+    "created_at, removed_at FROM recorded_symbols WHERE symbol = :symbol AND env = "
+    "CAST(:env AS exchange_env) AND removed_at IS NULL"
 )
 _UPSERT_AUTO = sa.text(
     "INSERT INTO recorded_symbols (id, symbol, env, reason, reason_refs, auto_added_at) "
@@ -103,19 +94,20 @@ _SOFT_REMOVE = sa.text(
 # `ux_rs_symbol`, so a new row goes in beside it. No streams or depth: the column defaults of
 # `0011_recorder` on insert (an integration test pins them), the row's own on promotion.
 _UPSERT_MANUAL = sa.text(
-    _with_cols(
-        "INSERT INTO recorded_symbols (id, symbol, env, reason, streams, orderbook_depth, "
-        "added_by) VALUES (CAST(:id AS uuid), :symbol, CAST(:env AS exchange_env), 'manual', "
-        "COALESCE(CAST(CAST(:streams AS text[]) AS stream_kind[]), "
-        "'{trades,orderbook_delta,tickers,liquidations}'), "
-        "COALESCE(CAST(:depth AS smallint), 200), CAST(:added_by AS uuid)) "
-        "ON CONFLICT (symbol, env) WHERE removed_at IS NULL DO UPDATE SET reason = 'manual', "
-        "streams = COALESCE(CAST(CAST(:streams AS text[]) AS stream_kind[]), "
-        "recorded_symbols.streams), "
-        "orderbook_depth = COALESCE(CAST(:depth AS smallint), recorded_symbols.orderbook_depth), "
-        "added_by = COALESCE(EXCLUDED.added_by, recorded_symbols.added_by), "
-        "updated_at = now() RETURNING @C@"
-    )
+    "INSERT INTO recorded_symbols (id, symbol, env, reason, streams, "
+    "orderbook_depth, added_by) VALUES (CAST(:id AS uuid), :symbol, CAST(:env AS "
+    "exchange_env), 'manual', COALESCE(CAST(CAST(:streams AS text[]) AS "
+    "stream_kind[]), '{trades,orderbook_delta,tickers,liquidations}'), "
+    "COALESCE(CAST(:depth AS smallint), 200), CAST(:added_by AS uuid)) ON CONFLICT "
+    "(symbol, env) WHERE removed_at IS NULL DO UPDATE SET reason = 'manual', "
+    "streams = COALESCE(CAST(CAST(:streams AS text[]) AS stream_kind[]), "
+    "recorded_symbols.streams), orderbook_depth = COALESCE(CAST(:depth AS "
+    "smallint), recorded_symbols.orderbook_depth), added_by = "
+    "COALESCE(EXCLUDED.added_by, recorded_symbols.added_by), updated_at = now() "
+    "RETURNING id::text AS id, symbol::text AS symbol, env::text AS env, "
+    "reason::text AS reason, reason_refs, streams::text[] AS streams, "
+    "orderbook_depth, pinned, retention_days, priority, added_by::text AS "
+    "added_by, auto_added_at, created_at, removed_at"
 )
 # Takes the manual reason away. A row with refs left, or pinned, becomes the auto reason they
 # imply (a position over a chart; any other ref, or none, counts as a chart) with

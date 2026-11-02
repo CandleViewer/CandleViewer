@@ -579,13 +579,82 @@ _SEED_ROWS = 50_000
 _RUNS = 200
 
 
+# Whole-literal EXPLAIN statements, each pinned to the shipped statement where it is used
+# (the assertions in `_explain` and the plan test), so no `text(...)` argument is assembled.
+_EXPLAIN_LIST_PLAN = sa.text(
+    "EXPLAIN (FORMAT JSON) SELECT id::text AS id, owner_user_id::text AS "
+    "owner_user_id, symbol, layout_id::text AS layout_id, tool, geometry, "
+    "style, label, locked, visible, z_index, created_at, updated_at FROM "
+    "drawings WHERE owner_user_id = CAST(:owner AS uuid) AND symbol = "
+    ":symbol AND deleted_at IS NULL AND (CAST(:layout AS uuid) IS NULL OR "
+    "layout_id = CAST(:layout AS uuid)) AND (CAST(:after_id AS uuid) IS "
+    "NULL OR id > CAST(:after_id AS uuid)) ORDER BY id LIMIT :limit"
+)
+
+_EXPLAIN_LIST_ANALYZE = sa.text(
+    "EXPLAIN (ANALYZE, FORMAT JSON) SELECT id::text AS id, "
+    "owner_user_id::text AS owner_user_id, symbol, layout_id::text AS "
+    "layout_id, tool, geometry, style, label, locked, visible, z_index, "
+    "created_at, updated_at FROM drawings WHERE owner_user_id = CAST(:owner "
+    "AS uuid) AND symbol = :symbol AND deleted_at IS NULL AND (CAST(:layout "
+    "AS uuid) IS NULL OR layout_id = CAST(:layout AS uuid)) AND "
+    "(CAST(:after_id AS uuid) IS NULL OR id > CAST(:after_id AS uuid)) "
+    "ORDER BY id LIMIT :limit"
+)
+
+_EXPLAIN_SNAPSHOT = sa.text(
+    "EXPLAIN (FORMAT JSON) SELECT id::text AS id, symbol, tool, deleted_at, "
+    "updated_at FROM drawings WHERE id = ANY(CAST(:ids AS uuid[])) AND "
+    "owner_user_id = CAST(:owner AS uuid) ORDER BY id FOR UPDATE"
+)
+
+_EXPLAIN_INSERT_MANY = sa.text(
+    "EXPLAIN (FORMAT JSON) INSERT INTO drawings (id, owner_user_id, symbol, "
+    "layout_id, tool, geometry, style, label, locked, visible, z_index, "
+    "anchor_start, anchor_end) SELECT n_id, CAST(:owner AS uuid), n_symbol, "
+    "n_layout, n_tool, n_geometry, n_style, n_label, n_locked, n_visible, "
+    "n_z_index, n_anchor_start, n_anchor_end FROM "
+    "jsonb_to_recordset(CAST(:rows AS jsonb)) AS r(n_id uuid, n_symbol "
+    "text, n_layout uuid, n_tool text, n_geometry jsonb, n_style jsonb, "
+    "n_label text, n_locked boolean, n_visible boolean, n_z_index integer, "
+    "n_anchor_start timestamptz, n_anchor_end timestamptz) ON CONFLICT (id) "
+    "DO NOTHING RETURNING id::text AS id, owner_user_id::text AS "
+    "owner_user_id, symbol, layout_id::text AS layout_id, tool, geometry, "
+    "style, label, locked, visible, z_index, created_at, updated_at"
+)
+
+_EXPLAIN_UPDATE_MANY = sa.text(
+    "EXPLAIN (FORMAT JSON) UPDATE drawings SET layout_id = r.n_layout, "
+    "geometry = r.n_geometry, style = r.n_style, label = r.n_label, locked "
+    "= r.n_locked, visible = r.n_visible, z_index = r.n_z_index, "
+    "anchor_start = r.n_anchor_start, anchor_end = r.n_anchor_end, "
+    "updated_at = greatest(clock_timestamp(), updated_at + interval '1 "
+    "microsecond') FROM jsonb_to_recordset(CAST(:rows AS jsonb)) AS r(n_id "
+    "uuid, n_if_match timestamptz, n_layout uuid, n_geometry jsonb, n_style "
+    "jsonb, n_label text, n_locked boolean, n_visible boolean, n_z_index "
+    "integer, n_anchor_start timestamptz, n_anchor_end timestamptz) WHERE "
+    "drawings.id = ANY(CAST(:ids AS uuid[])) AND drawings.id = r.n_id AND "
+    "drawings.owner_user_id = CAST(:owner AS uuid) AND drawings.deleted_at "
+    "IS NULL AND drawings.updated_at = r.n_if_match RETURNING id::text AS "
+    "id, owner_user_id::text AS owner_user_id, symbol, layout_id::text AS "
+    "layout_id, tool, geometry, style, label, locked, visible, z_index, "
+    "created_at, updated_at"
+)
+
+_EXPLAIN_SOFT_DELETE_MANY = sa.text(
+    "EXPLAIN (FORMAT JSON) UPDATE drawings SET deleted_at = now(), "
+    "updated_at = greatest(clock_timestamp(), updated_at + interval '1 "
+    "microsecond') WHERE id = ANY(CAST(:ids AS uuid[])) AND owner_user_id = "
+    "CAST(:owner AS uuid) AND deleted_at IS NULL RETURNING id::text AS id"
+)
+
+
 async def _explain(
     repo: SqlAlchemyRelationalRepository, analyze: bool, params: dict[str, Any]
 ) -> Any:
     option = "ANALYZE, FORMAT JSON" if analyze else "FORMAT JSON"
-    # Built only from the two fixed options above and the shipped `_LIST` text; no input.
-    # nosemgrep: avoid-sqlalchemy-text reason=explain-shipped-sql owner=@basiltt review=2027-03-25
-    stmt = sa.text(f"EXPLAIN ({option}) " + _LIST.text)
+    stmt = _EXPLAIN_LIST_ANALYZE if analyze else _EXPLAIN_LIST_PLAN
+    assert stmt.text == f"EXPLAIN ({option}) " + _LIST.text
     async with repo.unit_of_work() as uow:
         return (await uow.session.execute(stmt, params)).scalar_one()
 
@@ -833,18 +902,20 @@ async def test_bulk_batch_statements_use_the_pk_index_and_never_seq_scan_drawing
     f = _f()
     ups = _rows_param([_row_json(i, f, _T) for i in sample])
     news = _rows_param([_row_json(str(uuid.uuid4()), f) for _ in range(100)])
-    cases: dict[str, tuple[Any, dict[str, Any]]] = {
-        "snapshot": (_SNAPSHOT, {"ids": sample, "owner": owner}),  # owner-scoped (#2407)
-        "insert": (_INSERT_MANY, {"owner": owner, "rows": news}),
-        "update": (_UPDATE_MANY, {"owner": owner, "ids": sample, "rows": ups}),
-        "delete": (_SOFT_DELETE_MANY, {"owner": owner, "ids": sample}),
+    cases: dict[str, tuple[Any, Any, dict[str, Any]]] = {
+        "snapshot": (_SNAPSHOT, _EXPLAIN_SNAPSHOT, {"ids": sample, "owner": owner}),  # (#2407)
+        "insert": (_INSERT_MANY, _EXPLAIN_INSERT_MANY, {"owner": owner, "rows": news}),
+        "update": (
+            _UPDATE_MANY,
+            _EXPLAIN_UPDATE_MANY,
+            {"owner": owner, "ids": sample, "rows": ups},
+        ),
+        "delete": (_SOFT_DELETE_MANY, _EXPLAIN_SOFT_DELETE_MANY, {"owner": owner, "ids": sample}),
     }
     rel = SqlAlchemyRelationalRepository(pg_dsn, "drawings-it-plans")
     try:
-        for name, (stmt, params) in cases.items():
-            # Built only from a fixed literal and a shipped statement's text; no input.
-            # nosemgrep: avoid-sqlalchemy-text reason=explain-sql owner=@basiltt review=2027-03-25
-            explain = sa.text("EXPLAIN (FORMAT JSON) " + stmt.text)
+        for name, (stmt, explain, params) in cases.items():
+            assert explain.text == "EXPLAIN (FORMAT JSON) " + stmt.text
             async with rel.unit_of_work() as uow:
                 res = await uow.session.execute(explain, params)
                 raw = res.scalar_one()
