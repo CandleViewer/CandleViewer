@@ -6,6 +6,11 @@ import type {
   AdminLayoutProps,
   AdminStripItem,
   AuditActionTriggerProps,
+  AuditActionOption,
+  AuditActorOption,
+  AuditFilterBarProps,
+  AuditFilterField,
+  AuditFilters,
   AuditMarker,
   AuditRowListProps,
   AuditRowProps,
@@ -259,6 +264,7 @@ describe("@candleviewer/ui positions grid and CMP-049's treegrid (E29-S01)", () 
 describe("@candleviewer/ui audit log components (E42-S04)", () => {
   it.each([
     ["AuditActionTrigger", Atoms.AuditActionTrigger],
+    ["AuditFilterBar", Atoms.AuditFilterBar],
     ["CopyableCodeBlock", Atoms.CopyableCodeBlock],
     ["Pagination", Atoms.Pagination],
     ["auditMarkerText", Atoms.auditMarkerText],
@@ -269,9 +275,15 @@ describe("@candleviewer/ui audit log components (E42-S04)", () => {
   it("exports the marker's copy and each props type (checked by the typechecker)", () => {
     expect(Atoms.AUDIT_MARKER_COPY.recorded).toBe("Recorded in the audit log");
     expect(Atoms.PAGINATION_COPY.nav).toBe("Pagination");
+    expect(Atoms.AUDIT_FILTER_COPY.name).toBe("Filter the audit log");
     const props:
       | [
           AuditActionTriggerProps,
+          AuditActionOption,
+          AuditActorOption,
+          AuditFilterBarProps,
+          AuditFilterField,
+          AuditFilters,
           AuditMarker,
           CopyableCodeBlockProps,
           PaginationLabels,
