@@ -22,8 +22,14 @@
  *   first (D02 §8.2), and its confirm reads the row again before it sends.
  * - **Bulk** (D02 §8.3; `model/bulk.ts`): "2 selected · Cancel selected · Clear selection" and
  *   "Cancel all in view…" (present while rows are in view, §9.2) open `BulkCancelDialog`; Confirm
- *   reads the targets again, so a native stop is never sent (C-2.6, BQ-4). Once sent, `Esc` and
- *   "Keep orders" close the view and cancel nothing; the result then comes as a toast.
+ *   reads the targets again, so no row that is a native stop at Confirm is sent (C-2.6, BQ-4); one
+ *   that turns native while a per-row run is still sending meets the server's `403`, which stays
+ *   the enforcement. Once sent, `Esc` and "Keep orders" close the view and cancel nothing; the
+ *   result then comes as a toast.
+ * - **A sent cancel is never aborted** (D02 §8.3, "never silently dropped"): leaving the tab stops
+ *   its reads (the feed's own), never a write, so every confirmed target is sent and answered. An
+ *   answer that comes after the tab has gone changes nothing on screen and is said instead, once,
+ *   through the panel's announcer, which outlives the tab, in the words its toast would have shown.
  * - **Announcements** go through the panel's announcer (E17-D02 §11: no live region of its own):
  *   the selection count once per change (RT-13); a T2 press's reason through the panel's gated
  *   announcement; the toasts' sentences. Focus never drops to `body` (D05 §5.4): an ended row's
@@ -204,7 +210,6 @@ const UP: Link = Object.freeze({ kind: "up" });
 /** The grid's one Tab stop (CMP-049's roving cell or its control): focus's place when an opener has gone. */
 const ROVING_STOP = '[role="treegrid"] [tabindex="0"]';
 let toastSeq = 0;
-let sendSeq = 0;
 
 /** A cancel in flight from this client: the row's lifecycle at the press, and whether the server took it. */
 interface Pending {
@@ -285,6 +290,62 @@ function rowName(row: OrderRowModel): string {
     qty,
     accountOf(row),
   ].join(" · ");
+}
+
+/** A row's cancel answer in its toast's words (D01 D7): the order named, never the server's message. */
+function cancelToast(row: OrderRowModel, outcome: CancelOutcome): Omit<ToastItem, "id"> {
+  const words = {
+    BTCUSDT: row.symbol,
+    Sell: row.sideLabel,
+    "0.250": row.qty === null ? "—" : figure(row.qty),
+    Main: accountOf(row),
+  };
+  if (outcome.kind === "accepted") {
+    const priced = !row.isMarket && row.price !== null;
+    return {
+      title: priced
+        ? bindProposed("blotter.ui.cancel.toast", { ...words, "64,800.0": figure(row.price ?? "") })
+        : bindProposed("blotter.ui.cancel.toast.no_price", words),
+    };
+  }
+  if (outcome.kind === "unavailable")
+    return { title: bindProposed("blotter.ui.cancel.unconfirmed", words), tone: "warning" };
+  const why =
+    outcome.kind === "native_stop"
+      ? DECK["sl.note"].string
+      : outcome.kind === "account_scope"
+        ? DECK["rbac.account"].string
+        : outcome.kind === "view_as"
+          ? bindProposed("blotter.ui.cancel.view_as")
+          : undefined;
+  return {
+    title: bindProposed("blotter.ui.cancel.failed", words),
+    tone: "warning",
+    ...(why === undefined ? {} : { description: why }),
+  };
+}
+
+/** A toast's sentence as CMP-045 speaks it on arrival (`Toast.tsx`): its title, then its body. */
+const sentenceOf = (item: Omit<ToastItem, "id">): string =>
+  [item.title, item.description]
+    .filter((part): part is string => part !== undefined && part.trim() !== "")
+    .join(". ");
+
+/** CMP-045's politeness for a toast (H28): assertive for `danger` or an error, else polite. */
+const politenessOf = (item: Omit<ToastItem, "id">): "polite" | "assertive" =>
+  item.politeness ?? (item.tone === "danger" || item.error === true ? "assertive" : "polite");
+
+/** Lines as one body: each a sentence closed by its own stop, never a doubled one (code n2). */
+const sentences = (lines: readonly string[]): string =>
+  lines.map((line) => (/[.!?]$/.test(line) ? line : `${line}.`)).join(" ");
+
+/**
+ * Where a bulk send's answer goes: the dialog waiting on it (`closed` null), a toast once its dialog
+ * was closed while it sent, or nowhere for a retry whose dialog was closed (code m8). One per send,
+ * so a second send never takes a first one's answer with it (n3).
+ */
+interface Ticket {
+  closed: "toast" | "drop" | null;
 }
 
 /** What every row renderer shares. */
@@ -570,20 +631,14 @@ export function WorkingOrdersTab({
   const [now, setNow] = useState(wall);
   const [span, setSpan] = useState<Span>({ first: 0, last: FIRST_WINDOW - 1 });
   const alive = useRef(true);
-  const abort = useRef<AbortController | null>(null);
-  /** The bulk send the dialog waits on, and where a closed dialog's late result goes. */
-  const showing = useRef<{ readonly seq: number; readonly closed: "toast" | "drop" | null } | null>(
-    null,
-  );
+  /** The bulk send the dialog waits on (`Ticket`). */
+  const showing = useRef<Ticket | null>(null);
   useEffect(() => {
     alive.current = true;
-    const controller = new AbortController();
-    abort.current = controller;
     return () => {
+      // Nothing on screen changes once the tab has gone, and no write is aborted: a sent cancel
+      // runs on, and its answer is said through the panel's announcer (`deliver`, N-M1).
       alive.current = false;
-      // A request in flight resolves into nothing once the tab has gone; a per-row bulk still
-      // running stops there too: each target left is answered at once, unsent, as not known.
-      controller.abort();
     };
   }, []);
 
@@ -697,6 +752,14 @@ export function WorkingOrdersTab({
     const next = { ...item, id: `orders-toast-${toastSeq}` };
     setToasts((all) => [...all, next].slice(-MAX_TOASTS));
   };
+  /**
+   * An answer's toast while the tab is here; once it has gone, the same sentence, once, through the
+   * panel's announcer, which outlives it (D02 §8.3: never silently dropped; N-M1).
+   */
+  const deliver = (item: Omit<ToastItem, "id">): void => {
+    if (alive.current) toast(item);
+    else announcer.say(politenessOf(item), sentenceOf(item));
+  };
   const release = (id: string): void =>
     setCancelling((all) => {
       const next = new Map(all);
@@ -709,52 +772,22 @@ export function WorkingOrdersTab({
     if (row === undefined || gateOf(row).kind !== "allowed") return;
     setCancelling((all) => new Map(all).set(row.id, { from: row.state.lifecycle, taken: false }));
     reportCancelAttempted();
+    // no abort signal: leaving the tab never stops a cancel that was sent (N-M1)
     void writes
-      .cancelOrder(row.id, abort.current?.signal)
+      .cancelOrder(row.id)
       .catch((): CancelOutcome => ({ kind: "unavailable" })) // a throw is no answer (code m9)
       .then((outcome: CancelOutcome) => {
-        if (!alive.current) return;
-        if (outcome.kind === "accepted")
-          setCancelling((all) =>
-            all.has(row.id)
-              ? new Map(all).set(row.id, { from: row.state.lifecycle, taken: true })
-              : all,
-          );
-        else release(row.id);
-        const words = {
-          BTCUSDT: row.symbol,
-          Sell: row.sideLabel,
-          "0.250": row.qty === null ? "—" : figure(row.qty),
-          Main: accountOf(row),
-        };
-        if (outcome.kind === "accepted") {
-          const priced = !row.isMarket && row.price !== null;
-          toast({
-            title: priced
-              ? bindProposed("blotter.ui.cancel.toast", {
-                  ...words,
-                  "64,800.0": figure(row.price ?? ""),
-                })
-              : bindProposed("blotter.ui.cancel.toast.no_price", words),
-          });
-        } else if (outcome.kind === "unavailable") {
-          toast({ title: bindProposed("blotter.ui.cancel.unconfirmed", words), tone: "warning" });
-        } else {
+        if (alive.current) {
+          if (outcome.kind === "accepted")
+            setCancelling((all) =>
+              all.has(row.id)
+                ? new Map(all).set(row.id, { from: row.state.lifecycle, taken: true })
+                : all,
+            );
+          else release(row.id);
           if (outcome.kind === "account_scope") setDenied((all) => new Set(all).add(row.accountId));
-          const why =
-            outcome.kind === "native_stop"
-              ? DECK["sl.note"].string
-              : outcome.kind === "account_scope"
-                ? DECK["rbac.account"].string
-                : outcome.kind === "view_as"
-                  ? bindProposed("blotter.ui.cancel.view_as")
-                  : undefined;
-          toast({
-            title: bindProposed("blotter.ui.cancel.failed", words),
-            tone: "warning",
-            ...(why === undefined ? {} : { description: why }),
-          });
         }
+        deliver(cancelToast(row, outcome));
       });
   };
   /** A row's Cancel (D02 §8.2): at once, but a protective take-profit asks first (D01 D7). */
@@ -778,18 +811,18 @@ export function WorkingOrdersTab({
           BTCUSDT: takeProfit.symbol,
         });
 
-  /** A closed dialog's result, as a toast (design m12): one line per account, nothing dropped. */
-  const resultToast = (result: BulkResult): void => {
+  /** A closed dialog's result, as a toast (design m12): one sentence per line, nothing dropped (n2). */
+  const resultItem = (result: BulkResult): Omit<ToastItem, "id"> => {
     const lines = [
       ...result.lines.map((line) => lineText(line, wordsOf(line.accountId))),
       ...excludedLines(result.plan.excluded),
     ];
     const failed = result.lines.some((line) => line.kind !== "done");
-    toast({
+    return {
       title: bindProposed("blotter.ui.result.title"),
-      description: lines.join(". "),
+      description: sentences(lines),
       ...(failed ? { tone: "warning" as const } : {}),
-    });
+    };
   };
   const send = (plan: BulkPlan, isRetry: boolean): void => {
     reportCancelAllInvoked({
@@ -799,10 +832,10 @@ export function WorkingOrdersTab({
       accounts: new Set(plan.targets.map((r) => r.accountId)).size,
       retry: isRetry,
     });
-    sendSeq += 1;
-    const seq = sendSeq;
-    showing.current = { seq, closed: null };
-    void runPlan(plan, writes, abort.current?.signal)
+    const ticket: Ticket = { closed: null };
+    showing.current = ticket;
+    // no abort signal: once confirmed, every target is sent and answered (N-M1)
+    void runPlan(plan, writes)
       .catch(() =>
         // a throw is no answer (code m9): every target not known, never re-sent
         plan.route.kind === "cancel_all"
@@ -810,12 +843,14 @@ export function WorkingOrdersTab({
           : fromRows(plan, new Map()),
       )
       .then((result) => {
-        const waiting = showing.current;
-        if (!alive.current || waiting?.seq !== seq) return;
-        showing.current = null;
-        if (waiting.closed === "toast") resultToast(result);
-        else if (waiting.closed === null) setBulk({ phase: "result", result, sending: false });
-        // a retry whose dialog was closed is dropped, never re-opened (code m8)
+        const waited = showing.current === ticket;
+        if (waited) showing.current = null;
+        if (ticket.closed === "drop") return; // a retry whose dialog was closed (code m8)
+        // the dialog shows the send it waits on; any other answer (its dialog closed, or the tab
+        // gone with it) is told on its own, so no later send drops it (n3)
+        if (waited && ticket.closed === null && alive.current)
+          setBulk({ phase: "result", result, sending: false });
+        else deliver(resultItem(result));
       });
   };
   const openBulk = (plan: BulkPlan): void => {
@@ -849,8 +884,14 @@ export function WorkingOrdersTab({
     // once sent, Esc and "Keep orders" close the view and cancel nothing (CMP-043 H22, design m12):
     // the first send's result comes as a toast; a retry's is dropped (code m8)
     const waiting = showing.current;
-    if (waiting !== null && bulk !== null && (bulk.phase === "sending" || bulk.phase === "result"))
-      showing.current = { ...waiting, closed: bulk.phase === "sending" ? "toast" : "drop" };
+    if (
+      waiting !== null &&
+      bulk !== null &&
+      (bulk.phase === "sending" || bulk.phase === "result")
+    ) {
+      waiting.closed = bulk.phase === "sending" ? "toast" : "drop";
+      showing.current = null;
+    }
     setBulk(null);
   };
 

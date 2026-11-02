@@ -96,17 +96,36 @@ interface Sent {
   readonly key: string | null;
   readonly arm: boolean;
   readonly body: unknown;
+  /** Its signal had not aborted when it was sent: a browser sends nothing on an aborted one. */
+  readonly live: boolean;
 }
 
 interface Served {
   readonly accounts?: readonly ExchangeAccount[];
   readonly orders?: readonly unknown[];
-  readonly cancel?: (id: string) => Response;
+  readonly cancel?: (id: string) => Response | Promise<Response>;
   readonly cancelAll?: (body: unknown, n: number) => Response;
 }
 
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+
+/**
+ * A write's answer as a browser's `fetch` gives it: refused unsent when its signal has already
+ * aborted, and cut off by an abort while it waits (`AbortError` both ways).
+ */
+function asFetch(
+  answer: Response | Promise<Response>,
+  signal: AbortSignal | null | undefined,
+): Promise<Response> {
+  const aborted = (): DOMException => new DOMException("The operation was aborted.", "AbortError");
+  if (signal == null) return Promise.resolve(answer);
+  if (signal.aborted) return Promise.reject(aborted());
+  return new Promise((resolve, reject) => {
+    signal.addEventListener("abort", () => reject(aborted()), { once: true });
+    void Promise.resolve(answer).then(resolve, reject);
+  });
+}
 
 let ws: FakeClient;
 let sent: Sent[];
@@ -128,6 +147,7 @@ function serve(o: Served = {}) {
         key: headers.get("Idempotency-Key"),
         arm: headers.has("X-Arm-Token"),
         body: typeof init?.body === "string" ? JSON.parse(init.body) : null,
+        live: init?.signal?.aborted !== true,
       });
     }
     if (url.pathname === "/api/v1/exchange-accounts")
@@ -141,13 +161,17 @@ function serve(o: Served = {}) {
       });
     if (url.pathname === "/api/v1/orders/cancel-all" && method === "POST") {
       cancelAlls += 1;
-      return (
-        o.cancelAll?.(JSON.parse(String(init?.body)), cancelAlls) ?? json(200, { results: [] })
+      return asFetch(
+        o.cancelAll?.(JSON.parse(String(init?.body)), cancelAlls) ?? json(200, { results: [] }),
+        init?.signal,
       );
     }
     const id = /^\/api\/v1\/orders\/([0-9a-f-]{36})$/.exec(url.pathname)?.[1];
     if (id !== undefined && method === "DELETE")
-      return o.cancel?.(id) ?? json(202, { id, lifecycle_state: "cancel_pending" });
+      return asFetch(
+        o.cancel?.(id) ?? json(202, { id, lifecycle_state: "cancel_pending" }),
+        init?.signal,
+      );
     return json(404, {});
   });
 }
@@ -295,6 +319,43 @@ function placed(
   const each = <T,>(row: T) =>
     Array.from({ length: n }, (_, i) => ({ ...row, id: id(i), exchange_account_id: on(i) }));
   return { body: { orders: each(entry) } as OrdersBody, orders: each(rest) };
+}
+
+/** DELETEs the test answers itself (`answer`, a 202 `cancel_pending` each; all of them, or `ids`). */
+function heldCancels(): {
+  readonly cancel: (id: string) => Promise<Response>;
+  readonly waiting: () => string[];
+  readonly answer: (...ids: string[]) => void;
+} {
+  const waiting = new Map<string, (res: Response) => void>();
+  return {
+    cancel: (id) => new Promise<Response>((resolve) => waiting.set(id, resolve)),
+    waiting: () => [...waiting.keys()],
+    answer: (...ids) => {
+      for (const id of ids.length === 0 ? [...waiting.keys()] : ids) {
+        waiting.get(id)?.(json(202, { id, lifecycle_state: "cancel_pending" }));
+        waiting.delete(id);
+      }
+    },
+  };
+}
+
+/** Every message the shell's regions take from now on, in order (`ShellAnnouncer`: a node each). */
+function heard(): () => string[] {
+  const said: string[] = [];
+  const take = (records: readonly MutationRecord[]): void => {
+    for (const record of records)
+      for (const node of record.addedNodes)
+        if (node instanceof HTMLElement) said.push(node.textContent ?? "");
+  };
+  const observer = new MutationObserver(take);
+  for (const region of document.querySelectorAll("[data-cv-inert-exempt][aria-live]"))
+    observer.observe(region, { childList: true });
+  onTestFinished(() => observer.disconnect());
+  return () => {
+    take(observer.takeRecords());
+    return said;
+  };
 }
 
 beforeAll(async () => {
@@ -1344,6 +1405,96 @@ describe("the bulk dialog's restatement, the busy look and the bar (design n1, m
     );
     expect(css).toContain(`${busy} > .cv-spinner { display: none; }`);
   });
+});
+
+describe("a sent cancel outlives the tab (D02 §8.3, never silently dropped; N-M1)", () => {
+  it(
+    "Esc while a bulk sends, then the Positions tab: every target still goes out live, and its result is said once",
+    SCREEN,
+    async () => {
+      const extra = placed(2, 5); // two more entries on Sub-1: six targets, four in flight at a time
+      const held = heldCancels();
+      await openOrders({
+        body: { orders: [...snapshotBody().orders, ...extra.body.orders] } as OrdersBody,
+        orders: [...restOpen(), ...(extra.orders ?? [])],
+        cancel: held.cancel,
+      });
+      const said = heard();
+      fireEvent.click(screen.getByRole("button", { name: "Cancel all in view…" }));
+      await settle(500);
+      await confirmBulk("Cancel 6 orders");
+      expect(held.waiting()).toHaveLength(4); // MAX_IN_FLIGHT: two wait their turn
+      fireEvent.keyDown(screen.getByRole("alertdialog"), { key: "Escape" });
+      await settle(TICK);
+      fireEvent.click(screen.getByRole("tab", { name: "Positions" }));
+      await settle(TICK);
+      expect(screen.queryByRole("group", { name: "Working orders", hidden: true })).toBeNull();
+      held.answer(); // the first four answer: the last two go out, the tab gone
+      await settle(TICK);
+      expect(held.waiting()).toHaveLength(2);
+      held.answer();
+      await settle(REGION_BUDGET_MS + TICK);
+      const ids = ["0e000000-0000-4000-8000-000000000500", "0e000000-0000-4000-8000-000000000501"];
+      expect(deletes().sort()).toEqual([TP, ENTRY, ETH, COND, ...ids].sort());
+      expect(sent.map((s) => s.live)).toEqual([true, true, true, true, true, true]);
+      expect(said().filter((text) => text.startsWith("Cancel results"))).toEqual([
+        "Cancel results. Cancelled 1 on Main · LIVE. Cancelled 4 on Sub-1 · LIVE. Cancelled 1 on Sub-2 · LIVE. 1 native-stop order is not included: every position keeps a native stop. 2 orders are not included: they can't be cancelled now.",
+      ]);
+    },
+  );
+
+  it(
+    "a row's cancel sent before the tab goes is answered after it, and its toast's words said once",
+    SCREEN,
+    async () => {
+      const held = heldCancels();
+      await openOrders({ cancel: held.cancel });
+      const said = heard();
+      fireEvent.click(cancelOf(ENTRY));
+      await settle(TICK);
+      expect(held.waiting()).toEqual([ENTRY]);
+      fireEvent.click(screen.getByRole("tab", { name: "Positions" }));
+      await settle(TICK);
+      held.answer();
+      await settle(REGION_BUDGET_MS + TICK);
+      expect(sent.map((s) => s.live)).toEqual([true]);
+      expect(said().filter((text) => text.startsWith("Cancel"))).toEqual([
+        "Cancel sent: BTCUSDT Buy 0.15 at 63,950 on Sub-1.",
+      ]);
+    },
+  );
+
+  it(
+    "a second bulk confirmed while a closed first still runs: each answer is told (n3)",
+    SCREEN,
+    async () => {
+      const held = heldCancels();
+      await openOrders({ cancel: held.cancel });
+      const cancelSelected = async (name: string): Promise<void> => {
+        fireEvent.click(screen.getByRole("checkbox", { name, hidden: true }));
+        await settle(TICK);
+        fireEvent.click(screen.getByRole("button", { name: "Cancel selected" }));
+        await settle(500);
+        await confirmBulk("Cancel 1 order");
+      };
+      await cancelSelected("Select BTCUSDT Buy 0.15 BTC at 63,950 on Sub-1");
+      fireEvent.keyDown(screen.getByRole("alertdialog"), { key: "Escape" }); // it runs on, closed
+      await settle(TICK);
+      await cancelSelected("Select ETHUSDT Buy 1 ETH at 2,500 on Sub-2");
+      held.answer(ETH); // the second answers first: its dialog shows it
+      await settle(TICK);
+      const result = screen.getByRole("dialog", { name: "Cancel results" });
+      expect(
+        within(result)
+          .getAllByRole("listitem")
+          .map((li) => li.textContent),
+      ).toEqual(["Cancelled 1 on Sub-2 · LIVE"]);
+      held.answer(ENTRY); // then the closed first: its own toast, never dropped
+      await settle(TICK);
+      expect(onScreen("Cancelled 1 on Sub-1 · LIVE.")).toBeVisible();
+      expect(deletes()).toEqual([ENTRY, ETH]);
+    },
+  );
 });
 
 describe("axe and teardown", () => {
