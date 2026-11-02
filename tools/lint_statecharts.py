@@ -411,12 +411,16 @@ def rule_reenter(file: str, chart: dict) -> list[Finding]:
     """CV-LINT-REENTER (A4): self-target ("restart") transitions declare
     `reenter: true` explicitly."""
     findings: list[Finding] = []
+    chart_id = chart.get("id")
+    id_prefix = f"#{chart_id}." if isinstance(chart_id, str) and chart_id else None
     for state_path, state in _walk_states(chart):
         for event, value in _walk_transitions(state):
             for target in _transition_targets(value):
                 dest = target.get("target")
                 if not isinstance(dest, str):
                     continue
+                if id_prefix and dest.startswith(id_prefix):
+                    dest = dest[len(id_prefix) :]
                 dest_norm = dest.lstrip("#").lstrip(".")
                 last_segment = state_path.split(".")[-1]
                 if (
