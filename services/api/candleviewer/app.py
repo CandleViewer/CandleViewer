@@ -3521,10 +3521,13 @@ def create_app(
         )
         # E35-T12: the rule's cancels and amends over the exit service, check 8 over the amend
         # writer's own comparison, and the circuit breaker's cancels, each reading the rule's
-        # resting entries through its groups on a pool of its own (BQ-2, BQ-7 to BQ-10).
+        # resting entries through its groups on a pool of its own (BQ-2, BQ-7 to BQ-10), which
+        # the lifespan disposes with the two above, after the breaker's cancels drained.
+        orders_pg = app.state.rule_orders_pg = SqlAlchemyRelationalRepository(
+            dsn, "rule_orders", pool_size=2, max_overflow=0
+        )
         rule_entries = SqlAlchemyOrderStore(
-            SqlAlchemyRelationalRepository(dsn, "rule_orders", pool_size=2, max_overflow=0),
-            statement_timeout_ms=resolved.oms_statement_timeout_ms,
+            orders_pg, statement_timeout_ms=resolved.oms_statement_timeout_ms
         )
         environment: EnvironmentName = resolved.environment.value
         ctx.rules.bind(

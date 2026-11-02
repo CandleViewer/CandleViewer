@@ -51,12 +51,16 @@ MEETS_ALLOWANCE: Final = frozenset(
      "start_twap"}
 )  # fmt: skip
 #: The types that hand an order to the OMS, entries and reduce-only orders alike, each counted once
-#: per OMS call per resolved account by the order budget (24 §11.7, check 7; BQ-6). Amends,
-#: cancels, lockouts, leverage and the engine's own actions never count.
+#: per resolved account of an action by the order budget, a flatten over several positions once
+#: (24 §11.7, check 7; BQ-6). Amends, cancels, lockouts, leverage and the engine's own actions never
+#: count.
 COUNTS_ORDERS: Final = frozenset(
     {"place_order", "scale_in", "scale_out", "flatten_position", "flatten_all_positions",
      "reverse_position", "arm_chase_limit", "start_iceberg_slice", "start_twap"}
 )  # fmt: skip
+#: The exits' capabilities (24 §11.5 "Exits"; E35-T12): an exit only reduces risk, so none takes
+#: `abort_on_first` across its accounts: every resolved account is tried, each recorded on its own.
+EXITS: Final[frozenset[Capability]] = frozenset({"oms_reduce", "oms_cancel", "oms_amend"})
 #: The actions that set, move or cancel a stop, which check 8 asks the stop in force about (24
 #: §11.5; BQ-12): a cancel may select a native stop-loss; a take-profit amend sends the order's
 #: stop beside it, and check 8 finds its target as the stop moves' (E35-T12).

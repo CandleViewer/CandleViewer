@@ -466,12 +466,14 @@ class RulesService:
         """The circuit breaker's hook after a trip's move (24 §11.7; E35-T12, BQ-10): the tripped
         rule's resting entries cancelled by the bound port, as a task this service tracks and
         drains at its stop, never awaited by the dispatch worker. With no port bound, or with
-        `BREAKER_CANCELS_MAX` running, nothing starts, logged: the rule stays tripped and its
-        order actions refused all the same."""
+        `BREAKER_CANCELS_MAX` running, nothing starts: the trip pages P1 once more, naming the
+        rule, and the rule stays tripped and its order actions refused all the same."""
         port = self._breaker_cancels
         if port is None or len(self._breaker_tasks) >= BREAKER_CANCELS_MAX:
             why = "unbound" if port is None else "full"
-            _log().error("rules.breaker_cancels_not_started", rule_id=req.rule_id, reason=why)
+            _log().critical(
+                "rules.breaker_cancels_not_started", cv_page=True, rule_id=req.rule_id, reason=why
+            )
             return
         task = spawn(self._breaker_cancel(port, req), name="rule-breaker-cancels")
         self._breaker_tasks.add(task)

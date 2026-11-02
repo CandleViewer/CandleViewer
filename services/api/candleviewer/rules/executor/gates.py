@@ -25,6 +25,7 @@ import structlog
 from candleviewer.rules.executor.handlers import ENGINE_INTERNAL, HandlerSpec
 from candleviewer.rules.executor.ports import (
     STOP_ADMITTED,
+    Loosening,
     NotionalRebuild,
     PrincipalReads,
     PrincipalView,
@@ -256,11 +257,16 @@ class Gates:
         self, spec: HandlerSpec, req: ActionRequest, account_id: UUID | None
     ) -> StopVerdict:
         """Check 8 (`native_sl`; 24 §11.5, BQ-12; E35-T12, BQ-2): a type refused for good
-        (`widen_stop`) at its own slot; a stop action as the port judges it, awaited under
+        (`widen_stop`) at its own slot, a retired loosening that records its `sl.loosen_refused`
+        as any refused loosening does; a stop action as the port judges it, awaited under
         `STOP_CHECK_TIMEOUT_S`: refused (`native_sl`) while the port is unbound, when its read
         fails or answers late, and when it answers a refusal outside its two (fail closed)."""
         if spec.refused_as is not None:
-            return StopVerdict(refused=spec.refused_as)
+            loosening = Loosening(symbol=req.instance.symbol)
+            return StopVerdict(
+                refused=spec.refused_as,
+                loosening=loosening if spec.refused_as == "native_sl" else None,
+            )
         if not spec.touches_stop:
             return STOP_ADMITTED
         if self._stop is None:

@@ -1,7 +1,8 @@
 """E35-T12 slice 3e: the read of a rule's resting entries (`rule_entries_statement`; 24 §11.5
 "Exits", §11.7; BQ-7, BQ-8, BQ-10), as it is rendered for Postgres: its rows are the rule's
-groups' orders, through `origin_rule_id`, `placed`, open, not reduce-only, with no parent order,
-in a group whose algo is `none`, of one environment; the account and the symbol narrow it only
+groups' orders, through `origin_rule_id`, `placed`, open and in one of `RULE_ENTRY_STATES` (no
+cancel in flight, no state unknown), not reduce-only, with no parent order, in a group whose algo
+is `none`, of one environment; the account and the symbol narrow it only
 when named; every value is a bound parameter, none spliced into the text. Its rows on Postgres
 are the integration suite's (`test_rule_entries_read_pg.py`)."""
 
@@ -41,6 +42,7 @@ def test_the_read_selects_the_rules_resting_entries_through_its_groups() -> None
         "orders.reduce_only IS false",
         "orders.parent_order_id IS NULL",
         "orders.state IN (__[POSTCOMPILE_rule_open])",
+        "orders.lifecycle_state IN (__[POSTCOMPILE_lifecycle_state_1])",
         "ORDER BY orders.created_ts, orders.id",
     ):
         assert clause in text, clause

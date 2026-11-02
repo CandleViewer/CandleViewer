@@ -41,7 +41,7 @@ from candleviewer.rules.executor.handlers import (
     prepared,
 )
 from candleviewer.rules.executor.keys import dedupe_key
-from candleviewer.rules.executor.ports import STOP_ADMITTED, PrincipalView, StopVerdict
+from candleviewer.rules.executor.ports import STOP_ADMITTED, Loosening, PrincipalView, StopVerdict
 from candleviewer.rules.ir.models import MAX_ACTIONS, Action, ActionType, RuleLimits, RuleScope
 from candleviewer.rules.scope import (
     ActionRequest,
@@ -437,14 +437,18 @@ async def test_a_retry_runs_checks_2_3_and_5_again_and_a_refusal_sends_nothing(
 
 async def test_widen_stop_reads_kill_switch_while_engaged_and_native_sl_otherwise() -> None:
     """`widen_stop` is refused by type at check 8's slot, so an engaged kill switch (check 3) reads
-    first; with every switch open it is `native_sl`, and `rules.blocked` alone is written."""
+    first; with every switch open it is `native_sl`, a retired loosening recorded as any refused
+    loosening is: `sl.loosen_refused` ahead of `rules.blocked`, nothing sent (E35-T12)."""
     engaged = Gated(Switches(engaged={None}))
     await engaged.run(action("a1", "widen_stop"))
     assert engaged.results() == [("a1", "blocked", "kill_switch")]
     open_ = Gated(Switches(rollout=False))
     await open_.run(action("a1", "widen_stop"))
     assert open_.results() == [("a1", "blocked", "native_sl")]
-    assert open_.audited() == [("rules.blocked", "a1", "native_sl")] and open_.sent == []
+    assert open_.audited() == [
+        ("sl.loosen_refused", "a1", "native_sl"), ("rules.blocked", "a1", "native_sl"),
+    ]  # fmt: skip
+    assert open_.records.loosened == [Loosening(symbol="BTCUSDT")] and open_.sent == []
 
 
 async def test_an_oms_action_is_unavailable_while_the_rollout_port_reads_off() -> None:
@@ -678,6 +682,20 @@ async def test_abort_on_first_skips_the_actions_remaining_accounts() -> None:
     assert gated.sent == [("a1", str(A)), ("a1", str(B)), ("a2", str(A))]
 
 
+@pytest.mark.parametrize("action_type", ["flatten_all_positions", "cancel_all_orders"])
+async def test_an_exit_tries_every_account_and_its_first_failure_decides(action_type: str) -> None:
+    """24 §11.5 "Exits": an exit does not take `abort_on_first`, as it only reduces risk: account A
+    refused, accounts B and C are still closed or cancelled, each recorded on its own; then the
+    first account's failure decides for the fire, so `abort_remaining` stops the next action."""
+    gated = Gated(refuse={A}, stop=_Stops({A, B, C}))
+    await gated.run(action("a1", action_type, targets="all_accounts"), action("a2"))
+    assert per_account(gated) == [
+        ("a1", str(A), "failed", None), ("a1", str(B), "ok", None),
+        ("a1", str(C), "ok", None), ("a2", str(A), "skipped", None),
+    ]  # fmt: skip
+    assert gated.sent == [("a1", str(A)), ("a1", str(B)), ("a1", str(C))]
+
+
 async def test_revoked_grant_blocks_action_at_runtime() -> None:
     """Scenario: Authority is the intersection of owner and armer (RE-E6). A grant revoked after
     arming blocks at runtime (RE-E1): the armer's, through the principal (`permission`); the
@@ -904,8 +922,8 @@ async def test_records_carry_both_roles_from_the_principal_snapshot() -> None:
     await gated.run(action("a3"))
     roles = [(verb, f.node_id, f.owner_role, f.armed_by_role) for verb, f in gated.records.audits]
     assert roles == [
-        ("rules.fired", "a1", "owner", "manager"), ("rules.blocked", "a2", "owner", "manager"),
-        ("rules.blocked", "a3", None, None),
+        ("rules.fired", "a1", "owner", "manager"), ("sl.loosen_refused", "a2", "owner", "manager"),
+        ("rules.blocked", "a2", "owner", "manager"), ("rules.blocked", "a3", None, None),
     ]  # fmt: skip
 
 

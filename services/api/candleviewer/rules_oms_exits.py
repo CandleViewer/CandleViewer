@@ -33,7 +33,8 @@ its detail a generic sentence that never holds the id; a principal view gone sin
   nor a recorded stop nor an algo's child), on the action's account, read within
   `ENTRY_READ_TIMEOUT_S`. `cancel_order` takes those on the instance's symbol and
   `cancel_all_orders` those on every symbol, narrowed by `purpose`; each gets one
-  `cancel_admitted` with the reason `rule` (`entry`). BQ-7's reading of record: never a user's
+  `cancel_admitted` with the reason `rule` (`entry`), and a selection past `RULE_ENTRIES_LIMIT`
+  is never `ok` (`too_many_orders`). BQ-7's reading of record: never a user's
   manual entry, another rule's order or an algo's child, never a stop, a take-profit or a
   reduce-only exit (C-2.6). The amends move each resting limit entry of the rule on the
   instance's symbol through the exit service's `scope` and `amend`, the rule's request
@@ -45,7 +46,9 @@ its detail a generic sentence that never holds the id; a principal view gone sin
 - **The circuit breaker's cancels** (`RuleBreakerCancels`; BQ-10): the tripped rule's resting
   entries on every account of the environment, each `cancel_admitted` with the reason
   `rule_circuit_breaker` (`critical`), as the owner and with no principal check (an exit is
-  never gated, 24 §8.10); those not done are counted in one more `system_events` row.
+  never gated, 24 §8.10), never a stop, a take-profit or a reduce-only exit whatever the read
+  hands it; those not done, and a selection past the cap, are counted in one more `system_events`
+  row under the node as the origin names it, and a trip whose cancels cannot start pages.
 """
 
 from __future__ import annotations
@@ -423,6 +426,9 @@ BREAKER_CANCEL_TIMEOUT_S: Final = 15.0
 _CANCELLABLE_INTENTS: Final = frozenset({"entry", "scale_in"})
 #: The OMS's refusals that sent nothing and may pass later: `retry_once` may retry them (24 §11.9).
 _NOT_SENT: Final = frozenset({"oms_not_ready", "store_unavailable", "audit_unavailable"})
+#: A cancel whose selection runs past `RULE_ENTRIES_LIMIT` (the read holds one row more): the
+#: orders within the cap are tried, and the action is never `ok` (24 §11.5 "Exits").
+_TOO_MANY: Final = HandlerAnswer("refused", error_code="too_many_orders")
 _NO_TARGET: Final = HandlerAnswer(
     "refused", blocked_by="unavailable", detail=BLOCKED_DETAIL[POSITION_STOP]
 )
@@ -527,15 +533,22 @@ async def read_entries(
     account_id: UUID | None,
     symbol: str | None,
 ) -> tuple[OrderRow, ...]:
-    """The rule's resting entries, within `ENTRY_READ_TIMEOUT_S`; a raise (an unbound read, a
-    rule id that is no UUID, a store that does not answer) for the caller to refuse on."""
+    """The rule's resting entries, within `ENTRY_READ_TIMEOUT_S`, up to one row past
+    `RULE_ENTRIES_LIMIT`, so a selection the cap stops is seen as such (`capped`); a raise (an
+    unbound read, a rule id that is no UUID, a store that does not answer) for the caller to
+    refuse on."""
     if entries is None:
         raise LookupError("no read of the rule's entries is bound")
     async with asyncio.timeout(ENTRY_READ_TIMEOUT_S):
         return await entries.rule_resting_entries(
             UUID(rule_id), environment, account_id=account_id, symbol=symbol,
-            limit=RULE_ENTRIES_LIMIT,
+            limit=RULE_ENTRIES_LIMIT + 1,
         )  # fmt: skip
+
+
+def capped(rows: Sequence[OrderRow]) -> tuple[Sequence[OrderRow], bool]:
+    """The rows within `RULE_ENTRIES_LIMIT`, and whether the selection ran past it."""
+    return rows[:RULE_ENTRIES_LIMIT], len(rows) > RULE_ENTRIES_LIMIT
 
 
 def amend_targets(rows: Sequence[OrderRow]) -> list[OrderRow]:
@@ -637,13 +650,13 @@ class RuleCancelHandler(_ExitBase):
             return _INVALID
         symbol = exit_.symbol if self._type == "cancel_order" else None
         try:
-            rows = await self._rows(exit_, symbol=symbol)
+            rows, overflow = capped(await self._rows(exit_, symbol=symbol))
         except Exception:  # never `CancelledError`, which is no `Exception`
             return _ENTRIES_UNREAD
         wanted = _CANCELLABLE_INTENTS if params.purpose is None else {params.purpose}
         chosen = [r for r in rows if r.intent in wanted and r.intent in _CANCELLABLE_INTENTS]
         if not chosen:
-            return HandlerAnswer("done")
+            return _TOO_MANY if overflow else HandlerAnswer("done")
         exits = _exits_of(self._runtime)
         if exits is None:
             return _OMS_NOT_READY
@@ -665,6 +678,8 @@ class RuleCancelHandler(_ExitBase):
                 first = first or answer
             else:
                 worst = worst or answer
+        if worst is None and overflow:  # the orders past the cap stay: never `ok`
+            worst = _TOO_MANY
         return worst or first or HandlerAnswer("done")
 
 
@@ -846,9 +861,17 @@ class RuleBreakerCancels:
         self._entries, self._environment, self._alerts = entries, environment, alerts
 
     async def cancel_resting(self, req: ActionRequest) -> None:
-        node = req.payload.node_id
         try:
-            rows = await read_entries(
+            origin = self._origin(req)
+        except ValueError:  # a rule id or a version the origin refuses: no cancel can start
+            _log().critical(
+                "rules.breaker_cancels_not_started", cv_page=True, rule_id=req.rule_id,
+                reason="origin_refused",
+            )  # fmt: skip
+            return
+        node = origin.node_id  # the tripping node, as the cancels' records name it
+        try:
+            read = await read_entries(
                 self._entries, req.rule_id, self._environment, account_id=None, symbol=None
             )
         except Exception as exc:  # never `CancelledError`, which is no `Exception`
@@ -857,13 +880,17 @@ class RuleBreakerCancels:
             )
             await self._report(req, node, sent=0, not_done=None)
             return
+        within, overflow = capped(read)
+        rows = [r for r in within if not r.reduce_only and r.intent in _CANCELLABLE_INTENTS]
         exits = _exits_of(self._runtime) if rows else None
-        actor, origin = self._actor(req), self._origin(req)
+        actor = self._actor(req)
         sent = not_done = 0
         for row in rows:
             sent += 1
             if exits is None or not await self._cancelled(exits, row, actor, origin):
                 not_done += 1
+        if overflow:  # entries past the cap stay resting: one more not done, at least
+            not_done += 1
         await self._report(req, node, sent=sent, not_done=not_done)
 
     async def _cancelled(

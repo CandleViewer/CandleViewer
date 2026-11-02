@@ -337,3 +337,19 @@ async def test_lifespan_closes_the_oms_reads_pool_once_after_the_rules_module_st
         assert "oms_reads" not in stops.order
     assert stops.order.count("oms_reads") == 1
     assert stops.order.index("module:rules") < stops.order.index("oms_reads")
+
+
+async def test_lifespan_disposes_every_rule_pool_once_after_the_rules_module_stopped() -> None:
+    """E35-T11 and E35-T12 (#5004): the principals', the notional rebuild's and the rule
+    entries' pools are each disposed once, after `stop_all` stopped the rules module, whose
+    stop drains the breaker's cancels that read through the last."""
+    stops = _Stops()
+    app = _app(stops)
+    pools = ("rule_principals_pg", "rule_notional_pg", "rule_orders_pg")
+    for pool in pools:
+        setattr(app.state, pool, _Pool(pool, stops))
+    async with _lifespan(app):
+        assert not set(pools) & set(stops.order)
+    for pool in pools:
+        assert stops.order.count(pool) == 1, pool
+        assert stops.order.index("module:rules") < stops.order.index(pool), pool

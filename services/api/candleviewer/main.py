@@ -374,7 +374,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await teardown.run("supervisor.stop_all", supervisor.stop_all)
                 if persistence is not None:  # E50-T63: drained after `stop_all`, bounded by itself
                     await teardown.run("statechart_persistence", persistence.stop)
-                for pool in ("rule_principals_pg", "rule_notional_pg"):  # E35-T11, after the module
+                # E35-T11 and E35-T12: the rule pools, after the module (and the breaker's cancels)
+                for pool in ("rule_principals_pg", "rule_notional_pg", "rule_orders_pg"):
                     rules_pg = getattr(app.state, pool, None)
                     if rules_pg is not None:
                         await teardown.run(pool, rules_pg.dispose)

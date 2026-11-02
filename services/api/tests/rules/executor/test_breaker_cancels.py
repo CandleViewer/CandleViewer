@@ -3,7 +3,7 @@ after the trip's B9 move as a task the rules service tracks (24 §11.7; BQ-10 of
 
 The breaker starts them once per trip, its move landed or not, never again when it sends a move
 that has not landed; the service runs them as tasks it tracks, at most `BREAKER_CANCELS_MAX` at
-once, logs a trip whose cancels it cannot start, and drains them within its stop's grace, the
+once, pages a trip whose cancels it cannot start, and drains them within its stop's grace, the
 rest cancelled. No sleeps: each port waits on an event the test sets.
 """
 
@@ -101,6 +101,32 @@ async def test_the_service_tracks_the_cancels_bounded_and_drains_them_at_stop(
     await asyncio.sleep(0)
     await service.stop(0.0)  # nothing ran: the grace is spent at once, the task cancelled
     assert hung.started == ["b1"] and hung.ended == [] and service._breaker_tasks == set()
+
+
+async def test_a_trip_whose_cancels_cannot_start_pages_once_naming_the_rule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """24 §11.7: a trip whose cancels cannot start, as no port is bound or `BREAKER_CANCELS_MAX`
+    are running, pages P1 once (`cv_page`, CRITICAL), naming the rule; the running ones go on."""
+    monkeypatch.setattr(service_module, "BREAKER_CANCELS_MAX", 1)
+    service = RulesService()
+    port = Held()
+    with capture_logs() as logs:
+        service._start_breaker_cancels(exit_request("scale_out", node="u1"))  # no port bound
+        service.bind(breaker_cancels=port)
+        service._start_breaker_cancels(exit_request("scale_out", node="a1"))
+        service._start_breaker_cancels(exit_request("scale_out", node="a2"))  # the cap reached
+        await asyncio.sleep(0)
+    rule = exit_request("scale_out").rule_id
+    pages = [
+        (e["reason"], e["log_level"], e.get("cv_page"), e["rule_id"])
+        for e in logs if e["event"] == "rules.breaker_cancels_not_started"
+    ]  # fmt: skip
+    assert pages == [("unbound", "critical", True, rule), ("full", "critical", True, rule)]
+    assert port.started == ["a1"]
+    port.release.set()
+    await service._drain_breaker_cancels(5.0)
+    assert port.ended == ["a1"] and service._breaker_tasks == set()
 
 
 async def test_a_raising_cancels_port_is_logged_by_its_class() -> None:

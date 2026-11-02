@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from structlog.testing import capture_logs
 
 import candleviewer.rules_oms_exits as exits_module
 from candleviewer.domain.order_entry import OrderEntryRefusal
@@ -509,12 +510,14 @@ class Reading:
 
     rows: tuple[Any, ...] = ()
     calls: list[tuple[uuid.UUID, Any, Any]] = field(default_factory=list)
+    limits: list[int] = field(default_factory=list)
 
     async def rule_resting_entries(
         self, rule_id: uuid.UUID, environment: Any, *, account_id: Any = None,
         symbol: Any = None, limit: int,
     ) -> tuple[Any, ...]:  # fmt: skip
         self.calls.append((rule_id, account_id, symbol))
+        self.limits.append(limit)
         return self.rows
 
 
@@ -583,6 +586,9 @@ async def test_the_stop_check_compares_with_the_orders_stop_and_the_positions() 
     )  # fmt: skip
     assert await judge("58600") == STOP_ADMITTED
     assert await judge("100", mode="atr") == STOP_ADMITTED  # no `atr` in the snapshot
+    for mode in ("Partial", None):  # only a Full-mode stop covers the whole position
+        held.rows = (replace(stored(stop=Decimal("58500")), tpsl_mode=mode),)
+        assert await judge("58200") == STOP_ADMITTED, mode
     reading.rows = ()
     check._entries = None
     with pytest.raises(LookupError):
@@ -628,7 +634,8 @@ async def test_the_breaker_cancels_count_the_ones_not_done(monkeypatch: pytest.M
     `rule_circuit_breaker` as the owner, every account read (no account named); a refusal, a
     raise and a wait past the bound are each counted not done; a read that fails is reported
     unread; the origin names the tripped rule, `circuit_breaker` in place of a node id the
-    origin refuses; with no owner view read, the role is `unknown`."""
+    origin refuses, and the report names the node as the origin does; with no owner view read,
+    the role is `unknown`."""
     monkeypatch.setattr(exits_module, "BREAKER_CANCEL_TIMEOUT_S", 0.0)
     rows = tuple(_entry(seq=n) for n in range(4))
     exits = Exits([
@@ -660,7 +667,7 @@ async def test_the_breaker_cancels_count_the_ones_not_done(monkeypatch: pytest.M
     await single.cancel_resting(odd)
     [(_, _, actor, origin)] = once.cancelled
     assert (actor.role, origin.node_id, origin.armed_by) == ("unknown", "circuit_breaker", None)
-    assert alerts.counted == [("no such node", 1, 0)]
+    assert alerts.counted == [("circuit_breaker", 1, 0)]  # the node as the origin names it
     unread = RuleBreakerCancels(
         lambda: cast(Any, Composed(Exits())), principals, None, "demo", alerts
     )
@@ -837,8 +844,8 @@ async def test_the_stop_check_with_the_positions_stops_unread_raises_to_check_8(
 
 async def test_the_breakers_origin_skips_an_unread_armer_and_refuses_a_bad_version() -> None:
     """The breaker's origin: an armer id that is no user id names no armer (its cancels still
-    sent, as the owner); a rule version the origin refuses names no origin, so nothing is sent
-    and the error reaches the service's task, which logs it by its class."""
+    sent, as the owner); a rule version the origin refuses names no origin, so no cancel starts:
+    the trip pages P1 once more, naming the rule, and nothing is read or sent."""
     principals = Principals(frozenset({cr.ACCOUNT}))
     once, alerts = Exits([ExitOutcome(kind="accepted", status=202)]), Alerts()
     breaker = RuleBreakerCancels(
@@ -854,6 +861,81 @@ async def test_the_breakers_origin_skips_an_unread_armer_and_refuses_a_bad_versi
     refusing = RuleBreakerCancels(
         lambda: cast(Any, Composed(never)), principals, Reading((_entry(),)), "demo", alerts
     )
-    with pytest.raises(ValueError, match="names no origin"):
+    with capture_logs() as logs:
         await refusing.cancel_resting(replace(exit_request("scale_out"), version=0))
+    [page] = [e for e in logs if e["event"] == "rules.breaker_cancels_not_started"]
+    assert (page["log_level"], page["cv_page"], page["reason"]) == (
+        "critical", True, "origin_refused",
+    )  # fmt: skip
+    assert page["rule_id"] == exit_request("scale_out").rule_id
     assert never.cancelled == [] and alerts.counted == [("x1", 1, 0)]
+
+
+async def test_a_cancel_selects_by_purpose_and_never_a_stop_a_take_profit_or_an_exit() -> None:
+    """24 §11.5 "Exits" and §11.6: of the rule's rows whose intents are `entry`, `scale_in`,
+    `stop_loss`, `take_profit` and `flatten`, a cancel with no `purpose` cancels `entry` and
+    `scale_in` alone, `purpose: scale_in` that row alone, and `purpose: take_profit` or
+    `stop_loss` none: the handler's own guard keeps a stop, a take-profit and an exit out
+    whatever the read hands it (C-2.6)."""
+    intents = ("entry", "scale_in", "stop_loss", "take_profit", "flatten")
+    rows = tuple(_entry(seq=n, intent=i) for n, i in enumerate(intents, start=1))
+    by_id = {row.id: row.intent for row in rows}
+
+    async def cancelled(params: dict[str, Any]) -> tuple[list[str], str]:
+        exits = Exits([ExitOutcome(kind="accepted", status=202)] * 2)
+        cancel = RuleCancelHandler(
+            "cancel_all_orders", lambda: cast(Any, Composed(exits)),
+            Principals(frozenset({cr.ACCOUNT})), Reading(rows), "demo",
+        )  # fmt: skip
+        req = exit_request("cancel_all_orders", params)
+        answer = await cancel.send(
+            cancel.prepare(req, cr.ACCOUNT, max_notional_usd=None), client_ref=REF
+        )
+        return [by_id[i] for i, *_ in exits.cancelled], answer.answer
+
+    assert await cancelled({}) == (["entry", "scale_in"], "accepted")
+    assert await cancelled({"purpose": "scale_in"}) == (["scale_in"], "accepted")
+    assert await cancelled({"purpose": "take_profit"}) == ([], "done")
+    assert await cancelled({"purpose": "stop_loss"}) == ([], "done")
+
+
+async def test_a_selection_past_the_cap_is_never_ok_and_never_counted_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """24 §11.5 "Exits", §11.7: the read holds one row past `RULE_ENTRIES_LIMIT`, so a selection
+    the cap stops is seen: `cancel_all_orders` cancels the orders within the cap and answers
+    `too_many_orders`, never `ok`; the breaker counts the overflow not done, so the trip's
+    incident gets its row."""
+    monkeypatch.setattr(exits_module, "RULE_ENTRIES_LIMIT", 2)
+    rows = tuple(_entry(seq=n) for n in (1, 2, 3))  # the cap, and one more
+    principals, reading = Principals(frozenset({cr.ACCOUNT})), Reading(rows)
+    exits = Exits([ExitOutcome(kind="accepted", status=202)] * 2)
+    cancel = RuleCancelHandler(
+        "cancel_all_orders", lambda: cast(Any, Composed(exits)), principals, reading, "demo"
+    )
+    prepared = cancel.prepare(exit_request("cancel_all_orders"), cr.ACCOUNT, max_notional_usd=None)
+    answer = await cancel.send(prepared, client_ref=REF)
+    assert (answer.answer, answer.error_code) == ("refused", "too_many_orders")
+    assert [i for i, *_ in exits.cancelled] == [rows[0].id, rows[1].id] and reading.limits == [3]
+    once, alerts = Exits([ExitOutcome(kind="accepted", status=202)] * 2), Alerts()
+    breaker = RuleBreakerCancels(
+        lambda: cast(Any, Composed(once)), principals, Reading(rows), "demo", alerts
+    )
+    await breaker.cancel_resting(exit_request("scale_out", node="x9"))
+    assert len(once.cancelled) == 2 and alerts.counted == [("x9", 2, 1)]
+
+
+async def test_the_breaker_never_cancels_a_reduce_only_exit_or_a_take_profit_it_reads() -> None:
+    """24 §11.7, C-2.6: the breaker keeps a filter of its own beside the read's: a reduce-only
+    close and a take-profit row the read hands it never reach `cancel_admitted`, and the rule's
+    entry is cancelled."""
+    entry = _entry(seq=1)
+    close = _entry(seq=2, reduce_only=True, intent="flatten")
+    take_profit = _entry(seq=3, intent="take_profit")
+    once, alerts = Exits([ExitOutcome(kind="accepted", status=202)]), Alerts()
+    breaker = RuleBreakerCancels(
+        lambda: cast(Any, Composed(once)), Principals(frozenset({cr.ACCOUNT})),
+        Reading((entry, close, take_profit)), "demo", alerts,
+    )  # fmt: skip
+    await breaker.cancel_resting(exit_request("scale_out", node="x7"))
+    assert [i for i, *_ in once.cancelled] == [entry.id] and alerts.counted == [("x7", 1, 0)]

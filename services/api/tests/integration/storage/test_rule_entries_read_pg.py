@@ -24,7 +24,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
 from tests.integration.oms.test_rule_origin_submit_pg import _rule, _rule_context
-from tests.integration.oms.test_submission_pipeline_pg import Rig, pg, pg_dsn, rel
+from tests.integration.oms.test_submission_pipeline_pg import Rig, _sql, pg, pg_dsn, rel
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms import submit_rig as sr
 
@@ -38,7 +38,9 @@ async def test_the_rule_entries_read_selects_the_rules_resting_entries_alone(
     """BQ-7, BQ-10: the read selects the rule's own resting entries through its groups, never
     another rule's entry, a user's manual entry or the rule's own reduce-only close (no group, and
     reduce-only); on the account and the symbol when named; of the environment named; oldest
-    first, at most `limit`."""
+    first, at most `limit`. An entry of the rule's that is cancelled, and one that is an algo's
+    child (its `parent_order_id` set), leave the read: a group's `algo` is write-once once the
+    group fired (`trg_tg_write_once`), so the statement test pins that filter."""
     mine, theirs = _rule(pg_dsn, pg.user), _rule(pg_dsn, pg.user)
     first = await pg.submit(pg.entry(), _rule_context(pg, mine))
     second = await pg.submit(pg.entry(price=Decimal("59900")), _rule_context(pg, mine))
@@ -68,3 +70,11 @@ async def test_the_rule_entries_read_selects_the_rules_resting_entries_alone(
         assert await missed == ()
     with pytest.raises(ValueError, match="limit"):
         await store.rule_resting_entries(mine.rule_id, "demo", limit=0)
+    third = await pg.submit(pg.entry(price=Decimal("59800")), _rule_context(pg, mine))
+    await pg.settle()
+    _sql(pg_dsn, "UPDATE orders SET state = 'cancelled', lifecycle_state = 'cancelled' "
+         "WHERE id = %s", second.order_id)  # fmt: skip
+    _sql(pg_dsn, "UPDATE orders SET parent_order_id = %s WHERE id = %s",
+         first.order_id, third.order_id)  # fmt: skip
+    after = await store.rule_resting_entries(mine.rule_id, "demo", limit=10)
+    assert [row.id for row in after] == [first.order_id]

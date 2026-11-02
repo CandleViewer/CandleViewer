@@ -6,7 +6,8 @@ then the routing emitter (check 4), still the only path to a sink, whose sink ha
 back here (`hand_over`); then checks 5 to 8; then the records written ahead, the hand-over and the
 answer, so every refusal is decided before `rules.fired` could be written (24 §11.5). The first
 account whose result is neither `ok` nor `simulated` stops the action's other accounts
-(`abort_on_first`), recorded `skipped`. `on_error`
+(`abort_on_first`), recorded `skipped`, but for an exit, which tries every account (`EXITS`), its
+first failure deciding for the fire once all were tried. `on_error`
 decides what follows a result other than `ok`, `simulated` or `skipped`; a failed write, or a row no
 longer armed or not confirmed, stops the fire whatever it says. The run row is closed with the
 fire's status (`error` after a failed write, its close still tried once), every result is counted,
@@ -35,7 +36,7 @@ from candleviewer.rules.executor import dispatch
 from candleviewer.rules.executor.budget import CircuitBreaker, OrderBudget
 from candleviewer.rules.executor.dispatch import Fire
 from candleviewer.rules.executor.gates import Gates, Halts, scope_refusal
-from candleviewer.rules.executor.handlers import HANDLERS, HandlerAnswer, HandlerSpec
+from candleviewer.rules.executor.handlers import EXITS, HANDLERS, HandlerAnswer, HandlerSpec
 from candleviewer.rules.executor.keys import client_ref, dedupe_key
 from candleviewer.rules.executor.metrics import ExecutorMetrics
 from candleviewer.rules.executor.ports import (
@@ -322,6 +323,9 @@ class ActionExecutor:
                 accounts, wide, unresolved = (None,), False, True
             resolved = tuple(a for a in accounts if a is not None)
             halted = False  # `abort_on_first`: the action's later accounts are not attempted
+            spec = self._handlers.get(req.action_type)
+            every = spec is not None and spec.capability in EXITS  # an exit tries every account
+            held: Stop | None = None  # an exit's first `abort`, for the fire once all were tried
             for account in accounts or (None,):
                 action = self._action(req, account, resolved, wide, records)
                 action.position, action.limits = position, fire.limits
@@ -340,7 +344,9 @@ class ActionExecutor:
                 else:
                     result = await self._bounded(fire, action)
                     stop = self._stop_after(action, result)
-                halted = halted or result.outcome not in ("ok", "simulated")
+                    if every and stop == "abort":  # an exit tries its other accounts first
+                        held, stop = held or stop, None
+                halted = not every and (halted or result.outcome not in ("ok", "simulated"))
                 results.append(result)
                 self._metrics.result(result)
                 notional = self._settled(action, result)
@@ -357,6 +363,7 @@ class ActionExecutor:
                 if action.tripped:  # the budget refused it as spent (BQ-8)
                     node = req.payload.node_id
                     await self._breaker.trip(fire.rule_id, fire.run_id, node, req=action.req)
+            stop = stop or held
         status: RunStatus = _status(results) if writable else "error"  # a failed write: closed too
         await self._close(fire, records, status, max(0, int((self._clock() - started) * 1000)))
         await self._settle(fire, results, troubled=alerted)
