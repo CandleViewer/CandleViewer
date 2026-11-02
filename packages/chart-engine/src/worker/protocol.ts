@@ -259,6 +259,11 @@ export type FromWorker =
       readonly anchorTick: number | null;
     }
   | { readonly t: "a11y"; readonly id: ChartId; readonly cursorSummary: string }
+  /**
+   * E12-S06 (BQ-9, additive): the main series' visible range holds no bar (`empty`) or some
+   * (`ready`); posted on a change only. While empty the engine draws no grid; SCR-047 is the app's.
+   */
+  | { readonly t: "dataState"; readonly id: ChartId; readonly state: "empty" | "ready" }
   | {
       readonly t: "error";
       readonly id: ChartId | null;

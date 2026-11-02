@@ -78,17 +78,13 @@ describe("candle drawing (BQ-1)", () => {
   it("draws each series in exactly two instanced draws over one shared buffer", () => {
     const capacity = rt.series(1, 0)?.ring.capacity;
     expect(gl.draws).toEqual([`4 ${capacity}`, `4 ${capacity}`]);
-    expect(gl.writes.filter((w) => w.startsWith("full"))).toEqual([`full ${(capacity ?? 0) * 20}`]);
-    expect(gl.attribs).toEqual([
-      "attrib 0 4 20 0",
-      "divisor 0 1",
-      "attrib 1 1 20 16",
-      "divisor 1 1",
-      "attrib 0 4 20 0",
-      "divisor 0 1",
-      "attrib 1 1 20 16",
-      "divisor 1 1",
+    // The ring once for both parts; the gap seams' 16-entry buffer once (no gap: never drawn).
+    expect(gl.writes.filter((w) => w.startsWith("full"))).toEqual([
+      `full ${(capacity ?? 0) * 20}`,
+      `full ${16 * 20}`,
     ]);
+    const vao = ["attrib 0 4 20 0", "divisor 0 1", "attrib 1 1 20 16", "divisor 1 1"];
+    expect(gl.attribs).toEqual([...vao, ...vao, ...vao]);
     const batch = gl.uniforms.filter((u) => u[0] === "u_batch");
     expect(batch.map((u) => u.slice(1))).toEqual([
       [0, rt.series(1, 0)?.ring.head, (capacity ?? 0) - 1, 300],
@@ -146,8 +142,8 @@ describe("candle drawing (BQ-1)", () => {
     on.get("webglcontextrestored")?.({ preventDefault: () => undefined });
     frame();
     const capacity = rt.series(1, 0)?.ring.capacity ?? 0;
-    expect(gl.writes.slice(before.writes)).toEqual([`full ${capacity * 20}`]);
-    expect(gl.attribs.length - before.attribs).toBe(8);
+    expect(gl.writes.slice(before.writes)).toEqual([`full ${capacity * 20}`, `full ${16 * 20}`]);
+    expect(gl.attribs.length - before.attribs).toBe(12);
     expect(gl.draws.length - before.draws).toBe(2);
   });
 

@@ -784,5 +784,55 @@ Deviation: `BatchBuilder.patch` folded an empty range into the pending one, so `
 | #395 BQ-16 | `bar-store` microbenches | Coordinator ruling 2026-11-01 02:51Z / acceptance 03:38Z (RelayRoom R28), as the chart-engine CODEOWNER: F-02's per-bar checks stay unconditional. With the flags column written only once a series carries flags and the merge checked only when the first time is at or before the last bar's, the interleaved medians (8 rounds) are 1 M one-bar appends 34.4 → 40.6 ms (+6.3 ms per 1 M, about 6 ns a bar; ≤ 120 ms budget, about 79 ms headroom) and 100 k mutation steps 9.6 → 10.6 ms. No baseline moved: both are `*.perf.test.ts` budgets, in neither `bench/baseline.json` nor the matrix baselines, and `bench/results.json` is byte-identical. Joining the baselined set is a row for E11-T06 #449. |
 
 Seam limit: the scene graph cannot remove nodes, so `removeSeries` hides and unregisters the
-series' two hosts and frees its store and ring, and host node ids carry a generation number so a
+series' three hosts (wick, body and, since PR 2, the gap seam) and frees its store and ring, and host node ids carry a generation number so a
 re-added series id cannot collide. Node removal is a row for E11 (the scene graph).
+
+## OHLC bars, gap seams, bar picks and `dataState` (E12-S06 PR 2)
+
+`BarSeries` (`src/layers/candle/bars.ts`) draws an OHLC series with the same `candle` program, ring
+and palette as `CandleSeries`, as E12-D06 §3.2 / §4.1 set out. The stem runs from high to low on the
+centre column. The open tick sits to its left and the close tick to its right, each
+clamp(floor(body / 2), 1, floor((s − 3) / 2)) CSS px long. Stem and ticks are 1 hairline thick for
+an up bar and 2 for a down bar. A doji is a neutral hairline mark, and a zero-range bar gets the
+neutral zero-range mark. Each series draws twice: the stem as a 4-vertex strip, and both ticks as one
+10-vertex strip with degenerate bridges, through `PART_VERTICES` (BQ-15). Below 5 CSS px,
+`CandleSeries.frame` switches the two batches to the wick and body parts, so the series draws the
+candle mark. Every series has a third host, the gap seam (BQ-8). `SeamRing` lists the physical slots
+of the `gap_before` bars, sorted by logical index and kept in step with each ring sync: only the
+mutated range is rescanned, and the list is patched only when it changes. The seam draws through the
+`candle` program as part 4, a hairline in `color.candle.wick` at the slot's left edge. It is one more
+draw, and only while a gap is in view and `isTimeAligned` holds (BQ-12, `setSeriesOptions`); a batch
+block's `instances` = 0 skips the draw. Draw-trace `labels` name the parts `series.candle.wick` /
+`.body` / `.seam` and `series.ohlc.stem` / `.ticks` / `.seam`, for FrameStats attribution (SCR-046).
+
+A plot pick that misses every object goes to `CandleSeries.hitTest`. The structural bar is measured
+against its drawn parts through the geometry twin, with the frame's pane block and the object
+tolerance; a hit is `pick { kind: "bar", objectId: "series.<id>" }`. A seeded property test checks
+that hit-testing is the inverse of the drawn geometry. Each frame, before collect, the runtime posts
+`dataState` when the main series' visible range empties or fills, and hides the background layer
+while it is empty (BQ-9); SCR-047's surface, copy, E2E and axe belong to `apps/web`. Goldens: a CPU
+stand-in raster of the 2D output is pinned as text in `test/layers/candle-golden.test.ts`. The 48
+SwiftShader cases are `it.todo`s that become rows on E11-T08 #391 (BQ-5).
+
+Accepted pick limits (PR 2 lens): `hitTest` measures the parts the last frame drew (its pane block
+and `u_geom`), so a pick between a data change and the next frame answers against what is on
+screen. It tests only the bar in the slot under x, so a neighbour's wick within the tolerance is
+not hit.
+
+Consumer note for E12-S12 (`apps/web`, SCR-047; the BQ-9 comment at merge): `dataState` posts
+`empty` on the first frame, before any data arrives, and then `ready` once bars are in view. The
+app should debounce SCR-047 (show it only when `empty` lasts past the initial load), or the empty
+state flashes on every chart open.
+
+Deviations from the plan (#395 plan §2–§3), each for a stated reason:
+
+1. The seam uses the `candle` program and a per-series slot list, not the `line` program. A
+   pixel-space line buffer would have to be re-uploaded on every pan while a gap is in view. This way
+   a pan stays a uniform write, and the slot list survives prepends and evictions.
+2. The OHLC stem is its own part (3), not the wick (0). Its colour follows the direction
+   (`color.candle.up` / `.down`), while the candle wick stays neutral (E12-D06 §3.2, R-6).
+3. PR 1 drew the zero-range mark 1 hairline tall below 8 px. It is now 2 hairlines tall at every
+   spacing (E12-D06 §9); only the doji drops to 1 below 8 px. Twin, shader and tests changed
+   together.
+4. Each series gets a 16-entry (320 B) seam buffer, uploaded once at its first build even when it
+   has no gap; the PR 1 runtime tests now count that upload and its VAO.

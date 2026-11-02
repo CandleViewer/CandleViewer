@@ -229,6 +229,7 @@ describe("Scenario: The package builds and exports the designed surface", () => 
     expect(Object.keys(surface.members("ChartEvents")).sort()).toEqual([
       "click",
       "crosshair",
+      "dataState",
       "drawingChanged",
       "error",
       "frameStats",

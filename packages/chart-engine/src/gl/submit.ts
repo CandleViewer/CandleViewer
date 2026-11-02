@@ -14,7 +14,7 @@ import type { DrawTrace } from "./trace.js";
 export const QUAD_VERTICES = 4;
 /**
  * Strip vertices per instance, indexed by `PROGRAM` (E12-S06, BQ-15): every program draws one
- * quad today; a batch block's `vertices` overrides it (the OHLC ticks' 10-vertex strip, PR 2).
+ * quad; a batch block's `vertices` overrides it (the OHLC ticks' 10-vertex strip).
  */
 export const PROGRAM_VERTICES: readonly number[] = [4, 4, 4, 4, 4];
 
@@ -49,6 +49,9 @@ export function submitDrawList(
       const b = list[i] as RetainedBatch; // i < count <= list.length
       const vao = buffers.vao(b.nodeId);
       if (vao === null) continue; // no attached ring (the layers attach, E12/E18): no draw
+      const blk = own === null ? null : own(b);
+      const n = blk !== null && (blk.instances ?? -1) >= 0 ? (blk.instances as number) : b.count;
+      if (n === 0) continue; // E12-S06: the gap seam with no gap in view (BQ-8): no draw
       if (b.program !== program) {
         programs.bind(b.program);
         program = b.program;
@@ -65,15 +68,17 @@ export function submitDrawList(
         texture = b.texture;
         trace.textureSwitches += 1;
       }
-      const blk = own === null ? null : own(b);
       if (blk !== null) programs.setBatchUniforms(program, blk);
       const vertices =
         blk !== null && blk.vertices > 0 ? blk.vertices : (PROGRAM_VERTICES[b.program] ?? 4);
       gl.bindVertexArray(vao);
-      gl.drawArraysInstanced(GL.TRIANGLE_STRIP, 0, vertices, b.count);
+      gl.drawArraysInstanced(GL.TRIANGLE_STRIP, 0, vertices, n);
       trace.draws += 1;
-      trace.triangles += (vertices - 2) * b.count;
-      if (trace.enabled) trace.nodes.push(b.nodeId);
+      trace.triangles += (vertices - 2) * n;
+      if (trace.enabled) {
+        trace.nodes.push(b.nodeId);
+        trace.labels.push(blk?.label ?? b.nodeId);
+      }
     }
   } finally {
     gl.bindVertexArray(null);
