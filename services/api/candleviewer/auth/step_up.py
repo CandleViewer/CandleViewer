@@ -80,11 +80,12 @@ from candleviewer.auth.mfa_keyring import MfaKeyring, require_available, zero_se
 from candleviewer.auth.mfa_repository import MfaRepository
 from candleviewer.auth.models import MfaMethodRecord, SessionRecord, UserRecord
 from candleviewer.auth.repository import UserRepository
-from candleviewer.auth.session_chart import SessionChart, to_us
+from candleviewer.auth.session_chart import SessionChart, SessionChartError, to_us
 from candleviewer.auth.session_repository import SessionRepository, StepUpChange, StepUpState
 from candleviewer.auth.session_service import RevocationSink, publish_revoked
 from candleviewer.auth.totp import verify_code
 from candleviewer.auth.totp_skew import TotpSkewReporter
+from candleviewer.statechart.gateway import GatewayError
 
 #: Ticket: "a 5-minute grace per action class".
 GRACE_WINDOW = timedelta(minutes=5)
@@ -210,6 +211,16 @@ class StepUpGrant:
     #: #2304: the challenge the step-up answered, and (no-grace) the request it binds.
     challenge_id: uuid.UUID | None = None
     fingerprint: str | None = None
+
+
+class StepUpUnrecorded(SessionChartError):
+    """#2101 (C-7): B16 could not record `auth.step_up_granted` (the chart failed or the gateway
+    refused the send) after `step_up()` stored *grant*; the caller ends it (`end_grant`), so the
+    step-up leaves nothing elevated. The chart's error is the cause."""
+
+    def __init__(self, grant: StepUpGrant) -> None:
+        super().__init__("B16 STEP_UP_OK: not recorded")
+        self.grant = grant
 
 
 @dataclass(frozen=True)
@@ -565,7 +576,9 @@ class StepUpService:
         `SessionRevoked` when the session is revoked during the check. A session already revoked
         or read-only when the call begins is refused at once, before any factor is checked. A
         grant is never held. #2152: `MfaKeyringUnavailable` once the challenge is answered and
-        before either factor, unheld and with nothing recorded (22 `AuthUnavailable`)."""
+        before either factor, unheld and with nothing recorded (22 `AuthUnavailable`). A grant
+        stored whose `auth.step_up_granted` B16 cannot record is `StepUpUnrecorded`, carrying the
+        grant for the caller to end (#2101)."""
         started = self._failure_hold.start()
         if action_class is not None and action_class not in ACTION_CLASSES:
             raise UnknownActionClass(action_class)
@@ -602,19 +615,23 @@ class StepUpService:
                 raise SessionReadOnly(saved.readonly_until)
             fingerprint = challenge.fingerprint if single_use and challenge is not None else None
             cid = None if challenge is None else challenge.challenge_id
-            await self._record(
-                record,
-                now,
-                "STEP_UP_OK",
-                action_class=action_class,
-                elevated_until_us=to_us(until),
-                **({} if cid is None else {"challenge_id": str(cid)}),
-                **({} if fingerprint is None else {"request_sha256": fingerprint}),
-            )
-            auth_step_up_total.labels(action_class=action_class).inc()
-            return StepUpGrant(
+            grant = StepUpGrant(
                 action_class, until, single_use, challenge_id=cid, fingerprint=fingerprint
             )
+            try:
+                await self._record(
+                    record,
+                    now,
+                    "STEP_UP_OK",
+                    action_class=action_class,
+                    elevated_until_us=to_us(until),
+                    **({} if cid is None else {"challenge_id": str(cid)}),
+                    **({} if fingerprint is None else {"request_sha256": fingerprint}),
+                )
+            except (SessionChartError, GatewayError) as exc:  # #2101: the grant is stored
+                raise StepUpUnrecorded(grant) from exc
+            auth_step_up_total.labels(action_class=action_class).inc()
+            return grant
         except (StepUpCodeInvalid, SessionReadOnly, SessionRevoked):
             # A cancellation during the wait propagates (nothing here catches it).
             await self._failure_hold.hold(started)

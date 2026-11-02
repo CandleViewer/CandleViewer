@@ -797,6 +797,21 @@ def test_user_lifecycle_caps_and_help_cover_the_writers_closed_sets() -> None:
         assert named <= set(re.findall(r"\w+", specs[name].help)), name
 
 
+def test_auth_label_caps_are_their_closed_sets_and_other() -> None:
+    """#2101: `auth_session_revocations_total{reason}` and `auth_audit_outcome_lost_total{action}`
+    clamp their label to a closed set, else `other` (`normalise_reason`,
+    `normalise_outcome_action`), so each cap is that set plus one: a value added to a set without
+    its cap (`role_changed`, once) would be refused at the cap."""
+    from candleviewer.auth import metrics as auth_metrics
+
+    bounds = {
+        "auth_session_revocations_total": len(auth_metrics._KNOWN_REASONS) + 1,
+        "auth_audit_outcome_lost_total": len(auth_metrics.AUDIT_OUTCOME_ACTIONS) + 1,
+    }
+    caps = {s.name: s.max_series for s in CATALOGUE}
+    assert {name: caps[name] for name in bounds} == bounds
+
+
 def test_user_lifecycle_series_are_bound_at_import_and_served_with_env() -> None:
     """#965 R7: every value of the closed sets exists from import, so a first failure is an
     `increase()` the tickets can see; the export serves each with `env`, and so does the app."""

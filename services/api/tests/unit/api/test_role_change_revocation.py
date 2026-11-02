@@ -22,6 +22,7 @@ from typing import Any, cast
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
 from candleviewer.admin.lifecycle_metrics import user_lifecycle_steps_total
@@ -36,6 +37,7 @@ from candleviewer.auth.owner_floor import assert_owner_floor
 from candleviewer.auth.session_chart import SessionChart
 from candleviewer.auth.session_service import SessionService
 from candleviewer.statechart.bindings import b16_session
+from candleviewer.statechart.gateway import GatewayOverloadedError
 from candleviewer.ws.revocation import RevocationHub
 from tests.conftest import RecordingAuditSink
 from tests.unit.api.test_user_admin_routes import (
@@ -467,3 +469,102 @@ async def test_a_session_minted_after_the_hook_is_revoked_and_recorded_after(
     assert w.live(M) == set()
     recorded = [c["session_id"] for c in b16_audit.calls if c["action"] == "auth.session_revoked"]
     assert late[0] in recorded and len(recorded) == 2
+
+
+@ROUTES
+async def test_a_revocation_the_gateway_refuses_rolls_the_change_back_with_503(
+    b16_audit: RecordingAuditSink, route: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full inbox or a degraded chart (`GatewayError`) cannot record the revocation either: as
+    for a refused record, the change rolls back (`503 audit_unavailable`, nothing revoked), and
+    the session's chart is dropped, to be rebuilt from its row."""
+    forgotten: list[str] = []
+
+    async def full(self: SessionChart, record: Any, now: Any, reason: str) -> None:
+        raise GatewayOverloadedError(str(record.id), "control")
+
+    async def forget(self: SessionChart, session_id: str) -> None:
+        forgotten.append(session_id)
+
+    monkeypatch.setattr(SessionChart, "revoke", full)
+    monkeypatch.setattr(SessionChart, "forget", forget)
+    w = _world(b16_audit, route)
+    mine = await w.mint(M)
+
+    r = w.change(M, ["viewer"])
+
+    assert (r.status_code, r.json()["code"]) == (503, "audit_unavailable")
+    assert w.roles_of(M) == frozenset({"manager"})
+    assert w.live(M) == {str(mine.session_id)} and not w.closed
+    assert forgotten == [str(mine.session_id)]
+
+
+class _RefusingFor(RecordingAuditSink):
+    """B16's sink, refusing the `auth.session_revoked` record of each session in `refused`."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.refused: set[str] = set()
+
+    async def emit(self, action: str, **kwargs: Any) -> None:
+        if action == "auth.session_revoked" and kwargs.get("session_id") in self.refused:
+            raise AuditUnavailable("WAL unwritable")
+        await super().emit(action, **kwargs)
+
+
+def _lost_revocations() -> float:
+    labels = {"action": "auth.session_revoked"}
+    return REGISTRY.get_sample_value("auth_audit_outcome_lost_total", labels) or 0.0
+
+
+@ROUTES
+@pytest.mark.parametrize("failure", ["refused", "gateway"])
+async def test_an_after_the_fact_record_that_cannot_be_written_is_counted_lost(
+    route: str, failure: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A session minted between the hook and the commit is revoked with the rest; its record,
+    written after the fact, that the sink refuses or the gateway does not take is counted lost
+    (`auth_audit_outcome_lost_total`, 04 section 8.3 rule 2) and logged, its chart is dropped,
+    and the revocation and the `200` stand."""
+    sink, late, forgotten = _RefusingFor(), list[str](), list[str]()
+    revoke, forget = SessionChart.revoke, SessionChart.forget
+
+    async def gated(self: SessionChart, record: Any, now: Any, reason: str) -> None:
+        if failure == "gateway" and str(record.id) in late:
+            raise GatewayOverloadedError(str(record.id), "control")
+        await revoke(self, record, now, reason)
+
+    async def spied(self: SessionChart, session_id: str) -> None:
+        forgotten.append(session_id)
+        await forget(self, session_id)
+
+    monkeypatch.setattr(SessionChart, "revoke", gated)
+    monkeypatch.setattr(SessionChart, "forget", spied)
+    b16_session.set_audit_sink(sink)
+    try:
+        w = _world(sink, route)
+        await w.mint(M)
+
+        async def at_commit() -> None:
+            late.append(str((await w.sessions.mint(str(M))).session_id))
+            if failure == "refused":
+                sink.refused.add(late[0])
+
+        w.set_at_commit(at_commit)
+        before = _lost_revocations()
+        with capture_logs() as logs:
+            r = w.change(M, ["viewer"])
+    finally:
+        b16_session.set_audit_sink(None)
+
+    assert r.status_code == 200, r.text
+    assert w.live(M) == set()
+    assert _lost_revocations() == before + 1
+    (line,) = [e for e in logs if e["event"] == "users.role_change.revocation_unrecorded"]
+    error = "SessionChartError" if failure == "refused" else "GatewayOverloadedError"
+    assert (line["action"], line["session_id"], line["error"]) == (
+        "auth.session_revoked",
+        late[0],
+        error,
+    )
+    assert late[0] in forgotten

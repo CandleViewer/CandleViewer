@@ -125,11 +125,13 @@ from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import AuthError
 from candleviewer.auth.generated_permissions import Permission, Scope
+from candleviewer.auth.metrics import auth_audit_outcome_lost_total, normalise_outcome_action
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
 from candleviewer.auth.scopes import DenyReason, ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.auth.session_chart import SessionChartError
 from candleviewer.observability.context import current_request_id, current_request_uuid
+from candleviewer.statechart.gateway import GatewayError
 from candleviewer.storage.errors import (
     ACTOR_ROLE_REVOKED,
     ActorNotAuthorised,
@@ -614,17 +616,20 @@ def _sessions_revoked(
 async def _revocations_ahead(auth: _AuthLike, user_id: uuid.UUID) -> list[SessionRecord]:
     """SR-013 (#2101, C-7), in a role change's write-ahead hook: B16 `REVOKE` (reason
     `role_changed`) on each live session of the user, whose `revoked` entry writes its one
-    `auth.session_revoked` ahead of the commit (#965 R5). A record the sink refuses raises
-    `_AuditRefused`, so the change rolls back (`503`) with nothing revoked; a record written for a
-    change that then rolls back over-reports, never under-reports. The rows are revoked once the
-    change commits (`_end_sessions`); the sessions recorded here are returned for that step."""
+    `auth.session_revoked` ahead of the commit (#965 R5). A record that cannot be written (the
+    chart failed or the gateway refused the send) raises `_AuditRefused`, so the change rolls back
+    (`503`) with nothing revoked, and the session's chart is dropped, to be rebuilt from its row;
+    a record written for a change that then rolls back over-reports, never under-reports. The rows
+    are revoked once the change commits (`_end_sessions`); the sessions recorded here are returned
+    for that step."""
     sessions = auth.sessions
     live: list[SessionRecord] = list(await sessions.live_sessions(str(user_id)))
     now = sessions.now()
     for record in live:
         try:
             await auth.step_up.chart.revoke(record, now, ROLE_CHANGED_REASON)
-        except SessionChartError as exc:
+        except (SessionChartError, GatewayError) as exc:
+            await auth.step_up.chart.forget(str(record.id))  # the row stays live
             raise _AuditRefused from exc
     return live
 
@@ -635,10 +640,11 @@ async def _end_sessions(
     """After a committed role change (C-1, C-3, C-7), before the role push (C-6): every live
     session of the user revoked as `role_changed`, each one and every member of its rotation
     family published (`bye session_revoked`, `4401`; 23 section 9.5). A session the hook did not
-    record (a refresh or a sign-in minted it since) gets its record now, after the fact; one the
-    sink refuses is logged, and the revocation stands. A store failure is counted and logged, and
-    answers `503 store_unavailable`: the roles stay changed, and the repair is the per-session
-    `DELETE`. `None` once every session is revoked."""
+    record (a refresh or a sign-in minted it since) gets its record now, after the fact; one that
+    cannot be written is counted lost (`auth_audit_outcome_lost_total`, 04 section 8.3 rule 2) and
+    logged, and the revocation stands. A store failure is counted and logged, and answers
+    `503 store_unavailable`: the roles stay changed, and the repair is the per-session `DELETE`.
+    `None` once every session is revoked."""
     try:
         revoked: tuple[SessionRecord, ...] = await auth.sessions.revoke_all(
             str(user_id), reason=ROLE_CHANGED_REASON, families=True
@@ -653,9 +659,13 @@ async def _end_sessions(
     for late in (row for row in revoked if row.id not in seen):
         try:
             await auth.step_up.chart.revoke(late, now, ROLE_CHANGED_REASON)
-        except SessionChartError as exc:
+        except (SessionChartError, GatewayError) as exc:
+            await auth.step_up.chart.forget(str(late.id))
+            action = "auth.session_revoked"
+            auth_audit_outcome_lost_total.labels(action=normalise_outcome_action(action)).inc()
             _log().error(
                 "users.role_change.revocation_unrecorded",
+                action=action,
                 session_id=str(late.id),
                 error=type(exc).__name__,
             )

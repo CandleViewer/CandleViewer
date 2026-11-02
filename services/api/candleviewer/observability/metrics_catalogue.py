@@ -4900,7 +4900,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "none yet (mass revocation; #2746)",
         _L,
         "E09",
-        max_series=16,
+        max_series=18,  # `auth.metrics._KNOWN_REASONS` and `other`
         exported=True,
     ),
     _s(

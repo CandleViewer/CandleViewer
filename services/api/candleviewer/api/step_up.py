@@ -21,14 +21,15 @@ SR-013 (#2101): a granted step-up rotates its session (`SessionService.rotate`),
 live grants, and answers with the new session's tokens and rotated cookies, `X-CSRF-Token`
 included (ADR-0038 F5). The audit writer's readiness is checked before any factor; the rotation's
 `auth.session_revoked` (B16 `REVOKE`, reason `rotated`) and `auth.session_created` are written
-ahead of the claim and the mint, and a refused one ends the grant (`503`). A claim lost to a
-refresh or a revoke, or a mint that fails after the claim, voids the announced session (`401`).
+ahead of the claim and the mint, and a refused one ends the grant (`503`), as does a refused
+`auth.step_up_granted`. A claim lost to a refresh or a revoke, or a mint that fails after the
+claim, voids the announced session (`401`). Each void is an `auth.step_up_failed` row written as
+far as the writer takes it; one it refuses is counted lost (`auth_audit_outcome_lost_total`).
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import inspect
 import re
 import uuid
@@ -79,6 +80,7 @@ from candleviewer.auth.errors import (
     UserDisabled,
 )
 from candleviewer.auth.generated_permissions import Permission, Scope
+from candleviewer.auth.metrics import auth_audit_outcome_lost_total, normalise_outcome_action
 from candleviewer.auth.models import MintedSession, SessionRecord
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.auth.session_chart import SessionChartError
@@ -89,11 +91,13 @@ from candleviewer.auth.step_up import (
     StepUpChallenge,
     StepUpGrant,
     StepUpService,
+    StepUpUnrecorded,
     carried_grants,
 )
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.observability.redaction import redact_text
+from candleviewer.statechart.gateway import GatewayError
 from candleviewer.storage.errors import ACTOR_ROLE_REVOKED, ActorNotAuthorised
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
@@ -954,6 +958,13 @@ def make_step_up_router(
             return auth_unavailable()
         except SessionRevoked:
             return _unauthenticated()
+        except StepUpUnrecorded as exc:  # #2101 (C-7): the grant is stored, its record is not
+            sid = str(record.id)
+            await auth.step_up.chart.forget(sid)  # rebuilt from the row, which stays live
+            failed = type(exc.__cause__).__name__
+            _log().error("auth.step_up.grant_unrecorded", session_id=sid, error=failed)
+            await _end_grant(sid, exc.grant)
+            return _audit_unavailable()
         except UnknownActionClass:
             return _problem(
                 400,
@@ -981,14 +992,21 @@ def make_step_up_router(
         """SR-013 (#2101): rotate the session the step-up just elevated. Its records come after
         `auth.step_up_granted` (B16), each ahead of what it records (C-7): B16 `REVOKE` writes
         `auth.session_revoked` (reason `rotated`) ahead of the claim, then `auth.session_created`
-        names the new session, under an id drawn here, ahead of the mint. Either refused: the
-        grant is ended and the answer is `503`, nothing elevated or rotated. The claim is
-        conditional (C-8): one lost to a refresh, a logout or a revoke, or a mint that fails
-        after it, voids the announced session and answers `401`; the user signs in again."""
+        names the new session, under an id drawn here, ahead of the mint. Either refused (the
+        chart failed, the gateway refused the send or the writer refused the record): the grant
+        is ended, what stands of the records is voided (`_grant_voided`) and the answer is `503`,
+        nothing elevated or rotated. The claim is conditional (C-8): one lost to a refresh, a
+        logout or a revoke, or a mint that fails after it, voids the announced session and
+        answers `401`; the user signs in again."""
         sessions, chart, sid = auth.sessions, auth.step_up.chart, str(record.id)
         successor = uuid.uuid4()  # named by its write-ahead record, as at sign-in (#2914)
+        revoked = False  # B16 wrote the old session's `auth.session_revoked`
         try:
+            # Not bounded by `AUDIT_TIMEOUT_S`, as `reset_totp`'s B16 `REVOKE` is not: a timeout
+            # would cancel the wait on the chart's step part-way, and leave it unknown whether
+            # the step wrote `auth.session_revoked`, which the void below must know.
             await chart.revoke(record, sessions.now(), ROTATED_REASON)
+            revoked = True
             await _ahead(
                 emitter.emit(
                     "auth.session_created",
@@ -1000,11 +1018,12 @@ def make_step_up_router(
                     request_id=current_request_uuid(),
                 )
             )
-        except (SessionChartError, AuditRefused) as exc:
+        except (SessionChartError, GatewayError, AuditRefused) as exc:
             await chart.forget(sid)  # rebuilt from the row, which stays live
             failed = type(exc).__name__
             _log().error("auth.step_up.rotation_unrecorded", session_id=sid, error=failed)
-            await _end_grant(sid, grant)
+            ended = await _end_grant(sid, grant)
+            await _grant_voided(record, grant, revoked=revoked, ended=ended)
             return _audit_unavailable()
         try:
             outcome = await sessions.rotate(
@@ -1014,10 +1033,16 @@ def make_step_up_router(
                 ip=source_ip(request.scope),
                 user_agent=request.headers.get("user-agent"),
             )
+        except asyncio.CancelledError:
+            # Cancelled in the claim, the mint or the link (a shutdown): the announced session's
+            # void can no longer be written, whether or not it stands. Counted lost, as a cancelled
+            # refresh's record is (a false loss is the safe direction), and the cancel goes on.
+            _lost(str(successor), "cancelled")
+            raise
         except (SessionRevoked, UserDisabled) as exc:  # the claim lost, or the mint refused
             await _unrotated(record, successor, type(exc).__name__)
             return _unauthenticated()  # either way the old row is revoked, its grant with it
-        except Exception as exc:  # the claim or the mint failed: whether it claimed is unknown
+        except Exception as exc:  # the claim, mint or link failed: whether it claimed is unknown
             await _unrotated(record, successor, type(exc).__name__)
             await _end_grant(sid, grant)  # a claim that failed left the grant on a live row
             if not is_storage_outage(exc):
@@ -1025,21 +1050,23 @@ def make_step_up_router(
             return _unauthenticated()
         return _issued(request, record, grant, outcome.minted)
 
-    async def _end_grant(sid: str, grant: StepUpGrant) -> None:
+    async def _end_grant(sid: str, grant: StepUpGrant) -> bool:
         """End the grant of a step-up whose rotation did not happen, so it elevates nothing
-        (C-7). A store that refuses this too is logged, never the answer: the grant was recorded
-        (`auth.step_up_granted`) and its window bounds it."""
+        (C-7); `True` once the row no longer holds it. A store that refuses this too is logged,
+        never the answer: the grant was recorded (`auth.step_up_granted`) and its window bounds
+        it."""
         try:
             await auth.step_up.end_grant(sid, grant)
         except Exception as exc:
             failed = type(exc).__name__
             _log().error("auth.step_up.grant_not_ended", session_id=sid, error=failed)
+            return False
+        return True
 
     async def _unrotated(record: SessionRecord, successor: uuid.UUID, error: str) -> None:
         """No session stands under *successor*, which `auth.session_created` announced (C-2.9):
-        an `auth.step_up_failed` row voids it. The answer is decided, so a row the writer refuses
-        is logged and never changes it; the error log names both sessions and the error class
-        only (C-12.6), in case the row is lost too."""
+        an `auth.step_up_failed` row voids it (`_void`). The error log names both sessions and
+        the error class only (C-12.6), in case the row is lost too."""
         _log().error(
             "auth.step_up.unrotated",
             user_id=str(record.user_id),
@@ -1047,23 +1074,62 @@ def make_step_up_router(
             new_session_id=str(successor),
             error=error,
         )
-        with contextlib.suppress(AuditRefused):  # logged by `_ahead`, and above
+        voids = {"voids_session_created": str(successor), "rotated_from": str(record.id)}
+        await _void(record, successor, "unrotated", voids)
+
+    async def _grant_voided(
+        record: SessionRecord, grant: StepUpGrant, *, revoked: bool, ended: bool
+    ) -> None:
+        """A rotation refused a record (C-2.9): an `auth.step_up_failed` row on the old session
+        voids what stands. That is the rotation's `auth.session_revoked`, once B16 has written it
+        (reason `unrotated`), and the grant `auth.step_up_granted` recorded, once it is ended,
+        which the row names (reason `grant_ended` when the grant is all). When nothing stands,
+        nothing is written."""
+        voids: dict[str, Any] = {}
+        if revoked:
+            voids["voids_session_revoked"] = str(record.id)
+        if ended:
+            cid = {} if grant.challenge_id is None else {"challenge_id": str(grant.challenge_id)}
+            voids["grant_ended"] = {
+                "action_class": grant.action_class,
+                "elevated_until": grant.elevated_until.isoformat(),
+                **cid,
+            }
+        if voids:
+            await _void(record, record.id, "unrotated" if revoked else "grant_ended", voids)
+
+    async def _void(
+        record: SessionRecord, session_id: uuid.UUID, reason: str, voids: dict[str, Any]
+    ) -> None:
+        """The `auth.step_up_failed` row that voids what this step-up's records said (C-2.9), on
+        *session_id*. The answer is decided, so a row the writer refuses never changes it: it is
+        counted lost and logged (`_lost`)."""
+        try:
             await _ahead(
                 emitter.emit(
                     "auth.step_up_failed",
                     actor_label=str(record.user_id),
                     actor_user_id=record.user_id,
-                    session_id=successor,
+                    session_id=session_id,
                     outcome=AuditOutcome.FAILURE,
                     severity=Severity.WARNING,
-                    reason="unrotated",
-                    after_state={
-                        "voids_session_created": str(successor),
-                        "rotated_from": str(record.id),
-                    },
+                    reason=reason,
+                    after_state=voids,
                     request_id=current_request_uuid(),
                 )
             )
+        except AuditRefused as exc:  # logged by `_ahead` too
+            _lost(str(session_id), type(exc.__cause__).__name__)
+
+    def _lost(session_id: str, error: str) -> None:
+        """A void row lost after its answer was decided (04-security-program.md section 8.3 rule
+        2): counted on `auth_audit_outcome_lost_total`, which `AuthAuditOutcomeLost` alerts on,
+        under `other` (its action is no lane registry row, so not in the counter's closed set,
+        as a password change's own row is not), and logged with the session and the error class
+        only (C-12.6)."""
+        action = "auth.step_up_failed"
+        auth_audit_outcome_lost_total.labels(action=normalise_outcome_action(action)).inc()
+        _log().error("auth.step_up.outcome_lost", action=action, session_id=session_id, error=error)
 
     def _issued(
         request: Request, record: SessionRecord, grant: StepUpGrant, minted: MintedSession
