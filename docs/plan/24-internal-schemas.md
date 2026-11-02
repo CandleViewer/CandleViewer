@@ -714,6 +714,7 @@ class Bar(BaseModel):
     partial: bool                 # True when the bar began before recording started
     gap_before: bool              # True when a data gap precedes this bar
     synthetic: bool = False       # densify() filler (§3.3) — never persisted
+    volume_allocated: bool = True # renko: False on a flat brick of a run (§3.3); #2130 PR 2
 ```
 
 Shipped in `services/api/candleviewer/bars/` (E12-T01): `spec_hash` = sha256 over canonical JSON
@@ -730,6 +731,8 @@ golden vectors in `packages/fixtures/golden/bars/`; TS mirror generated into
 `packages/protocol/src/generated/bars/`.
 
 `min_delta`/`max_delta` require tracking the running intrabar delta path, not just the endpoint (research 08 §2) — they are the input to exhaustion and absorption reads.
+
+**Renko volume ownership (#2130; contract first, built from #2130 PR 2).** `volume_allocated` is a first-class `Bar` field and replaces the in-memory `RenkoBarUpdate.volume_allocated` wrapper field (`bars/renko_builder.py`): `BarUpdate` (§3.2) carries it in `bar`, and `RenkoBarUpdate` keeps only `open_source_ts` (until #2024). It is `True` on every non-renko bar, on a forming brick (`open`/`update`) and on the last brick of a run, and `False` only on the earlier, flat bricks of a run that completes several bricks (§3.3 Renko (a); BI-7, §3.4). It reaches the store inverted, as `bars_renko.volume_unallocated` (21 §4.8, QuestDB 0009: `volume_allocated = not volume_unallocated`), whose row checksum appends `volume_unallocated=True` only when true; and both wires, sent only as `false`: 22 `Bar.volume_allocated`, the 23 §14.3 item's, and CVWB kind 4 `flags` bit4 set (23 §3.4). Absent or pre-0009 reads `True`. The wire encoding, the stored polarity and the checksum rule are PROPOSED, for the orchestrator's ruling (§19.100).
 
 ### 3.2 Builder protocol
 
@@ -779,6 +782,7 @@ An amend re-emits a bar with the same identity `(bar_param/spec_hash, generation
 | BI-4      | Replaying the same trade sequence twice yields identical `Bar` objects including `spec_hash`.                          | Golden-file test against a recorded fixture |
 | BI-5      | `restore(snapshot())` at any point yields the same final series as an uninterrupted run.                               | Property with random cut points             |
 | BI-6      | `vwap == turnover / volume` to 8 dp, or `open` when `volume == 0`.                                                     | Unit                                        |
+| BI-7      | Renko: of the bricks one trade closes, exactly the last has `volume_allocated=True`; the rest are flat (BI-1 holds).   | Property, 3-brick run (#2130 PR 2)          |
 
 **Shipped harness (E12-T04, `services/api/bench/bar_determinism/`).** One shared harness checks BI-1…BI-6 for all six builders over a standard spec matrix: a seeded, offline `TradeEvent` generator (volatility, size distribution, taker skew; adversarial N-threshold prints, exact-threshold/boundary hits, rapid reversals, silences, late arrivals, duplicate ids); an independent, naive reference implementation written from §3.3 (`reference.py`), compared on every field; a plain-text comparator (`bar <i> field <f>: expected <x> actual <y>`); and a mutation set (time-bar off-by-one, endpoint-only `min_delta`, missing volume split, phantom range bars, renko double allocation) each proven caught. BI-1 counts trades a time builder drops (outside the 60 s amend window, or an empty interval) as not applied; BI-3 requires the extremes to equal the arrival-order intrabar path; BI-5 restores into a fresh builder through a JSON round trip of `BuilderState`. A violation names invariant, builder, spec, first offending bar and seed. PR gate: 100k trades in the backend unit run; nightly `bar-determinism-nightly`: 1M trades plus rebuild throughput vs `baseline.json` (warn >10 %, fail >25 % only when the runner OS matches the baseline's; the committed baseline is Windows dev hardware, so CI only WARNs until a Linux baseline is re-recorded on the CI runner, #2167). BI-5 cuts are random plus fixed cuts at the first renko reversal and the first volume split. The mutation set's time-bar off-by-one is injected by shifting boundary timestamps 1 µs (same effect as `<=` for `<`). Renko wick-shape defects are caught only by the reference cross-check, because no BI-n covers bar shape. The golden fixture day is synthesised from documented message shapes (exception #1778 A), not a recorder capture, so roadmap §5.3 exit criterion 4 stays open until E16 records a real day.
 
@@ -6746,3 +6750,12 @@ The orchestrator assigned this number on 2026-11-01 (the preamble above); it is 
 - 22 `getWorkspace` states the same bound and the `suppressed_before` count in its description; its `404` is unchanged.
 - 22 `exportWorkspace` is refused in a live view-as context: `403 view_as_read_only` with its `admin.view_as_refused` record, as a write is, though it is a read, because a bundle is a copy of the target's workspace that leaves the view. The "View-as session" text of `info.description` gains a "Refused reads" bullet that names it, and the `Forbidden` response text names it beside the state-changing operations. A held context refuses every read already.
 - No new `x-error-codes` entry, schema member or operation, so the `openapi_pending` baselines do not move; no WS, table, column, chart or `machine_hash` change, and no migration.
+
+### 19.100 2026-11-02 — §3.1, §3.4, 21 §4.8 / §9.6, 22 `Bar`, 23 §3.4 / §14.3: renko `volume_allocated` as a first-class bar field, stored inverted (E12, #2130)
+
+The next free number in the orchestrator's register on #2701 (2026-11-02, 17:58Z: §19.98 #2022, §19.99 #3086); to be confirmed at the ruling on this PR.
+
+- Contract first (C-6.1), additive (C-6.3), #2130 PR 1 of 2, after the orchestrator's ruling on #2130 (2026-11-02, 17:39Z). `volume_allocated` moves from the in-memory `RenkoBarUpdate` wrapper onto §3.1 `Bar`, default `True`; `BarUpdate` carries it in `bar`. BI-7 (§3.4) is the builders' guarantee: of the bricks one trade closes, exactly the last owns the run's volume and the others are flat, and with BI-1 no contract is counted twice.
+- PROPOSED, wire: 22 `Bar.volume_allocated` and the 23 §14.3 item's, an optional boolean, default `true`, renko only, sent only as `false`; CVWB kind 4 sets `flags` bit4 when it is false. Absent means `true`, so an old client counts every bar's volume once and every non-renko bar's bytes are unchanged; no `format_version` bump. Bit4 is unassigned on `main`; #5424 (open) reserves bits 4–7, and its vector `bars_flags_reserved_bits` changes with PR 2.
+- PROPOSED, storage and checksum: 21 §4.8 `bars_renko` gains `volume_unallocated BOOLEAN` (QuestDB 0009, 21 §9.6, after #5424's 0008), and `volume_allocated = not volume_unallocated`, because QuestDB has no NULL `BOOLEAN` and a pre-0009 row reads `false`, which this polarity reads as owning. The row checksum appends `volume_unallocated=True` only when true, #5396's rule (#5424's §19.81), so every existing row and every non-renko row verifies unchanged.
+- From #2130 PR 2: the 0009 file and its lockfile entry, the `Bar` field, `bar_row` and `row_checksum`, the reader (the tail read included), the REST and WS serializers, the kind-4 encoder and both reference decoders, the regenerated `packages/protocol` and Python models, and a 3-brick store and wire round trip. No Postgres table (no Alembic revision), no DEDUP key, chart or `machine_hash` change. No consumer reads the field yet; E19 #597 (volume profile) and the E18 footprint will.
