@@ -183,6 +183,24 @@ Focus after a page loads is the host's: the new page's first row, or the pressed
 
 The component makes no request: the endpoint the control calls writes the audit record (`14` §0.5 item 8).
 
+### AuditFilterBar (CMP-174, a search form of CMP-040 fields)
+
+| Keys                             | Action                                                                                                                                                             |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Tab / Shift+Tab                  | The controls in reading order: From, To, Actor, Action, Subject type and id, Outcome, Severity, IP, Search, Environment, the chips' Remove buttons, Clear filters. |
+| Typing in a text field           | Edits a draft only: Enter, or focus leaving the field, applies it. Enter never submits the form.                                                                   |
+| A select's own keys              | CMP-009's: a choice applies at once.                                                                                                                               |
+| Actor, Action (CMP-048)          | Choosing an option applies it; in Action, Enter with an exact code or label adds it as a chip.                                                                     |
+| Enter / Space on a chip's Remove | Removes that action; focus moves to the next chip's Remove, else the previous, else the Action field.                                                              |
+| Keys in a T2 control             | Change nothing (read-only); a press says the reason once.                                                                                                          |
+
+| Element | Role                             | Name                   | Notes                                                                                                                                                                   |
+| ------- | -------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| bar     | search (`form`)                  | "Filter the audit log" | No page number or total; no live region of its own.                                                                                                                     |
+| control | its own (CMP-047, 048, 009, 007) | its visible label      | From and To are described by "UTC". A `422` error sits under its field, linked and not live; focus moves to the first, unless the user moved on since the set was sent. |
+| T2      | its own                          | its label              | `aria-disabled`, read-only (`readonly`; a picker `aria-readonly`), the lock in its well; the own view's `rbac.owner_only` line, or the one rate-limit notice.           |
+| chips   | list                             | "Action"               | A CMP-011 chip per code, its remove button "Remove {label} ({code})".                                                                                                   |
+
 ### SystemHealthTile (CMP-178, a CMP-050 region tile, no pattern of its own)
 
 | Keys            | Action                                                                                                                    |

@@ -18,17 +18,26 @@ import type { DisabledReasonAttrs } from "./disabledReason.js";
 /**
  * The message line: always in the DOM (a polite live region announces swapped-in text once), the `danger` glyph
  * then the sentence while a message is given. Validity without a sentence is the host's to supply (CMP-040).
+ * `live={false}` keeps the line out of the live tree: the host moves focus to the field instead, which carries
+ * the message by `aria-describedby` (one voice; E42-D03 I-2, E42-D04 AL-17).
  */
 export function FieldMessage({
   id,
   message,
+  live = true,
 }: {
   readonly id: string;
   readonly message: string | undefined;
+  readonly live?: boolean;
 }): JSX.Element {
   const shown = message !== undefined && message !== "";
   return (
-    <div id={id} className="cv-field__message" aria-live="polite" aria-atomic="true">
+    <div
+      id={id}
+      className="cv-field__message"
+      aria-live={live ? "polite" : undefined}
+      aria-atomic={live ? "true" : undefined}
+    >
       {shown ? (
         <>
           <span className="cv-field__glyph">
