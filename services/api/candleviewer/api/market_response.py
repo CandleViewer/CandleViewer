@@ -384,18 +384,14 @@ def build_meta(
     return meta
 
 
-#: A served row that is no stored bar (an exchange kline): it has no build provenance.
-_NOT_BUILT: Final = object()
-
-
 def bars_provenance(rows: Iterable[object], *, spec_hash: str, running: int) -> dict[str, object]:
-    """22 `BarsMeta`'s members for the stored bars among `rows` (#5396, 24 §3.1): `spec_hash`;
+    """22 `BarsMeta`'s members for the built bars among `rows` (#5396, 24 §3.1): `spec_hash`;
     `build_version`, the lowest recorded among them (a row with none is left out of the minimum;
-    absent when none of them records one; `running` when no stored bar is served); and
-    `stale_build`, true when one was built below `running` or records no version. A row without
-    a `build_version` attribute is an exchange kline, not a stored bar, and counts for none."""
-    versions = [v for v in (getattr(r, "build_version", _NOT_BUILT) for r in rows)
-                if v is not _NOT_BUILT]  # fmt: skip
+    absent when none of them records one; `running` when no built bar is served); and
+    `stale_build`, true when one was built below `running` or records no version. An exchange
+    kline (a row with `tape_built` false) is no built bar and counts for none."""
+    built = [r for r in rows if getattr(r, "tape_built", True) is not False]
+    versions = [getattr(r, "build_version", None) for r in built]
     known = [v for v in versions if isinstance(v, int)]
     meta: dict[str, object] = {"spec_hash": spec_hash}
     if known or not versions:
