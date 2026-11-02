@@ -74,7 +74,7 @@ PATHS: dict[str, str] = {
     "E47D08": "docs/design/E47/E47-D08.md",
 }
 E47_REF = (
-    "307dffee24811c9fd7a99d7753c427573e858b13"  # #5444's head; re-pinned at its merge
+    "e60fe7baa545758e729fd70e061f0869b636ab22"  # #5444's head; re-pinned at its merge
 )
 REF_OF = {"D08": D08_REF, "E47D08": E47_REF}  # every other key is read at BASE
 DASH = "\u2013"  # the en dash of a cited range
@@ -541,7 +541,10 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     (
         "G-MOMENT",
         "drop M-06's view-as T2 naming",
-        sub("; its `Retry` / `Cancel` under view-as T2 (§11)", ""),
+        sub(
+            "; its `Retry` under view-as T2 (§11); its `Cancel` is a read",
+            "; its `Cancel` is a read",
+        ),
     ),
 )
 
