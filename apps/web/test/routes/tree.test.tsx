@@ -5,6 +5,7 @@ import { RouterProvider } from "react-router/dom";
 import { SHELL_MAIN_ID } from "../../src/features/app-shell/ShellLayout";
 import { KeymapHost } from "../../src/keymap/KeymapHost";
 import { buildRoutes } from "../../src/routes/tree";
+import { ROUTE_FOCUS_KEEP } from "../../src/features/app-shell/useRouteFocus";
 import { WatchlistRoute } from "../../src/features/watchlist/WatchlistRoute";
 import { ROUTE_MANIFEST } from "../../src/routes/manifest";
 import { ROUTE_TITLES, pageTitle, syncDocumentTitle } from "../../src/routes/titles";
@@ -158,6 +159,24 @@ describe("feature routes load on first visit (C-14.3; #5335's read)", () => {
       expect(loaded).toEqual({ Component: WatchlistRoute });
     },
   );
+
+  it("route focus: an unmarked navigation into R-111 lands on its h1; a marked tab switch keeps focus where it is (C-5335-d04)", async () => {
+    claimsFor("owner");
+    const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/risk"] });
+    render(<RouterProvider router={router} />);
+    await screen.findByRole("heading", { name: /R-150 — owned by E12/ }, ROUTE_WAIT);
+    await act(() => router.navigate("/watchlist/x"));
+    const h1 = await screen.findByRole("heading", { level: 1, name: "Watchlist" }, ROUTE_WAIT);
+    await waitFor(() => expect(document.activeElement).toBe(h1), ROUTE_WAIT);
+    // stands in for SCR-100's tab: a control the switch of the list's `:groupId` leaves where it is
+    const rules = within(screen.getByRole("navigation", { name: "Primary" })).getByRole("link", {
+      name: "Rules",
+    });
+    act(() => rules.focus());
+    await act(() => router.navigate("/watchlist/y", { state: { [ROUTE_FOCUS_KEEP]: true } }));
+    expect(router.state.location.pathname).toBe("/watchlist/y");
+    expect(document.activeElement).toBe(rules);
+  });
 
   it("a signed-out visit is still guarded: /watchlist/x goes to sign in, coming back there after", async () => {
     claimsFor(null);
