@@ -28,7 +28,17 @@ Gates (each FAIL led by its name):
               only (C-2.11; the ticket's AC); and KEYMAP at the base binds no command to the
               environment switch and nothing to Ctrl+Shift+L.
   G-T2        every §4.3 row is classed: V (form validity: it names validity and carries no T2
-              rendering and no lock look) or T2 (its reason a quoted sentence).
+              rendering and no lock look) or T2 (its reason a quoted sentence). A T2 reason that
+              names an E09-D09 §3.1 key is that key's text at the base (its `{slot}` filled);
+              any other is marked PROPOSED; S74-07 is `rbac.env` (ruling BQ-22).
+  G-RULED     the rulings' texts hold (comment 6577247518): the demo statement verbatim from
+              `14`:1787 with its em dash (BQ-10); DEMO `font.weight.medium` (BQ-07); the panel
+              LIVE `border.thick` rule present and the word never underlined (BQ-08); "LIVE
+              since" outside any live region (BQ-11); the typed match exact and case-sensitive
+              (BQ-14); to demo a click-confirm only (BQ-16); the audit on the 200 only (BQ-24).
+  G-AROW      A-1 … A-9 are all present; every Old text, and A-8's row text, stands exactly once
+              in its target at the base and on the line the row cites; A-9's anchor is A-6's
+              New text.
   G-CITE      every cite in range and on a non-blank line at its base, and equal to the pins.
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
               deny word in the spec; no deny word in this tool's text or the pins.
@@ -536,9 +546,137 @@ def g_scope(t: Texts) -> list[str]:
     ]
 
 
+DEMO_STATEMENT = (
+    "Demo uses Bybit's demo matching engine \u2014 REST order entry only, "
+    "no private WS order entry."
+)
+# (ruling, what must stand in the spec, what must not)
+RULED: tuple[tuple[str, str, str | None], ...] = (
+    (
+        "BQ-07 DEMO medium",
+        "DEMO `font.weight.medium` on CMP-074",
+        "DEMO `font.weight.regular` on",
+    ),
+    (
+        "BQ-08 the panel rule",
+        "On panel badges LIVE keeps E15-D03 D-4's `border.thick` rule",
+        None,
+    ),
+    ("BQ-08 no underline", "the word itself is never underlined", None),
+    ("BQ-11 LIVE since", "never inside the pill and never in a live region", None),
+    (
+        "BQ-14 exact match",
+        "Until the field equals `LIVE` exactly (case-sensitive",
+        "case-insensitive",
+    ),
+    ("BQ-16 to demo", "**To demo:** one Confirm, no typed word and no step-up", None),
+    (
+        "BQ-24 audit",
+        "on the 200 of `POST /session/environment`, at S74-05, never on intent",
+        None,
+    ),
+)
+
+
+def e09_keys(t: Texts) -> dict[str, re.Pattern[str]]:
+    out: dict[str, re.Pattern[str]] = {}
+    for ln in at(t, "E09D09").split("\n"):
+        m = re.match(r'\| `(rbac\.[a-z_]+)` +\| "([^"]+)"', ln)
+        if m and m[1] not in out:
+            parts = re.split(r"\{[a-z_]+\}", m[2])
+            out[m[1]] = re.compile(".+?".join(re.escape(x) for x in parts) + "$")
+    return out
+
+
+def g_t2_keys(t: Texts) -> list[str]:
+    keys = e09_keys(t)
+    bad = []
+    for r in table_rows(section(t.spec, "### 4.3"), "S74-"):
+        if len(r) < 4 or "T2" not in r[3] or "validity" in r[3]:
+            continue
+        quote = re.search(r'"([^"]{8,})"', r[3])
+        named = re.findall(r"`(rbac\.[a-z_]+)`", r[3])
+        if not quote:
+            continue
+        if named:
+            for k in named:
+                if k not in keys or not keys[k].match(quote[1]):
+                    bad.append(f"{r[0]}: {quote[1]!r} is not `{k}`'s text at the base")
+        elif "PROPOSED" not in r[3]:
+            bad.append(
+                f"{r[0]}: a T2 reason that is neither an E09-D09 key nor PROPOSED"
+            )
+        if r[0] == "S74-07" and named != ["rbac.env"]:
+            bad.append("S74-07: not-permitted is `rbac.env` (ruling BQ-22)")
+    return bad
+
+
+def g_ruled(t: Texts) -> list[str]:
+    bad = []
+    if DEMO_STATEMENT not in at(t, "14").split("\n")[1786]:
+        bad.append("the demo statement is not on `14`:1787 at the base")
+    n = t.spec.count(f'"{DEMO_STATEMENT}"')
+    if n != 1 or "engine - REST" in t.spec:
+        bad.append("BQ-10: the demo statement is not verbatim from `14`:1787")
+    for what, must, never in RULED:
+        if must not in t.spec:
+            bad.append(f"{what}: {must[:50]!r} no longer stands")
+        if never is not None and never in t.spec:
+            bad.append(f"{what}: {never!r} stands")
+    since = next(
+        (ln for ln in t.spec.split("\n") if ln.startswith("- **LIVE since")), ""
+    )
+    if re.search(
+        r"aria-live=\"(polite|assertive)\"|role=\"(status|alert|log)\"", since
+    ):
+        bad.append("BQ-11: LIVE since is placed in a live region")
+    return bad
+
+
+def g_arow(t: Texts) -> list[str]:
+    bad = []
+    lines = [
+        ln for ln in section(t.spec, "## 11.").split("\n") if ln.startswith("- **A-")
+    ]
+    ids = [re.match(r"- \*\*(A-\d+),", ln) for ln in lines]
+    got = [m[1] for m in ids if m]
+    if got != [f"A-{i}" for i in range(1, 10)]:
+        bad.append(f"the A-rows are {got}, not A-1 … A-9")
+    news: dict[str, list[str]] = {}
+    for ln in lines:
+        m = re.match(r"- \*\*(A-\d+),", ln)
+        if not m:
+            continue
+        aid = m[1]
+        news[aid] = re.findall(r'New: "(.+?)"(?:\.|$)', ln)
+        cite = CITE.search(ln)
+        olds = re.findall(r'Old: "(.+?)"\. New:', ln)
+        olds += re.findall(r'Delete the row whose action is "(.+?)"', ln)
+        if not olds:
+            continue
+        if cite is None:
+            bad.append(f"{aid}: names no line at the base")
+            continue
+        key = cite[1]
+        text = at(t, key)
+        ls = text.split("\n")
+        cited = [int(x.split("\u2013")[0]) for x in cite[2].split(", :")]
+        for o in olds:
+            if text.count(o) != 1:
+                bad.append(f"{aid}: {o[:40]!r} stands {text.count(o)} times in `{key}`")
+            elif not any(0 < n <= len(ls) and o in ls[n - 1] for n in cited):
+                bad.append(f"{aid}: {o[:40]!r} is not on its cited line")
+    a9 = next((ln for ln in lines if ln.startswith("- **A-9,")), "")
+    anchor = re.search(r'After "(.+?)" \(A-6', a9)
+    if anchor is None or not any(anchor[1] in n for n in news.get("A-6", [])):
+        bad.append("A-9: its anchor is not A-6's New text")
+    return bad
+
+
 GATES: dict[str, Callable[[Texts], list[str]]] = {
     "G-STATE": g_state, "G-TOKEN": g_token, "G-CONTRAST": g_contrast, "G-CVD": g_cvd,
-    "G-HOTKEY": g_hotkey, "G-T2": g_t2, "G-CITE": g_cite, "G-HYGIENE": g_hygiene,
+    "G-HOTKEY": g_hotkey, "G-T2": lambda t: g_t2(t) + g_t2_keys(t),
+    "G-RULED": g_ruled, "G-AROW": g_arow, "G-CITE": g_cite, "G-HYGIENE": g_hygiene,
     "G-SCOPE": g_scope,
 }  # fmt: skip
 
@@ -646,6 +784,19 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-CVD", "type a ΔE figure off", set_cell("V-01", 4, "107.06 / 91.86 / 121.11 / 115.66")),
     ("G-HOTKEY", "bind a hotkey to the switcher in §4", sub("there is no other path to SCR-074.", "there is no other path to SCR-074 but Ctrl+Shift+L.")),
     ("G-T2", "drop the not-permitted reason", set_cell("S74-07", 3, "T2 2a on Switch to LIVE")),
+    ("G-T2", "S74-07 given `14`'s string", sub("`rbac.env`, \"Live trading isn't enabled for you.\"", "`rbac.env`, \"The owner hasn't enabled Live for your account.\"")),
+    ("G-T2", "S74-07 given the key `rbac.permission`", sub("T2 2a `rbac.env`,", "T2 2a `rbac.permission`,")),
+    ("G-RULED", "the demo statement with a hyphen", sub("matching engine \u2014 REST order entry only, no private WS order entry.\" (`14`:1787)", "matching engine - REST order entry only, no private WS order entry.\" (`14`:1787)")),
+    ("G-RULED", "DEMO made regular", sub("DEMO `font.weight.medium` on CMP-074", "DEMO `font.weight.regular` on CMP-074")),
+    ("G-RULED", "the panel LIVE rule dropped", sub("On panel badges LIVE keeps E15-D03 D-4's `border.thick` rule", "On panel badges LIVE drops E15-D03 D-4's `border.thick` rule")),
+    ("G-RULED", "the word underlined", sub("the word itself is never underlined", "the word itself is underlined")),
+    ("G-RULED", "LIVE since in a live region", sub("never inside the pill and never in a live region", "inside a `role=\"status\"` region")),
+    ("G-RULED", "the match made case-insensitive", sub("exactly (case-sensitive, `14`:264)", "(case-insensitive, `14`:264)")),
+    ("G-RULED", "to demo given a typed word and step-up", sub("**To demo:** one Confirm, no typed word and no step-up", "**To demo:** a typed word and a step-up")),
+    ("G-RULED", "the audit moved to intent", sub("at S74-05, never on intent", "at S74-03, on intent")),
+    ("G-AROW", "A-5's Old text off by one character", sub('Old: "1 px border, 24 px tall in compact', 'Old: "1px border, 24 px tall in compact')),
+    ("G-AROW", "A-8's row text changed", sub('whose action is "Toggle Demo/Live switch flow', 'whose action is "Toggle the Demo/Live switch flow')),
+    ("G-AROW", "A-9 dropped", lambda t: replace(t, spec="\n".join(ln for ln in t.spec.split("\n") if not ln.startswith("- **A-9,")))),
     ("G-T2", "draw the typed gate as T2", set_cell("S74-02", 3, "Continue T2 2a until the field equals `LIVE` (form validity)")),
     ("G-HOTKEY", "a KEYMAP command bound to the switch", lambda t: replace(t, memo={**t.memo, f"{BASE}:{KEYMAP_REL}": json.dumps({"commands": [{"id": "session.env_switch", "label": "Switch Demo/Live", "defaultBinding": "Ctrl+Shift+L"}]})})),
     ("G-CITE", "re-point a `14` cite to an unpinned line", sub("(`14`:1767)", "(`14`:1766)")),
