@@ -24,7 +24,8 @@ Usage (from the repo root):
   python3 -I docs/design/_tools/e21_d03_scr051_audit.py --self-test
   python3 -I docs/design/_tools/e21_d03_scr051_audit.py --repin-ruled
   python3 -I docs/design/_tools/e21_d03_scr051_audit.py --fill   (writes sections 12 and 19.3)
-Exit 0 = no FAIL; 1 = at least one FAIL.
+Exit 0 = no FAIL; 1 = at least one FAIL. Run it on a rebased branch or a committed merge: on an
+uncommitted merge the merge-base is still the old one and G-UNTOUCHED reports main's own changes.
 """
 
 from __future__ import annotations
@@ -91,6 +92,8 @@ DEFICIENCIES = ("deuteranopia", "protanopia", "tritanopia")
 CANVAS = "color.surface.canvas"
 OVERLAY = "color.surface.overlay"
 INFO = "color.status.info.subtle"
+RAISED = "color.surface.raised"
+SUNKEN = "color.surface.sunken"
 STOPS = "color.heatmap.*"  # in PAIRS: the lowest of the ten standard stops
 CVD_STOPS = "color.cvd.heatmap.*"  # in PAIRS: the lowest of the ten CVD-safe stops
 # Section 12.2's table, row by row: (foreground, background, floor).
@@ -108,8 +111,23 @@ PAIRS: tuple[tuple[str, str, float], ...] = (
     ("color.focus.ring", INFO, 3.0),
     ("color.env.demo", OVERLAY, 3.0),
     ("color.env.live", OVERLAY, 3.0),
+    ("color.text.primary", RAISED, 4.5),
+    ("color.env.demo", RAISED, 3.0),
+    ("color.env.live", RAISED, 3.0),
+    ("color.text.secondary", RAISED, 4.5),
+    ("color.text.tertiary", RAISED, 4.5),
+    ("color.focus.ring", RAISED, 3.0),
+    ("color.border.selected", OVERLAY, 3.0),
+    ("color.text.primary", SUNKEN, 4.5),
+    ("color.border.default", OVERLAY, 3.0),
+    ("color.border.default", RAISED, 3.0),
     (STOPS, "color.heatmap.zero", 3.0),
     (CVD_STOPS, "color.heatmap.zero", 3.0),
+)
+# Pairs written and measured but not gated: a non-essential edge (section 12.2 says why; the
+# shared finding is E05-D04 F-03). Their floor cell reads "3, reported".
+REPORTED: frozenset[tuple[str, str]] = frozenset(
+    {("color.border.default", OVERLAY), ("color.border.default", RAISED)}
 )
 TABS = ("Depth & scale", "Colour", "Ladder", "Trading", "Detectors")
 TAB_ITEMS = (1, 2, 3, 4, 5, 6, 7, 8, 10)  # section AC.1 items that live on a tab row
@@ -139,7 +157,7 @@ SHED_MARKERS = (
     "**Restore**",
     "**Greyscale.**",
     "`degraded.exited",
-    "**One announcement per shed.**",
+    "**One announcement per state change.**",
 )
 
 # Deny lists are assembled from fragments so this file never matches itself.
@@ -213,7 +231,13 @@ def git_ok(*args: str) -> str | None:
 
 @functools.cache
 def at(rev: str, rel: str) -> tuple[str, ...]:
-    return tuple(git("show", f"{rev}:{rel}").split("\n"))
+    out = git_ok("show", f"{rev}:{rel}")
+    if out is None:
+        raise SystemExit(
+            f"cannot read {rel} at {rev}: the commit is missing here "
+            f"(try `git fetch origin {rev}`; D02's pin lives on {D02_PR}'s branch until it merges)"
+        )
+    return tuple(out.split("\n"))
 
 
 def diff_base() -> str:
@@ -351,7 +375,8 @@ def pair_ratio(name: str, fg: str, bg: str) -> float:
 
 
 def measured_pair(fg: str, bg: str, floor: float) -> list[str]:
-    return [pair_label(fg, bg), f"{floor:g}", *(f"{pair_ratio(n, fg, bg):.2f}" for n in THEMES)]
+    cell = f"{floor:g}, reported" if (fg, bg) in REPORTED else f"{floor:g}"
+    return [pair_label(fg, bg), cell, *(f"{pair_ratio(n, fg, bg):.2f}" for n in THEMES)]
 
 
 # ------------------------------------------------------------------ markdown helpers --------------
@@ -719,7 +744,7 @@ def g_contrast(t: Texts) -> list[Finding]:
         want_pair = measured_pair(fg, bg, floor)
         if written.get(want_pair[0], [])[:5] != want_pair:
             bad.append(f"pair {want_pair[0]}: measured {want_pair[1:]}")
-        if min(float(v) for v in want_pair[2:]) < floor:
+        if (fg, bg) not in REPORTED and min(float(v) for v in want_pair[2:]) < floor:
             bad.append(f"pair {want_pair[0]} below {floor:g}")
     if len(written) != len(PAIRS):
         bad.append(f"{len(written)} pair rows for {len(PAIRS)} pairs")
