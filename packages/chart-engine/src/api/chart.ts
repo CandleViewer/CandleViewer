@@ -11,6 +11,8 @@ import {
   MAX_BARS_CEILING,
   MEMORY_BUDGET_CEILING_MB,
   MEMORY_BUDGET_FLOOR_MB,
+  VIEWPORT_WINDOW_MULTIPLIER,
+  VIEWPORT_WINDOW_MULTIPLIER_MAX,
 } from "../memory/config.js";
 import { MEMORY_SAMPLE_INTERVAL_MS } from "../memory/MemorySampler.js";
 import {
@@ -98,6 +100,14 @@ export function createChart(opts: ChartOptions): Chart {
     1,
     Number.MAX_SAFE_INTEGER,
     "memory.sampleIntervalMs",
+  );
+  // Validated now, threaded to the worker's eviction planner by PR-2b (BQ-P2-08).
+  boundedInt(
+    opts.memory?.viewportWindowMultiplier,
+    VIEWPORT_WINDOW_MULTIPLIER,
+    1,
+    VIEWPORT_WINDOW_MULTIPLIER_MAX,
+    "memory.viewportWindowMultiplier",
   );
 
   const surface = mountSurface(opts.container);

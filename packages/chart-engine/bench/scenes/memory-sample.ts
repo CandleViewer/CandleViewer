@@ -1,8 +1,10 @@
 // `memory-sample` scene (E11-S15, BQ-S15-12): one chart's `MemoryAccount` at the bench scale, the
 // runtime's GL and framebuffer sources plus the three stores (a 200k-bar BarStore, a footprint and
-// a heatmap ring) as their owners will join them; each step one `MemorySampler.sample`. It reads no
-// clock: memory-sampler.test.ts asserts through `probeAllocations` that it allocates nothing, the
-// .perf.test.ts times it (≤ 0.2 ms) and counts the scavenges a long run of samples triggers.
+// a heatmap ring) as their owners will join them; each step one `MemorySampler.sample` fed to a
+// `MemoryGovernor.update` (PR-2a), the whole sample path. It reads no clock: memory-sampler.test.ts
+// asserts through `probeAllocations` that it allocates nothing, the .perf.test.ts times it
+// (≤ 0.2 ms) and counts the scavenges a long run of samples triggers.
+import { MemoryGovernor } from "../../src/memory/Governor.js";
 import { MemoryAccount, MemorySampler } from "../../src/memory/index.js";
 import { BarStore, FootprintStore, HeatmapRing } from "../../src/model/index.js";
 
@@ -12,6 +14,8 @@ const BARS = 200_000;
 export class MemorySampleBench {
   readonly account = new MemoryAccount();
   readonly sampler = new MemorySampler(this.account);
+  /** The sample path's consumer (E11-S15 PR-2a): each sample feeds the governor, 600 MiB budget. */
+  readonly governor = new MemoryGovernor(600);
   readonly bars = new BarStore();
   steps = 0;
 
@@ -42,7 +46,9 @@ export class MemorySampleBench {
 
   step(now: number): number {
     this.steps += 1;
-    return this.sampler.sample(now);
+    const bytes = this.sampler.sample(now);
+    this.governor.update(bytes);
+    return bytes;
   }
 }
 

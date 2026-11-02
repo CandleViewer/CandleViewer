@@ -2,10 +2,11 @@
 // register `{ id, bytes() }`: the GL buffers and textures and the default framebuffer now (the
 // worker runtime), each store when its owner wires it into the worker. Summing walks a fixed array:
 // no allocation per sample.
-// TODO(E12-S06 #399): register the BarStore here when it joins the worker's data path; E18 the
+// TODO(E11-S15 PR-2b #448): register the BarStore here when it joins the worker's data path; E18 the
 // FootprintStore and E21 the HeatmapRing, the same way.
 
-/** One counted holder of memory: `bytes()` is what it holds now, never negative. */
+/** One counted holder of memory: `bytes()` is what it holds now, never negative. It runs on the
+ * sampler tick, so it must not throw and must not allocate. */
 export interface MemorySource {
   readonly id: string;
   bytes(): number;
