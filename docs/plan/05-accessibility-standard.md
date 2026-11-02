@@ -251,6 +251,7 @@ Combos are pinned versions, not "latest" floating targets, to keep results repro
 
 - The dedicated **Accessibility** role in the UI/UX org owns this protocol, signs off screen-reader passes, and is a required reviewer (or delegates) on any PR touching the chart-engine DOM-mirror layer, live-region logic, or the design-system's a11y primitives.
 - QA/SDET incorporates the task script into the manual regression suite before each release per `03-testing-strategy.md` / `07-release-and-prr.md` PRR gates.
+- **Accessibility statement and conformance report (E47-D13):** the Accessibility role re-issues the in-product statement and regenerates the conformance report (`docs/plan/a11y/47-conformance-report.md`) for every release and for any change touching an in-scope screen; the statement carries the version it applies to, its issue date and its review date, and one older than the running release is flagged for re-issue, never shown as current (`docs/design/E47/E47-D13.md` §8). The pinned AT-version changelog of §8.1 stays in the regression checklist (§8.2 item 4).
 
 ## 9. Automated gates (CI-enforced)
 
