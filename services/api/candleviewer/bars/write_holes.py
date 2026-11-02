@@ -41,8 +41,8 @@ exception of 24 §19.81).
 
 **Reads.** `holes_for` is synchronous and in memory (the WS snapshot build is synchronous): the
 spans inside the page's span, minus the bars the page serves that are the version lost (equal
-checksums) or `trusted` (`Present`). A served bar of another or an unknown version suppresses
-nothing: an over-report, never a stale row read as complete.
+checksums) or `trusted` (`Present`: an exchange kline only). A served bar of another or an
+unknown version suppresses nothing: an over-report, never a stale row read as complete.
 
 **Journal.** One versioned orjson file, `<bars_state_root>/write_holes.json`, written atomically
 (write, flush, fsync, rename, directory fsync) after every change, one write at a time, and loaded
@@ -140,9 +140,10 @@ class HoleKey:
 class Present:
     """A bar a response serves: `(generation, index, open_us, end_us)`, and the version served.
     It suppresses a recorded key only when it is the version that was lost (`checksum` equal to
-    the record's lost checksum), or when `trusted`: the reader's own latest copy (the WS series
-    store's in-memory bar) or a bar of another source that fills the interval (an exchange kline
-    on `/market/klines`). An unknown version suppresses nothing (an over-report)."""
+    the record's lost checksum), or when `trusted`: a bar of another source that fills the
+    interval (an exchange kline on `/market/klines`). A tape-built bar is never trusted, a WS
+    series store's in-memory one included (a read hydrates the stored row, which can be the
+    version before a lost amend). An unknown version suppresses nothing (an over-report)."""
 
     generation: int | None
     index: int | None

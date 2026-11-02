@@ -10,9 +10,15 @@ reads no storage itself.
   logged once per channel until a build of it succeeds (a memory reset at `MAX_SERIES` entries).
 - **`meta`.** `spec_hash`, `build_version` (the lowest among the bars sent, else the running
   `BUILD_VERSIONS[kind]`) and the `include_delta` echo. `coverage_holes` (#5396, 23 §13): the
-  closed bars not stored (`bars.write_holes`) from the oldest bar sent on, minus the bars sent, at
-  most `MAX_COVERAGE_HOLES_WS` entries; absent when there is none or no bar is sent. It rides in
-  `meta`, so it is on every chunk and in either encoding.
+  closed bars not stored (`bars.write_holes`) from the oldest bar sent on, minus the bars sent
+  that are the version lost, at most `MAX_COVERAGE_HOLES_WS` entries; absent when there is none
+  or no bar is sent. A bar held is not trusted for being in memory: a read hydrates the stored
+  row, an earlier version than an amend whose write was lost (#5432 review). It suppresses a
+  record only when the `row_checksum` the writer stores for it (`rows.tape_row_checksum`, the
+  value the ledger keeps for the version lost) is equal, the rule REST applies to a tape-built
+  row; a version the ledger does not know suppresses nothing. Checksums are computed only for
+  the bars that open inside a recorded span, so a series with no record pays one lookup. It
+  rides in `meta`, so it is on every chunk and in either encoding.
 - **Encodings.** Only the form the subscription receives is built. Binary: kind-4 frames at the
   `covering_scales` of the bars sent (no bars: one empty frame). The whole snapshot goes structured
   when the instrument scales are unknown or a value does not fit kind 4 (§3.4's trigger, logged).
@@ -32,6 +38,7 @@ reads no storage itself.
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections.abc import Callable
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
@@ -42,7 +49,7 @@ from candleviewer.bars.errors import BarsError
 from candleviewer.bars.limits import MAX_COVERAGE_HOLES_WS
 from candleviewer.bars.metrics import bars_subscribe_snapshot_total, history_bucket
 from candleviewer.bars.models import Bar, BarSpec
-from candleviewer.bars.rows import BUILD_VERSIONS
+from candleviewer.bars.rows import BUILD_VERSIONS, tape_row_checksum
 from candleviewer.bars.series_store import MAX_SERIES, SeriesStore
 from candleviewer.bars.spec import WireBarType, from_wire, to_wire
 from candleviewer.bars.write_holes import Present, WriteHoleLedger, cap_spans
@@ -82,6 +89,27 @@ def _series(sub: Subscription) -> tuple[str, BarSpec, WireBarType, str] | None:
     return t.symbol, spec, bar_type, param
 
 
+def _coverage_holes(
+    ledger: WriteHoleLedger, symbol: str, spec: BarSpec, generation: int | None, bars: list[Bar]
+) -> list[tuple[int, int]]:
+    """The recorded holes from `bars[0]` on, minus the bars sent that are the version lost
+    (module docstring). A series with no record costs one lookup; checksums are computed
+    only for the bars that open inside a recorded span."""
+    recorded = ledger.holes_for(symbol, spec.spec_hash, bars[0].open_time, _LIVE_EDGE_US, ())
+    if not recorded or generation is None:
+        return recorded  # no generation named: no bar's version can be told
+    starts = [a for a, _ in recorded]
+    present = [
+        Present(generation, b.index, b.open_time, b.close_time + 1,
+                tape_row_checksum(b, spec, generation))
+        for b in bars
+        if (n := bisect_right(starts, b.open_time)) and b.open_time < recorded[n - 1][1]
+    ]  # fmt: skip
+    if not present:
+        return recorded
+    return ledger.holes_for(symbol, spec.spec_hash, bars[0].open_time, _LIVE_EDGE_US, present)
+
+
 class BarsSnapshotSource:
     """The `SnapshotSource` described in the module docstring."""
 
@@ -110,12 +138,7 @@ class BarsSnapshotSource:
         build = BUILD_VERSIONS[spec.kind] if latest.oldest_build is None else latest.oldest_build
         meta: Item = {"spec_hash": spec.spec_hash, "build_version": build, "include_delta": flow}
         if self._holes is not None and bars:
-            # the store's in-memory bars are the latest built: trusted (`write_holes.Present`)
-            present = [Present(latest.generation, b.index, b.open_time, b.close_time + 1,
-                               trusted=True) for b in bars]  # fmt: skip
-            spans = self._holes.holes_for(
-                symbol, spec.spec_hash, bars[0].open_time, _LIVE_EDGE_US, present
-            )
+            spans = _coverage_holes(self._holes, symbol, spec, latest.generation, bars)
             if spans:  # a list built per build, never changed after: the cache shares it
                 meta["coverage_holes"] = [
                     {"start_us": a, "end_us": b} for a, b in cap_spans(spans, MAX_COVERAGE_HOLES_WS)

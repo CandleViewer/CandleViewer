@@ -6,14 +6,16 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.bars.emit import BarEmission, EmitRouter, WriterSink
-from candleviewer.bars.metrics import bars_write_holes_total
+from candleviewer.bars.metrics import bars_write_holes_total, bars_write_roundtrip_mismatch_total
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
+from candleviewer.bars.rows import bar_row, tape_row_checksum
 from candleviewer.bars.write_holes import HoleKey, WriteHoleLedger
 from candleviewer.bars.writer import MAX_ATTEMPTS, BarBufferFull, BarWriter
 from tests.unit.bars.test_bars_persistence import SPEC, _bar, _SlowSink
@@ -309,3 +311,16 @@ async def test_writer_sink_loss_of_the_version_the_writer_stored_is_no_hole(
         await stop.emit(BarEmission(SPEC, 7, [BarUpdate(kind="close", bar=amended)]))
     assert [r.reason for r in ledger.pending()] == ["superseded"]
     await ledger.flush()
+
+
+def test_tape_row_checksum_is_the_stored_rows_and_counts_no_roundtrip_mismatch() -> None:
+    """The WS snapshot and `WriterSink` compare the version the writer stores (`bar_row`), and
+    computing it writes nothing, so it never counts `bars_write_roundtrip_mismatch_total`."""
+    (bar,) = _bars(1)
+    bar = bar.model_copy(update={"close": Decimal("0.1") + Decimal("0.2") / 3})  # inexact as double
+    before = bars_write_roundtrip_mismatch_total._value.get()
+    got = tape_row_checksum(bar, SPEC, 4)
+    assert bars_write_roundtrip_mismatch_total._value.get() == before
+    assert got == bar_row(bar, SPEC, source="tape", generation=4)["row_checksum"]
+    assert bars_write_roundtrip_mismatch_total._value.get() == before + 1  # the write path does
+    assert tape_row_checksum(bar.model_copy(update={"synthetic": True}), SPEC, 4) is None

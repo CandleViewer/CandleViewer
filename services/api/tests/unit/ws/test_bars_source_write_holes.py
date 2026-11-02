@@ -12,16 +12,24 @@ import pytest
 
 from candleviewer.bars.emit import BarEmission
 from candleviewer.bars.limits import MAX_COVERAGE_HOLES_WS
+from candleviewer.bars.models import Bar, BarSpec
+from candleviewer.bars.reader import BarTail
+from candleviewer.bars.rows import tape_row_checksum
 from candleviewer.bars.series_store import SeriesStore
 from candleviewer.bars.write_holes import HoleKey, WriteHoleLedger
 from candleviewer.ws.bars_source import BarsSnapshotSource
 from candleviewer.ws.sequencing import OWNER_META_MAX_BYTES, SnapshotBody, TopicEmitter
 from tests.unit.ws._seq_support import validate
-from tests.unit.ws.test_bars_source import CH, GEN, SPEC, STEP, SYM, T0, H, _build, _sub, _up
+from tests.unit.ws.test_bars_source import CH, GEN, SPEC, STEP, SYM, T0, H, _bar, _build, _sub, _up
+
+#: A price no other bar here has: the amended version of a bar, whose write was lost.
+AMENDED = "200.25"
 
 
-def _key(i: int, gen: int = GEN) -> HoleKey:
-    return HoleKey(SYM, H, "time", "5m", gen, i, T0 + i * STEP, T0 + (i + 1) * STEP)
+def _key(i: int, gen: int = GEN, *, version: Bar | None = None) -> HoleKey:
+    """Bar `i`'s key; `version`: the bar whose write was lost (its checksum), else unknown."""
+    checksum = None if version is None else tape_row_checksum(version, SPEC, gen)
+    return HoleKey(SYM, H, "time", "5m", gen, i, T0 + i * STEP, T0 + (i + 1) * STEP, checksum)
 
 
 async def _store(*closed: int, forming: int | None = None) -> SeriesStore:
@@ -35,10 +43,12 @@ async def _store(*closed: int, forming: int | None = None) -> SeriesStore:
     return store
 
 
-async def _reloaded(tmp_path: Path, *lost: int) -> WriteHoleLedger:
-    """A ledger read back from the journal an earlier process wrote."""
+async def _reloaded(tmp_path: Path, *lost: int, amended: bool = False) -> WriteHoleLedger:
+    """A ledger read back from the journal an earlier process wrote; `amended`: the losses are
+    of each bar's amended version (`AMENDED`, a known checksum), else of an unknown one."""
     earlier = WriteHoleLedger(tmp_path)
-    earlier.lost([_key(i) for i in lost], "shutdown")
+    earlier.lost([_key(i, version=_bar(i, px=AMENDED) if amended else None) for i in lost],
+                 "shutdown")  # fmt: skip
     await earlier.flush()
     ledger = WriteHoleLedger(tmp_path)
     assert await ledger.load() == "ok"
@@ -83,12 +93,51 @@ async def test_every_chunk_of_a_chunked_snapshot_carries_the_holes(tmp_path: Pat
         assert frame["meta"]["coverage_holes"] == [_hole(40)]
 
 
-async def test_a_held_bar_suppresses_its_hole_and_none_means_no_key(tmp_path: Path) -> None:
-    ledger = await _reloaded(tmp_path, 1)
+async def test_a_held_bar_of_an_unknown_lost_version_suppresses_nothing(tmp_path: Path) -> None:
+    ledger = await _reloaded(tmp_path, 1)  # the version lost is unknown: nothing can prove it
     body = _build(_src(await _store(0, 1, 2, forming=3), ledger), _sub())
-    assert "coverage_holes" not in body.meta  # the live store holds bar 1: it is sent
+    assert body.meta["coverage_holes"] == [_hole(1)]
     body = _build(_src(await _store(0, 1, 2, forming=3), None), _sub())
-    assert "coverage_holes" not in body.meta
+    assert "coverage_holes" not in body.meta  # no ledger: no key
+
+
+async def test_a_delivered_bar_that_is_the_lost_version_suppresses_its_hole(
+    tmp_path: Path,
+) -> None:
+    ledger = await _reloaded(tmp_path, 1, amended=True)
+    store = SeriesStore()
+    await store.ensure(SYM, SPEC)
+    ups = [_up("close", 0), _up("close", 1, px=AMENDED), _up("close", 2), _up("open", 3)]
+    await store.emit(BarEmission(SPEC, GEN, ups))  # the sink delivered the amend the write lost
+    assert "coverage_holes" not in _build(_src(store, ledger), _sub()).meta
+
+
+async def test_a_delivered_bar_of_another_version_keeps_the_hole(tmp_path: Path) -> None:
+    ledger = await _reloaded(tmp_path, 1, amended=True)
+    store = await _store(0, 1, 2, forming=3)  # bar 1 as first closed, not the amend lost
+    assert _build(_src(store, ledger), _sub()).meta["coverage_holes"] == [_hole(1)]
+
+
+class _Tail:
+    """`TailRead` fake: the stored rows, as `BarsReader.read_tail` hands them to the store."""
+
+    def __init__(self, bars: list[Bar]) -> None:
+        self._bars = bars
+
+    async def __call__(self, symbol: str, spec: BarSpec, limit: int) -> BarTail:
+        return BarTail([(GEN, b) for b in self._bars])
+
+
+async def test_a_hydrated_earlier_version_never_hides_a_lost_amend(tmp_path: Path) -> None:
+    """C-13.2 regression (#5432 review): after a restart the store hydrates bar 1 from its stored
+    row, the version before the amend whose write was lost; the journal kept that loss, so the
+    snapshot names it as REST does."""
+    ledger = await _reloaded(tmp_path, 1, amended=True)
+    store = SeriesStore(_Tail([_bar(0), _bar(1), _bar(2)]))
+    await store.ensure(SYM, SPEC)
+    latest = store.latest(SYM, H, 10)
+    assert latest is not None and [b.index for b in latest.closed] == [0, 1, 2]
+    assert _build(_src(store, ledger), _sub()).meta["coverage_holes"] == [_hole(1)]
 
 
 async def test_only_holes_from_the_oldest_bar_sent_on_are_named(tmp_path: Path) -> None:

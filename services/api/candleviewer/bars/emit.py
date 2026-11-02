@@ -37,7 +37,7 @@ import structlog
 from candleviewer.bars.errors import BarsError
 from candleviewer.bars.metrics import bar_emit_sink_errors_total
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
-from candleviewer.bars.rows import bar_param_for, bar_row
+from candleviewer.bars.rows import bar_param_for, tape_row_checksum
 from candleviewer.bars.write_holes import HoleKey, HoleRecorder
 
 #: Per-sink emit bound (§4.2 `Bars lane → sinks` row).
@@ -121,20 +121,10 @@ class WriterSink:
             param = ""
         keys = [
             HoleKey(b.symbol, spec.spec_hash, spec.kind, param, gen, b.index, b.open_time,
-                    b.close_time + 1, _checksum(b, spec, gen))
+                    b.close_time + 1, tape_row_checksum(b, spec, gen))
             for b in closed if not b.synthetic
         ]  # fmt: skip
         self._holes.lost(keys, reason)
-
-
-def _checksum(bar: Bar, spec: BarSpec, generation: int) -> int | None:
-    """The `row_checksum` the writer would store for `bar` (the version the ledger compares with
-    the one stored); None when it has no stored form."""
-    try:
-        value = bar_row(bar, spec, source="tape", generation=generation)["row_checksum"]
-    except (BarsError, ValueError):
-        return None
-    return int(str(value))
 
 
 class EmitRouter:
