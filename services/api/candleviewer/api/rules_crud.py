@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
 from candleviewer.api._generated.openapi_models import RuleInput, RuleUpdateInput
+from candleviewer.api.problems import problem
 from candleviewer.api.rule_body import read_object
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.domain.text import refuse_unstorable_text
@@ -35,6 +36,7 @@ from candleviewer.rules.manager import (
     RulesManager,
 )
 from candleviewer.rules.scope import ScopeResolver
+from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 _READ = "rules:read"
 _WRITE = "rules:write"
@@ -51,27 +53,27 @@ CREATE_MEMBERS: Final = _members(RuleInput)
 UPDATE_MEMBERS: Final = _members(RuleUpdateInput)
 
 
-def _problem(status: int, code: str, title: str, detail: str, **extra: Any) -> JSONResponse:
-    return JSONResponse(
-        status_code=status,
-        media_type="application/problem+json",
-        content={
-            "type": f"https://candleviewer.local/errors/{code}",
-            "title": title,
-            "status": status,
-            "code": code,
-            "detail": detail,
-            **extra,
-        },
-    )
+#: The status classes a refusal code outside the catalogue is answered under, its own code riding
+#: `errors[].rule` (22 `x-error-codes`): the arming preconditions name their own.
+_FALLBACK: Final = {400: ErrorCode.VALIDATION_FAILED, 403: ErrorCode.FORBIDDEN,
+                    409: ErrorCode.CONFLICT, 422: ErrorCode.VALIDATION_FAILED}  # fmt: skip
 
 
 def _from_error(exc: RuleError) -> JSONResponse:
-    """The problem a `RuleError` names: its `title` when it carries one (#2304: the contract's
-    step-up title), else the humanised code."""
+    """The problem a `RuleError` names: a catalogue code as it is, any other under its status
+    class with its own code as the `errors[].rule`; a `rule` the error carries rides the same
+    member (an `errors` list the error carries replaces it). A `title` the error carries (the
+    step-up wording every route shares, #2304) replaces the registry's."""
     extra = dict(exc.extra)
-    title = str(extra.pop("title", exc.code.replace("_", " ").capitalize()))
-    return _problem(exc.status, exc.code, title, exc.message, **extra)
+    rule = exc.rule
+    try:
+        code = ErrorCode(exc.code)
+        if "rest" not in ERROR_META[code].surfaces:
+            raise ValueError(exc.code)
+    except ValueError:
+        code = _FALLBACK.get(exc.status, ErrorCode.INTERNAL_ERROR)
+        rule = exc.code if rule is None else rule
+    return problem(code, exc.status, exc.message, rule=rule, extra=extra)
 
 
 def _unrecorded(lost: RuleRefusalUnrecorded) -> JSONResponse:
@@ -80,7 +82,7 @@ def _unrecorded(lost: RuleRefusalUnrecorded) -> JSONResponse:
     stored. Any other cause is a defect and propagates, never a retryable 503."""
     if not isinstance(lost.__cause__, AuditUnavailable | TimeoutError):
         raise lost
-    return _problem(503, "audit_unavailable", "Unavailable", "the refusal could not be recorded")
+    return problem(ErrorCode.AUDIT_UNAVAILABLE, 503, "the refusal could not be recorded")
 
 
 def _doc(body: dict[str, Any]) -> dict[str, Any] | None:
@@ -115,38 +117,36 @@ def make_rules_crud_router(
             return None  # the manager's own validation reports the malformed scope (422)
         if resolver is None:
             if scope_resolver is not None and (scope.account_ids or "live" in scope.environments):
-                return _problem(501, "not_implemented", "Not implemented", "no scope resolver")
+                return problem(ErrorCode.NOT_IMPLEMENTED, 501, "no scope resolver")
             return None
         try:
             caller = UUID(actor.user_id)
         except ValueError:
-            return _problem(403, "forbidden", "Forbidden", "Forbidden")
+            return problem(ErrorCode.FORBIDDEN, 403, "Forbidden")
         if scope_refresh is not None:
             await scope_refresh(caller)  # current grants/freeze, never a stale cache
         try:
             await resolver.authorize_accounts(caller, [UUID(str(a)) for a in scope.account_ids])
             await resolver.authorize_environments(caller, scope, audit_armed=arming)
         except ScopeForbiddenError:
-            return _problem(403, "forbidden", "Forbidden", ScopeForbiddenError.message)
+            return problem(ErrorCode.FORBIDDEN, 403, ScopeForbiddenError.message)
         except AuditUnavailable:  # the scope's record was not written (C-2.9): nothing proceeds
             detail = "the scope check could not be recorded"
-            return _problem(503, "audit_unavailable", "Unavailable", detail)
+            return problem(ErrorCode.AUDIT_UNAVAILABLE, 503, detail)
         return None
 
     async def _gate(request: Request, perm: str) -> tuple[Actor, RulesManager] | JSONResponse:
         if actor_resolver is None:
-            return _problem(
-                501, "not_implemented", "Not implemented", "no principal resolver wired"
-            )
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "no principal resolver wired")
         got = actor_resolver(request)
         actor: Actor | None = await got if inspect.isawaitable(got) else got
         if actor is None:
-            return _problem(401, "unauthorized", "Unauthorized", "no verified session")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "no verified session")
         if perm not in actor.perms:
-            return _problem(403, "forbidden", "Forbidden", f"requires {perm}")
+            return problem(ErrorCode.FORBIDDEN, 403, f"requires {perm}")
         mgr = manager_provider()
         if mgr is None:
-            return _problem(503, "service_unavailable", "Unavailable", "rule engine unavailable")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "rule engine unavailable")
         return actor, mgr
 
     async def _body(request: Request) -> dict[str, Any] | JSONResponse | None:
@@ -166,7 +166,7 @@ def make_rules_crud_router(
         return None
 
     def _bad(detail: str) -> JSONResponse:
-        return _problem(400, "validation_failed", "Bad request", detail)
+        return problem(ErrorCode.VALIDATION_FAILED, 400, detail)
 
     def _answer(exc: RuleError) -> JSONResponse:
         """The problem `exc` names; a refusal at a counted bound (`RuleCapRefused`) is counted
@@ -192,10 +192,9 @@ def make_rules_crud_router(
             try:
                 after = str(UUID(cursor))
             except ValueError:
-                return _problem(
+                return problem(
+                    ErrorCode.INVALID_CURSOR,
                     400,
-                    "invalid_cursor",
-                    "Pagination cursor is malformed or expired",  # 22's registered title
                     "The cursor is not a rule id.",  # names the cursor, never its value
                 )
         page = await mgr.list_rules(actor, mode, scope, after, max(1, min(limit, 200)))

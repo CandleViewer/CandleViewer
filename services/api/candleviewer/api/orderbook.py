@@ -18,8 +18,10 @@ from typing import Any, Protocol
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
-from candleviewer.api.ticker import _iso, _Principal, _problem, _Resolver
+from candleviewer.api.problems import problem
+from candleviewer.api.ticker import _iso, _Principal, _Resolver
 from candleviewer.exchange.base.models import BookLevel, BookSnapshot
+from candleviewer.ws._generated.error_codes import ErrorCode
 
 _REQUIRED_PERMISSION = "marketdata:read"
 DEMAND_CONSUMER = "rest-orderbook"
@@ -70,29 +72,29 @@ def make_orderbook_router(
         depth: int = Query(default=50),
     ) -> JSONResponse:
         if principal_resolver is None:
-            return _problem(501, "Not implemented", "no principal resolver wired")
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "no principal resolver wired")
         resolved: Any = principal_resolver.resolve(request)
         principal: _Principal | None = await resolved if inspect.isawaitable(resolved) else resolved
         if principal is None:
-            return _problem(401, "Unauthorized", "no verified session for this request")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "no verified session for this request")
         if not principal.has(_REQUIRED_PERMISSION):
-            return _problem(403, "Forbidden", f"requires {_REQUIRED_PERMISSION}")
+            return problem(ErrorCode.FORBIDDEN, 403, f"requires {_REQUIRED_PERMISSION}")
         if depth not in (1, 50, 200, 500):
-            return _problem(422, "Unprocessable entity", "depth must be one of 1, 50, 200, 500")
+            return problem(ErrorCode.VALIDATION_FAILED, 422, "depth must be one of 1, 50, 200, 500")
         if not (4 <= len(symbol) <= 20 and symbol.isascii() and symbol.isalnum()):
-            return _problem(400, "Bad request", "invalid symbol")
+            return problem(ErrorCode.VALIDATION_FAILED, 400, "invalid symbol")
         symbol = symbol.upper()
         reader = reader_provider()
         if reader is None:
-            return _problem(503, "Service unavailable", "order book not running")
+            return problem(ErrorCode.DEGRADED_DATA, 503, "order book not running")
         if not reader.is_listed(symbol):
-            return _problem(404, "Not found", f"unknown instrument {symbol}")
+            return problem(ErrorCode.NOT_FOUND, 404, f"unknown instrument {symbol}")
         reader.acquire(DEMAND_CONSUMER, symbol)
         reader.release(DEMAND_CONSUMER, symbol)  # grace period keeps the topic warm
         view = reader.view(symbol, depth)
         if view is None:
-            return _problem(
-                503, "Service unavailable", f"order book for {symbol} is resynchronising"
+            return problem(
+                ErrorCode.DEGRADED_DATA, 503, f"order book for {symbol} is resynchronising"
             )
         return JSONResponse(
             status_code=200, content=serialize_orderbook(view.snapshot, stale=view.stale)

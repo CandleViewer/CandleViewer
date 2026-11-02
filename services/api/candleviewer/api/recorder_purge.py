@@ -36,6 +36,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from candleviewer.api.problems import problem
 from candleviewer.api.recorder_admin import (
     RECORDING_WRITE,
     AdminJobStore,
@@ -43,7 +44,6 @@ from candleviewer.api.recorder_admin import (
     JobConflict,
     _Emitter,
     _PrincipalResolver,
-    _problem,
     logger,
 )
 from candleviewer.api.step_up import SpentGrant
@@ -56,6 +56,7 @@ from candleviewer.storage.repositories.purge_anchors import (
     PurgeAnchor,
     PurgeAnchorStore,
 )
+from candleviewer.ws._generated.error_codes import ErrorCode
 
 PURGE_JOB_KIND = "retention_purge"
 #: A no-grace class (`auth.step_up.NO_GRACE_ACTION_CLASSES`): one fresh code per purge.
@@ -111,19 +112,11 @@ def _rfc3339(dt: datetime) -> str:
 
 
 def _invalid(
-    status: int, code: str, detail: str, field: str, rule: str, message: str
+    status: int, code: ErrorCode, detail: str, field: str, rule: str, message: str
 ) -> JSONResponse:
     """A problem with one `errors[]` entry (`422 validation_failed`, `409`)."""
-    title = "Conflict" if status == 409 else "Unprocessable"
-    body: dict[str, object] = {
-        "type": "about:blank",
-        "title": title,
-        "status": status,
-        "detail": detail,
-        "code": code,
-        "errors": [{"field": field, "rule": rule, "message": message}],
-    }
-    return JSONResponse(status_code=status, content=body, media_type="application/problem+json")
+    errors = [{"field": field, "rule": rule, "message": message}]
+    return problem(code, status, detail, extra={"errors": errors})
 
 
 def _reuse(found: PurgeAnchor, before_us: int) -> JSONResponse | None:
@@ -132,27 +125,22 @@ def _reuse(found: PurgeAnchor, before_us: int) -> JSONResponse | None:
     if found.before_us != before_us:
         return _invalid(
             409,
-            "idempotency_key_reuse",
+            ErrorCode.IDEMPOTENCY_KEY_REUSE,
             "This Idempotency-Key is anchored to another purge window bound.",
             "before",
             "idempotency_bound_mismatch",
             f"anchored before is {_rfc3339(_EPOCH + timedelta(microseconds=found.before_us))}",
         )
     if not found.body_matches:
-        return _problem(
-            422,
-            "Unprocessable",
-            "Idempotency-Key reused with a different body",
-            "idempotency_key_reused",
+        return problem(
+            ErrorCode.IDEMPOTENCY_KEY_REUSED, 422, "Idempotency-Key reused with a different body"
         )
     return None
 
 
 def _store_down(exc: Exception) -> JSONResponse:
     logger().error("recorder_purge_anchor_unavailable", error=type(exc).__name__)
-    return _problem(
-        503, "Service unavailable", "idempotency store unavailable", "store_unavailable"
-    )
+    return problem(ErrorCode.STORE_UNAVAILABLE, 503, "idempotency store unavailable")
 
 
 def make_recorder_purge_router(
@@ -171,10 +159,10 @@ def make_recorder_purge_router(
     @router.post("/recorder/purge")
     async def purge(request: Request) -> JSONResponse:
         if principal_resolver is None:
-            return _problem(501, "Not implemented", "no principal resolver wired")
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "no principal resolver wired")
         principal = await principal_resolver.resolve(request)
         if principal is None:
-            return _problem(401, "Unauthorized", "no verified session for this request")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "no verified session for this request")
         common: dict[str, object] = {
             "actor_label": principal.username,
             "actor_user_id": principal.user_id,
@@ -196,41 +184,37 @@ def make_recorder_purge_router(
 
         if not principal.has(RECORDING_WRITE):  # RBAC before anything else (C-12.4)
             await denied(f"missing_permission:{RECORDING_WRITE}")
-            return _problem(403, "Forbidden", f"requires {RECORDING_WRITE}")
+            return problem(ErrorCode.FORBIDDEN, 403, f"requires {RECORDING_WRITE}")
         # Capability 9a (04-security-program §7.2 row 9a) is owner-only. Since G-04 (#484) no
         # seeded non-Owner role holds `recording:write`, so RBAC above refuses them first and this
         # arm is defence in depth, unreachable by any seeded role; it stays for a future grant of
         # the permission. `is_owner` is resolved via `PrincipalSnapshot.is_owner` (SR-017).
         if not principal.is_owner:
             await denied("purge_owner_only")
-            return _problem(403, "Forbidden", "purging recorded data is owner-only", "forbidden")
+            return problem(ErrorCode.FORBIDDEN, 403, "purging recorded data is owner-only")
         if audit is None or backend is None or require_elevation is None or anchors is None:
-            return _problem(503, "Service unavailable", "purge backend is not wired")
+            return problem(ErrorCode.PURGE_UNAVAILABLE, 503, "purge backend is not wired")
         key = request.headers.get("idempotency-key", "")
         try:
             key = str(uuid.UUID(key))
         except ValueError:
-            return _problem(400, "Bad request", "Idempotency-Key (UUID) is required")
+            return problem(ErrorCode.VALIDATION_FAILED, 400, "Idempotency-Key (UUID) is required")
         # The body is decided before the gate: a malformed or refused request spends no code.
         try:
             raw = await request.body()
             body = PurgeRequest.model_validate_json(raw or b"{}")
             sent: object = json.loads(raw)
         except (ValidationError, ValueError):
-            return _problem(422, "Unprocessable", "invalid purge request", "validation_failed")
+            return problem(ErrorCode.VALIDATION_FAILED, 422, "invalid purge request")
         if body.before.tzinfo is None:
-            return _problem(
-                422, "Unprocessable", "before must carry a UTC offset", "validation_failed"
-            )
+            return problem(ErrorCode.VALIDATION_FAILED, 422, "before must carry a UTC offset")
         if body.before < _EPOCH:  # the anchor's bound is microseconds since the epoch (ia_bound)
-            return _problem(
-                422, "Unprocessable", "before must not precede 1970-01-01", "validation_failed"
-            )
+            return problem(ErrorCode.VALIDATION_FAILED, 422, "before must not precede 1970-01-01")
         now = clock()
         if body.before > now:  # strict: no clock-skew tolerance
             return _invalid(
                 422,
-                "validation_failed",
+                ErrorCode.VALIDATION_FAILED,
                 "invalid purge request",
                 "before",
                 "before_in_future",
@@ -238,11 +222,8 @@ def make_recorder_purge_router(
             )
         if body.confirm_symbol != body.symbol:
             await denied("purge_confirmation_mismatch")
-            return _problem(
-                422,
-                "Unprocessable",
-                "confirm_symbol must equal symbol",
-                "purge_confirmation_mismatch",
+            return problem(
+                ErrorCode.PURGE_CONFIRMATION_MISMATCH, 422, "confirm_symbol must equal symbol"
             )
         fingerprint = request_fingerprint(request.method, raw_request_target(request), sent)
         spent = await require_elevation(request, STEP_UP_CLASS, fingerprint)
@@ -270,16 +251,15 @@ def make_recorder_purge_router(
             return anchored
         if await backend.is_pinned(body.symbol) and not body.include_pinned:
             await denied("retention_pinned_refused")
-            return _problem(
+            return problem(
+                ErrorCode.RETENTION_PINNED_REFUSED,
                 422,
-                "Unprocessable",
                 "symbol is pinned; set include_pinned to purge it",
-                "retention_pinned_refused",
             )
         # Review (b): hold the reservation from the free-check through `submit`, so a concurrent
         # loser is refused 409 BEFORE it writes an intent record (no orphan audit entries).
         if reserve.locked():
-            return _problem(409, "Conflict", "a purge job is already running", "job_running")
+            return problem(ErrorCode.JOB_RUNNING, 409, "a purge job is already running")
         async with reserve:
             return await _accept(backend, audit, anchors, call)
 
@@ -307,7 +287,7 @@ def make_recorder_purge_router(
         try:
             jobs.ensure_free(PURGE_JOB_KIND)
         except JobConflict:
-            return _problem(409, "Conflict", "a purge job is already running", "job_running")
+            return problem(ErrorCode.JOB_RUNNING, 409, "a purge job is already running")
         # Under the reservation: a request with this key may have won the lock meanwhile.
         anchored = await _lookup(anchors, call)
         if isinstance(anchored, JSONResponse):
@@ -367,12 +347,7 @@ def make_recorder_purge_router(
             )
         except Exception as exc:
             logger().error("recorder_purge_audit_failed", error=type(exc).__name__)
-            return _problem(
-                503,
-                "Service unavailable",
-                "audit write failed; job not started",
-                "audit_unavailable",
-            )
+            return problem(ErrorCode.AUDIT_UNAVAILABLE, 503, "audit write failed; job not started")
         if not anchored:  # the permanent anchor, with the write-ahead record, before the job
             anchor = NewPurgeAnchor(
                 id=job_id,
@@ -393,7 +368,7 @@ def make_recorder_purge_router(
         try:
             job = jobs.submit(PURGE_JOB_KIND, idem, work, done, job_id=str(job_id))
         except JobConflict:
-            return _problem(409, "Conflict", "a purge job is already running", "job_running")
+            return problem(ErrorCode.JOB_RUNNING, 409, "a purge job is already running")
         return JSONResponse(status_code=202, content={"job_id": job.id})
 
     async def _raced(anchors: PurgeAnchorStore, call: _Call) -> JSONResponse:
@@ -407,7 +382,7 @@ def make_recorder_purge_router(
             return answer
         if not answer:  # the store reported the key held, then no row for it: an outage
             return _store_down(RuntimeError("purge anchor vanished"))
-        return _problem(409, "Conflict", "a purge job is already running", "job_running")
+        return problem(ErrorCode.JOB_RUNNING, 409, "a purge job is already running")
 
     async def _closed_unstarted(
         audit: _Emitter,

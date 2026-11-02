@@ -36,6 +36,7 @@ from pydantic import ValidationError
 
 from candleviewer.api.auth_unavailable import auth_unavailable, record_unavailable, unavailable_row
 from candleviewer.api.csrf import source_ip
+from candleviewer.api.problems import problem
 from candleviewer.api.refusal_session import NamesSession, SessionsLike
 from candleviewer.api.step_up import RequestElevation, demand_elevation
 from candleviewer.api.step_up_challenge import (
@@ -62,10 +63,12 @@ from candleviewer.auth.password_policy import BreachedListUnavailable
 from candleviewer.auth.scopes import DenyReason, ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.storage.errors import ACTOR_ROLE_REVOKED, ActorNotAuthorised, WriteAheadTimeout
+from candleviewer.ws._generated.error_codes import ErrorCode
 
 _TOKEN = Path(alias="inviteToken", min_length=16, max_length=128)
 _UNIFORM_DETAIL = "This invitation link is not valid."
 _AUDIT_DOWN = "audit unavailable; nothing was changed"
+_SERVICE_DOWN = "service temporarily unavailable"
 #: Body fields that claim another identity than the invited one (#2319, AC-INV-07); never recorded.
 _IDENTITY_CLAIMS = frozenset({"username", "user_id", "email"})
 _WARNING_REASONS = frozenset({"redeemed", "role_tamper", "identity_tamper"})
@@ -93,22 +96,8 @@ class InviteAuthLike(SessionsLike, Protocol):
     def invites(self) -> InviteService: ...
 
 
-def _problem(status: int, title: str, detail: str, **extra: Any) -> JSONResponse:
-    return JSONResponse(
-        status_code=status,
-        content={
-            "type": "about:blank",
-            "title": title,
-            "status": status,
-            "detail": detail,
-            **extra,
-        },
-        media_type="application/problem+json",
-    )
-
-
 def _uniform_not_found() -> JSONResponse:
-    return _problem(404, "Not found", _UNIFORM_DETAIL)
+    return problem(ErrorCode.NOT_FOUND, 404, _UNIFORM_DETAIL)
 
 
 def _client_ip(request: Request) -> str:
@@ -172,17 +161,17 @@ def make_invites_router(
     def _audit_down() -> JSONResponse | None:
         if audit_ready():
             return None
-        return _problem(503, "Service unavailable", _AUDIT_DOWN)
+        return problem(ErrorCode.AUDIT_UNAVAILABLE, 503, _AUDIT_DOWN)
 
     async def _owner(request: Request) -> PrincipalSnapshot | JSONResponse:
         if principal_resolver is None:
-            return _problem(501, "Not implemented", "no principal resolver wired")
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "no principal resolver wired")
         if not auth.invites_is_active:
-            return _problem(503, "Service unavailable", "invites not wired")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "invites not wired")
         got = principal_resolver.resolve(request)
         principal = await got if inspect.isawaitable(got) else got
         if principal is None:
-            return _problem(401, "Unauthorized", "no verified session for this request")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "no verified session for this request")
         try:
             await enforce(
                 principal,
@@ -193,9 +182,7 @@ def make_invites_router(
                 request_id=current_request_uuid(),
             )
         except ForbiddenError as exc:
-            return _problem(
-                403, "Forbidden", "forbidden", code="forbidden", reason=exc.deny.reason.value
-            )
+            return problem(ErrorCode.FORBIDDEN, 403, "forbidden", rule=exc.deny.reason.value)
         return principal
 
     async def _refused_at_effect(
@@ -219,9 +206,9 @@ def make_invites_router(
                 **named,
             )
         except (AuditError, RuntimeError):  # RuntimeError: audit not started
-            return _problem(503, "Service unavailable", _AUDIT_DOWN)
+            return problem(ErrorCode.AUDIT_UNAVAILABLE, 503, _AUDIT_DOWN)
         reason = DenyReason.MISSING_PERMISSION.value
-        return _problem(403, "Forbidden", "forbidden", code="forbidden", reason=reason)
+        return problem(ErrorCode.FORBIDDEN, 403, "forbidden", rule=reason)
 
     async def _audit_owner(
         action: str, principal: PrincipalSnapshot, target: uuid.UUID, role: str, request: Request
@@ -284,8 +271,8 @@ def make_invites_router(
         except Exception as exc:
             if not is_storage_outage(exc):
                 raise
-            return _problem(503, "Service unavailable", "the user store is unavailable")
-        return None if found else _problem(404, "Not found", detail)
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "the user store is unavailable")
+        return None if found else problem(ErrorCode.NOT_FOUND, 404, detail)
 
     async def _invited(user_id: uuid.UUID, store: UserStatuses) -> bool:
         return await store.get_status(user_id) == "invited"
@@ -300,7 +287,7 @@ def make_invites_router(
         """A re-issue's: an `invited` user. No store wired is a wiring fault, 503, as the other
         unwired ports answer: the lookup is never skipped (C-12.4)."""
         if users is None:
-            return _problem(503, "Service unavailable", "the user store is not wired")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "the user store is not wired")
         return await _looked_up(_invited(user_id, users), "no invited user with this id")
 
     async def _not_pending(user_id: uuid.UUID) -> JSONResponse | None:
@@ -318,7 +305,7 @@ def make_invites_router(
             return down
         body = await _json_body(request)
         if body is None:
-            return _problem(400, "Bad request", "body must be a JSON object")
+            return problem(ErrorCode.VALIDATION_FAILED, 400, "body must be a JSON object")
         try:
             parsed = InviteCreateRequest.model_validate(body)
         except ValidationError:
@@ -333,7 +320,7 @@ def make_invites_router(
                 reason="invalid_invite_request",
                 request_id=current_request_uuid(),
             )
-            return _problem(422, "Unprocessable entity", "invalid invite request")
+            return problem(ErrorCode.VALIDATION_FAILED, 422, "invalid invite request")
         restated = invite_user_text(parsed.roles, mfa_required=parsed.mfa_required)
         if (refused := await demand_elevation(elevation, request, restated)) is not None:
             return refused  # after RBAC and the body (#2304): nothing is created
@@ -344,9 +331,9 @@ def make_invites_router(
         except ActorNotAuthorised:  # #2593: refused at the effect, nothing created
             return await _refused_at_effect(got, request, None)
         except InviteConflict:
-            return _problem(409, "Conflict", "email or username already in use")
+            return problem(ErrorCode.CONFLICT, 409, "email or username already in use")
         except (_AuditRefused, WriteAheadTimeout):  # the SQL store bounds the hook
-            return _problem(503, "Service unavailable", _AUDIT_DOWN)
+            return problem(ErrorCode.AUDIT_UNAVAILABLE, 503, _AUDIT_DOWN)
         return JSONResponse(status_code=201, content=_invite_json(invite))
 
     @router.get("/users/invites")
@@ -382,9 +369,9 @@ def make_invites_router(
         except ActorNotAuthorised:  # #2593: refused at the effect, no token minted
             return await _refused_at_effect(got, request, user_id)
         except InviteNotFound:
-            return _problem(404, "Not found", "no invited user with this id")
+            return problem(ErrorCode.NOT_FOUND, 404, "no invited user with this id")
         except (_AuditRefused, WriteAheadTimeout):
-            return _problem(503, "Service unavailable", _AUDIT_DOWN)
+            return problem(ErrorCode.AUDIT_UNAVAILABLE, 503, _AUDIT_DOWN)
         return JSONResponse(status_code=201, content=_invite_json(invite))
 
     @router.delete("/users/{userId}/invite")
@@ -410,21 +397,25 @@ def make_invites_router(
         except ActorNotAuthorised:  # #2593: refused at the effect, nothing revoked
             return await _refused_at_effect(got, request, user_id)
         except InviteNotFound:
-            return _problem(404, "Not found", "no pending invite for this user")
+            return problem(ErrorCode.NOT_FOUND, 404, "no pending invite for this user")
         except (_AuditRefused, WriteAheadTimeout):
-            return _problem(503, "Service unavailable", _AUDIT_DOWN)
+            return problem(ErrorCode.AUDIT_UNAVAILABLE, 503, _AUDIT_DOWN)
         return JSONResponse(status_code=200, content={"user_id": str(user_id), "revoked": True})
 
     # -- invitee side ------------------------------------------------------
 
+    def _service_down() -> JSONResponse:
+        """One body for every anonymous-side outage (audit down, breached list down)."""
+        return problem(ErrorCode.STORE_UNAVAILABLE, 503, _SERVICE_DOWN)
+
     def _too_many() -> JSONResponse:
-        return _problem(429, "Too many requests", "too many invalid attempts; try later")
+        return problem(ErrorCode.RATE_LIMITED, 429, "too many invalid attempts; try later")
 
     async def _gate(request: Request) -> JSONResponse | None:
         if not auth.invites_is_active:
-            return _problem(503, "Service unavailable", "invites not wired")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "invites not wired")
         if not audit_ready():  # generic: an anonymous caller learns nothing about audit
-            return _problem(503, "Service unavailable", "service temporarily unavailable")
+            return _service_down()
         if auth.invites.is_blocked(_client_ip(request)):
             return _too_many()
         return None
@@ -456,7 +447,7 @@ def make_invites_router(
         is read and spent with nothing awaited in between, so concurrent requests cannot overshoot.
         """
         if body is None:
-            return _problem(400, "Bad request", "body must be a JSON object")
+            return problem(ErrorCode.VALIDATION_FAILED, 400, "body must be a JSON object")
         reason: InviteTamperReason
         if "role" in body or "roles" in body:
             reason = "role_tamper"
@@ -470,9 +461,7 @@ def make_invites_router(
         auth.invites.refuse(reason, source_ip=ip)
         await _reject_audit(reason, request)
         if reason == "role_tamper":
-            return _problem(
-                403, "Forbidden", "the invited role cannot be changed", code="forbidden"
-            )
+            return problem(ErrorCode.FORBIDDEN, 403, "the invited role cannot be changed")
         return None
 
     @router.post("/invites/{inviteToken}")
@@ -485,7 +474,7 @@ def make_invites_router(
         body = body or {}
         password = body.get("password")
         if not isinstance(password, str) or set(body) - {"password"}:
-            return _problem(400, "Bad request", "password is required")
+            return problem(ErrorCode.VALIDATION_FAILED, 400, "password is required")
         try:
             start = await auth.invites.begin_redemption(
                 invite_token, password=password, source_ip=_client_ip(request)
@@ -494,9 +483,9 @@ def make_invites_router(
             await _reject_audit(exc.reason, request)
             return _uniform_not_found()
         except PasswordPolicyViolation as exc:
-            return _problem(422, "Unprocessable entity", exc.reason, code="password_policy")
+            return problem(ErrorCode.PASSWORD_POLICY, 422, exc.reason)
         except BreachedListUnavailable:  # #5269: fail closed, nothing consumed (logged at start)
-            return _problem(503, "Service unavailable", "service temporarily unavailable")
+            return _service_down()
         except MfaKeyringUnavailable as exc:  # #2152: before the hash and the token's use
             return await _mfa_unavailable(request, "redeemInvite", exc)
         return JSONResponse(
@@ -528,7 +517,7 @@ def make_invites_router(
                 "code",
             }
         ):
-            return _problem(400, "Bad request", "method_id and code are required")
+            return problem(ErrorCode.VALIDATION_FAILED, 400, "method_id and code are required")
 
         async def _audit_downgrade(rec: InviteRecord, stored_role: str) -> None:
             await emitter.emit(
@@ -571,13 +560,13 @@ def make_invites_router(
                 audit_bootstrap=_audit_bootstrap,
             )
         except (_AuditRefused, WriteAheadTimeout):  # the grant rolled back; the user stays invited
-            return _problem(503, "Service unavailable", _AUDIT_DOWN)
+            return problem(ErrorCode.AUDIT_UNAVAILABLE, 503, _AUDIT_DOWN)
         except MfaKeyringUnavailable as exc:  # #2152: after the method lookup, before the code
             return await _mfa_unavailable(request, "confirmInvite", exc)
         except InviteRejected as exc:
             await _reject_audit(exc.reason, request)
             if exc.reason == "enrollment_invalid":
-                return _problem(422, "Unprocessable entity", "invalid code", code="invalid_code")
+                return problem(ErrorCode.MFA_INVALID, 422, "invalid code")
             return _uniform_not_found()
         await emitter.emit(
             "users.invite_redeemed",

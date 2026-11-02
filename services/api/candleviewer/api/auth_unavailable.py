@@ -21,18 +21,18 @@ import structlog
 from fastapi.responses import JSONResponse
 
 from candleviewer.api.csrf import AUDIT_TIMEOUT_S
+from candleviewer.api.problems import problem
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import MfaKeyringUnavailable
 from candleviewer.auth.metrics import auth_audit_outcome_lost_total, normalise_outcome_action
 from candleviewer.auth.mfa_keyring import KEYRING_UNAVAILABLE
 from candleviewer.observability.context import current_request_uuid
-from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
+from candleviewer.ws._generated.error_codes import ErrorCode
 
 ACTION: Final = "auth.mfa_unavailable"
 #: The contract example's value (BQ-17): long enough for a restart, short enough for a sign-in.
 RETRY_AFTER_S: Final = 30
-_CODE = "auth_unavailable"
 _DETAIL = "Two-factor authentication is temporarily unavailable; try again later."
 #: A keyring reason is recorded only if it looks like one (C-12.6), else the generic one.
 _REASON = re.compile(r"[a-z][a-z0-9_]{0,63}")
@@ -45,18 +45,13 @@ def _log() -> Any:
 
 def auth_unavailable() -> JSONResponse:
     """The `503`, built from constants alone: the same body whatever the cause."""
-    title = ERROR_META[ErrorCode(_CODE)].title
-    content = {
-        "type": f"https://candleviewer.local/errors/{_CODE}",
-        "title": title,
-        "status": 503,
-        "code": _CODE,
-        "detail": _DETAIL,
-        "retry_after_seconds": RETRY_AFTER_S,
-    }
-    response = JSONResponse(status_code=503, content=content, media_type="application/problem+json")
-    response.headers["Retry-After"] = str(RETRY_AFTER_S)
-    return response
+    return problem(
+        ErrorCode.AUTH_UNAVAILABLE,
+        503,
+        _DETAIL,
+        headers={"Retry-After": str(RETRY_AFTER_S)},
+        extra={"retry_after_seconds": RETRY_AFTER_S},
+    )
 
 
 def unavailable_row(

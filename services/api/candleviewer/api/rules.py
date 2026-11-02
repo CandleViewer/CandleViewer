@@ -18,6 +18,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
 from candleviewer.api.preview_limiter import PreviewLimiter
+from candleviewer.api.problems import problem
 from candleviewer.api.rule_body import read_object
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.domain.text import escape_unpaired
@@ -100,20 +101,6 @@ def _scope_resolver(source: _ResolverSource) -> ScopeResolver | None:
     return source()
 
 
-def _problem(status: int, title: str, detail: str, *, code: str | None = None) -> JSONResponse:
-    """An RFC 7807 problem; `code` is the contract's machine-readable code (22 `x-error-codes`),
-    for the answers that have one."""
-    content: dict[str, Any] = {
-        "type": "about:blank",
-        "title": title,
-        "status": status,
-        "detail": detail,
-    }
-    if code is not None:
-        content["code"] = code
-    return JSONResponse(status_code=status, media_type="application/problem+json", content=content)
-
-
 def _rate_limited(wait: int) -> JSONResponse:
     """`429 rate_limited` (22 `RateLimited`): the wait, whole seconds and at least one, in
     `Retry-After` and again in the body. It writes no audit record."""
@@ -148,13 +135,15 @@ def make_rules_router(
 
     async def _authorize(request: Request) -> tuple[_Principal | None, JSONResponse | None]:
         if principal_resolver is None:
-            return None, _problem(501, "Not implemented", "no principal resolver wired")
+            return None, problem(ErrorCode.NOT_IMPLEMENTED, 501, "no principal resolver wired")
         resolved = principal_resolver.resolve(request)
         principal: _Principal | None = await resolved if inspect.isawaitable(resolved) else resolved
         if principal is None:
-            return None, _problem(401, "Unauthorized", "no verified session for this request")
+            return None, problem(
+                ErrorCode.UNAUTHENTICATED, 401, "no verified session for this request"
+            )
         if not principal.has(_REQUIRED):
-            return None, _problem(403, "Forbidden", f"requires {_REQUIRED}")
+            return None, problem(ErrorCode.FORBIDDEN, 403, f"requires {_REQUIRED}")
         return principal, None
 
     def _caller(principal: _Principal) -> UUID | None:
@@ -179,11 +168,13 @@ def make_rules_router(
         resolver = _scope_resolver(scope_resolver)
         if resolver is None:
             if rule.scope.account_ids or "live" in rule.scope.environments:
-                return _problem(501, "Not implemented", "no scope resolver wired")  # fail closed
+                return problem(
+                    ErrorCode.NOT_IMPLEMENTED, 501, "no scope resolver wired"
+                )  # fail closed
             return None
         caller = _caller(principal)
         if caller is None:
-            return _problem(401, "Unauthorized", "no verified user identity")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "no verified user identity")
         if scope_refresh is not None:
             await scope_refresh(caller)  # current grants/freeze, never a stale cache
         try:
@@ -192,13 +183,10 @@ def make_rules_router(
             )
             await resolver.authorize_environments(caller, rule.scope, audit_armed=False)
         except ScopeForbiddenError:
-            return _problem(403, "Forbidden", ScopeForbiddenError.message)
+            return problem(ErrorCode.FORBIDDEN, 403, ScopeForbiddenError.message)
         except AuditUnavailable:  # the scope's record was not written (C-2.9): nothing proceeds
-            return _problem(
-                503,
-                "Service unavailable",
-                "the scope check could not be recorded",
-                code="audit_unavailable",
+            return problem(
+                ErrorCode.AUDIT_UNAVAILABLE, 503, "the scope check could not be recorded"
             )
         return None
 
@@ -207,14 +195,14 @@ def make_rules_router(
         """AC2: only accounts the caller is granted; others are absent (no existence leak)."""
         principal, denied = await _authorize(request)
         if denied is not None or principal is None:
-            return denied or _problem(401, "Unauthorized", "no session")
+            return denied or problem(ErrorCode.UNAUTHENTICATED, 401, "no session")
         # Read per request: the composition root wires the scope after it builds this router.
         resolver = _scope_resolver(scope_resolver)
         if resolver is None:
-            return _problem(501, "Not implemented", "no scope resolver wired")
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "no scope resolver wired")
         caller = _caller(principal)
         if caller is None:
-            return _problem(401, "Unauthorized", "no verified user identity")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "no verified user identity")
         if scope_refresh is not None:
             await scope_refresh(caller)
         return JSONResponse({"accounts": [str(a) for a in resolver.listable_accounts(caller)]})
@@ -223,10 +211,10 @@ def make_rules_router(
     async def get_vocabulary(request: Request, symbol: str | None = None) -> Response:
         principal, denied = await _authorize(request)
         if denied is not None or principal is None:
-            return denied or _problem(401, "Unauthorized", "no session")
+            return denied or problem(ErrorCode.UNAUTHENTICATED, 401, "no session")
         if symbol is not None:
             if not (4 <= len(symbol) <= 20 and symbol.isascii() and symbol.isalnum()):
-                return _problem(400, "Bad request", "invalid symbol")
+                return problem(ErrorCode.VALIDATION_FAILED, 400, "invalid symbol")
             symbol = symbol.upper()
         registry = registry_provider()
         perms = frozenset(p for p in _ADVISORY_PERMISSIONS if principal.has(p))
@@ -237,7 +225,7 @@ def make_rules_router(
                 registry, permissions=perms, symbol=symbol, recorded_symbols=recorded_symbols()
             )
         except VocabularyUnavailableError:
-            return _problem(503, "Service unavailable", "rule engine vocabulary unavailable")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "rule engine vocabulary unavailable")
         etag = etag_for(body, perms, symbol)
         headers = {"ETag": etag, "Cache-Control": _CACHE, "Vary": "Authorization"}
         if request.headers.get("if-none-match") == etag:
@@ -254,7 +242,9 @@ def make_rules_router(
     async def _json_body(request: Request) -> dict[str, Any] | JSONResponse | None:
         """Read as the rule write routes read (`api/rule_body.py`): the 413 past the ceiling, a 400
         for a body nested too deep, None for anything but a JSON object."""
-        return await read_object(request, lambda detail: _problem(400, "Bad request", detail))
+        return await read_object(
+            request, lambda detail: problem(ErrorCode.VALIDATION_FAILED, 400, detail)
+        )
 
     def _counted(exc: RuleCompileError | IrValueError) -> RuleCompileError:
         """`_compile_error`, a refusal of the condition-node bound counted on the way."""
@@ -286,17 +276,19 @@ def make_rules_router(
     async def post_validate(request: Request) -> Response:
         principal, denied = await _authorize(request)
         if denied is not None or principal is None:
-            return denied or _problem(401, "Unauthorized", "no session")
+            return denied or problem(ErrorCode.UNAUTHENTICATED, 401, "no session")
         if (limited := _throttled(principal, "validate")) is not None:
             return limited
         registry = registry_provider()
         if registry is None:
-            return _problem(503, "Service unavailable", "rule engine vocabulary unavailable")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "rule engine vocabulary unavailable")
         body = await _json_body(request)
         if isinstance(body, JSONResponse):
             return body
         if body is None or not isinstance(body.get("ir"), dict) or set(body) - {"ir", "scope"}:
-            return _problem(400, "Bad request", "body must be an object with an 'ir' object")
+            return problem(
+                ErrorCode.VALIDATION_FAILED, 400, "body must be an object with an 'ir' object"
+            )
         try:
             check_bounds(body["ir"], "rule")
             rule = build_rule(body["ir"])
@@ -317,19 +309,21 @@ def make_rules_router(
     async def post_compile(ruleId: UUID, request: Request) -> Response:
         principal, denied = await _authorize(request)
         if denied is not None or principal is None:
-            return denied or _problem(401, "Unauthorized", "no session")
+            return denied or problem(ErrorCode.UNAUTHENTICATED, 401, "no session")
         if (limited := _throttled(principal, "compile")) is not None:
             return limited
         registry = registry_provider()
         if registry is None:
-            return _problem(503, "Service unavailable", "rule engine vocabulary unavailable")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "rule engine vocabulary unavailable")
         body = await _json_body(request)
         if isinstance(body, JSONResponse):
             return body
         editor = body.get("editor") if body else None
         model = body.get("model") if body else None
         if body is None or editor not in ("form", "graph") or not isinstance(model, dict):
-            return _problem(400, "Bad request", "body needs 'editor' (form|graph) and 'model'")
+            return problem(
+                ErrorCode.VALIDATION_FAILED, 400, "body needs 'editor' (form|graph) and 'model'"
+            )
         compile_fn = compile_form if editor == "form" else compile_graph
         try:
             rule = compile_fn(model, ruleId)
@@ -352,7 +346,9 @@ def make_rules_router(
         other = body.get("counterpart_model")
         if other is not None:
             if not isinstance(other, dict):
-                return _problem(400, "Bad request", "'counterpart_model' must be an object")
+                return problem(
+                    ErrorCode.VALIDATION_FAILED, 400, "'counterpart_model' must be an object"
+                )
             other_fn = compile_graph if editor == "form" else compile_form
             try:
                 other_view = json.loads(canonicalize(other_fn(other, ruleId)))

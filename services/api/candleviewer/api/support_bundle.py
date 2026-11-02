@@ -14,15 +14,17 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from candleviewer.api.problems import problem
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.observability.support_bundle import BundleError, BundleJob, SupportBundleService
+from candleviewer.ws._generated.error_codes import ErrorCode
 
 ADMIN_READ = "admin:read"
-_STATUS = {
-    "BUNDLE_ALREADY_RUNNING": 409,
-    "BUNDLE_WINDOW_TOO_LARGE": 400,
-    "BUNDLE_WINDOW_INVALID": 400,
+_REFUSAL = {
+    "BUNDLE_ALREADY_RUNNING": (ErrorCode.JOB_RUNNING, 409),
+    "BUNDLE_WINDOW_TOO_LARGE": (ErrorCode.INVALID_TIME_RANGE, 400),
+    "BUNDLE_WINDOW_INVALID": (ErrorCode.INVALID_TIME_RANGE, 400),
 }
 
 
@@ -51,18 +53,6 @@ class SupportBundleRequest(BaseModel):
         return cls.model_validate(data)
 
 
-def _problem(status: int, title: str, detail: str, code: str | None = None) -> JSONResponse:
-    body: dict[str, Any] = {
-        "type": "about:blank",
-        "title": title,
-        "status": status,
-        "detail": detail,
-    }
-    if code:
-        body["code"] = code
-    return JSONResponse(status_code=status, content=body, media_type="application/problem+json")
-
-
 def make_support_bundle_router(
     service: SupportBundleService,
     audit: _Emitter | None,
@@ -73,12 +63,12 @@ def make_support_bundle_router(
     @router.post("/support-bundle")
     async def create(request: Request) -> JSONResponse:
         if principal_resolver is None:
-            return _problem(501, "Not implemented", "no principal resolver wired")
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "no principal resolver wired")
         principal = await principal_resolver.resolve(request)
         if principal is None:
-            return _problem(401, "Unauthorized", "no verified session for this request")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "no verified session for this request")
         if audit is None:
-            return _problem(503, "Service unavailable", "audit backend is not wired")
+            return problem(ErrorCode.AUDIT_UNAVAILABLE, 503, "audit backend is not wired")
         common: dict[str, Any] = {
             "actor_label": principal.username,
             "actor_user_id": principal.user_id,
@@ -95,11 +85,11 @@ def make_support_bundle_router(
                 reason=f"missing_permission:{ADMIN_READ}",
                 **common,
             )
-            return _problem(403, "Forbidden", f"requires {ADMIN_READ}")
+            return problem(ErrorCode.FORBIDDEN, 403, f"requires {ADMIN_READ}")
         try:
             body = SupportBundleRequest.parse(await request.body())
         except (ValidationError, ValueError):
-            return _problem(400, "Bad request", "invalid support-bundle request")
+            return problem(ErrorCode.VALIDATION_FAILED, 400, "invalid support-bundle request")
 
         async def done(job: BundleJob) -> None:
             if job.status != "succeeded":
@@ -126,21 +116,24 @@ def make_support_bundle_router(
         try:
             job = service.start(body.from_, body.to, on_complete=done)
         except BundleError as exc:
-            return _problem(_STATUS.get(exc.code, 400), "Bundle refused", str(exc), exc.code)
+            refusal = _REFUSAL.get(exc.code)
+            if refusal is None:
+                return problem(ErrorCode.VALIDATION_FAILED, 400, str(exc), rule=exc.code.lower())
+            return problem(refusal[0], refusal[1], str(exc), rule=exc.code.lower())
         return JSONResponse(status_code=202, content={"job_id": job.id})
 
     @router.get("/support-bundle/{job_id}")
     async def status(job_id: str, request: Request) -> JSONResponse:
         if principal_resolver is None:
-            return _problem(501, "Not implemented", "no principal resolver wired")
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "no principal resolver wired")
         principal = await principal_resolver.resolve(request)
         if principal is None:
-            return _problem(401, "Unauthorized", "no verified session for this request")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "no verified session for this request")
         if not principal.has(ADMIN_READ):
-            return _problem(403, "Forbidden", f"requires {ADMIN_READ}")
+            return problem(ErrorCode.FORBIDDEN, 403, f"requires {ADMIN_READ}")
         job = service.get(job_id)
         if job is None:
-            return _problem(404, "Not found", "unknown support bundle job")
+            return problem(ErrorCode.NOT_FOUND, 404, "unknown support bundle job")
         return JSONResponse(job.view())
 
     return router

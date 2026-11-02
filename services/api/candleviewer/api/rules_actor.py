@@ -116,7 +116,7 @@ def _unanswerable(exc: SessionReadOnly | SessionRevoked) -> RuleError:
             title=SESSION_READ_ONLY_TITLE,
             readonly_until=until,
         )
-    return RuleError(401, "unauthorized", "no verified session")
+    return RuleError(401, "unauthenticated", "no verified session")
 
 
 def make_rules_audit(emitter: Any) -> Callable[[str, dict[str, Any]], Any]:

@@ -97,6 +97,7 @@ from candleviewer.admin.lifecycle_metrics import user_lifecycle_steps_total
 from candleviewer.admin.user_disable import DisableResult
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.csrf import source_ip
+from candleviewer.api.problems import problem
 from candleviewer.api.query_allowlist import undeclared_query_refusal
 from candleviewer.api.refusal_session import refusal_session
 from candleviewer.api.sessions import _view_json
@@ -303,17 +304,7 @@ class _AuditRefused(Exception):
 
 
 def _forbidden(reason: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=403,
-        content={
-            "type": "about:blank",
-            "title": "Forbidden",
-            "status": 403,
-            "code": "forbidden",
-            "reason": reason,
-        },
-        media_type="application/problem+json",
-    )
+    return problem(ErrorCode.FORBIDDEN, 403, rule=reason)
 
 
 #: #2593: the answer of a write refused at the effect: the 403 a fresh request from the demoted
@@ -370,20 +361,6 @@ def _registered(code: ErrorCode, status: int, detail: str) -> JSONResponse:
         body["retry_after_seconds"] = _RETRY_AFTER_S
         headers["Retry-After"] = str(_RETRY_AFTER_S)
     return JSONResponse(body, status, headers, "application/problem+json")
-
-
-def _problem(status: int, code: str, title: str, detail: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status,
-        content={
-            "type": f"https://candleviewer.local/errors/{code}",
-            "title": title,
-            "status": status,
-            "code": code,
-            "detail": detail,
-        },
-        media_type="application/problem+json",
-    )
 
 
 def _lifecycle_problem(exc: UserLifecycleError) -> JSONResponse:
@@ -657,9 +634,7 @@ def make_users_router(
         request: Request, user_id: Annotated[uuid.UUID, Path(alias="userId")]
     ) -> JSONResponse:
         if principal_resolver is None or store is None:
-            return _problem(
-                501, "not_implemented", "Not implemented", "no principal resolver/store wired"
-            )
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "no principal resolver/store wired")
         got = principal_resolver.resolve(request)
         principal = await got if inspect.isawaitable(got) else got
         if principal is None:
@@ -703,7 +678,7 @@ def make_users_router(
         # caller they refuse is never challenged (#2304). Fail closed when the step-up service
         # is not wired. Denial is audited by B16.
         if auth is None or not auth.step_up_is_active or not auth.sessions_is_active:
-            return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
+            return problem(ErrorCode.STEP_UP_UNAVAILABLE, 503, "step-up not wired")
         token = _bearer(request)
         if token is None:
             return _unauthenticated()
@@ -785,9 +760,7 @@ def make_users_router(
         request: Request, user_id: Annotated[uuid.UUID, Path(alias="userId")]
     ) -> JSONResponse:
         if principal_resolver is None or account_access is None:
-            return _problem(
-                501, "not_implemented", "Not implemented", "no principal resolver/store wired"
-            )
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "no principal resolver/store wired")
         got = principal_resolver.resolve(request)
         principal = await got if inspect.isawaitable(got) else got
         if principal is None:
@@ -907,9 +880,7 @@ def make_users_router(
         request: Request, user_id: Annotated[uuid.UUID, Path(alias="userId")]
     ) -> Response:
         if principal_resolver is None or user_disable is None:
-            return _problem(
-                501, "not_implemented", "Not implemented", "no principal resolver/service wired"
-            )
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "no principal resolver/service wired")
         got = principal_resolver.resolve(request)
         principal = await got if inspect.isawaitable(got) else got
         if principal is None:

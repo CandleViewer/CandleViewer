@@ -90,9 +90,12 @@ def is_reserved_name(name: str) -> bool:
 
 
 class RuleError(Exception):
-    def __init__(self, status: int, code: str, message: str, **extra: Any) -> None:
+    def __init__(
+        self, status: int, code: str, message: str, *, rule: str | None = None, **extra: Any
+    ) -> None:
         super().__init__(message)
         self.status, self.code, self.message, self.extra = status, code, message, extra
+        self.rule = rule  # the specific refusal a catalogue `code` stands for: `errors[].rule`
 
 
 class RuleAuditUnavailable(RuleError):
@@ -121,8 +124,17 @@ class RuleCapRefused(RuleError):
     """A refusal of one of the `REFUSED_CAPS`, answered as any `RuleError` is. `cap` is an attribute
     and never a member of the answer: the routes count it, nothing sends it."""
 
-    def __init__(self, cap: RefusedCap, status: int, code: str, message: str, **extra: Any) -> None:
-        super().__init__(status, code, message, **extra)
+    def __init__(
+        self,
+        cap: RefusedCap,
+        status: int,
+        code: str,
+        message: str,
+        *,
+        rule: str | None = None,
+        **extra: Any,
+    ) -> None:
+        super().__init__(status, code, message, rule=rule, **extra)
         self.cap = cap
 
 
@@ -646,7 +658,9 @@ class RulesManager:
             "rule.system_rule_refused",
             {"rule_id": row.id, "name": row.name, "op": op, "actor": actor.user_id},
         )
-        raise RuleError(403, "system_rule_protected", "System rules cannot be changed.")
+        raise RuleError(
+            403, "forbidden", "System rules cannot be changed.", rule="system_rule_protected"
+        )
 
     async def export_rule(self, rule_id: str, actor: Actor) -> dict[str, Any]:
         """Portable bundle (E35-X02 j): the IR only, with every account id, environment grant
@@ -919,7 +933,9 @@ class RulesManager:
         await self._require_grants(rule, actor, "create", rid)
         await self._require_owner_for_raised_limits(rule, actor, "create", rid)
         if is_reserved_name(rule.name):
-            raise RuleError(403, "system_rule_reserved", "The 'sys.' name prefix is reserved.")
+            raise RuleError(
+                403, "forbidden", "The 'sys.' name prefix is reserved.", rule="system_rule_reserved"
+            )
         await self._check_name_free(rule.name, actor)
         row = RuleRow(rid, rule.name, actor.user_id, scope=rule.scope.level)
         v = self._new_version(row, rule, h, notes, actor)
@@ -1018,7 +1034,9 @@ class RulesManager:
                 "rule.system_rule_refused",
                 {"rule_id": row.id, "name": row.name, "op": "rename", "actor": actor.user_id},
             )
-            raise RuleError(403, "system_rule_reserved", "The 'sys.' name prefix is reserved.")
+            raise RuleError(
+                403, "forbidden", "The 'sys.' name prefix is reserved.", rule="system_rule_reserved"
+            )
         await self._check_name_free(name, actor, row.id)
 
     async def _check_name_free(self, name: str, actor: Actor, rule_id: str = "") -> None:
@@ -1029,7 +1047,9 @@ class RulesManager:
         the name up inside the caller's scope (SR-051): every live rule for the Owner role, the
         caller's own live rules for anyone else."""
         if await self._s.name_taken(read_scope(actor), name, rule_id):
-            raise RuleError(409, "name_taken", f"A rule named '{name}' already exists.")
+            raise RuleError(
+                409, "conflict", f"A rule named '{name}' already exists.", rule="name_taken"
+            )
 
     async def delete(self, rule_id: str, actor: Actor) -> None:
         row = await self._visible_row(rule_id, actor, "delete")
@@ -1244,8 +1264,9 @@ class RulesManager:
         if not idempotency_key:
             raise RuleError(
                 400,
-                "idempotency_key_required",
+                "validation_failed",
                 "Send an Idempotency-Key header so a retry cannot arm the rule twice.",
+                rule="idempotency_key_required",
             )
         row = await self._visible_row(rule_id, actor, "set_mode")
         cache_key = f"{actor.user_id}:{rule_id}:{idempotency_key}:{target}"
@@ -1341,7 +1362,10 @@ class RulesManager:
     ) -> dict[str, Any]:
         if target not in MODES:
             raise RuleError(
-                422, "invalid_mode", f"Unknown mode '{target}'. Choose disabled, simulate or armed."
+                422,
+                "validation_failed",
+                f"Unknown mode '{target}'. Choose disabled, simulate or armed.",
+                rule="invalid_mode",
             )
         leaf = await self._leaf(row)
         prev = mode_of(leaf)
@@ -1351,8 +1375,9 @@ class RulesManager:
         if target in ("simulate", "armed") and (v is None or quarantine_path(v.ir)):
             raise RuleError(
                 422,
-                "rule_invalid",
+                "validation_failed",
                 "This rule cannot be read by the engine. Export it and repair it first.",
+                rule="rule_invalid",
             )
         ev_payload: dict[str, Any] = {"actor": actor.user_id}
         raised: dict[str, Any] = {}
@@ -1364,7 +1389,9 @@ class RulesManager:
             row.id, row.mode, row.disabled_reason, target, **ev_payload
         )
         if event is None:
-            raise RuleError(422, "illegal_transition", _illegal(leaf, target))
+            raise RuleError(
+                422, "validation_failed", _illegal(leaf, target), rule="illegal_transition"
+            )
         if event == "HUMAN_REARM" or (target == "armed" and ev_payload.get("live")):
             await self._consume_step_up(actor)
         payload: dict[str, Any] = {
@@ -1392,7 +1419,9 @@ class RulesManager:
         if not await self._record_b9(
             row, event, action, recorded, session=actor.session_id, **ev_payload
         ):
-            raise RuleError(422, "illegal_transition", _illegal(leaf, target))
+            raise RuleError(
+                422, "validation_failed", _illegal(leaf, target), rule="illegal_transition"
+            )
         self._metric("rule_mode_transitions_total", {"from": prev, "to": row.mode, "result": "ok"})
         await self._bc({"topic": "rules", **payload})  # emitted before the HTTP response returns
         return self._view(row)
@@ -1446,8 +1475,11 @@ class RulesManager:
         refusal = check_arming(facts)
         if refusal:
             named = refusal.raised_limits
-            extra = {"errors": owner_only_errors(named)} if named else {}
-            raise RuleError(refusal.status, refusal.code, refusal.message, **extra)
+            if named:
+                raise RuleError(
+                    refusal.status, refusal.code, refusal.message, errors=owner_only_errors(named)
+                )
+            raise RuleError(refusal.status, refusal.code, refusal.message)
         out: dict[str, Any] = {
             "permitted": True,
             "elevated": True,

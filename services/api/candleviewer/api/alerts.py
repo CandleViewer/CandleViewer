@@ -155,13 +155,13 @@ class _Deps:
     def store(self) -> AlertRepository:
         r = self.repo()
         if r is None:
-            raise _Problem(503, "service_unavailable", "Unavailable", "alerts store unavailable")
+            raise _Problem(503, "store_unavailable", "Unavailable", "alerts store unavailable")
         return r
 
     def compiler(self) -> AlertCompiler:
         reg = self.registry()
         if reg is None:
-            raise _Problem(503, "service_unavailable", "Unavailable", "metric registry unavailable")
+            raise _Problem(503, "store_unavailable", "Unavailable", "metric registry unavailable")
         return AlertCompiler(reg)
 
     async def audit_event(self, action: str, actor: Actor, alert_id: str, **kw: Any) -> None:
