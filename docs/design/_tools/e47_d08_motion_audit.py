@@ -441,12 +441,31 @@ def simulate(spec: str) -> Sim | None:
 # ---------------------------------------------------------------------------- values
 
 
+THEME_RE = re.compile(r"dark(?: \+ (light|hc))?")
+FRAME_THEME_RE = re.compile(r"· (dark|light|hc)`")
+
+
+def board_themes(cell: str) -> set[str] | None:
+    """The themes a §0 Theme cell plans: dark, plus at most one twin; None if malformed."""
+    m = THEME_RE.fullmatch(cell)
+    return None if m is None else {"dark"} | ({m.group(1)} if m.group(1) else set())
+
+
+def frame_themes(hand: str) -> dict[str, set[str]]:
+    """Board number -> the themes of its frames in the hand-off's §H."""
+    return {
+        r[0]: set(FRAME_THEME_RE.findall(r[1]))
+        for r in first_table(hand, "## §H")[1:]
+        if len(r) > 1
+    }
+
+
 def count_values(t: Texts) -> Values:
     rows = first_table(t.spec, "## 0.")[1:]
     inv = inventory(t.spec)
     return {
         "COUNT:boards": str(len(rows)),
-        "COUNT:boards.twins": str(sum(1 for r in rows if len(r) > 3 and r[3] in ("light", "hc"))),
+        "COUNT:boards.twins": str(sum(1 for r in rows if len(r) > 3 and " + " in r[3])),
         "COUNT:inv.rows": str(len(inv)),
         "COUNT:inv.animated": str(sum(1 for r in inv if r.klass.endswith("animated"))),
         "COUNT:inv.static": str(sum(1 for r in inv if r.klass.endswith("static"))),
@@ -617,8 +636,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-PAUSE",
         "spec",
         "## 8.",
-        "W-4, once, politely; the toggle's off state reads W-4 (D08-C3)",
-        "Paused at hh:mm, once, politely (D08-C3)",
+        "W-4 off and W-10 on, once, politely;",
+        "Paused at hh:mm, once, politely;",
     ),
     Mutation(
         "M-15",
@@ -772,6 +791,15 @@ MUTATIONS: tuple[Mutation, ...] = (
         "## 17.",
         "| M-1 | drop the both-modes sentence from the opening | G-BOTH |",
         "| M-1 | drop the both-modes sentence from the opening | G-PIN |",
+    ),
+    Mutation(
+        "M-32",
+        "drop board 09's dark frame in the hand-off's §H",
+        "G-BOARDS",
+        "hand",
+        "## §H",
+        "`safety/reduced · dark`, `safety/reduced · hc`",
+        "`safety/reduced · hc`",
     ),
 )
 
@@ -979,13 +1007,20 @@ def g_boards(t: Texts) -> list[Finding]:
     bad: list[str] = []
     if not 1 <= len(rows) <= 10:
         bad.append(f"{len(rows)} boards")
-    twins = [r for r in rows if len(r) > 3 and r[3] in ("light", "hc")]
+    twins = [r for r in rows if len(r) > 3 and " + " in r[3]]
     if 3 * len(twins) > len(rows):
         bad.append(f"{len(twins)} twins of {len(rows)} boards")
+    frames = frame_themes(t.hand)
+    _, _, h_region = section(t.hand, "## §H")
+    off: list[Finding] = []
     for k, r in enumerate(rows, 1):
-        if len(r) < 5 or r[3] not in ("dark", "light", "hc"):
+        themes = board_themes(r[3]) if len(r) >= 5 else None
+        if themes is None:
             bad.append(f"board {r[0] if r else '?'} has no theme")
             continue
+        if frames.get(r[0]) != themes:
+            msg = f"board {r[0]}'s §H frames are not its themes {sorted(themes)}"
+            off.append(("G-BOARDS", msg, "hand", h_region))
         name = re.fullmatch(r"`E47-D08 / (\d\d) ([a-z0-9-]+)`", r[1])
         if not name or name.group(1) != r[0] or r[0] != f"{k:02d}":
             bad.append(f"board {r[0]} is misnamed")
@@ -993,7 +1028,7 @@ def g_boards(t: Texts) -> list[Finding]:
             bad.append(f"board {r[0]} is not pending")
     if not any("**Not drawn (the text is binding)**" in ln for ln in body(t.spec, "## 0.")):
         bad.append("no 'not drawn' paragraph")
-    return [("G-BOARDS", b, "spec", region) for b in bad]
+    return [("G-BOARDS", b, "spec", region) for b in bad] + off
 
 
 def g_inv(t: Texts) -> list[Finding]:
