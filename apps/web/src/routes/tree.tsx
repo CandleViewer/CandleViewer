@@ -34,7 +34,10 @@ import { ScreenRoot } from "../features/app-shell/ScreenRoot";
 
 /**
  * SCR-063 on R-130 (E29-S01 #911, BQ-16): its own chunk, loaded when the route first renders, so the
- * panel, its grid and its feed stay out of the first bundle.
+ * panel, its grid and its feed stay out of the first bundle. `React.lazy` sits in the element on
+ * purpose, as for the admin routes (`AdminRouteElement.tsx`): the `import()` runs only after the
+ * route's loader (the session and RBAC guard) has decided, where a route-level `lazy` or a loader
+ * preload ahead of the guard would fetch the chunk beside it.
  */
 const PositionsPanel = lazy(() =>
   import("../features/positions/PositionsPanel").then((m) => ({ default: m.PositionsPanel })),
