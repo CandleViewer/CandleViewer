@@ -39,7 +39,7 @@ PR opened/updated, merge group queued for main, or merge train dispatched (.gith
 ├─ dependabot-alerts (always, #3558) → C-9.1 #11's Dependabot alert gate: the open alerts on
 │                                      `main`, judged on this tree         (CI-SEC-001/004/005)
 ├─ _job-js.yml    (js filter)        → node-version, lint, typecheck, unit, build (CI-JS-001, CI-BUILD-001)
-├─ _job-py.yml    (py filter)        → ruff, mypy --strict, architecture contract; pytest in nineteen
+├─ _job-py.yml    (py filter)        → ruff, mypy --strict, architecture contract; pytest in twenty-three
 │                                      parallel lanes (tools/ci/py-test-lanes.json, the heavy
 │                                      matrices sharded, #3881), coverage combined over all of them
 ├─ architecture   (py filter)        → mirrors the py lane's result, beside coverage-thresholds
@@ -1547,6 +1547,19 @@ section in the same sprint — do not just work around it and move on.
   (540 s, 9 minutes, in `tools/ci/py-test-lanes.json`), a final `if: always()`,
   `continue-on-error` step prints a `::warning::` annotation (`py_test_lanes.py budget LANE SECONDS`).
   It is a warning only and never changes the job's result: rebalance the lane when one appears.
+- **The four lanes that stayed over 12 minutes (#5505, second PR).** On run 41487753329 `db-chaos-1`
+  took 16m45s (15m30 of pytest), `unit-heavy-1` 16m23s (14m22), `contract-security-1` 13m00 (11m58)
+  and `db-chaos-5` 12m20 (11m21); the merge-group run 41452897386 ran the same four 21 to 28 % faster
+  (11m24, 10m22, 8m55, 8m59), so the slow run sets the cut. Each is split in two on the per-file
+  seconds of `estimate`: `db-chaos-6` (26 files of `tests/integration/storage`, about 460 s of 916),
+  `unit-heavy-5` (11 files of `tests/unit/api`, about 360 s of 711), `contract-security-5` (15 files of
+  `tests/contract`, about 215 s of 426, which also halves the collection time that makes up a third
+  of that lane) and `db-chaos-7` (`tests/integration/oms`, about 305 s of 654). Estimated tests per
+  leg on the slow run: `db-chaos-1` 455 s, `db-chaos-6` 461 s, `unit-heavy-1` 352 s, `unit-heavy-5`
+  358 s, `contract-security-1` 210 s, `contract-security-5` 216 s, `db-chaos-5` 350 s, `db-chaos-7`
+  304 s, so every leg is at 9 minutes or less before collection. Every moved file stays in a lane the
+  Postgres pre-pull covers (`db-chaos*`); the matrix has twenty-three lanes and a PR run starts
+  76 jobs (72 before).
 - **To rebalance**, take the lane jobs' logs of a recent green `pr` run (job ids from
   `gh api repos/CandleViewer/CandleViewer/actions/runs/<run id>/jobs`, then
   `gh api --allow-escape-sequences repos/CandleViewer/CandleViewer/actions/jobs/<job id>/logs`) and
