@@ -72,6 +72,7 @@ answers the 403 a fresh request from the demoted actor gets at entry, never a ch
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import inspect
 import json
@@ -595,6 +596,9 @@ _UNREVOKED: Final = (
     "the roles changed, but the user's sessions could not be revoked; revoke each one with "
     "DELETE /users/{userId}/sessions/{sessionId}"
 )
+#: #2101: the bound (s) on dropping the chart of a session whose `REVOKE` was cut short. The
+#: change's row locks are still held then, and its own write-ahead bound may have passed.
+CHART_DROP_TIMEOUT_S: Final = 1.0
 
 
 def _sessions_revoked(
@@ -619,8 +623,10 @@ async def _revocations_ahead(auth: _AuthLike, user_id: uuid.UUID) -> list[Sessio
     `auth.session_revoked` ahead of the commit (#965 R5). A record that cannot be written (the
     chart failed or the gateway refused the send) raises `_AuditRefused`, so the change rolls back
     (`503`) with nothing revoked, and the session's chart is dropped, to be rebuilt from its row;
-    a record written for a change that then rolls back over-reports, never under-reports. The rows
-    are revoked once the change commits (`_end_sessions`); the sessions recorded here are returned
+    a record written for a change that then rolls back over-reports, never under-reports. A
+    `REVOKE` cut short (the store's write-ahead bound expired, or the request was cancelled) drops
+    the session's chart too (`_drop_chart`), then lets the interruption go on. The rows are
+    revoked once the change commits (`_end_sessions`); the sessions recorded here are returned
     for that step."""
     sessions = auth.sessions
     live: list[SessionRecord] = list(await sessions.live_sessions(str(user_id)))
@@ -631,7 +637,23 @@ async def _revocations_ahead(auth: _AuthLike, user_id: uuid.UUID) -> list[Sessio
         except (SessionChartError, GatewayError) as exc:
             await auth.step_up.chart.forget(str(record.id))  # the row stays live
             raise _AuditRefused from exc
+        except BaseException:  # cut short part-way: the chart is dropped, never kept
+            await _drop_chart(auth, str(record.id))
+            raise
     return live
+
+
+async def _drop_chart(auth: _AuthLike, session_id: str) -> None:
+    """Drop the chart of a session whose `REVOKE` was cut short (`SessionChart.forget`): its next
+    use rebuilds it from the row, which stays live. Bounded by `CHART_DROP_TIMEOUT_S`; a drop that
+    fails or overruns is logged (the error class only, C-12.6), and never replaces what the caller
+    re-raises."""
+    try:
+        async with asyncio.timeout(CHART_DROP_TIMEOUT_S):
+            await auth.step_up.chart.forget(session_id)
+    except Exception as exc:
+        failed = type(exc).__name__
+        _log().error("users.role_change.chart_not_dropped", session_id=session_id, error=failed)
 
 
 async def _end_sessions(
