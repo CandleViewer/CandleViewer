@@ -74,8 +74,8 @@ describe("R-130 mounts SCR-063 (E29-S01, BQ-16)", () => {
     expect(dynamicSpecs).toContain(PANEL);
   });
 
-  // The lazy panel's first render comes late under load: on the build host at a load of 26 to 35 it took over the
-  // default 1 s wait and, with the shell around it, 14.4 s in all; the wait and the test take the screen tests'
+  // The lazy panel's first render comes late under load: 2.0 to 3.2 s a run on the build host and 2.4 s on the
+  // fold's, at loads of 24 to 35, past RTL's default 1 s wait; the wait and the test take the screen tests'
   // measured bounds (`positions.integration.test.tsx`, `keymap-editor-axe.test.tsx`).
   it(
     "R-130's element mounts the lazy panel, the deep link applied",

@@ -1,14 +1,15 @@
 /**
- * The Positions tab's announcements (E29-S01 #911) through the shell's one announcer
+ * The Positions panel's announcements (E29-S01 #911) through the shell's one announcer
  * (`app-shell/announcer.tsx`; E17-D02 §11: the panel owns no live region). The routing is E29-D05
  * §8.1's (PROPOSED, owner approval pending on #2701):
  *
  * - **RT-05**, a crossing into Critical: assertive, once per crossing; **RT-12**, a Near crossing:
  *   polite, once per crossing. The store hands each crossing once (`PositionsSnapshot.crossings`,
  *   whose `seq` never repeats).
- * - **RT-07**, the stale lock: assertive, once per episode; **RT-11**, reconciling, desync and
- *   synced: polite, once per episode. `accountSignals` numbers the episodes and `accountLine` gives
- *   D03 §4.1's words; the kill-switch lock has no announcement in the deck, so it is shown, not said.
+ * - **RT-07**, the stale lock and the kill-switch lock: assertive, once per episode, in D03:329's
+ *   words by variant; **RT-11**, reconciling, desync and synced: polite, once per episode.
+ *   `accountSignals` numbers the episodes and `accountLine` gives D03 §4.1's words. An episode waits
+ *   until the directory lists its account, so it is said by the account's label, never an id stub.
  * - **RT-15**, could not load and an account withdrawn: polite, once (the panel's lines).
  * - **RT-16**, the focused row's changed values and the totals: polite, at most once per 2 s per
  *   field, through the chart's ambient writer (`chart/a11y/politeWriter.ts`), with "significant",
@@ -16,21 +17,18 @@
  * - **Serialised, never concatenated** (D05 §8.3): a region takes one message at a time, each after
  *   the shell's per-region budget (`REGION_BUDGET_MS`), so no writer cuts another's message; a batch
  *   goes most severe first. At most `MAX_QUEUED` wait per region (C-2.18): past it the oldest goes.
+ *   A message said into a `slot` replaces the one of that slot still waiting (latest wins).
  *
  * The sentences composed here (a crossing, a value change) are PROPOSED to E29-D03's copy owner
  * (G-W3): each joins words a design gives (the row's name, E29-D05 N-01; the tier sentence, D02
  * §5.3; CMP-116's reading).
  */
+import { useEffect, useRef } from "react";
 import { liqSentence, pnlReading } from "@candleviewer/ui";
-import {
-  REGION_BUDGET_MS,
-  announce,
-  forget,
-  lastWrittenAt,
-  type Politeness,
-} from "../app-shell/announcer";
-import { accountLine, type AccountSignal, type Role } from "./accountSignals";
-import { bindKinds, DECK, type DeckKey } from "./copy";
+import { sayToShell } from "../../chart/a11y/politeWriter";
+import { REGION_BUDGET_MS, lastWrittenAt, type Politeness } from "../app-shell/announcer";
+import { accountLine, type AccountSignal } from "./accountSignals";
+import { bindKinds, bindTextKinds } from "./copy";
 import { parseDecimal } from "./model/decimal";
 import type { LiqReading } from "./model/liqTier";
 import type { PositionRowModel } from "./model/rowMapping";
@@ -44,14 +42,17 @@ export interface AnnouncerTimers {
 }
 
 export interface PanelAnnouncer {
-  /** Queues one message; it is written when its region's budget allows. */
-  say(politeness: Politeness, text: string): void;
+  /**
+   * Queues one message; it is written when its region's budget allows. With `slot`, it replaces
+   * the message of that slot still waiting, in its place (a newer result of the same kind).
+   */
+  say(politeness: Politeness, text: string, slot?: string): void;
   /** Drops what waits; nothing is written after it. */
   dispose(): void;
 }
 
 export interface PanelAnnouncerOptions {
-  /** Writes one message; defaults to the shell announcer, under a fresh key each time. */
+  /** Writes one message; defaults to the shell announcer (`sayToShell`, a fresh key each time). */
   readonly write?: ((politeness: Politeness, text: string) => void) | undefined;
   /** When a region was last written (epoch ms); defaults to the shell announcer's. */
   readonly lastWrittenAt?: ((politeness: Politeness) => number) | undefined;
@@ -59,26 +60,22 @@ export interface PanelAnnouncerOptions {
   readonly timers?: AnnouncerTimers | undefined;
 }
 
-let written = 0;
-/** The shell announcer says a key once: a fresh key per message, forgotten at once, keeps it sayable. */
-function writeToShell(politeness: Politeness, text: string): void {
-  written += 1;
-  const key = `positions:${String(written)}`;
-  announce(politeness, text, key);
-  forget(key);
-}
-
 const platformTimers: AnnouncerTimers = {
   setTimeout: (callback, ms) => setTimeout(callback, ms),
   clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
 
+interface Queued {
+  text: string;
+  readonly slot: string | undefined;
+}
+
 export function createPanelAnnouncer(options: PanelAnnouncerOptions = {}): PanelAnnouncer {
-  const write = options.write ?? writeToShell;
+  const write = options.write ?? sayToShell;
   const writtenAt = options.lastWrittenAt ?? lastWrittenAt;
   const now = options.now ?? ((): number => Date.now());
   const timers = options.timers ?? platformTimers;
-  const queues: Record<Politeness, string[]> = { polite: [], assertive: [] };
+  const queues: Record<Politeness, Queued[]> = { polite: [], assertive: [] };
   const pending: Record<Politeness, unknown> = { polite: undefined, assertive: undefined };
   let disposed = false;
 
@@ -93,16 +90,21 @@ export function createPanelAnnouncer(options: PanelAnnouncerOptions = {}): Panel
       pending[region] = timers.setTimeout(() => pump(region), due - at);
       return;
     }
-    const text = queue.shift();
-    if (text !== undefined) write(region, text);
+    const next = queue.shift();
+    if (next !== undefined) write(region, next.text);
     if (queue.length > 0) pending[region] = timers.setTimeout(() => pump(region), REGION_BUDGET_MS);
   }
 
   return {
-    say(politeness, text) {
+    say(politeness, text, slot) {
       if (disposed || text.trim() === "") return;
       const queue = queues[politeness];
-      queue.push(text);
+      const waiting = slot === undefined ? undefined : queue.find((q) => q.slot === slot);
+      if (waiting !== undefined) {
+        waiting.text = text; // latest wins, in the place the first took
+        return;
+      }
+      queue.push({ text, slot });
       if (queue.length > MAX_QUEUED) queue.shift();
       if (pending[politeness] === undefined) pump(politeness);
     },
@@ -115,6 +117,36 @@ export function createPanelAnnouncer(options: PanelAnnouncerOptions = {}): Panel
       }
     },
   };
+}
+
+/**
+ * The panel's announcer for a component's lifetime: created on first use and disposed on unmount,
+ * so nothing is written after it. StrictMode's simulated unmount disposes it and its second mount
+ * makes the next `say` create a fresh one (as `chart/a11y/politeWriter.ts`'s `useAmbientWriter`
+ * does), so a development build is never left silent. The facade is stable across renders.
+ */
+export function usePanelAnnouncer(options?: PanelAnnouncerOptions): PanelAnnouncer {
+  const optionsRef = useRef(options);
+  const inner = useRef<PanelAnnouncer | null>(null);
+  const unmounted = useRef(false);
+  useEffect(() => {
+    unmounted.current = false; // StrictMode's second mount: the next say creates a fresh announcer
+    return () => {
+      unmounted.current = true;
+      inner.current?.dispose();
+      inner.current = null;
+    };
+  }, []);
+  const facade = useRef<PanelAnnouncer | null>(null);
+  facade.current ??= {
+    say: (politeness, text, slot) => {
+      if (unmounted.current) return;
+      inner.current ??= createPanelAnnouncer(optionsRef.current);
+      inner.current.say(politeness, text, slot);
+    },
+    dispose: () => inner.current?.dispose(),
+  };
+  return facade.current;
 }
 
 /** One message of a batch, with the rank that orders it (D05 §8.3: most severe first). */
@@ -178,39 +210,41 @@ export function crossingAnnouncements(
 /** What the account announcements remember: the episode each account last said. */
 export type SaidEpisodes = ReadonlyMap<string, number>;
 
-const politenessOf = (key: DeckKey): Politeness =>
-  DECK[key].announce === "assertive" ? "assertive" : "polite";
-
 /**
  * RT-07 and RT-11 for a signals change: each account's new episode once (its `accountLine` announcement), and
- * `acct.announce.synced` once when an episode ends on an account still listed (`listed`; a withdrawn account's
- * signals leave with its rows and say nothing). Returns the batch and what is now said.
+ * `acct.announce.synced` once when an episode ends on an account still listed. An account the directory does not
+ * list yet (`listed`) is held, unsaid: its episode is said once its label is known, and one that ends before
+ * then is never said, nor its end; a withdrawn account's signals leave with its rows and say nothing. Returns
+ * the batch and what is now said.
  */
 export function accountAnnouncements(
   said: SaidEpisodes,
   accounts: ReadonlyMap<string, AccountSignal>,
-  role: Role,
   labelOf: (accountId: string) => string,
   listed: (accountId: string) => boolean,
 ): { readonly batch: readonly Announcement[]; readonly said: SaidEpisodes } {
   const batch: Announcement[] = [];
   const next = new Map<string, number>();
   for (const [id, signal] of accounts) {
-    if (signal.oms === null) continue;
+    const line = accountLine(signal);
+    if (signal.oms === null || line === null) continue;
+    const before = said.get(id);
+    if (!listed(id)) {
+      if (before !== undefined) next.set(id, before); // what was said stays said
+      continue;
+    }
     next.set(id, signal.oms.episode);
-    if (said.get(id) === signal.oms.episode) continue;
-    const key = accountLine(signal, role)?.announce ?? null;
-    if (key === null) continue; // the kill-switch lock: shown, not said (no deck announcement)
+    if (before === signal.oms.episode) continue;
     batch.push({
-      politeness: politenessOf(key),
-      text: bindKinds(key, { label: labelOf(id) }),
+      politeness: line.announce.politeness,
+      text: bindTextKinds(line.announce.text, line.announce.name, { label: labelOf(id) }),
       rank: signal.oms.state === "stale" ? 0 : 2,
     });
   }
   for (const id of said.keys()) {
     if (next.has(id) || !listed(id)) continue;
     batch.push({
-      politeness: politenessOf("acct.announce.synced"),
+      politeness: "polite",
       text: bindKinds("acct.announce.synced", { label: labelOf(id) }),
       rank: 2,
     });

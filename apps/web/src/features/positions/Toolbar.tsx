@@ -59,6 +59,8 @@ export interface ToolbarProps {
   readonly onColumns: (next: readonly PositionsGridColumnId[]) => void;
   readonly onExport: () => void;
   readonly density?: Density | undefined;
+  /** The "+ Filter" trigger's id: where focus goes when a state's own Clear filters leaves. */
+  readonly addFilterId?: string | undefined;
 }
 
 export function Toolbar({
@@ -71,6 +73,7 @@ export function Toolbar({
   onColumns,
   onExport,
   density,
+  addFilterId,
 }: ToolbarProps): JSX.Element {
   const groupById = useId();
   const directory = new Map(accounts.map((a) => [a.id, a]));
@@ -103,7 +106,11 @@ export function Toolbar({
           addFilter={
             <AccountMultiSelect
               mode="account"
-              trigger={<Button iconLeft="plus">{D02_TEXT.addFilter.string}</Button>}
+              trigger={
+                <Button iconLeft="plus" {...(addFilterId === undefined ? {} : { id: addFilterId })}>
+                  {D02_TEXT.addFilter.string}
+                </Button>
+              }
               accounts={accounts.map((a) => ({
                 id: a.id,
                 label: a.label,

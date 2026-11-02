@@ -1,6 +1,7 @@
 /**
  * E29-S01 (#911, BQ-14) the account-level signals: `account_notice` reasons (`23` §15.9) mapped
- * to E29-D03 §4.1's line, marker and announcement per role, once per episode; the kill-switch lock;
+ * to E29-D03 §4.1's line, marker and announcement, the same for every role while no client reads
+ * B19 (the lock's cause withheld from all), once per episode; the kill-switch lock;
  * the kill switch from `WsState`. No B20 risk-lockout state is kept until B20 has a runtime machine
  * (the orchestrator's carry on #911). The resyncing frame is the shipped producer's golden; E29-T06's
  * rows follow `23`'s table.
@@ -19,7 +20,7 @@ import {
   useAccountSignals,
   type AccountSignalsStore,
 } from "../../../src/features/positions/accountSignals";
-import { bindDeck } from "../../../src/features/positions/copy";
+import { bindDeck, D03_TEXT, DECK } from "../../../src/features/positions/copy";
 import { golden, MAIN, SUB1, SUB2 } from "./support/fakes";
 
 const resyncing = golden<SystemUpdate>("ws_system_account_notice.json");
@@ -47,10 +48,14 @@ describe("account_notice → the account's state (D03 §4.1)", () => {
     signals.applyNotice(resyncing, 100);
     const sub1 = signals.getSnapshot().accounts.get(SUB1);
     expect(sub1?.oms).toEqual({ state: "reconciling", sinceMs: 100, episode: 1, killLock: false });
-    expect(accountLine(sub1 ?? { oms: null }, "owner")).toEqual({
+    expect(accountLine(sub1 ?? { oms: null })).toEqual({
       line: "acct.reconciling.line",
       marker: "acct.marker.checking",
-      announce: "acct.announce.reconciling",
+      announce: {
+        text: DECK["acct.announce.reconciling"],
+        name: "acct.announce.reconciling",
+        politeness: "polite",
+      },
     });
     expect(bindDeck("acct.reconciling.line", { "Sub-1": "Sub-1", LIVE: "LIVE" })).toBe(
       "Sub-1 · LIVE — Reconciling with the exchange… Values shown are the last Bybit confirmed. Closing, cancelling and tightening stops still work.",
@@ -66,26 +71,29 @@ describe("account_notice → the account's state (D03 §4.1)", () => {
       episode: 1,
       sinceMs: 1,
     });
-    expect(
-      accountLine(signals.getSnapshot().accounts.get(SUB1) ?? { oms: null }, "viewer")?.line,
-    ).toBe("acct.desync.line");
+    expect(accountLine(signals.getSnapshot().accounts.get(SUB1) ?? { oms: null })?.line).toBe(
+      "acct.desync.line",
+    );
     signals.applyNotice(notice("oms.account_synced", [SUB1], "info"), 3);
     expect(signals.getSnapshot().accounts.has(SUB1)).toBe(false);
     signals.applyNotice(notice("oms.account_desync", [SUB1.toUpperCase()]), 4);
     expect(signals.getSnapshot().accounts.get(SUB1)?.oms).toMatchObject({ episode: 2 }); // a new episode
   });
 
-  it("Stale — locked: the cause is the Owner's; a Manager or Viewer reads the no-cause line", () => {
+  it("Stale — locked: no client reads B19, so every role, the Owner too, reads and hears no cause", () => {
     const signals = createAccountSignals();
     signals.applyNotice(notice("oms.account_stale", [SUB2], "critical"), 7);
     const signal = signals.getSnapshot().accounts.get(SUB2) ?? { oms: null };
-    expect(accountLine(signal, "owner")).toEqual({
-      line: "acct.stale.line",
+    // D03 §4.1's "cause not shown" row: the line and D03:329's cause-not-shown sentence, assertive
+    expect(accountLine(signal)).toEqual({
+      line: "acct.stale.line.nocause",
       marker: "acct.marker.stale",
-      announce: "acct.announce.stale",
+      announce: {
+        text: D03_TEXT.staleAnnounce,
+        name: "D03_TEXT.staleAnnounce",
+        politeness: "assertive",
+      },
     });
-    expect(accountLine(signal, "manager")?.line).toBe("acct.stale.line.nocause");
-    expect(accountLine(signal, "viewer")?.line).toBe("acct.stale.line.nocause");
   });
 
   it("a stale notice under a covering kill switch is the kill-switch lock, for every role", () => {
@@ -93,10 +101,14 @@ describe("account_notice → the account's state (D03 §4.1)", () => {
     signals.setKillSwitch(engaged("accounts", [SUB2]), 5);
     signals.applyNotice(notice("oms.account_stale", [SUB1, SUB2]), 9);
     const sub2 = signals.getSnapshot().accounts.get(SUB2) ?? { oms: null };
-    expect(accountLine(sub2, "manager")).toEqual({
+    expect(accountLine(sub2)).toEqual({
       line: "acct.killlock.line",
       marker: "kill_lock",
-      announce: null,
+      announce: {
+        text: D03_TEXT.killLockAnnounce,
+        name: "D03_TEXT.killLockAnnounce",
+        politeness: "assertive",
+      },
     });
     expect(signals.getSnapshot().accounts.get(SUB1)?.oms?.killLock).toBe(false);
   });
@@ -110,7 +122,7 @@ describe("account_notice → the account's state (D03 §4.1)", () => {
     signals.applyNotice(notice("oms.account_desync", ["not-an-id"]), 1);
     signals.applyNotice({ kind: "health" } as SystemUpdate, 1);
     expect(listener).not.toHaveBeenCalled();
-    expect(accountLine({ oms: null }, "owner")).toBeNull();
+    expect(accountLine({ oms: null })).toBeNull();
   });
 });
 

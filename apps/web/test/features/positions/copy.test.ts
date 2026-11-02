@@ -1,15 +1,18 @@
 /**
  * E29-S01 (#911) the words: every deck entry `copy.ts` holds is the E29-D06 deck's, byte for byte
- * (D06 §6, BQ-17: no string invented); the binder replaces the named spans only; the D02 strings the
- * deck does not key are found at their cited lines, and the Viewer's verbs at E09-D09 §3.2.
+ * (D06 §6, BQ-17: no string invented); the binder replaces the named spans only; the D02 and D03
+ * strings the deck does not key are found at their cited lines, and the Viewer's verbs at E09-D09 §3.2.
  */
 import { describe, expect, it } from "vitest";
 import {
   bindDeck,
   bindKinds,
+  bindTextKinds,
   D02_TEXT,
+  D03_TEXT,
   DECK,
   DECK_VERSION,
+  permissionLines,
   PROPOSED_TEXT,
   RBAC_VERBS,
 } from "../../../src/features/positions/copy";
@@ -95,6 +98,34 @@ describe("strings the deck does not key", () => {
   it.each(Object.entries(D02_TEXT))("%s is at its D02 line", (_, { string, source }) => {
     const line = Number.parseInt(source.replace("D02:", ""), 10);
     expect(lines[line - 1]).toContain(string);
+  });
+
+  const d03 = repoFile("docs/design/E29/E29-D03.md").split("\n");
+  it.each(Object.entries(D03_TEXT))(
+    "%s is at its D03 line, a variant the deck does not key",
+    (_, { string, source }) => {
+      const line = Number.parseInt(source.replace("D03:", ""), 10);
+      expect(d03[line - 1]).toContain(string);
+      expect(d03[line - 1]).toContain("`acct.announce.stale`");
+      expect(Object.values(DECK).map((e) => e.string)).not.toContain(string);
+    },
+  );
+
+  it("a D03 variant binds its account span by kind", () => {
+    expect(bindTextKinds(D03_TEXT.killLockAnnounce, "kill", { label: "Desk A" })).toBe(
+      "Desk A is still locked for new orders after the kill switch. Closing, cancelling and tightening stops still work.",
+    );
+    expect(() => bindTextKinds(D03_TEXT.staleAnnounce, "stale", {})).toThrow(/stale: unbound/);
+  });
+
+  it("each read-only line names the permission it is for (S-22's ids are keyed by it)", () => {
+    expect(permissionLines(["positions:write"])).toEqual([
+      { permission: "orders:write", line: "Your role can't place orders." },
+    ]);
+    expect(permissionLines([]).map((l) => l.permission)).toEqual([
+      "positions:write",
+      "orders:write",
+    ]);
   });
 
   it("the Viewer's verbs are E09-D09 §3.2's", () => {

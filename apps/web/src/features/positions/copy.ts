@@ -8,7 +8,8 @@
  *
  * Each data-bound span of a string is named in its `params` (D06 §6): `bindDeck` replaces those
  * spans with the caller's values, never the fixture's; a span marked `fixed` stays as written.
- * `D02_TEXT` holds the few strings merged E29-D02 draws and the deck does not key, each with its line.
+ * `D02_TEXT` and `D03_TEXT` hold the few merged E29-D02 and E29-D03 strings the deck does not key,
+ * each with its line.
  */
 
 export interface DeckEntry {
@@ -628,12 +629,42 @@ export const D02_TEXT = {
   envDemo: { string: "DEMO", source: "D02:209" },
 } as const;
 
+/** A string and its data-bound spans: a deck entry, or a merged string the deck does not key. */
+export interface BoundText {
+  readonly string: string;
+  readonly params?: Readonly<Record<string, string>>;
+}
+
+/**
+ * Merged E29-D03 strings the deck does not key (each cited; a test finds it at its line): D03 §5.2
+ * words `acct.announce.stale` by §4.1's variant (D03:329), and the deck keys only the failure one.
+ * No client reads B19, so no lock's cause is known: every role hears the cause-not-shown sentence,
+ * and a stale notice under a covering kill switch the kill-switch sentence (D03 §4.1, RT-07). Both
+ * are assertive, once per episode (D03 §8.3). The deck's gap is routed to E29-D06's owner.
+ */
+export const D03_TEXT = {
+  staleAnnounce: {
+    string:
+      "Sub-2 is locked for new orders until the owner resolves it. Closing, cancelling and tightening stops still work.",
+    source: "D03:329",
+    params: { "Sub-2": "account label" },
+  },
+  killLockAnnounce: {
+    string:
+      "Sub-2 is still locked for new orders after the kill switch. Closing, cancelling and tightening stops still work.",
+    source: "D03:329",
+    params: { "Sub-2": "account label" },
+  },
+} as const satisfies Readonly<Record<string, BoundText & { readonly source: string }>>;
+
 /**
  * PROPOSED words (#911 BQ-15, routed to E29-D03's copy owner through G-W3 and listed in the PR body
  * for the ledger row): the Working orders and Fills placeholders, which no deck or D02 line draws,
  * the words the panel composes where no design gives a string (a trade group's name and the
  * positions with none, the crossing and value announcements, the export's file name), and the
  * environment words for a session D02 does not draw (TESTNET, the shell badge's PROPOSED word).
+ * `filterEmptyOne` is filter-empty's singular, proposed as `blotter.ui.filter_empty#2`: the deck's
+ * one form reads "No rows match 1 filters" for the commonest case, one Account chip.
  */
 export const PROPOSED_TEXT = {
   workingOrdersTitle: "Working orders are not available yet",
@@ -645,6 +676,7 @@ export const PROPOSED_TEXT = {
   envTestnet: "TESTNET",
   testnetTotal: "TESTNET total",
   exportFileName: "candleviewer-positions-{stamp}.csv",
+  filterEmptyOne: "No rows match 1 filter",
 } as const;
 
 /** The values a deck string's data-bound spans take, by the kind its `params` name (D06 §6). */
@@ -665,20 +697,23 @@ const SPAN_KINDS: Readonly<Record<string, keyof DeckValues>> = {
 };
 
 /**
- * The deck string of `key` with each span bound by its kind ("account label", "environment", ...),
- * so one call fits every key of a family whatever fixture word the deck wrote ("Sub-1", "Sub-2").
- * A span left unbound throws, as `bindDeck` does.
+ * `text` with each span bound by its kind ("account label", "environment", ...), so one call fits
+ * every string of a family whatever fixture word it wrote ("Sub-1", "Sub-2"). A span left unbound
+ * throws, as `bindText` does; `name` says whose in the error.
  */
-export function bindKinds(key: DeckKey, values: DeckValues): string {
-  const entry: DeckEntry = DECK[key];
+export function bindTextKinds(text: BoundText, name: string, values: DeckValues): string {
   const spans: Record<string, string> = {};
-  for (const [span, kind] of Object.entries(entry.params ?? {})) {
+  for (const [span, kind] of Object.entries(text.params ?? {})) {
     const field = Object.hasOwn(SPAN_KINDS, kind) ? SPAN_KINDS[kind] : undefined;
     const value = field === undefined ? undefined : values[field];
     if (value !== undefined) spans[span] = value;
   }
-  return bindDeck(key, spans);
+  return bindText(text, name, spans);
 }
+
+/** The deck string of `key`, its spans bound by kind (`bindTextKinds`). */
+export const bindKinds = (key: DeckKey, values: DeckValues): string =>
+  bindTextKinds(DECK[key], key, values);
 
 /** E09-D09 §3.2's verbs for the Viewer's two `rbac.permission` lines, in D02:433's order. */
 export const RBAC_VERBS = {
@@ -687,49 +722,63 @@ export const RBAC_VERBS = {
 } as const;
 
 /**
- * The deck string of `key` with each bound span replaced: `values` maps a span as the deck writes
- * it ("Sub-1", "{account}") to the caller's text. Every span but a `fixed` one must be bound, so a
- * fixture label never reaches the screen.
+ * `text` with each bound span replaced: `values` maps a span as the string writes it ("Sub-1",
+ * "{account}") to the caller's text. Every span but a `fixed` one must be bound, so a fixture label
+ * never reaches the screen; `name` says whose in the error.
  */
-export function bindDeck(key: DeckKey, values: Readonly<Record<string, string>> = {}): string {
-  return bindEntry(key, DECK[key], values);
-}
-
-/**
- * `bindDeck`'s rule for any entry of the deck's shape: a PROPOSED string the deck does not key yet
- * (E29-S02's `orders/copy.ts`) binds the same way, by the spans its `params` name.
- */
-export function bindEntry(
-  key: string,
-  entry: DeckEntry,
+export function bindText(
+  text: BoundText,
+  name: string,
   values: Readonly<Record<string, string>> = {},
 ): string {
-  const spans = Object.entries(entry.params ?? {})
+  const spans = Object.entries(text.params ?? {})
     .filter(([, kind]) => kind !== "fixed")
     .map(([span]) => span);
   const missing = spans.filter((span) => !Object.hasOwn(values, span));
-  if (missing.length > 0) throw new TypeError(`${key}: unbound ${missing.join(", ")}`);
-  // Spans are found in the deck's own string, left to right, so a bound value is never re-read.
+  if (missing.length > 0) throw new TypeError(`${name}: unbound ${missing.join(", ")}`);
+  // Spans are found in the string itself, left to right, so a bound value is never re-read.
   const found = spans
-    .map((span) => ({ span, at: entry.string.indexOf(span) }))
+    .map((span) => ({ span, at: text.string.indexOf(span) }))
     .filter(({ at }) => at >= 0)
     .sort((a, b) => a.at - b.at);
   let out = "";
   let from = 0;
   for (const { span, at } of found) {
     if (at < from) continue; // overlapping spans: the first wins
-    out += entry.string.slice(from, at) + (values[span] ?? span);
+    out += text.string.slice(from, at) + (values[span] ?? span);
     from = at + span.length;
   }
-  return out + entry.string.slice(from);
+  return out + text.string.slice(from);
 }
+
+/** The deck string of `key`, each bound span replaced (`bindText`). */
+export const bindDeck = (key: DeckKey, values: Readonly<Record<string, string>> = {}): string =>
+  bindText(DECK[key], key, values);
+
+/**
+ * `bindDeck`'s rule for any entry of the deck's shape: a PROPOSED string the deck does not key yet
+ * (E29-S02's `orders/copy.ts`) binds the same way, by the spans its `params` name.
+ */
+export const bindEntry = (
+  key: string,
+  entry: DeckEntry,
+  values: Readonly<Record<string, string>> = {},
+): string => bindText(entry, key, values);
+
+export type WritePermission = keyof typeof RBAC_VERBS;
 
 /**
  * The panel-header notice of a read-only role (D02 §10.4, S-22): one `rbac.permission` line per
- * write the session lacks, verbatim. Presentation only: the server enforces (C-12.4).
+ * write the session lacks, verbatim, with the permission it names. Presentation only: the server
+ * enforces (C-12.4).
  */
-export function permissionLines(permissions: readonly string[]): readonly string[] {
-  return (Object.keys(RBAC_VERBS) as (keyof typeof RBAC_VERBS)[])
+export function permissionLines(
+  permissions: readonly string[],
+): readonly { readonly permission: WritePermission; readonly line: string }[] {
+  return (Object.keys(RBAC_VERBS) as WritePermission[])
     .filter((permission) => !permissions.includes(permission))
-    .map((permission) => bindDeck("rbac.permission", { "{verb}": RBAC_VERBS[permission] }));
+    .map((permission) => ({
+      permission,
+      line: bindDeck("rbac.permission", { "{verb}": RBAC_VERBS[permission] }),
+    }));
 }
