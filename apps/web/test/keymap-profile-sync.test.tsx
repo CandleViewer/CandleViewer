@@ -76,6 +76,9 @@ interface Row {
 type Answer = Response | Promise<Response> | undefined;
 type Refuse = (method: string, url: string, init?: RequestInit) => Answer;
 const noRefusal: Refuse = () => undefined;
+/** `22` `getViewAs`'s answer to the request, whose signal an answer held on the wire heeds. */
+type View = (init?: RequestInit) => Response | Promise<Response>;
+const noView: View = () => new Response(null, { status: 204 });
 /**
  * `22`'s `/settings/hotkeys*` for one user, as the server PR serves it: list, create (inactive, version 1), replace,
  * activate; an unknown id is `404`, and a create or a replace naming a profile another one holds (folded by `lower()`)
@@ -92,7 +95,7 @@ function stubServer() {
     /** `Hotkey-Bindings-Rewritten` on a create's or a replace's answer, when set. */
     rewritten: null as string | null,
     refuse: noRefusal,
-    view: (): Response => new Response(null, { status: 204 }),
+    view: noView,
     /** The `/me/keymap` answer for the active profile, flattened (`22` getMyKeymap). */
     keymap: (): Keymap => {
       const active = rows.find((r) => r.isActive);
@@ -126,7 +129,7 @@ function stubServer() {
       const url = String(input);
       const body: unknown = init?.body ? JSON.parse(String(init.body)) : undefined;
       calls.push({ method, url, body, ifMatch: new Headers(init?.headers).get("if-match") });
-      if (url === VIEW_AS) return server.view();
+      if (url === VIEW_AS) return server.view(init);
       const refused = server.refuse(method, url, init);
       if (refused !== undefined) return refused;
       const sent = body as { name: string; bindings: Binding[] } | undefined;
@@ -866,6 +869,143 @@ describe("BQ-14: nothing is sent while a view is live", () => {
     down = false;
     await store.flush();
     expect(keysOf(server.calls, "chart.footprint_toggle")).toBe("Alt+Q");
+  });
+
+  // Keymap writes are skipped while a view-as context is active (read-only per the view-as policy), and while the
+  // read of it is unanswered or failed. An Owner is never viewed as, so these sessions are a Manager's.
+  const AUDIT = "/api/v1/settings/hotkey-audit";
+  const ACTIVE: Row = {
+    id: "17000000-0000-4000-8000-000000000001",
+    name: "CandleViewer Default",
+    isActive: true,
+    version: 1,
+    bindings: [{ action: "chart.footprint_toggle", keys: "Ctrl+Alt+F", scope: "chart" }],
+  };
+  /** Every key the keymap keeps on this device: the profiles, their marks and dead letters, the audit outboxes. */
+  const keymapKeys = (): string[] =>
+    Array.from(
+      { length: window.localStorage.length },
+      (_, i) => window.localStorage.key(i) ?? "",
+    ).filter((key) => /^cv\.(keymap|hotkey)-/.test(key));
+  /** A change of the audited cancel-all and of the footprint toggle, as the editor lands them. */
+  function remap(): void {
+    m.setAuditSink(m.recordAudit);
+    act(() => m.setBindings(m.applyRebind(m.getBindings(), "dom.cancel_all", "Ctrl+Alt+Q")));
+    rebind("chart.footprint_toggle", "Alt+Q");
+  }
+
+  it.each([
+    ["live", "active"],
+    ["held", "expired"],
+  ] as const)(
+    "a %s view-as context is read-only: a remap holds for the page, and nothing is stored, sent, queued or marked",
+    async (_what, state) => {
+      const server = stubServer();
+      server.view = () => context(state);
+      signIn("u-2", "manager");
+      const { store } = startSync();
+      await vi.advanceTimersByTimeAsync(0); // the view-as read answers
+      remap();
+      await store.flush();
+      await m.flushAuditOutbox();
+      expect(m.getBindings().get("chart.footprint_toggle")).toBe("Alt+Q");
+      expect([lines(server.calls), keymapKeys(), m.auditOutbox(), store.unsent("u-2")]).toEqual([
+        [`GET ${VIEW_AS}`],
+        [],
+        [],
+        false,
+      ]);
+    },
+  );
+
+  it("once the view-as context has ended, the user's next sign-in sends nothing changed under it", async () => {
+    const server = stubServer();
+    server.view = () => context("active");
+    server.refuse = (_method, url) =>
+      url === AUDIT ? problem(403, "view_as_read_only") : undefined;
+    signIn("u-2", "manager");
+    startSync();
+    await vi.advanceTimersByTimeAsync(0);
+    remap();
+    await vi.advanceTimersByTimeAsync(0);
+    await reload(); // later, on this device: no context, and the user signs in
+    server.view = noView;
+    server.refuse = noRefusal;
+    server.calls.length = 0;
+    signIn("u-2", "manager"); // no active profile on the server: the device keeps its own
+    const { store } = startSync();
+    await vi.advanceTimersByTimeAsync(0);
+    rebind("chart.table_toggle", "Alt+Y"); // their own change: the whole profile goes
+    await store.flush();
+    await m.flushAuditOutbox();
+    expect([
+      keysOf(server.calls, "chart.table_toggle"),
+      keysOf(server.calls, "chart.footprint_toggle"),
+      keysOf(server.calls, "dom.cancel_all"),
+    ]).toEqual(["Alt+Y", "F", "Ctrl+Shift+X"]);
+    // besides the profile, the one view-as read of the sign-in, which the store takes too; no audit record
+    expect(lines(server.calls).filter((line) => !line.includes(PROFILES))).toEqual([
+      `GET ${VIEW_AS}`,
+    ]);
+  });
+
+  it.each([
+    ["unanswered", (init?: RequestInit) => held(init)],
+    ["failed", () => problem(503, "store_unavailable")],
+  ] as const)(
+    "while the view-as read is %s the keymap is read-only: a later sign-in sends nothing changed then",
+    async (_what, answer) => {
+      const server = stubServer();
+      server.rows.push({ ...ACTIVE });
+      server.view = answer;
+      signIn("u-2", "manager", server.keymap());
+      startSync();
+      await vi.advanceTimersByTimeAsync(0);
+      remap();
+      await vi.advanceTimersByTimeAsync(0);
+      await reload(); // the page closes, its read never answered or failed
+      server.view = noView;
+      server.calls.length = 0;
+      signIn("u-2", "manager", server.keymap());
+      const { store } = startSync();
+      await vi.advanceTimersByTimeAsync(0);
+      await store.flush();
+      await m.flushAuditOutbox();
+      expect(lines(server.calls)).toEqual([`GET ${VIEW_AS}`]); // the server's profile is taken; nothing goes
+      expect(m.getBindings().get("chart.footprint_toggle")).toBe("Ctrl+Alt+F");
+    },
+  );
+
+  it("a sign-in held for the view-as read is never taken for a user /me names after it", async () => {
+    const server = stubServer();
+    server.rows.push({ ...ACTIVE });
+    server.view = () => context("active");
+    signIn("u-2", "manager", server.keymap());
+    startSync();
+    await vi.advanceTimersByTimeAsync(0);
+    const me = m.getShellState().me;
+    // `/me` names an Owner before their own bootstrap completes
+    act(() =>
+      m.setShellState({ me: me && { ...me, role: "owner", user: { ...me.user, id: "u-1" } } }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect([m.getBindings().get("chart.footprint_toggle"), stored(`${DEVICE}:u-1`)]).toEqual([
+      "F",
+      null,
+    ]);
+  });
+
+  it("a view-as answer holds for its own session: once it ends, the next sign-in is read again", async () => {
+    const server = stubServer();
+    signIn("u-2", "manager");
+    startSync();
+    await vi.advanceTimersByTimeAsync(0); // 204: the keymap names the user
+    act(() => m.accessToken.clear()); // the session ends; the next one holds a view-as context
+    server.view = () => context("active");
+    signIn("u-2", "manager");
+    await vi.advanceTimersByTimeAsync(0);
+    rebind("chart.footprint_toggle", "Alt+Q");
+    expect([lines(server.calls), keymapKeys()]).toEqual([[`GET ${VIEW_AS}`, `GET ${VIEW_AS}`], []]);
   });
 });
 
