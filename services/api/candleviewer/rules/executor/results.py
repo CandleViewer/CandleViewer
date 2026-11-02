@@ -20,6 +20,7 @@ BlockedBy = Literal[
     "rules_disabled", "kill_switch", "order_entry", "scope", "live_gate", "environment",
     "permission", "cap", "order_budget", "native_sl", "rate_limited", "unavailable",
     "backpressure", "circuit_breaker", "confirmation_unavailable", "mode_changed",
+    "confirmation_expired", "confirmation_rejected",
 ]  # fmt: skip
 BLOCKED_BY: Final[tuple[BlockedBy, ...]] = get_args(BlockedBy)
 Outcome = Literal["ok", "failed", "blocked", "skipped", "unknown", "simulated"]
@@ -49,6 +50,8 @@ BLOCKED_DETAIL: Final[Mapping[str, str]] = MappingProxyType(
         "circuit_breaker": "Not done — the rule's circuit breaker tripped and stopped the rule.",
         "confirmation_unavailable": "Not done — confirming before acting is not available yet.",
         "mode_changed": "Not done — the rule was changed or disarmed before it acted.",
+        "confirmation_expired": "Not done — no one confirmed this fire before its time ran out.",
+        "confirmation_rejected": "Not done — a person rejected this fire when asked to confirm it.",
         ROW_UNREAD: "Not done — the rule's state was not confirmed, so nothing was sent.",
     }
 )

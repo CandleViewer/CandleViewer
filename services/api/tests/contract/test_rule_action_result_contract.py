@@ -92,7 +92,7 @@ def test_blocked_by_set_equals_the_metric_reason_labels() -> None:
     words = row.split("word for word (", 1)[1].split(")", 1)[0]
     assert tuple(re.findall(r"`(\w+)`", words)) == BLOCKED_BY
     (spec,) = (s for s in CATALOGUE if s.name == "rule_actions_blocked_total")
-    assert spec.labels == ("reason",) and spec.max_series == len(BLOCKED_BY) == 16
+    assert spec.labels == ("reason",) and spec.max_series == len(BLOCKED_BY) == 18
 
 
 def test_blocked_detail_is_one_plain_sentence_per_reason() -> None:

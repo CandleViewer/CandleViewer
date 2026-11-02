@@ -86,7 +86,7 @@ def test_the_executor_series_are_live_with_closed_labels() -> None:
     expected = {
         "rule_actions_total": (("type", "result"), 150),
         "rule_action_duration_seconds": (("type",), 25),
-        "rule_actions_blocked_total": (("reason",), 16),
+        "rule_actions_blocked_total": (("reason",), 18),
         "rule_dispatch_reread_failed_total": (("reason",), 2),
         "rule_records_shed_total": (("kind",), 2),
     }  # fmt: skip

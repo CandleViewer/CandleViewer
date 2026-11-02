@@ -4093,7 +4093,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "dashboard only",
         _L,
         "E35",
-        max_series=16,
+        max_series=18,
     ),
     # E35-T08 (#4999): `reason` is `rules/service.RereadFailure`, a closed set of two.
     _s(
