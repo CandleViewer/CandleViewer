@@ -126,6 +126,22 @@ roles and names.
 | meta       | text (`p`)           | —         | One plain line, never live, e.g. "All times UTC · as of 14:02:11".                              |
 | marker     | text                 | —         | A CMP-093 audited-read line, never live.                                                        |
 
+### Pagination (CMP-053, cursor mode: a nav of buttons)
+
+| Keys                         | Action                                                                                      |
+| ---------------------------- | ------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab              | Newest, Newer, Older: one stop each, a T2 one included.                                     |
+| Enter / Space                | Asks for that page, once per press: a held key's repeats ask for nothing more.              |
+| Enter / Space on a T2 button | Asks for nothing; the reason, already shown under the buttons or by the host, is said once. |
+
+| Element | Role             | Name                 | Notes                                                                                                               |
+| ------- | ---------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| pager   | navigation       | "Pagination"         | No `aria-current`, page number or total (keyset paging).                                                            |
+| button  | button (CMP-001) | Newest, Newer, Older | T2: `aria-disabled`, the lock ("Not available") leading the label, described by its reason alone; never `disabled`. |
+| reason  | text (`p`)       | —                    | A reason no host node carries, once, under the buttons; `blockedReason` replaces the direction reasons.             |
+
+Focus after a page loads is the host's: the new page's first row, or the pressed button after a failed read.
+
 ### AuditRow (CMP-173, compact: a list of links)
 
 | Keys            | Action                                                 |

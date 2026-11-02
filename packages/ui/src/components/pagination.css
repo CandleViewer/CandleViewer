@@ -1,0 +1,34 @@
+/*
+ * CMP-053 Pagination, cursor mode (E42-D04 D4, §12.1). Tokens only and static: the buttons are CMP-001's, with
+ * their own hover, focus and T2 looks. They sit in a row `space.inset.xs` apart and wrap at 200 % zoom; a reason
+ * the pager shows itself (2a) is a `type.ui.caption` line in `color.text.secondary` under the row, wrapping, never
+ * dimmed (§12.1: never `color.text.disabled`, never an opacity).
+ */
+.cv-pagination {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-stack-xs);
+  min-width: 0;
+}
+
+.cv-pagination__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-inset-xs);
+}
+
+.cv-pagination__reason {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+/* The reason takes CanvasText; the buttons keep CMP-001's forced rendering. */
+@media (forced-colors: active) {
+  .cv-pagination__reason {
+    color: CanvasText;
+  }
+}
