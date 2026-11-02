@@ -318,7 +318,7 @@
             "type": "prometheus",
             "uid": "cv-prometheus"
           },
-          "expr": "oms_unknown_orders{env=\"$env\"}",
+          "expr": "sum(oms_unknown_orders{env=\"$env\",reason!=\"already_terminal\"})",
           "legendFormat": "",
           "refId": "A"
         }
