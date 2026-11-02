@@ -75,11 +75,6 @@ def _refuse_null(value: object) -> object:
     return value
 
 
-def _take_null(value: object) -> object:
-    """A model no request body reaches takes `null` where a request model it extends refuses it."""
-    return value
-
-
 class Symbol(RootModel[str]):
     root: Annotated[
         str,
@@ -196,6 +191,7 @@ class Error(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
+    __null_refused = field_validator("field", "rule", "message", "symbol", "limit", "resolved", "remaining", mode="before")(_refuse_null)
 
 
 class Exchange(BaseModel):
@@ -203,6 +199,7 @@ class Exchange(BaseModel):
     ret_msg: str | None = None
     endpoint: str | None = None
     request_id: str | None = None
+    __null_refused = field_validator("ret_code", "ret_msg", "endpoint", "request_id", mode="before")(_refuse_null)
 
 
 class Problem(BaseModel):
@@ -289,6 +286,7 @@ class Problem(BaseModel):
             description="`no_data_recorded` from `GET /market/bars` only: when recording of the symbol's trade tape began, so the client can offer the first recorded window; null when nothing was ever recorded for the symbol. Optional, additive (C-6.3).\n"
         ),
     ] = None
+    __null_refused = field_validator("detail", "instance", "errors", "required_permissions", "retry_after_seconds", "idle_locked_at", "revoked_reason", "exchange", "action_class", "challenge_id", "challenge_expires_at", "action_summary", "step_up_reason", "failures_remaining", mode="before")(_refuse_null)
 
 
 class PageMeta(BaseModel):
@@ -344,6 +342,7 @@ class DataMeta(PageMeta):
             description="Requested-range gaps the local cache has no bars for yet (QA defect #1622 blocker 1 / E08-S06 \"Cache hit\" scenario — `GET /market/klines` is cache-only until a live `KlineFetcher` lands, so it reports holes here instead of silently pretending the exchange was consulted). On `/market/bars` and `/market/klines` a range of the window the server cannot serve from its store is listed here too, so a missing range is named, never silently absent (#5396): a closed bar the server did not store is listed, within the page's span, until the version lost is stored, and never where the page serves that very version, a tape-built row whose row checksum is the lost one's (another version served there, such as an earlier one, is no substitute, and a bar whose lost version is unknown stays listed). On `/market/klines` an exchange kline served at that open time fills the interval whatever the tape built there, so the bar is not listed; a range under a page served from the cold tier stays listed. Sorted, overlapping and touching ranges joined, at most 64 entries: past that the oldest ranges are joined into one, which may cover served bars (a range is never left out)."
         ),
     ] = None
+    __null_refused = field_validator("sources", "generated_at", "coverage_holes", mode="before")(_refuse_null)
 
 
 class KlineInterval(
@@ -385,6 +384,7 @@ class TokenBundle(BaseModel):
             description="Returned only to non-cookie clients that set `cookie_auth:false` on login."
         ),
     ] = None
+    __null_refused = field_validator("refresh_expires_in", mode="before")(_refuse_null)
 
 
 class MfaChallengeResponse(BaseModel):
@@ -443,6 +443,7 @@ class MfaMethod(BaseModel):
     active: StrictBool | None = None
     created_at: AwareDatetime | None = None
     last_used_at: AwareDatetime | None = None
+    __null_refused = field_validator("id", "kind", "active", "created_at", mode="before")(_refuse_null)
 
 
 class RefreshRequest(BaseModel):
@@ -539,6 +540,7 @@ class UserSession(BaseModel):
     last_seen_at: AwareDatetime | None = None
     expires_at: AwareDatetime | None = None
     current: StrictBool | None = None
+    __null_refused = field_validator("id", "created_at", "last_seen_at", "expires_at", "current", mode="before")(_refuse_null)
 
 
 class User(BaseModel):
@@ -569,6 +571,7 @@ class User(BaseModel):
     last_login_at: AwareDatetime | None = None
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
+    __null_refused = field_validator("mfa_enabled", "mfa_required", "created_at", "updated_at", mode="before")(_refuse_null)
 
 
 class UserWithInvite(User):
@@ -576,6 +579,7 @@ class UserWithInvite(User):
         str | None, Field(description="One-time link, valid 72 h. Shown once.")
     ] = None
     invite_expires_at: AwareDatetime | None = None
+    __null_refused = field_validator("invite_url", "invite_expires_at", mode="before")(_refuse_null)
 
 
 class UpdateUserRequest(BaseModel):
@@ -603,6 +607,7 @@ class Role(BaseModel):
     description: str | None = None
     permissions: list[str] | None = None
     user_count: JsonInt | None = None
+    __null_refused = field_validator("id", "name", "description", "permissions", "user_count", mode="before")(_refuse_null)
 
 
 class AccountAccessGrantInput(BaseModel):
@@ -625,6 +630,7 @@ class AccountAccessGrant(BaseModel):
     ] = None
     granted_at: AwareDatetime | None = None
     granted_by: UUID | None = None
+    __null_refused = field_validator("account_label", "environment", "granted_at", "granted_by", mode="before")(_refuse_null)
 
 
 class AccountHealth(BaseModel):
@@ -713,6 +719,7 @@ class WalletBalance(BaseModel):
         ),
     ] = None
     updated_at: AwareDatetime | None = None
+    __null_refused = field_validator("coin", "equity", "wallet_balance", "available_balance", "unrealised_pnl", "account_im_rate", "account_mm_rate", "updated_at", mode="before")(_refuse_null)
 
 
 class CreateExchangeAccountRequest(BaseModel):
@@ -818,6 +825,7 @@ class ApiKey(BaseModel):
             description="`warn` inside the warning window (default 14 days), `overdue` past `rotation_due_at`. Age alone never disables a key. `null` unless the key is `active`.\n"
         ),
     ] = None
+    __null_refused = field_validator("read_only", "created_at", mode="before")(_refuse_null)
 
 
 class CreateApiKeyRequest(BaseModel):
@@ -860,12 +868,14 @@ class KeyExchangeProblem(Problem):
     exchange: Annotated[
         Exchange | None, Field(description="Present when the failure originated at Bybit.")
     ] = None
+    __null_refused = field_validator("exchange", mode="before")(_refuse_null)
 
 
 class OrderExchangeProblem(Problem):
     exchange: Annotated[
         Exchange | None, Field(description="Present when the failure originated at Bybit.")
     ] = None
+    __null_refused = field_validator("exchange", mode="before")(_refuse_null)
 
 
 class RotateApiKeyRequest(BaseModel):
@@ -897,6 +907,7 @@ class Rest(BaseModel):
         ]
         | None
     ) = None
+    __null_refused = field_validator("ok", "latency_ms", mode="before")(_refuse_null)
 
 
 class Websocket(BaseModel):
@@ -917,6 +928,7 @@ class Websocket(BaseModel):
         ]
         | None
     ) = None
+    __null_refused = field_validator("ok", mode="before")(_refuse_null)
 
 
 class Offset(BaseModel):
@@ -1041,6 +1053,7 @@ class RiskCaps(BaseModel):
     max_orders_per_minute: Annotated[JsonInt | None, Field(ge=1, le=600)] = None
     max_consecutive_losses: Annotated[JsonInt | None, Field(ge=1, le=50)] = None
     lockout_minutes_after_breach: Annotated[JsonInt, Field(ge=0, le=1440)] = 60
+    __null_refused = field_validator("max_daily_loss_usd", "max_daily_loss_pct", "max_open_positions", "max_position_notional_usd", "max_orders_per_minute", "max_consecutive_losses", mode="before")(_refuse_null)
 
 
 class ProfileSymbolPattern(RootModel[str]):
@@ -1213,6 +1226,7 @@ class ProfileWarning(BaseModel):
         ),
     ] = None
     estimated: Annotated[StrictBool, Field(description="Derived from an estimate (C10).")] = False
+    __null_refused = field_validator("field", "symbol", mode="before")(_refuse_null)
 
 
 class AccountProfileInput(BaseModel):
@@ -1424,6 +1438,7 @@ class Instrument(BaseModel):
         str | None,
         Field(description="Human-readable explanation of `status`, for screen readers (#182)."),
     ] = None
+    __null_refused = field_validator("base_coin", "quote_coin", "settle_coin", "contract_type", "status", "price_scale", "min_order_qty", "max_order_qty", "min_notional_value", "max_leverage", "leverage_step", "funding_interval_minutes", "launch_time", "copy_trading", "revision", "updated_at", "delisted", mode="before")(_refuse_null)
 
 
 class RiskLimitTier(BaseModel):
@@ -1460,6 +1475,7 @@ class RiskLimitTier(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
+    __null_refused = field_validator("tier", "risk_limit_value", "initial_margin", "maintenance_margin", "max_leverage", mode="before")(_refuse_null)
 
 
 class InstrumentDetail(Instrument):
@@ -1470,6 +1486,7 @@ class InstrumentDetail(Instrument):
         AwareDatetime | None,
         Field(description="When this instrument's cache entry started missing refresh cadence."),
     ] = None
+    __null_refused = field_validator("risk_limit_tiers", "recorded", mode="before")(_refuse_null)
 
 
 class Ticker(BaseModel):
@@ -1604,6 +1621,7 @@ class Ticker(BaseModel):
     next_funding_time: AwareDatetime | None = None
     ts: AwareDatetime | None = None
     stale: StrictBool | None = None
+    __null_refused = field_validator("symbol", "last_price", "mark_price", "index_price", "bid1_price", "bid1_size", "ask1_price", "ask1_size", "price_change_pct_24h", "high_24h", "low_24h", "volume_24h", "turnover_24h", "open_interest", "open_interest_value", "funding_rate", "next_funding_time", "ts", "stale", mode="before")(_refuse_null)
 
 
 class TickersItem(Ticker):
@@ -1731,6 +1749,7 @@ class Bar(BaseModel):
     cvd: Decimal | None = None
     min_delta: Decimal | None = None
     max_delta: Decimal | None = None
+    __null_refused = field_validator("index", "generation", "close_time", "turnover", "trades", "confirm", mode="before")(_refuse_null)
 
 
 class BarsMeta(DataMeta):
@@ -1754,6 +1773,7 @@ class BarsMeta(DataMeta):
             description="True when a bar served was built below the running builder version, or has no recorded build version: a NULL `build_version` is unknown provenance and serves `stale_build: true` on every read path (24 §3.1). A later read may serve such a window rebuilt. Absent means `false`."
         ),
     ] = False
+    __null_refused = field_validator("spec_hash", "build_version", mode="before")(_refuse_null)
 
 
 class FootprintCell(BaseModel):
@@ -1798,6 +1818,7 @@ class FootprintCell(BaseModel):
         ),
     ] = None
     trades: JsonInt | None = None
+    __null_refused = field_validator("delta", "total_volume", "trades", mode="before")(_refuse_null)
 
 
 class FootprintImbalance(BaseModel):
@@ -1821,11 +1842,13 @@ class FootprintImbalance(BaseModel):
     stacked: StrictBool | None = None
     stack_size: JsonInt | None = None
     estimated: StrictBool = False
+    __null_refused = field_validator("price", "direction", "ratio", "stacked", "stack_size", mode="before")(_refuse_null)
 
 
 class UnfinishedAuction(BaseModel):
     high: StrictBool | None = None
     low: StrictBool | None = None
+    __null_refused = field_validator("high", "low", mode="before")(_refuse_null)
 
 
 class FootprintBar(Bar):
@@ -1856,6 +1879,7 @@ class FootprintBar(Bar):
     unfinished_auction: UnfinishedAuction | None = None
     cells: list[FootprintCell] | None = None
     imbalances: list[FootprintImbalance] | None = None
+    __null_refused = field_validator("poc_price", "value_area_high", "value_area_low", "unfinished_auction", "cells", "imbalances", mode="before")(_refuse_null)
 
 
 class FootprintResponse(BaseModel):
@@ -1882,6 +1906,7 @@ class FootprintResponse(BaseModel):
     price_grouping: JsonInt | None = None
     bars: list[FootprintBar]
     meta: DataMeta
+    __null_refused = field_validator("bar_type", "param", "tick_size", "price_grouping", mode="before")(_refuse_null)
 
 
 class ProfileRow(BaseModel):
@@ -1926,6 +1951,7 @@ class ProfileRow(BaseModel):
         ),
     ] = None
     tpo_count: JsonInt | None = None
+    __null_refused = field_validator("price", "volume", "buy_volume", "sell_volume", "delta", "tpo_count", mode="before")(_refuse_null)
 
 
 class ProfilePeriod(BaseModel):
@@ -1970,6 +1996,7 @@ class ProfilePeriod(BaseModel):
     rows: list[ProfileRow] | None = None
     hvn: list[Decimal] | None = None
     lvn: list[Decimal] | None = None
+    __null_refused = field_validator("period_start", "period_end", "total_volume", "poc_price", "value_area_high", "value_area_low", "naked_poc", "rows", "hvn", "lvn", mode="before")(_refuse_null)
 
 
 class ProfileResponse(BaseModel):
@@ -1985,6 +2012,7 @@ class ProfileResponse(BaseModel):
     split: Literal["composite", "session", "fixed"] | None = None
     profiles: list[ProfilePeriod] | None = None
     meta: DataMeta | None = None
+    __null_refused = field_validator("symbol", "kind", "split", "profiles", "meta", mode="before")(_refuse_null)
 
 
 class PublicTrade(BaseModel):
@@ -2025,6 +2053,7 @@ class PublicTrade(BaseModel):
         JsonInt | None, Field(description="Number of raw prints merged when clustering is on.")
     ] = None
     tick_direction: Literal["PlusTick", "ZeroPlusTick", "MinusTick", "ZeroMinusTick"] | None = None
+    __null_refused = field_validator("id", "ts", "price", "size", "side", "is_block_trade", "cluster_size", "tick_direction", mode="before")(_refuse_null)
 
 
 class TradesPageMeta(PageMeta):
@@ -2063,6 +2092,7 @@ class OrderbookSnapshot(BaseModel):
     bids: Annotated[list[Bid], Field(description="[price, size], descending.")]
     asks: Annotated[list[Ask], Field(description="[price, size], ascending.")]
     stale: StrictBool | None = None
+    __null_refused = field_validator("stale", mode="before")(_refuse_null)
 
 
 class Sample(RootModel[JsonInt]):
@@ -2096,6 +2126,7 @@ class MetricPoint(BaseModel):
             description="Per-point detail for event-like metrics (iceberg, stop_run, absorption)."
         ),
     ] = None
+    __null_refused = field_validator("meta", mode="before")(_refuse_null)
 
 
 class MetricSeries(BaseModel):
@@ -2131,6 +2162,7 @@ class MetricSeries(BaseModel):
         str | None, Field(examples=["base_volume", "index", "ratio", "confidence", "usd", "price"])
     ] = None
     points: list[MetricPoint]
+    __null_refused = field_validator("estimated", "params", "unit", mode="before")(_refuse_null)
 
 
 class MetricsResponse(BaseModel):
@@ -2148,6 +2180,7 @@ class MetricsResponse(BaseModel):
     param: str | None = None
     series: list[MetricSeries] | None = None
     meta: DataMeta | None = None
+    __null_refused = field_validator("symbol", "bar_type", "param", "series", "meta", mode="before")(_refuse_null)
 
 
 class Liquidation(BaseModel):
@@ -2191,6 +2224,7 @@ class Liquidation(BaseModel):
         ),
     ] = None
     cluster_size: Annotated[JsonInt | None, Field(ge=1)] = None
+    __null_refused = field_validator("ts", "symbol", "side", "price", "size", "notional_usd", "cluster_size", mode="before")(_refuse_null)
 
 
 class Coverage(BaseModel):
@@ -2244,6 +2278,7 @@ class Interval(BaseModel):
     to: AwareDatetime | None = None
     tier: Literal["questdb", "parquet"] | None = None
     rows: JsonInt | None = None
+    __null_refused = field_validator("from_", "to", "tier", "rows", mode="before")(_refuse_null)
 
 
 class Gap1(BaseModel):
@@ -2264,6 +2299,7 @@ class Gap1(BaseModel):
             description="`backpressure_drop`: rows dropped under write backpressure, the level-3 write gate included; `seq_jump`: an order-book update-id jump. **Open-ended for readers:** a reason a client does not know is still a gap (C-6.3)."
         ),
     ] = None
+    __null_refused = field_validator("from_", "to", "reason", mode="before")(_refuse_null)
 
 
 class Stream(BaseModel):
@@ -2282,6 +2318,7 @@ class Stream(BaseModel):
     ) = None
     intervals: list[Interval] | None = None
     gaps: list[Gap1] | None = None
+    __null_refused = field_validator("stream", "intervals", "gaps", mode="before")(_refuse_null)
 
 
 class DataCoverage(BaseModel):
@@ -2295,6 +2332,7 @@ class DataCoverage(BaseModel):
     ] = None
     streams: list[Stream] | None = None
     generated_at: AwareDatetime | None = None
+    __null_refused = field_validator("symbol", "streams", "generated_at", mode="before")(_refuse_null)
 
 
 class RecordedSymbol(BaseModel):
@@ -2340,6 +2378,7 @@ class RecordedSymbol(BaseModel):
             description="Why the server refuses the next start (`symbol_cap`, `disk_pressure`; such a symbol has no row, so only status carries it) or stop (`chart_open`, `position_open`) of a symbol, null or omitted when none; `position_open` outranks `chart_open` when both hold, and a role-restricted view never carries `position_open` (R-I2). **Open-ended for readers:** clients must tolerate values they do not know, so adding one is an additive change (C-6.3)."
         ),
     ] = None
+    __null_refused = field_validator("pinned", "streams", "depth", "disk_bytes", "rows_last_hour", "lag_ms", "lingering", mode="before")(_refuse_null)
 
 
 class Estimate(BaseModel):
@@ -2348,6 +2387,7 @@ class Estimate(BaseModel):
         str | None, Field(examples=["~0.5-0.75 GB/day/symbol compressed at depth 200"])
     ] = None
     warning: str | None = None
+    __null_refused = field_validator("daily_bytes_estimate", "basis", mode="before")(_refuse_null)
 
 
 class RecordedSymbolWithEstimate(RecordedSymbol):
@@ -2357,6 +2397,7 @@ class RecordedSymbolWithEstimate(RecordedSymbol):
             description="Planning estimate, replaced by measured rates once the recorder has run for an hour."
         ),
     ] = None
+    __null_refused = field_validator("estimate", mode="before")(_refuse_null)
 
 
 class AddRecordedSymbolRequest(BaseModel):
@@ -2424,6 +2465,7 @@ class Connection(BaseModel):
     connected_since: AwareDatetime | None = None
     reconnects_last_hour: JsonInt | None = None
     last_ping_ms: JsonInt | None = None
+    __null_refused = field_validator("endpoint", "state", "subscribed_topics", "reconnects_last_hour", "last_ping_ms", mode="before")(_refuse_null)
 
 
 class Symbol1(BaseModel):
@@ -2451,6 +2493,7 @@ class Symbol1(BaseModel):
             description="Why the server refuses the next start (`symbol_cap`, `disk_pressure`; such a symbol has no row, so only status carries it) or stop (`chart_open`, `position_open`) of a symbol, null or omitted when none; `position_open` outranks `chart_open` when both hold, and a role-restricted view never carries `position_open` (R-I2). **Open-ended for readers:** clients must tolerate values they do not know, so adding one is an additive change (C-6.3)."
         ),
     ] = None
+    __null_refused = field_validator("symbol", "state", "lag_ms", "rows_last_hour", "dropped_messages", "resyncs_last_hour", "last_event_at", "lingering", mode="before")(_refuse_null)
 
 
 class RecorderPolicySettings(BaseModel):
@@ -2467,6 +2510,7 @@ class Tier(BaseModel):
     tier: Literal["questdb", "parquet", "postgres"] | None = None
     used_bytes: JsonInt | None = None
     retention_days: JsonInt | None = None
+    __null_refused = field_validator("tier", "used_bytes", mode="before")(_refuse_null)
 
 
 class Symbol2(BaseModel):
@@ -2481,6 +2525,7 @@ class Symbol2(BaseModel):
     used_bytes: JsonInt | None = None
     daily_growth_bytes: JsonInt | None = None
     pinned: StrictBool | None = None
+    __null_refused = field_validator("symbol", "used_bytes", "daily_growth_bytes", "pinned", mode="before")(_refuse_null)
 
 
 class StorageUsage(BaseModel):
@@ -2502,6 +2547,7 @@ class StorageUsage(BaseModel):
         ),
     ] = None
     accelerate_retention: StrictBool | None = None
+    __null_refused = field_validator("disk_total_bytes", "disk_used_bytes", "disk_free_bytes", "daily_growth_bytes", "tiers", "symbols", "generated_at", "cap_bytes", "level", "write_gate", "accelerate_retention", mode="before")(_refuse_null)
 
 
 class RetentionPolicyInput(BaseModel):
@@ -2524,6 +2570,7 @@ class RetentionPolicyInput(BaseModel):
 class RetentionPolicy(RetentionPolicyInput):
     id: UUID | None = None
     updated_at: AwareDatetime | None = None
+    __null_refused = field_validator("id", "updated_at", mode="before")(_refuse_null)
 
 
 class RecordingSession(BaseModel):
@@ -2561,6 +2608,7 @@ class RecordingSession(BaseModel):
     rows: JsonInt | None = None
     bytes: JsonInt | None = None
     gap_count: JsonInt | None = None
+    __null_refused = field_validator("id", "recorded_symbol_id", "symbol", "state", "started_at", "streams", "depth", "rows", "bytes", "gap_count", mode="before")(_refuse_null)
 
 
 class CreateReplaySessionRequest(BaseModel):
@@ -2624,6 +2672,7 @@ class ReplaySession(BaseModel):
     created_at: AwareDatetime | None = None
     progress_pct: Annotated[StrictFloat | None, Field(ge=0.0, le=100.0)] = None
     error: str | None = None
+    __null_refused = field_validator("id", "state", "symbols", "from_", "to", "cursor_ts", "speed", "streams", "depth", "created_by", "created_at", "progress_pct", mode="before")(_refuse_null)
 
 
 class ReplayControlRequest(BaseModel):
@@ -3072,6 +3121,7 @@ class Order(BaseModel):
     ] = None
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
+    __null_refused = field_validator("order_link_id", "intent", "provenance", "filled_qty", "remaining_qty", "time_in_force", "reduce_only", "close_on_trigger", "position_idx", "tpsl_mode", "algo", "environment", "created_at", "updated_at", mode="before")(_refuse_null)
 
 
 class OrderEvent(BaseModel):
@@ -3104,6 +3154,7 @@ class OrderEvent(BaseModel):
         ),
     ] = None
     event_ts: AwareDatetime | None = None
+    __null_refused = field_validator("id", "kind", "event_ts", mode="before")(_refuse_null)
 
 
 class TradeGroupDefinitionMember(BaseModel):
@@ -3367,6 +3418,7 @@ class ResolvedLegParams(BaseModel):
             description='Human-readable derivation, shown in the ticket\'s "why this size" tooltip.'
         ),
     ] = None
+    __null_refused = field_validator("qty", "leverage", "stop_loss_price", "notional_usd", "risk_usd", "estimated_fee_usd", "sizing_explanation", mode="before")(_refuse_null)
 
 
 class LegError(BaseModel):
@@ -3382,6 +3434,7 @@ class LegError(BaseModel):
     ] = None
     exchange_ret_code: JsonInt | None = None
     retryable: StrictBool | None = None
+    __null_refused = field_validator("code", "message", "retryable", mode="before")(_refuse_null)
 
 
 class Totals(BaseModel):
@@ -3405,6 +3458,7 @@ class Totals(BaseModel):
         ),
     ] = None
     realised_pnl: Decimal | None = None
+    __null_refused = field_validator("requested_legs", "submitted_legs", "rejected_legs", "filled_qty", "target_qty", mode="before")(_refuse_null)
 
 
 class Reason(RootModel[str]):
@@ -3474,12 +3528,14 @@ class Result(BaseModel):
     ok: StrictBool | None = None
     affected: JsonInt | None = None
     error: LegError | None = None
+    __null_refused = field_validator("exchange_account_id", "ok", "affected", mode="before")(_refuse_null)
 
 
 class BulkAccountResult(BaseModel):
     results: list[Result] | None = None
     requested: JsonInt | None = None
     succeeded: JsonInt | None = None
+    __null_refused = field_validator("results", "requested", "succeeded", mode="before")(_refuse_null)
 
 
 class Result1(BaseModel):
@@ -3488,6 +3544,7 @@ class Result1(BaseModel):
     ok: StrictBool | None = None
     affected: JsonInt | None = None
     error: LegError | None = None
+    __null_refused = field_validator("leg_id", "exchange_account_id", "ok", "affected", mode="before")(_refuse_null)
 
 
 class BulkLegResult(BaseModel):
@@ -3495,6 +3552,7 @@ class BulkLegResult(BaseModel):
     results: list[Result1] | None = None
     requested: JsonInt | None = None
     succeeded: JsonInt | None = None
+    __null_refused = field_validator("trade_group_id", "results", "requested", "succeeded", mode="before")(_refuse_null)
 
 
 class KillSwitch(BaseModel):
@@ -3504,6 +3562,7 @@ class KillSwitch(BaseModel):
     engaged_at: AwareDatetime | None = None
     engaged_by: UUID | None = None
     reason: str | None = None
+    __null_refused = field_validator("exchange_account_ids", mode="before")(_refuse_null)
 
 
 class SetKillSwitchRequest(BaseModel):
@@ -3528,6 +3587,7 @@ class Failure(BaseModel):
     ok: StrictBool | None = None
     affected: JsonInt | None = None
     error: LegError | None = None
+    __null_refused = field_validator("exchange_account_id", "ok", "affected", mode="before")(_refuse_null)
 
 
 class Actions(BaseModel):
@@ -3540,11 +3600,13 @@ class Actions(BaseModel):
             description="The accounts whose cancel or flatten failed at the exchange, shaped as `BulkAccountResult` rows; `error` is CandleViewer's code, never the exchange's text (SR-E29-09).\n"
         ),
     ] = None
+    __null_refused = field_validator("orders_cancelled", "positions_flattened", "rules_disarmed", "failures", mode="before")(_refuse_null)
 
 
 class KillSwitchResult(BaseModel):
     state: KillSwitch | None = None
     actions: Actions | None = None
+    __null_refused = field_validator("state", "actions", mode="before")(_refuse_null)
 
 
 class Position(BaseModel):
@@ -3645,6 +3707,7 @@ class Position(BaseModel):
     trade_group_id: UUID | None = None
     r_multiple: Decimal | None = None
     updated_at: AwareDatetime | None = None
+    __null_refused = field_validator("position_idx", "avg_price", "mark_price", "position_value", "leverage", "margin_mode", "unrealised_pnl", "realised_pnl_session", "trailing_stop", "tpsl_mode", "native_stop_present", "updated_at", mode="before")(_refuse_null)
 
 
 class Account(BaseModel):
@@ -3666,6 +3729,7 @@ class Account(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
+    __null_refused = field_validator("exchange_account_id", "size", "side", "unrealised_pnl", mode="before")(_refuse_null)
 
 
 class AggregatePosition(BaseModel):
@@ -3710,6 +3774,7 @@ class AggregatePosition(BaseModel):
         ),
     ] = None
     accounts: list[Account] | None = None
+    __null_refused = field_validator("symbol", "net_size", "gross_size", "weighted_avg_price", "unrealised_pnl", "accounts", mode="before")(_refuse_null)
 
 
 class SetTpSlRequest(BaseModel):
@@ -3758,6 +3823,7 @@ class TpSlResult(BaseModel):
     activation_price: Decimal | None = None
     tpsl_mode: Literal["Full", "Partial"] | None = None
     applied_at: AwareDatetime | None = None
+    __null_refused = field_validator("position_id", "tpsl_mode", "applied_at", mode="before")(_refuse_null)
 
 
 class ClosePositionRequest(BaseModel):
@@ -3888,6 +3954,7 @@ class Execution(BaseModel):
         ),
     ] = None
     ts: AwareDatetime | None = None
+    __null_refused = field_validator("id", "exec_id", "order_id", "exchange_account_id", "symbol", "side", "exec_qty", "exec_price", "exec_value", "fee", "fee_rate", "fee_coin", "is_maker", "exec_type", "exec_pnl", "ts", mode="before")(_refuse_null)
 
 
 class ClosedPnl(BaseModel):
@@ -3960,6 +4027,7 @@ class ClosedPnl(BaseModel):
     ] = None
     opened_at: AwareDatetime | None = None
     closed_at: AwareDatetime | None = None
+    __null_refused = field_validator("id", "exchange_account_id", "symbol", "side", "qty", "avg_entry_price", "avg_exit_price", "closed_pnl", "cum_entry_value", "cum_exit_value", "leverage", "opened_at", "closed_at", mode="before")(_refuse_null)
 
 
 class RuleOperand1(BaseModel):
@@ -4092,6 +4160,7 @@ class RuleBindings(BaseModel):
     exchange_account_ids: list[UUID] | None = None
     symbols: list[Symbol] | None = None
     trade_group_ids: list[UUID] | None = None
+    __null_refused = field_validator("exchange_account_ids", "symbols", "trade_group_ids", mode="before")(_refuse_null)
 
 
 class Tag(RootModel[str]):
@@ -4120,6 +4189,7 @@ class Rule(BaseModel):
     created_by: UUID | None = None
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
+    __null_refused = field_validator("editor", "tags", "version", "bindings", "fire_count_24h", "created_by", "created_at", "updated_at", mode="before")(_refuse_null)
 
 
 class LastSimulation(BaseModel):
@@ -4138,6 +4208,7 @@ class RuleVersion(BaseModel):
     created_by: UUID | None = None
     created_at: AwareDatetime | None = None
     note: str | None = None
+    __null_refused = field_validator("id", "rule_id", "version", "ir_hash", "is_active", "created_by", "created_at", mode="before")(_refuse_null)
 
 
 class RuleValidationIssue(BaseModel):
@@ -4173,6 +4244,7 @@ class RuleValidationIssue(BaseModel):
     class_: Annotated[
         Literal["syntax", "semantics", "safety", "performance"] | None, Field(alias="class")
     ] = None
+    __null_refused = field_validator("path", "code", "message", "severity", "class_", mode="before")(_refuse_null)
 
 
 class RuleValidationResult(BaseModel):
@@ -4186,6 +4258,7 @@ class RuleValidationResult(BaseModel):
         StrictBool | None,
         Field(description="True when any error or open safety warning refuses mode=armed."),
     ] = None
+    __null_refused = field_validator("referenced_variables", "referenced_actions", "estimated_evaluations_per_minute", "blocks_arming", mode="before")(_refuse_null)
 
 
 class SimulateRuleRequest(BaseModel):
@@ -4224,6 +4297,7 @@ class Action(BaseModel):
         ),
     ] = None
     exchange_account_id: UUID | None = None
+    __null_refused = field_validator("ts", "action", "params", "would_have_succeeded", "symbol", mode="before")(_refuse_null)
 
 
 class RuleSimulationResult(BaseModel):
@@ -4239,6 +4313,7 @@ class RuleSimulationResult(BaseModel):
     hypothetical_pnl_delta_usd: Decimal | None = None
     errors: list[str] | None = None
     duration_ms: JsonInt | None = None
+    __null_refused = field_validator("run_id", "rule_id", "version_id", "from_", "to", "evaluations", "fires", "suppressed_by_guard", "actions", "errors", "duration_ms", mode="before")(_refuse_null)
 
 
 class RuleRun(BaseModel):
@@ -4253,6 +4328,7 @@ class RuleRun(BaseModel):
     fires: JsonInt | None = None
     errors: JsonInt | None = None
     error_message: str | None = None
+    __null_refused = field_validator("id", "rule_id", "rule_version_id", "kind", "status", "started_at", "evaluations", "fires", "errors", mode="before")(_refuse_null)
 
 
 class RuleEvent(BaseModel):
@@ -4271,6 +4347,7 @@ class RuleEvent(BaseModel):
         | None
     ) = None
     payload: dict[str, Any] | None = None
+    __null_refused = field_validator("id", "ts", "kind", "payload", mode="before")(_refuse_null)
 
 
 class AlertDelivery(BaseModel):
@@ -4288,6 +4365,7 @@ class AlertDelivery(BaseModel):
     fired_at: AwareDatetime | None = None
     acked_at: AwareDatetime | None = None
     error: str | None = None
+    __null_refused = field_validator("id", "alert_id", "channel", "status", "severity", "title", "message", "fired_at", mode="before")(_refuse_null)
 
 
 class JournalTrade(BaseModel):
@@ -4369,6 +4447,7 @@ class JournalTrade(BaseModel):
     tags: list[str] | None = None
     setup: str | None = None
     notes_count: JsonInt | None = None
+    __null_refused = field_validator("id", "exchange_account_id", "symbol", "side", "opened_at", "qty", "avg_entry_price", "gross_pnl", "fees", "realised_pnl", "max_favourable_excursion", "max_adverse_excursion", "duration_seconds", "outcome", "tags", "notes_count", mode="before")(_refuse_null)
 
 
 class Mistake(RootModel[str]):
@@ -4399,6 +4478,7 @@ class Note(NoteInput):
     author_user_id: UUID | None = None
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
+    __null_refused = field_validator("id", "author_user_id", "created_at", "updated_at", mode="before")(_refuse_null)
 
 
 class Totals1(BaseModel):
@@ -4496,6 +4576,7 @@ class Totals1(BaseModel):
     ] = None
     longest_win_streak: JsonInt | None = None
     longest_loss_streak: JsonInt | None = None
+    __null_refused = field_validator("trades", "wins", "losses", "breakeven", "win_rate", "gross_profit", "gross_loss", "net_pnl", "fees", "profit_factor", "expectancy_r", "avg_win_r", "avg_loss_r", "max_drawdown", "max_drawdown_pct", "longest_win_streak", "longest_loss_streak", mode="before")(_refuse_null)
 
 
 class EquityCurveItem(BaseModel):
@@ -4516,6 +4597,7 @@ class EquityCurveItem(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
+    __null_refused = field_validator("t", "equity", "pnl", mode="before")(_refuse_null)
 
 
 class Row(BaseModel):
@@ -4545,11 +4627,13 @@ class Row(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
+    __null_refused = field_validator("key", "trades", "win_rate", "net_pnl", "expectancy_r", mode="before")(_refuse_null)
 
 
 class Breakdown(BaseModel):
     group_by: str | None = None
     rows: list[Row] | None = None
+    __null_refused = field_validator("group_by", "rows", mode="before")(_refuse_null)
 
 
 class JournalAnalytics(BaseModel):
@@ -4557,6 +4641,7 @@ class JournalAnalytics(BaseModel):
     equity_curve: list[EquityCurveItem] | None = None
     breakdowns: list[Breakdown] | None = None
     generated_at: AwareDatetime | None = None
+    __null_refused = field_validator("totals", "equity_curve", "breakdowns", "generated_at", mode="before")(_refuse_null)
 
 
 class WorkspaceInput(BaseModel):
@@ -4885,6 +4970,7 @@ class ChartTemplate(ChartTemplateInput):
     owner_user_id: UUID | None = None
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
+    __null_refused = field_validator("id", "owner_user_id", "created_at", "updated_at", mode="before")(_refuse_null)
 
 
 class DrawingPoint(BaseModel):
@@ -5207,6 +5293,7 @@ class Appearance(BaseModel):
     font_scale: Annotated[StrictFloat | None, Field(ge=0.75, le=2.0)] = None
     reduce_motion: StrictBool | None = None
     high_contrast: StrictBool | None = None
+    __null_refused = field_validator("theme", "density", "font_scale", "reduce_motion", "high_contrast", mode="before")(_refuse_null)
 
 
 class Accessibility(BaseModel):
@@ -5218,6 +5305,7 @@ class Accessibility(BaseModel):
     announce_prices: Literal["off", "significant", "always"] | None = None
     verbosity: Literal["low", "normal", "high"] | None = None
     keyboard_only: StrictBool | None = None
+    __null_refused = field_validator("reduced_motion", "increased_contrast", "disable_canvas_animation", "always_show_tables", "thick_focus_ring", "announce_prices", "verbosity", "keyboard_only", mode="before")(_refuse_null)
 
 
 class Chart(BaseModel):
@@ -5228,6 +5316,7 @@ class Chart(BaseModel):
     crosshair_sync: StrictBool | None = None
     bar_close_countdown: StrictBool | None = None
     price_scale_mode: Literal["linear", "logarithmic", "percent"] | None = None
+    __null_refused = field_validator("default_bar_type", "default_param", "crosshair_sync", "bar_close_countdown", "price_scale_mode", mode="before")(_refuse_null)
 
 
 class Orderflow(BaseModel):
@@ -5238,6 +5327,7 @@ class Orderflow(BaseModel):
     value_area_pct: StrictFloat | None = None
     big_trade_threshold_mode: Literal["absolute", "relative", "zscore"] | None = None
     big_trade_k: StrictFloat | None = None
+    __null_refused = field_validator("heatmap_bid_colour", "heatmap_ask_colour", "imbalance_ratio", "min_stack", "value_area_pct", "big_trade_threshold_mode", "big_trade_k", mode="before")(_refuse_null)
 
 
 class Trading(BaseModel):
@@ -5252,6 +5342,7 @@ class Trading(BaseModel):
         ),
     ] = None
     default_qty_presets: list[Decimal] | None = None
+    __null_refused = field_validator("one_click_armed", "arm_timeout_seconds", "confirm_market_orders", "confirm_flatten", "default_environment", "default_qty_presets", mode="before")(_refuse_null)
 
 
 class Notifications(BaseModel):
@@ -5264,17 +5355,20 @@ class Notifications(BaseModel):
         ),
     ] = None
     quiet_hours: dict[str, Any] | None = None
+    __null_refused = field_validator("desktop_enabled", "email_enabled", mode="before")(_refuse_null)
 
 
 class Data(BaseModel):
     default_depth: JsonInt | None = None
     stale_badge_after_ms: JsonInt | None = None
     max_history_bars: JsonInt | None = None
+    __null_refused = field_validator("default_depth", "stale_badge_after_ms", "max_history_bars", mode="before")(_refuse_null)
 
 
 class FieldMeta(BaseModel):
     overridden: list[str] | None = None
     updated_at: AwareDatetime | None = None
+    __null_refused = field_validator("overridden", "updated_at", mode="before")(_refuse_null)
 
 
 class Settings(BaseModel):
@@ -5289,6 +5383,7 @@ class Settings(BaseModel):
     notifications: Notifications | None = None
     data: Data | None = None
     field_meta: Annotated[FieldMeta | None, Field(alias="_meta")] = None
+    __null_refused = field_validator("appearance", "accessibility", "chart", "orderflow", "trading", "notifications", "data", "field_meta", mode="before")(_refuse_null)
 
 
 class SettingsPatch(BaseModel):
@@ -5367,6 +5462,7 @@ class HotkeyProfile(HotkeyProfileInput):
     owner_user_id: UUID | None = None
     is_active: StrictBool | None = None
     updated_at: AwareDatetime | None = None
+    __null_refused = field_validator("id", "owner_user_id", "is_active", "updated_at", mode="before")(_refuse_null)
 
 
 class Detail(BaseModel):
@@ -5382,6 +5478,7 @@ class Detail(BaseModel):
             max_length=2,
         ),
     ] = None
+    __null_refused = field_validator("elided", mode="before")(_refuse_null)
 
 
 class AuditEntry(BaseModel):
@@ -5452,6 +5549,7 @@ class Component(BaseModel):
     latency_unit: Literal["ms"] | None = None
     detail: str | None = None
     last_good_at: AwareDatetime | None = None
+    __null_refused = field_validator("name", "state", "latency_ms", "latency_unit", "detail", mode="before")(_refuse_null)
 
 
 class HealthReport(BaseModel):
@@ -5474,11 +5572,13 @@ class HealthReport(BaseModel):
     ] = None
     components: list[Component] | None = None
     alerts_active: JsonInt | None = None
+    __null_refused = field_validator("overall", "version", "git_sha", "environment", "uptime_seconds", "server_time", "components", "alerts_active", mode="before")(_refuse_null)
 
 
 class Override(BaseModel):
     user_id: UUID | None = None
     value: Any | None = None
+    __null_refused = field_validator("user_id", mode="before")(_refuse_null)
 
 
 class FeatureFlag(BaseModel):
@@ -5514,6 +5614,7 @@ class FeatureFlag(BaseModel):
             description="`true` when this flag's stored row is unreadable (malformed, or a kind mismatch): the flag alone resolves to its fail-closed value, and a `PUT` with a valid value repairs it (E42-T03). Sent only as `true`.\n"
         ),
     ] = None
+    __null_refused = field_validator("key", "kind", "description", "overrides", "updated_at", "unreadable", mode="before")(_refuse_null)
 
 
 class FeatureFlagResolution(RootModel[Literal["stored", "fail_closed"]]):
@@ -5600,6 +5701,7 @@ class Backup(BaseModel):
             description="When the artefact was deleted (`deleteBackup`, E42-T05); the catalogue row is kept. `null` while the artefact exists.\n"
         ),
     ] = None
+    __null_refused = field_validator("id", "kind", "status", "started_at", "location", "encrypted", mode="before")(_refuse_null)
 
 
 class AuditExportResult(BaseModel):
@@ -5740,6 +5842,7 @@ class Account1(BaseModel):
         ),
     ] = None
     mode: Literal["read", "trade"]
+    __null_refused = field_validator("label", "environment", mode="before")(_refuse_null)
 
 
 class Session(BaseModel):
@@ -5752,6 +5855,7 @@ class Session(BaseModel):
     ] = None
     elevated_until: AwareDatetime | None = None
     one_click_armed_until: AwareDatetime | None = None
+    __null_refused = field_validator("session_id", "environment", mode="before")(_refuse_null)
 
 
 class Me(BaseModel):
@@ -5768,6 +5872,7 @@ class Me(BaseModel):
     ]
     session: Session | None = None
     onboarding_complete: StrictBool | None = None
+    __null_refused = field_validator("session", "onboarding_complete", mode="before")(_refuse_null)
 
 
 class Account2(BaseModel):
@@ -5793,11 +5898,13 @@ class Account2(BaseModel):
     ] = None
     open_positions: JsonInt | None = None
     lockout_until: AwareDatetime | None = None
+    __null_refused = field_validator("exchange_account_id", "orders_per_minute_limit", "orders_per_minute_used", "rate_budget_pct_used", "daily_loss_usd", "daily_loss_cap_usd", "open_positions", mode="before")(_refuse_null)
 
 
 class EffectiveLimits(BaseModel):
     risk_caps: RiskCaps | None = None
     accounts: list[Account2] | None = None
+    __null_refused = field_validator("risk_caps", "accounts", mode="before")(_refuse_null)
 
 
 class Item(BaseModel):
@@ -6035,6 +6142,7 @@ class ScannerCriterion(BaseModel):
             description="Present for a `class_set` criterion only: its classes, in display order."
         ),
     ] = None
+    __null_refused = field_validator("classes", mode="before")(_refuse_null)
 
 
 class IndicatorOutput(BaseModel):
@@ -6046,6 +6154,7 @@ class Reconciliation(BaseModel):
     last_checked_at: AwareDatetime | None = None
     verdict: Literal["in_sync", "drifted", "repaired", "unresolvable"] | None = None
     detail: str | None = None
+    __null_refused = field_validator("verdict", mode="before")(_refuse_null)
 
 
 class ExchangeRecordFields(BaseModel):
@@ -6180,6 +6289,7 @@ class ExchangeRecordFields(BaseModel):
         ),
     ] = None
     is_maker: StrictBool | None = None
+    __null_refused = field_validator("order_link_id", "symbol", "side", "order_type", "qty", "time_in_force", "reduce_only", "close_on_trigger", "position_idx", "tpsl_mode", "tp_size", "sl_size", "tp_trigger_by", "sl_trigger_by", "category", "leverage", "filled_qty", "remaining_qty", "exec_id", "exec_qty", "exec_price", "fee", "is_maker", mode="before")(_refuse_null)
 
 
 class TakeProfit(BaseModel):
@@ -6231,6 +6341,7 @@ class Rejection(BaseModel):
         ),
     ] = None
     message: str | None = None
+    __null_refused = field_validator("code", "message", mode="before")(_refuse_null)
 
 
 class Leg1(BaseModel):
@@ -6275,6 +6386,7 @@ class Leg1(BaseModel):
         ),
     ] = None
     rejection: Rejection | None = None
+    __null_refused = field_validator("account_label", "warnings", "resolved", "take_profits", "estimated_margin_usd", "estimated_risk_usd", mode="before")(_refuse_null)
 
 
 class Totals2(BaseModel):
@@ -6312,6 +6424,7 @@ class Totals2(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
+    __null_refused = field_validator("accounts_targeted", "accounts_submittable", "total_qty", "total_notional_usd", "total_risk_usd", "total_estimated_fee_usd", mode="before")(_refuse_null)
 
 
 class TradeGroupPreview(BaseModel):
@@ -6359,12 +6472,14 @@ class Totals3(BaseModel):
             description="MUST be zero in steady state; any non-zero value is a violation of the native-stop safety invariant and is surfaced as a critical banner.\n"
         ),
     ] = None
+    __null_refused = field_validator("equity_usd", "unrealised_pnl_usd", "realised_pnl_today_usd", "open_positions", "gross_notional_usd", "positions_without_native_stop", mode="before")(_refuse_null)
 
 
 class Lockout(BaseModel):
     reason: Literal["daily_loss", "consecutive_losses", "max_positions", "manual"] | None = None
     since: AwareDatetime | None = None
     until: AwareDatetime | None = None
+    __null_refused = field_validator("reason", "since", mode="before")(_refuse_null)
 
 
 class Account3(BaseModel):
@@ -6406,6 +6521,7 @@ class Account3(BaseModel):
     open_positions: JsonInt | None = None
     frozen: StrictBool | None = None
     lockout: Lockout | None = None
+    __null_refused = field_validator("exchange_account_id", "label", "equity_usd", "unrealised_pnl_usd", "realised_pnl_today_usd", "daily_loss_cap_usd", "cap_utilisation_pct", "open_positions", "frozen", mode="before")(_refuse_null)
 
 
 class RiskSummary(BaseModel):
@@ -6419,6 +6535,7 @@ class RiskSummary(BaseModel):
     kill_switch: KillSwitch | None = None
     totals: Totals3 | None = None
     accounts: list[Account3]
+    __null_refused = field_validator("environment", "kill_switch", "totals", mode="before")(_refuse_null)
 
 
 class Iceberg1(BaseModel):
@@ -6479,6 +6596,7 @@ class DetectorMethodology(BaseModel):
     assumption: Annotated[str, Field(description="The inference being made, stated plainly.")]
     false_positive_modes: list[str]
     confidence_basis: str | None = None
+    __null_refused = field_validator("display_name", mode="before")(_refuse_null)
 
 
 class Signal(BaseModel):
@@ -6487,6 +6605,7 @@ class Signal(BaseModel):
     weight: StrictFloat | None = None
     contribution: StrictFloat | None = None
     direction: Literal["supports", "opposes", "neutral"] | None = None
+    __null_refused = field_validator("name", "value", "weight", "contribution", "direction", mode="before")(_refuse_null)
 
 
 class RegimeExplanation(BaseModel):
@@ -6502,6 +6621,7 @@ class RegimeExplanation(BaseModel):
     confidence: Annotated[StrictFloat | None, Field(ge=0.0, le=1.0)] = None
     as_of: AwareDatetime | None = None
     signals: list[Signal]
+    __null_refused = field_validator("confidence", "as_of", mode="before")(_refuse_null)
 
 
 class Signal1(BaseModel):
@@ -6524,6 +6644,7 @@ class Signal1(BaseModel):
     unavailable_reason: str | None = None
     missing_dependency: dict[str, Any] | None = None
     recorder_action: dict[str, Any] | None = None
+    __null_refused = field_validator("display_name", "enum_values", "params_schema", "description", "warmup_bars", "deterministic", "confidence", "dependencies", "when_unavailable", "unavailable_reason", "missing_dependency", "recorder_action", mode="before")(_refuse_null)
 
 
 class Operator(BaseModel):
@@ -6531,6 +6652,7 @@ class Operator(BaseModel):
     arity: Annotated[JsonInt | None, Field(ge=1, le=3)] = None
     operand_types: list[str] | None = None
     result_type: str | None = None
+    __null_refused = field_validator("id", "arity", "operand_types", "result_type", mode="before")(_refuse_null)
 
 
 class Action1(BaseModel):
@@ -6552,17 +6674,20 @@ class Action1(BaseModel):
             description="Always false: no rule may loosen a stop, and an action that could is refused for every role (`stop_loosening`, 24-internal-schemas.md section 8.8 rule 5). The field stays until the 24-internal-schemas.md section 19.26 follow-up retires it.\n"
         ),
     ] = False
+    __null_refused = field_validator("display_name", "params_schema", "idempotent", "guarded", "targets", "restriction", "notes", mode="before")(_refuse_null)
 
 
 class Guard(BaseModel):
     id: str | None = None
     params_schema: dict[str, Any] | None = None
+    __null_refused = field_validator("id", "params_schema", mode="before")(_refuse_null)
 
 
 class Trigger(BaseModel):
     id: str | None = None
     description: str | None = None
     required_fields: list[str] | None = None
+    __null_refused = field_validator("id", "description", "required_fields", mode="before")(_refuse_null)
 
 
 class RuleVocabulary(BaseModel):
@@ -6574,6 +6699,7 @@ class RuleVocabulary(BaseModel):
     triggers: list[Trigger] | None = None
     vocabulary_version: JsonInt | None = None
     arm_live_permission: str | None = None
+    __null_refused = field_validator("ir_version", "triggers", "vocabulary_version", "arm_live_permission", mode="before")(_refuse_null)
 
 
 class Marker(BaseModel):
@@ -6590,6 +6716,7 @@ class Marker(BaseModel):
         ),
     ] = None
     label: str | None = None
+    __null_refused = field_validator("at", "kind", "price", "label", mode="before")(_refuse_null)
 
 
 class JournalTradeContext(BaseModel):
@@ -6614,6 +6741,7 @@ class JournalTradeContext(BaseModel):
     executions: list[Execution] | None = None
     markers: list[Marker] | None = None
     coverage: DataCoverage
+    __null_refused = field_validator("bars", "footprint", "executions", "markers", mode="before")(_refuse_null)
 
 
 class BuildInfo(BaseModel):
@@ -6623,6 +6751,7 @@ class BuildInfo(BaseModel):
     api_version: str | None = None
     ws_protocol_version: str | None = None
     electron_version: str | None = None
+    __null_refused = field_validator("api_version", "ws_protocol_version", mode="before")(_refuse_null)
 
 
 class AdminSliceStatus(BaseModel):
@@ -6639,12 +6768,14 @@ class AdminSliceStatus(BaseModel):
             description="When the slice was read; at most 5 s older than the response (slice cache)."
         ),
     ] = None
+    __null_refused = field_validator("status", "generated_at", mode="before")(_refuse_null)
 
 
 class Users(AdminSliceStatus):
     total: JsonInt | None = None
     active: JsonInt | None = None
     without_mfa: JsonInt | None = None
+    __null_refused = field_validator("total", "active", "without_mfa", mode="before")(_refuse_null)
 
 
 class Accounts(AdminSliceStatus):
@@ -6652,28 +6783,33 @@ class Accounts(AdminSliceStatus):
     enabled: JsonInt | None = None
     keys_expiring_30d: JsonInt | None = None
     keys_invalid: JsonInt | None = None
+    __null_refused = field_validator("total", "enabled", "keys_expiring_30d", "keys_invalid", mode="before")(_refuse_null)
 
 
 class Recorder(AdminSliceStatus):
     symbols_recording: JsonInt | None = None
     symbols_degraded: JsonInt | None = None
     lag_seconds_p99: StrictFloat | None = None
+    __null_refused = field_validator("symbols_recording", "symbols_degraded", "lag_seconds_p99", mode="before")(_refuse_null)
 
 
 class Storage(AdminSliceStatus):
     used_bytes: JsonInt | None = None
     free_bytes: JsonInt | None = None
     days_until_full: StrictFloat | None = None
+    __null_refused = field_validator("used_bytes", "free_bytes", mode="before")(_refuse_null)
 
 
 class Trading1(AdminSliceStatus):
     live_enabled: StrictBool | None = None
     kill_switch_engaged: StrictBool | None = None
     open_positions: JsonInt | None = None
+    __null_refused = field_validator("live_enabled", "kill_switch_engaged", "open_positions", mode="before")(_refuse_null)
 
 
 class Incidents(AdminSliceStatus):
     open: JsonInt | None = None
+    __null_refused = field_validator("open", mode="before")(_refuse_null)
 
 
 class AdminOverview(BaseModel):
@@ -6695,6 +6831,7 @@ class AdminOverview(BaseModel):
     trading: Trading1 | None = None
     incidents_open: JsonInt | None = None
     incidents: Incidents | None = None
+    __null_refused = field_validator("generated_at", "users", "accounts", "recorder", "storage", "trading", "incidents_open", "incidents", mode="before")(_refuse_null)
 
 
 class PerSymbolItem(BaseModel):
@@ -6710,6 +6847,7 @@ class PerSymbolItem(BaseModel):
     daily_growth_bytes: JsonInt | None = None
     pinned: StrictBool | None = None
     retention_days: JsonInt | None = None
+    __null_refused = field_validator("symbol", "used_bytes", "daily_growth_bytes", "pinned", mode="before")(_refuse_null)
 
 
 class Storage1(AdminSliceStatus):
@@ -6730,12 +6868,14 @@ class Storage1(AdminSliceStatus):
             description="`true` iff `projection_basis` is `estimated`; otherwise `false` or omitted."
         ),
     ] = None
+    __null_refused = field_validator("used_bytes", "free_bytes", "daily_growth_bytes", "per_symbol", "projection_basis", "estimated", mode="before")(_refuse_null)
 
 
 class Ingestion(AdminSliceStatus):
     messages_per_sec: StrictFloat | None = None
     queue_depth: JsonInt | None = None
     dropped_last_hour: JsonInt | None = None
+    __null_refused = field_validator("messages_per_sec", "queue_depth", "dropped_last_hour", mode="before")(_refuse_null)
 
 
 class RateBudgetItem(BaseModel):
@@ -6744,6 +6884,7 @@ class RateBudgetItem(BaseModel):
     limit_per_minute: JsonInt | None = None
     peak_used_per_minute: JsonInt | None = None
     utilisation_pct: StrictFloat | None = None
+    __null_refused = field_validator("exchange_account_id", "label", "limit_per_minute", "peak_used_per_minute", "utilisation_pct", mode="before")(_refuse_null)
 
 
 class SubaccountCapacity(AdminSliceStatus):
@@ -6774,6 +6915,7 @@ class SubaccountCapacity(AdminSliceStatus):
             description="When the tier was recorded (the setting's `updated_at`); `null` if never."
         ),
     ] = None
+    __null_refused = field_validator("used", "tier_source", mode="before")(_refuse_null)
 
 
 class Incident(BaseModel):
@@ -6797,6 +6939,7 @@ class Incident(BaseModel):
             pattern="^[0-9a-f]{16}$",
         ),
     ] = None
+    __null_refused = field_validator("title", "occurrences", "signature", mode="before")(_refuse_null)
 
 
 class StatechartMachine(BaseModel):
@@ -6854,6 +6997,7 @@ class RecentEvent(BaseModel):
     to_states: list[str] | None = None
     faulted: StrictBool | None = None
     occurred_at: AwareDatetime
+    __null_refused = field_validator("from_states", "to_states", "faulted", mode="before")(_refuse_null)
 
 
 class StatechartMachineDetail(BaseModel):
@@ -6880,6 +7024,7 @@ class StatechartMachineDetail(BaseModel):
             max_length=50,
         ),
     ] = None
+    __null_refused = field_validator("events", "machine", "context_summary", "configuration", "config", "recent_events", mode="before")(_refuse_null)
 
 
 class StatechartExport(BaseModel):
@@ -6990,6 +7135,7 @@ class Key(BaseModel):
     ] = None
     ip_whitelist_matches_expected: StrictBool | None = None
     last_verified_at: AwareDatetime | None = None
+    __null_refused = field_validator("exchange_account_id", "key_id_masked", "status", "age_days", "withdrawal_permission_present", "ip_whitelist_matches_expected", mode="before")(_refuse_null)
 
 
 class Auth(BaseModel):
@@ -6997,18 +7143,21 @@ class Auth(BaseModel):
     failed_logins_24h: JsonInt | None = None
     denied_requests_24h: JsonInt | None = None
     active_elevated_sessions: JsonInt | None = None
+    __null_refused = field_validator("users_without_mfa", "failed_logins_24h", "denied_requests_24h", "active_elevated_sessions", mode="before")(_refuse_null)
 
 
 class Audit(BaseModel):
     last_chain_verification_at: AwareDatetime | None = None
     chain_intact: StrictBool | None = None
     entries_total: JsonInt | None = None
+    __null_refused = field_validator("chain_intact", "entries_total", mode="before")(_refuse_null)
 
 
 class Finding(BaseModel):
     severity: Literal["debug", "info", "warning", "error", "critical"] | None = None
     code: str | None = None
     message: str | None = None
+    __null_refused = field_validator("severity", "code", "message", mode="before")(_refuse_null)
 
 
 class SecuritySummary(BaseModel):
@@ -7017,6 +7166,7 @@ class SecuritySummary(BaseModel):
     auth: Auth | None = None
     audit: Audit | None = None
     findings: list[Finding] | None = None
+    __null_refused = field_validator("generated_at", "keys", "auth", "audit", "findings", mode="before")(_refuse_null)
 
 
 class KekRewrapRequest(BaseModel):
@@ -7158,6 +7308,7 @@ class SessionInfo(BaseModel):
         dict[str, Any] | None, Field(description="Flags resolved for this user.")
     ] = None
     session: SessionState
+    __null_refused = field_validator("allowed_environments", "kill_switch", "clock_offset_ms", "api_version", "feature_flags", mode="before")(_refuse_null)
 
 
 class CreateUserRequest(BaseModel):
@@ -7221,6 +7372,7 @@ class ExchangeAccount(BaseModel):
     enabled: StrictBool = True
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
+    __null_refused = field_validator("connection_state", "key_status", "position_mode", "margin_mode", "balance_stale", "created_at", "updated_at", mode="before")(_refuse_null)
 
 
 class AccountConsequenceSummary(BaseModel):
@@ -7253,6 +7405,7 @@ class OpenExposureProblem(Problem):
             description="What the client does after `409 exposure_unknown`; `components.parameters.OpenExposure` says which applies. `leave_positions`: send the disable or the revoke again with `open_exposure=leave_positions`; a delete is not sent again, the account is disabled instead (`updateExchangeAccount` with `enabled: false`) and never deleted, and that disable must carry `open_exposure=leave_positions`: without a choice it is `409 exposure_unknown` again. `fix_key`: put the key right at the exchange, then send the request again; until then no choice proceeds. The resend is a new request with a new `Idempotency-Key`: under the same key the identical request replays the stored `409` for 24 h, and a request with another `open_exposure` is `409 idempotency_key_reuse` (the Idempotency rule of `info.description`). It advises the SCR-129 dialog: the choice stays the Owner's (SR-E27-07), and a client never sends it on its own. Closed: a new value is a breaking change (C-6.3).\n"
         ),
     ] = None
+    __null_refused = field_validator("consequences", "remedy", mode="before")(_refuse_null)
 
 
 class KeyVerification(BaseModel):
@@ -7303,6 +7456,7 @@ class KeyVerification(BaseModel):
     clock_offset_ms: JsonInt | None = None
     probe_ret_code: JsonInt | None = None
     warnings: list[Literal["key_expiring_soon", "clock_skew"]] | None = None
+    __null_refused = field_validator("uta", "read_only", "permissions", "ip_whitelist", "ip_whitelist_matches_egress", "clock_offset_ms", "warnings", mode="before")(_refuse_null)
 
 
 class KeyVerificationPassed(KeyVerification):
@@ -7315,6 +7469,7 @@ class KeyRejectedProblem(Problem):
         Field(description="Stable machine-readable error code from `x-error-codes`."),
     ]
     verification: KeyVerification | KeyVerificationNotRead | None = None
+    __null_refused = field_validator("verification", mode="before")(_refuse_null)
 
 
 class ApiKeyRotation(BaseModel):
@@ -7324,6 +7479,7 @@ class ApiKeyRotation(BaseModel):
     verification: KeyVerification | None = None
     overlap_until: AwareDatetime | None = None
     state: Literal["overlapping", "completed", "failed"] | None = None
+    __null_refused = field_validator("rotation_id", "old_key_id", "new_key", "verification", "overlap_until", "state", mode="before")(_refuse_null)
 
 
 class KeyTestResult(BaseModel):
@@ -7347,6 +7503,7 @@ class KeyTestResult(BaseModel):
             description="The verification as far as the pipeline got. Omitted when the REST half reached no verdict (a timeout, an outage, a refused signature, a clock outside the `recv_window` or a rate limit): an earlier check's standing result is never shown in its place, because an outage must not read as a pass (SR-E27-18). A key the exchange refused before its rights were read is `KeyVerificationNotRead`.\n"
         ),
     ] = None
+    __null_refused = field_validator("passed", "checked_at", "rest", "websocket", "verification", mode="before")(_refuse_null)
 
 
 class KlineResponse(BaseModel):
@@ -7364,6 +7521,7 @@ class KlineResponse(BaseModel):
     ) = None
     bars: list[Bar]
     meta: BarsMeta
+    __null_refused = field_validator("interval", "bar_type", mode="before")(_refuse_null)
 
 
 class HeatmapResponse(BaseModel):
@@ -7439,6 +7597,7 @@ class HeatmapResponse(BaseModel):
             max_length=128,
         ),
     ] = None
+    __null_refused = field_validator("symbol", "from_", "to", "time_bucket_ms", "price_grouping", "times", "prices", "bid_matrix", "ask_matrix", "max_value", "normalize", "history", "samples", "estimated_columns", "effective_time_bucket_ms", "segments", mode="before")(_refuse_null)
 
 
 class RecordingStatus(BaseModel):
@@ -7455,11 +7614,13 @@ class RecordingStatus(BaseModel):
     generated_at: AwareDatetime | None = None
     role_restricted: StrictBool | None = None
     policy: RecorderPolicySettings | None = None
+    __null_refused = field_validator("overall", "connections", "symbols", "ingest_rate_msgs_per_sec", "write_backlog_rows", "generated_at", "role_restricted", "policy", mode="before")(_refuse_null)
 
 
 class OrderWithEvents(Order):
     events: list[OrderEvent] | None = None
     executions: list[Execution] | None = None
+    __null_refused = field_validator("events", "executions", mode="before")(_refuse_null)
 
 
 class TradeGroupDefinition(BaseModel):
@@ -7556,6 +7717,7 @@ class TradeGroupLeg(BaseModel):
     closed_at: AwareDatetime | None = None
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
+    __null_refused = field_validator("id", "trade_group_id", "exchange_account_id", "status", "sequence_no", "orders", "order_details", "target_qty", "filled_qty", "native_sl_confirmed", "fees_paid", "created_at", "updated_at", mode="before")(_refuse_null)
 
 
 class TradeGroup(BaseModel):
@@ -7607,6 +7769,7 @@ class TradeGroup(BaseModel):
     note: str | None = None
     legs: list[TradeGroupLeg]
     totals: Totals | None = None
+    __null_refused = field_validator("client_group_ref", "intent", "atomicity", "algo", "created_by", "created_at", "updated_at", "totals", mode="before")(_refuse_null)
 
 
 class OrderAcceptance(BaseModel):
@@ -7654,6 +7817,7 @@ class JournalTradeDetail(JournalTrade):
     executions: list[Execution] | None = None
     notes: list[Note] | None = None
     rule_id: UUID | None = None
+    __null_refused = field_validator("mistakes", "checklist", "executions", "notes", mode="before")(_refuse_null)
 
 
 class LayoutGridTabset(BaseModel):
@@ -7751,6 +7915,7 @@ class Job(BaseModel):
             description="Why a `failed` job failed, as a stable code, never a message. Open-ended for readers. A failed `audit_export` job has produced no downloadable file; it fails with `export_too_large` (its span is over `audit_export_max_rows`, or its file over `audit_export_max_bytes`; nothing is left on disk), `signing_key_rotated` (its header names a key that was no longer the active one when it came to sign), `signing_unavailable` (no KEK held, no usable key or a key that cannot be opened, or a signer failure), `audit_unavailable` (the signer refused because its write-ahead record could not be written, or the export's completion record could not be written, and its file is removed: an audit outage is answered as one) or `internal_error` (ADR-0039)."
         ),
     ] = None
+    __null_refused = field_validator("id", "kind", "status", "progress_pct", mode="before")(_refuse_null)
 
 
 class ScannerRow(BaseModel):
@@ -7876,6 +8041,7 @@ class ScannerRow(BaseModel):
             description="The active criteria skipped for this row because it is `live_only` and they need recorded history (`needs_recording`), in `listScannerCriteria` order; empty for a `recorded` row.\n"
         ),
     ] = None
+    __null_refused = field_validator("last_price", "price_change_pct_24h", "volume_24h", "open_interest", "cvd", "tape_speed", "liquidation_intensity", "recording", "price_path_24h", "skipped_criteria", mode="before")(_refuse_null)
 
 
 class ScannerMeta(DataMeta):
@@ -8047,6 +8213,7 @@ class IndicatorDescriptor(BaseModel):
             description="When an output is `null`, with the bar count and reason, for screen readers."
         ),
     ] = None
+    __null_refused = field_validator("category", "defaults", "outputs", "warmup_bars", "unit", "nullable_when", mode="before")(_refuse_null)
 
 
 class ExchangeCallRecord(BaseModel):
@@ -8100,6 +8267,7 @@ class CapacityReport(BaseModel):
     rate_budget: list[RateBudgetItem] | None = None
     rate_budget_status: AdminSliceStatus | None = None
     subaccounts: SubaccountCapacity | None = None
+    __null_refused = field_validator("generated_at", "storage", "ingestion", "rate_budget", "rate_budget_status", "subaccounts", mode="before")(_refuse_null)
 
 
 class ApiKeyWithVerification(BaseModel):
@@ -8120,6 +8288,7 @@ class OrderDiagnostics(BaseModel):
         ),
     ] = None
     reconciliation: Reconciliation | None = None
+    __null_refused = field_validator("exchange_calls", "reconciliation", mode="before")(_refuse_null)
 
 
 class RuleArithmeticNode(BaseModel):
@@ -8308,11 +8477,13 @@ class RuleDetail(Rule):
     graph_layout: dict[str, Any] | None = None
     ir_hash: str | None = None
     last_simulation: LastSimulation | None = None
+    __null_refused = field_validator("ir", "ir_hash", "last_simulation", mode="before")(_refuse_null)
 
 
 class RuleVersionDetail(RuleVersion):
     ir: RuleIr | None = None
     graph_layout: dict[str, Any] | None = None
+    __null_refused = field_validator("ir", mode="before")(_refuse_null)
 
 
 class AlertInput(BaseModel):
@@ -8492,6 +8663,7 @@ class WorkspaceBundle(BaseModel):
             description="Export holds only the caller's live presets, never a built-in or another user's: at most 500, the per-user cap of `createIndicatorPreset`, and never truncated to the import limits below. Import (E15-S07; no operation takes a bundle yet) never trusts them: every item is validated again as on `createIndicatorPreset`, so `is_builtin` and `owner_user_id` are never honoured (an item carrying either is refused), the importer owns what is imported, and the array is imported whole or not at all. The server refuses it whole beyond 200 items or 1 MiB of preset JSON (SR-E13-07's import limits; the 1 MiB counts this array, not the whole bundle), on any invalid item, or when it would take the importer past 500 live presets.\n"
         ),
     ] = None
+    __null_refused = field_validator("exported_at", "chart_templates", "drawings", "indicator_presets", mode="before")(_refuse_null)
 
 
 class Alert(AlertInput):
@@ -8521,7 +8693,7 @@ class Alert(AlertInput):
     ] = None
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
-    _AlertInput__null_refused = field_validator("message_template", "severity", "cooldown_seconds", mode="before")(_take_null)
+    __null_refused = field_validator("id", "owner_user_id", "fire_count", "cooldown_seconds", "created_at", "updated_at", mode="before")(_refuse_null)
 
 
 RuleArithmeticNode.model_rebuild()
