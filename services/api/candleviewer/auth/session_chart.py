@@ -11,6 +11,11 @@ A chart is built lazily, the first time a session needs one in this process,
 and hydrated from the persisted row with `replay=True` events (already audited
 when they happened, so not re-recorded). Charts are bounded per process
 (C-2.18) and dropped once revoked.
+
+A chart that has ended, or is past the state an event must reach, never takes
+an event it must record quietly (#5512): the send raises
+`SessionChartUnrecorded` and the chart is dropped, to be rebuilt from the row
+on its next use.
 """
 
 from __future__ import annotations
@@ -18,9 +23,12 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
+
+import structlog
 
 from candleviewer.auth.models import SessionRecord
+from candleviewer.auth.session_service import OWNER_REVOKE_AUDIT_TIMEOUT_S
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.statechart import build
 from candleviewer.statechart.bindings import b16_session
@@ -45,10 +53,49 @@ _MUST_REACH: dict[str, str] = {
     "ABSOLUTE_DEADLINE": "auth.revoked",
     "REVOKE": "auth.revoked",
 }
+#: C-2.9 (#5512): the B16 events with a transition that writes an audit record, by its own
+#: actions or by the entry actions of the state it enters (catalogue B16.2, B16.3). Synchronous
+#: code has decided each one before it is sent. `ELEVATION_DEADLINE` and `READONLY_EXPIRED` write
+#: none.
+_MUST_RECORD: frozenset[str] = frozenset(
+    {
+        "MFA_OK",
+        "MFA_FAILED",
+        "MFA_TIMEOUT",
+        "REQUEST",
+        "IDLE_DEADLINE",
+        "ABSOLUTE_DEADLINE",
+        "REVOKE",
+        "LOGOUT",
+        "UNLOCK_OK",
+        "UNLOCK_FAILED",
+        "STEP_UP_OK",
+        "STEP_UP_FAILED",
+        "ACTION_REQUEST",
+    }
+)
+
+
+def _log() -> Any:
+    """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)
 
 
 class SessionChartError(RuntimeError):
     """The B16 chart refused or failed to record an event (e.g. audit down)."""
+
+
+class SessionChartUnrecorded(SessionChartError):
+    """#5512 (C-2.9): the chart did not record *event*, which it had to (`_MUST_RECORD`): past its
+    end, it held the event for good (`deferred`), or the event, one of `_MUST_REACH`, changed
+    nothing (`unchanged`): the chart was already past the state it must reach, whose entry writes
+    the record. A `SessionChartError`, so every caller's arm for a failed record applies; the
+    chart has been dropped."""
+
+    def __init__(self, event: str, reason: Literal["deferred", "unchanged"]) -> None:
+        super().__init__(f"B16 {event}: {reason}")
+        self.event = event
+        self.reason = reason
 
 
 class _Refusals:
@@ -106,15 +153,25 @@ class SessionChart:
         """Send via the statechart gateway (the only send path, E50-T15) and
         wait for this event's macrostep. A receipt is read only through
         `receipt_is_conclusive` (CV-C06): an action error (e.g. audit down)
-        fails loud; a deferred/no-op receipt is not an error here — the
-        chart records, it never gates (C-2.21). An event in `_MUST_REACH`
-        also fails loud unless the chart reached its state (B16.7). An event
-        that is not a replay carries the id of the request it happens in, a
-        UUID string, or none outside a request (#3990): B16's actions run in
-        the chart's own task, outside the request's context, so the id rides
-        on the payload and its audit record names it. It is always this
-        request's: no caller sets it."""
-        if not payload.get("replay"):
+        fails loud; a deferred/no-op receipt alone is no error (the chart
+        records, it never gates: C-2.21) unless the event must be recorded
+        (below). An event in `_MUST_REACH` also fails loud unless the chart
+        reached its state (B16.7). An event that is not a replay carries the
+        id of the request it happens in, a UUID string, or none outside a
+        request (#3990): B16's actions run in the chart's own task, outside
+        the request's context, so the id rides on the payload and its audit
+        record names it. It is always this request's: no caller sets it.
+
+        #5512 (C-2.9): a send of a `_MUST_RECORD` event that is not a replay
+        raises `SessionChartUnrecorded` when the chart cannot record it: the
+        chart is past its end (`elevation.dead`, which only a revocation
+        reaches) and holds the event for good (`deferred`), or a `_MUST_REACH`
+        event's receipt is not conclusive (its step changed nothing: the chart
+        was already past the state, so the entry that writes the record did
+        not run). The chart is dropped first, so a held event never runs later
+        and the next use rebuilds the chart from the row."""
+        replay = bool(payload.get("replay"))
+        if not replay:
             request_uuid = current_request_uuid()
             payload["request_id"] = None if request_uuid is None else str(request_uuid)
         # Called from request handlers only - never from a B16 action - so the
@@ -123,6 +180,15 @@ class SessionChart:
         if receipt_is_conclusive(receipt) and receipt.error is not None:
             raise SessionChartError(f"B16 {event}: {type(receipt.error).__name__}")
         must_reach = _MUST_REACH.get(event)
+        # A replay was recorded when it happened (`_hydrate`), so it is never refused here.
+        if event in _MUST_RECORD and not replay:
+            # B16.2: `elevation.dead` is final, so an event held there never runs.
+            if getattr(receipt, "deferred", False) is True and self.in_state(sid, "dead"):
+                await self._drop(sid)
+                raise SessionChartUnrecorded(event, "deferred")
+            if must_reach is not None and not receipt_is_conclusive(receipt):
+                await self._drop(sid)
+                raise SessionChartUnrecorded(event, "unchanged")
         if must_reach is not None and not self.in_state(sid, must_reach):
             raise SessionChartError(f"B16 {event}: {must_reach} not reached")
 
@@ -180,10 +246,11 @@ class SessionChart:
         (INV-B16-e, #2301): `IDLE_DEADLINE`, and no other event. The event carries the lock's
         own moment from the row (`idle_locked_at_us`, #4743), never the time of this read: a
         lock by request's `locked_at` (`POST /auth/lock` sends the chart nothing), else the
-        idle deadline that fell due; `auth.idle_locked` records it."""
+        idle deadline that fell due; `auth.idle_locked` records it. It goes to any chart not
+        in `idle_locked` (#5512): one that cannot take it raises (`_send`)."""
         interp = await self._get(record, now)
         sid = str(record.id)
-        if record.is_idle_locked(now=now) and self.in_state(sid, "active"):
+        if record.is_idle_locked(now=now) and not self.in_state(sid, "idle_locked"):
             before = b16_session.elevation_view(dict(interp.context))
             moment = record.locked_at if record.locked_at is not None else record.idle_deadline()
             await self._send(sid, "IDLE_DEADLINE", before=before, idle_locked_at_us=to_us(moment))
@@ -209,9 +276,36 @@ class SessionChart:
         await self._send(str(record.id), event, before=before, **payload)
 
     async def revoke(self, record: SessionRecord, now: datetime, reason: str) -> None:
-        """Session revoked by sync code: record `REVOKE`, then drop the chart."""
-        await self.record(record, now, "REVOKE", reason=reason)
-        await self.forget(str(record.id))
+        """Session revoked by sync code: record `REVOKE`, then drop the chart. #5512: the
+        chart is dropped however the record ends (written, refused, or cut short by the
+        caller's bound), at once (`_drop`), so a slow audit writer never leaves a revoked
+        chart cached over a row that stays live."""
+        try:
+            await self.record(record, now, "REVOKE", reason=reason)
+        finally:
+            await self._drop(str(record.id))
+
+    async def _drop(self, session_id: str) -> None:
+        """Drop the session's chart at once, never waiting for `_lock`, which another session's
+        build may hold while the caller holds the session's row locks: it leaves the cache and
+        the gateway here, and its next use rebuilds it from the row. Its interpreter is then
+        stopped, bounded by the owner revoke's bound (`OWNER_REVOKE_AUDIT_TIMEOUT_S`). A stop
+        that fails or overruns is logged with its error class only (C-12.6) and never replaces
+        what the caller raises or returns; a new cancellation goes on."""
+        self._bind_loop()
+        interp = self._charts.pop(session_id, None)
+        if interp is None:  # none cached; one being built comes from the row
+            return
+        self._gateway.unregister(session_id)
+        try:
+            async with asyncio.timeout(OWNER_REVOKE_AUDIT_TIMEOUT_S):
+                await interp.stop()
+        except Exception as exc:  # a timeout included; logged, never the caller's outcome
+            _log().error(
+                "auth.session_chart.chart_not_stopped",
+                session_id=session_id,
+                error=type(exc).__name__,
+            )
 
     async def forget(self, session_id: str) -> None:
         """Drop the session's chart without recording anything; its next use rebuilds it
@@ -233,4 +327,4 @@ class SessionChart:
             await interp.stop()
 
 
-__all__ = ["MAX_CHARTS", "SessionChart", "SessionChartError", "to_us"]
+__all__ = ["MAX_CHARTS", "SessionChart", "SessionChartError", "SessionChartUnrecorded", "to_us"]
