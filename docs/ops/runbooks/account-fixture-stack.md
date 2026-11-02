@@ -158,7 +158,10 @@ lane's`, with no compose call and the run directory kept; running it again chang
 another lane's project down, and `up`, `restart-api` and `drive` refuse such a project the same way. A project with no
 object listed is not thereby this lane's: `down`, `restart-api` and `drive` also match the lane `up` wrote into the run
 directory's `stack.env` with theirs, before they use or remove the directory, and refuse one that names another lane or
-none (exit 2, a line of its own, nothing of the file shown); a run directory with no `stack.env` goes on as before.
+none (exit 2, a line of its own, nothing of the file shown); a run directory with no `stack.env` goes on as before. The
+run directory and `stack.env` must be the invoking user's own, mode 0700 and 0600 as `up` makes them (neither a link):
+those three commands check that first and refuse anything else with exit 2 and one fixed line that shows no path or
+uid, before any docker call.
 
 When every listed object carries this lane's label, `down` goes by the project name alone: `docker compose -p
 <project> down -v --remove-orphans`, run from an empty directory, so compose reads no compose file and no env file and

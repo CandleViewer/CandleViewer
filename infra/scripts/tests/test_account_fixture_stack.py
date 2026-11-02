@@ -8,7 +8,9 @@ the directory it ran in, answers the label listings from the test's scenario (wi
 listing is answered as docker answers it: the stub fills the call's `--format` (a name, or an
 object's `cv.lane` label, bare or as `printf "%q"` prints it) and fails on a field docker has not,
 so the lane label shows only when the script asks for it. No Docker, no network: the only socket
-is a loopback bind the script makes to find free ports.
+is a loopback bind the script makes to find free ports. The checks that hold the run directory and
+`stack.env` to the invoking user run the script under another uid's `os.getuid()`
+(`AS_ANOTHER_UID`), as a test cannot give a file to another uid.
 """
 
 from __future__ import annotations
@@ -102,11 +104,15 @@ OTHER_ENVS: Final = {
     "padded": [f"CV_ACCTFIX_LANE= {LANE}"],
     "two-lane-lines": [f"CV_ACCTFIX_LANE={LANE}", f"CV_ACCTFIX_LANE={OTHER_LANE}"],
 }
-#: What the script prints for a file, socket or process call that fails (then the class's name).
-FAILED_LINE: Final = "a file, socket or process call failed"
 #: The refusal for a run directory whose `stack.env` is not this lane's: one fixed line.
 RUN_DIR_LINE: Final = (
     "the run directory's stack.env names another lane, or none: it is not this lane's"
+)
+#: The refusal for a run directory or `stack.env` that is not what `up` makes (the invoking user's
+#: own, mode 0700 and 0600, no link): one fixed line that shows no path, value or uid.
+NOT_OWN_LINE: Final = (
+    "the run directory (0700) and its stack.env (0600) must be the invoking user's own: "
+    "check them by hand"
 )
 #: A `CV_ACCTFIX_LANE` the script refuses.
 MALFORMED_LANES: Final = {
@@ -171,6 +177,28 @@ for word, status in scenario.get("exit", {}).items():
     if word in args:
         raise SystemExit(status)
 """
+#: The script under another uid's `os.getuid()`, run as `python -I -c <this> <named> <script>
+#: <arguments>`. A test's files are its own user's, and only root can give a file to another uid.
+#: So the object `named` (`directory`: the run directory, `file`: `stack.env`) stays as it is on
+#: disk, which under the other uid is another's, and the other object is reported as that uid's
+#: own: by `lstat` for the directory, by `fstat` for the file, the two calls the checks read them
+#: with. Only the check on the object `named` can refuse.
+AS_ANOTHER_UID: Final = """
+import os, runpy, sys
+named, script = sys.argv[1], sys.argv[2]
+sys.argv[1:] = sys.argv[3:]
+other = os.getuid() + 12345
+os.getuid = lambda: other
+reads = "fstat" if named == "directory" else "lstat"
+read = getattr(os, reads)
+def as_own(*args, **kwargs):
+    seen = read(*args, **kwargs)
+    fields = (seen.st_mode, seen.st_ino, seen.st_dev, seen.st_nlink, other, seen.st_gid,
+              seen.st_size, int(seen.st_atime), int(seen.st_mtime), int(seen.st_ctime))
+    return os.stat_result(fields)
+setattr(os, reads, as_own)
+runpy.run_path(script, run_name="__main__")
+"""
 SECRET_NAMES: Final = (
     "POSTGRES_PASSWORD",
     "CV_PG_DSN",
@@ -200,15 +228,20 @@ class Host:
         (self.home / "scenario.json").write_text(json.dumps(listed), encoding="utf-8")
 
     def run(
-        self, *args: str, lane: str | None = LANE, **extra_env: str
+        self, *args: str, lane: str | None = LANE, foreign: str | None = None, **extra_env: str
     ) -> subprocess.CompletedProcess[str]:
-        """The script under the test's lane (`lane=None`: `CV_ACCTFIX_LANE` unset)."""
+        """The script under the test's lane (`lane=None`: `CV_ACCTFIX_LANE` unset). `foreign` is
+        `directory` or `file`: the script runs under another uid's `os.getuid()` (`AS_ANOTHER_UID`)
+        and that object is another uid's, the other one the caller's own."""
         env = {"PATH": str(self.bin), "HOME": str(self.home)}  # the stub alone answers `docker`
         env |= {"XDG_RUNTIME_DIR": str(self.runtime), "TMPDIR": str(self.tmp), **extra_env}
         if lane is not None:
             env["CV_ACCTFIX_LANE"] = lane
+        argv = [sys.executable, "-I", str(SCRIPT), *args]
+        if foreign is not None:
+            argv = [sys.executable, "-I", "-c", AS_ANOTHER_UID, foreign, str(SCRIPT), *args]
         return subprocess.run(  # noqa: S603 - this interpreter and the script under test
-            [sys.executable, "-I", str(SCRIPT), *args],
+            argv,
             cwd=self.home,
             env=env,
             capture_output=True,
@@ -427,15 +460,16 @@ def test_down_takes_no_file_option(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("kind", ["symlink", "subdirectory"])
 def test_down_leaves_a_run_dir_up_never_made_and_says_so(tmp_path: Path, kind: str) -> None:
-    """The run directory is flat and real: a link in its place, or a directory in it, is
-    refused with one fixed line and left as it is, never followed or half removed."""
+    """The run directory is flat and real: a link in its place is refused with the one line for a
+    run directory that is not the user's own real directory, and a directory in it with the line of
+    its own; each is left as it is, never followed or half removed."""
     host = Host(tmp_path)
     run_dir, elsewhere = host.runtime / PROJECT, tmp_path / "elsewhere"
     elsewhere.mkdir()
     (elsewhere / "kept").write_text("kept", encoding="utf-8")
     if kind == "symlink":
         run_dir.symlink_to(elsewhere)
-        line = "the run directory is not the directory up made: check it by hand"
+        line = NOT_OWN_LINE
     else:
         assert host.run("up", "--project", PROJECT).returncode == 0
         (run_dir / "sub").mkdir()
@@ -446,6 +480,25 @@ def test_down_leaves_a_run_dir_up_never_made_and_says_so(tmp_path: Path, kind: s
     assert (done.returncode, done.stderr) == (2, f"account-fixture-stack: refused: {line}\n")
     assert (elsewhere / "kept").exists() and os.path.lexists(run_dir)
     assert kind == "symlink" or (run_dir / "stack.env").exists()
+
+
+@pytest.mark.parametrize("kind", ["a-link", "a-regular-file"])
+def test_remove_run_dir_unlinks_only_the_directory_up_made(tmp_path: Path, kind: str) -> None:
+    """The unlink's own guard, behind the checks `down` makes first: a link or a regular file in
+    place of the run directory is refused and left as it is, never followed."""
+    stack = _stack()
+    run_dir, elsewhere = tmp_path / "run-dir", tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "kept").write_text("kept", encoding="utf-8")
+    if kind == "a-link":
+        run_dir.symlink_to(elsewhere)
+    else:
+        run_dir.write_text("synthetic", encoding="ascii")
+
+    with pytest.raises(stack.Refused, match="not the directory up made"):
+        stack.remove_run_dir(run_dir)
+
+    assert (elsewhere / "kept").exists() and os.path.lexists(run_dir)
 
 
 def test_up_refuses_volumes_whose_run_dir_is_gone(tmp_path: Path) -> None:
@@ -486,11 +539,15 @@ def test_a_listing_docker_does_not_answer_stops_up_and_down(
 
 
 def _hand_made_run_dir(host: Host, *lines: str) -> Path:
-    """A run directory made by hand under the host's run root, with a synthetic `stack.env` of
-    these lines (never a real file's): no `up` ran, so no Docker object exists for it."""
+    """A run directory made by hand under the host's run root, as `up` makes one (the test user's
+    own, mode 0700, its `stack.env` mode 0600) with a synthetic `stack.env` of these lines (never a
+    real file's): no `up` ran, so no Docker object exists for it."""
     run_dir = host.runtime / PROJECT
     run_dir.mkdir(mode=0o700)
-    (run_dir / "stack.env").write_text("".join(f"{line}\n" for line in lines), encoding="ascii")
+    run_dir.chmod(0o700)  # whatever the umask
+    env_file = run_dir / "stack.env"
+    env_file.write_text("".join(f"{line}\n" for line in lines), encoding="ascii")
+    env_file.chmod(0o600)
     return run_dir
 
 
@@ -692,6 +749,8 @@ def test_a_run_dir_whose_stack_env_names_another_lane_or_none_is_refused(
 def test_a_run_dir_whose_stack_env_names_this_lane_is_used_as_before(
     tmp_path: Path, command: str
 ) -> None:
+    """The control for the refusals below: a run directory and a `stack.env` of the user's own,
+    mode 0700 and 0600, that name this lane pass every check."""
     host = Host(tmp_path)
     lines = (f"COMPOSE_PROJECT_NAME={PROJECT}", f"CV_ACCTFIX_LANE={LANE}", "CV_ACCOUNT_FIXTURE=x")
     run_dir = _hand_made_run_dir(host, *lines)
@@ -726,22 +785,195 @@ def test_a_run_dir_with_no_stack_env_is_treated_as_before(tmp_path: Path) -> Non
     assert down.returncode == 0 and not os.path.lexists(run_dir)
 
 
+def _tree(root: Path) -> dict[str, tuple[int, bytes]]:
+    """Everything under `root`, links not followed: each path's mode and, for a regular file, its
+    bytes. What a refusal leaves as it was."""
+    found: dict[str, tuple[int, bytes]] = {}
+    for here, names, files in os.walk(root):
+        for name in [*names, *files]:
+            path = Path(here, name)
+            mode = path.lstat().st_mode
+            found[str(path.relative_to(root))] = (
+                mode,
+                path.read_bytes() if stat.S_ISREG(mode) else b"",
+            )
+    return found
+
+
+def _refused_as_not_own(
+    host: Host, done: subprocess.CompletedProcess[str], before: dict[str, tuple[int, bytes]]
+) -> None:
+    """Exit 2 and the one fixed line, which holds no path or lane, before any docker call, and
+    nothing under the test's directory (the run directory, a link's target) changed."""
+    said = f"account-fixture-stack: refused: {NOT_OWN_LINE}\n"
+    assert (done.returncode, done.stdout, done.stderr) == (2, "", said)
+    assert str(host.runtime) not in done.stderr and LANE not in done.stderr
+    assert host.calls() == [] and _tree(host.runtime.parent) == before
+
+
 @pytest.mark.parametrize("command", ["down", "restart-api", "drive"])
-def test_a_stack_env_that_is_a_link_is_not_followed(tmp_path: Path, command: str) -> None:
-    """The file is opened without following a link: one fixed line naming the exception's class,
-    nothing of the file read, no docker call, the directory as it was."""
+@pytest.mark.parametrize("named", ["directory", "file"])
+def test_a_run_dir_or_stack_env_of_another_uid_is_refused(
+    tmp_path: Path, command: str, named: str
+) -> None:
+    """The run directory (`lstat`) and `stack.env` (`fstat` on the opened file) are each held to
+    the invoking user's uid. The script runs under another uid's `os.getuid()`, the object `named`
+    another uid's and the other one the caller's own (`AS_ANOTHER_UID`), so only that object's
+    check can refuse. The directory names this lane and has the right modes: under the real uid it
+    is used as before (`test_a_run_dir_whose_stack_env_names_this_lane_is_used_as_before`)."""
+    host = Host(tmp_path)
+    _hand_made_run_dir(host, f"CV_ACCTFIX_LANE={LANE}")
+    before = _tree(tmp_path)
+
+    done = host.run(*COMMANDS[command], foreign=named)
+
+    _refused_as_not_own(host, done, before)
+
+
+#: A mode other than the required one, for each object: wider (what a umask of 022 leaves, and
+#: group-writable) and tighter.
+WRONG_MODES: Final = [
+    *(("directory", mode) for mode in (0o755, 0o770, 0o500)),
+    *(("file", mode) for mode in (0o644, 0o660, 0o400)),
+]
+
+
+@pytest.mark.parametrize("command", ["down", "restart-api", "drive"])
+@pytest.mark.parametrize(
+    ("kind", "mode"), WRONG_MODES, ids=[f"{kind}-{mode:04o}" for kind, mode in WRONG_MODES]
+)
+def test_a_run_dir_or_stack_env_with_another_mode_is_refused(
+    tmp_path: Path, command: str, kind: str, mode: int
+) -> None:
+    """The run directory's mode is exactly 0700 and `stack.env`'s exactly 0600: any other is
+    refused, the other object being right."""
+    host = Host(tmp_path)
+    run_dir = _hand_made_run_dir(host, f"CV_ACCTFIX_LANE={LANE}")
+    (run_dir if kind == "directory" else run_dir / "stack.env").chmod(mode)
+    try:
+        before = _tree(tmp_path)
+
+        done = host.run(*COMMANDS[command])
+
+        _refused_as_not_own(host, done, before)
+    finally:
+        run_dir.chmod(0o700)  # a tighter directory stays removable
+
+
+@pytest.mark.parametrize("command", ["down", "restart-api", "drive"])
+@pytest.mark.parametrize("case", ["a-link-to-a-directory", "a-regular-file"])
+def test_a_run_dir_that_is_a_link_or_not_a_directory_is_refused(
+    tmp_path: Path, command: str, case: str
+) -> None:
+    """`lstat` stands for the run directory, so a link is never followed: one to a directory that
+    is exactly what `up` makes and names this lane is refused, and so is a regular file of the
+    user's own with mode 0700."""
     host = Host(tmp_path)
     run_dir = host.runtime / PROJECT
-    run_dir.mkdir(mode=0o700)
-    target = tmp_path / "elsewhere"
-    target.write_text(f"CV_ACCTFIX_LANE={LANE}\n", encoding="ascii")  # this lane, behind a link
-    (run_dir / "stack.env").symlink_to(target)
+    if case == "a-regular-file":
+        run_dir.write_text("synthetic", encoding="ascii")
+        run_dir.chmod(0o700)
+    else:
+        behind = _hand_made_run_dir(host, f"CV_ACCTFIX_LANE={LANE}").rename(tmp_path / "behind")
+        run_dir.symlink_to(behind)
+    before = _tree(tmp_path)
 
     done = host.run(*COMMANDS[command])
 
-    said = f"account-fixture-stack: refused: {FAILED_LINE} (OSError)\n"
-    assert (done.returncode, done.stdout, done.stderr) == (2, "", said)
-    assert host.calls() == [] and (run_dir / "stack.env").is_symlink()
+    _refused_as_not_own(host, done, before)
+
+
+@pytest.mark.parametrize("command", ["down", "restart-api", "drive"])
+@pytest.mark.parametrize("case", ["a-link-to-a-file", "a-dangling-link"])
+def test_a_stack_env_that_is_a_link_is_refused_not_followed(
+    tmp_path: Path, command: str, case: str
+) -> None:
+    """`lstat` and `S_ISREG` stand where `os.path.isfile` did: a link to a file that names this
+    lane (the user's own, mode 0600, right in every other way) and a link to nothing are refused
+    alike, nothing read."""
+    host = Host(tmp_path)
+    run_dir = host.runtime / PROJECT
+    run_dir.mkdir(mode=0o700)
+    run_dir.chmod(0o700)
+    target = tmp_path / "elsewhere"
+    if case == "a-link-to-a-file":
+        target.write_text(f"CV_ACCTFIX_LANE={LANE}\n", encoding="ascii")
+        target.chmod(0o600)
+    (run_dir / "stack.env").symlink_to(target)
+    before = _tree(tmp_path)
+
+    done = host.run(*COMMANDS[command])
+
+    _refused_as_not_own(host, done, before)
+
+
+@pytest.mark.parametrize(
+    ("mode", "uid_shift"),
+    [(0o600, 12345), (0o644, 0), (0o660, 0), (0o400, 0)],
+    ids=["another-uid", "mode-0644", "mode-0660", "mode-0400"],
+)
+def test_names_lane_refuses_a_file_that_is_not_the_users_own_with_mode_0600(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: int, uid_shift: int
+) -> None:
+    """`names_lane` judges the opened file itself, the command's earlier checks aside: the owner
+    and the mode (exactly 0600) each refuse alone, the other being right."""
+    stack = _stack()
+    env_file = tmp_path / "stack.env"
+    env_file.write_text(f"CV_ACCTFIX_LANE={LANE}\n", encoding="ascii")
+    env_file.chmod(mode)
+    other = os.getuid() + uid_shift
+    monkeypatch.setattr(stack.os, "getuid", lambda: other)
+
+    with pytest.raises(stack.Refused) as refused:
+        stack.names_lane(env_file, LANE)
+
+    assert str(refused.value) == NOT_OWN_LINE
+
+
+def test_names_lane_refuses_a_directory(tmp_path: Path) -> None:
+    """The type alone is wrong: a directory of the user's own with mode 0600 (`O_RDONLY` opens one)
+    is no `stack.env`."""
+    stack = _stack()
+    (tmp_path / "stack.env").mkdir(mode=0o600)
+    (tmp_path / "stack.env").chmod(0o600)
+
+    with pytest.raises(stack.Refused) as refused:
+        stack.names_lane(tmp_path / "stack.env", LANE)
+
+    assert str(refused.value) == NOT_OWN_LINE
+
+
+def test_names_lane_does_not_follow_a_link(tmp_path: Path) -> None:
+    """A link is an `OSError` of the open itself (`O_NOFOLLOW`), never a read, whatever it points
+    at: here a file of the user's own with mode 0600 that names this lane."""
+    stack = _stack()
+    target = tmp_path / "target"
+    target.write_text(f"CV_ACCTFIX_LANE={LANE}\n", encoding="ascii")
+    target.chmod(0o600)
+    (tmp_path / "stack.env").symlink_to(target)
+
+    with pytest.raises(OSError):
+        stack.names_lane(tmp_path / "stack.env", LANE)
+
+
+def test_up_makes_the_run_dir_0700_and_stack_env_0600_under_any_umask(tmp_path: Path) -> None:
+    """`up` sets both modes itself, so a umask that strips the owner's bits (0277) changes
+    neither: the run directory is a real directory of the user's own with mode 0700 and
+    `stack.env` a regular file of theirs with mode 0600, as the commands that read them require."""
+    host = Host(tmp_path)
+    (host.home / "docker.jsonl").touch(mode=0o600)  # the stub's log exists: no umask creates it
+    outer = os.umask(0o277)
+    try:
+        done = host.run("up", "--project", PROJECT)
+    finally:
+        os.umask(outer)
+
+    run_dir = host.runtime / PROJECT
+    shown = [run_dir.lstat(), (run_dir / "stack.env").lstat()]
+    assert done.returncode == 0, done.stderr
+    assert [stat.S_IFMT(entry.st_mode) for entry in shown] == [stat.S_IFDIR, stat.S_IFREG]
+    assert [entry.st_uid for entry in shown] == [os.getuid()] * 2
+    assert [stat.S_IMODE(entry.st_mode) for entry in shown] == [0o700, 0o600]
 
 
 def test_up_refuses_an_existing_run_dir_without_reading_it(tmp_path: Path) -> None:
@@ -818,6 +1050,7 @@ def test_names_lane_is_yes_only_when_the_one_lane_line_names_it(
     `lane-a`) or leave the second of two lines unread."""
     env_file = tmp_path / "stack.env"
     env_file.write_bytes(content)
+    env_file.chmod(0o600)  # the mode the reader requires: it judges the opened file
 
     assert _stack().ENV_READ_BOUND == BOUND
     assert _stack().names_lane(env_file, LANE) is named
