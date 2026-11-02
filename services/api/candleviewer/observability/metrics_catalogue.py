@@ -1774,14 +1774,28 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "bars_write_holes_dropped_total",
+        "counter",
+        "records",
+        (),
+        "Write-hole records dropped with their series past the ledger's series cap (16 384;"
+        " #5396). An under-report: those ranges are no longer listed in meta.coverage_holes.",
+        "any = served history may be missing without a marker; bars_writer DEGRADED"
+        " (bars_write_holes_dropped)",
+        _L,
+        "E12",
+        exported=True,
+    ),
+    _s(
         "bars_write_holes_total",
         "counter",
         "bars",
         ("reason",),
         "Closed bars not stored, recorded once each as a coverage hole and served in"
         " meta.coverage_holes until stored (reason: sink_timeout, refused, permanent,"
-        " transient_exhausted, shutdown; #5396); superseded = a later write of a stored bar"
-        " not stored (the stored row is served, no hole).",
+        " transient_exhausted, shutdown; #5396). An upper bound once records merge: a key new to"
+        " a merged span is told apart only while it is remembered. superseded = a later write of"
+        " a stored bar not stored (the stored row is served, no hole).",
         "any but superseded = served bar history has a recorded hole; heal is queued"
         " (bars.write_holes); superseded = a stored bar may be out of date",
         _L,

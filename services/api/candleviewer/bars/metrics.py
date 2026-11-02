@@ -262,12 +262,17 @@ SUPERSEDED: Final = "superseded"
 bars_write_holes_total = Counter(
     "bars_write_holes_total",
     "Closed bars not stored, recorded once each as a coverage hole (reason: sink_timeout,"
-    " refused, permanent, transient_exhausted, shutdown); superseded = a later write of a stored"
-    " bar not stored (the stored row is served, no hole).",
+    " refused, permanent, transient_exhausted, shutdown; an upper bound once records merge);"
+    " superseded = a later write of a stored bar not stored (the stored row is served, no hole).",
     labelnames=("reason",),
 )
 for _reason in (*WRITE_HOLE_REASONS, SUPERSEDED):
     bars_write_holes_total.labels(reason=_reason)
+bars_write_holes_dropped_total = Counter(
+    "bars_write_holes_dropped_total",
+    "Write-hole records dropped with their series past the ledger's series cap (an"
+    " under-report: the ranges are no longer listed in meta.coverage_holes).",
+)
 #: BR-13: a client `resync` with `sequence_gap` on a `bars` topic (`ws.sequencing`).
 ws_bars_seq_gap_total = Counter(
     "ws_bars_seq_gap_total",
@@ -355,6 +360,7 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "bars_write_saturation_total",
         "bars_write_failed_total",
         "bars_write_holes_total",  # bars.write_holes (#5396)
+        "bars_write_holes_dropped_total",
         "bars_write_latency_seconds",
         "bars_symbol_cardinality",
         "bars_source_overwrite_refused_total",  # also counted by bars.kline_rows

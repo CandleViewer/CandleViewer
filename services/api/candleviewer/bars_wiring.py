@@ -206,6 +206,8 @@ class BarsRuntime:
         )
         if degraded:
             return True, "bars_writer_degraded"
+        if self.holes is not None and self.holes.dropped:  # #5396: holes no longer listed
+            return True, "bars_write_holes_dropped"
         if self.precedence.degraded:  # #2053: kline rows refused, tape state unknown
             return True, self.precedence.reason()
         return False, ""

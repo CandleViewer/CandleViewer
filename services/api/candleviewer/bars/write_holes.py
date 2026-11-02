@@ -21,8 +21,12 @@ counted as `superseded` and logged, and not recorded (`MAX_RECENT_KEYS` keys are
 **Bound.** At most `MAX_RANGES_PER_SERIES` records per series and `MAX_TOTAL_RANGES` in all (the
 series with the most merges first). Past either, the oldest records merge into one span: a merged
 span over-reports (a key stored inside it does not split it), never under-reports. A key new to a
-merged span is still counted. At most `MAX_SERIES` series: past that the series changed least
-recently is dropped and logged (`bars_write_holes_series_dropped`), its records with it.
+merged span is still counted. Past `MAX_SERIES_SOFT` series the stalest series collapse to one
+merged span each. A series with records is never dropped below `MAX_SERIES`; a record expires only
+once its span ends before its table's retention (`bars.rows.RETENTION`, cold included), when the
+store no longer serves that range either. Past `MAX_SERIES` (the server builds far fewer) the
+stalest series is dropped: counted by `bars_write_holes_dropped_total`, logged, and `dropped`
+degrades `bars_writer` (the ruled exception of 24 §19.81).
 
 **Reads.** `holes_for` is synchronous and in memory (the WS snapshot build is synchronous): the
 spans inside the page's span, minus the bars the page serves.
@@ -56,9 +60,11 @@ from candleviewer.bars.metrics import (
     SUPERSEDED,
     WRITE_HOLE_REASONS,
     bars_blob_discarded_total,
+    bars_write_holes_dropped_total,
     bars_write_holes_total,
 )
 from candleviewer.bars.models import BarKind
+from candleviewer.bars.rows import RETENTION
 from candleviewer.bars.state_store import SPEC_HASH_PATTERN, SYMBOL_PATTERN
 from candleviewer.observability.context import run_in_thread, spawn, thread_future
 
@@ -69,8 +75,11 @@ MAX_RANGES_PER_SERIES: Final = 256
 #: Records in all; with `MAX_SERIES` it keeps the journal far below `MAX_JOURNAL_BYTES` (a
 #: record serialises to under 200 bytes), which the write enforces as well.
 MAX_TOTAL_RANGES: Final = 16_384
-#: Series held; twice the series a server builds at once, so a retired spec's records stay a while.
-MAX_SERIES: Final = 1_024
+#: Past this many series the stalest collapse to one merged span each (an over-report).
+MAX_SERIES_SOFT: Final = 1_024
+#: Series held at most (<= `MAX_TOTAL_RANGES`, so every series keeps a record). Past it a series
+#: is dropped: an under-report that is counted, logged and degrades `bars_writer` (24 §19.81).
+MAX_SERIES: Final = 16_384
 #: Keys remembered as stored lately (a later loss is `superseded`) and as counted lately (a repeat
 #: inside a merged span is not counted again).
 MAX_RECENT_KEYS: Final = 4096
@@ -79,6 +88,7 @@ LOG_EVERY_US: Final = 60_000_000
 #: The closed `reason` values of a record (and of `bars_write_holes_total`, with `superseded`).
 HOLE_REASONS: Final = WRITE_HOLE_REASONS
 _KINDS: Final = frozenset(get_args(BarKind))
+_DAY_US: Final = 86_400_000_000
 
 
 def _log() -> Any:
@@ -228,6 +238,8 @@ class WriteHoleLedger:
         self._dirty = False
         self._task: asyncio.Task[None] | None = None
         self._writing: asyncio.Future[None] | None = None
+        #: Sticky: a series with records was dropped past `MAX_SERIES` (an under-report).
+        self.dropped = False
 
     # -- the write path ---------------------------------------------------------------------
 
@@ -254,6 +266,7 @@ class WriteHoleLedger:
                 new[series_key] = new.get(series_key, 0) + 1
                 _remember(self._counted, _key_id(key), MAX_RECENT_KEYS)
             self._changed(series_key, spans=spans)
+        self._collapse_stale()
         self._enforce_total()
         for series_key, n in new.items():
             bars_write_holes_total.labels(reason=reason).inc(n)
@@ -280,12 +293,17 @@ class WriteHoleLedger:
                 self._changed(series_key, spans=True)
 
     def _add_series(self, series_key: tuple[str, str], key: HoleKey) -> _Series:
-        """A new series; past `MAX_SERIES` the one changed least recently is dropped (logged)."""
+        """A new series. At `MAX_SERIES`, expired records go first; only if that frees none is
+        the stalest series dropped (counted, logged, `dropped` set)."""
+        if len(self._series) >= MAX_SERIES:
+            self._expire()
         while len(self._series) >= MAX_SERIES:
             old_key = min(self._series, key=lambda k: self._series[k].touched_us)
-            dropped = self._series.pop(old_key)
+            lost = self._series.pop(old_key)
+            bars_write_holes_dropped_total.inc(len(lost.ranges))
+            self.dropped = True
             _log().error("bars_write_holes_series_dropped", spec_hash=old_key[1],
-                         records=len(dropped.ranges))  # fmt: skip
+                         records=len(lost.ranges))  # fmt: skip
             self._changed(old_key, spans=True)
         series = _Series(key.kind, key.bar_param, [])
         self._series[series_key] = series
@@ -328,13 +346,50 @@ class WriteHoleLedger:
         return True, True
 
     def _enforce_total(self) -> None:
-        """At most `MAX_TOTAL_RANGES` records in all: the series with the most merges its oldest."""
+        """At most `MAX_TOTAL_RANGES` records in all: the series with the most merges its oldest
+        (a series with one record is left as it is)."""
         total = sum(len(s.ranges) for s in self._series.values())
-        while total > MAX_TOTAL_RANGES:
+        while total > MAX_TOTAL_RANGES and self._series:
             series_key = max(self._series, key=lambda k: len(self._series[k].ranges))
+            if len(self._series[series_key].ranges) < 2:
+                return
             _merge_oldest(self._series[series_key])
             total -= 1
             self._changed(series_key, spans=True)
+
+    def _collapse_stale(self) -> None:
+        """Past `MAX_SERIES_SOFT` series: expired records go, then every series but the
+        `MAX_SERIES_SOFT` changed most recently collapses to one merged span."""
+        if len(self._series) <= MAX_SERIES_SOFT:
+            return
+        self._expire()
+        excess = len(self._series) - MAX_SERIES_SOFT
+        if excess <= 0:
+            return
+        for series_key in sorted(self._series, key=lambda k: self._series[k].touched_us)[:excess]:
+            series = self._series[series_key]
+            if len(series.ranges) > 1:
+                while len(series.ranges) > 1:
+                    _merge_oldest(series)
+                self._changed(series_key, spans=True)
+
+    def _expire(self) -> None:
+        """Drop records whose span ends before their table's whole retention (hot and cold): the
+        store no longer serves that range. A table kept forever never expires one."""
+        now = self._now()
+        for series_key in list(self._series):
+            series = self._series[series_key]
+            days = RETENTION.get(f"bars_{series.kind}", (0, None))[1]
+            if days is None:
+                continue
+            cutoff = now - days * _DAY_US
+            kept = [r for r in series.ranges if r.to_us > cutoff]
+            if len(kept) != len(series.ranges):
+                if kept:
+                    series.ranges = kept
+                else:
+                    del self._series[series_key]
+                self._changed(series_key, spans=True)
 
     def _changed(self, series_key: tuple[str, str], *, spans: bool) -> None:
         """A change to persist; `spans` when the series' reported spans changed (a render cache
@@ -465,6 +520,8 @@ class WriteHoleLedger:
         for series_key, series in loaded.items():
             self._series[series_key] = series
             self._revisions[series_key] = self._revisions.get(series_key, 0) + 1
+        self._expire()
+        self._collapse_stale()
         self._enforce_total()
         return reason
 
@@ -557,6 +614,8 @@ def _read_journal(path: Path) -> tuple[dict[tuple[str, str], _Series] | None, st
         doc = orjson.loads(data)
         if doc["v"] != JOURNAL_VERSION:
             return None, "version"
+        if len(doc["series"]) > MAX_SERIES:
+            return None, "corrupt"  # never written by this server
         out = {_series_key(s): _parse_series(s) for s in doc["series"]}
     except (ValueError, KeyError, TypeError, IndexError, AttributeError):
         return None, "corrupt"

@@ -45,3 +45,13 @@ async def test_ledger_loads_before_the_writer_and_flushes_after_it(tmp_path: Pat
     reread = WriteHoleLedger(root)
     assert await reread.load() == "ok"
     assert sorted(r.reason for r in reread.pending()) == ["permanent", "shutdown"]
+
+
+def test_a_dropped_series_degrades_the_bars_writer(tmp_path: Path) -> None:
+    """Past the ledger's hard series cap a dropped series is an under-report: `bars_writer`
+    reports DEGRADED with `bars_write_holes_dropped` (24 §19.81)."""
+    ctx = build_app_context(_settings(tmp_path))
+    runtime = wire_bars(ctx, now_us=lambda: T0, inner_sink=_Refusing())
+    assert runtime.holes is not None and runtime.writer_state() == (False, "")
+    runtime.holes.dropped = True
+    assert runtime.writer_state() == (True, "bars_write_holes_dropped")

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from dataclasses import replace
 from pathlib import Path
 
 import orjson
@@ -14,7 +15,11 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from structlog.testing import capture_logs
 
-from candleviewer.bars.metrics import bars_blob_discarded_total, bars_write_holes_total
+from candleviewer.bars.metrics import (
+    bars_blob_discarded_total,
+    bars_write_holes_dropped_total,
+    bars_write_holes_total,
+)
 from candleviewer.bars.write_holes import (
     JOURNAL_NAME,
     LOG_EVERY_US,
@@ -39,6 +44,11 @@ def _key(idx: int, *, gen: int = 7, kind: str = "time", open_us: int | None = No
     start = T0 + idx * W if open_us is None else open_us
     end = start + W if kind == "time" else start + 1
     return HoleKey(SYM, H, kind, "1m" if kind == "time" else "tick:100", gen, idx, start, end)
+
+
+def _dropped() -> float:
+    value: float = bars_write_holes_dropped_total._value.get()
+    return value
 
 
 def _metric(reason: str) -> float:
@@ -334,18 +344,85 @@ def test_write_holes_recorded_log_is_once_per_series_per_minute(tmp_path: Path) 
     assert [e["event"] for e in logs].count("bars_write_holes_recorded") == 2
 
 
-def test_write_holes_past_the_series_cap_the_stalest_series_is_dropped(
+def test_write_holes_past_the_soft_series_cap_the_stalest_collapse_never_drop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A series with records is never dropped below the hard cap: past the soft cap the stalest
+    collapse to one merged span each, which still covers every key (an over-report)."""
+    from candleviewer.bars import write_holes
+
+    monkeypatch.setattr(write_holes, "MAX_SERIES_SOFT", 2)
+    now = [T0]
+    ledger = WriteHoleLedger(tmp_path, now_us=lambda: now[0])
+    before = _dropped()
+    for n, h in enumerate(("a", "b", "c")):
+        now[0] = T0 + n
+        ledger.lost(
+            [replace(_key(1), spec_hash=h * 64), replace(_key(3), spec_hash=h * 64)], "refused"
+        )
+    by_hash = {r.spec_hash: r for r in ledger.pending() if r.merged}
+    assert sorted({r.spec_hash for r in ledger.pending()}) == ["a" * 64, "b" * 64, "c" * 64]
+    assert list(by_hash) == ["a" * 64]  # the stalest, collapsed to one span
+    assert (by_hash["a" * 64].from_us, by_hash["a" * 64].to_us) == (T0 + W, T0 + 4 * W)
+    assert _dropped() == before and not ledger.dropped
+
+
+def test_write_holes_past_the_hard_series_cap_the_drop_is_counted_and_flagged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from candleviewer.bars import write_holes
 
+    monkeypatch.setattr(write_holes, "MAX_SERIES_SOFT", 1)
     monkeypatch.setattr(write_holes, "MAX_SERIES", 2)
     now = [T0]
     ledger = WriteHoleLedger(tmp_path, now_us=lambda: now[0])
-    for n, h in enumerate(("a", "b", "c")):
-        now[0] = T0 + n
-        ledger.lost([HoleKey(SYM, h * 64, "time", "1m", 7, 1, T0, T0 + W)], "refused")
-    assert sorted(r.spec_hash for r in ledger.pending()) == ["b" * 64, "c" * 64]
+    before = _dropped()
+    with capture_logs() as logs:
+        for n, h in enumerate(("a", "b", "c")):
+            now[0] = T0 + n
+            ledger.lost([replace(_key(1), spec_hash=h * 64)], "refused")
+    assert sorted({r.spec_hash for r in ledger.pending()}) == ["b" * 64, "c" * 64]
+    assert _dropped() == before + 1 and ledger.dropped
+    assert "bars_write_holes_series_dropped" in [e["event"] for e in logs]
+
+
+@pytest.mark.asyncio
+async def test_write_holes_records_expire_only_past_their_tables_whole_retention(
+    tmp_path: Path,
+) -> None:
+    """A tick record ending before the 730-day retention (hot and cold) goes on reload; one inside
+    it stays, and a time record (kept forever) never expires."""
+    day = 86_400_000_000
+    earlier = WriteHoleLedger(tmp_path)
+    old_tick = _key(1, kind="tick", open_us=T0)
+    young_tick = _key(5, kind="tick", open_us=T0 + 400 * day)
+    earlier.lost([old_tick, young_tick, replace(_key(9), spec_hash="b" * 64)], "refused")
+    await earlier.flush()
+    ledger = WriteHoleLedger(tmp_path, now_us=lambda: T0 + 731 * day)
+    assert await ledger.load() == "ok"
+    kept = {(r.kind, r.from_us) for r in ledger.pending()}
+    assert kept == {("tick", young_tick.open_us), ("time", T0 + 9 * W)}
+    assert not ledger.dropped
+
+
+@pytest.mark.asyncio
+async def test_write_holes_hand_edited_journal_loads_or_is_discarded_never_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from candleviewer.bars import write_holes
+
+    one = [[7, 1, 1, T0, T0 + W, "refused", 0, 1, False]]
+    doc = {"v": 1, "series": [{"symbol": SYM, "spec_hash": h * 64, "kind": "time",
+                               "bar_param": "1m", "ranges": one} for h in "abc"]}  # fmt: skip
+    (tmp_path / JOURNAL_NAME).write_bytes(orjson.dumps(doc))
+    monkeypatch.setattr(write_holes, "MAX_TOTAL_RANGES", 2)  # over it, one record a series
+    ledger = WriteHoleLedger(tmp_path)
+    assert await ledger.load() == "ok" and len(ledger.pending()) == 3
+    monkeypatch.setattr(write_holes, "MAX_SERIES", 2)  # over the series cap: never ours
+    before = bars_blob_discarded_total.labels(reason="write_holes")._value.get()
+    again = WriteHoleLedger(tmp_path)
+    assert await again.load() == "corrupt" and again.pending() == []
+    assert bars_blob_discarded_total.labels(reason="write_holes")._value.get() == before + 1
 
 
 # -- the journal's bound and its write path -------------------------------------------------------
