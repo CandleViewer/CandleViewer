@@ -15,6 +15,7 @@ is a loopback bind the script makes to find free ports. The checks that hold the
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
@@ -115,12 +116,12 @@ NOT_OWN_LINE: Final = (
     "the run directory (0700) and its stack.env (0600) must be the invoking user's own: "
     "check them by hand"
 )
-#: The refusal for a run root that is not a real directory the invoking user owns without a group
-#: or other write bit, or that is not sticky: one fixed line that shows no path, value or uid.
+#: The refusal for a run root that is no usable directory (`run_root`'s rule): one fixed line that
+#: shows no path, value or uid.
 NOT_ROOT_LINE: Final = (
     "the run root ($XDG_RUNTIME_DIR, or /dev/shm when it is unset or not absolute) must be a real "
     "directory that is the invoking user's own and not writable by group or others, or that is "
-    "sticky: check it by hand"
+    "sticky and owned by root or the invoking user: check it by hand"
 )
 #: A `CV_ACCTFIX_LANE` the script refuses.
 MALFORMED_LANES: Final = {
@@ -195,11 +196,9 @@ for word, status in scenario.get("exit", {}).items():
 """
 #: The script under another uid's `os.getuid()`, run as `python -I -c <this> <named> <script>
 #: <arguments>`. A test's files are its own user's, and only root can give a file to another uid.
-#: So the object `named` (`directory`: the run directory, `file`: `stack.env`, `root`: the run
-#: root) stays as it is on disk, which under the other uid is another's, and the objects the checks
-#: read before it are reported as that uid's own, by the call that reads them: `lstat` for the run
-#: root and the run directory, `fstat` for the file. Only the check on the object `named` can
-#: refuse.
+#: So the object `named` (`directory`, `file` or `root`: the run directory, `stack.env`, the run
+#: root) stays as it is on disk, another uid's, and the objects the checks read before it are
+#: reported as the caller's own: by `lstat` for the run root and directory, by `fstat` for the file.
 AS_ANOTHER_UID: Final = """
 import os, runpy, sys
 named, script = sys.argv[1], sys.argv[2]
@@ -255,9 +254,8 @@ class Host:
         self, *args: str, lane: str | None = LANE, foreign: str | None = None, **extra_env: str
     ) -> subprocess.CompletedProcess[str]:
         """The script under the test's lane (`lane=None`: `CV_ACCTFIX_LANE` unset). `foreign` is
-        `directory`, `file` or `root`: the script runs under another uid's `os.getuid()`
-        (`AS_ANOTHER_UID`) and that object is another uid's, the ones read before it the caller's
-        own."""
+        `directory`, `file` or `root`: the script runs under another uid's `os.getuid()` with that
+        object another uid's and the ones read before it the caller's own (`AS_ANOTHER_UID`)."""
         env = {"PATH": str(self.bin), "HOME": str(self.home)}  # the stub alone answers `docker`
         env |= {"XDG_RUNTIME_DIR": str(self.runtime), "TMPDIR": str(self.tmp), **extra_env}
         if lane is not None:
@@ -485,9 +483,8 @@ def test_down_takes_no_file_option(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("kind", ["symlink", "subdirectory"])
 def test_down_leaves_a_run_dir_up_never_made_and_says_so(tmp_path: Path, kind: str) -> None:
-    """The run directory is flat and real: a link in its place is refused with the one line for a
-    run directory that is not the user's own real directory, and a directory in it with the line of
-    its own; each is left as it is, never followed or half removed."""
+    """A link in place of the run directory is refused with the run-directory line, and a
+    directory in it with the line of its own; each is left as it is."""
     host = Host(tmp_path)
     run_dir, elsewhere = host.runtime / PROJECT, tmp_path / "elsewhere"
     elsewhere.mkdir()
@@ -510,8 +507,7 @@ def test_down_leaves_a_run_dir_up_never_made_and_says_so(tmp_path: Path, kind: s
 @pytest.mark.parametrize("kind", ["a-link", "a-regular-file"])
 def test_remove_run_dir_unlinks_only_the_directory_up_made(tmp_path: Path, kind: str) -> None:
     """A link or a regular file in place of the run directory is refused with the fixed line and
-    left as it is, never followed: the directory behind the link is what `up` makes, so only the
-    open (`O_NOFOLLOW`) refuses it."""
+    left as it is; the directory behind a link is what `up` makes, so `O_NOFOLLOW` alone refuses."""
     stack = _stack()
     run_dir, elsewhere = tmp_path / "run-dir", tmp_path / "elsewhere"
     elsewhere.mkdir(mode=0o700)
@@ -532,16 +528,17 @@ def test_remove_run_dir_unlinks_only_the_directory_up_made(tmp_path: Path, kind:
 def test_remove_run_dir_unlinks_through_the_descriptor_it_opened(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Each entry is unlinked through the descriptor of the directory that was opened and
-    checked, never through the path. The test puts another directory, with an entry of the same
-    name, at the path once the open has returned: it stays as it is."""
+    """Each entry is listed, examined and unlinked through the descriptor of the directory that
+    was opened and checked, never through the path. The test puts another directory at the path
+    after the open: it holds the opened entry's name as a directory and a name of its own."""
     stack = _stack()
     run_dir, moved, other = tmp_path / "run-dir", tmp_path / "moved", tmp_path / "other"
     run_dir.mkdir(mode=0o700)
     run_dir.chmod(0o700)
     (run_dir / "kek").write_text("opened", encoding="ascii")
     other.mkdir()
-    (other / "kek").write_text("at the path", encoding="ascii")
+    (other / "kek").mkdir()
+    (other / "own-entry").write_text("at the path", encoding="ascii")
     real_open = os.open
 
     def open_then_move(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
@@ -552,10 +549,13 @@ def test_remove_run_dir_unlinks_through_the_descriptor_it_opened(
 
     monkeypatch.setattr(stack.os, "open", open_then_move)
 
-    with pytest.raises(OSError):  # the path names a directory that is not empty: no `rmdir`
+    with pytest.raises(OSError) as raised:  # the path names a directory that is not empty
         stack.remove_run_dir(run_dir)
 
-    assert (run_dir / "kek").read_text(encoding="ascii") == "at the path"
+    assert raised.value.errno == errno.ENOTEMPTY
+    assert sorted(path.name for path in run_dir.iterdir()) == ["kek", "own-entry"]
+    assert (run_dir / "kek").is_dir()
+    assert (run_dir / "own-entry").read_text(encoding="ascii") == "at the path"
     assert list(moved.iterdir()) == []
 
 
@@ -566,9 +566,8 @@ def test_down_removes_the_run_dir_only_when_it_is_what_up_makes(
     tmp_path: Path, mode: int, foreign: str | None
 ) -> None:
     """`remove_run_dir` judges the directory it opened (`fstat`): the mode (exactly 0700) and the
-    owner each refuse alone. The stub `docker` makes `<run root>/<project>` with one file in it on
-    the teardown call, after `down`'s checks found none there: `down` refuses with the fixed
-    line, and the directory and its file stay as the stub left them."""
+    owner each refuse alone. The stub `docker` makes `<run root>/<project>` with one file in it at
+    the teardown call: `down` refuses with the fixed line and leaves the directory as it is."""
     host = Host(tmp_path)
     run_dir = host.runtime / PROJECT
     made = [{"path": str(run_dir), "mode": mode}]
@@ -643,9 +642,8 @@ def test_a_listing_docker_does_not_answer_stops_up_and_down(
 
 def _hand_made_run_dir(host: Host, *lines: str, stack_env: bool = True) -> Path:
     """A run directory made by hand under the host's run root, as `up` makes one (the test user's
-    own, mode 0700, its `stack.env` mode 0600) with a synthetic `stack.env` of these lines (never a
-    real file's), or, with `stack_env=False`, one other file and no `stack.env`: no `up` ran, so no
-    Docker object exists for it."""
+    own, mode 0700) with a synthetic `stack.env` of these lines (mode 0600), or, with
+    `stack_env=False`, one other file and no `stack.env`. No `up` ran: no Docker object exists."""
     run_dir = host.runtime / PROJECT
     run_dir.mkdir(mode=0o700)
     run_dir.chmod(0o700)  # whatever the umask
@@ -913,9 +911,8 @@ def _refused(
     before: dict[str, tuple[int, bytes]],
     line: str = NOT_OWN_LINE,
 ) -> None:
-    """Exit 2 and the one fixed line `line`, which holds no path or lane, before any docker call,
-    and nothing under the test's directory (the run root, the run directory, a link's target)
-    changed."""
+    """Exit 2 and the one fixed line `line` (no path or lane in it) before any docker call, and
+    nothing under the test's directory changed."""
     said = f"account-fixture-stack: refused: {line}\n"
     assert (done.returncode, done.stdout, done.stderr) == (2, "", said)
     assert str(host.runtime) not in done.stderr and LANE not in done.stderr
@@ -928,10 +925,9 @@ def test_a_run_dir_or_stack_env_of_another_uid_is_refused(
     tmp_path: Path, command: str, named: str
 ) -> None:
     """The run directory (`lstat`) and `stack.env` (`fstat` on the opened file) are each held to
-    the invoking user's uid. The script runs under another uid's `os.getuid()`, the object `named`
-    another uid's and the other one the caller's own (`AS_ANOTHER_UID`), so only that object's
-    check can refuse. The directory names this lane and has the right modes: under the real uid it
-    passes every check (`test_a_run_dir_whose_stack_env_names_this_lane_is_used_as_before`)."""
+    the invoking user's uid. The script runs under another uid's `os.getuid()` with the object
+    `named` another uid's and the others the caller's own (`AS_ANOTHER_UID`), so only that
+    object's check can refuse; under the real uid the directory passes every check."""
     host = Host(tmp_path)
     _hand_made_run_dir(host, f"CV_ACCTFIX_LANE={LANE}")
     before = _tree(tmp_path)
@@ -977,8 +973,7 @@ def test_a_run_dir_that_is_a_link_or_not_a_directory_is_refused(
     tmp_path: Path, command: str, case: str
 ) -> None:
     """The run directory is read with `lstat`, so a link is never followed: one to a directory
-    that is exactly what `up` makes and names this lane is refused, and so is a regular file of
-    the user's own with mode 0700."""
+    that is what `up` makes and names this lane is refused, and so is a regular file."""
     host = Host(tmp_path)
     run_dir = host.runtime / PROJECT
     if case == "a-regular-file":
@@ -1018,8 +1013,9 @@ def test_a_run_dir_with_no_stack_env_is_held_to_the_same_owner_and_mode(
         run_dir.chmod(0o700)  # a tighter directory stays removable
 
 
-#: A run root that fails the rule, in one way each: the mode it is given (`Host.runtime` is the
-#: root) and whether the script runs under another uid's `os.getuid()`, with the root another's.
+#: A run root that fails the rule, in one way each: the mode `Host.runtime` (the root) is given, and
+#: whether the script runs under another uid's `os.getuid()`. A root that is no directory (a
+#: regular file, nothing, a path below a file) points `$XDG_RUNTIME_DIR` elsewhere.
 ROOT_REFUSALS: Final = {
     "a-link": (0o700, None),
     "mode-0777": (0o777, None),
@@ -1027,6 +1023,10 @@ ROOT_REFUSALS: Final = {
     "mode-0707": (0o707, None),
     "mode-0770-another-uid": (0o770, "root"),
     "mode-0700-another-uid": (0o700, "root"),
+    "sticky-1777-another-uid": (0o1777, "root"),
+    "a-regular-file": (0o700, None),
+    "missing": (0o700, None),
+    "below-a-regular-file": (0o700, None),
 }
 
 
@@ -1035,16 +1035,25 @@ ROOT_REFUSALS: Final = {
 def test_a_run_root_that_is_not_a_usable_directory_is_refused(
     tmp_path: Path, command: str, case: str
 ) -> None:
-    """Every command reads the run root with `lstat` before any docker call. A link (to a
-    directory that passes), a directory the user owns but group or others can write (no sticky
-    bit), and one of another uid's (mode 0770 or 0700, the owner alone) are each refused with the
-    one fixed line, and nothing under the test's directory changes."""
+    """Every command reads the run root with `lstat` before any docker call: a link (to a
+    directory that passes), a regular file, nothing, a path below a file, one that group or
+    others can write (no sticky bit), one of another uid's (0770, 0700) and a sticky one of
+    another uid's (1777) are each refused with the one fixed line, and the tree is unchanged."""
+    if case == "sticky-1777-another-uid" and os.geteuid() == 0:
+        pytest.skip("root owns the run root, which the rule accepts")
     host = Host(tmp_path)
     mode, foreign = ROOT_REFUSALS[case]
     extra: dict[str, str] = {}
     if case == "a-link":
         (tmp_path / "root-link").symlink_to(host.runtime)
         extra["XDG_RUNTIME_DIR"] = str(tmp_path / "root-link")
+    elif case in ("a-regular-file", "below-a-regular-file"):
+        regular = tmp_path / "root-file"
+        regular.write_text("synthetic", encoding="ascii")
+        regular.chmod(0o600)
+        extra["XDG_RUNTIME_DIR"] = str(regular / "root" if "below" in case else regular)
+    elif case == "missing":
+        extra["XDG_RUNTIME_DIR"] = str(tmp_path / "no-such-root")
     host.runtime.chmod(mode)
     before = _tree(tmp_path)
 
@@ -1061,7 +1070,7 @@ def test_a_run_root_that_is_the_users_own_or_sticky_is_used(
     tmp_path: Path, command: str, mode: int
 ) -> None:
     """A run root the user owns with no group or other write bit (0700, 0755), or a sticky one
-    (1777, as /dev/shm is), is used."""
+    the user owns (1777), is used."""
     host = Host(tmp_path)
     host.runtime.chmod(mode)
 
@@ -1072,14 +1081,35 @@ def test_a_run_root_that_is_the_users_own_or_sticky_is_used(
 
 
 @pytest.mark.parametrize(
+    ("owner", "used"), [("root", True), ("the-user", True), ("another-uid", False)]
+)
+def test_a_sticky_run_root_is_used_only_when_root_or_the_user_owns_it(
+    monkeypatch: pytest.MonkeyPatch, owner: str, used: bool
+) -> None:
+    """A sticky run root (mode 1777, as /dev/shm is) is used when root or the invoking user owns
+    it and refused when another uid does. `lstat` answers for a path that is never touched."""
+    stack = _stack()
+    uids = {"root": 0, "the-user": os.getuid(), "another-uid": os.getuid() + 12345}
+    entry = os.stat_result((stat.S_IFDIR | 0o1777, 1, 1, 2, uids[owner], 0, 0, 0, 0, 0))
+    environ = {"XDG_RUNTIME_DIR": "/no/such/run-root"}
+    with monkeypatch.context() as patched:
+        patched.setattr(stack.os, "lstat", lambda path: entry)
+        if used:
+            assert stack.run_root(environ) == Path("/no/such/run-root")
+        else:
+            with pytest.raises(stack.Refused) as refused:
+                stack.run_root(environ)
+            assert str(refused.value) == NOT_ROOT_LINE
+
+
+@pytest.mark.parametrize(
     "environ", [{}, {"XDG_RUNTIME_DIR": "relative"}], ids=["unset", "not-absolute"]
 )
 def test_the_dev_shm_fallback_meets_the_same_rule(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environ: dict[str, str]
 ) -> None:
     """`/dev/shm` (here a directory under `tmp_path`) is the run root when `$XDG_RUNTIME_DIR` is
-    unset or not absolute, and is read with the same rule: sticky it is used, writable by others
-    without the sticky bit it is refused."""
+    unset or not absolute, under the same rule: sticky and the user's own, used; 0777, refused."""
     stack = _stack()
     shm = tmp_path / "shm"
     shm.mkdir()
@@ -1099,10 +1129,9 @@ def test_the_dev_shm_fallback_meets_the_same_rule(
 def test_a_stack_env_that_is_not_a_regular_file_is_refused(
     tmp_path: Path, command: str, case: str
 ) -> None:
-    """`stack.env` is read with `lstat` and must be a regular file (`S_ISREG`), so a link is
-    never followed and a pipe is never opened: a link to a file that names this lane (the user's
-    own, mode 0600, right in every other way), a link to nothing, a FIFO and a socket (which the
-    open itself would fail on) are refused alike with the fixed line, nothing read."""
+    """`stack.env` is read with `lstat` and must be a regular file, so a link is never followed
+    and a pipe is never opened: a link to a file that names this lane (right in every other way), a
+    link to nothing, a FIFO and a socket (the open itself fails on it) are refused alike."""
     host = Host(tmp_path)
     run_dir = host.runtime / PROJECT
     run_dir.mkdir(mode=0o700)
@@ -1204,9 +1233,8 @@ def test_names_lane_does_not_follow_a_link(tmp_path: Path) -> None:
 def test_names_lane_reads_the_file_it_opened_not_the_one_at_the_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The type, the owner and the mode come from the opened descriptor (`fstat`), and so does
-    the answer. The test puts another file (mode 0644, another lane's) at the path once the open
-    has returned."""
+    """The type, owner, mode and answer all come from the opened descriptor (`fstat`): the test
+    puts another file (mode 0644, another lane's) at the path once the open has returned."""
     stack = _stack()
     env_file, other = tmp_path / "stack.env", tmp_path / "other"
     env_file.write_text(f"CV_ACCTFIX_LANE={LANE}\n", encoding="ascii")
@@ -1226,9 +1254,8 @@ def test_names_lane_reads_the_file_it_opened_not_the_one_at_the_path(
 
 
 def test_up_makes_the_run_dir_0700_and_stack_env_0600_under_any_umask(tmp_path: Path) -> None:
-    """`up` sets both modes itself, so a umask that strips the owner's bits (0277) changes
-    neither: the run directory is a real directory of the user's own with mode 0700 and
-    `stack.env` a regular file of theirs with mode 0600, as the commands that read them require."""
+    """`up` sets both modes itself, so a umask that strips the owner's bits (0277) changes neither:
+    a real directory of the user's own, mode 0700, and a regular file of theirs, mode 0600."""
     host = Host(tmp_path)
     (host.home / "docker.jsonl").touch(mode=0o600)  # the stub's log exists: no umask creates it
     outer = os.umask(0o277)

@@ -154,10 +154,11 @@ python3 $S down --project <project>
 Every command checks the run root first, and `down`, `restart-api` and `drive` then check the run directory and its
 `stack.env`, each before any docker call and each refused with exit 2 and one fixed line that shows no path or uid. The
 run root (`$XDG_RUNTIME_DIR` when it is set and absolute, else `/dev/shm`) must be a real directory, never a link, that
-is the invoking user's own with no group or other write bit, or that is sticky. The run directory and `stack.env` must be
-the invoking user's own, mode 0700 and 0600 as `up` makes them (neither a link). `stack.env` must also name this lane:
-the lane `up` wrote into it is matched with theirs, and one that names another lane or none is refused (a line of its
-own, nothing of the file shown). A run directory with no `stack.env` goes on as before.
+is the invoking user's own with no group or other write bit, or that is sticky and owned by root or the invoking user.
+The run directory and `stack.env` must be the invoking user's own, mode 0700 and 0600 as `up` makes them (neither a
+link). `stack.env` must also name this lane: the lane `up` wrote into it is matched with theirs, and one that names
+another lane or none is refused (a line of its own, nothing of the file shown). A run directory with no `stack.env`
+goes on as before.
 
 Then `down` lists the project's containers, networks and volumes by their compose label and reads each one's `cv.lane`
 label. If any carries another lane's label, or none, `down` refuses: exit 2 and the one fixed line

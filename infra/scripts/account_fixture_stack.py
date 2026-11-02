@@ -21,8 +21,8 @@ runs that step once more, which changes nothing on a migrated database).
 
 Every command, `up` included, reads the run root (`$XDG_RUNTIME_DIR` when it is set and absolute,
 else `/dev/shm`) with `lstat` before any docker call. It must be a real directory (never a link)
-that is the invoking user's own with no group or other write bit, or that is sticky: anything else
-is one fixed line that shows no path, value or uid.
+that is the invoking user's own with no group or other write bit, or that is sticky and owned by
+root or the invoking user: anything else is one fixed line that shows no path, value or uid.
 
 Every command takes the lane from one environment variable, `CV_ACCTFIX_LANE` (1 to 63 of a-z, 0-9
 and `-`, the first not a `-`), and refuses it unset or malformed with exit 2 and one fixed line that
@@ -122,7 +122,7 @@ NOT_OWN: Final = (
 NOT_ROOT: Final = (
     "the run root ($XDG_RUNTIME_DIR, or /dev/shm when it is unset or not absolute) must be a real "
     "directory that is the invoking user's own and not writable by group or others, or that is "
-    "sticky: check it by hand"
+    "sticky and owned by root or the invoking user: check it by hand"
 )
 #: How often `up` draws the free ports again while two of them coincide.
 PORT_DRAWS: Final = 8
@@ -153,9 +153,11 @@ class Refused(Exception):
 
 def _usable_root(entry: os.stat_result) -> bool:
     """A run root: a real directory (`entry` is an `lstat`, so a link is none) that is the invoking
-    user's own with no group or other write bit, or that is sticky."""
+    user's own with no group or other write bit, or that is sticky and owned by root or the
+    invoking user."""
     own = entry.st_uid == os.getuid() and not entry.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
-    return stat.S_ISDIR(entry.st_mode) and (own or bool(entry.st_mode & stat.S_ISVTX))
+    sticky = entry.st_uid in (0, os.getuid()) and bool(entry.st_mode & stat.S_ISVTX)
+    return stat.S_ISDIR(entry.st_mode) and (own or sticky)
 
 
 def run_root(environ: Mapping[str, str]) -> Path:
@@ -416,10 +418,9 @@ def down(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
     """Everything of the project, by its name alone, then the run directory; idempotent. Only a
     project whose every object carries this lane's label, and whose run directory, when there is
     one, is what `up` makes (the invoking user's own, its `stack.env`, when it has one, a file of
-    theirs that names this lane): any other is refused, as it stands. The directory's path is
-    computed once, here, for both the checks and the removal (`remove_run_dir`, which reads the
-    directory it opens); the bound on what lies between them is the one `_checked_stack_env`
-    notes."""
+    theirs that names this lane): any other is refused, as it stands. The run directory's path
+    is computed once, for the checks and the removal; `_checked_stack_env` notes the bound
+    between them."""
     project = checked_project(args.project)
     run_dir = run_root(environ) / project
     _checked_stack_env(run_dir, args)  # before anything uses or removes the directory
@@ -443,9 +444,9 @@ def down(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
 def remove_run_dir(run_dir: Path) -> str:
     """Unlink the flat run directory `up` made (its owner unlinks root's files in it), and say
     what happened. The directory is opened once, without following a link, and the opened
-    directory must be what `up` makes (`_own_dir`, the check `_checked_stack_env` makes), else
-    `Refused`; it is listed and each entry unlinked through that descriptor, and anything `up`
-    never makes in it is refused and left as it is. The directory itself goes last."""
+    directory must be what `up` makes (`_own_dir`), else `Refused`; it is listed and each entry
+    unlinked through that descriptor, anything `up` never makes in it is refused and left as it
+    is, and the directory itself goes last."""
     try:
         descriptor = os.open(run_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     except FileNotFoundError:
@@ -483,7 +484,8 @@ def _checked_stack_env(run_dir: Path, args: argparse.Namespace) -> Path | None:
     opens `--env-file` again and reads the sources of the two secret files, and `drive` binds the
     directory read-only. The bound on all of these rests on the run directory's owner and mode
     (the invoking user's own, 0700) and on the run root's rule (`run_root`: the invoking user's own
-    with no group or other write bit, or sticky)."""
+    with no group or other write bit, or sticky and owned by root or the invoking user). It assumes
+    the run root's ancestors are root's or the invoking user's and are not writable by others."""
     try:
         shown = os.lstat(run_dir)
     except FileNotFoundError:
