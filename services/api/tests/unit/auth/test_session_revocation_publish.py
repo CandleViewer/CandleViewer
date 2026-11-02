@@ -153,6 +153,21 @@ async def _step_up_rotation(w: _World) -> Calls:
     return set()  # SR-013 (#2101): a step-up's rotation is a refresh's: re-`auth` in place
 
 
+async def _unlinked_rotation(w: _World) -> Calls:
+    """#2101: a step-up rotation whose family link fails revokes its successor, which was never
+    handed over: no socket runs on it, so nothing is published."""
+    sid, successor = await w.mint(), uuid.uuid4()
+
+    async def down(*, prev_session_id: str, next_session_id: str) -> None:
+        raise OSError("the store is unreachable")
+
+    w.repo.link_rotation = down  # type: ignore[method-assign]  # the link's unit of work fails
+    with pytest.raises(OSError):
+        await w.sessions.rotate(sid, successor_id=successor, carry_grants=carried_grants)
+    assert w.repo.sessions[str(successor)].revoked_reason == "rotation_unlinked"
+    return set()  # its tokens were never returned
+
+
 async def _require_active_expired(w: _World) -> Calls:
     sid = await w.mint()
     w.clock.now += ABSOLUTE_LIFETIME
@@ -251,6 +266,7 @@ _PATHS: dict[tuple[str, str], Callable[[_World], Awaitable[Calls]]] = {
     ("SessionService.refresh", "expired"): _refresh_expired,
     ("SessionService.refresh", "rotated"): _refresh_rotation,
     ("SessionService.rotate", "rotated"): _step_up_rotation,
+    ("SessionService._end_unlinked", "rotation_unlinked"): _unlinked_rotation,
     ("SessionService.require_active", "expired"): _require_active_expired,
     ("SessionService._revoke_stray_session", "user_disabled"): _stray_session,
     ("SessionService.unlock", "unlock_attempts_exceeded"): _unlock_attempts_exceeded,

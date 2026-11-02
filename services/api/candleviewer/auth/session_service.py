@@ -663,8 +663,12 @@ class SessionService:
         rotation leaves it where it was.
 
         Raises `SessionRevoked` when the claim loses (the session is revoked, rotated or gone:
-        nothing is claimed or minted), and what `mint` raises (`UserDisabled`, a store failure)
-        once the claim has won: the old session stays revoked and no successor exists."""
+        nothing is claimed or minted), and what `mint` or the family link raises (`UserDisabled`,
+        a store failure) once the claim has won: the old session stays revoked and no successor
+        stands. A successor whose link fails was minted but never handed over: it is revoked as
+        `rotation_unlinked` before the error propagates (best effort; a store that refuses that
+        too is logged). `refresh()` has had the same window between its mint and its link since
+        before #2101, and is left as it is."""
         now = self._clock()
         claimed = await self._repository.revoke(session_id, reason="rotated", now=now)
         if claimed is None:
@@ -687,10 +691,31 @@ class SessionService:
             locked_at=claimed.locked_at,
             step_up_elevations=carry_grants(claimed.step_up_elevations, now),
         )
-        await self._repository.link_rotation(
-            prev_session_id=str(claimed.id), next_session_id=str(minted.session_id)
-        )
+        try:  # a unit of work of its own, after the insert's
+            await self._repository.link_rotation(
+                prev_session_id=str(claimed.id), next_session_id=str(minted.session_id)
+            )
+        except Exception:
+            await self._end_unlinked(str(minted.session_id))
+            raise
         return RefreshOutcome(minted=minted, previous_session_id=claimed.id)
+
+    async def _end_unlinked(self, session_id: str) -> None:
+        """Revoke the successor of a rotation whose family link failed (`rotate`, #2101) as
+        `rotation_unlinked`, counted as any revoke is (`_revoke_row`). Not `rotated`: nothing
+        succeeds it, so the view-as sweeper takes it as the last carrier of a context it holds
+        (`ViewAsSessionStore.list_view_as_due`). Nothing is published: its tokens were never
+        returned, so no socket runs on it. A store that refuses this too is logged and the link's
+        error still propagates; the row then stays live, unusable without its tokens, until its
+        idle timeout or absolute expiry."""
+        try:
+            await self._revoke_row(session_id, reason="rotation_unlinked")
+        except Exception as exc:
+            _log().error(
+                "auth.session_rotation_successor_live",
+                session_id=session_id,
+                error=type(exc).__name__,
+            )
 
     # -- per-request enforcement ------------------------------------------
 

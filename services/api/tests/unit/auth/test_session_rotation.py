@@ -14,8 +14,12 @@ import structlog
 
 from candleviewer.auth.errors import RefreshReuseDetected, SessionRevoked, UserDisabled
 from candleviewer.auth.hashing import Hasher
-from candleviewer.auth.metrics import auth_sessions_active, normalise_reason
-from candleviewer.auth.models import MintedSession, UserStatus
+from candleviewer.auth.metrics import (
+    auth_session_revocations_total,
+    auth_sessions_active,
+    normalise_reason,
+)
+from candleviewer.auth.models import MintedSession, SessionRecord, UserStatus
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import carried_grants
 from candleviewer.auth.view_as import ViewAsState
@@ -287,6 +291,66 @@ async def test_rotate_of_a_disabled_user_keeps_the_claim_and_mints_nothing() -> 
     assert repo.sessions[str(old.session_id)].revoked_reason == "rotated"
     assert str(successor) not in repo.sessions
     assert repo.rotation_next == {}
+
+
+class _UnlinkedRepository(FakeSessionRepository):
+    """The family link fails after the successor's insert (its own unit of work); with *refuse*,
+    so does any later revoke of that successor."""
+
+    def __init__(self, *, refuse: bool = False) -> None:
+        super().__init__()
+        self.refuse, self.successor = refuse, ""
+
+    async def link_rotation(self, *, prev_session_id: str, next_session_id: str) -> None:
+        self.successor = next_session_id
+        raise OSError("the store is unreachable")
+
+    async def revoke(self, session_id: str, *, reason: str, now: datetime) -> SessionRecord | None:
+        if self.refuse and session_id == self.successor:
+            raise RuntimeError("the store refused the revoke too")
+        return await super().revoke(session_id, reason=reason, now=now)
+
+
+async def test_rotate_whose_link_fails_revokes_the_successor_before_the_error() -> None:
+    """#2101 (fold): a successor that cannot be linked into the family was never handed over;
+    it is revoked (`rotation_unlinked`, counted as itself, published to no one), so the void the
+    step-up writes is true, and the link's error propagates."""
+    repo, clock, sink = _UnlinkedRepository(), _Clock(), _Sink()
+    service = _service(repo, clock, sink)
+    old = await service.mint(str(uuid.uuid4()))
+    successor = uuid.uuid4()
+    gauge = auth_sessions_active._value.get()
+    unlinked = auth_session_revocations_total.labels(reason="rotation_unlinked")._value.get()
+
+    with pytest.raises(OSError, match="unreachable"):
+        await service.rotate(str(old.session_id), successor_id=successor, carry_grants=_keep_all)
+
+    assert repo.sessions[str(old.session_id)].revoked_reason == "rotated"
+    assert repo.sessions[str(successor)].revoked_reason == "rotation_unlinked"
+    assert auth_sessions_active._value.get() == gauge - 1  # neither session is live
+    counted = auth_session_revocations_total.labels(reason="rotation_unlinked")._value.get()
+    assert counted == unlinked + 1
+    assert sink.published == []
+
+
+async def test_rotate_whose_successor_revoke_fails_too_logs_it_and_raises_the_link_error() -> None:
+    """Best effort: the successor's revoke refused too is logged (ids and error class only), and
+    the error the caller sees is still the link's, which `api.step_up` classifies."""
+    repo, clock = _UnlinkedRepository(refuse=True), _Clock()
+    service = _service(repo, clock)
+    old = await service.mint(str(uuid.uuid4()))
+    successor = uuid.uuid4()
+
+    with structlog.testing.capture_logs() as logs, pytest.raises(OSError):
+        await service.rotate(str(old.session_id), successor_id=successor, carry_grants=_keep_all)
+
+    assert repo.sessions[str(successor)].revoked_at is None
+    (line,) = [e for e in logs if e["event"] == "auth.session_rotation_successor_live"]
+    assert (line["log_level"], line["session_id"], line["error"]) == (
+        "error",
+        str(successor),
+        "RuntimeError",
+    )
 
 
 async def test_mint_inserts_the_step_up_elevations_it_is_given() -> None:
