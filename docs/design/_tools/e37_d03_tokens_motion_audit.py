@@ -594,18 +594,23 @@ def amendments(
                 continue
             per_cmp[cmp_].add(fname)
             if fname in ("Tokens", "Storybook"):
-                if old15 is not None:
-                    no, line = cited_line(today, old15)
-                    on_line = (
-                        bool(no)
-                        and line.startswith(f"- **{fname}**:")
-                        and all(q in line for q in quoted(today))
-                    )
-                    if not on_line:
+                if old15 is not None:  # found by content: the CMP entry's own field line
+                    head = f"- **{fname}**: "
+                    k = field_line(old15, cmp_, head)
+                    base_text = old15[k][len(head) :].removesuffix(".") if k is not None else None
+                    if base_text is None or [base_text] != quoted(today):
                         problems.append(
-                            f"A-row {r[0]}: today's text is not on 15 line {no or '?'} "
-                            f"({cmp_} {fname}{', at the merge base' if mode == 'landed' else ''})"
+                            f"A-row {r[0]}: today's text is not {cmp_}'s {fname} field in 15"
+                            f"{' at the merge base' if mode == 'landed' else ''}"
                         )
+                    elif mode == "landed" and k is not None:  # New appended to that field at HEAD
+                        h = field_line(cat_lines, cmp_, head)
+                        expect = old15[k] + " " + (unquote(proposed) or "")
+                        if h is None or cat_lines[h] != expect:
+                            problems.append(
+                                f"A-row {r[0]}: {cmp_}'s {fname} field in 15 is not the merge "
+                                "base's text plus the New text"
+                            )
                 if field_line(cat_lines, cmp_, f"- **{fname}**:") is None:
                     problems.append(f"A-row {r[0]}: 15 {cmp_} has no {fname} field")
                 if "**E37-D03 —**" not in proposed:
@@ -1147,11 +1152,6 @@ MUTATIONS: tuple[tuple[str, ...], ...] = (  # (name, old, new[, occurrences])
         "| non-text          | 5.96 / 6.36 / 11.87   | PASS                                | PROPOSED ",
         "| non-text          | 5.96 / 6.36 / 11.87   | PASS                                | registered ",
     ),
-    (
-        "an A-row cites the wrong 15 line",
-        '"`color.node.trigger`" (1824)',
-        '"`color.node.trigger`" (1825)',
-    ),
     ("a matrix row drifts", "| P1  | node body text", "| P1  | node body text (bold)"),
     (
         "the PROPOSED-row count drifts",
@@ -1340,6 +1340,25 @@ def edit_text(field: str, old: str, new: str) -> Callable[[View], View | None]:
     return apply
 
 
+def shift15(v: View) -> View | None:
+    """Six lines added to `15` above CMP-146, in the base copy and at HEAD (as E47-S02 did)."""
+    tx = v[2].texts
+    pad = "### CMP-146 "
+    if pad not in tx.cat15 or tx.base15 is None or pad not in tx.base15:
+        return None
+    six = "- shifted\n" * 6
+    t2 = tx._replace(
+        cat15=tx.cat15.replace(pad, six + pad, 1), base15=tx.base15.replace(pad, six + pad, 1)
+    )
+    return v[0], v[1], v[2]._replace(texts=t2)
+
+
+# probes that must PASS (no new FAIL): a moved line is not a changed field
+PASSES: list[tuple[str, Callable[[View], View | None]]] = [
+    ("15 shifted by six lines above CMP-146 (both copies)", shift15),
+]
+
+
 def plan() -> list[Mut]:
     lits: list[Mut] = [
         (m[0], False, literal(m[1], m[2], int(m[3]) if len(m) > 3 else 1)) for m in MUTATIONS
@@ -1364,6 +1383,15 @@ def plan() -> list[Mut]:
             False,
             edit_text(
                 "cat15", "**E37-D03 —** canvas `color.surface.canvas`", "**E37-D03 —** the canvas"
+            ),
+        ),
+        (
+            "an Old field's text differs at the merge base (CMP-238 Storybook)",
+            False,
+            edit_text(
+                "base15",
+                "- **Storybook**: SmallGraph, LargeGraph, WithErrorNodes.",
+                "- **Storybook**: SmallGraph, LargeGraph.",
             ),
         ),
         (
@@ -1426,12 +1454,25 @@ def self_test(spec_path: Path) -> int:
         for p in fresh:
             print(f"  {p}")
             seen.setdefault(p, name)
+    for name, apply in PASSES:
+        view = apply((spec, screens, repo))
+        if view is None:
+            ok = False
+            print(f"pass probe {name}: DOES NOT APPLY")
+            continue
+        got, _ = evaluate(*view)
+        fresh = [p for p in got if p not in base]
+        ok = ok and not fresh
+        print(f"pass probe {name}: {'PASS' if not fresh else 'FAIL'} ({len(fresh)} new FAIL)")
+        for p in fresh:
+            print(f"  {p}")
     restored, _ = evaluate(spec, screens, read_repo())
     same = spec_path.read_bytes() == before and read(SCREENS) == screens
     ok = ok and not restored and same
     print(
         f"restore: rc {1 if restored else 0}; spec and 14 byte-identical: {same}; "
         f"--self-test: {'ok' if ok else 'FAIL'} - {len(muts)} mutations in memory, "
+        f"{len(PASSES)} pass probe(s), "
         f"{len(seen)} distinct FAILs"
     )
     return 0 if ok else 1
