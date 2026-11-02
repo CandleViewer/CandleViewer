@@ -15,6 +15,32 @@
   min-height: 0;
 }
 
+/* A tab group fills its cell: the strip at its height, the shown panel takes the rest (CMP-042's
+   horizontal panel is content-sized, which is 0 for a docked chart). */
+.cv-dockgrid__tabset {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.cv-dockgrid__tabset > .cv-tabs {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.cv-dockgrid__tabset .cv-tabs__panel:not([hidden]) {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.cv-dockgrid__tabset .cv-tabs__panel:not([hidden]) > * {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+
 /* The split: cells share the space by their fractions; the gutter is the separator's visible width. */
 .cv-splitpane {
   display: flex;

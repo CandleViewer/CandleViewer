@@ -59,21 +59,23 @@ export function DockGridView(props: DockGridViewProps): JSX.Element {
     if (node.type === "tabset") {
       const names = node.children.map((leaf) => paneName(leaf.paneId));
       return (
-        <Tabs
-          aria-label={names.join(", ")}
-          tabs={node.children.map((leaf, i) => ({ id: leaf.id, label: names[i] ?? "" }))}
-          value={node.children[node.active]?.id ?? ""}
-          onChange={(id) =>
-            onActivateTab(
-              node.id,
-              node.children.findIndex((l) => l.id === id),
-            )
-          }
-          renderPanel={(id) => {
-            const leaf = node.children.find((l) => l.id === id);
-            return leaf === undefined ? null : renderSlot(leaf);
-          }}
-        />
+        <div className="cv-dockgrid__tabset">
+          <Tabs
+            aria-label={names.join(", ")}
+            tabs={node.children.map((leaf, i) => ({ id: leaf.id, label: names[i] ?? "" }))}
+            value={node.children[node.active]?.id ?? ""}
+            onChange={(id) =>
+              onActivateTab(
+                node.id,
+                node.children.findIndex((l) => l.id === id),
+              )
+            }
+            renderPanel={(id) => {
+              const leaf = node.children.find((l) => l.id === id);
+              return leaf === undefined ? null : renderSlot(leaf);
+            }}
+          />
+        </div>
       );
     }
     const minimums = minSizes?.(node.id);
