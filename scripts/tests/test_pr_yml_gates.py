@@ -280,19 +280,21 @@ def _runs(condition: object, on: set[str], inputs: dict[str, Any]) -> bool:
     return bool(filters & on) if filters else text.lower() != "false" and "github." not in text
 
 
-def _executed(workflow: str, on: set[str]) -> list[str]:
-    """Jobs a PR run puts on a runner, one per matrix leg."""
+def _executed(workflow: str, on: set[str], draft: bool = False) -> list[str]:
+    """Jobs a PR run puts on a runner, one per matrix leg; `draft` reads the draft-PR clauses as true."""
     ran: list[str] = []
     for job_id, job in _load(workflow)["jobs"].items():
         callee = _load(job["uses"]) if "uses" in job else {"jobs": {"": job}}
         call = (callee.get(True) or {}).get("workflow_call") or {}  # YAML 1.1 reads `on` as True
         inputs = {k: v.get("default") for k, v in (call.get("inputs") or {}).items()}
-        # A feature-branch PR is not a draft: pr.yml's `heavy` input (the draft clause negated) is true.
+        # pr.yml's `heavy` input is the draft clause negated: true on a ready PR, false on a draft.
         inputs |= {
-            key: True if ".draft == true" in str(value) else value
+            key: (not draft) if ".draft == true" in str(value) else value
             for key, value in (job.get("with") or {}).items()
         }
-        for inner_id, inner in callee["jobs"].items() if _runs(job.get("if", True), on, {}) else ():
+        deferred = draft and ".draft == true" in str(job.get("if", ""))
+        called = _runs(job.get("if", True), on, {}) and not deferred
+        for inner_id, inner in callee["jobs"].items() if called else ():
             if _runs(inner.get("if", True), on, inputs):
                 matrix = (inner.get("strategy") or {}).get("matrix") or {}
                 legs = math.prod(_legs(axis, inputs) for axis in matrix.values())
@@ -343,6 +345,21 @@ def _legs(axis: object, inputs: dict[str, object]) -> int:
 def test_executed_job_count_per_change_class(change: str, count: int) -> None:
     on = set(JOBS["changed-paths"]["outputs"]) if change == "all" else set(change.split(","))
     assert len(_executed("pr.yml", on)) == count
+
+
+def test_draft_pr_runs_only_the_light_job_set() -> None:
+    """#5506: a draft starts the light jobs; the heavy lanes skip until ready_for_review."""
+    every = set(JOBS["changed-paths"]["outputs"])
+    draft, ready = _executed("pr.yml", every, draft=True), _executed("pr.yml", every)
+    assert len(draft) < len(ready)
+    for light in ("changed-paths", "gates", "py / py-checks"):
+        assert light in draft
+    assert any(job.startswith("js / ") and "lint" in job for job in draft)
+    assert any(job.startswith("js / ") and "typecheck" in job for job in draft)
+    heavy = ("py-tests", "py-perf", "py-perf-index", "unit-frontend", "unit-engine", "build")
+    assert not [job for job in draft if any(name in job.split(" / ")[-1] for name in heavy)]
+    assert [job for job in ready if "py-tests" in job]
+    assert not [job for job in draft if job.split(" / ")[0] in ("e2e", "a11y", "engine-bench")]
 
 
 def test_pr_runs_neither_xstate_job_and_the_nightly_runs_both_through_the_script() -> None:

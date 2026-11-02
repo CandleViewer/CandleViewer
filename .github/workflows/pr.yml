@@ -14,6 +14,7 @@ name: pr
 # CV-ERR codes surfaced by the resolver: CI-GATE-001 (applicable lane not
 # successful), CI-GATE-002 (gate misconfiguration: applicable lane skipped),
 # CI-GATE-003 (unpinned action / pull_request_target — tools/ci/check_action_pins.py);
+# by the resolver on a draft pull request: CI-GATE-005 (the full matrix runs from ready_for_review, #5506);
 # by the security-review-label job: CI-GATE-004 (C-10.2 path, label not added, #2892); by the
 # dependabot-alerts job: CI-SEC-001/004/005 (C-9.1 #11's Dependabot alert gate, #3558).
 
@@ -812,7 +813,7 @@ jobs:
     # lane runs on the merge group and on a merge train, and the `ci-required` resolver reads a
     # pull request's skip as "runs on the merge group", not as CI-GATE-002 (MERGE_GROUP_ONLY in
     # scripts/ci_gate_resolver.mjs). It restates that job's condition: change both together. The
-    # opt-in `audit-query-plan` job of the same workflow still starts from a labelled PR.
+    # opt-in `audit-query-plan` job of the same workflow still starts from a labelled PR (once ready for review).
     if: ${{ needs.changed-paths.outputs.py == 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
     uses: ./.github/workflows/_job-integration.yml
   migrations:

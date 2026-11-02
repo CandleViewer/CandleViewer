@@ -492,6 +492,7 @@ here, or the check fails the `governance` lane.
   label was missing (an API error: re-run; over the API's 3000 files: split the PR). Never remove
   the label: the job does not re-check after a removal (pr.yml does not run on `unlabeled`), so the
   merge guard is the backstop.
+- **CI-GATE-005** (a draft pull request): expected; mark it ready for review to run the full matrix.
 
 ### CI-PIN-* — action-pin ledger (`tools/ci/check_action_pins.py`, `.github/actions-pins.md`)
 
