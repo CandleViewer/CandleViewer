@@ -1,31 +1,35 @@
 #!/usr/bin/env python3
 """E38-D03 (#1074) audit: the hi-fi spec of the paper reset (SCR-079), live eligibility
-(SCR-122), the environment parity report and the paper fidelity panel (SCR-137 sections).
+(SCR-122), the environment parity report and the paper fidelity panel (SCR-137 fragments).
 
-Standalone and offline. It reads the spec and the pins file from the working tree, every cited
-file AS TEXT with `git show` at the pinned base (`BASE`), except E38-D01, which is read at #5451's
-approved head (`D01_REF`) until it merges. Colour maths is the repository's
-`docs/research/_tools/cvd_simulate.py` (`simulate`, `delta_e76`, `contrast_ratio`, `JND_FLOOR`),
-loaded from the working tree as E10-D03's tool does. Default-deny: a gate that cannot read its
+Standalone and offline, shaped on the merged E10-D03 tool (`e10_d03_shell_audit.py`): it imports
+`packages/ui/tokens/tests/verify_tokens.py` (the token loader and resolver),
+`docs/design/_tools/contrast_check.py` (`contrast_ratio`) and
+`docs/research/_tools/cvd_simulate.py` (`simulate`, `delta_e76`; JND 5.0) from the working tree
+and never re-implements them. It reads the spec and the pins file from the working tree and every
+cited file AS TEXT with `git show` at the pinned base (`BASE`), except E38-D01, which is read at
+#5451's approved head (`D01_REF`) until it merges. Default-deny: a gate that cannot read its
 input FAILs.
 
 Gates (each FAIL led by its name):
-  G-STATE     every state the ticket's Scope names has a §0 frame row, and each of the five
-              acceptance criteria (AC-1 … AC-5) maps to frames that §0 lists.
+  G-STATE     every state the ticket's Scope and the rulings name has a §0 frame row, and each
+              of the five acceptance criteria (AC-1 … AC-5) maps to frames that §0 lists.
   G-TOKEN     every design token the spec names (`color.*`, `font.*`, `border.*`, `radius.*`,
-              `type.*`, `space.*`, `size.*`, `motion.*`, `opacity.*`) resolves in the token JSON
-              at the base.
-  G-CONTRAST  every §8.1 row is recomputed per theme (light = semantic-light over dark; hc =
-              semantic-hc over dark) and equals the spec to two decimals; a `text` row is
-              at least 4.5:1 and a `ui` row at least 3:1 in every theme; the verdict cell
-              matches its role and figures.
+              `type.*`, `space.*`, `size.*`, `motion.*`, `opacity.*`) is in a merged set.
+  G-CONTRAST  every §8.1 row is recomputed per theme (dark, light, high-contrast as
+              `verify_tokens` merges them) with `contrast_check.contrast_ratio` and equals the
+              spec to two decimals; a `text` row is at least 4.5:1 and a `ui` row at least 3:1
+              in every theme; the verdict cell matches its role and figures.
   G-CVD       every §8.2 row's normal / protanopia / deuteranopia / tritanopia ΔE76 equals the
               spec to two decimals, and its JND column names the simulations under 5.0.
   G-HIDDEN    the reset in a LIVE session is absent, never disabled (US-PAPER-006; the AC):
               S79-07 reads absent with the "not even disabled" note and no T2, and the T2
               alternative (S79-09, B07) is marked "not adopted".
-  G-T2        every state row (S79-, S122-, S137-) whose Presentation is T2 carries its reason
-              as a quoted sentence.
+  G-T2        every state row (S77-, S79-, S122-, S137-) whose Presentation is T2 carries its
+              reason as a quoted sentence, and that sentence is an E09-D09 key's text at the
+              base (its `{slot}` filled) unless the cell marks it PROPOSED.
+  G-MERGED    only merged owners are cited: E38-D02 or #1003 appears only on a request row or
+              the sentence saying so, and the unmerged #1075 is never named.
   G-CITE      every cite in range and on a non-blank line at its base, and equal to the pins.
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
               deny word in the spec; no deny word in this tool's text or the pins.
@@ -43,7 +47,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.util
-import json
 import re
 import subprocess
 import sys
@@ -51,6 +54,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC_REL = "docs/design/E38/E38-D03.md"
@@ -59,8 +63,9 @@ PINS_REL = "docs/design/_tools/e38_d03_ruled_pins.txt"
 OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
 BASE = "c327ed438c01c5bab9247890dd00f5dce3717f97"  # origin/main when written; re-pinned by content
 D01_REF = "4774b2f8cd7b67a1ee934fe88546568f7aa3e34c"  # #5451's approved head; re-pinned at merge
-CVD_REL = "docs/research/_tools/cvd_simulate.py"
-TOKENS = "packages/ui/tokens/"
+TOKENS = ROOT / "packages" / "ui" / "tokens"
+CVD_PATH = ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py"
+CONTRAST_PATH = ROOT / "docs" / "design" / "_tools" / "contrast_check.py"
 PATHS: dict[str, str] = {
     "04": "docs/plan/04-security-program.md",
     "11": "docs/plan/11-user-stories.md",
@@ -68,12 +73,20 @@ PATHS: dict[str, str] = {
     "15": "docs/plan/15-component-catalogue.md",
     "22": "docs/plan/22-api-openapi.yaml",
     "24": "docs/plan/24-internal-schemas.md",
+    "E42D02": "docs/design/E42/E42-D02.md",
     "E42D03": "docs/design/E42/E42-D03.md",
+    "E30D04": "docs/design/E30/E30-D04.md",
+    "E27D02": "docs/design/E27/E27-D02.md",
+    "E27D03": "docs/design/E27/E27-D03.md",
+    "E10D03": "docs/design/E10/E10-D03.md",
+    "E05D03": "docs/design/E05/E05-D03.md",
     "E09D09": "docs/design/E09/E09-D09.md",
     "D01": "docs/design/research/E38-paper-parity.md",
 }
 REF_OF = {"D01": D01_REF}
-CITE = re.compile(r"`(\d\d|E42D03|E09D09|D01)`:(\d+(?:–\d+)?(?:, :\d+(?:–\d+)?)*)")
+CITE = re.compile(
+    r"`(\d\d|E42D0[23]|E09D09|E30D04|E27D0[23]|E10D03|E05D03|D01)`:(\d+(?:–\d+)?(?:, :\d+(?:–\d+)?)*)"
+)
 TOKEN_NAME = re.compile(
     r"`((?:color|font|border|radius|type|space|size|motion|opacity)\.[a-z0-9.-]*[a-z0-9])`"
 )
@@ -101,10 +114,10 @@ DENY = (
     "gh" + "sa",
     "pre-" + "auth",
 )  # each entry an explicit join, so this tool's own text carries none of the words
-THEMES = ("dark", "light", "hc")
+THEMES = ("dark", "light", "high-contrast")
 FLOOR = {"text": 4.5, "ui": 3.0}
 DEFICIENCIES = ("protanopia", "deuteranopia", "tritanopia")
-# the states the ticket's Scope names; each needs a §0 frame row
+# the states the ticket's Scope and the rulings name; each needs a §0 frame row
 REQUIRED_FRAMES = (
     "SCR-079/reset-demo",
     "SCR-079/reset-confirm-plain",
@@ -116,19 +129,22 @@ REQUIRED_FRAMES = (
     "SCR-122/eligibility-default",
     "SCR-122/eligibility-grant",
     "SCR-122/eligibility-revoke",
-    "SCR-122/eligibility-self",
-    "SCR-122/acknowledge",
-    "SCR-122/reduce-only",
+    "sign-in/acknowledge-live",
+    "workspace/reduce-only",
+    "SCR-077/parity-link",
     "SCR-137/parity",
     "SCR-137/parity-stale",
     "SCR-137/parity-candidates",
     "SCR-137/parity-empty-error",
     "SCR-137/fidelity",
     "SCR-137/fidelity-breach",
+    "SCR-137/fidelity-fill-rate",
     "SCR-137/fidelity-unavailable",
 )
 ACS = ("AC-1", "AC-2", "AC-3", "AC-4", "AC-5")
-FRAME = re.compile(r"`(SCR-\d{3}/[a-z0-9-]+)`")
+FRAME = re.compile(r"`((?:SCR-\d{3}|[a-z-]+)/[a-z0-9-]+)`")
+UNMERGED = re.compile(r"E38-D02|#1003")
+NEVER = re.compile(r"#1075|FillModelDisclosure")
 
 
 @dataclass(frozen=True)
@@ -165,14 +181,33 @@ def at(t: Texts, key: str) -> str:
     return text
 
 
-def cvd() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("cvd_simulate", ROOT / CVD_REL)
+def _load(path: Path, name: str) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
-        raise SystemExit(f"{CVD_REL} cannot be loaded")
+        raise SystemExit(f"cannot load {path}")
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["cvd_simulate"] = mod
+    sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
+
+
+_MODS: dict[str, ModuleType] = {}
+
+
+def mod(name: str) -> ModuleType:
+    if name not in _MODS:
+        if name == "verify_tokens":
+            sys.path.insert(0, str(TOKENS / "tests"))
+            _MODS[name] = _load(TOKENS / "tests" / "verify_tokens.py", name)
+        elif name == "contrast_check":
+            _MODS[name] = _load(CONTRAST_PATH, name)
+        else:
+            _MODS[name] = _load(CVD_PATH, name)
+    return _MODS[name]
+
+
+def cvd() -> ModuleType:
+    return mod("cvd_simulate")
 
 
 def norm(s: str) -> str:
@@ -199,40 +234,41 @@ def section(text: str, head: str) -> str:
 # ---------------------------------------------------------------------------- tokens
 
 
-def flat(obj: object, prefix: str = "") -> dict[str, str]:
-    out: dict[str, str] = {}
-    if isinstance(obj, dict):
-        if "$value" in obj:
-            out[prefix] = str(obj["$value"])
-            return out
-        for k, v in obj.items():
-            if not k.startswith("$"):
-                out.update(flat(v, f"{prefix}.{k}" if prefix else k))
-    return out
+_THEMES: dict[str, dict[str, str]] = {}
 
 
-def token_files(t: Texts) -> dict[str, dict[str, str]]:
-    files = {}
-    for name in ("primitives", "semantic-dark", "semantic-light", "semantic-hc"):
-        raw = show(t, BASE, f"{TOKENS}{name}.tokens.json")
-        if raw is None:
-            raise SystemExit(f"{TOKENS}{name}.tokens.json does not resolve at the base")
-        files[name] = flat(json.loads(raw))
-    return files
+def theme(name: str) -> dict[str, str]:
+    """The colour tokens of one theme, resolved as E10-D03's tool does."""
+    if name not in _THEMES:
+        v = mod("verify_tokens")
+        allt: dict[str, Any] = dict(v.load(v.PRIMITIVES))
+        allt.update(v.merged_set(v.THEMES[name]))
+        _THEMES[name] = {
+            k: str(v.resolve(tok["$value"], allt)).upper()
+            for k, tok in allt.items()
+            if isinstance(tok, dict) and tok.get("$type") == "color"
+        }
+    return _THEMES[name]
 
 
-def resolve(files: dict[str, dict[str, str]], theme: str, name: str) -> str:
-    layers = {"dark": ["semantic-dark"], "light": ["semantic-light", "semantic-dark"],
-              "hc": ["semantic-hc", "semantic-dark"]}[theme] + ["primitives"]  # fmt: skip
-    v = "{" + name + "}"
-    for _ in range(20):
-        if not (v.startswith("{") and v.endswith("}")):
-            return v[:7].upper()
-        key = v[1:-1]
-        v = next((files[f][key] for f in layers if key in files[f]), "")
-        if not v:
-            raise LookupError(f"`{key}` does not resolve in {theme}")
-    raise LookupError(f"`{name}` loops in {theme}")
+def known_tokens() -> set[str]:
+    v = mod("verify_tokens")
+    names: set[str] = set(v.load(v.PRIMITIVES))
+    for th in THEMES:
+        names |= set(v.merged_set(v.THEMES[th]))
+    return names
+
+
+def hex_rgb(h: str) -> tuple[int, int, int]:
+    h = h.lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def color(th: str, name: str) -> str:
+    t = theme(th)
+    if name not in t:
+        raise LookupError(f"`{name}` does not resolve in {th}")
+    return t[name][:7]
 
 
 # ---------------------------------------------------------------------------- figures
@@ -254,25 +290,26 @@ def tok(cell: str) -> str:
 
 
 def contrast_values(t: Texts, row: list[str]) -> list[str]:
-    files, mod = token_files(t), cvd()
+    cc = mod("contrast_check")
     fg, bg = tok(row[1]), tok(row[2])
     return [
-        f"{mod.contrast_ratio(resolve(files, th, fg), resolve(files, th, bg)):.2f}"
+        f"{cc.contrast_ratio(hex_rgb(color(th, fg)), hex_rgb(color(th, bg))):.2f}"
         for th in THEMES
     ]
 
 
 def cvd_values(t: Texts, row: list[str]) -> tuple[str, str]:
-    files, mod = token_files(t), cvd()
-    a, b, theme = tok(row[1]), tok(row[2]), row[3]
-    ha, hb = resolve(files, theme, a), resolve(files, theme, b)
-    ds = [mod.delta_e76(ha, hb)] + [
-        mod.delta_e76(mod.simulate(ha, d), mod.simulate(hb, d)) for d in DEFICIENCIES
+    cv = cvd()
+    th = {"hc": "high-contrast"}.get(row[3], row[3])
+    a, b = tok(row[1]), tok(row[2])
+    ha, hb = color(th, a), color(th, b)
+    ds = [cv.delta_e76(ha, hb)] + [
+        cv.delta_e76(cv.simulate(ha, d), cv.simulate(hb, d)) for d in DEFICIENCIES
     ]
     under = [
         n
         for n, d in zip(("normal", *DEFICIENCIES), ds, strict=True)
-        if d < mod.JND_FLOOR
+        if d < cv.JND_FLOOR
     ]
     return " / ".join(f"{d:.2f}" for d in ds), (", ".join(under) if under else "none")
 
@@ -339,8 +376,7 @@ def g_state(t: Texts) -> list[str]:
 
 
 def g_token(t: Texts) -> list[str]:
-    files = token_files(t)
-    known = set().union(*(set(f) for f in files.values()))
+    known = known_tokens()
     names = sorted(set(TOKEN_NAME.findall(t.spec)))
     return [
         f"`{n}` does not resolve in the token JSON at the base"
@@ -415,14 +451,43 @@ def g_hidden(t: Texts) -> list[str]:
     return bad
 
 
+def e09_templates(t: Texts) -> list[re.Pattern[str]]:
+    out = []
+    for ln in at(t, "E09D09").split("\n"):
+        if ln.startswith("| `"):
+            for q in re.findall(r'"([^"]{8,})"', ln):
+                parts = re.split(r"\{[a-z_]+\}", q)
+                out.append(re.compile(".+?".join(re.escape(x) for x in parts) + "$"))
+    return out
+
+
 def g_t2(t: Texts) -> list[str]:
     bad = []
-    rows = [r for lead in ("S79-", "S122-", "S137-") for r in table_rows(t.spec, lead)]
+    leads = ("S77-", "S79-", "S122-", "S137-")
+    rows = [r for lead in leads for r in table_rows(t.spec, lead)]
     if not rows:
         return ["the spec has no state rows"]
+    keys = e09_templates(t)
     for r in rows:
-        if len(r) > 3 and "T2" in r[3] and not re.search(r"\"[^\"]{8,}\"", r[3]):
+        if len(r) < 4 or "T2" not in r[3]:
+            continue
+        quote = re.search(r'"([^"]{8,})"', r[3])
+        if not quote:
             bad.append(f"{r[0]}: a T2 presentation with no quoted reason")
+        elif "PROPOSED" not in r[3] and not any(k.match(quote[1]) for k in keys):
+            bad.append(
+                f"{r[0]}: {quote[1]!r} is no E09-D09 key's text and is not PROPOSED"
+            )
+    return bad
+
+
+def g_merged(t: Texts) -> list[str]:
+    bad = []
+    for i, ln in enumerate(t.spec.split("\n"), 1):
+        if UNMERGED.search(ln) and not (ln.startswith("| R-") or "request row" in ln):
+            bad.append(f"spec:{i} leans on the unmerged E38-D02 outside a request row")
+        if NEVER.search(ln):
+            bad.append(f"spec:{i} names the unmerged #1075")
     return bad
 
 
@@ -471,7 +536,7 @@ def g_scope(t: Texts) -> list[str]:
 
 GATES: dict[str, Callable[[Texts], list[str]]] = {
     "G-STATE": g_state, "G-TOKEN": g_token, "G-CONTRAST": g_contrast, "G-CVD": g_cvd,
-    "G-HIDDEN": g_hidden, "G-T2": g_t2, "G-CITE": g_cite, "G-HYGIENE": g_hygiene,
+    "G-HIDDEN": g_hidden, "G-T2": g_t2, "G-MERGED": g_merged, "G-CITE": g_cite, "G-HYGIENE": g_hygiene,
     "G-SCOPE": g_scope,
 }  # fmt: skip
 
@@ -568,9 +633,12 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-CONTRAST", "type a contrast figure off", set_cell("P-01", 4, "1.00")),
     ("G-CONTRAST", "report a ui pair as structure", set_cell("P-08", 3, "structure")),
     ("G-CVD", "type a ΔE figure off", set_cell("V-01", 4, "1.00 / 1.00 / 1.00 / 1.00")),
-    ("G-HIDDEN", "draw the LIVE reset disabled", set_cell("S79-07", 3, "T2 \"Paper reset isn't available in a LIVE session.\"")),
+    ("G-HIDDEN", "draw the LIVE reset disabled", set_cell("S79-07", 3, "T2 \"Paper reset isn't available in a LIVE session.\" (PROPOSED)")),
     ("G-HIDDEN", "adopt the T2 alternative silently", sub("**not adopted**", "**the default**")),
-    ("G-T2", "drop the self-grant reason", set_cell("S122-07", 3, "T2")),
+    ("G-T2", "drop the reduce-only reason", set_cell("S122-06", 3, "T2")),
+    ("G-T2", "retype a key's text", set_cell("S137-09", 3, 'T2 "Read only while viewing someone."')),
+    ("G-MERGED", "cite the unmerged E38-D02", sub("It is a request row to E38-D02 (R-1), not drawn here.", "It is drawn by E38-D02 §3.4.")),
+    ("G-MERGED", "name #1075's offer", sub("The values are illustrative, and the defect ids are fixtures.", "The values are illustrative (#1075).")),
     ("G-CITE", "re-point a `14` cite to an unpinned line", sub("(`14`:43)", "(`14`:44)")),
     ("G-HYGIENE", "write a closing keyword against #1074", sub("carries the closing line.", "carries the closing line. Closes #1074.")),
     ("G-HYGIENE", "put a deny word into the tool's own text", lambda t: replace(t, tool=t.tool + "\n# " + DENY[6] + "\n")),
