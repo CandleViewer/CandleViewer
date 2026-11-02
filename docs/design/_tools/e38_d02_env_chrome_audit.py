@@ -4,10 +4,11 @@ chrome SCR-075 (CMP-074, CMP-075, CMP-139).
 
 Standalone and offline. It reads the spec and the pins file from the working tree, every cited
 file AS TEXT with `git show` at the pinned base (`BASE`), except E38-D01, which is read at #5451's
-approved head (`D01_REF`) until it merges. Colour maths is the repository's
-`docs/research/_tools/cvd_simulate.py` (`simulate`, `delta_e76`, `contrast_ratio`, `JND_FLOOR`),
-loaded from the working tree as E10-D03's tool does. Default-deny: a gate that cannot read its
-input FAILs.
+approved head (`D01_REF`) until it merges. Colour maths imports, as the merged E10-D03 tool does,
+`packages/ui/tokens/tests/verify_tokens.py` (the token loader and resolver),
+`docs/design/_tools/contrast_check.py` (`contrast_ratio`) and
+`docs/research/_tools/cvd_simulate.py` (`simulate`, `delta_e76`, `JND_FLOOR`) from the working
+tree, and never re-implements them. Default-deny: a gate that cannot read its input FAILs.
 
 Gates (each FAIL led by its name):
   G-STATE     every SCR-074 / SCR-075 state the ticket and `14` name has a §0 frame row;
@@ -23,9 +24,11 @@ Gates (each FAIL led by its name):
               at least 4.5:1 and a `ui` row at least 3:1 in every theme.
   G-CVD       every §8.2 row's normal / protanopia / deuteranopia / tritanopia ΔE76 equals the
               spec to two decimals, and its JND column names the simulations under 5.0.
-  G-HOTKEY    no key chord stands outside §13's rows: SCR-074 is click- and Tab-reachable only
-              (C-2.11; the ticket's AC).
-  G-T2        every §4.3 row whose Presentation is T2 carries its reason as a quoted sentence.
+  G-HOTKEY    no key chord stands outside §13's rows and A-8: SCR-074 is click- and Tab-reachable
+              only (C-2.11; the ticket's AC); and KEYMAP at the base binds no command to the
+              environment switch and nothing to Ctrl+Shift+L.
+  G-T2        every §4.3 row is classed: V (form validity: it names validity and carries no T2
+              rendering and no lock look) or T2 (its reason a quoted sentence).
   G-CITE      every cite in range and on a non-blank line at its base, and equal to the pins.
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
               deny word in the spec; no deny word in this tool's text or the pins.
@@ -51,6 +54,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC_REL = "docs/design/E38/E38-D02.md"
@@ -59,8 +63,10 @@ PINS_REL = "docs/design/_tools/e38_d02_ruled_pins.txt"
 OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
 BASE = "67fe8b5265810d9d7928bdf4b56e4911f16fce54"  # origin/main when written; re-pinned by content
 D01_REF = "4774b2f8cd7b67a1ee934fe88546568f7aa3e34c"  # #5451's approved head; re-pinned at merge
-CVD_REL = "docs/research/_tools/cvd_simulate.py"
-TOKENS = "packages/ui/tokens/"
+TOKENS = ROOT / "packages" / "ui" / "tokens"
+CVD_PATH = ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py"
+CONTRAST_PATH = ROOT / "docs" / "design" / "_tools" / "contrast_check.py"
+KEYMAP_REL = "apps/web/src/keymap/keymap.json"
 PATHS: dict[str, str] = {
     "04": "docs/plan/04-security-program.md",
     "13": "docs/plan/13-user-flows.md",
@@ -75,6 +81,7 @@ PATHS: dict[str, str] = {
     "E30D04": "docs/design/E30/E30-D04.md",
     "E09D09": "docs/design/E09/E09-D09.md",
     "E15D03": "docs/design/E15/E15-D03.md",
+    "E11D02": "docs/design/E11/E11-D02.md",
     "E29D03": "docs/design/E29/E29-D03.md",
     "E32D03": "docs/design/E32/E32-D03.md",
     "E33D03": "docs/design/E33/E33-D03.md",
@@ -82,7 +89,7 @@ PATHS: dict[str, str] = {
 }
 REF_OF = {"D01": D01_REF}
 CITE = re.compile(
-    r"`(\d\d|E10D03|E10D04|E30D02|E30D04|E09D09|E15D03|E29D03|E32D03|E33D03|D01)`"
+    r"`(\d\d|E10D03|E10D04|E30D02|E30D04|E09D09|E15D03|E11D02|E29D03|E32D03|E33D03|D01)`"
     r":(\d+(?:–\d+)?(?:, :\d+(?:–\d+)?)*)"
 )
 TOKEN_NAME = re.compile(
@@ -113,7 +120,7 @@ DENY = (
     "gh" + "sa",
     "pre-" + "auth",
 )  # each entry an explicit join, so this tool's own text carries none of the words
-THEMES = ("dark", "light", "hc")
+THEMES = ("dark", "light", "high-contrast")
 FLOOR = {"text": 4.5, "ui": 3.0}
 DEFICIENCIES = ("protanopia", "deuteranopia", "tritanopia")
 # §4.3's state rows, in order: `14`:1777's switching, switched, failed and not permitted, plus
@@ -181,14 +188,33 @@ def at(t: Texts, key: str) -> str:
     return text
 
 
-def cvd() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("cvd_simulate", ROOT / CVD_REL)
+def _load(path: Path, name: str) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
-        raise SystemExit(f"{CVD_REL} cannot be loaded")
+        raise SystemExit(f"cannot load {path}")
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["cvd_simulate"] = mod
+    sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
+
+
+_MODS: dict[str, ModuleType] = {}
+
+
+def mod(name: str) -> ModuleType:
+    if name not in _MODS:
+        if name == "verify_tokens":
+            sys.path.insert(0, str(TOKENS / "tests"))
+            _MODS[name] = _load(TOKENS / "tests" / "verify_tokens.py", name)
+        elif name == "contrast_check":
+            _MODS[name] = _load(CONTRAST_PATH, name)
+        else:
+            _MODS[name] = _load(CVD_PATH, name)
+    return _MODS[name]
+
+
+def cvd() -> ModuleType:
+    return mod("cvd_simulate")
 
 
 def norm(s: str) -> str:
@@ -215,40 +241,41 @@ def section(text: str, head: str) -> str:
 # ---------------------------------------------------------------------------- tokens
 
 
-def flat(obj: object, prefix: str = "") -> dict[str, str]:
-    out: dict[str, str] = {}
-    if isinstance(obj, dict):
-        if "$value" in obj:
-            out[prefix] = str(obj["$value"])
-            return out
-        for k, v in obj.items():
-            if not k.startswith("$"):
-                out.update(flat(v, f"{prefix}.{k}" if prefix else k))
-    return out
+_THEMES: dict[str, dict[str, str]] = {}
 
 
-def token_files(t: Texts) -> dict[str, dict[str, str]]:
-    files = {}
-    for name in ("primitives", "semantic-dark", "semantic-light", "semantic-hc"):
-        raw = show(t, BASE, f"{TOKENS}{name}.tokens.json")
-        if raw is None:
-            raise SystemExit(f"{TOKENS}{name}.tokens.json does not resolve at the base")
-        files[name] = flat(json.loads(raw))
-    return files
+def theme(name: str) -> dict[str, str]:
+    """The colour tokens of one theme, resolved as E10-D03's tool does."""
+    if name not in _THEMES:
+        v = mod("verify_tokens")
+        allt: dict[str, Any] = dict(v.load(v.PRIMITIVES))
+        allt.update(v.merged_set(v.THEMES[name]))
+        _THEMES[name] = {
+            k: str(v.resolve(tok["$value"], allt)).upper()
+            for k, tok in allt.items()
+            if isinstance(tok, dict) and tok.get("$type") == "color"
+        }
+    return _THEMES[name]
 
 
-def resolve(files: dict[str, dict[str, str]], theme: str, name: str) -> str:
-    layers = {"dark": ["semantic-dark"], "light": ["semantic-light", "semantic-dark"],
-              "hc": ["semantic-hc", "semantic-dark"]}[theme] + ["primitives"]  # fmt: skip
-    v = "{" + name + "}"
-    for _ in range(20):
-        if not (v.startswith("{") and v.endswith("}")):
-            return v[:7].upper()
-        key = v[1:-1]
-        v = next((files[f][key] for f in layers if key in files[f]), "")
-        if not v:
-            raise LookupError(f"`{key}` does not resolve in {theme}")
-    raise LookupError(f"`{name}` loops in {theme}")
+def known_tokens() -> set[str]:
+    v = mod("verify_tokens")
+    names: set[str] = set(v.load(v.PRIMITIVES))
+    for th in THEMES:
+        names |= set(v.merged_set(v.THEMES[th]))
+    return names
+
+
+def hex_rgb(h: str) -> tuple[int, int, int]:
+    h = h.lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def color(th: str, name: str) -> str:
+    t = theme(th)
+    if name not in t:
+        raise LookupError(f"`{name}` does not resolve in {th}")
+    return t[name][:7]
 
 
 # ---------------------------------------------------------------------------- figures
@@ -270,25 +297,26 @@ def tok(cell: str) -> str:
 
 
 def contrast_values(t: Texts, row: list[str]) -> list[str]:
-    files, mod = token_files(t), cvd()
+    cc = mod("contrast_check")
     fg, bg = tok(row[1]), tok(row[2])
     return [
-        f"{mod.contrast_ratio(resolve(files, th, fg), resolve(files, th, bg)):.2f}"
+        f"{cc.contrast_ratio(hex_rgb(color(th, fg)), hex_rgb(color(th, bg))):.2f}"
         for th in THEMES
     ]
 
 
 def cvd_values(t: Texts, row: list[str]) -> tuple[str, str]:
-    files, mod = token_files(t), cvd()
-    a, b, theme = tok(row[1]), tok(row[2]), row[3]
-    ha, hb = resolve(files, theme, a), resolve(files, theme, b)
-    ds = [mod.delta_e76(ha, hb)] + [
-        mod.delta_e76(mod.simulate(ha, d), mod.simulate(hb, d)) for d in DEFICIENCIES
+    cv = cvd()
+    th = {"hc": "high-contrast"}.get(row[3], row[3])
+    a, b = tok(row[1]), tok(row[2])
+    ha, hb = color(th, a), color(th, b)
+    ds = [cv.delta_e76(ha, hb)] + [
+        cv.delta_e76(cv.simulate(ha, d), cv.simulate(hb, d)) for d in DEFICIENCIES
     ]
     under = [
         n
         for n, d in zip(("normal", *DEFICIENCIES), ds, strict=True)
-        if d < mod.JND_FLOOR
+        if d < cv.JND_FLOOR
     ]
     return " / ".join(f"{d:.2f}" for d in ds), (", ".join(under) if under else "none")
 
@@ -386,8 +414,7 @@ def g_state(t: Texts) -> list[str]:
 
 
 def g_token(t: Texts) -> list[str]:
-    files = token_files(t)
-    known = set().union(*(set(f) for f in files.values()))
+    known = known_tokens()
     names = sorted(set(TOKEN_NAME.findall(t.spec)))
     return [
         f"`{n}` does not resolve in the token JSON at the base"
@@ -433,8 +460,19 @@ def g_hotkey(t: Texts) -> list[str]:
     allowed = section(t.spec, "## 13.")
     bad = []
     for i, ln in enumerate(t.spec.split("\n"), 1):
-        if CHORD.search(ln) and ln not in allowed:
-            bad.append(f"spec:{i} names a key chord outside §13's rows")
+        if CHORD.search(ln) and ln not in allowed and not ln.startswith("- **A-8,"):
+            bad.append(f"spec:{i} names a key chord outside §13's rows and A-8")
+    raw = show(t, BASE, KEYMAP_REL)
+    if raw is None:
+        return [*bad, f"{KEYMAP_REL} does not resolve at the base"]
+    for c in json.loads(raw).get("commands", []):
+        cid, label = str(c.get("id", "")), str(c.get("label", ""))
+        if c.get("defaultBinding") == "Ctrl+Shift+L":
+            bad.append(f"KEYMAP binds Ctrl+Shift+L to `{cid}`")
+        if re.search(
+            r"environment|demo\s*/\s*live|switch.*(demo|live)", label, re.IGNORECASE
+        ):
+            bad.append(f"KEYMAP binds `{cid}` ({label!r}) to the environment switch")
     return bad
 
 
@@ -444,7 +482,13 @@ def g_t2(t: Texts) -> list[str]:
     if not rows:
         return ["§4.3 has no state rows"]
     for r in rows:
-        if len(r) > 3 and "T2" in r[3] and not re.search(r"\"[^\"]{8,}\"", r[3]):
+        if len(r) < 4:
+            continue
+        cell = r[3]
+        if "validity" in cell:
+            if "T2" in cell or "lock look)" not in cell and "lock" in cell:
+                bad.append(f"{r[0]}: a validity state (V) drawn with a T2 rendering")
+        elif "T2" in cell and not re.search(r"\"[^\"]{8,}\"", cell):
             bad.append(f"{r[0]}: a T2 presentation with no quoted reason")
     return bad
 
@@ -602,6 +646,8 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-CVD", "type a ΔE figure off", set_cell("V-01", 4, "107.06 / 91.86 / 121.11 / 115.66")),
     ("G-HOTKEY", "bind a hotkey to the switcher in §4", sub("there is no other path to SCR-074.", "there is no other path to SCR-074 but Ctrl+Shift+L.")),
     ("G-T2", "drop the not-permitted reason", set_cell("S74-07", 3, "T2 2a on Switch to LIVE")),
+    ("G-T2", "draw the typed gate as T2", set_cell("S74-02", 3, "Continue T2 2a until the field equals `LIVE` (form validity)")),
+    ("G-HOTKEY", "a KEYMAP command bound to the switch", lambda t: replace(t, memo={**t.memo, f"{BASE}:{KEYMAP_REL}": json.dumps({"commands": [{"id": "session.env_switch", "label": "Switch Demo/Live", "defaultBinding": "Ctrl+Shift+L"}]})})),
     ("G-CITE", "re-point a `14` cite to an unpinned line", sub("(`14`:1767)", "(`14`:1766)")),
     ("G-HYGIENE", "write a closing keyword against #1003", sub("carries the closing line.", "carries the closing line. Closes #1003.")),
     ("G-HYGIENE", "put a deny word into the tool's own text", lambda t: replace(t, tool=t.tool + "\n# " + DENY[6] + "\n")),
