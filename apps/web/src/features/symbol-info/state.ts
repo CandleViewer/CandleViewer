@@ -239,10 +239,10 @@ export function liveState(input: LiveInput): LiveState {
       announce: null,
     };
   }
-  if (input.itemStale || (age !== null && age >= STALE_T1_MS)) {
+  if (input.itemStale || input.serverStale !== null || (age !== null && age >= STALE_T1_MS)) {
     return {
       kind: "stale_t1",
-      // An item flagged stale with no time of its own has no age to show: never a made-up "Stale 5s".
+      // An item (or the server) flagged stale with no time of its own has no age to show: never a made-up "Stale 5s".
       marker: seconds === null ? copy.LIVE_STALE : copy.staleT1(`${String(seconds)}s`),
       lastUpdate: last,
       announce: copy.LIVE_STALE,

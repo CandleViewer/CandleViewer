@@ -296,6 +296,17 @@ describe("liveState", () => {
     });
   });
 
+  it("honours a server-stale signal with no time of its own, as T1 without an age", () => {
+    expect(
+      liveState(live({ serverStale: { sinceMs: null }, lastDataMs: null, itemStale: false })),
+    ).toEqual({
+      kind: "stale_t1",
+      marker: "Live values stale.",
+      lastUpdate: null,
+      announce: "Live values stale.",
+    });
+  });
+
   it("lets the exchange feed down outrank a bootstrap-only band's T1", () => {
     expect(
       liveState(live({ bootstrapOnly: true, feedDown: true, lastDataMs: NOW - 120_000 })),
