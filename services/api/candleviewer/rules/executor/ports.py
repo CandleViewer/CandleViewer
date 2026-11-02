@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal
 from types import MappingProxyType
 from typing import Any, Final, Literal, Protocol, get_args
@@ -113,6 +114,10 @@ class ActionAuditFields:
     armed_by: str | None
     dedupe_key: str
     blocked_by: BlockedBy | None = None
+    #: Both users' roles as the principal snapshot the action was checked against gave them
+    #: (check 5, E35-T10); `None` when that snapshot was not read.
+    owner_role: str | None = None
+    armed_by_role: str | None = None
 
 
 def audit_fields(
@@ -150,3 +155,66 @@ class AlertPort(Protocol):
 
     def settled(self, rule_id: str) -> None:
         """The rule's fire ended with no partial outcome: its alert episode is over."""
+
+    def breaker_tripped(self, rule_id: str, run_id: UUID, node_id: str) -> None:
+        """The circuit breaker tripped (24 §11.7, BQ-8): the P1 page, synchronous, on every trip,
+        naming the rule, the fire and the action whose order the budget refused."""
+
+    async def breaker_moved(self, rule_id: str, run_id: UUID, node_id: str, *, moved: bool) -> None:
+        """After the trip's B9 move: the one `critical` `system_events` row saying whether the rule
+        was moved, and, when it was not, the page again."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PrincipalView:
+    """One user's principal snapshot (24 §11.5 "The principal"; E35-T10, BQ-5): whether the user
+    is active (neither disabled nor deleted), the role's name and whether it is the Owner role,
+    the accounts the order route's decision admits with `requires_trade` in the process's
+    environment (every account of it for an Owner; a view-only or frozen grant admits none), and
+    when it was read, on the executor's monotonic clock."""
+
+    user_id: UUID
+    active: bool
+    role: str | None
+    is_owner: bool
+    trade_accounts: frozenset[UUID]
+    read_at: float
+
+
+class PrincipalReads(Protocol):
+    """Check 5's reads by user id, never a session (E35-FR-01): synchronous, from memory. E35-T11
+    binds them; unbound, every action that reaches check 5 is refused (`permission`)."""
+
+    def principal(self, user_id: UUID) -> PrincipalView | None: ...
+
+
+class StopCheck(Protocol):
+    """Check 8's read-only port to the recorded-stop writer's own comparison (24 §11.5, §8.8 rule
+    5; BQ-12): whether the stop action on that account leaves the stop in force no looser, and a
+    cancel selects no native stop-loss. E35-T12 binds it; unbound, every stop action is refused
+    (`native_sl`)."""
+
+    def admits(self, req: ActionRequest, account_id: UUID | None) -> bool: ...
+
+
+class NotionalRebuild(Protocol):
+    """The day's notional a rule has sent, rebuilt from the rows its answers wrote (24 §11.7;
+    BQ-11), which E35-T11 binds; unbound, an entry of a rule with `max_daily_notional` set is
+    refused (`cap`)."""
+
+    async def day_notional(self, rule_id: str, day: date) -> Decimal: ...
+
+
+class RuleSwitches(Protocol):
+    """Checks 2 and 3's switches (24 §11.5; E35-T10, BQ-2), each a synchronous read of memory,
+    never an interpreter (C-2.20, C-2.21): the master switch `rules.enabled` (off while unread),
+    the `killswitch.order_entry` flag (engaged while unread), B18's verdict for an account (the
+    global one for `None`) and the rollout flag `rules.oms_actions` (off until E35-T11)."""
+
+    def rules_enabled(self) -> bool: ...
+
+    def order_entry_killed(self) -> bool: ...
+
+    def kill_switch_engaged(self, account_id: UUID | None) -> bool: ...
+
+    def oms_actions(self) -> bool: ...

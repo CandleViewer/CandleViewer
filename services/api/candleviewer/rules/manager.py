@@ -55,6 +55,16 @@ IDEM_CACHE_MAX = 4096
 REFUSAL_AUDIT_TIMEOUT_S: Final = 2.0
 #: Bound on one disarm of a rule armed above a hard cap, run beside the evaluator tick (#3232).
 TICK_DISARM_TIMEOUT_S: Final = 2.0
+#: Bound on one rule's stop by the kill-switch hook or the circuit breaker: its B9 event, its
+#: `rule.kill_switched` record and its row (24 §11.7, E35-T10).
+STOP_TIMEOUT_S: Final = 2.0
+#: Which rules the kill-switch hook reaches (24 §11.7, BQ-9): every armed rule (`"global"`), or
+#: every armed rule that can act on one of these engaged accounts. A plain alias, not a PEP 695
+#: `type` statement: Semgrep cannot parse that, and its grant-check rule reads this module's
+#: function scopes (as `ws/codec.py` notes).
+KillScope = Literal["global"] | frozenset[UUID]
+#: Why a rule left `armed` through this module, as the service's `rule_stopped` hook hears it.
+StopReason = Literal["kill_switch", "scope_denied"]
 _ORDER_ACTIONS = frozenset(
     {
         "place_order",
@@ -284,6 +294,14 @@ def _noop_metric(_name: str, _labels: dict[str, str]) -> None:
     return None
 
 
+def _noop_stopped(_rule_id: str, _reason: StopReason) -> None:
+    return None
+
+
+def _noop_left_armed(_rule_id: str) -> None:
+    return None
+
+
 def _now_us() -> int:
     """The server's clock for a stored version's authorship, in µs (24 §11.2 `TsUs`)."""
     return time.time_ns() // 1_000
@@ -412,6 +430,23 @@ def _disarm_cause(row: RuleRow) -> tuple[str, dict[str, Any]] | None:
     return ("limits_above_cap", capped) if capped else None
 
 
+def _can_act_on(row: RuleRow, engaged: frozenset[UUID]) -> bool:
+    """Whether the rule can act on an engaged account (BQ-9): its active version's scope names
+    one, or names none, or one of its actions targets `all_accounts`. A version that cannot be
+    read may act anywhere, so it is in scope (fail closed)."""
+    active = next((v for v in row.versions if v.id == row.active_version_id), None)
+    try:
+        rule = Rule.model_validate(active.ir) if active is not None else None
+        named = None if rule is None else {UUID(str(a)) for a in rule.scope.account_ids}
+    except (ValidationError, ValueError):
+        return True
+    if rule is None or named is None:
+        return True
+    return (
+        not named or bool(named & engaged) or any(a.targets == "all_accounts" for a in rule.actions)
+    )
+
+
 class RulesManager:
     def __init__(
         self,
@@ -436,18 +471,41 @@ class RulesManager:
         self._sim_window: dict[str, tuple[str, int]] = {}
         #: rule_id -> its disarm in flight above a hard cap (#3232): one per rule, `stop()` cancels.
         self._tick_disarms: dict[str, asyncio.Task[None]] = {}
+        #: The `rules` broadcasts of the forced stops (E35-T10), each run beside the move, never
+        #: inside its caller's bound, so a slow broadcast never reads as a failed move.
+        self._stop_broadcasts: set[asyncio.Task[None]] = set()
         #: Forced disarms run one at a time, so their re-read of the row and chart holds (#3232).
         self._disarming = asyncio.Lock()
+        self._rule_stopped: Callable[[str, StopReason], None] = _noop_stopped
+        self._left_armed: Callable[[str], None] = _noop_left_armed
+        self.kill_moves_failed_total = 0  # the kill-switch hook's moves that failed
 
-    def set_hooks(self, *, audit: Audit | None = None, broadcast: Broadcast | None = None) -> None:
+    def set_hooks(
+        self,
+        *,
+        audit: Audit | None = None,
+        broadcast: Broadcast | None = None,
+        rule_stopped: Callable[[str, StopReason], None] | None = None,
+        left_armed: Callable[[str], None] | None = None,
+    ) -> None:
+        """`rule_stopped` hears, synchronously and once per rule moved, a rule this module took
+        out of `armed` with its reason: the kill-switch hook's (E35-T10). `left_armed` hears,
+        synchronously, each rule whose stored row leaves `armed` by any move, once the move has
+        landed (`_record_b9`): a human disarm or mode change, the auto-disarm, the breaker's or
+        the kill switch's move, a version switch (E35-T10, the service's strike counts)."""
         if audit is not None:
             self._audit = audit
         if broadcast is not None:
             self._bc = broadcast
+        if rule_stopped is not None:
+            self._rule_stopped = rule_stopped
+        if left_armed is not None:
+            self._left_armed = left_armed
 
     async def stop(self) -> None:
-        """Cancel the tick disarms in flight (their rules stay armed, skipped), then the charts."""
-        tasks = list(self._tick_disarms.values())
+        """Cancel the tick disarms in flight (their rules stay armed, skipped) and the forced
+        stops' broadcasts still running, then the charts."""
+        tasks = [*self._tick_disarms.values(), *self._stop_broadcasts]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -659,14 +717,21 @@ class RulesManager:
             row = await self._force_disarm(row)
         return self._view(row)
 
-    async def _force_disarm(self, row: RuleRow) -> RuleRow:
+    async def _force_disarm(
+        self, row: RuleRow, named: tuple[StopReason, dict[str, Any]] | None = None
+    ) -> RuleRow:
         """B9 `DISARM`, audited as `rule.disarmed` with its cause (no actor: the server does it);
         the `rules` broadcast carries the reason only. `row` may be stale, so forced disarms run
         one at a time on the row read again (returned), only while it still has a cause and its
-        chart still takes DISARM (one that does not would park it: `onUnhandled: "defer"`)."""
+        chart still takes DISARM (one that does not would park it: `onUnhandled: "defer"`). The
+        cause is the row's own (`_disarm_cause`), or one a caller names for an armed row (E35-T10:
+        `scope_denied`), which `rule_stopped` hears once the rule has moved."""
         async with self._disarming:
             row = await self._s.get(row.id) or row
-            cause = _disarm_cause(row)
+            own = _disarm_cause(row)
+            cause: tuple[str, dict[str, Any]] | None = (
+                own if named is None else (named if row.mode == "armed" else None)
+            )
             if cause is None or not await self.lifecycle.handled_event(
                 row.id, row.mode, row.disabled_reason, "disabled"
             ):
@@ -678,6 +743,8 @@ class RulesManager:
             if await self._record_b9(
                 row, "DISARM", "rule.disarmed", payload | detail, reason=reason
             ):
+                if named is not None:
+                    self._rule_stopped(row.id, named[0])
                 await self._bc({"topic": "rules", **payload})
         return row
 
@@ -1033,6 +1100,97 @@ class RulesManager:
         self._tick_disarms[rid] = task
         task.add_done_callback(lambda _done: self._tick_disarms.pop(rid, None))
 
+    async def kill_all(self, scope: KillScope, reason: Literal["kill_switch"]) -> tuple[str, ...]:
+        """The kill switch's `disarm_rules` hook (24 §11.7; BQ-9), which E39-S03 calls: B9 `KILL`
+        to every armed rule in `scope`, each recorded `rule.kill_switched` with `reason` and no
+        actor, under its own bound, so re-arming needs a human (INV-B9-d). Each rule moved is
+        handed to `rule_stopped`, which drops its waiting fires; a move that fails is logged and
+        counted, and check 3 keeps the rule's actions blocked while the switch is engaged. The
+        rules moved, in the store's order. The rules are read under the same bound as each move;
+        a read that fails or runs late raises to the caller, and check 3 holds meanwhile."""
+        moved: list[str] = []
+        async with asyncio.timeout(STOP_TIMEOUT_S):
+            rows = await self._s.all()
+        for row in rows:
+            if row.deleted or row.mode != "armed":
+                continue
+            if scope != "global" and not _can_act_on(row, scope):
+                continue
+            try:
+                async with asyncio.timeout(STOP_TIMEOUT_S):
+                    stopped = await self._stop_rule(row.id, "KILL", reason)
+            except Exception as lost:  # the hooks name no error type: `rules` may not import them
+                self.kill_moves_failed_total += 1
+                _log().error("rules.kill_move_failed", rule_id=row.id, error=type(lost).__name__)
+                continue
+            if stopped == "moved":
+                moved.append(row.id)
+                self._rule_stopped(row.id, reason)
+        return tuple(moved)
+
+    async def trip_breaker(self, rule_id: str) -> bool:
+        """The circuit breaker's move (24 §11.7; BQ-8): B9 `KILL_SWITCH`, so only a human re-arm
+        with step-up leaves it (INV-B9-d), recorded `rule.kill_switched` with the reason
+        `order_budget` and no actor (`system`). True when the rule moved, or when its row is
+        already out of `armed` (disarmed, killed or deleted first), so nothing is left to stop;
+        False only while the row stays armed. Its caller bounds the move, never the broadcast."""
+        return await self._stop_rule(rule_id, "KILL_SWITCH", "order_budget") != "stuck"
+
+    def auto_disarm(self, rule_id: str, reason: Literal["scope_denied"]) -> None:
+        """Disarm a rule after repeated scope or permission refusals (24 §11.5; RE-E1, BQ-10):
+        synchronous, it starts one tracked task per rule beside the tick and the dispatch, never
+        awaited on either, which runs the forced disarm (B9 `DISARM`, `rule.disarmed` with
+        `reason`) under `TICK_DISARM_TIMEOUT_S`; one already in flight takes no second."""
+        if rule_id in self._tick_disarms:
+            return
+        task = spawn(self._scope_disarm(rule_id, reason), name="rule-scope-disarm")
+        self._tick_disarms[rule_id] = task
+        task.add_done_callback(lambda _done: self._tick_disarms.pop(rule_id, None))
+
+    async def _scope_disarm(self, rule_id: str, reason: Literal["scope_denied"]) -> None:
+        """One attempt, logged by the error's class alone when it fails; the next refusal past
+        the count tries again."""
+        try:
+            async with asyncio.timeout(TICK_DISARM_TIMEOUT_S):
+                row = await self._s.get(rule_id)
+                if row is not None:
+                    await self._force_disarm(row, (reason, {}))
+        except Exception as lost:  # the hook names no error type: `rules` may not import `audit`
+            _log().error("rules.scope_disarm_failed", rule_id=rule_id, error=type(lost).__name__)
+
+    async def _stop_rule(
+        self, rule_id: str, event: str, reason: str
+    ) -> Literal["moved", "out", "stuck"]:
+        """B9 `event` (`KILL` or `KILL_SWITCH`) to the rule while its row is armed, recorded
+        `rule.kill_switched` with `reason` and no actor (the system): `moved`, its `rules`
+        broadcast then run beside the caller (`_broadcast_stop`); `out` when the row is gone or no
+        longer armed; `stuck` when the chart does not move. Forced moves run one at a time, on the
+        row read again."""
+        async with self._disarming:
+            row = await self._s.get(rule_id)
+            if row is None or row.deleted or row.mode != "armed":
+                return "out"
+            leaf = await self._leaf(row)
+            payload = {"rule_id": row.id, "mode": "disabled", "from": row.mode}
+            payload |= {"b9_from": leaf, "b9_event": event, "reason": reason}
+            if not await self._record_b9(row, event, "rule.kill_switched", payload, reason=reason):
+                return "stuck"
+        task = spawn(self._broadcast_stop(rule_id, payload), name="rule-stop-broadcast")
+        self._stop_broadcasts.add(task)
+        task.add_done_callback(self._stop_broadcasts.discard)
+        return "moved"
+
+    async def _broadcast_stop(self, rule_id: str, payload: dict[str, Any]) -> None:
+        """The moved rule's `rules` broadcast, under its own bound: one that fails or runs late is
+        logged by the error's class, and the move stands."""
+        try:
+            async with asyncio.timeout(STOP_TIMEOUT_S):
+                await self._bc({"topic": "rules", **payload})
+        except Exception as lost:  # the hook names no error type
+            _log().warning(
+                "rules.stop_broadcast_failed", rule_id=rule_id, error=type(lost).__name__
+            )
+
     async def _disarm_on_tick(self, row: RuleRow) -> None:
         """One attempt, bounded by `TICK_DISARM_TIMEOUT_S`. A failed or timed-out one is logged,
         the row stays armed and the next tick retries; a late append can be recorded twice."""
@@ -1159,7 +1317,8 @@ class RulesManager:
         and only then persist the projected mode on the row. Returns False when the chart
         refused (nothing audited as a success, nothing persisted). Any failure after the
         chart moved evicts it, so it is rebuilt from the row - the durable truth - and the
-        caller gets an error, never a 2xx."""
+        caller gets an error, never a 2xx. Every move out of `armed` lands here: once the row
+        that was armed is persisted in another mode, `left_armed` hears it (E35-T10)."""
         try:
             before, leaf = await self.lifecycle.send(row.id, event, **ev)
         except LifecycleError as exc:
@@ -1169,6 +1328,7 @@ class RulesManager:
             ) from exc
         if leaf == before:
             return False
+        was_armed = row.mode == "armed"
         try:
             await self._audit(audit_action, payload | {"b9_to": leaf})
             row.mode = mode_of(leaf)
@@ -1180,6 +1340,8 @@ class RulesManager:
         except BaseException:
             await self.lifecycle.evict(row.id)
             raise
+        if was_armed and row.mode != "armed":
+            self._left_armed(row.id)
         return True
 
     async def _transition(

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
@@ -312,6 +313,12 @@ class _Source:
         await self._maybe_fail("permissions")
         return frozenset() if self.disabled else frozenset({ARM_LIVE})
 
+    async def load_account_environments(
+        self, account_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, str]:
+        """E35-T10 (BQ-3): every account read in this world's environment, `demo`."""
+        return dict.fromkeys(account_ids, "demo")
+
     async def _maybe_fail(self, read: str) -> None:
         if self.fail == f"hang-{read}":
             await asyncio.Event().wait()
@@ -325,7 +332,7 @@ async def test_scope_refresh_failure_fails_closed(fail: str) -> None:
     cuts it) leaves the snapshot with no grant and no live-arming permission, never the old
     ones; the error still reaches the cascade, which counts and alerts the failed step."""
     source = _Source()
-    state = SnapshotScopeState(source, "demo")
+    state = SnapshotScopeState(source)
     await state.refresh(_A)
     assert state.granted_accounts(_A) == {_ACCOUNT} and state.can_arm_live(_A)  # a held entry
     source.fail = fail

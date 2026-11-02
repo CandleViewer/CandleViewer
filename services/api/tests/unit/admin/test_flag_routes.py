@@ -14,7 +14,14 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError
 
-from candleviewer.admin.flags import FLAGS, FlagConflictError, FlagsWriteDenied, StoredFlag
+from candleviewer.admin.flags import (
+    FLAGS,
+    FlagConflictError,
+    FlagsWriteDenied,
+    StoredFlag,
+    default_registry,
+)
+from candleviewer.admin.flags.catalogue import RULES_ENABLED
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import assert_spec_is_valid
 from candleviewer.api.step_up import StepUpRefused
@@ -335,3 +342,29 @@ def test_a_refusal_the_route_cannot_audit_is_503(key: str, body: object, writer:
     response = put(client(writer, audit=_FlagAuditDown())[0], body, key)
     assert (response.status_code, response.json()["code"]) == (503, "audit_unavailable")
     assert response.headers["retry-after"] == "5"
+
+
+def test_a_manager_reads_rules_enabled_and_is_refused_its_write() -> None:
+    """E35-T10 (24 §16.2): the rule master switch is `all_roles` for reading, so the WS `system`
+    filter gives a Manager its key and value and a non-owner reader lists it; writing it is the
+    Owner's alone, so a Manager's write is refused by the guard and nothing is written."""
+    assert default_registry().visible_to(RULES_ENABLED, frozenset({"manager"})) is True
+    c, audit = client()
+    listed = c.get("/admin/feature-flags", headers={"x-role": "reader"}).json()["items"]
+    assert [i["value"] for i in listed if i["key"] == RULES_ENABLED] == [True]
+    response = put(c, write(value=False), RULES_ENABLED, role="manager")
+    assert (response.status_code, response.json()["code"]) == (403, "forbidden")
+    assert _changes(audit) == []  # nothing written: no flags.change record
+
+
+def test_releasing_rules_enabled_needs_the_killswitch_step_up() -> None:
+    """24 §16.2: engaging the master switch (a write of `false`) takes `flags`, as engaging any
+    kill switch on the console does; releasing it (a write of `true` over `false`) takes
+    `killswitch`, no grace and single use."""
+    c, _ = client(step_up=(step_up := FakeStepUp()))
+    engaged = put(c, write(value=False), RULES_ENABLED)
+    assert engaged.status_code == 200 and engaged.json()["value"] is False
+    body = write(value=True, expected_updated_at=engaged.json()["updated_at"])
+    released = put(c, body, RULES_ENABLED)
+    assert released.status_code == 200 and released.json()["value"] is True
+    assert step_up.demanded == ["flags", "killswitch"]

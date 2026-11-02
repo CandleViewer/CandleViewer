@@ -1,4 +1,5 @@
-"""E35-T09 (#5000) part 1 of `rules_oms_wiring`: the executor's write-ahead adapters.
+"""E35-T09 (#5000) part 1 of `rules_oms_wiring`: the executor's write-ahead adapters; and E35-T10's
+(#5002) switches, principal fields, budget rebuild and breaker alert.
 
 `RuleActionAudit` writes `rules.fired` and `rules.blocked` keyed by the fire key, naming the rule as
 the actor and both users, never a parameter's value, a figure or a credential (24 §15.5, BQ-11).
@@ -25,6 +26,7 @@ from structlog.testing import capture_logs
 from candleviewer import rules_oms_wiring
 from candleviewer.audit.redact import redact
 from candleviewer.observability.health_probes import SystemEvent
+from candleviewer.oms_wiring import HaltingKillSwitch, InterimKillSwitch
 from candleviewer.rules.executor.ports import (
     ActionAuditFields,
     EventRow,
@@ -46,6 +48,7 @@ from tests.rules.executor.request_builders import action_request
 
 RULE, OWNER, ARMER = str(uuid.UUID(int=7)), uuid.UUID(int=0xA1), str(uuid.UUID(int=0xA2))
 ACCOUNT, RUN = uuid.UUID(int=0xB1), uuid.UUID(int=8)
+_A, _B = ACCOUNT, uuid.UUID(int=0xB2)
 #: Planted where a careless record would copy it: a figure, a credential, a free-text value.
 PLANTED = ("64123.75", "sk-live-planted", "planted note")
 
@@ -159,6 +162,7 @@ async def test_rule_action_records_never_carry_a_parameter_value_a_figure_or_a_c
     assert {f.name for f in fields(ActionAuditFields)} == {
         "rule_id", "version", "ir_hash", "run_id", "node_id", "action_type", "scope_instance",
         "account_id", "owner", "armed_by", "dedupe_key", "blocked_by",
+        "owner_role", "armed_by_role",  # E35-T10: the roles' names, from the principal snapshot
     }  # fmt: skip
 
 
@@ -357,3 +361,159 @@ async def test_a_failed_system_event_write_is_counted_and_never_holds_the_next_f
     with capture_logs() as logs:
         await unbound.partial_fire(RULE, RUN, "a2")
     assert [e["event"] for e in logs] == ["rules.partial_fire"] and unbound.events_failed_total == 0
+
+
+class _Views:
+    """The two flag views `rule_switches` reads, as `FeatureFlagsRuntime` holds them."""
+
+    def __init__(self, enabled: object, killed: object) -> None:
+        self.reads: list[str] = []
+        self._enabled, self._killed = enabled, killed
+
+    def rules_enabled(self) -> bool:
+        self.reads.append("rules.enabled")
+        return cast(bool, self._enabled)
+
+    def order_entry_killed(self) -> bool:
+        self.reads.append("killswitch.order_entry")
+        return cast(bool, self._killed)
+
+
+def test_the_rule_switches_read_the_two_views_and_the_shared_kill_switch_port() -> None:
+    """E35-T10 (BQ-2): checks 2 and 3 read the master switch's view and the order-entry kill
+    switch's view as they read, a value other than a boolean as closed; B18 through the OMS's
+    shared port (`HaltingKillSwitch`, #2904), asked for the global account when an action names
+    none, so the audit-chain break halt engages it on every account; and the rollout port, off
+    until E35-T11."""
+    asked: list[uuid.UUID] = []
+
+    def engaged_on_b(account_id: Any) -> object | None:
+        asked.append(account_id)
+        return "refused" if account_id == _B else None
+
+    views = _Views(True, False)
+    switches = rules_oms_wiring.rule_switches(views, engaged_on_b)
+    assert (switches.rules_enabled(), switches.order_entry_killed()) == (True, False)
+    assert views.reads == ["rules.enabled", "killswitch.order_entry"]
+    assert (switches.kill_switch_engaged(_A), switches.kill_switch_engaged(_B)) == (False, True)
+    assert switches.kill_switch_engaged(None) is False and asked[-1] == uuid.UUID(int=0)
+    assert switches.oms_actions() is False
+    halt = _Halt()
+    port = HaltingKillSwitch(InterimKillSwitch(), halt)
+    closed = rules_oms_wiring.rule_switches(_Views(None, None), port.refusal)
+    assert (closed.rules_enabled(), closed.order_entry_killed()) == (False, True)
+    assert not any(closed.kill_switch_engaged(a) for a in (_A, _B, None))  # the interim admits
+    halt.engaged = True  # the audit-chain break halt: B18 engaged on every account
+    assert all(closed.kill_switch_engaged(a) for a in (_A, _B, None))
+
+
+class _Halt:
+    """The audit-chain break halt's view (`oms_wiring.HaltView`), set by the test."""
+
+    engaged = False
+
+
+def test_a_budget_setting_above_the_hard_cap_refuses_start() -> None:
+    """Scenario: The budget survives a restart (edge case): a budget setting above its hard cap
+    refuses start. The caps live in `rules.limits` alone (60 a minute, 2,000 a day, interim,
+    pending the owner's ratification, #2701); `create_app` refuses to start above either, whatever
+    `rules_evaluator_enabled` says, before anything serves."""
+    from candleviewer.app import create_app
+    from candleviewer.rules.limits import ORDER_BUDGET_CAPS, ORDER_BUDGET_DEFAULTS
+    from candleviewer.settings import Settings
+
+    assert dict(ORDER_BUDGET_CAPS) == {"per_minute": 60, "per_day": 2_000}
+    assert dict(ORDER_BUDGET_DEFAULTS) == {"per_minute": 10, "per_day": 200}
+    at_caps = rules_oms_wiring.rule_order_budget(60, 2_000, None)
+    assert (at_caps.per_minute, at_caps.per_day) == (60, 2_000)
+    for minute, day, named in ((61, 200, "PER_MINUTE"), (10, 2_001, "PER_DAY")):
+        with pytest.raises(rules_oms_wiring.OrderBudgetAboveCap, match=f"BUDGET_{named} is above"):
+            rules_oms_wiring.rule_order_budget(minute, day, None)
+        settings = Settings(rules_order_budget_per_minute=minute, rules_order_budget_per_day=day)
+        assert settings.rules_evaluator_enabled is False
+        with pytest.raises(rules_oms_wiring.OrderBudgetAboveCap):
+            create_app(settings)
+
+
+def test_the_budget_settings_default_to_the_limits_modules_values() -> None:
+    """R1C2-08: `settings` may not import `rules`, so its two defaults repeat
+    `ORDER_BUDGET_DEFAULTS`; they never drift apart."""
+    from candleviewer.rules.limits import ORDER_BUDGET_DEFAULTS
+    from candleviewer.settings import Settings
+
+    fields = Settings.model_fields
+    defaults = {
+        "per_minute": fields["rules_order_budget_per_minute"].default,
+        "per_day": fields["rules_order_budget_per_day"].default,
+    }
+    assert defaults == dict(ORDER_BUDGET_DEFAULTS)
+
+
+def test_the_budget_rebuild_counts_each_fire_key_once_by_its_first_start() -> None:
+    """24 §11.7 (R1S-01): the rebuild's read groups the `action_start` events by their fire key
+    (`dedupe_key`, else the event's own id), each age its first start's: a retried order, written
+    ahead again under its key, is one order. The statement is one literal, pinned whole."""
+    assert rules_sqlalchemy._ORDER_ACTION_AGES.text == (
+        "SELECT EXTRACT(EPOCH FROM now() - MIN(e.event_ts)) AS age FROM rule_events e "
+        "JOIN rule_runs r ON r.id = e.rule_run_id WHERE r.rule_id = CAST(:rule_id AS uuid) "
+        "AND r.mode = 'armed' AND r.started_at >= now() - make_interval(secs => :since) "
+        "AND e.kind = 'action_start' AND e.payload->>'action_type' = ANY(CAST(:types AS text[])) "
+        "GROUP BY COALESCE(e.payload->>'dedupe_key', CAST(e.id AS text)) "
+        "ORDER BY MIN(e.event_ts) DESC LIMIT :limit"
+    )
+
+
+class _Ages:
+    """The rules repository's read for the budget's rebuild, as the adapter calls it."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list[str], float, int]] = []
+
+    async def order_action_ages(
+        self, rule_id: str, action_types: list[str], *, since_s: float, limit: int
+    ) -> list[float]:
+        self.calls.append((rule_id, list(action_types), since_s, limit))
+        return [1.5, 61.0]
+
+
+async def test_the_budget_rebuild_adapter_reads_the_counted_action_starts() -> None:
+    """BQ-7: the rebuild asks the repository for one rule's counted types (the handler table's
+    `counts_orders`), over the last 24 h, at most the day's limit, and hands back plain ages in
+    seconds, which the budget places on its own clock."""
+    from candleviewer.rules.executor.handlers import COUNTS_ORDERS
+
+    repository = _Ages()
+    adapter = rules_oms_wiring.RuleBudgetRebuild(cast(SqlAlchemyRulesRepository, repository))
+    assert await adapter.order_ages(RULE, limit=200) == (1.5, 61.0)
+    assert repository.calls == [(RULE, sorted(COUNTS_ORDERS), 86_400.0, 200)]
+    budget = rules_oms_wiring.rule_order_budget(
+        10, 200, cast(SqlAlchemyRulesRepository, repository)
+    )
+    assert await budget.admit(RULE, 1000.0) == "ok"  # rebuilt from the two ages, then counted
+    assert len(repository.calls) == 2
+
+
+async def test_the_breaker_alert_writes_one_system_event_and_pages() -> None:
+    """BQ-8: every trip pages, the `cv_page` CRITICAL line naming the rule, the fire and the action,
+    never deduplicated; after the B9 move one `critical` `system_events` row (`rules`,
+    `circuit_breaker`) says whether the rule was moved, and a rule not moved is paged again."""
+    events = _Events()
+    alerts = RuleAlerts(events)
+    ids = {"rule_id": RULE, "run_id": str(RUN), "node_id": "a1"}
+    with capture_logs() as logs:
+        alerts.breaker_tripped(RULE, RUN, "a1")
+        alerts.breaker_tripped(RULE, RUN, "a1")
+        await alerts.breaker_moved(RULE, RUN, "a1", moved=True)
+        await alerts.breaker_moved(RULE, RUN, "a1", moved=False)
+    pages = [(e["event"], e["log_level"], e["cv_page"]) for e in logs if e.get("cv_page")]
+    assert pages == [
+        ("rules.circuit_breaker_tripped", "critical", True),
+        ("rules.circuit_breaker_tripped", "critical", True),
+        ("rules.circuit_breaker_not_moved", "critical", True),
+    ]
+    assert all({k: e[k] for k in ids} == ids for e in logs if e.get("cv_page"))
+    assert [(r.component, r.kind, r.severity, r.details) for r in events.rows] == [
+        ("rules", "circuit_breaker", "critical", ids | {"moved": "true"}),
+        ("rules", "circuit_breaker", "critical", ids | {"moved": "false"}),
+    ]
+    assert len({r.message for r in events.rows}) == 1  # one fixed text

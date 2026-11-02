@@ -13,7 +13,7 @@ import asyncio
 import functools
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -24,13 +24,20 @@ from structlog.typing import EventDict
 from candleviewer.rules import service as rules_service
 from candleviewer.rules.executor import dispatch
 from candleviewer.rules.executor.engine import ActionExecutor
+from candleviewer.rules.executor.gates import Gates, scope_refusal
 from candleviewer.rules.ir.models import Action, RuleScope
 from candleviewer.rules.manager import InMemoryRuleStore
 from candleviewer.rules.runner import EvalTick
 from candleviewer.rules.scope import ActionRequest, ScopeInstanceRef
 from candleviewer.rules.service import RulesService
 from candleviewer.settings import Settings
-from tests.rules.executor.request_builders import Counted, Records, action_request
+from tests.rules.executor.request_builders import (
+    Counted,
+    Principals,
+    Records,
+    Switches,
+    action_request,
+)
 from tests.rules.executor.test_mode_split import NOTE, Rig
 from tests.rules.test_evaluator import Clock
 from tests.rules.test_scope_wiring import OWNER, A, B, Source
@@ -122,7 +129,8 @@ async def start(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Start]:
 
         store, svc, records, counted = InMemoryRuleStore(), RulesService(), Records(), Counted()
         svc.bind(store=store, action_sink=sink, simulation_sink=to_simulation)
-        svc.bind(records=(records, records), metrics=counted.metrics)
+        svc.bind(records=(records, records), metrics=counted.metrics, switches=Switches())
+        svc.bind(principal=Principals(frozenset({A, B})))
         svc.wire_scope(source, "demo", audit)
         await svc.refresh_scope(OWNER)
         ctx: Any = SimpleNamespace(settings=SimpleNamespace(rules_evaluator_enabled=True))
@@ -219,6 +227,44 @@ async def test_the_evaluation_tick_never_awaits_dispatch(rig: DispatchRig) -> No
     assert rig.dispatch.queued == 2 and rig.sink.log == [("in", 1, "a1")]
     rig.sink.release(rid, 3)
     await rig.settle()
+
+
+@dataclass
+class _ReadWhere(Switches):
+    """`Switches` that log the task each read of checks 2 and 3 runs in."""
+
+    where: list[str] = field(default_factory=list)
+
+    def _read(self) -> None:
+        task = asyncio.current_task()
+        self.where.append("" if task is None else task.get_name())
+
+    def rules_enabled(self) -> bool:
+        self._read()
+        return super().rules_enabled()
+
+    def order_entry_killed(self) -> bool:
+        self._read()
+        return super().order_entry_killed()
+
+    def kill_switch_engaged(self, account_id: uuid.UUID | None) -> bool:
+        self._read()
+        return super().kill_switch_engaged(account_id)
+
+
+async def test_checks_2_and_3_are_read_in_a_dispatch_worker_never_at_offer(
+    rig: DispatchRig,
+) -> None:
+    """24 §11.5 (the carry from #5231; R1C1-08): the tick only offers; the switches of checks 2 and
+    3 are read after the dequeue, in a fire worker, and never in the tick's task."""
+    executor = rig.svc._executor
+    assert executor is not None
+    reads = executor._gates._switches = _ReadWhere()
+    await rig.add("armed")
+    await rig.fire()
+    await rig.settle()
+    assert len(rig.executor) == 1 and reads.where  # the action ran, its switches read
+    assert {name.rsplit("-", 1)[0] for name in reads.where} == {"rule-dispatch-worker"}
 
 
 async def test_stop_drains_dispatch_workers_within_grace(rig: DispatchRig) -> None:
@@ -521,9 +567,11 @@ async def test_a_fire_hands_its_run_rows_facts_to_the_records(rig: DispatchRig) 
 async def test_the_recheck_before_a_retry_runs_check_one_then_the_scope_recheck(
     rig: DispatchRig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`RulesService._recheck`, the hook `retry_once` runs before its retry (24 §11.9): with no
-    scope resolver, or a grant withdrawn since, it is `scope`; a row no longer armed, on another
-    `ir_hash` or unread is `mode_changed`, check 1 first; else nothing refuses (`None`)."""
+    """The service's two hooks the executor asks again before `retry_once`'s retry, check 1 first
+    (24 §11.9; E35-T10 runs checks 1 to 8 again in the executor): check 1, `_check_one`, finds a
+    row no longer armed or on another `ir_hash` (`mode_changed`), or unread; check 4,
+    `_scope_check`, answers the resolver's reason, read as `scope` with no resolver or a grant
+    withdrawn since; else neither refuses."""
     rid = await rig.add("armed")
     row = await rig.row(rid)
     scope = RuleScope.model_validate(
@@ -533,29 +581,32 @@ async def test_the_recheck_before_a_retry_runs_check_one_then_the_scope_recheck(
         scope, OWNER, ScopeInstanceRef(f"BTCUSDT@{A}", "BTCUSDT", A), rule_id=rid,
         version=row.versions[0].version, ir_hash=row.versions[0].ir_hash,
     )  # fmt: skip
-    recheck, resolver = rig.svc._recheck, rig.svc.scope_resolver
-    assert await recheck(req) is None
+    check_one, scope_check = rig.svc._check_one, rig.svc._scope_check
+    resolver = rig.svc.scope_resolver
+    assert await check_one(req) == "armed" and scope_check(req) is None
     rig.svc.scope_resolver = None
-    assert await recheck(req) == "scope"  # no resolver: nothing passes the scope re-check
+    refused = scope_check(req)  # no resolver: nothing passes the scope re-check
+    assert refused is not None and scope_refusal(refused) == "scope"
     rig.svc.scope_resolver = resolver
     rig.source.grants = [(B, True, False)]  # the grant on A is withdrawn
     await rig.svc.refresh_scope(OWNER)
-    assert await recheck(req) == "scope"
-    assert await recheck(replace(req, ir_hash="f" * 64)) == "mode_changed"  # before the scope's
+    refused = scope_check(req)
+    assert refused is not None and scope_refusal(refused) == "scope"
+    assert await check_one(replace(req, ir_hash="f" * 64)) == "mode_changed"
     row.mode = "disabled"
-    assert await recheck(req) == "mode_changed"
+    assert await check_one(req) == "mode_changed"
     row.mode = "armed"
 
     async def unreadable(_rule_id: str) -> Any:
         raise ConnectionError("the rule store is unreachable")
 
     monkeypatch.setattr(rig.store, "get", unreadable)
-    assert await recheck(req) == "mode_changed"
+    assert await check_one(req) == "unread"  # the executor skips the rest as `mode_changed`
     assert rig.counted.reread() == {"store_error": 1}
 
 
 def _fire(
-    run: int, *nodes: str, emit: Callable[[ActionRequest], Awaitable[bool]], rule: str = RULE
+    run: int, *nodes: str, emit: Callable[[ActionRequest], Awaitable[str | None]], rule: str = RULE
 ) -> dispatch.Fire:
     scope = RuleScope(level="account")
     reqs = tuple(
@@ -577,7 +628,7 @@ async def _never_executed(fire: dispatch.Fire) -> None:
     raise AssertionError("no fire is executed here")
 
 
-async def _never_run(_req: ActionRequest) -> bool:
+async def _never_run(_req: ActionRequest) -> str | None:
     raise AssertionError("no worker runs here")
 
 
@@ -599,17 +650,18 @@ async def test_a_failed_action_stops_its_fire_and_the_worker_goes_on(
         return None
 
     executor = ActionExecutor(
-        check_one=armed, recheck=passes, records=records, audit=records, stand_in=passes
-    )
+        check_one=armed, scope_check=lambda _req: None,
+        gates=Gates(switches=Switches(), principal=Principals()), records=records, audit=records,
+        stand_in=passes,
+    )  # fmt: skip
 
-    async def emit(req: ActionRequest) -> bool:
+    async def emit(req: ActionRequest) -> None:
         seen.append((req.run_id.int, req.payload.node_id))
         if seen == [(1, "a1")]:
             if failure == "timeout":
                 await asyncio.Event().wait()  # never answers: only the bound ends it
             raise RuntimeError("the emitter failed")
-        await executor.hand_over(req)
-        return True
+        await executor.hand_over(req)  # `emit_checked`: None once the action went on
 
     fires = dispatch.FireDispatch(_never_refused, executor.execute)
     fires.start()
@@ -638,8 +690,8 @@ async def test_workers_that_end_without_stop_page_at_once() -> None:
     """Only `stop()` ends the workers: any other end leaves the queued fires with no one to run
     them, so it pages at once, by the error's class alone."""
 
-    async def emit(_req: ActionRequest) -> bool:
-        return True
+    async def emit(_req: ActionRequest) -> str | None:
+        return None
 
     fires = dispatch.FireDispatch(_never_refused, _never_executed)
     fires.offer(_fire(1, "a1", emit=emit))
@@ -830,3 +882,71 @@ async def test_every_worker_ends_cancelled_at_stop_idle_ones_too(rig: DispatchRi
     assert len(workers) == dispatch.DISPATCH_WORKERS + dispatch.AUDIT_WORKERS
     await rig.svc.stop(GUARD_S)
     assert [t.get_name() for t in workers if not t.cancelled()] == []
+
+
+class _Held:
+    """`execute` that logs each fire it runs and holds a fire of a `held` rule until released."""
+
+    def __init__(self, *held: str) -> None:
+        self.ran: list[tuple[str, int]] = []
+        self.held = {rule: asyncio.Event() for rule in held}
+        self.running = asyncio.Event()
+
+    async def __call__(self, fire: dispatch.Fire) -> None:
+        self.ran.append((fire.rule_id, fire.run_id.int))
+        if (gate := self.held.get(fire.rule_id)) is not None:
+            self.running.set()
+            await gate.wait()
+
+
+async def _idle(fires: dispatch.FireDispatch) -> None:
+    async with asyncio.timeout(GUARD_S):
+        await fires.idle()
+
+
+async def _none(_req: ActionRequest) -> None:
+    return None
+
+
+async def test_drop_takes_a_rules_waiting_fires_and_nothing_else() -> None:
+    """E35-T10 (24 §11.7): `drop` takes the rule's waiting fires out of its lane, oldest first, and
+    leaves the fire that runs and every other rule's lane; dropping a rule with nothing waiting
+    takes nothing."""
+    other = str(uuid.UUID(int=9))
+    held = _Held(RULE)
+    fires = dispatch.FireDispatch(_never_refused, held)
+    fires.start()
+    for fire in (_fire(1, "a1", emit=_none), _fire(2, "a1", emit=_none),
+                 _fire(3, "a1", emit=_none), _fire(4, "b1", emit=_none, rule=other)):  # fmt: skip
+        assert fires.offer(fire)
+    async with asyncio.timeout(GUARD_S):
+        await held.running.wait()  # fire 1 runs; 2 and 3 wait in its rule's lane
+    dropped = fires.drop(RULE)
+    assert [f.run_id.int for f in dropped] == [2, 3] and fires.drop(RULE) == ()
+    assert fires.drop("no-such-rule") == ()
+    held.held[RULE].set()
+    await _idle(fires)
+    await fires.stop(0.0)
+    assert sorted(held.ran) == sorted([(RULE, 1), (other, 4)])  # nothing dropped ever ran
+    assert fires.queued == 0
+
+
+async def test_a_dropped_lane_never_stalls_the_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A lane emptied while it waits its turn keeps it: the worker that meets it skips it, the
+    queue still runs empty (`idle`), and the rule's next fire runs in a lane of its own."""
+    monkeypatch.setattr(dispatch, "DISPATCH_WORKERS", 1)
+    other = str(uuid.UUID(int=9))
+    held = _Held(other)
+    fires = dispatch.FireDispatch(_never_refused, held)
+    fires.start()
+    assert fires.offer(_fire(1, "b1", emit=_none, rule=other))
+    async with asyncio.timeout(GUARD_S):
+        await held.running.wait()  # the one worker is held: the rule's lane waits in the turn
+    assert fires.offer(_fire(2, "a1", emit=_none))
+    assert [f.run_id.int for f in fires.drop(RULE)] == [2]
+    held.held[other].set()
+    await _idle(fires)  # the emptied lane was skipped, never stalled
+    assert fires.offer(_fire(3, "a1", emit=_none))
+    await _idle(fires)
+    await fires.stop(0.0)
+    assert held.ran == [(other, 1), (RULE, 3)]

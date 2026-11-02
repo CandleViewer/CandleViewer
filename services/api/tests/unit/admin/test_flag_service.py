@@ -400,7 +400,15 @@ async def test_an_unreadable_override_on_a_non_safety_flag_is_ignored_and_counte
     )
 
 
-_SAFETY = {MAINTENANCE_MODE, "killswitch.order_entry", "killswitch.ingestion", LIVE_ENABLED}
+#: The flags whose overrides are ignored at resolution: the kill-switch class (E35-T10 adds
+#: `rules.enabled`, the master switch of rule actions) and the live gate.
+_SAFETY = {
+    MAINTENANCE_MODE,
+    "killswitch.order_entry",
+    "killswitch.ingestion",
+    "rules.enabled",
+    LIVE_ENABLED,
+}
 
 
 @pytest.mark.parametrize("key", sorted(_SAFETY))

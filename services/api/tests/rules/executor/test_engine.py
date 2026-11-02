@@ -1,9 +1,11 @@
 """E35-T09 (#5000) slice 2d: the action executor (24 §11.5, §11.9; BQ-5 to BQ-9).
 
-`Engine` drives one `ActionExecutor` with scripted doubles: check 1's verdicts, the routing
-emitter (a scope denial, or the hand-over back to the executor; a dry run to the simulation
-list), one bound `send_notification` handler whose answers a test scripts per node, the records in
-memory and the alerts. Every action is `send_notification`, so the bound handler serves them all.
+`Engine` drives one `ActionExecutor` with scripted doubles: check 1's verdicts, the switches of
+checks 2 and 3 (open, E35-T10) and the principal of check 5 (both users active), the routing
+emitter (a scope denial's reason, or the hand-over back to the executor; a dry run to the
+simulation list) and the scope re-check before a retry, one bound
+`send_notification` handler whose answers a test scripts per node, the records in memory and the
+alerts. Every action is `send_notification`, so the bound handler serves them all.
 No sleeps: a hang is an event nobody sets, under a bound the test sets to 0.
 """
 
@@ -23,6 +25,7 @@ from candleviewer.rules.executor import dispatch, writeahead
 from candleviewer.rules.executor import engine as engine_module
 from candleviewer.rules.executor.dispatch import Fire
 from candleviewer.rules.executor.engine import ActionExecutor, RowVerdict
+from candleviewer.rules.executor.gates import Gates
 from candleviewer.rules.executor.handlers import (
     HANDLERS,
     HandlerAnswer,
@@ -32,10 +35,15 @@ from candleviewer.rules.executor.handlers import (
 )
 from candleviewer.rules.executor.keys import client_ref, dedupe_key
 from candleviewer.rules.executor.ports import ActionAuditFields, EventRow, RunRow
-from candleviewer.rules.executor.results import BlockedBy
-from candleviewer.rules.ir.models import Action, RuleScope
+from candleviewer.rules.ir.models import MAX_ACTIONS, Action, RuleScope
 from candleviewer.rules.scope import ActionRequest, ScopeInstanceRef
-from tests.rules.executor.request_builders import Counted, Records, action_request
+from tests.rules.executor.request_builders import (
+    Counted,
+    Principals,
+    Records,
+    Switches,
+    action_request,
+)
 
 GUARD_S = 5.0
 RULE, RUN, OWNER = str(uuid.UUID(int=7)), uuid.UUID(int=8), uuid.UUID(int=0xA1)
@@ -57,7 +65,9 @@ class Handler:
         self.prepared: list[str] = []
         self.sent: list[tuple[str, str, str]] = []  # (node, client_ref, request_sha256)
 
-    def prepare(self, req: ActionRequest, account_id: uuid.UUID | None) -> Prepared:
+    def prepare(
+        self, req: ActionRequest, account_id: uuid.UUID | None, *, max_notional_usd: Any
+    ) -> Prepared:
         self.prepared.append(req.payload.node_id)
         return prepared({"node": req.payload.node_id, "account": str(account_id)})
 
@@ -114,13 +124,22 @@ class Alerts:
     def settled(self, rule_id: str) -> None:
         self.settled_rules.append(rule_id)
 
+    def breaker_tripped(self, rule_id: str, run_id: uuid.UUID, node_id: str) -> None:
+        self.raised.append(("breaker_tripped", rule_id, run_id, node_id))  # E35-T10: no order here
+
+    async def breaker_moved(
+        self, rule_id: str, run_id: uuid.UUID, node_id: str, *, moved: bool
+    ) -> None:
+        self.raised.append(("breaker_moved", rule_id, run_id, node_id))
+
 
 @dataclass
 class Engine:
     handler: Handler
     records: Records = field(default_factory=Records)
     verdicts: dict[str, list[RowVerdict]] = field(default_factory=dict)
-    rechecks: dict[str, list[BlockedBy | None]] = field(default_factory=dict)
+    rechecks: dict[str, list[str | None]] = field(default_factory=dict)  # the retry's check 4
+    switches: Switches = field(default_factory=Switches)
     denied: set[str] = field(default_factory=set)
     order: list[tuple[str, str]] = field(default_factory=list)
     simulated: list[str] = field(default_factory=list)
@@ -132,8 +151,10 @@ class Engine:
         spec = replace(HANDLERS["send_notification"], handler=self.handler)
         table: dict[str, HandlerSpec] = {**HANDLERS, "send_notification": spec}
         self.executor = ActionExecutor(
-            check_one=self.check_one, recheck=self.recheck, records=self.records,
-            audit=self.records, alerts=self.alerts, metrics=self.counted.metrics, handlers=table,
+            check_one=self.check_one, scope_check=self.scope_check,
+            gates=Gates(switches=self.switches, principal=Principals()), records=self.records,
+            audit=self.records,
+            alerts=self.alerts, metrics=self.counted.metrics, handlers=table,
         )  # fmt: skip
 
     async def check_one(self, req: ActionRequest) -> RowVerdict:
@@ -142,22 +163,23 @@ class Engine:
         queue = self.verdicts.get(node)
         return queue.pop(0) if queue else "armed"
 
-    async def recheck(self, req: ActionRequest) -> BlockedBy | None:
+    def scope_check(self, req: ActionRequest) -> str | None:
         self.order.append(("recheck", req.payload.node_id))
         queue = self.rechecks.get(req.payload.node_id)
         return queue.pop(0) if queue else None
 
-    async def emit(self, req: ActionRequest) -> bool:
-        """The routing emitter: the scope re-check, then the sink by mode (`_route`)."""
+    async def emit(self, req: ActionRequest) -> str | None:
+        """The routing emitter (`emit_checked`): the scope re-check's reason, else the sink by mode
+        (`_route`)."""
         node = req.payload.node_id
         self.order.append(("scope", node))
         if node in self.denied:
-            return False
+            return "grant_revoked"
         if req.mode != "armed" or req.payload.dry_run_only:
             self.simulated.append(node)
         else:
             await self.executor.hand_over(req)
-        return True
+        return None
 
     async def run(self, *nodes: str, on_error: str = "abort_remaining", **kw: Any) -> None:
         await self.executor.execute(fire(self.emit, *nodes, on_error=on_error, **kw))
@@ -181,9 +203,11 @@ def fire(emit: Any, *nodes: str, on_error: str = "abort_remaining", **over: Any)
 
 
 def key(node: str) -> str:
+    """The fire key of a `send_notification` action, which names no account (24 §11.5 `targets`,
+    E35-T10): its key carries none."""
     return dedupe_key(
         rule_id=RULE, version=1, scope_instance=f"BTCUSDT@{ACCOUNT}", node_id=node, run_id=RUN,
-        account_id=ACCOUNT,
+        account_id=None,
     )  # fmt: skip
 
 
@@ -299,16 +323,18 @@ async def test_the_write_ahead_comes_first(
 
 
 async def test_retry_once_reruns_the_checks_and_a_refusal_sends_nothing() -> None:
-    """Before the retry the checks run again (one hook, E35-T10's to extend): one that now refuses
-    sends nothing, and the first call's result stands (`unknown` after no answer)."""
+    """Before the retry checks 1 to 8 run again (E35-T10): one that now refuses (the scope
+    re-check here, check 1 below) sends nothing, and the first call's result stands (`unknown`
+    after no answer)."""
     engine = Engine(Handler({"a1": [NO_ANSWER, OK]}))
-    engine.rechecks["a1"] = ["scope"]
+    engine.rechecks["a1"] = ["grant_revoked"]
     await engine.run("a1", on_error="retry_once")
     assert len(engine.handler.sent) == 1 and outcomes(engine.records) == [("a1", "unknown")]
     pre = Engine(Handler({"a1": [PRE_ANCHOR, OK]}))
-    pre.rechecks["a1"] = ["mode_changed"]
+    pre.verdicts["a1"] = ["armed", "mode_changed"]  # the row is disarmed before the retry
     await pre.run("a1", on_error="retry_once")
     assert len(pre.handler.sent) == 1 and outcomes(pre.records) == [("a1", "failed")]
+    assert ("recheck", "a1") not in pre.order  # check 1 refused first: check 4 was never asked
 
 
 @pytest.mark.parametrize("mode", ["abort_remaining", "continue", "retry_once"])
@@ -430,20 +456,26 @@ async def test_a_bound_stand_in_never_serves_an_action_that_would_reach_the_oms(
 
     engine = Engine(Handler({}))
     records = engine.records
+    # Check 5 admits the instance's account, so `widen_stop` reaches check 8 (E35-T10).
     engine.executor = ActionExecutor(
-        check_one=engine.check_one, recheck=engine.recheck, records=records, audit=records,
-        stand_in=sink,
+        check_one=engine.check_one, scope_check=engine.scope_check,
+        gates=Gates(switches=Switches(rollout=True), principal=Principals(frozenset({ACCOUNT}))),
+        records=records, audit=records, stand_in=sink,
     )  # fmt: skip
     types = (
         "place_order", "scale_out", "cancel_order", "modify_stop_loss", "move_to_breakeven",
         "halt_new_orders", "reduce_leverage", "start_twap", "widen_stop", "send_notification",
         "set_variable",
     )  # fmt: skip
+    runs = (RUN, uuid.UUID(int=9))  # E35-T10: a rule holds at most `MAX_ACTIONS`, so two fires
     reqs = tuple(
-        request(f"a{n}", on_error="continue", action_type=t, action={"type": t, "params": {}})
+        request(f"a{n}", on_error="continue", action_type=t, action={"type": t, "params": {}},
+                run_id=runs[n // MAX_ACTIONS])
         for n, t in enumerate(types)
-    )
-    await engine.executor.execute(Fire(RULE, RUN, reqs, engine.emit, version_id="v"))
+    )  # fmt: skip
+    for k, run in enumerate(runs):
+        part = reqs[k * MAX_ACTIONS : (k + 1) * MAX_ACTIONS]
+        await engine.executor.execute(Fire(RULE, run, part, engine.emit, version_id="v"))
     assert reached == ["send_notification", "set_variable"]
     refused = {node: reason for node, outcome, reason in records.results() if outcome == "blocked"}
     assert refused == {f"a{n}": "native_sl" if t == "widen_stop" else "unavailable"
@@ -475,7 +507,8 @@ async def test_an_executor_with_no_records_bound_hands_nothing_over() -> None:
     result is counted `failed` (`write_ahead_failed`) and the write-ahead alert raised."""
     engine = Engine(Handler({"a1": [OK]}))
     engine.executor = ActionExecutor(
-        check_one=engine.check_one, recheck=engine.recheck, alerts=engine.alerts,
+        check_one=engine.check_one, scope_check=engine.scope_check,
+        gates=Gates(switches=engine.switches, principal=Principals()), alerts=engine.alerts,
         metrics=engine.counted.metrics, handlers=engine.executor._handlers,
     )  # fmt: skip
     with capture_logs() as logs:
@@ -538,8 +571,10 @@ async def test_an_armed_fires_close_carries_its_duration() -> None:
 
     engine = Engine(Slow({"a1": [OK]}))
     engine.executor = ActionExecutor(
-        check_one=engine.check_one, recheck=engine.recheck, records=engine.records,
-        audit=engine.records, handlers=engine.executor._handlers, clock=lambda: now[0],
+        check_one=engine.check_one, scope_check=engine.scope_check,
+        gates=Gates(switches=engine.switches, principal=Principals(clock=lambda: now[0])),
+        records=engine.records, audit=engine.records, handlers=engine.executor._handlers,
+        clock=lambda: now[0],
     )  # fmt: skip
     await engine.run("a1")
     assert engine.records.closed[RUN] == ("ok", 1250)
@@ -608,8 +643,8 @@ async def test_the_defensive_refusals_send_nothing() -> None:
     absent from the table is `unavailable`; `hand_over` outside a fire refuses."""
     engine = Engine(Handler({"a1": [OK]}))
 
-    async def passes_only(req: ActionRequest) -> bool:
-        return True
+    async def passes_only(req: ActionRequest) -> None:
+        return None  # `emit_checked`: it went on, yet nothing was handed over
 
     await engine.executor.execute(fire(passes_only, "a1"))
     ((node, outcome, _),) = engine.records.results()
@@ -617,7 +652,8 @@ async def test_the_defensive_refusals_send_nothing() -> None:
     table = {k: v for k, v in HANDLERS.items() if k != "send_notification"}
     missing = Engine(Handler({"a1": [OK]}))
     missing.executor = ActionExecutor(
-        check_one=missing.check_one, recheck=missing.recheck, records=missing.records,
+        check_one=missing.check_one, scope_check=missing.scope_check,
+        gates=Gates(switches=missing.switches, principal=Principals()), records=missing.records,
         audit=missing.records, handlers=table,
     )  # fmt: skip
     await missing.run("a1")

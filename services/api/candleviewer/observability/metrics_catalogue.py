@@ -3880,14 +3880,15 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E35",
         max_series=100,
     ),
+    # E35-T10 (#5002; 24 Sec.11.5, BQ-10): live in `rules/executor/metrics.py`.
     _s(
         "rule_autodisarm_total",
         "counter",
         "disarms",
         (),
-        "Rules auto-disarmed.",
+        "Rules disarmed after repeated scope or permission refusals on one account.",
         "rule storm",
-        _P,
+        _L,
         "E35",
     ),
     # E35 authoring limits (#4834): refusals by closed sets (`rules/manager.REFUSED_CAPS`,
@@ -4506,11 +4507,12 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "tasks",
         ("flag",),
-        "Flag-view poll tasks that ended other than by their stop; each latches its view off.",
-        "pages via the cv_page CRITICAL log line: the view reads off until a restart",
+        "Flag-view poll tasks that ended other than by their stop; each latches its view closed.",
+        "pages via the cv_page CRITICAL log line: the view reads its fail-closed value until a "
+        "restart",
         _L,
         "E42",
-        max_series=3,
+        max_series=5,  # E35-T10: the OMS's two views, trade_groups and the two rule switches
         exported=True,
     ),
     # --- Admin jobs (E42-T05, #966 Q10) -------------------------------------
@@ -5018,14 +5020,16 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _P,
         "E27",
     ),
+    # E35-T10 (#5002; 24 Sec.11.7, BQ-8): live in `rules/executor/metrics.py`; the page is the
+    # breaker's `cv_page` CRITICAL line, on every trip, so no alert rule keys on the counter.
     _s(
         "rule_circuit_breaker_trips_total",
         "counter",
         "trips",
         (),
-        "Rule circuit-breaker trips.",
-        "alert on any",
-        _P,
+        "Rule circuit-breaker trips, each once.",
+        "pages via the cv_page CRITICAL log line naming the rule, on every trip",
+        _L,
         "E35",
     ),
     # --- Audit read path (E42-T02) -------------------------------------------

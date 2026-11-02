@@ -835,6 +835,12 @@ class Settings(BaseSettings):
     # E35-S02-B1 (#1809): run the deterministic rule evaluator in the app (C-4.13: off by
     # default). Never gates a safety invariant (C-4.14): native SL / scope checks stay on.
     rules_evaluator_enabled: bool = False
+    # E35-T10 (24 Sec.11.7, Sec.16.1): the SR-104 order budget per rule, the two boot settings
+    # `CV_RULES_ORDER_BUDGET_PER_MINUTE` and `CV_RULES_ORDER_BUDGET_PER_DAY`. `create_app` refuses
+    # to start with either above its hard cap, whatever `rules_evaluator_enabled` says; the caps
+    # live in the rules module alone (this module may not import it).
+    rules_order_budget_per_minute: int = Field(default=10, ge=1)
+    rules_order_budget_per_day: int = Field(default=200, ge=1)
     # E40-T03: run the server-side alert evaluator (C-4.13: off by default until E40-T04's
     # dispatcher ships; removal with E40-Q02). Never gates a safety invariant (C-4.14).
     alerts_evaluator_enabled: bool = False

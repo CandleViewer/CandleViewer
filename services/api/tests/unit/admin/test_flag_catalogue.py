@@ -1,6 +1,7 @@
 """E42-T03: the shipped flag definitions are `21-database-schema.md` 10.7 row for row, every
-flag's outage value is its default but for the two engaged order-entry switches, and each key is
-visible to a role as its 10.7 visibility says (the predicate the WS `system` filter is given)."""
+flag's outage value is its default but for the engaged switches (the two order-entry ones, and
+`rules.enabled` off, E35-T10), and each key is visible to a role as its 10.7 visibility says (the
+predicate the WS `system` filter is given)."""
 
 from __future__ import annotations
 
@@ -11,14 +12,17 @@ import pytest
 from candleviewer.admin.flags import default_registry
 from candleviewer.admin.flags.catalogue import (
     ENVIRONMENT_SEEDS,
+    RULES_ENABLED,
     TRADING_OMS_ENABLED,
     TRADING_TRADE_GROUPS,
 )
+from candleviewer.admin.flags.policy import engaged_value
 from candleviewer.admin.flags.registry import Category
 
 _B, _ALL, _OWN = "boolean", "all_roles", "owner_only"
 #: 10.7 as `(key, kind, default, is_killswitch, visibility)`. `engine.fallback_lightweight_charts`
-#: is the one 10.7 row left out: a third-party production chart library is out of scope (D4, C-1.2).
+#: is left out: a third-party production chart library is out of scope (D4, C-1.2); and
+#: `rules.oms_actions` waits for E35-T11, which registers it.
 _SECTION_10_7 = {
     ("trading.live_enabled", _B, False, False, _ALL),
     ("trading.one_click", _B, False, False, _ALL),
@@ -37,6 +41,7 @@ _SECTION_10_7 = {
     ("killswitch.ingestion", _B, False, True, _OWN),
     ("killswitch.order_entry", _B, False, True, _ALL),
     ("maintenance.mode", _B, False, True, _ALL),
+    ("rules.enabled", _B, True, True, _ALL),
     ("maintenance.keep_recorder", _B, True, False, _OWN),
     ("desktop.backend_connection", _B, False, False, _OWN),
 }
@@ -48,15 +53,30 @@ def test_the_catalogue_is_10_7_row_for_row() -> None:
     assert rows == _SECTION_10_7
 
 
-def test_every_flag_fails_closed_to_its_default_but_two_engaged_switches() -> None:
+def test_every_flag_fails_closed_to_its_default_but_the_engaged_switches() -> None:
     """While the store cannot be read every flag takes its default, but the two switches that
-    refuse order entry are engaged; only the live gate needs evidence."""
+    refuse order entry are engaged, and so is the rule master switch, off (E35-T10); only the live
+    gate needs evidence."""
     r = default_registry()
-    engaged = {"maintenance.mode": True, "killswitch.order_entry": True}
+    engaged = {"maintenance.mode": True, "killswitch.order_entry": True, RULES_ENABLED: False}
     fail_closed = {k: s.fail_closed_value for k, s in r.items()}
     assert fail_closed == {k: s.default for k, s in r.items()} | engaged
     assert all(s.overridable != (s.is_killswitch or s.requires_evidence) for s in r.values())
     assert [k for k, s in r.items() if s.requires_evidence] == ["trading.live_enabled"]
+
+
+def test_rules_enabled_is_a_kill_switch_class_master_switch_engaged_at_false() -> None:
+    """24 §16.2 (BQ-17 of #863, BQ-2): the permanent master switch of rule actions, kill-switch
+    class with no override, on by default, engaged and fail-closed at `false`, readable by every
+    role; its engaged value comes from its spec, not its class."""
+    spec = default_registry()[RULES_ENABLED]
+    assert (spec.gates, spec.default, spec.restrictive, spec.visibility.value) == (
+        Category.KILL_SWITCH, True, False, "all_roles",
+    )  # fmt: skip
+    assert spec.is_killswitch and not spec.overridable and not spec.requires_evidence
+    assert spec.fail_closed_value is False and engaged_value(spec) is False
+    assert spec.description == "Master switch of rule actions; off while unread."
+    assert RULES_ENABLED not in ENVIRONMENT_SEEDS  # a kill switch takes no seed (C-4.14)
 
 
 def test_backend_connection_flag_is_an_owner_only_rollout_off_with_its_removal_ticket() -> None:

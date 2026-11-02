@@ -9,6 +9,7 @@ module, but it does no real work until its owning epic lands.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable
 from dataclasses import replace
 from time import monotonic
@@ -21,13 +22,24 @@ from candleviewer.observability import spawn
 from candleviewer.observability.health import HealthReport, HealthStatus
 from candleviewer.rules.evaluator import Evaluator, SnapshotBuilder
 from candleviewer.rules.evaluator.engine import EvaluationResult
+from candleviewer.rules.executor.budget import CircuitBreaker, OrderBudget
 from candleviewer.rules.executor.dispatch import AuditDispatch, Fire, FireDispatch, JobKind
 from candleviewer.rules.executor.engine import ActionExecutor, RowVerdict
+from candleviewer.rules.executor.gates import Gates, Halts
 from candleviewer.rules.executor.metrics import ExecutorMetrics
 from candleviewer.rules.executor.metrics import RereadFailure as RereadFailure
-from candleviewer.rules.executor.ports import ActionAudit, AlertPort, RunRecords
+from candleviewer.rules.executor.ports import (
+    ActionAudit,
+    AlertPort,
+    NotionalRebuild,
+    PrincipalReads,
+    RuleSwitches,
+    RunRecords,
+    StopCheck,
+)
 from candleviewer.rules.executor.results import BlockedBy
 from candleviewer.rules.ir.models import Rule
+from candleviewer.rules.limits import SCOPE_DENIALS_BEFORE_DISARM
 from candleviewer.rules.manager import (
     Audit,
     Broadcast,
@@ -35,6 +47,7 @@ from candleviewer.rules.manager import (
     InMemoryRuleStore,
     RulesManager,
     RuleStore,
+    StopReason,
 )
 from candleviewer.rules.runner import (
     EvalTick,
@@ -85,7 +98,10 @@ if TYPE_CHECKING:
 class RulesService:
     """Empty scaffold for the M15 `rules` module lifecycle."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+        #: E35-T10: the monotonic clock a fire's offer time and a rule's trip and kill times share.
+        self._clock = clock
+        self._halts = Halts()
         self._started = False
         self._tasks: set[asyncio.Task[bool]] = set()
         self._registry: MetricRegistry | None = None
@@ -108,6 +124,17 @@ class RulesService:
         self._records: tuple[RunRecords, ActionAudit] | None = None
         self._alerts: AlertPort | None = None
         self._metrics = ExecutorMetrics()
+        # E35-T10: the checks' ports (unbound: each refuses, so no armed action is handed over).
+        self._switches: RuleSwitches | None = None
+        self._principal: PrincipalReads | None = None  # E35-T11 binds the reads
+        self._notional: NotionalRebuild | None = None  # E35-T11 binds the day's rebuild
+        self._stop_check: StopCheck | None = None  # E35-T12 binds it
+        #: The SR-104 order budget, from its boot settings (`create_app`); unbound, the defaults
+        #: with no rebuild, so every order action is refused as not confirmed.
+        self._budget = OrderBudget()
+        #: Consecutive `scope` or `permission` refusals, by rule, then account (`None` for an
+        #: action that names none) (BQ-10): a rule's counts go in one pop, off the tick's cost.
+        self._strikes: dict[str, dict[UUID | None, int]] = {}
         self._executor: ActionExecutor | None = None  # while the evaluator runs
         self._dispatch: FireDispatch | None = None  # the fire queue, while the evaluator runs
         self._audits: AuditDispatch | None = None  # the record-only jobs' queue, beside it
@@ -123,6 +150,11 @@ class RulesService:
         records: tuple[RunRecords, ActionAudit] | None = None,
         alerts: AlertPort | None = None,
         metrics: ExecutorMetrics | None = None,
+        switches: RuleSwitches | None = None,
+        principal: PrincipalReads | None = None,
+        notional: NotionalRebuild | None = None,
+        stop_check: StopCheck | None = None,
+        budget: OrderBudget | None = None,
     ) -> None:
         """Composition-root wiring (store / audit / WS fan-out / action executor); before `start`.
         Each option is set only when given, so a later call (E35-S05's simulation sink, the
@@ -134,7 +166,11 @@ class RulesService:
         `action_sink` stands in for the engine-internal handlers no slice has bound, never for an
         action that would reach the OMS (`ActionExecutor`). `records` are the executor's two
         write-ahead ports, `alerts` its partial-fire and write-ahead alerts and `metrics` its
-        series (E35-T09, `rules_oms_wiring`)."""
+        series (E35-T09, `rules_oms_wiring`); `switches` the master switch, both kill switches and
+        the rollout port its checks 2 and 3 read, and `principal` the owner's and the armer's
+        snapshots check 5 reads (E35-T10; E35-T11 binds them, and unbound, check 5 refuses);
+        `notional` the day's allowance rebuild (E35-T11's) and `stop_check` check 8's comparison
+        (E35-T12's), each refusing while unbound; `budget` the SR-104 order budget of check 7."""
         if action_sink is not None:
             self._action_sink = action_sink
         if simulation_sink is not None:
@@ -145,6 +181,16 @@ class RulesService:
             self._alerts = alerts
         if metrics is not None:
             self._metrics = metrics
+        if switches is not None:
+            self._switches = switches
+        if principal is not None:
+            self._principal = principal
+        if notional is not None:
+            self._notional = notional
+        if stop_check is not None:
+            self._stop_check = stop_check
+        if budget is not None:
+            self._budget = budget
         if store is not None:
             self._store = store
         if audit is not None:
@@ -183,7 +229,7 @@ class RulesService:
 
         self._scope_audit = audit
         self._scope_env = environment
-        self.scope_state = SnapshotScopeState(source, environment, live_gate_open)
+        self.scope_state = SnapshotScopeState(source, live_gate_open)
         self.scope_resolver = ScopeResolver(self.scope_state, audit)
 
     async def refresh_scope(self, owner: UUID) -> None:
@@ -274,16 +320,14 @@ class RulesService:
             return "mode_changed"
         return "armed"
 
-    async def _recheck(self, req: ActionRequest) -> BlockedBy | None:
-        """The checks that exist, run again before `retry_once`'s retry (24 §11.9): check 1, then
-        the scope re-check. E35-T10 adds its checks here."""
-        if await self._check_one(req) != "armed":
-            return "mode_changed"
+    def _scope_check(self, req: ActionRequest) -> str | None:
+        """Check 4 run again before `retry_once`'s retry (24 §11.9), outside the emitter, which
+        would hand the action over: the resolver's reason, `None` while in scope; refused while no
+        resolver is wired."""
         resolver = self.scope_resolver
         if resolver is None:
-            return "scope"
-        refused = resolver.check_action(req.rule_scope, req.owner, req.environment, req.instance)
-        return None if refused is None else "scope"
+            return "out_of_scope"
+        return resolver.check_action(req.rule_scope, req.owner, req.environment, req.instance)
 
     def _refused(self, fire: Fire, first: bool) -> None:
         """A fire the full queue refused (24 §11.5), on the tick: each of its actions is counted
@@ -311,6 +355,51 @@ class RulesService:
                 kind=job.kind, actions=len(job.requests),
             )  # fmt: skip
 
+    def _rule_stopped(self, rule_id: str, reason: StopReason) -> None:
+        """The manager's hook, once per rule it moved out of `armed` (E35-T10): a killed rule's
+        kill time is stamped and its waiting fires are dropped (24 §11.7, BQ-9); a landed
+        auto-disarm is counted. Its strike counts went as its row left `armed`."""
+        if reason == "kill_switch":
+            self._halts.killed[rule_id] = self._clock()
+            self._drop(rule_id, "kill_switch")
+        else:  # `scope_denied`: the auto-disarm landed
+            self._metrics.autodisarmed()
+
+    def _forget_strikes(self, rule_id: str) -> None:
+        """Drop every count of `rule_id`, all its accounts in one pop (24 §11.5): the manager's
+        `left_armed` hook, as the rule's row leaves `armed` by any move, so a re-arm starts at
+        none; and, as a second line, a tick that evaluates the rule in another mode."""
+        self._strikes.pop(rule_id, None)
+
+    def _scope_outcome(self, rule_id: str, account_id: UUID | None, refused: bool) -> None:
+        """The auto-disarm's count (24 §11.5; RE-E1, BQ-10), synchronous: each `scope` or
+        `permission` refusal at dispatch and each scope-skipped evaluation of an armed rule on the
+        tick adds one for the rule and the account (`None` for an action that names none), a pass
+        of check 5 on that account clears it, and from the `SCOPE_DENIALS_BEFORE_DISARM`th on the
+        manager disarms the rule beside the tick, never awaited here."""
+        if not refused:
+            counts = self._strikes.get(rule_id)
+            if counts is not None and counts.pop(account_id, None) is not None and not counts:
+                del self._strikes[rule_id]
+            return
+        counts = self._strikes.setdefault(rule_id, {})
+        strikes = counts[account_id] = counts.get(account_id, 0) + 1
+        if strikes >= SCOPE_DENIALS_BEFORE_DISARM and self._manager is not None:
+            self._manager.auto_disarm(rule_id, "scope_denied")
+
+    def _drop(self, rule_id: str, reason: BlockedBy) -> None:
+        """The rule's waiting fires, out of its lane (never the one that runs), each counted as
+        its actions' `blocked` results and recorded refused whole through the audit queue, as one
+        record-only job offered and never awaited (24 §11.7): its run row closed `aborted`, and
+        per action `action_fail` and `rules.blocked` with `reason`."""
+        if self._dispatch is None:
+            return
+        for fire in self._dispatch.drop(rule_id):
+            for req in fire.requests:
+                self._metrics.refused(req.action_type, reason)
+            if self._audits is not None:
+                self._audits.offer(replace(fire, kind="refused_fire", refused_by=reason))
+
     def registry(self) -> MetricRegistry | None:
         """Metric registry while the engine module is running; `None` otherwise (-> 503)."""
         return self._registry if self._started else None
@@ -323,6 +412,7 @@ class RulesService:
             self._manager.set_hooks(audit=self._audit)
         if self._broadcast is not None:
             self._manager.set_hooks(broadcast=self._broadcast)
+        self._manager.set_hooks(rule_stopped=self._rule_stopped, left_armed=self._forget_strikes)
         self._started = True
         # E35-X02 (i): out-of-band tampering with a protected sys.* rule is audited at boot.
         await self._manager.verify_system_rules()
@@ -343,8 +433,18 @@ class RulesService:
         run_records, action_audit = self._records or (None, None)
         stand_in = None if self._action_sink is _discard_actions else self._action_sink
         executor = self._executor = ActionExecutor(
-            check_one=self._check_one, recheck=self._recheck, records=run_records,
-            audit=action_audit, alerts=self._alerts, metrics=self._metrics, stand_in=stand_in,
+            check_one=self._check_one, scope_check=self._scope_check,
+            gates=Gates(
+                switches=self._switches, principal=self._principal, notional=self._notional,
+                stop=self._stop_check,
+            ),
+            records=run_records, audit=action_audit, alerts=self._alerts, metrics=self._metrics,
+            stand_in=stand_in, halts=self._halts, budget=self._budget,
+            breaker=CircuitBreaker(
+                self._halts, move=manager.trip_breaker, drop=self._drop, alerts=self._alerts,
+                metrics=self._metrics, clock=self._clock,
+            ),
+            on_scope=self._scope_outcome,
         )  # fmt: skip
         dispatch = self._dispatch = FireDispatch(self._refused, executor.execute)
         audits = self._audits = AuditDispatch(self._shed, executor.execute)
@@ -361,11 +461,13 @@ class RulesService:
             is offered, written or shed (BQ-5)."""
             if emitter is None or audit_only is None or env is None:
                 return
+            if item.mode != "armed":  # only an armed rule's refusals count toward its disarm
+                self._forget_strikes(str(item.rule.rule_id))
             kind: JobKind
             if result.fired:
-                emit, queue, kind = emitter.emit, dispatch, "fire"
+                emit, queue, kind = emitter.emit_checked, dispatch, "fire"
             elif result.skipped_reason == "scope":
-                emit, queue, kind = audit_only.emit, audits, "scope_denial"
+                emit, queue, kind = audit_only.emit_checked, audits, "scope_denial"
             else:
                 return
             rule = item.rule
@@ -390,10 +492,13 @@ class RulesService:
             if kind == "scope_denial":
                 for req in reqs:
                     self._metrics.refused(req.action_type, "scope")
+                if item.mode == "armed":  # one per evaluation, of an armed rule only
+                    self._scope_outcome(str(rule.rule_id), ref.account_id, True)
             queue.offer(
                 Fire(
                     str(rule.rule_id), run_id, reqs, emit, kind=kind, version_id=item.version_id,
                     trigger_type=result.trigger_type, metric_values=result.metric_values,
+                    offered_at=self._clock(), limits=rule.limits,
                 )
             )  # fmt: skip
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
@@ -34,6 +35,12 @@ class Source:
 
     async def load_permissions(self, owner: uuid.UUID) -> frozenset[str]:
         return self.perms
+
+    async def load_account_environments(
+        self, account_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, str]:
+        """E35-T10 (BQ-3): every account read in this world's environment, `demo`."""
+        return dict.fromkeys(account_ids, "demo")
 
 
 class Principal:

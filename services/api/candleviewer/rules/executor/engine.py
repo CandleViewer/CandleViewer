@@ -1,9 +1,12 @@
 """The rule action executor (E35-T09; 24 §11.5, §11.9): one fire, its actions in IR order (E5).
 
-For an armed fire, per action: check 1, the row read again, before the scope re-check (BQ-6); then
-the routing emitter, still the only path to a sink, whose sink hands the action back here
-(`hand_over`); then the handler table (`unavailable` while no handler is bound, `native_sl` for
-good for `widen_stop`); then the records written ahead, the hand-over and the answer. `on_error`
+For an armed fire, per action, its `targets` resolved, and per resolved account (E35-T10, BQ-4):
+check 1, the row read again (BQ-6); checks 2 and 3, synchronous reads with no await (`gates.py`);
+then the routing emitter (check 4), still the only path to a sink, whose sink hands the action
+back here (`hand_over`); then checks 5 to 8; then the records written ahead, the hand-over and the
+answer, so every refusal is decided before `rules.fired` could be written (24 §11.5). The first
+account whose result is neither `ok` nor `simulated` stops the action's other accounts
+(`abort_on_first`), recorded `skipped`. `on_error`
 decides what follows a result other than `ok`, `simulated` or `skipped`; a failed write, or a row no
 longer armed or not confirmed, stops the fire whatever it says. The run row is closed with the
 fire's status (`error` after a failed write, its close still tried once), every result is counted,
@@ -21,14 +24,18 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
+from decimal import Decimal
 from typing import Any, Final, Literal, NoReturn, cast
+from uuid import UUID
 
 import structlog
 
 from candleviewer.rules.executor import dispatch
+from candleviewer.rules.executor.budget import CircuitBreaker, OrderBudget
 from candleviewer.rules.executor.dispatch import Fire
-from candleviewer.rules.executor.handlers import HANDLERS, HandlerAnswer, HandlerSpec, refusal
+from candleviewer.rules.executor.gates import Gates, Halts, scope_refusal
+from candleviewer.rules.executor.handlers import HANDLERS, HandlerAnswer, HandlerSpec
 from candleviewer.rules.executor.keys import client_ref, dedupe_key
 from candleviewer.rules.executor.metrics import ExecutorMetrics
 from candleviewer.rules.executor.ports import (
@@ -45,6 +52,7 @@ from candleviewer.rules.executor.ports import (
     trigger_reason,
 )
 from candleviewer.rules.executor.results import (
+    BUDGET_UNREAD,
     ActionResult,
     BlockedBy,
     Outcome,
@@ -53,21 +61,22 @@ from candleviewer.rules.executor.results import (
 )
 from candleviewer.rules.executor.writeahead import WRITE_AHEAD_FAILED, FireRecords, WriteAheadFailed
 from candleviewer.rules.ir.canonical import IrValueError
-from candleviewer.rules.scope import ActionRequest, ActionSink
+from candleviewer.rules.ir.models import RuleLimits
+from candleviewer.rules.scope import ActionRequest, ActionSink, ScopeInstanceRef
 
 #: What check 1 found (24 §11.5): the row still armed at the fire's version and `ir_hash`, no
 #: longer so (`mode_changed`), or not confirmed: its read failed or answered late (BQ-6).
 RowVerdict = Literal["armed", "mode_changed", "unread"]
 CheckOne = Callable[[ActionRequest], Awaitable[RowVerdict]]
-#: The checks that exist, run again before `retry_once`'s retry (24 §11.9): check 1 and the scope
-#: re-check; E35-T10 extends this one hook with its checks.
-Recheck = Callable[[ActionRequest], Awaitable[BlockedBy | None]]
-Stop = Literal["abort", "mode_changed", "unread", "write"]
+#: Check 4 run again before `retry_once`'s retry (24 §11.9), outside the emitter, which hands over:
+#: the scope re-check's reason, or `None` when the action is still in scope.
+ScopeCheck = Callable[[ActionRequest], str | None]
+Stop = Literal["abort", "mode_changed", "unread", "write", "tripped"]
+#: Told of each `scope` or `permission` refusal at dispatch (`True`) and each pass of check 5
+#: (`False`), by rule and account, synchronously: the service's auto-disarm count (BQ-10).
+ScopeOutcome = Callable[[str, UUID | None, bool], None]
 _DONE: Final = frozenset({"ok", "simulated", "skipped"})
 _NOT_DONE: Final = frozenset({"failed", "blocked", "unknown"})
-#: The capabilities whose handlers run inside the engine (E35-T13): only these may be served by a
-#: bound stand-in sink, so no stand-in ever reaches an OMS path, whatever is bound there.
-_STAND_IN: Final = frozenset({"notifications", "journal", "variables", "signals", "rule_control"})
 #: The answers `retry_once` may retry: no answer, or a refusal before the anchor existed.
 _RETRIED: Final = frozenset({"no_answer", "pre_anchor"})
 _OUTCOME_OF: Final[Mapping[str, Outcome]] = {
@@ -119,13 +128,22 @@ class _Unrecordable(_Unbound):
 
 @dataclass(slots=True)
 class _Action:
-    """One armed action on its account, shared with `hand_over` through `_CURRENT`."""
+    """One armed action on one resolved account (`None` for an action that names none), shared
+    with `hand_over` through `_CURRENT`: `req` names that account on the firing instance's key."""
 
     req: ActionRequest
     key: str
     fields: ActionAuditFields
     records: FireRecords
     started: float
+    account: UUID | None = None
+    resolved: tuple[UUID, ...] = ()
+    wide: bool = False  # resolved by `all_accounts`
+    position: int = 1  # its 1-based place in the fire's IR order
+    limits: RuleLimits = field(default_factory=RuleLimits)  # its fire's
+    offered_at: float = float("-inf")  # its fire's
+    ceiling: Decimal | None = None  # an entry's notional allowance (check 6)
+    tripped: bool = False  # check 7 refused it as spent: the breaker trips after its result
     send_it: Callable[[], Awaitable[HandlerAnswer]] | None = None
     sent: bool = False
     answer: HandlerAnswer | None = None
@@ -158,10 +176,10 @@ def _run_row(fire: Fire, snapshot: Mapping[str, SnapshotValue] | None = None) ->
     )  # fmt: skip
 
 
-def _key(req: ActionRequest) -> str:
+def _key(req: ActionRequest, account: UUID | None) -> str:
     return dedupe_key(
         rule_id=req.rule_id, version=req.version, scope_instance=req.instance.key,
-        node_id=req.payload.node_id, run_id=req.run_id, account_id=req.instance.account_id,
+        node_id=req.payload.node_id, run_id=req.run_id, account_id=account,
     )  # fmt: skip
 
 
@@ -169,14 +187,16 @@ class ActionExecutor:
     """`execute(fire)` from a dispatch worker; `hand_over(req)` from the routing emitter's sink,
     for an armed action the emitter passed. A bound `stand_in` sink (`RulesService.bind`'s
     `action_sink`) stands in for a handler no slice has bound yet, of an engine-internal capability
-    only (`_STAND_IN`): an action that would reach the OMS stays `unavailable` until its slice binds
-    its handler (C-2.6)."""
+    only (`handlers.ENGINE_INTERNAL`, check 2): an action that would reach the OMS stays
+    `unavailable` until its slice binds its handler (C-2.6). `gates` holds the checks' ports; its
+    unbound ports refuse."""
 
     def __init__(
         self,
         *,
         check_one: CheckOne,
-        recheck: Recheck,
+        scope_check: ScopeCheck,
+        gates: Gates | None = None,
         records: RunRecords | None = None,
         audit: ActionAudit | None = None,
         alerts: AlertPort | None = None,
@@ -184,8 +204,18 @@ class ActionExecutor:
         stand_in: ActionSink | None = None,
         handlers: Mapping[str, HandlerSpec] = HANDLERS,
         clock: Callable[[], float] = time.monotonic,
+        halts: Halts | None = None,
+        budget: OrderBudget | None = None,
+        breaker: CircuitBreaker | None = None,
+        wall: Callable[[], float] = time.time,
+        on_scope: ScopeOutcome | None = None,
     ) -> None:
-        self._check_one, self._recheck = check_one, recheck
+        self._check_one, self._scope_check = check_one, scope_check
+        self._gates = Gates() if gates is None else gates
+        self._halts = Halts() if halts is None else halts  # the trip and kill times (E35-T10)
+        self._budget = OrderBudget() if budget is None else budget  # unrebuilt: refuses orders
+        self._breaker = CircuitBreaker(self._halts) if breaker is None else breaker
+        self._wall, self._on_scope = wall, on_scope
         unbound = _Unbound()
         self._records: RunRecords = unbound if records is None else records
         self._audit: ActionAudit = unbound if audit is None else audit
@@ -213,53 +243,103 @@ class ActionExecutor:
                 return
 
     async def _throttled(self, fire: Fire) -> None:
-        """A fire the full fire queue refused, off the tick (BQ-4): per action `action_fail`
-        (`blocked`, `backpressure`, no account) and `rules.blocked`, then its run row closed
-        `throttled`, or `error` after a failed write, its close still tried once (BQ-9). Its
-        metrics were counted on the tick."""
+        """A fire refused whole off the tick, as a record-only job (BQ-4): one the full fire queue
+        refused (`backpressure`, its run row closed `throttled`), or one the circuit breaker or the
+        kill-switch hook dropped from its lane (E35-T10, closed `aborted`); `error` after a failed
+        write, its close still tried once (BQ-9). Its metrics were counted where it was refused."""
+        throttled = fire.refused_by == "backpressure"
+        await self._whole(fire, fire.refused_by, "throttled" if throttled else "aborted")
+
+    async def _whole(
+        self, fire: Fire, reason: BlockedBy, status: RunStatus, *, count: bool = False
+    ) -> None:
+        """A fire refused whole: per action `action_fail` (`blocked`, `reason`, with no account:
+        targets are resolved only past these blocks) and `rules.blocked`, never `rules.fired`, each
+        counted first when `count` says so; then its run row closed `status`, or `error` after a
+        failed write, its close still tried once (BQ-9)."""
         if not fire.requests:
             return
+        refused = []
+        for req in fire.requests:
+            key = _key(req, None)
+            result = blocked_result(
+                node_id=req.payload.node_id, action_type=req.action_type, account_id=None,
+                resolved_accounts=(), dedupe_key=key, reason=reason,
+            )  # fmt: skip
+            if count:
+                self._metrics.result(result)
+            refused.append((result, audit_fields(req, account_id=None, dedupe_key=key)))
         records = self._records_for(fire)
-        status: RunStatus = "throttled"
         try:
-            for req in fire.requests:
-                key = dedupe_key(
-                    rule_id=req.rule_id, version=req.version, scope_instance=req.instance.key,
-                    node_id=req.payload.node_id, run_id=req.run_id, account_id=None,
-                )  # fmt: skip
-                result = blocked_result(
-                    node_id=req.payload.node_id, action_type=req.action_type, account_id=None,
-                    resolved_accounts=(), dedupe_key=key, reason="backpressure",
-                )  # fmt: skip
-                await records.refused(result, audit_fields(req, account_id=None, dedupe_key=key))
+            for result, fields in refused:
+                await records.refused(result, fields)
         except WriteAheadFailed as failed:
             status = "error"
             self._records_failed(fire, failed)
         await self._close(fire, records, status, 0)
 
     async def _armed(self, fire: Fire) -> None:
+        """An armed fire: first the blocks that refuse it whole (24 §11.5), a fire offered before
+        its rule's trip time (`circuit_breaker`) or kill time (`kill_switch`), then a rule that
+        requires confirmation (`confirmation_unavailable`, never executed later); else its actions,
+        per resolved account."""
+        whole = self._halts.block(fire.rule_id, fire.offered_at)
+        if whole is None and fire.limits.require_confirmation:
+            whole = "confirmation_unavailable"
+        if whole is not None:
+            await self._whole(fire, whole, "aborted", count=True)
+            return
+        try:
+            await self._actions(fire)
+        finally:
+            self._gates.allowance.ended(fire.run_id)
+
+    async def _actions(self, fire: Fire) -> None:
         records = self._records_for(fire)
         started, results = self._clock(), list[ActionResult]()
         stop: Stop | None = None
         writable, alerted = True, False
-        for req in fire.requests:
-            key = _key(req)
-            fields = audit_fields(req, account_id=req.instance.account_id, dedupe_key=key)
-            if stop is not None:
-                result = self._skipped(req, key, stop)
-            else:
-                action = _Action(req, key, fields, records, self._clock())
-                result = await self._bounded(fire, action)
-                stop = self._stop_after(action, result)
-            results.append(result)
-            self._metrics.result(result)
-            if writable and not await self._keep(fire, records, result, fields):
-                writable = False
-                if stop in (None, "abort"):
-                    stop = "write"  # a write after the answer stops the rest the same way
-            if (stop == "write" or not writable) and not alerted:
-                alerted = True  # AC-14: once per fire, naming the action whose write failed
-                await self._alert_write(fire, req)
+        for position, req in enumerate(fire.requests, start=1):
+            unresolved = False
+            try:  # the action's first guarded step: a raise is its `failed` result, recorded
+                accounts, wide = self._gates.resolve_targets(
+                    req, self._handlers.get(req.action_type), self._clock()
+                )
+            except Exception as exc:  # never `CancelledError`, which is no `Exception`
+                self._failed_log(fire, req, exc, not_run=None)
+                accounts, wide, unresolved = (None,), False, True
+            resolved = tuple(a for a in accounts if a is not None)
+            halted = False  # `abort_on_first`: the action's later accounts are not attempted
+            for account in accounts or (None,):
+                action = self._action(req, account, resolved, wide, records)
+                action.position, action.limits = position, fire.limits
+                action.offered_at = fire.offered_at
+                if stop == "tripped":  # the rest of a tripping fire, whatever `on_error` says
+                    result = self._blocked(action, "circuit_breaker")
+                elif stop is not None or halted:
+                    result = self._skipped(action, stop)
+                elif unresolved:
+                    result = self._result(action, "failed", error_code="error")
+                    stop = self._stop_after(action, result)
+                elif not accounts:  # `all_accounts` resolved to no account (BQ-4)
+                    result = self._blocked(action, "permission")
+                    self._scoped(action, refused=True)
+                    stop = self._stop_after(action, result)
+                else:
+                    result = await self._bounded(fire, action)
+                    stop = self._stop_after(action, result)
+                halted = halted or result.outcome not in ("ok", "simulated")
+                results.append(result)
+                self._metrics.result(result)
+                if writable and not await self._keep(fire, records, result, action.fields):
+                    writable = False
+                    if stop in (None, "abort"):
+                        stop = "write"  # a write after the answer stops the rest the same way
+                if (stop == "write" or not writable) and not alerted:
+                    alerted = True  # AC-14: once per fire, naming the action whose write failed
+                    await self._alert_write(fire, req)
+                if action.tripped:  # the budget refused it as spent (BQ-8)
+                    await self._breaker.trip(fire.rule_id, fire.run_id, req.payload.node_id)
         status: RunStatus = _status(results) if writable else "error"  # a failed write: closed too
         await self._close(fire, records, status, max(0, int((self._clock() - started) * 1000)))
         await self._settle(fire, results, troubled=alerted)
@@ -273,6 +353,26 @@ class ActionExecutor:
         except IrValueError as refused:
             unwritable = _Unrecordable(refused)
             return FireRecords(_run_row(fire, snapshot={}), unwritable, unwritable)
+
+    def _action(
+        self,
+        req: ActionRequest,
+        account: UUID | None,
+        resolved: tuple[UUID, ...],
+        wide: bool,
+        records: FireRecords,
+    ) -> _Action:
+        """The action on one resolved account: the request the checks see names that account on
+        the firing instance's key, with its own fire key and audit fields (24 §11.9)."""
+        if account is not None and account != req.instance.account_id:
+            instance = ScopeInstanceRef(req.instance.key, req.instance.symbol, account)
+            req = replace(req, instance=instance)
+        key = _key(req, account)
+        fields = audit_fields(req, account_id=account, dedupe_key=key)
+        return _Action(
+            req, key, fields, records, self._clock(), account=account, resolved=resolved,
+            wide=wide,
+        )  # fmt: skip
 
     async def _bounded(self, fire: Fire, action: _Action) -> ActionResult:
         """The action's whole step under `ACTION_TIMEOUT_S`: a timeout after its hand-over began
@@ -290,14 +390,20 @@ class ActionExecutor:
         req = action.req
         action.verdict = await self._check_one(req)  # check 1 comes before the scope re-check
         if action.verdict != "armed":
-            return self._skipped(req, action.key, action.verdict)
+            return self._skipped(action, action.verdict)
+        refused = self._before_scope(action)  # checks 2 and 3: synchronous, never awaited
+        if refused is not None:
+            return self._blocked(action, refused)
         token = _CURRENT.set(action)
         try:
-            passed = await fire.emit(req)
+            refused_as = await fire.emit(req)  # `emit_checked`: its reason, or None once sent on
         finally:
             _CURRENT.reset(token)
-        if not passed:  # the emitter refused and audited it (`rules.scope_denied`)
-            return self._blocked(action, "scope")
+        if refused_as is not None:  # the emitter refused and audited it (`rules.scope_denied`)
+            blocked_by = scope_refusal(refused_as)
+            if blocked_by == "scope":
+                self._scoped(action, refused=True)
+            return self._blocked(action, blocked_by)
         if req.payload.dry_run_only:
             return self._result(action, "simulated")
         if action.result is None:
@@ -308,15 +414,17 @@ class ActionExecutor:
         return action.result
 
     async def hand_over(self, req: ActionRequest) -> None:
-        """The routing emitter's sink for an armed action (`RulesService._route`): the handler
-        table, then the records written ahead, then the hand-over, once (24 §11.5)."""
+        """The routing emitter's sink for an armed action (`RulesService._route`): checks 5 to 8,
+        then the records written ahead, then the hand-over, once (24 §11.5)."""
         action = _CURRENT.get()
         if action is None or action.req is not req:
             raise RuntimeError("an armed action is handed over only inside its fire")
         spec = self._handlers.get(req.action_type)
-        reason = self._refusal(spec)
+        reason, limit = (
+            ("unavailable", None) if spec is None else await self._after_scope(spec, action)
+        )
         if reason is not None or spec is None:
-            action.result = self._blocked(action, reason or "unavailable")
+            action.result = self._blocked(action, reason or "unavailable", limit)
             return
         action.send_it = self._sender(spec, action)
         try:
@@ -328,10 +436,10 @@ class ActionExecutor:
         action.answer, action.result = answer, self._answered(action, answer)
 
     async def _retry(self, action: _Action) -> None:
-        """`retry_once` (24 §11.9): after the checks run again, the same request under the same
+        """`retry_once` (24 §11.9): after checks 1 to 8 run again, the same request under the same
         `client_ref`, its write ahead again (one `rules.fired`: the record is keyed). A check that
         refuses now sends nothing, and the first call's result stands."""
-        if await self._recheck(action.req) is not None or action.send_it is None:
+        if not await self._rechecked(action) or action.send_it is None:
             return
         try:
             answer = await action.records.admitted(action.fields, action.send_it)
@@ -340,17 +448,94 @@ class ActionExecutor:
             return
         action.answer, action.result = answer, self._answered(action, answer)
 
-    def _refusal(self, spec: HandlerSpec | None) -> BlockedBy | None:
-        if spec is None:
-            return "unavailable"
-        if spec.handler is None and spec.refused_as is None and spec.capability in _STAND_IN:
-            return None if self._stand_in is not None else "unavailable"
-        return refusal(spec)
+    def _before_scope(self, action: _Action) -> BlockedBy | None:
+        """Checks 2 and 3 on the action's account; a `dry_run_only` action, which never reaches a
+        handler, is never `unavailable` (24 §11.5)."""
+        spec = self._handlers.get(action.req.action_type)
+        return self._gates.before_scope(
+            spec, action.account, stand_in=self._stand_in is not None,
+            dry_run=action.req.payload.dry_run_only,
+        )  # fmt: skip
+
+    async def _after_scope(
+        self, spec: HandlerSpec, action: _Action, *, again: bool = False
+    ) -> tuple[BlockedBy | None, str | None]:
+        """Checks 5 to 8 on the action's account, the first refusal with the detail key of its
+        `blocked_detail`; the records carry the roles check 5 read, and an entry the allowance it
+        may use. `again`: before a retry, when check 7 only asks whether the rule tripped."""
+        req = action.req
+        refused, owner, armer = self._gates.principal(
+            req, action.account, all_accounts=action.wide, now=self._clock()
+        )
+        action.fields = replace(
+            action.fields, owner_role=None if owner is None else owner.role,
+            armed_by_role=None if armer is None else armer.role,
+        )  # fmt: skip
+        if not again:
+            self._scoped(action, refused=refused is not None)
+        if refused is not None:
+            return refused, None
+        limit = self._gates.per_fire(action.position, action.limits)  # check 6
+        if limit is None and spec.meets_allowance:
+            allowance = self._gates.allowance
+            limit, action.ceiling = await allowance.remainder(
+                req.rule_id, req.run_id, action.limits
+            )
+        if limit is not None:
+            return "cap", limit
+        if spec.counts_orders:  # check 7
+            budgeted = await (self._tripped(action) if again else self._admitted(action))
+            if budgeted is not None:
+                return "order_budget", budgeted or None
+        return self._gates.stop_check(spec, req, action.account), None  # check 8
+
+    async def _admitted(self, action: _Action) -> str | None:
+        """Check 7 (24 §11.7): `None` once the budget admits and counts the order; else the
+        refusal's detail key, `""` for its own. A rule whose breaker tripped and has not moved is
+        refused and trips again; a spent budget trips it after this result; counts not rebuilt
+        since a start refuse with their own detail and never trip it."""
+        rule_id = action.req.rule_id
+        if self._breaker.unmoved(rule_id):
+            action.tripped = True
+            return ""
+        admission = await self._budget.admit(rule_id, self._wall())
+        if admission == "spent":
+            action.tripped = True
+        if admission == "ok":
+            return None
+        return BUDGET_UNREAD if admission == "unrebuilt" else ""
+
+    async def _tripped(self, action: _Action) -> str | None:
+        """Check 7 before a retry (24 §11.9): whether the rule tripped since its fire was offered,
+        counting nothing, so the order is counted once."""
+        rule_id = action.req.rule_id
+        trip = self._halts.tripped.get(rule_id)
+        if self._breaker.unmoved(rule_id) or (trip is not None and trip >= action.offered_at):
+            return ""
+        return None
+
+    def _scoped(self, action: _Action, *, refused: bool) -> None:
+        """A `scope` or `permission` refusal at dispatch, or a pass of check 5, for the service's
+        auto-disarm count (BQ-10), by rule and the action's resolved account: `None` for an action
+        that names none, so its passes never clear an account's count."""
+        if self._on_scope is not None:
+            self._on_scope(action.req.rule_id, action.account, refused)
+
+    async def _rechecked(self, action: _Action) -> bool:
+        """Checks 1 to 8 again before a retry (24 §11.9), check 4 through the scope re-check
+        alone: True when every one passes. A refusal here is no result of its own."""
+        req = action.req
+        if await self._check_one(req) != "armed" or self._before_scope(action) is not None:
+            return False
+        spec = self._handlers.get(req.action_type)
+        if spec is None or self._scope_check(req) is not None:
+            return False
+        return (await self._after_scope(spec, action, again=True))[0] is None
 
     def _sender(self, spec: HandlerSpec, action: _Action) -> Callable[[], Awaitable[HandlerAnswer]]:
         """The hand-over, built once: a retry sends the same request under the same key."""
         handler, req = spec.handler, action.req
-        if handler is None:  # `_refusal` admits a handler-less type only with a stand-in bound
+        if handler is None:  # check 2 admits a handler-less type only with a stand-in bound
             sink = cast(ActionSink, self._stand_in)
 
             async def via_sink() -> HandlerAnswer:
@@ -359,7 +544,7 @@ class ActionExecutor:
                 return HandlerAnswer("done")
 
             return via_sink
-        prepared = handler.prepare(req, req.instance.account_id)
+        prepared = handler.prepare(req, action.account, max_notional_usd=action.ceiling)
         ref = client_ref(action.key)
 
         async def via_handler() -> HandlerAnswer:
@@ -369,6 +554,8 @@ class ActionExecutor:
         return via_handler
 
     def _answered(self, action: _Action, answer: HandlerAnswer) -> ActionResult:
+        if answer.answer == "accepted" and answer.notional_usd is not None:  # the ledger (BQ-11)
+            self._gates.allowance.spend(action.req.rule_id, action.req.run_id, answer.notional_usd)
         if answer.answer == "refused" and answer.blocked_by is not None:
             return self._blocked(action, answer.blocked_by)
         return self._result(
@@ -382,6 +569,8 @@ class ActionExecutor:
         result other than `ok`, `simulated` or `skipped`, and `continue` never does."""
         if action.write_failed:
             return "write"
+        if action.tripped:
+            return "tripped"
         if action.verdict == "mode_changed":
             return "mode_changed"
         if action.verdict == "unread":
@@ -391,10 +580,9 @@ class ActionExecutor:
         return "abort"
 
     def _ids(self, action: _Action) -> dict[str, Any]:
-        account = action.req.instance.account_id
         return {
             "node_id": action.req.payload.node_id, "action_type": action.req.action_type,
-            "account_id": account, "resolved_accounts": () if account is None else (account,),
+            "account_id": action.account, "resolved_accounts": action.resolved,
             "dedupe_key": action.key,
         }  # fmt: skip
 
@@ -405,17 +593,18 @@ class ActionExecutor:
         ids = self._ids(action)
         return ActionResult(**ids, outcome=outcome, duration_us=self._micros(action), **more)
 
-    def _blocked(self, action: _Action, reason: BlockedBy) -> ActionResult:
-        return blocked_result(**self._ids(action), reason=reason, duration_us=self._micros(action))
+    def _blocked(
+        self, action: _Action, reason: BlockedBy, limit: str | None = None
+    ) -> ActionResult:
+        return blocked_result(
+            **self._ids(action), reason=reason, duration_us=self._micros(action), limit=limit
+        )
 
-    def _skipped(self, req: ActionRequest, key: str, stop: Stop | RowVerdict) -> ActionResult:
-        account = req.instance.account_id
+    def _skipped(self, action: _Action, stop: Stop | RowVerdict | None) -> ActionResult:
         named = stop in ("mode_changed", "unread")
         return skipped_result(
-            node_id=req.payload.node_id, action_type=req.action_type, account_id=account,
-            resolved_accounts=() if account is None else (account,), dedupe_key=key,
-            reason="mode_changed" if named else None, unread=stop == "unread",
-        )  # fmt: skip
+            **self._ids(action), reason="mode_changed" if named else None, unread=stop == "unread"
+        )
 
     async def _keep(
         self, fire: Fire, records: FireRecords, result: ActionResult, fields: ActionAuditFields

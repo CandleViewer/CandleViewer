@@ -627,9 +627,10 @@ export interface paths {
      *     default: `all_roles`, or `owner_only` for a flag no manager or viewer session ever learns
      *     (`21-database-schema.md` 10.7 gives each flag's; `23-ws-protocol.md` 15.9).
      *     `trading.live_enabled` and the kill-switch-class flags (`maintenance.mode`,
-     *     `killswitch.*`) resolve from the deployment value only: user and role overrides for them
-     *     are ignored at resolution, not merely refused on write, so an override row that reached
-     *     the store another way (a seed, a migration, a direct database change) changes nothing.
+     *     `killswitch.*`, `rules.enabled`) resolve from the deployment value only: user and role
+     *     overrides for them are ignored at resolution, not merely refused on write, so an override
+     *     row that reached the store another way (a seed, a migration, a direct database change)
+     *     changes nothing.
      *     Kill-switch-class flags are re-read at least every 5 s and never served from the 30 s
      *     cache. `trading.live_enabled` is not kill-switch-class, so the 30 s cache applies to it:
      *     the fast stop is the kill switch, at 5 s or less. Override values on a `percentage` flag

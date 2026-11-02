@@ -22,7 +22,7 @@ import asyncio
 import functools
 import re
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from datetime import timedelta
 from decimal import Decimal
@@ -114,6 +114,13 @@ class _Rows(FakeSessionRepository):
     async def load_grants(self, owner: uuid.UUID) -> list[tuple[uuid.UUID, bool, bool]]:
         rows = self.grants.items()
         return [(acct, g["can_view"], g["frozen"]) for (user, acct), g in rows if user == owner]
+
+    async def load_account_environments(
+        self, account_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, str]:
+        """E35-T10 (BQ-3): each account's environment, this deployment's (the scope snapshot reads
+        it with the grants)."""
+        return dict.fromkeys(account_ids, "demo")
 
     async def load_permissions(self, owner: uuid.UUID) -> frozenset[str]:
         """O5: a user who is not `active` holds no permission, whatever their roles."""
@@ -379,7 +386,7 @@ def _world() -> Iterator[tuple[SimpleNamespace, Any, TestClient]]:
     with pytest.MonkeyPatch.context() as mp:
         for name in ("user", "session_info"):
             mp.setattr(SqlAlchemyIdentityProvider, name, _delegate(w.repo, name))
-        for name in ("load_grants", "load_permissions"):
+        for name in ("load_grants", "load_permissions", "load_account_environments"):
             mp.setattr(SqlAlchemyScopeSource, name, _delegate(w.repo, name))
         mp.setattr(SqlAlchemySessionRepository, "find_by_id", _delegate(w.repo, "find_by_id"))
         users = _Users(w.repo)  # #2295: the `users` read the enrolment-only guard classifies with

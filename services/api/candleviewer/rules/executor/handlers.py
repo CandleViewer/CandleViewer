@@ -7,16 +7,17 @@ capability, the binder and the handler. Building the table refuses a type with n
 key outside `ActionType` and a type left undeclared, so the table is complete or the module does
 not import.
 
-No handler is bound in E35-T09: every type blocks `unavailable` until its slice binds it, and
-`widen_stop`, retired, is refused for good as `native_sl` (24 §8.8 rule 5), bound or not. No order
-path is reachable from here (C-2.6): an order-placing handler arrives with its slice's native-stop
-suite.
+No handler is bound in E35-T09: check 2 blocks every type `unavailable` until its slice binds it,
+and check 8 refuses `widen_stop`, retired, for good as `native_sl` (24 §8.8 rule 5), bound or not
+(`rules/executor/gates.py`, E35-T10). No order path is reachable from here (C-2.6): an
+order-placing handler arrives with its slice's native-stop suite.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from decimal import Decimal
 from types import MappingProxyType
 from typing import Any, Final, Literal, Protocol, get_args
 from uuid import UUID
@@ -32,6 +33,30 @@ Capability = Literal[
     "leverage", "algos", "notifications", "journal", "variables", "signals", "rule_control",
     "none",
 ]  # fmt: skip
+#: The capabilities whose handlers run inside the engine (E35-T13): only these may be served by a
+#: bound stand-in sink, so no stand-in ever reaches an OMS path, and only their six types name no
+#: account. Every other capability reaches past the engine, behind the rollout port (24 §11.5).
+ENGINE_INTERNAL: Final[frozenset[Capability]] = frozenset(
+    {"notifications", "journal", "variables", "signals", "rule_control"}
+)
+#: The entries, which meet the notional allowance (24 §11.7, check 6; BQ-11): never a reduce-only
+#: order (C-2.6).
+MEETS_ALLOWANCE: Final = frozenset(
+    {"place_order", "scale_in", "reverse_position", "arm_chase_limit", "start_iceberg_slice",
+     "start_twap"}
+)  # fmt: skip
+#: The types that hand an order to the OMS, entries and reduce-only orders alike, each counted once
+#: per OMS call per resolved account by the order budget (24 §11.7, check 7; BQ-6). Amends,
+#: cancels, lockouts, leverage and the engine's own actions never count.
+COUNTS_ORDERS: Final = frozenset(
+    {"place_order", "scale_in", "scale_out", "flatten_position", "flatten_all_positions",
+     "reverse_position", "arm_chase_limit", "start_iceberg_slice", "start_twap"}
+)  # fmt: skip
+#: The actions that set, move or cancel a stop, which check 8 asks the stop in force about (24
+#: §11.5; BQ-12): a cancel may select a native stop-loss.
+TOUCHES_STOP: Final = frozenset(
+    {"modify_stop_loss", "tighten_stop", "move_to_breakeven", "cancel_order", "cancel_all_orders"}
+)
 #: How a handler's call ended, which `on_error` reads (24 §11.9): `accepted` and `done` took
 #: effect; `refused` is a definite refusal, never retried (`blocked_by` when a check of the set
 #: maps it); `pre_anchor` a refusal before the OMS anchor existed and `no_answer` a timeout or a
@@ -49,6 +74,11 @@ class HandlerAnswer:
     blocked_by: BlockedBy | None = None
     order_id: UUID | None = None
     group_id: UUID | None = None
+    #: An accepted entry's notional in USD (quantity times reference price), which feeds the
+    #: rule's allowance ledger (E35-T10, BQ-11). E35-T11's handlers name it on an `accepted`
+    #: answer only, the one the ledger reads; an answer of unknown outcome (`no_answer`,
+    #: `in_flight`) names none, and E35-T11 (#5003) carries what the ledger does with one.
+    notional_usd: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,7 +110,12 @@ class Handler(Protocol):
     """What runs an action: `prepare` is pure and builds the request once; `send` hands it over
     under the action's `client_ref`, once, or twice for `retry_once`, never rebuilt."""
 
-    def prepare(self, req: ActionRequest, account_id: UUID | None) -> Prepared: ...
+    def prepare(
+        self, req: ActionRequest, account_id: UUID | None, *, max_notional_usd: Decimal | None
+    ) -> Prepared:
+        """The request, built once; `max_notional_usd` is the allowance an entry may not exceed
+        (check 6, `None` when the rule sets no notional limit), which the OMS refuses, never
+        caps (24 §11.7)."""
 
     async def send(self, prepared: Prepared, *, client_ref: str) -> HandlerAnswer: ...
 
@@ -102,6 +137,9 @@ class HandlerSpec:
     bound_by: str | None
     handler: Handler | None = None
     refused_as: BlockedBy | None = None  # a type refused for good, bound or not
+    meets_allowance: bool = False  # an entry (`MEETS_ALLOWANCE`)
+    counts_orders: bool = False  # hands an order to the OMS (`COUNTS_ORDERS`)
+    touches_stop: bool = False  # a stop action (`TOUCHES_STOP`)
 
     def __post_init__(self) -> None:
         if not self.idempotent and not (self.guarded and self.guard):
@@ -116,14 +154,6 @@ class HandlerBinding:
     bound_by: str | None
     guard: str | None = None
     refused_as: BlockedBy | None = None
-
-
-def refusal(spec: HandlerSpec) -> BlockedBy | None:
-    """Why the executor refuses the action before its records written ahead: `native_sl` for a
-    type refused for good, `unavailable` while no handler is bound, else `None`."""
-    if spec.refused_as is not None:
-        return spec.refused_as
-    return "unavailable" if spec.handler is None else None
 
 
 def _b(capability: Capability, bound_by: str | None, guard: str | None = None) -> HandlerBinding:
@@ -192,6 +222,9 @@ def build_handlers(
         table[action_type] = HandlerSpec(
             action_type, *flags, guard=bound.guard, capability=bound.capability,
             bound_by=bound.bound_by, refused_as=bound.refused_as,
+            meets_allowance=action_type in MEETS_ALLOWANCE,
+            counts_orders=action_type in COUNTS_ORDERS,
+            touches_stop=action_type in TOUCHES_STOP,
         )  # fmt: skip
     return MappingProxyType(table)
 
