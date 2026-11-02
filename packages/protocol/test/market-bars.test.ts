@@ -12,6 +12,7 @@ type Bars = generated.rest.operations["getBars"];
 type Page = Bars["responses"][200]["content"]["application/json"];
 type Bar = Schemas["Bar"];
 type WsBar = generated.ws.BarsSymbolBarTypeParam["bars"][number];
+type SnapMeta = NonNullable<generated.ws.CandleViewerWSEnvelope["meta"]>;
 type Refusals = 400 | 401 | 403 | 422 | 503;
 
 describe("klines and bars pages (consumer side, 22-api-openapi /market/klines, /market/bars)", () => {
@@ -61,6 +62,12 @@ describe("klines and bars pages (consumer side, 22-api-openapi /market/klines, /
     expectTypeOf<Page["meta"]["coverage_holes"]>().toEqualTypeOf<
       Schemas["DataMeta"]["coverage_holes"]
     >();
+  });
+
+  it("reads coverage holes from a bars snapshot as from a REST page (#5396)", () => {
+    type Hole = NonNullable<Page["meta"]["coverage_holes"]>[number];
+    expectTypeOf<SnapMeta["coverage_holes"]>().toEqualTypeOf<Hole[] | undefined>();
+    expectTypeOf<Hole>().toEqualTypeOf<{ start_us: number; end_us: number }>();
   });
 
   it("reads when recording began from a no_data_recorded refusal", () => {

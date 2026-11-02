@@ -305,8 +305,12 @@ class InstrumentsPageMeta(PageMeta):
 
 
 class CoverageHole(BaseModel):
-    start_us: Annotated[JsonInt, Field(description="Gap start, exchange epoch microseconds.")]
-    end_us: Annotated[JsonInt, Field(description="Gap end, exchange epoch microseconds.")]
+    start_us: Annotated[
+        JsonInt, Field(description="Gap start, exchange epoch microseconds (inclusive).")
+    ]
+    end_us: Annotated[
+        JsonInt, Field(description="Gap end, exchange epoch microseconds (exclusive).")
+    ]
 
 
 class DataMeta(PageMeta):
