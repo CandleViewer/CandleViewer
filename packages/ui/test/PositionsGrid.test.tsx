@@ -139,6 +139,15 @@ const headerOf = (id: string): HTMLElement => {
   if (found === undefined) throw new Error(`no header ${id}`);
   return found;
 };
+/**
+ * A span's `display` as a browser computes it: `inline`, its initial value, which jsdom leaves empty. Testing Library
+ * joins an inline child's trimmed words to the text before it with no space and pads any other child, so an exact name
+ * checked without this passes here and can fail in the Storybook project (CI-A11Y-002). `mount`'s cleanup removes it.
+ */
+const inlineSpans = (): void => {
+  document.body.appendChild(document.createElement("style")).textContent =
+    "span:not([hidden]) { display: inline; }";
+};
 
 describe("PositionsGrid (CMP-114): the treegrid", () => {
   it("marks one root with data-cmp and draws CMP-049's treegrid, named by its caption", async () => {
@@ -658,6 +667,7 @@ describe("PositionsGrid (CMP-114): TotalsRow (D02 §5.2, D-15)", () => {
   });
 
   it("D-15's Net is the row's tooltip and description, the label's name its own", async () => {
+    inlineSpans();
     await mount(<Host totals={{ ...TOTALS, net: "-1234.5" }} />);
     const header = within(grid()).getByRole("rowheader", {
       name: "LIVE total · 4 open · Exposure 34,322.66 USDT",
@@ -932,10 +942,11 @@ describe("PositionsGrid (CMP-114): the narrow dock (D02 §11.5)", () => {
   });
 
   it("the totals keep their label, count and uPnL; the exposure and rPnL today are the row's tooltip and description", async () => {
+    inlineSpans();
     await mount(<Host variant="narrow" />);
     // The name is the label and the count alone: no figure is cut where the label cell ends (D-8).
     const header = within(grid()).getByRole("rowheader", { name: "LIVE total · 4 open" });
-    expect(header.querySelector(".cv-positions-grid__totals-span")?.textContent).toBe(" · 4 open");
+    expect(header.querySelector(".cv-positions-grid__totals-span")?.textContent).toBe("· 4 open");
     const row = header.closest("tr");
     expect(row).toHaveAccessibleDescription(
       "Exposure 34,322.66 USDT · rPnL today profit 34.40 USDT",
