@@ -14,7 +14,9 @@ Gates (each FAIL led by its name):
   G-MAP      the ticket's seventeen operations are K-01 ... K-17 in the ticket's order; every K
              row has a binding, an outline twin and an announcement.
   G-KEYMAP   every `X` (`rules.id`) binding in §4 equals the keymap's defaultBinding for that id
-             at the base; no K row and no keymap rules.* row names an arm command.
+             at the base; every rules.* command the canvas can receive (no screen scope, or
+             SCR-082's) is named in §4, by id or by its `rules.<stem>_*` family; no K row and no
+             keymap rules.* row names an arm command.
   G-SCRIPT   every S row's quoted template stands on its cited line at its ref (`${x}` read as
              `{x}`).
   G-MOTION   the MOT anchors equal E37-D03 §7's motion rows and the rows with a reduce cell.
@@ -25,6 +27,10 @@ Gates (each FAIL led by its name):
              public-text deny word in the review, this tool or the pins file; no unknown anchor.
   G-SCOPE    the diff against `git merge-base HEAD origin/main` touches only the review, this
              tool and the pins file.
+  G-XREF     every F id the review names is a §11 row; no K binding names a chrome-reserved
+             chord; every §8 target that passes under 24 x 24 passes by an equivalent, and the
+             required targets are present; §6's L rows are L-1 ... L-n and cover the regions of
+             D02's focus order; no V row is Blocking unless §11 counts as many Blocking rows.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e37_d04_a11y_review_audit.py --check       (exit 1 on any FAIL)
@@ -70,7 +76,13 @@ PATHS: dict[str, str] = {
 }
 REF_OF = {"D03": D03_REF}
 # the A-row headers name their parents in these words
-PARENT_WORDS = {"E37-D02": "D02", "E37-D03": "D03", "`15`": "15", "`05`": "05", "`14`": "14"}
+PARENT_WORDS = {
+    "E37-D02": "D02",
+    "E37-D03": "D03",
+    "`15`": "15",
+    "`05`": "05",
+    "`14`": "14",
+}
 SEVERITIES = ("Blocking", "Major", "Minor", "Info")
 # the ticket's Scope list, in its order (T: "add node, delete node, ... simulate")
 T_OPS = (
@@ -97,11 +109,23 @@ KEYS = r"\d\d|D0[23]|DS|KEYMAP|COPY|PSEL|TRAV|NUDGE"
 CITE = re.compile(rf"`({KEYS})`:(\d+(?:{DASH}\d+)?(?:, :\d+(?:{DASH}\d+)?)*)")
 BINDING = re.compile(r"`([^`]+)` \(`(rules\.[a-z_]+)`\)")
 ANCHOR = re.compile(r"`?([^\s<|(`]+)`?<!--=([A-Z]+:[A-Za-z0-9.]+)-->")
-CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE)
-LOCAL_PATH = re.compile("/" + "home/|/Users/|[A-Za-z]:\\\\|\\bwt-" + "notes\\b")  # assembled
+CLOSING = re.compile(
+    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE
+)
+LOCAL_PATH = re.compile(
+    "/" + "home/|/Users/|[A-Za-z]:\\\\|\\bwt-" + "notes\\b"
+)  # assembled
 AGENT_NAME = re.compile(r"\b[a-z]{2,4}-worker-\d\b")
 URL_OR_HOST = re.compile(r"https?://|penpot\.[a-z]|team-id=|file-id=", re.IGNORECASE)
 ARM = re.compile(r"\brules\.arm|\bArm rule\b", re.IGNORECASE)
+# chords the browser, the desktop shell or `05` keep for the chrome (page zoom, text scale, the
+# command palette); no K row may bind one
+CHROME_CHORDS = ("Ctrl+0", "Ctrl+=", "Ctrl+-", "Ctrl+K")
+TARGETS = ("node card", "port", "connection (keyboard)", "connection (pointer)", "palette entry",
+           "CMP-002", "minimap", "CMP-235")  # fmt: skip
+REGIONS = ("header", "palette", "canvas:", "foot row", "outline", "inspector", "CMP-234",
+           "action bar")  # fmt: skip
+DIMS = re.compile(r"(\d+) × (\d+)")
 # assembled with an explicit +, so the formatter keeps the split and the tool never spells a word
 DENY = (
     "le" + "ak",
@@ -133,8 +157,8 @@ class Texts:
 def git(*args: str) -> str | None:
     try:
         # git with fixed arguments and no shell; the only external program the audit runs
-        r = subprocess.run(  # noqa: S603
-            ["git", "-C", str(ROOT), *args],  # noqa: S607
+        r = subprocess.run(
+            ["git", "-C", str(ROOT), *args],
             capture_output=True,
             check=False,
         )
@@ -154,7 +178,9 @@ def at(t: Texts, key: str) -> str:
     ref = REF_OF.get(key, BASE)
     text = show(t, ref, PATHS[key])
     if text is None:
-        raise SystemExit(f"{PATHS[key]} does not resolve at {ref[:10]}; fetch #5448's head first")
+        raise SystemExit(
+            f"{PATHS[key]} does not resolve at {ref[:10]}; fetch #5448's head first"
+        )
     return text
 
 
@@ -176,6 +202,16 @@ def section(text: str, head: str) -> str:
         return ""
     j = text.find("\n## ", i + 1)
     return text[i : j if j > 0 else len(text)]
+
+
+def canvas_commands(t: Texts) -> list[str]:
+    data = json.loads(at(t, "KEYMAP"))
+    return [
+        str(c["id"])
+        for c in data.get("commands", [])
+        if str(c.get("id", "")).startswith("rules.")
+        and ("screens" not in c or "SCR-082" in c["screens"])
+    ]
 
 
 def keymap(t: Texts) -> dict[str, str]:
@@ -309,10 +345,23 @@ def g_keymap(t: Texts, vals: dict[str, str]) -> list[str]:
             if cid not in km:
                 bad.append(f"{r[0]}: `{cid}` is not a keymap command at the base")
             elif km[cid] != chord:
-                bad.append(f"{r[0]}: `{cid}` binds {km[cid]!r} at the base, the map says {chord!r}")
+                bad.append(
+                    f"{r[0]}: `{cid}` binds {km[cid]!r} at the base, the map says {chord!r}"
+                )
         if ARM.search(" | ".join(r)):
-            bad.append(f"{r[0]}: names an arm command (the editor's map has no arm key)")
-    bad += [f"the keymap carries {cid}, an arm command" for cid in km if ARM.search(cid)]
+            bad.append(
+                f"{r[0]}: names an arm command (the editor's map has no arm key)"
+            )
+    bad += [
+        f"the keymap carries {cid}, an arm command" for cid in km if ARM.search(cid)
+    ]
+    four = section(t.spec, "## 4.")
+    families = set(re.findall(r"`(rules\.[a-z]+)_\*`", four))
+    for cid in canvas_commands(t):
+        if f"`{cid}`" not in four and not any(
+            cid.startswith(f + "_") for f in families
+        ):
+            bad.append(f"`{cid}` reaches SCR-082 and §4 does not map it")
     return bad
 
 
@@ -362,13 +411,17 @@ def g_arow(t: Texts, vals: dict[str, str]) -> list[str]:
             continue
         body = ln[m.end() :]
         anchors = re.findall(r'Old: "(.+?)"\. New:', body)
-        anchors += re.findall(r'(?:[Aa]fter|[Bb]efore) "(.+?)"(?: \(its (?:row|line)\))? add', body)
+        anchors += re.findall(
+            r'(?:[Aa]fter|[Bb]efore) "(.+?)"(?: \(its (?:row|line)\))? add', body
+        )
         if not anchors:
             bad.append(f"{aid}: names neither an Old text nor an anchor")
         for a in anchors:
             n = sum(at(t, p).count(a) for p in parents)
             if n != 1:
-                bad.append(f"{aid}: {a[:40]!r} stands {n} times across {', '.join(parents)}")
+                bad.append(
+                    f"{aid}: {a[:40]!r} stands {n} times across {', '.join(parents)}"
+                )
     return bad
 
 
@@ -377,7 +430,9 @@ def g_cite(t: Texts, vals: dict[str, str]) -> list[str]:
     pinned = parse_pins(t.pins)
     for label, h in hashes.items():
         if label not in pinned:
-            bad.append(f"cite {label} is unpinned: verify it by content, then --repin-ruled")
+            bad.append(
+                f"cite {label} is unpinned: verify it by content, then --repin-ruled"
+            )
         elif pinned[label] != h:
             bad.append(f"cite {label}: the line at its ref is not the pinned content")
     return bad + anchor_problems(t, vals, "SHA:")
@@ -417,6 +472,57 @@ def g_scope(t: Texts, vals: dict[str, str]) -> list[str]:
     ]
 
 
+def target_rows(t: Texts) -> list[list[str]]:
+    block = section(t.spec, "## 8.")
+    block = block[block.find("**Targets**") :]
+    return [
+        cells(ln)
+        for ln in block.split("\n")
+        if ln.startswith("| ") and not ln.startswith(("| Element", "| ---"))
+    ]
+
+
+def g_xref(t: Texts, vals: dict[str, str]) -> list[str]:
+    bad = []
+    fs = {r[0] for r in rows(section(t.spec, "## 11."), "F")}
+    for fid in sorted(set(re.findall(r"\bF-\d\d\b", t.spec))):
+        if fid not in fs:
+            bad.append(f"{fid} is named but §11 has no such row")
+    for r in rows(section(t.spec, "## 4."), "K"):
+        chords = re.findall(r"`([^`]+)`", r[2]) if len(r) > 2 else []
+        for c in chords:
+            if c in CHROME_CHORDS:
+                bad.append(f"{r[0]}: binds `{c}`, which the chrome keeps")
+    trs = target_rows(t)
+    for name in TARGETS:
+        if not any(r[0].startswith(name) for r in trs):
+            bad.append(f"§8 has no target row for {name!r}")
+    for r in trs:
+        if len(r) != 3:
+            bad.append(f"§8 target {r[0]!r}: {len(r)} cells, not 3")
+            continue
+        d = DIMS.search(r[1])
+        small = d is not None and min(int(d[1]), int(d[2])) < 24
+        if small and r[2].startswith("pass") and "equivalent" not in r[2]:
+            bad.append(f"§8 target {r[0]!r}: under 24 × 24 and passes by no equivalent")
+    ls = rows(section(t.spec, "## 6."), "L")
+    if [r[0] for r in ls] != [f"L-{i}" for i in range(1, len(ls) + 1)]:
+        bad.append("§6's L rows are not L-1 ... L-n in order")
+    for region in REGIONS:
+        if not any(region in r[1] for r in ls if len(r) > 1):
+            bad.append(f"§6 has no L row for the {region.rstrip(':')} region")
+    blocking_v = sum(
+        1
+        for r in rows(section(t.spec, "## 7."), "V")
+        if len(r) > 3 and r[3] == "Blocking"
+    )
+    if blocking_v > int(vals["F:blocking"]):
+        bad.append(
+            f"{blocking_v} V rows read Blocking, §11 counts {vals['F:blocking']}"
+        )
+    return bad
+
+
 GATES: dict[str, Callable[[Texts, dict[str, str]], list[str]]] = {
     "G-FINDING": g_finding,
     "G-MAP": g_map,
@@ -427,6 +533,7 @@ GATES: dict[str, Callable[[Texts, dict[str, str]], list[str]]] = {
     "G-CITE": g_cite,
     "G-HYGIENE": g_hygiene,
     "G-SCOPE": g_scope,
+    "G-XREF": g_xref,
 }
 
 
@@ -453,7 +560,11 @@ def changed_paths() -> list[str] | None:
 
 def load() -> Texts:
     spec = (ROOT / SPEC_REL).read_text(encoding="utf-8")
-    pins = (ROOT / PINS_REL).read_text(encoding="utf-8") if (ROOT / PINS_REL).exists() else ""
+    pins = (
+        (ROOT / PINS_REL).read_text(encoding="utf-8")
+        if (ROOT / PINS_REL).exists()
+        else ""
+    )
     tool = (ROOT / TOOL_REL).read_text(encoding="utf-8")
     return Texts(spec, pins, tool, changed_paths(), {})
 
@@ -484,18 +595,25 @@ def set_cell(row: str, col: int, value: str) -> Callable[[Texts], Texts]:
 def drop_row(row: str) -> Callable[[Texts], Texts]:
     def f(t: Texts) -> Texts:
         return replace(
-            t, spec="\n".join(x for x in t.spec.split("\n") if not x.startswith(f"| {row} "))
+            t,
+            spec="\n".join(
+                x for x in t.spec.split("\n") if not x.startswith(f"| {row} ")
+            ),
         )
 
     return f
 
 
 MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
-    ("G-FINDING", "a Major accepted with no fix", set_cell("F-03", 4, "accepted: browse mode")),
+    (
+        "G-FINDING",
+        "a Major accepted with no fix",
+        set_cell("F-03", 4, "accepted: browse mode"),
+    ),
     (
         "G-FINDING",
         "a count typed by hand in §11's heading",
-        sub("Major 7<!--=F:major-->", "Major 6<!--=F:major-->"),
+        sub("Major 9<!--=F:major-->", "Major 8<!--=F:major-->"),
     ),
     ("G-MAP", "the zoom row dropped", drop_row("K-11")),
     ("G-MAP", "K-15's announcement cell emptied", set_cell("K-15", 4, "")),
@@ -527,7 +645,11 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
             'Old: "collapsed into the outline (the 24px target stays)"',
         ),
     ),
-    ("G-CITE", "a `D02` cite one line off its pinned content", sub("`D02`:282", "`D02`:283")),
+    (
+        "G-CITE",
+        "a `D02` cite one line off its pinned content",
+        sub("`D02`:282", "`D02`:283"),
+    ),
     (
         "G-HYGIENE",
         "a closing keyword against #949",
@@ -543,6 +665,35 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "a parent file in the diff",
         lambda t: replace(t, changed=[*OWN_PATHS, PATHS["D02"]]),
     ),
+    (
+        "G-KEYMAP",
+        "a canvas-reachable command left unmapped",
+        sub("`Ctrl+D` (`rules.duplicate`)", "`Ctrl+D` (the form's command)"),
+    ),
+    (
+        "G-XREF",
+        "K-11 binds the text-scale chord",
+        sub(
+            "fit (F-04, PROPOSED); no zoom chord",
+            "fit (F-04, PROPOSED); `Ctrl+=` zooms",
+        ),
+    ),
+    (
+        "G-XREF",
+        "K-15 names a finding §11 does not carry",
+        sub("scoped to SCR-081 only (F-18)", "scoped to SCR-081 only (F-99)"),
+    ),
+    (
+        "G-XREF",
+        "a 16 × 16 port target still passes",
+        lambda t: set_cell("port", 2, "pass")(set_cell("port", 1, "16 × 16 target")(t)),
+    ),
+    ("G-XREF", "the foot row's L row dropped", drop_row("L-4")),
+    (
+        "G-XREF",
+        "a V row Blocking with §11's counts unchanged",
+        set_cell("V-7", 3, "Blocking"),
+    ),
 )
 
 
@@ -550,7 +701,9 @@ def selftest() -> tuple[bool, list[str]]:
     base = replace(load(), changed=list(OWN_PATHS))
     before = base.spec
     found = audit(base)
-    out = [f"self-test: baseline {len(found)} FAIL"] + [f"  baseline {g}: {m}" for g, m in found]
+    out = [f"self-test: baseline {len(found)} FAIL"] + [
+        f"  baseline {g}: {m}" for g, m in found
+    ]
     ok = not found
     for i, (gate, what, fn) in enumerate(MUTATIONS, 1):
         gates = sorted({g for g, _ in audit(fn(base))})
