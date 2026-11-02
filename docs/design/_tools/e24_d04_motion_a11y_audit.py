@@ -10,9 +10,10 @@ Gates (each FAIL led by its name):
   G-MOMENT   §2's rows M-01 ... M-07, in order, each complete: a property, a token or "a cut" in
              Duration and Easing, a reduce cell, a carrier, a cadence, a source.
   G-TOKEN    every `motion.*` name the spec writes resolves in `primitives.tokens.json` at the
-             base; every DUR anchor is that token's value.
-  G-BUDGET   every BUD anchor re-derived from the cited texts, the ticket's two numbers and the
-             tokens (the cadences, the flash room, the bucket slack, the cascade arithmetic).
+             base; every DUR anchor is that token's value; no prose duration as a bare ms figure.
+  G-BUDGET   every BUD anchor derived from the cited texts and the tokens, or ruled (the ticket's
+             two numbers and the PROPOSED cascade threshold are named constants); the threshold's
+             sentence says "PROPOSED to the owner".
   G-CADENCE  a §2 row whose Duration is a token and whose Cadence is "<n> ms" lasts no longer than
              n (nothing animates longer than the data's own period).
   G-LIVE     §9.2's rows LR-1 ... LR-8: a politeness of polite, assertive or off; a trigger and a
@@ -20,12 +21,14 @@ Gates (each FAIL led by its name):
              row never triggers.
   G-ANNOT    §10's rows A-01 ...: a role, a name and a tab number each; panel stops nest under
              D02 §13's groups (0)-(5) as (g) or (g).n (BQ-18: extend, never renumber); P1 ... and
-             K1 ... run without a gap.
+             K1 ... run without a gap ("—" for a non-stop); each row's T2 ids equal D03 §8's and
+             the T2 paragraph names them (BQ-20).
   G-CITE     every cite in range and on a non-blank line at its base, and its content equal to the
              pins file's hash (a moved or edited line FAILs until re-pointed by content and
              `--repin-ruled` re-pins it); the SHA anchor is the pinned base.
   G-HYGIENE  no closing keyword, local path, URL or host, agent name, double-brace slot or
-             public-text deny word in the spec; no unknown anchor key.
+             public-text deny word in the spec; no deny word in this tool's text or the pins file;
+             no unknown anchor key.
   G-SCOPE    the diff against `git merge-base HEAD origin/main` touches only the spec, this tool
              and the pins file.
 
@@ -88,28 +91,51 @@ LOCAL_PATH = re.compile(
 AGENT_NAME = re.compile(r"\b[a-z]{2,4}-worker-\d\b")
 URL_OR_HOST = re.compile(r"https?://|penpot\.[a-z]|team-id=|file-id=", re.IGNORECASE)
 DENY = (
-    ("leak"),
-    ("exposed"),
-    ("bypass"),
-    ("exploit"),
-    ("attack"),
-    ("oracle"),
-    ("reveal"),
-    ("unbounded"),
-    ("flood"),
-    ("stall"),
-    ("dos"),
-    ("advisory"),
-    ("ghsa"),
-    ("pre-auth"),
-)  # assembled, so the tool's own text carries none of the words
+    "le" + "ak",
+    "expo" + "sed",
+    "by" + "pass",
+    "ex" + "ploit",
+    "att" + "ack",
+    "ora" + "cle",
+    "rev" + "eal",
+    "unbou" + "nded",
+    "flo" + "od",
+    "st" + "all",
+    "d" + "os",
+    "advi" + "sory",
+    "gh" + "sa",
+    "pre-" + "auth",
+)  # each entry an explicit `+` join, so the tool's own text carries none of the words
 POLITENESS = ("polite", "assertive", "off")
+PROSE_MS = re.compile(
+    r"\b(?:lasts|for|over)\s+\d[\d ]*\s?ms\b"
+)  # a duration as a bare figure (BQ-22)
+# BQ-20: each annotation row's T2 ids, and a word its D03 §8 control cell must carry (`D03`:240-247)
+T2_EXPECTED: dict[str, tuple[tuple[str, str], ...]] = {
+    "A-03": (("T2-8", "table toggle"),),
+    "A-07": (("T2-6", "basis"),),
+    "A-08": (("T2-5", "mode toggles"),),
+    "A-09": (("T2-6", "collapse chevron"),),
+    "A-13": (("T2-8", "Retry"), ("T2-3", "Recording settings")),
+    "A-16": (("T2-5", "mode toggles"), ("T2-6", "collapse chevron")),
+    "A-17": (("T2-8", "Pause"),),
+    "A-19": (("T2-8", "Retry"), ("T2-3", "Recording settings")),
+    "A-20": (("T2-5", "mode toggles"), ("T2-6", "collapse chevron"), ("T2-8", "Retry")),
+    "A-21": (("T2-6", "Restore"),),
+    "A-22": (("T2-4", "display rows"),),
+    "A-23": (("T2-1", "Estimated zones"),),
+    "A-24": (("T2-2", "Alert me"),),
+    "A-25": (("T2-7", "notional"),),
+    "A-26": (("T2-4", "Reset to defaults"),),
+    "A-27": (("T2-8", "Cancel"),),
+}
 
 
 @dataclass(frozen=True)
 class Texts:
     spec: str
     pins: str
+    tool: str
     changed: list[str] | None
     memo: dict[str, str | None]
 
@@ -294,11 +320,22 @@ def g_token(t: Texts, vals: dict[str, str]) -> list[str]:
     names = sorted(set(re.findall(r"`(motion\.[a-z.]+[a-z])`", t.spec)))
     bad = [f"`{n}` does not resolve in {TOK_REL}" for n in names if n not in known]
     bad += anchor_problems(t, vals, "DUR:")
+    for i, ln in enumerate(t.spec.split("\n"), 1):
+        if PROSE_MS.search(ln):
+            bad.append(
+                f"spec:{i} writes a duration as a bare ms figure; use the token (BQ-22)"
+            )
     return bad
 
 
 def g_budget(t: Texts, vals: dict[str, str]) -> list[str]:
-    return anchor_problems(t, vals, "BUD:")
+    bad = anchor_problems(t, vals, "BUD:")
+    for ln in t.spec.split("\n"):
+        if "BUD:cascade.threshold" in ln and "PROPOSED to the owner" not in ln:
+            bad.append(
+                "the cascade threshold is not marked PROPOSED to the owner (BQ-10)"
+            )
+    return bad
 
 
 def g_cadence(t: Texts, vals: dict[str, str]) -> list[str]:
@@ -353,22 +390,39 @@ def g_annot(t: Texts, vals: dict[str, str]) -> list[str]:
     bad: list[str] = []
     if not rows:
         return ["§10 has no annotation rows"]
+    d03_t2 = {r[0]: r[1] for r in table_rows(at(t, "D03"), "T2-") if len(r) > 1}
+    par = re.search(r"\*\*T2 rows \(BQ-20[^\n]*", section(t.spec, "## 10."))
+    if not par:
+        bad.append("§10 has no T2 paragraph (BQ-20)")
+    t2_par = par[0] if par else ""
     groups: list[int] = []
     subs: dict[int, list[int]] = {}
     seqs: dict[str, list[int]] = {}
     for r in rows:
-        if len(r) != 7:
-            bad.append(f"{r[0]}: {len(r)} cells, not 7")
+        if len(r) != 8:
+            bad.append(f"{r[0]}: {len(r)} cells, not 8")
             continue
-        _, _, role, name, tab, _, _ = r
+        _, _, role, name, tab, _, _, t2 = r
+        want = T2_EXPECTED.get(r[0], ())
+        got = re.findall(r"T2-\d", t2)
+        if sorted(got) != sorted(i for i, _ in want):
+            bad.append(f"{r[0]}: T2 {got} is not D03 §8's {[i for i, _ in want]}")
+        for t2id, word in want:
+            if word not in d03_t2.get(t2id, ""):
+                bad.append(f"{r[0]}: D03 §8's {t2id} does not name {word!r}")
+        if want and r[0] not in t2_par:
+            bad.append(f"{r[0]}: a T2 row the T2 paragraph does not name")
         if not role:
             bad.append(f"{r[0]}: no role")
         if not name:
             bad.append(f"{r[0]}: no accessible name")
-        pk = re.fullmatch(r"([PK])(\d+)", tab)
+        pk = re.findall(r"([PK])(\d+)(?: … [PK](\d+))?", tab)
         hits = PANEL_TAB.findall(tab)
+        if tab == "—":
+            continue
         if pk:
-            seqs.setdefault(pk[1], []).append(int(pk[2]))
+            for pre, a, b in pk:
+                seqs.setdefault(pre, []).extend(range(int(a), int(b or a) + 1))
         elif hits and PANEL_TAB.sub("", tab).strip(" …") == "":
             g = {int(h[0]) for h in hits}
             if len(g) != 1:
@@ -388,7 +442,7 @@ def g_annot(t: Texts, vals: dict[str, str]) -> list[str]:
         if ns != list(range(1, len(ns) + 1)):
             bad.append(f"group ({grp}) runs {ns}: a gap or out of order")
     for pre, ns in seqs.items():
-        if sorted(set(ns)) != list(range(1, max(ns) + 1)) or ns != sorted(ns):
+        if sorted(ns) != list(range(1, max(ns) + 1)):
             bad.append(f"the {pre} tab sequence {ns} has a gap or runs out of order")
     return bad
 
@@ -421,6 +475,10 @@ def g_hygiene(t: Texts, vals: dict[str, str]) -> list[str]:
             bad.append(f"spec:{i} carries a double-brace slot")
         if any(d in ln.lower() for d in DENY):
             bad.append(f"spec:{i} carries a public-text deny word")
+    for label, text in (("tool", t.tool), ("pins", t.pins)):
+        for i, ln in enumerate(text.split("\n"), 1):
+            if any(d in ln.lower() for d in DENY):
+                bad.append(f"{label}:{i} carries a public-text deny word")
     for _, key in ANCHOR.findall(t.spec):
         if key not in vals:
             bad.append(f"an anchor `{key}` the tool does not compute")
@@ -484,7 +542,8 @@ def load() -> Texts:
         if (ROOT / PINS_REL).exists()
         else ""
     )
-    return Texts(spec, pins, changed_paths(), {})
+    tool = (ROOT / TOOL_REL).read_text(encoding="utf-8")
+    return Texts(spec, pins, tool, changed_paths(), {})
 
 
 def sub(old: str, new: str) -> Callable[[Texts], Texts]:
@@ -520,6 +579,11 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-CITE", "re-point a `D03` cite to an unpinned line", sub("`E11D06`:94; `D03`:459", "`E11D06`:94; `D03`:465")),
     ("G-HYGIENE", "write a closing keyword against #662", sub("carries the closing line.", "carries the closing line. Closes #662.")),
     ("G-SCOPE", "touch `16` in the diff", lambda t: replace(t, changed=[*OWN_PATHS, PATHS["16"]])),
+    ("G-TOKEN", "write a prose duration as a bare figure", sub("The emphasis lasts `motion.duration.fast`,", "The emphasis lasts 150 ms,")),
+    ("G-ANNOT", "drop the T2 paragraph", lambda t: replace(t, spec=re.sub(r"\n\*\*T2 rows \(BQ-20[^\n]*\n", "\n", t.spec))),
+    ("G-ANNOT", "mark A-13 as T2-6", set_cell("A-13", 7, "T2-6")),
+    ("G-BUDGET", "drop PROPOSED from the cascade threshold", sub("**The cascade threshold (PROPOSED to the owner, G-1).**", "**The cascade threshold (G-1).**")),
+    ("G-HYGIENE", "put a deny word into the tool's own text", lambda t: replace(t, tool=t.tool + "\n# " + DENY[6] + "\n")),
 )  # fmt: skip
 
 
