@@ -87,14 +87,28 @@ describe("SCR-102's 'Add to watchlist…'", () => {
     expect(act.create).toHaveBeenCalledOnce();
   });
 
-  it("while the lists are read, one busy item; if they cannot be, one that says so", () => {
-    const loading = sub(
-      watchlistChooserItem("ETHUSDT", { kind: "loading" }, true, undefined, actions()),
+  it("A-5335-d02: while the lists are read, the item itself is busy and opens nothing; if they cannot be, one child says so", () => {
+    const loading = watchlistChooserItem(
+      "ETHUSDT",
+      { kind: "loading" },
+      true,
+      undefined,
+      actions(),
     );
-    expect(loading).toMatchObject([{ label: "Loading watchlists…", busy: true }]);
-    const failed = sub(
-      watchlistChooserItem("ETHUSDT", { kind: "failed" }, true, undefined, actions()),
-    );
-    expect(failed).toMatchObject([{ label: "Watchlists could not be loaded.", disabled: true }]);
+    // The same row throughout (the menu keys its rows by id): focus on it survives the lists arriving.
+    expect(loading).toMatchObject({
+      id: "watchlist",
+      label: "Add to watchlist…",
+      busy: true,
+      description: "Loading watchlists…",
+      items: [],
+    });
+    const loaded = watchlistChooserItem("ETHUSDT", ready(MAJORS), true, undefined, actions());
+    const failed = watchlistChooserItem("ETHUSDT", { kind: "failed" }, true, undefined, actions());
+    expect([loading.id, loaded.id, failed.id]).toEqual(["watchlist", "watchlist", "watchlist"]);
+    expect(loaded.busy).toBeUndefined();
+    expect(sub(failed)).toMatchObject([
+      { label: "Watchlists could not be loaded.", disabled: true },
+    ]);
   });
 });

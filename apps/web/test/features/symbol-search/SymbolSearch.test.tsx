@@ -1325,15 +1325,18 @@ describe("SCR-102's 'Add to watchlist…' (E08-S08, #4702; E08-D05 §6.3, E08-D0
         headers: { "Content-Type": "application/json" },
       }),
     );
-  /** `/watchlists` holding `lists`, as E08-T07 keeps it (If-Match versions); `refuse` answers the next write. */
-  function server(lists: readonly Watchlist[]) {
+  /**
+   * `/watchlists` holding `lists`, as E08-T07 keeps it (If-Match versions); `refuse` answers the next write. A read
+   * waits for `hold` first (the lists arrive when the test says so).
+   */
+  function server(lists: readonly Watchlist[], hold: Promise<unknown> = Promise.resolve()) {
     const held = new Map(lists.map((l): [string, Watchlist] => [l.id, l]));
     const writes: { method: string; url: string; ifMatch: string | null; body: unknown }[] = [];
     let refuse: number | null = null;
     apiFetch.mockImplementation((url: string, init?: RequestInit) => {
       const method = (init?.method ?? "GET").toUpperCase();
       if (!url.startsWith("/api/v1/watchlists")) return Promise.reject(new TypeError("no network"));
-      if (method === "GET") return json({ items: [...held.values()] });
+      if (method === "GET") return hold.then(() => json({ items: [...held.values()] }));
       const body: unknown = JSON.parse(String(init?.body));
       writes.push({ method, url, ifMatch: new Headers(init?.headers).get("If-Match"), body });
       if (refuse !== null) {
@@ -1517,6 +1520,53 @@ describe("SCR-102's 'Add to watchlist…' (E08-S08, #4702; E08-D05 §6.3, E08-D0
     expect(screen.queryByRole("menu", { name: "Add to watchlist…" })).toBeNull();
     expect(fake.writes).toEqual([]);
     expect(apiFetch.mock.calls.filter(([url]) => url.startsWith("/api/v1/watchlists"))).toEqual([]);
+  });
+
+  /** Focus is somewhere in the action menu or its submenu (a menu that lost it leaves it on the page or the input). */
+  const inMenus = (): boolean =>
+    [...document.querySelectorAll('[role="menu"]')].some((m) => m.contains(document.activeElement));
+
+  it("A-5335-d02: while the lists are read, → on 'Add to watchlist…' opens nothing; focus stays in the menu as they arrive, and the next → opens them", async () => {
+    await shell(CHART_1);
+    writer();
+    let arrive: () => void = () => undefined;
+    server(
+      [MAJORS, ALTS],
+      new Promise<void>((resolve) => {
+        arrive = resolve;
+      }),
+    );
+    const menu = await menuOn();
+    const add = within(menu).getByRole("menuitem", { name: "Add to watchlist…" });
+    // the keyboard reaches the item before the lists have been read
+    act(() => add.focus());
+    act(() => void fireEvent.keyDown(add, { key: "ArrowRight" }));
+    expect(screen.queryByRole("menu", { name: "Add to watchlist…" })).toBeNull();
+    expect(add).toHaveAttribute("aria-busy", "true");
+    expect(inMenus()).toBe(true);
+    arrive();
+    await act(() => new Promise<void>((done) => setTimeout(done, 0)));
+    // the same row: it is no longer busy and focus never left it (nor jumped to the input)
+    expect(inMenus()).toBe(true);
+    expect(add).toHaveFocus();
+    expect(add).not.toHaveAttribute("aria-busy");
+    act(() => void fireEvent.keyDown(add, { key: "ArrowRight" }));
+    const lists = screen.getByRole("menu", { name: "Add to watchlist…" });
+    expect(within(lists).getByRole("menuitem", { name: "Majors, 1 symbol" })).toHaveFocus();
+  });
+
+  it("A-5335-d04: a T2 item's reason is said through SCR-102's one polite region; the menu adds no second one", async () => {
+    await shell(CHART_1); // no workspaces:write: "Add to watchlist…" is T2 (the reason is its second line)
+    const menu = await menuOn();
+    const regions = (): number =>
+      screen.getByRole("dialog", { name: "Symbol search" }).querySelectorAll('[role="status"]')
+        .length;
+    expect(regions()).toBe(1); // CMP-160's, with the menu open
+    const item = within(menu).getByRole("menuitem", { name: "Add to watchlist…" });
+    act(() => item.focus());
+    act(() => void fireEvent.keyDown(item, { key: "Enter" }));
+    expect(said()).toBe("Your role can't save workspaces.");
+    expect(regions()).toBe(1);
   });
 
   it("a delisted Recent's menu has no 'Add to watchlist…'", async () => {
