@@ -55,6 +55,7 @@
 15|406|- **A11y**: toggle is CMP-002 IconButton with label "Show {label}"/"Hide
 15|410|is a veto only: `false` masks
 15|416|visually (updates every second would
+15|519|- **Props**: `title` · `message` · `role?` (CMP-043's: `alertdialog` for
 15|520|- **States**: standard; typed (Confirm natively disabled until the summa
 15|525|- **As built (E05-S03)**: no `initialFocus` prop: focus always starts on
 15|754|- **A11y**: a `<nav>` with an `aria-label` holding an ordered list; `ari
@@ -79,6 +80,8 @@ D03|150|| [ ] | SCR-079 (`14:1753`) equity, available balance, used margin, unre
 D03|153|| [ ] | SCR-079 (`14:1753`) rate-limit budget usage | the Owner's deploy
 D03|182|CMP-034: permanently masked
 D03|192|## 0. The boards (drawn; ten under the lever-4 cap)
+D03|194|Page **`E27-D03 Accounts and key vault hi-fi`** (36 characters), created
+D03|195|step; page id `2cfb7e8e-8725-806d-8008-daee3d38d63c` (`docs/design/READM
 D03|338|### 2.1 CMP-175 KeyPermissionBadge — the variant set (AC2, AC3)
 D03|491|- Static text: not focusable. The word is its text; the glyph is `aria-h
 D03|508|### 2.2 CMP-176 AccountKeyRow — the row, blocked and disabled
@@ -201,8 +204,13 @@ D03|2037|| the session's access changes mid-session (`permission_change`) | E09-
 D03|2038|| a keystroke on a T2 control | polite | once per press | the reason sen
 D03|2043|The countdown never speaks per tick, the health chips never speak on a r
 D03|2258|| `e27.scr126.invalid.key_empty` | CMP-040 inline error on press · frame
+D03|2524|A screen never writes its own reason (GATE G-T2.4): every gated control
+D03|2532|| `keys.kek_unavailable` | "Off while the credential key is unavailable.
+D03|2535|| `keys.compromise_path` | "A key that can move funds takes the compromi
 D03|2536|| `accounts.never_keyed` | "An account that never had a key can only be
 D03|2541|| `accounts.no_key` | "No API key yet — trading is off for this account.
+D03|2553|| `frozen` | "Trading frozen by the owner at {hh:mm} UTC — new orders of
+D03|2555|| `arm.locked` | "LOCKED · {account} · {size} {coin}" | E30-D02 §14 (`E3
 D03|2700|| D03-C1 | **"cosy".** The ticket asks for compact, cosy and comfortable
 D03|2707|| D03-C8 | **A distinct critical hue (DS-6)**, BQ-6's OWNER-LEVEL rider.
 D03|2708|| D03-C9 | **The verdict line's own announcement vs `15:935`.** E27-D02
@@ -232,6 +240,7 @@ DS|74|- **R5 Live accounts** (`22` `ArmToken`): submits — `placeOrder`, `creat
 DS|79|**R6 Contracts in flight** (this file;
 DS|81|- **R7 Penpot references** (`docs/design/README.md`): page name and page
 E09-D09|40|| 3 | In the **session** (`GET /auth/session` and `GET /me` at bootstrap
+E09-D09|85|Every T2 reason is one of these seven keys, or a key of a registered **s
 E09-D09|95|| `rbac.view_as` | "Read-only while viewing as {user}." | `GET /auth/ses
 E09-D09|238|### 9.3 Keys on a T2 control
 E27.json|419|"key": "E27-D05",

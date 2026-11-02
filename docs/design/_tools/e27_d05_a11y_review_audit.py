@@ -13,7 +13,8 @@ review edits no token). Eleven gates, each FAIL led by its code:
 
 - [G1-INVENTORY] section 2 lists the six surfaces, the two insets and the twenty-seven components
   as reviewed, and CMP-104 / CMP-106 with the ruled words; section 0's board counts equal the
-  merged E27-D03 images at the base, and no E27-D04 board is merged.
+  merged E27-D03 images at the base, and no E27-D04 board is merged; section 7's R7 names the
+  reviewed page by name and id, both standing in E27-D03 section 0 at the base (BQ-6).
 - [G2-REQ] section 3: every catalogue clause the ticket names has an RQ row; a verdict from R-3's
   list; `at risk` or `non-compliant` names an F row, `compliant` names none.
 - [G3-KEYS] section 4: every FO row fills open, Tab order, close, error and step change; section 5:
@@ -21,8 +22,10 @@ review edits no token). Eleven gates, each FAIL led by its code:
 - [G4-T2] section 6: the view-as rows first, each led by `rbac.view_as` or recorded T3; a class per
   row; a T2 row's rendering 2a and its checks; no disabled token on a T2 row; an `rbac.*` string
   one sentence of at most 60 characters; the admin key actions recorded T3 for view-as in the
-  ruled words (BQ-5); the G-T2.4 key check: every `accounts.*` key a leg names is a PROPOSED E27
-  state key in E27-D03's register at the base, its string one sentence of at most 60 characters.
+  ruled words (BQ-5); the G-T2.4 key check: every key a leg names has a vocabulary owner at the
+  base: an `rbac.*` key of E09-D09 section 3.1, one of the ten `keys.*` and `accounts.*` keys
+  PROPOSED E27 in E27-D03's register (all ten named, each one sentence of at most 60 characters),
+  or a state key E27-D03 consumes from E30-D02 section 14; the G-T2.4 paragraph names each owner.
 - [G5-LIVE] section 9: a politeness and a maximum rate on every LR row, a justification, assertive
   rows once per event, and the deliberately silent rows (heartbeat age, countdown ticks, staleness
   age, `wallet`, `system`, the 60 s health refresh) never spoken.
@@ -44,7 +47,8 @@ review edits no token). Eleven gates, each FAIL led by its code:
 - [G10-CITE] every `KEY`:line cite resolves at the base to a non-blank line; the pins file and the
   cited endpoints match both ways, each pin's words on its line; E27-D04 at the base equals its
   pin (#5001's merge) and E27-D03 equals its last edit.
-- [G11-HYGIENE] no word or substring on the lane's public-text list, host, uuid, local path, URL
+- [G11-HYGIENE] no word or substring on the lane's public-text list, host, uuid (but the R7
+  page id), local path, URL
   or closing keyword (with or without a space before the #); no fixture label or decimal amount in a quoted example (sections 5, 9, 16).
 
 `--json` prints the numbers and findings; `--check` exits 1 on any FAIL (0 FAIL, 0 WARN is the
@@ -95,6 +99,10 @@ KEYS = {
     "E27.json": "docs/plan/backlog/E27.json",
 }
 IMG_DIR = "docs/design/E27/img"
+# R7 (BQ-6): the reviewed Penpot page, by name and id, as E27-D03 section 0 publishes them (194-195).
+PAGE_NAME = "E27-D03 Accounts and key vault hi-fi"
+PAGE_ID = "2cfb7e8e-8725-806d-8008-daee3d38d63c"
+PAGE_REF = f"page `{PAGE_NAME}` · id `{PAGE_ID}` (`D03`:194–195)"
 D03_BOARDS = 10  # D03 section 0: ten boards, boards 01 and 02 with three renders each
 D03_FILES = 16
 SURFACES = ("SCR-125", "SCR-126", "SCR-127", "SCR-128", "SCR-129", "SCR-079")
@@ -172,8 +180,19 @@ SUPERSEDED = (  # the defaults the ruling overrode, and the pre-ruling stamp
     "a G-T2 miss that hides the reason",
 )
 STATE_KEY = re.compile(
-    r'^\| `(accounts\.[a-z_]+)` +\| "([^"]+)" +\| state, PROPOSED E27', re.MULTILINE
+    r'^\| `((?:accounts|keys)\.[a-z_]+)` +\| "([^"]+)" +\| state, PROPOSED E27', re.MULTILINE
 )
+CONSUMED_KEY = re.compile(r'^\| `([a-z_.]+)` +\| "[^"]+" +\| E30-D02 §14 \(', re.MULTILINE)
+RBAC_KEY = re.compile(r"^\| `(rbac\.[a-z_]+)` +\|", re.MULTILINE)
+LEG_KEY = re.compile(r"`([a-z_]+(?:\.[a-z_]+)?)`")
+E27_KEYS = 10  # D03 section 12.2: the four `keys.*` and the six `accounts.*`, PROPOSED E27
+# Each reason key's vocabulary owner, named in section 6's G-T2.4 paragraph (E09-D09 section 3.1).
+OWNERS = {
+    "rbac": "E09-D09 §3.1",
+    "keys": "vocabulary owner E27",
+    "accounts": "vocabulary owner E27",
+    "consumed": "vocabulary owner E30-D02",
+}
 ID_KINDS = ("RQ", "FO", "T2", "LR", "CR", "CT", "SR", "C", "G", "Q", "A", "H")
 SIMS = ("protanopia", "deuteranopia", "tritanopia")
 BARS = {"text": 4.5, "non-text": 3.0, "hc-text": 7.0}
@@ -406,6 +425,17 @@ def gate_inventory(ctx: Ctx, r: Result) -> None:
         r.fail("G1-INVENTORY", f"section 0 does not read {words!r} (merged at the base)")
     if d04 or "seven boards" not in zero or int(D04T.BOARDS) != 7:
         r.fail("G1-INVENTORY", "E27-D04's boards: merged at the base, or section 0 omits them")
+    d03_page = " ".join(ctx.base["D03"].splitlines()[193:195])
+    r7 = [row[-1] for row in rows(section(ctx.spec, "7. The recurring items R1–R7 per surface"))]
+    r7 = [c for c in r7 if c != "R7 Penpot reference"]
+    if (
+        PAGE_NAME not in d03_page
+        or PAGE_ID not in d03_page
+        or len(r7) != len(SURFACES) + 1
+        or r7[0] != PAGE_REF
+        or any(c not in (PAGE_REF, "the same page") for c in r7)
+    ):
+        r.fail("G1-INVENTORY", "R7: the reviewed page is not named by name and id in section 7")
     r.numbers["inventory"] = len(seen)
     r.numbers["d03_images"] = words
 
@@ -485,15 +515,35 @@ def gate_t2(ctx: Ctx, r: Result) -> None:
     ):
         r.fail("G4-T2", "the admin key actions are not recorded T3 for view-as in the ruled words")
     registered = dict(STATE_KEY.findall(ctx.base["D03"]))
-    named = set(re.findall(r"`(accounts\.[a-z_]+)`", " ".join(" ".join(v) for v in table.values())))
-    bad = sorted(k for k in named if k not in registered)
+    consumed = set(CONSUMED_KEY.findall(ctx.base["D03"]))
+    rbac = set(RBAC_KEY.findall(ctx.base["E09-D09"]))
+    named = {k for v in table.values() for k in LEG_KEY.findall(v[2])}
+    orphan = sorted(k for k in named if k not in registered and k not in consumed | rbac)
+    unnamed = sorted(set(registered) - named)
     long = sorted(
         k for k, s in registered.items() if len(s) > 60 or not s.endswith(".") or ". " in s
     )
-    if not registered or bad or long or RULING_PINS[4] not in six:
-        r.fail("G4-T2", f"G-T2.4: unregistered {bad[:3]}, not one sentence ≤ 60 {long[:3]}")
+    para = section(ctx.spec, "6. Gated controls")
+    para = para[para.find("**G-T2.4") :]
+    para = para[: para.find("\n\n")]
+    owners = [o for o in OWNERS.values() if o not in para]
+    owners += [k for k in sorted(named & consumed) if f"`{k}`" not in para]
+    if (
+        len(registered) != E27_KEYS
+        or orphan
+        or unnamed
+        or long
+        or owners
+        or RULING_PINS[4] not in para
+    ):
+        r.fail(
+            "G4-T2",
+            f"G-T2.4: no vocabulary {orphan[:3]}, unnamed {unnamed[:3]}, not one sentence"
+            f" ≤ 60 {long[:3]}, owner not named {owners[:3]}, E27 keys {len(registered)}",
+        )
     r.numbers["t2"] = len(table)
     r.numbers["state_keys"] = len(registered)
+    r.numbers["consumed_keys"] = len(named & consumed)
 
 
 # --- G5: live regions ---------------------------------------------------------------------------
@@ -718,6 +768,7 @@ def repin(ctx: Ctx) -> int:
 # --- G11: hygiene -------------------------------------------------------------------------------
 def gate_hygiene(ctx: Ctx, r: Result) -> None:
     for name, text in (("the spec", ctx.spec), ("the tool", ctx.tool), ("the pins", ctx.pins)):
+        text = text.replace(PAGE_ID, "")  # R7: the one id E27-D03 already publishes
         low = text.lower()
         for word in DENY:
             if word.lower() in low:
@@ -843,6 +894,9 @@ PROBES: tuple[tuple[str, Mut], ...] = (
         sub("Owner approval pending (#2701): the", "Owner walkthrough post-Done (#2701): the"),
     ),
     ("G4-T2", sub(RULING_PINS[4] + " (`D03`", "the keys (`D03`")),
+    ("G4-T2", regex(r"^(\| T2-08 (?:[^|]*\|){2} .*?)`keys\.test_throttled`", r"\1`keys.later`")),
+    ("G4-T2", regex(r"^(\| T2-11 (?:[^|]*\|){2} .*?)`arm\.locked`", r"\1`arm.held`")),
+    ("G4-T2", sub("vocabulary owner E30-D02", "a consumed vocabulary")),
     (
         "G7-VERDICT",
         regex(r"^(\| `05` §3\.4 item 3 [^|]*\| ruled divergence[^|]*\| [^|]*?)A-01", r"\1"),
@@ -850,6 +904,8 @@ PROBES: tuple[tuple[str, Mut], ...] = (
     ("G11-HYGIENE", sub("## 19. Summary", "## 19. Summary " + "Closes" + "#818")),
     ("G10-CITE", lambda ctx: ctx._replace(d04_pin=ctx.d04_pin + "\n")),
     ("G11-HYGIENE", regex(r'^(\| SR-01 (?:[^|]*\|){2} )"', r'\1"sub_002 ')),
+    ("G1-INVENTORY", sub(" · id `" + PAGE_ID + "` (`D03`:194–195) |", " (`D03`:194–195) |")),
+    ("G11-HYGIENE", sub("## 19. Summary", "## 19. Summary " + PAGE_ID[:-1] + "f")),
 )
 
 
