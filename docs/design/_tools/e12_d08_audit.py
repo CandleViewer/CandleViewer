@@ -81,7 +81,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "8cb96b187570c825eb77e5d616976e5a43f0b80a"  # re-based at origin/main (RULED, orchestrator, 2026-11-02 02:14Z): every cite re-read here
+BASE = "f8f6c3011e14a35a4254ea9616179ae70ae342f0"  # re-based at origin/main (RULED, orchestrator, 2026-11-02 02:14Z, at 8cb96b1875; re-pointed in the lens fold): every cite re-read here
 HEAD_REF = "origin/main"  # a cited line that differs here FAILs (G-VERSION)
 SPEC_REL = "docs/design/E12/E12-D08.md"
 TOOL_REL = "docs/design/_tools/e12_d08_audit.py"
@@ -156,6 +156,8 @@ RULED_VALUES = {
     "RULED:cadence.hz": "2",  # BQ-20
     "RULED:waiver.target": "2026-11-06",  # BQ-31
     "RULED:lines.budget": str(SPEC_LINE_BUDGET),
+    "RULED:chassis.row": "32",  # Q4 (02:14Z): size.control.compact plus space.1 above and below
+    "RULED:chassis.axis": "64",  # Q4 (02:14Z): the boards' fixed price-axis column
 }
 
 # CITE values: key -> (cite, regex whose group 1 is the value at the base)
@@ -1812,8 +1814,8 @@ def g_ledger(spec: str, env: Env, vals: dict[str, str]) -> list[str]:
     rows = table(sec)
     bad: list[str] = []
     ids = [r[0] for r in rows]
-    if ids != ["D08-G1", "D08-G2", "D08-G3", "D08-G4"]:
-        bad.append(f"the G-ledger rows are {ids}, ruled D08-G1 ... D08-G4")
+    if ids != ["D08-G1", "D08-G2", "D08-G3", "D08-G4", "D08-G5"]:
+        bad.append(f"the G-ledger rows are {ids}, ruled D08-G1 ... D08-G5")
     for r in rows:
         if len(r) < 5:
             continue
