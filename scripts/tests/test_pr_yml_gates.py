@@ -198,7 +198,9 @@ def test_gen_runs_the_old_job_on_a_full_install_and_a_bare_python() -> None:
 def _resolve(off: set[str], context: dict[str, str]) -> tuple[int, set[str]]:
     """Run the resolver step under the env GitHub builds; an unresolved expression is ''."""
     if not (shutil.which("bash") and shutil.which("node")):  # CI must run these fail-closed proofs
-        (pytest.fail if os.environ.get("CI") else pytest.skip)("bash and node run the resolver step")
+        (pytest.fail if os.environ.get("CI") else pytest.skip)(
+            "bash and node run the resolver step"
+        )
     values = {f"needs.{job}.result": "success" for job in JOBS}
     values |= {f"needs.gates.outputs.{lane}": "success" for lane in GATES}
     for name in JOBS["changed-paths"]["outputs"]:
@@ -285,7 +287,11 @@ def _executed(workflow: str, on: set[str]) -> list[str]:
         callee = _load(job["uses"]) if "uses" in job else {"jobs": {"": job}}
         call = (callee.get(True) or {}).get("workflow_call") or {}  # YAML 1.1 reads `on` as True
         inputs = {k: v.get("default") for k, v in (call.get("inputs") or {}).items()}
-        inputs |= job.get("with") or {}
+        # A feature-branch PR is not a draft: pr.yml's `heavy` input (the draft clause negated) is true.
+        inputs |= {
+            key: True if ".draft == true" in str(value) else value
+            for key, value in (job.get("with") or {}).items()
+        }
         for inner_id, inner in callee["jobs"].items() if _runs(job.get("if", True), on, {}) else ():
             if _runs(inner.get("if", True), on, inputs):
                 matrix = (inner.get("strategy") or {}).get("matrix") or {}

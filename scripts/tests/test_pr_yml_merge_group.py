@@ -69,7 +69,20 @@ DRAFT_DEFERRED = {
     "a11y": "needs.changed-paths.outputs.e2e == 'true'",
     "engine-bench": "(needs.changed-paths.outputs.engine == 'true' || "
     "needs.changed-paths.outputs.protocol == 'true')",
+    # #5506: a draft runs the light job set; these heavy lanes wait for ready_for_review too.
+    "rule-roundtrip": "needs.changed-paths.outputs.rules == 'true'",
+    "contract": "needs.changed-paths.outputs.protocol == 'true'",
+    "migrations": "needs.changed-paths.outputs.migrations == 'true'",
+    "security": "(needs.changed-paths.outputs.js == 'true' || needs.changed-paths.outputs.py == "
+    "'true' || needs.changed-paths.outputs.infra == 'true' || "
+    "needs.changed-paths.outputs.semgrep == 'true')",
+    "coverage-thresholds": "always() && (needs.changed-paths.outputs.js == 'true' || "
+    "needs.changed-paths.outputs.py == 'true')",
 }
+#: Gated on a draft like the lanes above, but not in the resolver's DRAFT_DEFERRED: a pull
+#: request's run skips `integration` on every PR (MERGE_GROUP_ONLY defers it there).
+DRAFT_GATED_NOT_DEFERRED = {"integration": "needs.changed-paths.outputs.py == 'true'"}
+DRAFT_GATED = DRAFT_DEFERRED | DRAFT_GATED_NOT_DEFERRED
 EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
 FREEZE_UPLOAD = (
     "_job-security.yml:read-only-scans:"
@@ -118,7 +131,7 @@ EVENT_CONDITIONS = {
     # merge group or train (the clause is false there), so a queue run keeps every one of them.
     **{
         f"pr.yml:{lane}": f"${{{{ {filters} && !({DRAFT}) }}}}"
-        for lane, filters in DRAFT_DEFERRED.items()
+        for lane, filters in DRAFT_GATED.items()
     },
     # The freeze proposal artifact for a dependency PR's reviewer; the freeze check still runs:
     FREEZE_UPLOAD: "${{ !cancelled() && steps.freeze.outcome == 'failure' && (github.actor == "
@@ -138,8 +151,12 @@ FALSE_ON_A_MERGE_GROUP = {
 #: the job or value still runs there, so neither a PR guard nor a fallback applies to it.
 DRAFT_READS = {
     (f"pr.yml:{lane}", EVENT_CONDITIONS[f"pr.yml:{lane}"].removeprefix("${{ ").removesuffix(" }}"))
-    for lane in DRAFT_DEFERRED
+    for lane in DRAFT_GATED
 } | {("pr.yml:ci-required:Resolve ci-required conclusion", DRAFT_FLAG)}
+#: The `heavy` input pr.yml passes the js and py lanes (#5506): the draft clause, negated, behind the
+#: same event guard, so it is false by construction on a merge group or train (heavy is true there).
+HEAVY_INPUT = f"!({DRAFT})"
+DRAFT_READS |= {("pr.yml:js", HEAVY_INPUT), ("pr.yml:py", HEAVY_INPUT)}
 #: The secret-scan range's ends: a PR's, a merge group's, else a merge train's (#3783).
 SCAN = "github.event.pull_request.%s.sha || github.event.merge_group.%s_sha || inputs.train_%s"
 #: A merge train's base branch in a lane pr.yml calls, which sees its own inputs only (#3783).
@@ -160,6 +177,7 @@ EVENT_VALUES = [
     ("pr.yml:gates", SCAN % ("head", "head", "head")),
     ("pr.yml:ci-required", "needs.changed-paths.outputs.pr"),
     ("pr.yml:ci-required", DRAFT_FLAG),  # PR_DRAFT: empty off a pull request; read on one only
+    *[(f"pr.yml:{lane}", f"!({DRAFT})") for lane in ("js", "py")],  # the `heavy` input (#5506)
     ("_job-migrations.yml:migrations", MIGRATIONS_BASE),  # the Alembic lock step
     ("_job-migrations.yml:migrations", MIGRATIONS_BASE),  # the QuestDB DDL lock step (#4014)
 ]
@@ -605,11 +623,30 @@ def test_resolver_writes_the_not_applicable_lane_to_the_job_summary(tmp_path: Pa
 DRAFT_RUN = {"github.event.pull_request.draft": "true"}
 
 
+#: A draft pull request's `ci-required` always fails (#5506): the full matrix runs from ready_for_review.
+DRAFT_GATE = "CI-GATE-005: draft pull request: the full matrix runs from ready_for_review"
+
+
+def test_resolver_fails_a_draft_even_when_every_lane_is_green() -> None:
+    assert _resolve(DRAFT_RUN, "pull_request") == (1, {DRAFT_GATE})
+
+
+@pytest.mark.parametrize("event", ["merge_group", "workflow_dispatch", ""])
+def test_resolver_does_not_apply_the_draft_gate_off_a_pull_request(event: str) -> None:
+    assert _resolve(QUEUED | DRAFT_RUN, event) == (0, set())
+
+
+def test_resolver_passes_a_ready_pull_request_with_the_drafts_lanes_run() -> None:
+    assert _resolve({}, "pull_request") == (0, set())
+
+
 @pytest.mark.parametrize("lane", sorted(DRAFT_DEFERRED))
 def test_resolver_reads_a_drafts_skipped_deferred_lane_as_deferred(lane: str) -> None:
     proc = _run(DRAFT_RUN | {RESULTS[lane]: "skipped"}, "pull_request")
     notice = [line for line in proc.stdout.splitlines() if line.startswith("::notice")]
-    assert (proc.returncode, "CI-GATE" in proc.stderr) == (0, False)
+    # The only failure is the draft's own CI-GATE-005 (#5506): no CI-GATE-001/002 for the skip.
+    errors = {line for line in proc.stderr.splitlines() if line.startswith("CI-")}
+    assert (proc.returncode, errors) == (1, {DRAFT_GATE})
     assert len(notice) == 1
     assert notice[0].startswith(f"::notice title={lane} deferred::{lane}: skipped")
     assert notice[0].endswith("runs when the pull request leaves draft")
@@ -636,25 +673,40 @@ def test_resolver_requires_a_deferred_lane_on_a_merge_group_and_a_train(
 
 @pytest.mark.parametrize("result", ["failure", "cancelled"])
 def test_resolver_still_fails_a_draft_whose_deferred_lane_ran_red(result: str) -> None:
-    expected = (1, {FAIL % ("e2e", result)})
+    expected = (1, {FAIL % ("e2e", result), DRAFT_GATE})
     assert _resolve(DRAFT_RUN | {RESULTS["e2e"]: result}, "pull_request") == expected
 
 
 def test_resolver_defers_no_other_lane_on_a_draft() -> None:
-    assert _resolve(DRAFT_RUN | {RESULTS["py"]: "skipped"}, "pull_request") == (1, {SKIP % "py"})
+    assert _resolve(DRAFT_RUN | {RESULTS["py"]: "skipped"}, "pull_request") == (
+        1,
+        {SKIP % "py", DRAFT_GATE},
+    )
 
 
 def test_the_draft_deferred_lanes_are_the_ones_whose_job_skips_a_draft() -> None:
     """The resolver's DRAFT_DEFERRED, the flag it reads and the lanes' job `if:` say the same."""
     script = (ROOT / "scripts" / "ci_gate_resolver.mjs").read_text(encoding="utf-8")
-    (listed,) = re.findall(r"DRAFT_DEFERRED = new Set\(\[(.*?)\]\)", script)
+    (listed,) = re.findall(r"DRAFT_DEFERRED = new Set\(\[(.*?)\]\)", script, re.DOTALL)
     skipping = {
         lane
         for lane, job in JOBS.items()
         if " ".join(str(job.get("if", "")).split()).endswith(f" && !({DRAFT}) }}}}")
     }
-    assert skipping == set(re.findall(r'"([\w-]+)"', listed)) == set(DRAFT_DEFERRED)
-    assert set(DRAFT_DEFERRED) == {"e2e", "a11y", "engine-bench"}
+    assert skipping == set(DRAFT_GATED)
+    assert (
+        skipping - {"integration"} == set(re.findall(r'"([\w-]+)"', listed)) == set(DRAFT_DEFERRED)
+    )
+    assert set(DRAFT_DEFERRED) == {
+        "e2e",
+        "a11y",
+        "engine-bench",
+        "rule-roundtrip",
+        "contract",
+        "migrations",
+        "security",
+        "coverage-thresholds",
+    }
     assert RESOLVER["env"]["PR_DRAFT"] == "${{ " + DRAFT_FLAG + " }}"
     assert 'process.env.PR_DRAFT === "true"' in script
 

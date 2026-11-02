@@ -765,12 +765,16 @@ jobs:
     needs: changed-paths
     if: ${{ needs.changed-paths.outputs.js == 'true' }}
     uses: ./.github/workflows/_job-js.yml
+    with:
+      heavy: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
 
   py:
     name: py
     needs: changed-paths
     if: ${{ needs.changed-paths.outputs.py == 'true' }}
     uses: ./.github/workflows/_job-py.yml
+    with:
+      heavy: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
 
   # Mirrors the `py` lane (import-linter runs in py-checks), beside coverage-thresholds (#3076).
   architecture:
@@ -790,13 +794,13 @@ jobs:
   rule-roundtrip:
     name: rule-roundtrip
     needs: changed-paths
-    if: ${{ needs.changed-paths.outputs.rules == 'true' }}
+    if: ${{ needs.changed-paths.outputs.rules == 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
     uses: ./.github/workflows/_job-rule-roundtrip.yml
 
   contract:
     name: contract
     needs: changed-paths
-    if: ${{ needs.changed-paths.outputs.protocol == 'true' }}
+    if: ${{ needs.changed-paths.outputs.protocol == 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
     uses: ./.github/workflows/_job-contract.yml
 
   integration:
@@ -809,7 +813,7 @@ jobs:
     # pull request's skip as "runs on the merge group", not as CI-GATE-002 (MERGE_GROUP_ONLY in
     # scripts/ci_gate_resolver.mjs). It restates that job's condition: change both together. The
     # opt-in `audit-query-plan` job of the same workflow still starts from a labelled PR.
-    if: ${{ needs.changed-paths.outputs.py == 'true' }}
+    if: ${{ needs.changed-paths.outputs.py == 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
     uses: ./.github/workflows/_job-integration.yml
   migrations:
     name: migrations
@@ -820,7 +824,7 @@ jobs:
     # the QuestDB DDL files. Applicable whenever a migration revision file,
     # models.py, a DDL file under backend/db/questdb/ or the migration tooling
     # changes.
-    if: ${{ needs.changed-paths.outputs.migrations == 'true' }}
+    if: ${{ needs.changed-paths.outputs.migrations == 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
     uses: ./.github/workflows/_job-migrations.yml
 
   security:
@@ -830,7 +834,7 @@ jobs:
     # touches only the Semgrep rules, fixtures or ignore file the scan reads (#2915). The
     # `ci-required` resolver below restates this condition: change both together. Every PR, a
     # docs-only one too, also gets the secret scans: the `gates` job's secret-scan step (#3385).
-    if: ${{ needs.changed-paths.outputs.js == 'true' || needs.changed-paths.outputs.py == 'true' || needs.changed-paths.outputs.infra == 'true' || needs.changed-paths.outputs.semgrep == 'true' }}
+    if: ${{ (needs.changed-paths.outputs.js == 'true' || needs.changed-paths.outputs.py == 'true' || needs.changed-paths.outputs.infra == 'true' || needs.changed-paths.outputs.semgrep == 'true') && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
     with:
       image_changed: ${{ needs.changed-paths.outputs.image == 'true' }}
     # A called reusable workflow may only use permissions its caller job grants.
@@ -867,7 +871,7 @@ jobs:
     # still needs its services/api number checked; a js-only PR its
     # frontend/engine packages).
     needs: [changed-paths, js, py]
-    if: ${{ always() && (needs.changed-paths.outputs.js == 'true' || needs.changed-paths.outputs.py == 'true') }}
+    if: ${{ always() && (needs.changed-paths.outputs.js == 'true' || needs.changed-paths.outputs.py == 'true') && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
     permissions:
       contents: read
       pull-requests: write
@@ -911,9 +915,10 @@ jobs:
       - name: Resolve ci-required conclusion
         # #3881: the resolver also reads GITHUB_EVENT_NAME, which the runner sets. On a pull request
         # it reads a skipped `integration` lane as deferred to the merge group, not as CI-GATE-002.
-        # On a draft pull request (PR_DRAFT) it reads a skipped e2e, a11y or engine-bench lane as
-        # deferred until the PR leaves draft (DRAFT_DEFERRED). The path is empty on every event
-        # without a pull request (merge_group), and the resolver reads it on pull_request only.
+        # On a draft pull request (PR_DRAFT) it reads a skipped heavy lane as deferred until the PR
+        # leaves draft (DRAFT_DEFERRED) and fails with CI-GATE-005 (#5506): a draft runs the light
+        # set only. The path is empty on every event without a pull request (merge_group), and the
+        # resolver reads it on pull_request only.
         env:
           PR_DRAFT: ${{ github.event.pull_request.draft }}
           FILTER_JS: ${{ needs.changed-paths.outputs.js }}
