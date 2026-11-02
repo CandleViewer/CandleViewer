@@ -6,10 +6,17 @@
  *   `oms.` family per account is its state; `oms.account_synced` clears it; any other family is an
  *   event and kept for nothing. Mapped by E29-D03 §4.1 (D03:212–219) to the deck's `acct.*` line,
  *   header marker and announcement (RT-11 polite and RT-07 assertive, once per episode).
- * - **The stale lock's cause** is the Owner's alone, and only through B19, which no client reads
- *   yet: an Owner reads `acct.stale.line` (the notice's own meaning, 2 minutes of failure), a
- *   Manager or Viewer `acct.stale.line.nocause`; a stale notice that arrives while the kill switch
- *   covers the account is the kill-switch lock for every role (D03 §4.1).
+ * - **The stale lock's cause** is the Owner's alone, and only through B19 (D03 §4.1), which no
+ *   client reads: the feed subscribes to no `machines.` topic, and the notice carries no cause
+ *   (G17), so "2 minutes of failure" may be false for a fault lock. Every role, the Owner included,
+ *   reads `acct.stale.line.nocause` and hears D03:329's cause-not-shown sentence (`D03_TEXT`); a
+ *   stale notice that arrives while the kill switch covers the account is the kill-switch lock for
+ *   every role, said with D03:329's kill-switch sentence (RT-07).
+ * - **Late mount:** the shell keeps one `account_notice`, its last (`store.ts`), and no frame `ts`
+ *   reaches a feature, so a panel that mounts (a first visit, a route re-entry) knows only the
+ *   accounts that frame names, each "since" the mount; an earlier account's state is unknown until
+ *   its next notice (D03 G15 asks the server to re-send each account's latest reason). The panel
+ *   owns this store for the route's life, so a tab switch keeps every state and its "since".
  * - **The kill switch** comes from `WsState` (`unknown` is never "not killed", WS-E06), its engage
  *   time from the shell's last `system` frame that carries one.
  * - **The risk lockout waits for B20** (the orchestrator's carry on #911): B20 has no runtime
@@ -19,9 +26,10 @@
  *   with its reason and its "until" time) and RT-20 come with B20's runtime machine.
  */
 import { useSyncExternalStore } from "react";
+import type { Politeness } from "../app-shell/announcer";
 import type { SystemUpdate } from "../../lib/ws/protocol/frames";
 import type { KillSwitchView } from "../../lib/ws/state/types";
-import type { DeckKey } from "./copy";
+import { D03_TEXT, DECK, type BoundText, type DeckKey } from "./copy";
 import { isUuid } from "./model/rowMapping";
 
 export type OmsState = "reconciling" | "desync" | "stale";
@@ -74,15 +82,38 @@ export function killSwitchCovers(view: KillSwitchView, accountId: string): boole
   );
 }
 
+/** An account state's announcement: its words, and the region D03 §8.3 gives it. */
+export interface AccountAnnounce {
+  readonly text: BoundText;
+  /** Its owner's name for the words, for a binding error. */
+  readonly name: string;
+  readonly politeness: Politeness;
+}
+
 export interface AccountLine {
   readonly line: DeckKey;
   /** The header marker: a deck key, or `kill_lock` for D02:422's "Locked — kill switch". */
   readonly marker: DeckKey | "kill_lock";
-  readonly announce: DeckKey | null;
+  readonly announce: AccountAnnounce;
 }
 
-/** E29-D03 §4.1's line, marker and announcement for an account's state, per role. */
-export function accountLine(signal: AccountSignal, role: Role): AccountLine | null {
+const deckAnnounce = (key: DeckKey): AccountAnnounce => ({
+  text: DECK[key],
+  name: key,
+  politeness: DECK[key].announce === "assertive" ? "assertive" : "polite",
+});
+/** RT-07 (D05 §8.1): a lock, either variant, is assertive, once per episode (D03 §8.3). */
+const lockAnnounce = (key: keyof typeof D03_TEXT): AccountAnnounce => ({
+  text: D03_TEXT[key],
+  name: `D03_TEXT.${key}`,
+  politeness: "assertive",
+});
+
+/**
+ * E29-D03 §4.1's line, marker and announcement for an account's state. The same for every role
+ * while no client reads B19: the cause is withheld from all (the "cause not shown" row).
+ */
+export function accountLine(signal: AccountSignal): AccountLine | null {
   const oms = signal.oms;
   if (oms === null) return null;
   switch (oms.state) {
@@ -90,20 +121,26 @@ export function accountLine(signal: AccountSignal, role: Role): AccountLine | nu
       return {
         line: "acct.reconciling.line",
         marker: "acct.marker.checking",
-        announce: "acct.announce.reconciling",
+        announce: deckAnnounce("acct.announce.reconciling"),
       };
     case "desync":
       return {
         line: "acct.desync.line",
         marker: "acct.marker.verifying",
-        announce: "acct.announce.desync",
+        announce: deckAnnounce("acct.announce.desync"),
       };
     case "stale":
-      if (oms.killLock) return { line: "acct.killlock.line", marker: "kill_lock", announce: null };
+      if (oms.killLock) {
+        return {
+          line: "acct.killlock.line",
+          marker: "kill_lock",
+          announce: lockAnnounce("killLockAnnounce"),
+        };
+      }
       return {
-        line: role === "owner" ? "acct.stale.line" : "acct.stale.line.nocause",
+        line: "acct.stale.line.nocause",
         marker: "acct.marker.stale",
-        announce: "acct.announce.stale",
+        announce: lockAnnounce("staleAnnounce"),
       };
   }
 }

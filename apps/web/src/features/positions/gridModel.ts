@@ -9,6 +9,8 @@
  * - **Totals:** "LIVE total" / "DEMO total" (D02:142, :209); a testnet session's label is PROPOSED.
  *   The row is the model's (count, exposure, uPnL, rPnL today; never a size across symbols, D-15).
  * - **Environment words:** LIVE and DEMO (D02:238, :209); TESTNET is the shell badge's PROPOSED word.
+ * - **State lines** (D02 §10.1): Loading and Could not load per account, an account's "No longer
+ *   shown" line, and filter-empty's title, so the tab shows and the panel says the same words.
  */
 import type { ReactNode } from "react";
 import type {
@@ -17,11 +19,12 @@ import type {
   PositionsGridLiq,
   PositionsGridTotals,
 } from "@candleviewer/ui";
-import { D02_TEXT, PROPOSED_TEXT } from "./copy";
+import { bindDeck, bindKinds, D02_TEXT, PROPOSED_TEXT } from "./copy";
 import type { FilterChip } from "./model/filters";
 import type { GroupModel, TotalsModel } from "./model/grouping";
 import type { LiqReading } from "./model/liqTier";
 import type { AccountInfo, Environment, PositionRowModel } from "./model/rowMapping";
+import type { Withdrawn } from "./positionsStore";
 
 /** A model row with its liquidation reading beside it: what CMP-114 draws. */
 export type GridRow = PositionRowModel & { readonly liq: PositionsGridLiq };
@@ -151,3 +154,49 @@ export const chipsRestated = (
   chips: readonly FilterChip[],
   accounts: ReadonlyMap<string, AccountInfo>,
 ): string => chips.map((chip) => chipLabel(chip, accounts)).join(" · ");
+
+/** S-01's line per account, "Loading Sub-1 · LIVE…" (D02:388). */
+export const loadingLine = (account: AccountInfo): string =>
+  bindKinds("blotter.ui.loading", {
+    label: account.label,
+    environment: envWord(account.environment),
+  });
+
+/**
+ * S-02's lines (D02:389): one per account, else one for the panel while the directory is unknown,
+ * "Could not load Positions · LIVE" (PROPOSED: the deck's string with the tab's name for a label).
+ */
+export function failedLines(
+  accounts: readonly AccountInfo[],
+  environment: Environment | null,
+): readonly string[] {
+  if (accounts.length > 0) {
+    return accounts.map((a) =>
+      bindKinds("blotter.ui.snapshot_failed", {
+        label: a.label,
+        environment: envWord(a.environment),
+      }),
+    );
+  }
+  return [
+    bindKinds("blotter.ui.snapshot_failed", {
+      label: D02_TEXT.tabPositions.string,
+      environment: envWord(environment),
+    }),
+  ];
+}
+
+/** S-08's line for an account withdrawn (`panel.no_longer_shown`, D02:400; E09-D09 §4.1). */
+export const withdrawnLine = (
+  entry: Withdrawn,
+  accounts: ReadonlyMap<string, AccountInfo>,
+): string =>
+  bindDeck("panel.no_longer_shown", {
+    "{account}": entry.label ?? accountWords(entry.accountId, accounts),
+  });
+
+/** S-04's title (D02:380): the deck's plural, its singular PROPOSED for one chip. */
+export const filterEmptyTitle = (count: number): string =>
+  count === 1
+    ? PROPOSED_TEXT.filterEmptyOne
+    : bindKinds("blotter.ui.filter_empty", { count: String(count) });

@@ -1,7 +1,8 @@
 /**
  * E29-S01 (#911) the grid's model: the model's groups and totals as CMP-114 draws them, with D02's
  * words (account headers "Main · LIVE" with the position mode, symbol and trade-group headers, the
- * totals label per environment) and the FilterBar's chip words (D02:375, :380).
+ * totals label per environment), the FilterBar's chip words (D02:375, :380) and the state lines
+ * (D02 §10.1) the tab shows and the panel says.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -9,12 +10,16 @@ import {
   chipLabel,
   chipsRestated,
   envWord,
+  failedLines,
+  filterEmptyTitle,
   gridGroups,
   gridRow,
   gridTotals,
   idStub,
+  loadingLine,
   totalsLabel,
   tradeGroupLabel,
+  withdrawnLine,
 } from "../../../src/features/positions/gridModel";
 import { groupRows, totalsOf } from "../../../src/features/positions/model/grouping";
 import type { LiqReading } from "../../../src/features/positions/model/liqTier";
@@ -169,5 +174,33 @@ describe("chip words (D02:375, :380)", () => {
         directory,
       ),
     ).toBe("Account: Sub-1 · Symbol: SOLUSDT");
+  });
+});
+
+describe("the state lines (D02 §10.1)", () => {
+  const accounts = [...directory.values()];
+
+  it("Loading and Could not load per account; one panel line while the directory is unknown", () => {
+    expect(accounts.map(loadingLine)).toEqual([
+      "Loading Main · LIVE…",
+      "Loading Sub-1 · LIVE…",
+      "Loading Sub-2 · LIVE…",
+    ]);
+    expect(failedLines(accounts.slice(0, 2), "live")).toEqual([
+      "Could not load Main · LIVE",
+      "Could not load Sub-1 · LIVE",
+    ]);
+    expect(failedLines([], "demo")).toEqual(["Could not load Positions · DEMO"]);
+  });
+
+  it("an account withdrawn by its label, else its stub; filter-empty's singular is PROPOSED", () => {
+    expect(withdrawnLine({ accountId: SUB2, label: "Sub-2" }, directory)).toBe(
+      "No longer shown — access to Sub-2 was withdrawn.",
+    );
+    expect(withdrawnLine({ accountId: SUB2, label: null }, new Map())).toBe(
+      "No longer shown — access to …0003 was withdrawn.",
+    );
+    expect(filterEmptyTitle(1)).toBe("No rows match 1 filter");
+    expect(filterEmptyTitle(2)).toBe("No rows match 2 filters");
   });
 });
