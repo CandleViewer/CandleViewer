@@ -451,13 +451,20 @@ describe("flush: on a change, on online and at sign-in; the last write wins, wit
 });
 
 describe("BQ-5: a refusal is parked, retried or re-synced by its class", () => {
-  /** An Owner's sync with the shell announcer mounted, and one change sent to a server that answers `first` once. */
-  async function refusedOnce(first: () => Response) {
+  /**
+   * An Owner's sync with the shell announcer mounted, and one change (`Alt+Q`) sent to a server that answers `first`
+   * once. With `always`, it answers `first` to every send of that same profile, as a server refusing a body does.
+   */
+  async function refusedOnce(first: () => Response, always = false) {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const server = stubServer();
     let answered = false;
-    server.refuse = (method) => {
-      if (method === "GET" || answered) return undefined;
+    server.refuse = (method, _url, init) => {
+      if (method === "GET") return undefined;
+      const body = init?.body ? (JSON.parse(String(init.body)) as { bindings: Binding[] }) : null;
+      const same =
+        body?.bindings.find((b) => b.action === "chart.footprint_toggle")?.keys === "Alt+Q";
+      if (answered && !(always && same)) return undefined;
       answered = true;
       return first();
     };
@@ -484,7 +491,7 @@ describe("BQ-5: a refusal is parked, retried or re-synced by its class", () => {
   ])(
     "%s refuses the profile itself: parked, said once, and a later change still syncs",
     async (_what, answer) => {
-      const { server, store, warn } = await refusedOnce(answer);
+      const { server, store, warn } = await refusedOnce(answer, true); // refused every time it is sent
       const status = answer().status;
       expect(stored(`${DEAD}:u-1`)).toMatchObject({ status });
       expect(polite()).toHaveTextContent(NOTE);
@@ -492,11 +499,13 @@ describe("BQ-5: a refusal is parked, retried or re-synced by its class", () => {
       expect(warn).toHaveBeenCalledTimes(1);
       expect(store.unsent("u-1")).toBe(false); // parked: it leaves the queue, as an audit record does
       expect(m.getBindings().get("chart.footprint_toggle")).toBe("Alt+Q"); // still on this device
+      const before = server.calls.length;
       await act(() => store.flush()); // a parked profile is never sent again
-      const after = server.calls.length;
+      expect(server.calls).toHaveLength(before);
+      expect(polite()?.getAttribute("data-seq")).toBe("1"); // nor said again
       rebind("chart.footprint_toggle", "Alt+W");
       await act(() => store.flush());
-      expect(server.calls.length).toBeGreaterThan(after);
+      expect(server.calls.length).toBeGreaterThan(before);
       expect(
         server.rows
           .find((r) => r.isActive)
