@@ -33,7 +33,7 @@ _CLAIM = sa.text(
     "ORDER BY available_at, id LIMIT :limit FOR UPDATE SKIP LOCKED) "
     "RETURNING id, (payload->>'delivery_id')::bigint AS delivery_id, attempts, max_attempts"
 )
-#: Fixed SQL, bound params only (same columns as `alert_deliveries_sqlalchemy._COLS`).
+#: Fixed SQL, bound params only (same columns as the `alert_deliveries_sqlalchemy` statements).
 _LOAD = sa.text(
     "SELECT id, alert_id::text AS alert_id, user_id::text AS user_id, channel::text AS channel, "
     "status::text AS status, title, body, context, attempt, http_status, error_message, "

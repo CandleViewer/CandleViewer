@@ -53,8 +53,9 @@ from candleviewer.storage.repositories.user_roles_sqlalchemy import bounded_writ
 #: `auth.session_repository.StepUpState`, restated: storage may not import `auth` (C-3.1).
 _StepUpState = tuple[dict[str, datetime], int, datetime | None]
 
-# Static column list (no caller data is ever interpolated into any statement). Every read and
-# every `RETURNING` that builds a record selects all of it, the view-as columns (#3085) included.
+
+# The session columns, written out in every statement that builds a record (no splicing); the
+# unit test pins each statement against this copy. The view-as columns (#3085) are included.
 _COLUMNS = (
     "id::text AS id, user_id::text AS user_id, refresh_token_hash, "
     "access_token_jti::text AS access_token_jti, issued_at, last_seen_at, expires_at, "
@@ -94,71 +95,164 @@ _INSERT_SQL = sa.text("""
     """)
 
 
-# #2911: the owner's status in the same statement as the row (a `users_pkey` probe, no extra
-# round trip); NULL when the user row is gone.
-_USER_STATUS = (
-    "(SELECT u.status::text FROM users u WHERE u.id = sessions.user_id "
-    "AND u.deleted_at IS NULL) AS user_status"
+_BY_ID_SQL = sa.text(
+    "SELECT id::text AS id, user_id::text AS user_id, refresh_token_hash, "
+    "access_token_jti::text AS access_token_jti, issued_at, last_seen_at, "
+    "expires_at, revoked_at, revoked_reason, ip::text AS ip, user_agent, "
+    "device_label, is_electron, mfa_satisfied_at, idle_timeout_s, "
+    "step_up_elevations::text AS step_up_elevations, step_up_failures, "
+    "readonly_until, view_as_context_id::text AS view_as_context_id, "
+    "view_as_target_user_id::text AS view_as_target_user_id, view_as_started_at, "
+    "view_as_expires_at, view_as_ended_at, view_as_end_recorded_at, "
+    "view_as_cleared_at, view_as_end_reason, locked_at, unlocked_at, (SELECT "
+    "u.status::text FROM users u WHERE u.id = sessions.user_id AND u.deleted_at IS "
+    "NULL) AS user_status FROM sessions WHERE id = CAST(:id AS uuid)"
 )
-
-
-def _sql(template: str) -> sa.TextClause:
-    """Expand the static placeholders (never caller data) into a statement."""
-    return sa.text(template.replace("@COLS@", _COLUMNS).replace("@STATUS@", _USER_STATUS))
-
-
-_BY_ID_SQL = _sql("SELECT @COLS@, @STATUS@ FROM sessions WHERE id = CAST(:id AS uuid)")
-_BY_HASH_SQL = _sql("SELECT @COLS@, @STATUS@ FROM sessions WHERE refresh_token_hash = :h")
-_BY_JTI_SQL = _sql("SELECT @COLS@ FROM sessions WHERE access_token_jti = CAST(:j AS uuid)")
-_LIVE_BY_USER_SQL = _sql(
-    "SELECT @COLS@ FROM sessions WHERE user_id = CAST(:u AS uuid) "
-    "AND revoked_at IS NULL ORDER BY issued_at DESC"
+_BY_HASH_SQL = sa.text(
+    "SELECT id::text AS id, user_id::text AS user_id, refresh_token_hash, "
+    "access_token_jti::text AS access_token_jti, issued_at, last_seen_at, "
+    "expires_at, revoked_at, revoked_reason, ip::text AS ip, user_agent, "
+    "device_label, is_electron, mfa_satisfied_at, idle_timeout_s, "
+    "step_up_elevations::text AS step_up_elevations, step_up_failures, "
+    "readonly_until, view_as_context_id::text AS view_as_context_id, "
+    "view_as_target_user_id::text AS view_as_target_user_id, view_as_started_at, "
+    "view_as_expires_at, view_as_ended_at, view_as_end_recorded_at, "
+    "view_as_cleared_at, view_as_end_reason, locked_at, unlocked_at, (SELECT "
+    "u.status::text FROM users u WHERE u.id = sessions.user_id AND u.deleted_at IS "
+    "NULL) AS user_status FROM sessions WHERE refresh_token_hash = :h"
+)
+_BY_JTI_SQL = sa.text(
+    "SELECT id::text AS id, user_id::text AS user_id, refresh_token_hash, "
+    "access_token_jti::text AS access_token_jti, issued_at, last_seen_at, "
+    "expires_at, revoked_at, revoked_reason, ip::text AS ip, user_agent, "
+    "device_label, is_electron, mfa_satisfied_at, idle_timeout_s, "
+    "step_up_elevations::text AS step_up_elevations, step_up_failures, "
+    "readonly_until, view_as_context_id::text AS view_as_context_id, "
+    "view_as_target_user_id::text AS view_as_target_user_id, view_as_started_at, "
+    "view_as_expires_at, view_as_ended_at, view_as_end_recorded_at, "
+    "view_as_cleared_at, view_as_end_reason, locked_at, unlocked_at FROM sessions "
+    "WHERE access_token_jti = CAST(:j AS uuid)"
+)
+_LIVE_BY_USER_SQL = sa.text(
+    "SELECT id::text AS id, user_id::text AS user_id, refresh_token_hash, "
+    "access_token_jti::text AS access_token_jti, issued_at, last_seen_at, "
+    "expires_at, revoked_at, revoked_reason, ip::text AS ip, user_agent, "
+    "device_label, is_electron, mfa_satisfied_at, idle_timeout_s, "
+    "step_up_elevations::text AS step_up_elevations, step_up_failures, "
+    "readonly_until, view_as_context_id::text AS view_as_context_id, "
+    "view_as_target_user_id::text AS view_as_target_user_id, view_as_started_at, "
+    "view_as_expires_at, view_as_ended_at, view_as_end_recorded_at, "
+    "view_as_cleared_at, view_as_end_reason, locked_at, unlocked_at FROM sessions "
+    "WHERE user_id = CAST(:u AS uuid) AND revoked_at IS NULL ORDER BY issued_at "
+    "DESC"
 )
 #: Activity never lifts a lock (#2300): the row must still be unlocked at `:now`
 #: (`SessionRecord.is_idle_locked`: `locked_at` is set, #4743, or `last_seen_at + idle_timeout_s
 #: <= now`).
-_TOUCH_SQL = _sql(
-    "UPDATE sessions SET last_seen_at = :now WHERE id = CAST(:id AS uuid) "
-    "AND revoked_at IS NULL AND locked_at IS NULL "
-    "AND last_seen_at + make_interval(secs => idle_timeout_s) > :now "
-    "RETURNING @COLS@"
+_TOUCH_SQL = sa.text(
+    "UPDATE sessions SET last_seen_at = :now WHERE id = CAST(:id AS uuid) AND "
+    "revoked_at IS NULL AND locked_at IS NULL AND last_seen_at + "
+    "make_interval(secs => idle_timeout_s) > :now RETURNING id::text AS id, "
+    "user_id::text AS user_id, refresh_token_hash, access_token_jti::text AS "
+    "access_token_jti, issued_at, last_seen_at, expires_at, revoked_at, "
+    "revoked_reason, ip::text AS ip, user_agent, device_label, is_electron, "
+    "mfa_satisfied_at, idle_timeout_s, step_up_elevations::text AS "
+    "step_up_elevations, step_up_failures, readonly_until, "
+    "view_as_context_id::text AS view_as_context_id, view_as_target_user_id::text "
+    "AS view_as_target_user_id, view_as_started_at, view_as_expires_at, "
+    "view_as_ended_at, view_as_end_recorded_at, view_as_cleared_at, "
+    "view_as_end_reason, locked_at, unlocked_at"
 )
 #: An unlock (#2301, B16.7) lifts both locks in one write: the deadline (re-stamped) and a lock by
 #: request (`locked_at`, #4743); it records itself in `unlocked_at`, which nothing clears.
-_LIFT_IDLE_LOCK_SQL = _sql(
+_LIFT_IDLE_LOCK_SQL = sa.text(
     "UPDATE sessions SET last_seen_at = :now, step_up_elevations = '{}'::jsonb, "
-    "locked_at = NULL, unlocked_at = :now "
-    "WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL RETURNING @COLS@"
+    "locked_at = NULL, unlocked_at = :now WHERE id = CAST(:id AS uuid) AND "
+    "revoked_at IS NULL RETURNING id::text AS id, user_id::text AS user_id, "
+    "refresh_token_hash, access_token_jti::text AS access_token_jti, issued_at, "
+    "last_seen_at, expires_at, revoked_at, revoked_reason, ip::text AS ip, "
+    "user_agent, device_label, is_electron, mfa_satisfied_at, idle_timeout_s, "
+    "step_up_elevations::text AS step_up_elevations, step_up_failures, "
+    "readonly_until, view_as_context_id::text AS view_as_context_id, "
+    "view_as_target_user_id::text AS view_as_target_user_id, view_as_started_at, "
+    "view_as_expires_at, view_as_ended_at, view_as_end_recorded_at, "
+    "view_as_cleared_at, view_as_end_reason, locked_at, unlocked_at"
 )
 # #4743, `POST /auth/lock`'s unit of work (`lock_session`): the row, locked as an UPDATE of non-key
 # columns locks it, so of concurrent locks exactly one writes; a revoked or absolute-expired row is
 # not read, as a lock must not write it. With the user's status, as `find_by_id` reads it (#2911),
 # so the record the lock answers with is a whole one. Then, after the record written ahead (C-2.9),
 # the lock itself: `last_seen_at` never moves.
-_LOCK_ROW_SQL = _sql(
-    "SELECT @COLS@, @STATUS@ FROM sessions WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL "
-    "AND expires_at > :now FOR NO KEY UPDATE"
+_LOCK_ROW_SQL = sa.text(
+    "SELECT id::text AS id, user_id::text AS user_id, refresh_token_hash, "
+    "access_token_jti::text AS access_token_jti, issued_at, last_seen_at, "
+    "expires_at, revoked_at, revoked_reason, ip::text AS ip, user_agent, "
+    "device_label, is_electron, mfa_satisfied_at, idle_timeout_s, "
+    "step_up_elevations::text AS step_up_elevations, step_up_failures, "
+    "readonly_until, view_as_context_id::text AS view_as_context_id, "
+    "view_as_target_user_id::text AS view_as_target_user_id, view_as_started_at, "
+    "view_as_expires_at, view_as_ended_at, view_as_end_recorded_at, "
+    "view_as_cleared_at, view_as_end_reason, locked_at, unlocked_at, (SELECT "
+    "u.status::text FROM users u WHERE u.id = sessions.user_id AND u.deleted_at IS "
+    "NULL) AS user_status FROM sessions WHERE id = CAST(:id AS uuid) AND "
+    "revoked_at IS NULL AND expires_at > :now FOR NO KEY UPDATE"
 )
-_SET_LOCKED_SQL = _sql(
-    "UPDATE sessions SET locked_at = :now WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL "
-    "RETURNING @COLS@, @STATUS@"
+_SET_LOCKED_SQL = sa.text(
+    "UPDATE sessions SET locked_at = :now WHERE id = CAST(:id AS uuid) AND "
+    "revoked_at IS NULL RETURNING id::text AS id, user_id::text AS user_id, "
+    "refresh_token_hash, access_token_jti::text AS access_token_jti, issued_at, "
+    "last_seen_at, expires_at, revoked_at, revoked_reason, ip::text AS ip, "
+    "user_agent, device_label, is_electron, mfa_satisfied_at, idle_timeout_s, "
+    "step_up_elevations::text AS step_up_elevations, step_up_failures, "
+    "readonly_until, view_as_context_id::text AS view_as_context_id, "
+    "view_as_target_user_id::text AS view_as_target_user_id, view_as_started_at, "
+    "view_as_expires_at, view_as_ended_at, view_as_end_recorded_at, "
+    "view_as_cleared_at, view_as_end_reason, locked_at, unlocked_at, (SELECT "
+    "u.status::text FROM users u WHERE u.id = sessions.user_id AND u.deleted_at IS "
+    "NULL) AS user_status"
 )
-_REVOKE_SQL = _sql(
-    "UPDATE sessions SET revoked_at = :now, revoked_reason = :reason "
-    "WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL RETURNING @COLS@"
+_REVOKE_SQL = sa.text(
+    "UPDATE sessions SET revoked_at = :now, revoked_reason = :reason WHERE id = "
+    "CAST(:id AS uuid) AND revoked_at IS NULL RETURNING id::text AS id, "
+    "user_id::text AS user_id, refresh_token_hash, access_token_jti::text AS "
+    "access_token_jti, issued_at, last_seen_at, expires_at, revoked_at, "
+    "revoked_reason, ip::text AS ip, user_agent, device_label, is_electron, "
+    "mfa_satisfied_at, idle_timeout_s, step_up_elevations::text AS "
+    "step_up_elevations, step_up_failures, readonly_until, "
+    "view_as_context_id::text AS view_as_context_id, view_as_target_user_id::text "
+    "AS view_as_target_user_id, view_as_started_at, view_as_expires_at, "
+    "view_as_ended_at, view_as_end_recorded_at, view_as_cleared_at, "
+    "view_as_end_reason, locked_at, unlocked_at"
 )
 #: #2593: the live session of one user, locked for an Owner's revoke.
-_LOCK_LIVE_OF_USER_SQL = _sql(
-    "SELECT @COLS@ FROM sessions WHERE id = CAST(:id AS uuid) AND user_id = CAST(:u AS uuid) "
-    "AND revoked_at IS NULL FOR NO KEY UPDATE"
+_LOCK_LIVE_OF_USER_SQL = sa.text(
+    "SELECT id::text AS id, user_id::text AS user_id, refresh_token_hash, "
+    "access_token_jti::text AS access_token_jti, issued_at, last_seen_at, "
+    "expires_at, revoked_at, revoked_reason, ip::text AS ip, user_agent, "
+    "device_label, is_electron, mfa_satisfied_at, idle_timeout_s, "
+    "step_up_elevations::text AS step_up_elevations, step_up_failures, "
+    "readonly_until, view_as_context_id::text AS view_as_context_id, "
+    "view_as_target_user_id::text AS view_as_target_user_id, view_as_started_at, "
+    "view_as_expires_at, view_as_ended_at, view_as_end_recorded_at, "
+    "view_as_cleared_at, view_as_end_reason, locked_at, unlocked_at FROM sessions "
+    "WHERE id = CAST(:id AS uuid) AND user_id = CAST(:u AS uuid) AND revoked_at IS "
+    "NULL FOR NO KEY UPDATE"
 )
 #: #2593: a session's user, read without a lock (it never changes) to name a view-as's viewer.
 _SESSION_USER_SQL = sa.text("SELECT user_id FROM sessions WHERE id = CAST(:id AS uuid)")
-_REVOKE_ALL_SQL = _sql(
-    "UPDATE sessions SET revoked_at = :now, revoked_reason = :reason "
-    "WHERE user_id = CAST(:u AS uuid) AND revoked_at IS NULL "
-    "AND (CAST(:except_id AS uuid) IS NULL OR id <> CAST(:except_id AS uuid)) "
-    "RETURNING @COLS@"
+_REVOKE_ALL_SQL = sa.text(
+    "UPDATE sessions SET revoked_at = :now, revoked_reason = :reason WHERE user_id "
+    "= CAST(:u AS uuid) AND revoked_at IS NULL AND (CAST(:except_id AS uuid) IS "
+    "NULL OR id <> CAST(:except_id AS uuid)) RETURNING id::text AS id, "
+    "user_id::text AS user_id, refresh_token_hash, access_token_jti::text AS "
+    "access_token_jti, issued_at, last_seen_at, expires_at, revoked_at, "
+    "revoked_reason, ip::text AS ip, user_agent, device_label, is_electron, "
+    "mfa_satisfied_at, idle_timeout_s, step_up_elevations::text AS "
+    "step_up_elevations, step_up_failures, readonly_until, "
+    "view_as_context_id::text AS view_as_context_id, view_as_target_user_id::text "
+    "AS view_as_target_user_id, view_as_started_at, view_as_expires_at, "
+    "view_as_ended_at, view_as_end_recorded_at, view_as_cleared_at, "
+    "view_as_end_reason, locked_at, unlocked_at"
 )
 #: #2593: the owner TOTP reset's session revoke, in its own unit of work (`owner_totp_reset_*`).
 REVOKE_ALL_SQL = _REVOKE_ALL_SQL
@@ -170,19 +264,36 @@ _LOCK_STEP_UP_SQL = sa.text(
     "SELECT step_up_elevations::text AS step_up_elevations, step_up_failures, readonly_until "
     "FROM sessions WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL FOR NO KEY UPDATE"
 )
-_STEP_UP_SQL = _sql(
+_STEP_UP_SQL = sa.text(
     "UPDATE sessions SET step_up_elevations = CAST(:elevations AS jsonb), "
-    "step_up_failures = :failures, readonly_until = :readonly_until "
-    "WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL RETURNING @COLS@"
+    "step_up_failures = :failures, readonly_until = :readonly_until WHERE id = "
+    "CAST(:id AS uuid) AND revoked_at IS NULL RETURNING id::text AS id, "
+    "user_id::text AS user_id, refresh_token_hash, access_token_jti::text AS "
+    "access_token_jti, issued_at, last_seen_at, expires_at, revoked_at, "
+    "revoked_reason, ip::text AS ip, user_agent, device_label, is_electron, "
+    "mfa_satisfied_at, idle_timeout_s, step_up_elevations::text AS "
+    "step_up_elevations, step_up_failures, readonly_until, "
+    "view_as_context_id::text AS view_as_context_id, view_as_target_user_id::text "
+    "AS view_as_target_user_id, view_as_started_at, view_as_expires_at, "
+    "view_as_ended_at, view_as_end_recorded_at, view_as_cleared_at, "
+    "view_as_end_reason, locked_at, unlocked_at"
 )
 # #2304: consume a one-shot grant in one conditional statement. A concurrent consumer of the
 # same key re-evaluates the predicate after the first commits, finds the key gone and updates
 # no row, so the grant is used once.
-_CONSUME_STEP_UP_SQL = _sql(
-    "UPDATE sessions SET step_up_elevations = step_up_elevations - CAST(:key AS text) "
-    "WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL "
-    "AND CAST(step_up_elevations ->> CAST(:key AS text) AS timestamptz) > :now "
-    "RETURNING @COLS@"
+_CONSUME_STEP_UP_SQL = sa.text(
+    "UPDATE sessions SET step_up_elevations = step_up_elevations - CAST(:key AS "
+    "text) WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL AND "
+    "CAST(step_up_elevations ->> CAST(:key AS text) AS timestamptz) > :now "
+    "RETURNING id::text AS id, user_id::text AS user_id, refresh_token_hash, "
+    "access_token_jti::text AS access_token_jti, issued_at, last_seen_at, "
+    "expires_at, revoked_at, revoked_reason, ip::text AS ip, user_agent, "
+    "device_label, is_electron, mfa_satisfied_at, idle_timeout_s, "
+    "step_up_elevations::text AS step_up_elevations, step_up_failures, "
+    "readonly_until, view_as_context_id::text AS view_as_context_id, "
+    "view_as_target_user_id::text AS view_as_target_user_id, view_as_started_at, "
+    "view_as_expires_at, view_as_ended_at, view_as_end_recorded_at, "
+    "view_as_cleared_at, view_as_end_reason, locked_at, unlocked_at"
 )
 _LINK_SQL = sa.text(
     "INSERT INTO sessions_rotation (prev_session_id, next_session_id) "
@@ -204,14 +315,23 @@ _FAMILY_SQL = sa.text("""
 # Protocol's docstrings state it, so of two racing writers the row lock lets one apply and the other
 # finds its condition gone (None). Each RETURNING builds its record through `row_to_fields`, which
 # validates the context. A start overwrites all eight columns, the end ones with NULL.
-_VIEW_AS_START_SQL = _sql(
+_VIEW_AS_START_SQL = sa.text(
     "UPDATE sessions SET view_as_context_id = CAST(:context_id AS uuid), "
-    "view_as_target_user_id = CAST(:target_user_id AS uuid), view_as_started_at = :started_at, "
-    "view_as_expires_at = :view_as_expires_at, view_as_ended_at = NULL, view_as_end_reason = NULL, "
-    "view_as_end_recorded_at = NULL, view_as_cleared_at = NULL "
-    "WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL AND expires_at > :now "
-    "AND (view_as_context_id IS NULL "
-    "OR (view_as_cleared_at IS NOT NULL AND view_as_end_recorded_at IS NOT NULL)) RETURNING @COLS@"
+    "view_as_target_user_id = CAST(:target_user_id AS uuid), view_as_started_at = "
+    ":started_at, view_as_expires_at = :view_as_expires_at, view_as_ended_at = "
+    "NULL, view_as_end_reason = NULL, view_as_end_recorded_at = NULL, "
+    "view_as_cleared_at = NULL WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL "
+    "AND expires_at > :now AND (view_as_context_id IS NULL OR (view_as_cleared_at "
+    "IS NOT NULL AND view_as_end_recorded_at IS NOT NULL)) RETURNING id::text AS "
+    "id, user_id::text AS user_id, refresh_token_hash, access_token_jti::text AS "
+    "access_token_jti, issued_at, last_seen_at, expires_at, revoked_at, "
+    "revoked_reason, ip::text AS ip, user_agent, device_label, is_electron, "
+    "mfa_satisfied_at, idle_timeout_s, step_up_elevations::text AS "
+    "step_up_elevations, step_up_failures, readonly_until, "
+    "view_as_context_id::text AS view_as_context_id, view_as_target_user_id::text "
+    "AS view_as_target_user_id, view_as_started_at, view_as_expires_at, "
+    "view_as_ended_at, view_as_end_recorded_at, view_as_cleared_at, "
+    "view_as_end_reason, locked_at, unlocked_at"
 )
 # An end applies to a revoked row only while no other unrevoked row holds its context: a refresh
 # revokes the row but its successor carries the context on, so a stale end reaching the rotated copy
@@ -219,43 +339,88 @@ _VIEW_AS_START_SQL = _sql(
 # gap `SessionService.refresh` bounds) the rotated row alone holds it and is ended; so is an orphan
 # (no successor came) or a logged-out head, as the sweeper does. `o.id <> sessions.id` keeps the row
 # from counting as its own holder.
-_VIEW_AS_END_SQL = _sql(
-    "UPDATE sessions SET view_as_ended_at = :ended_at, view_as_end_reason = :reason "
-    "WHERE id = CAST(:id AS uuid) AND view_as_context_id = CAST(:context_id AS uuid) "
-    "AND view_as_ended_at IS NULL AND (revoked_at IS NULL OR NOT EXISTS (SELECT 1 FROM sessions o "
-    "WHERE o.view_as_context_id = sessions.view_as_context_id AND o.id <> sessions.id "
-    "AND o.revoked_at IS NULL)) RETURNING @COLS@"
+_VIEW_AS_END_SQL = sa.text(
+    "UPDATE sessions SET view_as_ended_at = :ended_at, view_as_end_reason = "
+    ":reason WHERE id = CAST(:id AS uuid) AND view_as_context_id = "
+    "CAST(:context_id AS uuid) AND view_as_ended_at IS NULL AND (revoked_at IS "
+    "NULL OR NOT EXISTS (SELECT 1 FROM sessions o WHERE o.view_as_context_id = "
+    "sessions.view_as_context_id AND o.id <> sessions.id AND o.revoked_at IS "
+    "NULL)) RETURNING id::text AS id, user_id::text AS user_id, "
+    "refresh_token_hash, access_token_jti::text AS access_token_jti, issued_at, "
+    "last_seen_at, expires_at, revoked_at, revoked_reason, ip::text AS ip, "
+    "user_agent, device_label, is_electron, mfa_satisfied_at, idle_timeout_s, "
+    "step_up_elevations::text AS step_up_elevations, step_up_failures, "
+    "readonly_until, view_as_context_id::text AS view_as_context_id, "
+    "view_as_target_user_id::text AS view_as_target_user_id, view_as_started_at, "
+    "view_as_expires_at, view_as_ended_at, view_as_end_recorded_at, "
+    "view_as_cleared_at, view_as_end_reason, locked_at, unlocked_at"
 )
 # RETURNING sees the row as updated, so whether this call set the end comes from `prev`: the row as
 # locked before the update. Joined in FROM, `prev` runs before the update, and a racing write that
 # holds the row makes it wait and then read the row as that write left it (READ COMMITTED returns
 # a locked row's newest version). Its columns are renamed so the unqualified `@COLS@` stay
 # unambiguous.
-_VIEW_AS_LEAVE_SQL = _sql(
-    "WITH prev AS (SELECT id AS prev_id, view_as_ended_at AS prev_ended_at FROM sessions "
-    "WHERE id = CAST(:id AS uuid) FOR NO KEY UPDATE) "
-    "UPDATE sessions SET view_as_ended_at = COALESCE(view_as_ended_at, :ended_at), "
-    "view_as_end_reason = COALESCE(view_as_end_reason, :reason), view_as_cleared_at = :now "
-    "FROM prev WHERE id = prev.prev_id AND view_as_context_id = CAST(:context_id AS uuid) "
-    "AND view_as_cleared_at IS NULL AND revoked_at IS NULL "
-    "RETURNING @COLS@, prev.prev_ended_at IS NULL AS ended_now"
+_VIEW_AS_LEAVE_SQL = sa.text(
+    "WITH prev AS (SELECT id AS prev_id, view_as_ended_at AS prev_ended_at FROM "
+    "sessions WHERE id = CAST(:id AS uuid) FOR NO KEY UPDATE) UPDATE sessions SET "
+    "view_as_ended_at = COALESCE(view_as_ended_at, :ended_at), view_as_end_reason "
+    "= COALESCE(view_as_end_reason, :reason), view_as_cleared_at = :now FROM prev "
+    "WHERE id = prev.prev_id AND view_as_context_id = CAST(:context_id AS uuid) "
+    "AND view_as_cleared_at IS NULL AND revoked_at IS NULL RETURNING id::text AS "
+    "id, user_id::text AS user_id, refresh_token_hash, access_token_jti::text AS "
+    "access_token_jti, issued_at, last_seen_at, expires_at, revoked_at, "
+    "revoked_reason, ip::text AS ip, user_agent, device_label, is_electron, "
+    "mfa_satisfied_at, idle_timeout_s, step_up_elevations::text AS "
+    "step_up_elevations, step_up_failures, readonly_until, "
+    "view_as_context_id::text AS view_as_context_id, view_as_target_user_id::text "
+    "AS view_as_target_user_id, view_as_started_at, view_as_expires_at, "
+    "view_as_ended_at, view_as_end_recorded_at, view_as_cleared_at, "
+    "view_as_end_reason, locked_at, unlocked_at, prev.prev_ended_at IS NULL AS "
+    "ended_now"
 )
-_VIEW_AS_CLEAR_SQL = _sql(
-    "UPDATE sessions SET view_as_cleared_at = :now "
-    "WHERE id = CAST(:id AS uuid) AND view_as_context_id = CAST(:context_id AS uuid) "
-    "AND view_as_ended_at IS NOT NULL AND view_as_cleared_at IS NULL RETURNING @COLS@"
+_VIEW_AS_CLEAR_SQL = sa.text(
+    "UPDATE sessions SET view_as_cleared_at = :now WHERE id = CAST(:id AS uuid) "
+    "AND view_as_context_id = CAST(:context_id AS uuid) AND view_as_ended_at IS "
+    "NOT NULL AND view_as_cleared_at IS NULL RETURNING id::text AS id, "
+    "user_id::text AS user_id, refresh_token_hash, access_token_jti::text AS "
+    "access_token_jti, issued_at, last_seen_at, expires_at, revoked_at, "
+    "revoked_reason, ip::text AS ip, user_agent, device_label, is_electron, "
+    "mfa_satisfied_at, idle_timeout_s, step_up_elevations::text AS "
+    "step_up_elevations, step_up_failures, readonly_until, "
+    "view_as_context_id::text AS view_as_context_id, view_as_target_user_id::text "
+    "AS view_as_target_user_id, view_as_started_at, view_as_expires_at, "
+    "view_as_ended_at, view_as_end_recorded_at, view_as_cleared_at, "
+    "view_as_end_reason, locked_at, unlocked_at"
 )
-_VIEW_AS_RECORDED_SQL = _sql(
-    "UPDATE sessions SET view_as_end_recorded_at = :now "
-    "WHERE id = CAST(:id AS uuid) AND view_as_context_id = CAST(:context_id AS uuid) "
-    "AND view_as_ended_at IS NOT NULL AND view_as_end_recorded_at IS NULL RETURNING @COLS@"
+_VIEW_AS_RECORDED_SQL = sa.text(
+    "UPDATE sessions SET view_as_end_recorded_at = :now WHERE id = CAST(:id AS "
+    "uuid) AND view_as_context_id = CAST(:context_id AS uuid) AND view_as_ended_at "
+    "IS NOT NULL AND view_as_end_recorded_at IS NULL RETURNING id::text AS id, "
+    "user_id::text AS user_id, refresh_token_hash, access_token_jti::text AS "
+    "access_token_jti, issued_at, last_seen_at, expires_at, revoked_at, "
+    "revoked_reason, ip::text AS ip, user_agent, device_label, is_electron, "
+    "mfa_satisfied_at, idle_timeout_s, step_up_elevations::text AS "
+    "step_up_elevations, step_up_failures, readonly_until, "
+    "view_as_context_id::text AS view_as_context_id, view_as_target_user_id::text "
+    "AS view_as_target_user_id, view_as_started_at, view_as_expires_at, "
+    "view_as_ended_at, view_as_end_recorded_at, view_as_cleared_at, "
+    "view_as_end_reason, locked_at, unlocked_at"
 )
 # The start's unit of work (#3085): the row it starts on, locked as an UPDATE of non-key columns
 # locks it, so of concurrent starts exactly one goes on; a revoked or absolute-expired row is not
 # read, as `_VIEW_AS_START_SQL` would not write it.
-_VIEW_AS_START_LOCK_SQL = _sql(
-    "SELECT @COLS@ FROM sessions WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL "
-    "AND expires_at > :now FOR NO KEY UPDATE"
+_VIEW_AS_START_LOCK_SQL = sa.text(
+    "SELECT id::text AS id, user_id::text AS user_id, refresh_token_hash, "
+    "access_token_jti::text AS access_token_jti, issued_at, last_seen_at, "
+    "expires_at, revoked_at, revoked_reason, ip::text AS ip, user_agent, "
+    "device_label, is_electron, mfa_satisfied_at, idle_timeout_s, "
+    "step_up_elevations::text AS step_up_elevations, step_up_failures, "
+    "readonly_until, view_as_context_id::text AS view_as_context_id, "
+    "view_as_target_user_id::text AS view_as_target_user_id, view_as_started_at, "
+    "view_as_expires_at, view_as_ended_at, view_as_end_recorded_at, "
+    "view_as_cleared_at, view_as_end_reason, locked_at, unlocked_at FROM sessions "
+    "WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL AND expires_at > :now FOR "
+    "NO KEY UPDATE"
 )
 # The target's notice (the Q1 ruling, option A; 21 Sec.3.10.2): `info`, so no incident is opened.
 _VIEW_AS_NOTICE_SQL = sa.text(
@@ -271,27 +436,62 @@ _VIEW_AS_NOTICE_SQL = sa.text(
 # Nothing deletes `sessions` rows today (the 30-day purge is #3223 L2), so the copies stay, and they
 # also sit in `ix_sessions_view_as_target`, which both live reads walk, filtered by their
 # `revoked_at IS NULL`. A row revoked `rotated` with no `revoked_at` would be live: it carries.
-_VIEW_AS_DUE_SQL = _sql(
-    "SELECT @COLS@ FROM sessions s "
-    "WHERE s.view_as_context_id IS NOT NULL AND s.view_as_end_recorded_at IS NULL "
-    "AND (s.view_as_ended_at IS NOT NULL OR s.view_as_expires_at <= :now "
-    "OR s.revoked_at IS NOT NULL OR s.expires_at <= :now) "
-    "AND (s.revoked_reason IS DISTINCT FROM 'rotated' OR NOT EXISTS (SELECT 1 FROM sessions o "
-    "WHERE o.view_as_context_id = s.view_as_context_id AND (o.revoked_reason IS DISTINCT FROM "
-    "'rotated' OR o.revoked_at IS NULL OR o.revoked_at > :cutoff))) "
-    "ORDER BY s.view_as_expires_at LIMIT :limit"
+_VIEW_AS_DUE_SQL = sa.text(
+    "SELECT id::text AS id, user_id::text AS user_id, refresh_token_hash, "
+    "access_token_jti::text AS access_token_jti, issued_at, last_seen_at, "
+    "expires_at, revoked_at, revoked_reason, ip::text AS ip, user_agent, "
+    "device_label, is_electron, mfa_satisfied_at, idle_timeout_s, "
+    "step_up_elevations::text AS step_up_elevations, step_up_failures, "
+    "readonly_until, view_as_context_id::text AS view_as_context_id, "
+    "view_as_target_user_id::text AS view_as_target_user_id, view_as_started_at, "
+    "view_as_expires_at, view_as_ended_at, view_as_end_recorded_at, "
+    "view_as_cleared_at, view_as_end_reason, locked_at, unlocked_at FROM sessions "
+    "s WHERE s.view_as_context_id IS NOT NULL AND s.view_as_end_recorded_at IS "
+    "NULL AND (s.view_as_ended_at IS NOT NULL OR s.view_as_expires_at <= :now OR "
+    "s.revoked_at IS NOT NULL OR s.expires_at <= :now) AND (s.revoked_reason IS "
+    "DISTINCT FROM 'rotated' OR NOT EXISTS (SELECT 1 FROM sessions o WHERE "
+    "o.view_as_context_id = s.view_as_context_id AND (o.revoked_reason IS DISTINCT "
+    "FROM 'rotated' OR o.revoked_at IS NULL OR o.revoked_at > :cutoff))) ORDER BY "
+    "s.view_as_expires_at LIMIT :limit"
 )
-_VIEW_AS_LIVE_SQL = _sql(
-    "SELECT @COLS@ FROM sessions WHERE view_as_context_id IS NOT NULL "
-    "AND view_as_ended_at IS NULL AND revoked_at IS NULL ORDER BY view_as_expires_at LIMIT :limit"
+_VIEW_AS_LIVE_SQL = sa.text(
+    "SELECT id::text AS id, user_id::text AS user_id, refresh_token_hash, "
+    "access_token_jti::text AS access_token_jti, issued_at, last_seen_at, "
+    "expires_at, revoked_at, revoked_reason, ip::text AS ip, user_agent, "
+    "device_label, is_electron, mfa_satisfied_at, idle_timeout_s, "
+    "step_up_elevations::text AS step_up_elevations, step_up_failures, "
+    "readonly_until, view_as_context_id::text AS view_as_context_id, "
+    "view_as_target_user_id::text AS view_as_target_user_id, view_as_started_at, "
+    "view_as_expires_at, view_as_ended_at, view_as_end_recorded_at, "
+    "view_as_cleared_at, view_as_end_reason, locked_at, unlocked_at FROM sessions "
+    "WHERE view_as_context_id IS NOT NULL AND view_as_ended_at IS NULL AND "
+    "revoked_at IS NULL ORDER BY view_as_expires_at LIMIT :limit"
 )
-_VIEW_AS_LIVE_BY_TARGET_SQL = _sql(
-    "SELECT @COLS@ FROM sessions WHERE view_as_target_user_id = CAST(:target AS uuid) "
-    "AND view_as_context_id IS NOT NULL AND view_as_ended_at IS NULL AND revoked_at IS NULL"
+_VIEW_AS_LIVE_BY_TARGET_SQL = sa.text(
+    "SELECT id::text AS id, user_id::text AS user_id, refresh_token_hash, "
+    "access_token_jti::text AS access_token_jti, issued_at, last_seen_at, "
+    "expires_at, revoked_at, revoked_reason, ip::text AS ip, user_agent, "
+    "device_label, is_electron, mfa_satisfied_at, idle_timeout_s, "
+    "step_up_elevations::text AS step_up_elevations, step_up_failures, "
+    "readonly_until, view_as_context_id::text AS view_as_context_id, "
+    "view_as_target_user_id::text AS view_as_target_user_id, view_as_started_at, "
+    "view_as_expires_at, view_as_ended_at, view_as_end_recorded_at, "
+    "view_as_cleared_at, view_as_end_reason, locked_at, unlocked_at FROM sessions "
+    "WHERE view_as_target_user_id = CAST(:target AS uuid) AND view_as_context_id "
+    "IS NOT NULL AND view_as_ended_at IS NULL AND revoked_at IS NULL"
 )
-_VIEW_AS_LIVE_BY_VIEWER_SQL = _sql(
-    "SELECT @COLS@ FROM sessions WHERE user_id = CAST(:viewer AS uuid) "
-    "AND view_as_context_id IS NOT NULL AND view_as_ended_at IS NULL AND revoked_at IS NULL"
+_VIEW_AS_LIVE_BY_VIEWER_SQL = sa.text(
+    "SELECT id::text AS id, user_id::text AS user_id, refresh_token_hash, "
+    "access_token_jti::text AS access_token_jti, issued_at, last_seen_at, "
+    "expires_at, revoked_at, revoked_reason, ip::text AS ip, user_agent, "
+    "device_label, is_electron, mfa_satisfied_at, idle_timeout_s, "
+    "step_up_elevations::text AS step_up_elevations, step_up_failures, "
+    "readonly_until, view_as_context_id::text AS view_as_context_id, "
+    "view_as_target_user_id::text AS view_as_target_user_id, view_as_started_at, "
+    "view_as_expires_at, view_as_ended_at, view_as_end_recorded_at, "
+    "view_as_cleared_at, view_as_end_reason, locked_at, unlocked_at FROM sessions "
+    "WHERE user_id = CAST(:viewer AS uuid) AND view_as_context_id IS NOT NULL AND "
+    "view_as_ended_at IS NULL AND revoked_at IS NULL"
 )
 
 
@@ -363,7 +563,7 @@ def _violates(exc: sa.exc.IntegrityError, constraint: str) -> bool:
 
 
 def row_to_fields(row: Any) -> dict[str, Any]:
-    """Map a result row (see `_COLUMNS`) to `SessionRecord` constructor kwargs. The lock columns
+    """Map a result row (see `_COLUMNS`) to `SessionRecord` kwargs. The lock columns
     (#4743) are read by key, as the view-as ones are: a read that missed one raises, never
     reporting an unlocked session."""
     m = row._mapping

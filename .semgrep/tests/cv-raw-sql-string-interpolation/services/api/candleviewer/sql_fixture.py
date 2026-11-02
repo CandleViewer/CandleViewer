@@ -2,6 +2,8 @@
 Run with: python tools/ci/check_semgrep_rule_tests.py (covers cv-raw-sql-string-interpolation)
 """
 
+from textwrap import dedent
+
 import sqlalchemy as sa
 from sqlalchemy import text
 from sqlalchemy import text as sql_text
@@ -60,6 +62,40 @@ def bad_helper_receiver(template: str, fragment: str) -> None:
     sa.text(template.replace("@C@", BOOTSTRAP_MARKER).replace("@W@", fragment))  # ruleid: cv-raw-sql-string-interpolation
 
 
+def bad_constant_splice_helper(template: str) -> None:
+    # Even a helper splicing module constants only is flagged: the statements are whole literals.
+    sa.text(template.replace("@M@", BOOTSTRAP_MARKER, 1).replace("@T@", TEMPLATE))  # ruleid: cv-raw-sql-string-interpolation
+    sa.text(template.replace("@C@", "id, name"))  # ruleid: cv-raw-sql-string-interpolation
+
+
+def bad_concat_and_split(account_id: str) -> None:
+    sa.text("SELECT * FROM orders WHERE account_id = " + account_id)  # ruleid: cv-raw-sql-string-interpolation
+    text("SELECT * FROM orders WHERE account_id = " + account_id)  # ruleid: cv-raw-sql-string-interpolation
+    sa.text(f"SELECT {account_id}" " FROM orders WHERE a = :a")  # ruleid: cv-raw-sql-string-interpolation
+    text(f"SELECT {account_id}" " FROM orders WHERE a = :a")  # ruleid: cv-raw-sql-string-interpolation
+    sa.sql.text("SELECT * FROM orders WHERE account_id = " + account_id)  # ruleid: cv-raw-sql-string-interpolation
+    sa.sql.expression.text(f"SELECT {account_id}" " FROM orders")  # ruleid: cv-raw-sql-string-interpolation
+    sub_text(f"SELECT {account_id}" " FROM orders")  # ruleid: cv-raw-sql-string-interpolation
+
+
+def bad_receiver_side(x: str) -> None:
+    # The splice sits in the receiver; a constant `.strip()` / `.replace` / `dedent` wraps it.
+    sa.text("SELECT {} FROM orders".format(x).replace("\n", " "))  # ruleid: cv-raw-sql-string-interpolation
+    sa.text(("SELECT %s FROM orders" % x).strip())  # ruleid: cv-raw-sql-string-interpolation
+    sa.text(("SELECT " + x + " FROM orders").replace("\n", " "))  # ruleid: cv-raw-sql-string-interpolation
+    sa.text(dedent("SELECT {} FROM orders".format(x)))  # ruleid: cv-raw-sql-string-interpolation
+    sa.text(dedent("SELECT %s FROM orders" % x))  # ruleid: cv-raw-sql-string-interpolation
+    sa.text(dedent("SELECT " + x + " FROM orders"))  # ruleid: cv-raw-sql-string-interpolation
+    sa.text(dedent(f"SELECT {x} FROM orders"))  # ruleid: cv-raw-sql-string-interpolation
+    sa.text(text=("SELECT " + x + " FROM orders").strip())  # ruleid: cv-raw-sql-string-interpolation
+    sa.text(text="SELECT {} FROM orders".format(x))  # ruleid: cv-raw-sql-string-interpolation
+    text(("SELECT %s FROM orders" % x).strip())  # ruleid: cv-raw-sql-string-interpolation
+    text(dedent("SELECT {} FROM orders".format(x)))  # ruleid: cv-raw-sql-string-interpolation
+    sa.sql.text(("SELECT " + x + " FROM orders").strip())  # ruleid: cv-raw-sql-string-interpolation
+    sa.sql.expression.text(dedent("SELECT %s FROM orders" % x))  # ruleid: cv-raw-sql-string-interpolation
+    sa.sql.text(dedent("SELECT {} FROM orders".format(x)))  # ruleid: cv-raw-sql-string-interpolation
+
+
 def bad_by_name(text: object, template: str, fragment: str) -> None:
     # A `text` that is not SQLAlchemy's (a parameter, a local helper) is matched by its name alone.
     text("SELECT @C@ FROM orders @W@".replace("@C@", BOOTSTRAP_MARKER).replace("@W@", TEMPLATE))  # ruleid: cv-raw-sql-string-interpolation
@@ -82,6 +118,24 @@ def bad_first_build() -> sa.TextClause:
     )
 
 
+def bad_variable_operand(prefix: str, template: str, x: str) -> None:
+    # A variable template or a variable left operand: the splice has no literal at its left.
+    sa.text(prefix + "SELECT * FROM orders")  # ruleid: cv-raw-sql-string-interpolation
+    text(prefix + "SELECT * FROM orders")  # ruleid: cv-raw-sql-string-interpolation
+    sa.text(template % x)  # ruleid: cv-raw-sql-string-interpolation
+    text(template % x)  # ruleid: cv-raw-sql-string-interpolation
+    sa.text(template.format(x))  # ruleid: cv-raw-sql-string-interpolation
+    text(template.format(x))  # ruleid: cv-raw-sql-string-interpolation
+    sa.sql.text(prefix + "SELECT * FROM orders")  # ruleid: cv-raw-sql-string-interpolation
+    sa.sql.text(template % x)  # ruleid: cv-raw-sql-string-interpolation
+    sa.sql.expression.text(template.format(x))  # ruleid: cv-raw-sql-string-interpolation
+    sa.text(text=template % x)  # ruleid: cv-raw-sql-string-interpolation
+    sa.text(dedent(template.format(x)))  # ruleid: cv-raw-sql-string-interpolation
+    sub_text(template % x)  # ruleid: cv-raw-sql-string-interpolation
+    _text(template % x)  # ok: cv-raw-sql-string-interpolation
+    _text(prefix + "summary")  # ok: cv-raw-sql-string-interpolation
+
+
 def ok_whole_literals(dsn: str, name: str, template: str) -> str:
     sa.text("SELECT * FROM orders WHERE account_id = :account_id")  # ok: cv-raw-sql-string-interpolation
     # BOOTSTRAP_MARKER written out in the statement, never spliced into it.
@@ -91,8 +145,10 @@ def ok_whole_literals(dsn: str, name: str, template: str) -> str:
     )
     dsn.replace("postgresql+asyncpg", "postgresql")  # ok: cv-raw-sql-string-interpolation
     sa.text("SELECT :x").bindparams(x="a".replace("a", "b"))  # ok: cv-raw-sql-string-interpolation
-    # A helper splicing module constants only: the shape of the reviewed `_sql(template)` helpers.
-    sa.text(template.replace("@M@", BOOTSTRAP_MARKER, 1).replace("@T@", TEMPLATE))  # ok: cv-raw-sql-string-interpolation
+    sa.text(dedent("SELECT :x FROM orders"))  # ok: cv-raw-sql-string-interpolation
+    sa.text(text="SELECT :x FROM orders")  # ok: cv-raw-sql-string-interpolation
+    _text(dedent("%s summary" % name))  # ok: cv-raw-sql-string-interpolation
+    _text("summary " + name)  # ok: cv-raw-sql-string-interpolation
     # A helper imported as `text` under another name is not SQLAlchemy's `text`.
     _text("%s summary" % name)  # ok: cv-raw-sql-string-interpolation
     _text("{} summary".format(name))  # ok: cv-raw-sql-string-interpolation

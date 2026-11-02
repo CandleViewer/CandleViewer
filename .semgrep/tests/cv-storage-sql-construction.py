@@ -1,4 +1,6 @@
 """Fixtures for cv-storage-sql-construction (E07-X02, SR-097 neighbourhood)."""
+from textwrap import dedent
+
 import sqlalchemy as sa
 from hypothesis import strategies as st
 from sqlalchemy import text
@@ -55,6 +57,30 @@ async def bad_helper_receiver(template, fragment):
     sa.text(template.replace("@C@", BOOTSTRAP_MARKER).replace("@W@", fragment))  # ruleid: cv-storage-sql-construction
 
 
+async def bad_constant_splice_helper(template):
+    # Even a helper splicing module constants only is flagged: the statements are whole literals.
+    sa.text(template.replace("@M@", BOOTSTRAP_MARKER, 1).replace("@T@", TEMPLATE))  # ruleid: cv-storage-sql-construction
+    sa.text(template.replace("@C@", "id, name"))  # ruleid: cv-storage-sql-construction
+
+
+async def bad_receiver_side(x, y, template):
+    # The splice sits in the receiver; a constant `.strip()` / `.replace` / `dedent` wraps it.
+    sa.text("SELECT {} FROM t".format(x).replace("\n", " "))  # ruleid: cv-storage-sql-construction
+    sa.text(("SELECT %s FROM t" % x).strip())  # ruleid: cv-storage-sql-construction
+    sa.text(("SELECT " + x + " FROM t").replace("\n", " "))  # ruleid: cv-storage-sql-construction
+    sa.text(dedent("SELECT {} FROM t".format(x)))  # ruleid: cv-storage-sql-construction
+    sa.text(dedent("SELECT %s FROM t" % x))  # ruleid: cv-storage-sql-construction
+    sa.text(dedent("SELECT " + x + " FROM t"))  # ruleid: cv-storage-sql-construction
+    sa.text(dedent(f"SELECT {x} FROM t"))  # ruleid: cv-storage-sql-construction
+    sa.text(text=("SELECT " + x + " FROM t").strip())  # ruleid: cv-storage-sql-construction
+    sa.text(text="SELECT {} FROM t".format(x))  # ruleid: cv-storage-sql-construction
+    text(("SELECT %s FROM t" % x).strip())  # ruleid: cv-storage-sql-construction
+    text(dedent("SELECT {} FROM t".format(x)))  # ruleid: cv-storage-sql-construction
+    sa.sql.text(("SELECT " + x + " FROM t").strip())  # ruleid: cv-storage-sql-construction
+    sa.sql.expression.text(dedent("SELECT %s FROM t" % x))  # ruleid: cv-storage-sql-construction
+    sa.sql.text(dedent("SELECT {} FROM t".format(x)))  # ruleid: cv-storage-sql-construction
+
+
 async def bad_by_name(text, template, sym, fragment):
     # A `text` that is not SQLAlchemy's (a parameter, a local helper) is matched by its name alone.
     text(f"SELECT {sym}" " FROM t")  # ruleid: cv-storage-sql-construction
@@ -76,8 +102,9 @@ async def good_sa_text(dsn, sym, template):
     )
     dsn.replace("postgresql+asyncpg", "postgresql")  # ok: cv-storage-sql-construction
     sa.text("SELECT :x").bindparams(x="a".replace("a", "b"))  # ok: cv-storage-sql-construction
-    # A helper splicing module constants only: the shape of the reviewed `_sql(template)` helpers.
-    sa.text(template.replace("@M@", BOOTSTRAP_MARKER, 1).replace("@T@", TEMPLATE))  # ok: cv-storage-sql-construction
+    sa.text(dedent("SELECT :x FROM t"))  # ok: cv-storage-sql-construction
+    sa.text(text="SELECT :x FROM t")  # ok: cv-storage-sql-construction
+    st.text(dedent("abc {}".format(sym)))  # ok: cv-storage-sql-construction
     st.text(f"abc {sym}")  # ok: cv-storage-sql-construction
     st.text("abc {}".format(sym))  # ok: cv-storage-sql-construction
     st.text("abc %s" % sym)  # ok: cv-storage-sql-construction

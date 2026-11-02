@@ -24,66 +24,95 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
 
-_COLS = (
-    "id, alert_id::text AS alert_id, user_id::text AS user_id, channel::text AS channel, "
-    "status::text AS status, title, body, context, attempt, http_status, error_message, "
-    "queued_at, sent_at, acked_at, acked_by::text AS acked_by, "
-    "(SELECT a.severity::text FROM alerts a WHERE a.id = alert_deliveries.alert_id) AS severity"
+_INSERT = sa.text(
+    "INSERT INTO alert_deliveries (alert_id, user_id, channel, title, body, "
+    "context) VALUES (CAST(:alert_id AS uuid), CAST(:user_id AS uuid), "
+    "CAST(:channel AS alert_channel), :title, :body, CAST(:context AS jsonb)) "
+    "RETURNING id, alert_id::text AS alert_id, user_id::text AS user_id, "
+    "channel::text AS channel, status::text AS status, title, body, context, "
+    "attempt, http_status, error_message, queued_at, sent_at, acked_at, "
+    "acked_by::text AS acked_by, (SELECT a.severity::text FROM alerts a WHERE a.id "
+    "= alert_deliveries.alert_id) AS severity"
 )
-
-
-def _sql(template: str) -> sa.TextClause:
-    # Only the static column fragment is substituted, never caller data.
-    return sa.text(template.replace("@C@", _COLS))
-
-
-_INSERT = _sql(
-    "INSERT INTO alert_deliveries (alert_id, user_id, channel, title, body, context) VALUES "
-    "(CAST(:alert_id AS uuid), CAST(:user_id AS uuid), CAST(:channel AS alert_channel), :title, "
-    ":body, CAST(:context AS jsonb)) RETURNING @C@"
+_MARK_SENT = sa.text(
+    "UPDATE alert_deliveries SET status = 'sent', sent_at = now(), attempt = "
+    "attempt + 1, http_status = :http_status, error_message = NULL WHERE id = :id "
+    "AND status = 'queued' RETURNING id, alert_id::text AS alert_id, user_id::text "
+    "AS user_id, channel::text AS channel, status::text AS status, title, body, "
+    "context, attempt, http_status, error_message, queued_at, sent_at, acked_at, "
+    "acked_by::text AS acked_by, (SELECT a.severity::text FROM alerts a WHERE a.id "
+    "= alert_deliveries.alert_id) AS severity"
 )
-_MARK_SENT = _sql(
-    "UPDATE alert_deliveries SET status = 'sent', sent_at = now(), attempt = attempt + 1, "
-    "http_status = :http_status, error_message = NULL WHERE id = :id AND status = 'queued' "
-    "RETURNING @C@"
+_MARK_FAILED = sa.text(
+    "UPDATE alert_deliveries SET status = 'failed', attempt = least(attempt + 1, "
+    "10), http_status = :http_status, error_message = :error WHERE id = :id AND "
+    "status = 'queued' RETURNING id, alert_id::text AS alert_id, user_id::text AS "
+    "user_id, channel::text AS channel, status::text AS status, title, body, "
+    "context, attempt, http_status, error_message, queued_at, sent_at, acked_at, "
+    "acked_by::text AS acked_by, (SELECT a.severity::text FROM alerts a WHERE a.id "
+    "= alert_deliveries.alert_id) AS severity"
 )
-_MARK_FAILED = _sql(
-    "UPDATE alert_deliveries SET status = 'failed', attempt = least(attempt + 1, 10), "
-    "http_status = :http_status, error_message = :error WHERE id = :id AND status = 'queued' "
-    "RETURNING @C@"
-)
-_MARK_SUPPRESSED = _sql(
+_MARK_SUPPRESSED = sa.text(
     "UPDATE alert_deliveries SET status = 'suppressed', error_message = :reason "
-    "WHERE id = :id AND status = 'queued' RETURNING @C@"
+    "WHERE id = :id AND status = 'queued' RETURNING id, alert_id::text AS "
+    "alert_id, user_id::text AS user_id, channel::text AS channel, status::text AS "
+    "status, title, body, context, attempt, http_status, error_message, queued_at, "
+    "sent_at, acked_at, acked_by::text AS acked_by, (SELECT a.severity::text FROM "
+    "alerts a WHERE a.id = alert_deliveries.alert_id) AS severity"
 )
-_ACK_ONE = _sql(
-    "UPDATE alert_deliveries SET status = 'acked', acked_at = now(), "
-    "acked_by = CAST(:by AS uuid) WHERE id = :id AND user_id = CAST(:by AS uuid) "
-    "AND status = 'sent' AND acked_at IS NULL RETURNING @C@"
+_ACK_ONE = sa.text(
+    "UPDATE alert_deliveries SET status = 'acked', acked_at = now(), acked_by = "
+    "CAST(:by AS uuid) WHERE id = :id AND user_id = CAST(:by AS uuid) AND status = "
+    "'sent' AND acked_at IS NULL RETURNING id, alert_id::text AS alert_id, "
+    "user_id::text AS user_id, channel::text AS channel, status::text AS status, "
+    "title, body, context, attempt, http_status, error_message, queued_at, "
+    "sent_at, acked_at, acked_by::text AS acked_by, (SELECT a.severity::text FROM "
+    "alerts a WHERE a.id = alert_deliveries.alert_id) AS severity"
 )
 #: Bounded (ticket DoS note): one batch of at most `:cap` rows via `ix_ad_user_unack`.
-_ACK_ALL = _sql(
-    "UPDATE alert_deliveries SET status = 'acked', acked_at = now(), "
-    "acked_by = CAST(:by AS uuid) WHERE id IN (SELECT id FROM alert_deliveries "
-    "WHERE user_id = CAST(:by AS uuid) AND status = 'sent' AND acked_at IS NULL "
-    "ORDER BY queued_at DESC LIMIT :cap FOR UPDATE SKIP LOCKED) RETURNING id"
+_ACK_ALL = sa.text(
+    "UPDATE alert_deliveries SET status = 'acked', acked_at = now(), acked_by = "
+    "CAST(:by AS uuid) WHERE id IN (SELECT id FROM alert_deliveries WHERE user_id "
+    "= CAST(:by AS uuid) AND status = 'sent' AND acked_at IS NULL ORDER BY "
+    "queued_at DESC LIMIT :cap FOR UPDATE SKIP LOCKED) RETURNING id"
 )
-_GET_OWNED = _sql("SELECT @C@ FROM alert_deliveries WHERE id = :id AND user_id = CAST(:by AS uuid)")
+_GET_OWNED = sa.text(
+    "SELECT id, alert_id::text AS alert_id, user_id::text AS user_id, "
+    "channel::text AS channel, status::text AS status, title, body, context, "
+    "attempt, http_status, error_message, queued_at, sent_at, acked_at, "
+    "acked_by::text AS acked_by, (SELECT a.severity::text FROM alerts a WHERE a.id "
+    "= alert_deliveries.alert_id) AS severity FROM alert_deliveries WHERE id = :id "
+    "AND user_id = CAST(:by AS uuid)"
+)
 #: Unscoped: the REST layer compares `user_id` itself, so a foreign id is audited before its 404.
-_GET = _sql("SELECT @C@ FROM alert_deliveries WHERE id = :id")
+_GET = sa.text(
+    "SELECT id, alert_id::text AS alert_id, user_id::text AS user_id, "
+    "channel::text AS channel, status::text AS status, title, body, context, "
+    "attempt, http_status, error_message, queued_at, sent_at, acked_at, "
+    "acked_by::text AS acked_by, (SELECT a.severity::text FROM alerts a WHERE a.id "
+    "= alert_deliveries.alert_id) AS severity FROM alert_deliveries WHERE id = :id"
+)
 #: The owner of an alert, soft-deleted or not: its delivery history outlives the alert.
 _ALERT_OWNER = sa.text("SELECT owner_user_id::text FROM alerts WHERE id = CAST(:id AS uuid)")
 #: E40-T04 desktop report-back: only the caller's own `desktop` row still `queued` moves (a
 #: conditional update that re-checks the owner, as `_ACK_ONE` does: C-12.4).
-_DESKTOP_SENT = _sql(
-    "UPDATE alert_deliveries SET status = 'sent', sent_at = now(), error_message = NULL "
-    "WHERE id = :id AND user_id = CAST(:by AS uuid) AND channel = 'desktop' "
-    "AND status = 'queued' RETURNING @C@"
+_DESKTOP_SENT = sa.text(
+    "UPDATE alert_deliveries SET status = 'sent', sent_at = now(), error_message = "
+    "NULL WHERE id = :id AND user_id = CAST(:by AS uuid) AND channel = 'desktop' "
+    "AND status = 'queued' RETURNING id, alert_id::text AS alert_id, user_id::text "
+    "AS user_id, channel::text AS channel, status::text AS status, title, body, "
+    "context, attempt, http_status, error_message, queued_at, sent_at, acked_at, "
+    "acked_by::text AS acked_by, (SELECT a.severity::text FROM alerts a WHERE a.id "
+    "= alert_deliveries.alert_id) AS severity"
 )
-_DESKTOP_FAILED = _sql(
-    "UPDATE alert_deliveries SET status = 'failed', error_message = :error "
-    "WHERE id = :id AND user_id = CAST(:by AS uuid) AND channel = 'desktop' "
-    "AND status = 'queued' RETURNING @C@"
+_DESKTOP_FAILED = sa.text(
+    "UPDATE alert_deliveries SET status = 'failed', error_message = :error WHERE "
+    "id = :id AND user_id = CAST(:by AS uuid) AND channel = 'desktop' AND status = "
+    "'queued' RETURNING id, alert_id::text AS alert_id, user_id::text AS user_id, "
+    "channel::text AS channel, status::text AS status, title, body, context, "
+    "attempt, http_status, error_message, queued_at, sent_at, acked_at, "
+    "acked_by::text AS acked_by, (SELECT a.severity::text FROM alerts a WHERE a.id "
+    "= alert_deliveries.alert_id) AS severity"
 )
 #: The channel-failure notice: an already-`sent` in_app record, so it never re-enters the
 #: outbox (no notice-about-a-notice loop) and shows in the inbox / `unacked_count`.
@@ -95,33 +124,51 @@ CHANNEL_FAILURE_NOTICE = sa.text(
 
 #: E40-T04 `alerts` topic: the rows a change named, and the channel-failure notice each failed one
 #: raised (written `sent`, so `ix_ad_user_unack` serves it while it is unacknowledged).
-_GET_MANY = _sql(
-    "SELECT @C@ FROM alert_deliveries WHERE id = ANY(CAST(:ids AS bigint[])) ORDER BY id"
+_GET_MANY = sa.text(
+    "SELECT id, alert_id::text AS alert_id, user_id::text AS user_id, "
+    "channel::text AS channel, status::text AS status, title, body, context, "
+    "attempt, http_status, error_message, queued_at, sent_at, acked_at, "
+    "acked_by::text AS acked_by, (SELECT a.severity::text FROM alerts a WHERE a.id "
+    "= alert_deliveries.alert_id) AS severity FROM alert_deliveries WHERE id = "
+    "ANY(CAST(:ids AS bigint[])) ORDER BY id"
 )
-_NOTICES = _sql(
-    "SELECT @C@ FROM alert_deliveries WHERE user_id = ANY(CAST(:users AS uuid[])) "
-    "AND status = 'sent' AND acked_at IS NULL AND channel = 'in_app' "
-    "AND context->>'failed_delivery_id' = ANY(CAST(:failed AS text[])) ORDER BY id"
+_NOTICES = sa.text(
+    "SELECT id, alert_id::text AS alert_id, user_id::text AS user_id, "
+    "channel::text AS channel, status::text AS status, title, body, context, "
+    "attempt, http_status, error_message, queued_at, sent_at, acked_at, "
+    "acked_by::text AS acked_by, (SELECT a.severity::text FROM alerts a WHERE a.id "
+    "= alert_deliveries.alert_id) AS severity FROM alert_deliveries WHERE user_id "
+    "= ANY(CAST(:users AS uuid[])) AND status = 'sent' AND acked_at IS NULL AND "
+    "channel = 'in_app' AND context->>'failed_delivery_id' = ANY(CAST(:failed AS "
+    "text[])) ORDER BY id"
 )
-_UNACKED = _sql(
-    "SELECT count(*) FROM alert_deliveries WHERE user_id = CAST(:user AS uuid) "
-    "AND status = 'sent' AND acked_at IS NULL"
+_UNACKED = sa.text(
+    "SELECT count(*) FROM alert_deliveries WHERE user_id = CAST(:user AS uuid) AND "
+    "status = 'sent' AND acked_at IS NULL"
 )
-_EXPIRED = _sql(
-    "SELECT @C@ FROM alert_deliveries WHERE queued_at < now() - make_interval(days => :days) "
-    "ORDER BY id LIMIT :limit"
+_EXPIRED = sa.text(
+    "SELECT id, alert_id::text AS alert_id, user_id::text AS user_id, "
+    "channel::text AS channel, status::text AS status, title, body, context, "
+    "attempt, http_status, error_message, queued_at, sent_at, acked_at, "
+    "acked_by::text AS acked_by, (SELECT a.severity::text FROM alerts a WHERE a.id "
+    "= alert_deliveries.alert_id) AS severity FROM alert_deliveries WHERE "
+    "queued_at < now() - make_interval(days => :days) ORDER BY id LIMIT :limit"
 )
 _DELETE_IDS = sa.text("DELETE FROM alert_deliveries WHERE id = ANY(:ids)")
-_LIST = _sql(
-    "SELECT @C@ FROM alert_deliveries WHERE user_id = CAST(:user AS uuid) "
-    "AND (CAST(:alert_id AS uuid) IS NULL OR alert_id = CAST(:alert_id AS uuid)) "
-    "AND (CAST(:status AS text) IS NULL OR status::text = :status) "
-    "AND (NOT :unacked_only OR (status = 'sent' AND acked_at IS NULL)) "
-    "AND (CAST(:from_ts AS timestamptz) IS NULL OR queued_at >= :from_ts) "
-    "AND (CAST(:to_ts AS timestamptz) IS NULL OR queued_at < :to_ts) "
-    "AND (CAST(:after_ts AS timestamptz) IS NULL OR "
-    "(queued_at, id) < (CAST(:after_ts AS timestamptz), CAST(:after_id AS bigint))) "
-    "ORDER BY queued_at DESC, id DESC LIMIT :limit"
+_LIST = sa.text(
+    "SELECT id, alert_id::text AS alert_id, user_id::text AS user_id, "
+    "channel::text AS channel, status::text AS status, title, body, context, "
+    "attempt, http_status, error_message, queued_at, sent_at, acked_at, "
+    "acked_by::text AS acked_by, (SELECT a.severity::text FROM alerts a WHERE a.id "
+    "= alert_deliveries.alert_id) AS severity FROM alert_deliveries WHERE user_id "
+    "= CAST(:user AS uuid) AND (CAST(:alert_id AS uuid) IS NULL OR alert_id = "
+    "CAST(:alert_id AS uuid)) AND (CAST(:status AS text) IS NULL OR status::text = "
+    ":status) AND (NOT :unacked_only OR (status = 'sent' AND acked_at IS NULL)) "
+    "AND (CAST(:from_ts AS timestamptz) IS NULL OR queued_at >= :from_ts) AND "
+    "(CAST(:to_ts AS timestamptz) IS NULL OR queued_at < :to_ts) AND "
+    "(CAST(:after_ts AS timestamptz) IS NULL OR (queued_at, id) < (CAST(:after_ts "
+    "AS timestamptz), CAST(:after_id AS bigint))) ORDER BY queued_at DESC, id DESC "
+    "LIMIT :limit"
 )
 
 

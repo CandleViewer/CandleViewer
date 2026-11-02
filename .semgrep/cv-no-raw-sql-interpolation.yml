@@ -22,6 +22,8 @@ rules:
       references:
         - docs/security/threat-models/E12-bars.md BR-25
         - docs/plan/security/ci-gates-e12.md
+    # Limitation: `text(var)` with the SQL assembled elsewhere is out of this rule's view (E12
+    # owns pre-call assembly only inside the market-data modules its `paths` name).
     patterns:
       - pattern-either:
           - patterns:
@@ -36,9 +38,13 @@ rules:
               - metavariable-regex:
                   metavariable: $SQL
                   regex: '(?i)^\s*(SELECT\s|INSERT\s+INTO\s|UPDATE\s+\w+\s+SET\s|DELETE\s+FROM\s|WITH\s+\w+\s+AS\s*\()'
-      # Owned by cv-raw-sql-string-interpolation (no double-firing).
+      # Owned by cv-raw-sql-string-interpolation (no double-firing): `execute(...)`, and `text(...)`
+      # as the bare name, as `sa.text` / `sqlalchemy.text` or as `sa.sql[.expression].text`.
       - pattern-not-inside: $C.execute(...)
       - pattern-not-inside: text(...)
+      - pattern-not-inside: sqlalchemy.text(...)
+      - pattern-not-inside: sqlalchemy.sql.text(...)
+      - pattern-not-inside: sqlalchemy.sql.expression.text(...)
       # Identifier interpolation proven safe by a closed allow-list guard in the same function.
       - pattern-not-inside: |
           if $K not in $ALLOW:

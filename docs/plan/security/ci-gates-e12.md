@@ -97,9 +97,10 @@ fix merged (#2140 → #2137, #2141 → #2138, #2142 → #2139). The rules now co
   identifier must come from a closed allow-list checked in the same function
   (`if kind not in _FAMILIES: raise ...`) or from `storage.sql_identifiers.checked_identifier`.
   The rule recognises both forms.
-- **Overlap:** `cv-raw-sql-string-interpolation` owns `execute(f"...")`/`text(f"...")`, and
+- **Overlap:** `cv-raw-sql-string-interpolation` owns `execute(f"...")` and every `text(f"...")`
+  form (`text`, `sa.text`, `sqlalchemy.text`, `sa.sql.text`, `sa.sql.expression.text`), and
   `cv-storage-sql-construction` owns `storage/**`. This rule excludes text inside `execute(...)`
-  and `text(...)`, so the three never fire on the same line.
+  and any of those `text(...)` calls, so the rules never fire on the same line.
 
 ## cv-unbounded-query-window
 
