@@ -33,7 +33,7 @@ This document is the single source of truth for accessibility acceptance criteri
 4. Destructive/irreversible actions (submit market order, flatten all, cancel all, Live-armed rule trigger, Demo→Live switch) require either (a) a second keystroke/confirm dialog operable by keyboard, or (b) an explicit "hold to confirm" pattern that also has a discrete-press keyboard fallback (never a mouse-hold-only or timing-only gate — WCAG 2.2.1 no keyboard-only timing trap).
 5. 1-click/no-confirm trading is an explicit opt-in toggle (already in scope per `23-views-and-screens.digest.md` View 13) and must show a persistent, non-colour-only "1-click ARMED" indicator (icon + text) whenever active.
 6. No functionality may depend on hover-only or drag-only interaction: every drag-to-modify order line, drawing tool, or rule-graph edge has a keyboard-operable equivalent (e.g. select line with `Tab`/click → arrow keys nudge by tick size → `Enter` commits, `Esc` cancels).
-7. Chart pan/zoom/crosshair must be fully keyboard operable: arrow keys move crosshair by one bar/one tick, `Shift+arrows` pans the viewport, `+`/`-` zoom, `Home`/`End` jump to oldest/latest bar, matching WCAG 2.1.1 for the "canvas control surrogate" pattern in §5.
+7. Chart pan/zoom/crosshair must be fully keyboard operable: arrow keys move crosshair by one bar/one tick, `Shift+arrows` move it ten bars with the viewport following at the edge (E06-D03 D6), `+`/`-` zoom, `Home`/`End` jump to oldest/latest bar, matching WCAG 2.1.1 for the "canvas control surrogate" pattern in §5.
 
 ### 3.2 Default hotkey map (v1)
 
@@ -85,7 +85,7 @@ Research found no reusable default keymap (DeepCharts ships user-defined-only, T
 3. **Reserved, non-remappable keys**: `Esc` (universal cancel) and `Ctrl+K` (command palette, the recovery mechanism if a user breaks their own hotkey config) are permanently reserved and excluded from the remap UI.
 4. **OS/Electron-reserved combos are blocklisted** (e.g. `Ctrl+W`, `Ctrl+Q`, `Alt+F4`, `Ctrl+N` if it would conflict with OS window management) — the remap UI filters these out of the pickable set entirely rather than allowing-then-failing silently.
 5. **Cross-account/hotkey-size-preset ambiguity**: when multiple trade-group accounts are targeted by one ticket, size-preset keys (`1`-`5`) apply to the _ticket's_ configured per-account sizing rule, not a literal shared quantity — this is a UX/data-model concern documented here to prevent an a11y-adjacent "silent multi-account fat-finger" failure mode; the order-confirm dialog (keyboard operable) always lists the resolved per-account quantities before submit.
-6. **Tracking note — rule-builder node-graph keyboard spec**: the rule-engine's visual node-graph editor (drag-connect rule nodes/edges) will define its own keyboard interaction model (arrow-key node navigation, `Enter`/`Space` to connect, `Delete` to remove an edge) in `14-screens-catalogue.md` once that screen is specced. That spec MUST cross-link back to this §3.3's precedence/detection rules rather than defining an independent conflict-resolution scheme, to avoid duplication drift between the two documents; `14-screens-catalogue.md`'s node-graph section is required to open with an explicit "see `05-accessibility-standard.md` §3.3 for global conflict rules" pointer, and this file's §12 Cross-references entry for `14-screens-catalogue.md` (once added) must reciprocally reference this rule.
+6. **Tracking note — rule-builder node-graph keyboard spec**: the rule-engine's visual node-graph editor (drag-connect rule nodes/edges) defines its own keyboard interaction model (arrow-key node navigation, `Enter`/`Space` to connect, `Delete` to remove an edge) in `docs/design/E37/E37-D02.md` §13, with node move and keyboard pan in `docs/design/E47/E47-D09.md` §7. That spec MUST cross-link back to this §3.3's precedence/detection rules rather than defining an independent conflict-resolution scheme, to avoid duplication drift between the two documents; `14-screens-catalogue.md`'s node-graph section is required to open with an explicit "see `05-accessibility-standard.md` §3.3 for global conflict rules" pointer, and this file's §12 Cross-references entry for `14-screens-catalogue.md` (once added) must reciprocally reference this rule.
 
 ### 3.4 Focus management in dense layouts
 
@@ -98,9 +98,26 @@ CandleViewer screens are unusually dense (multi-pane chart + footprint + DOM hea
 5. **Skip links**: a visually-hidden-until-focused "Skip to order ticket" / "Skip to chart" link set at the top of the DOM lets keyboard/SR users bypass the watchlist/nav chrome, satisfying WCAG 2.4.1 (Bypass Blocks).
 6. **Visible focus indicator**: WCAG 2.2 SC 2.4.11 (Focus Not Obscured, Minimum) — a focused element is never fully hidden behind a sticky toolbar/panel; focus ring uses a ≥2px outline with ≥3:1 contrast against adjacent colours (SC 1.4.11 non-text contrast), consistent across the dark theme and high-contrast theme. Focus ring style is a design-system token (`16-design-system-brief.md`), never removed via `outline: none` without a replacement that meets the same contrast bar.
 7. **Target size**: WCAG 2.2 SC 2.5.8 (Target Size, Minimum, AA) — all clickable controls, including individual DOM-ladder rows and footprint cells at default zoom, are ≥24×24 CSS px OR have ≥24px spacing to the next target, OR fall under the "inline"/"essential" exception (footprint cells at max chart zoom-out are documented as the "essential exception" — dense financial data display — but MUST provide the zoomed/table alternative in §5.4 for anyone who cannot hit small targets).
-8. **Dragging alternatives**: WCAG 2.2 SC 2.5.7 (Dragging Movements, AA) — every drag interaction (order-line reprice, drawing-tool node move, rule-graph node move, panel resize) has a non-drag alternative: click-to-select then arrow-key nudge, or a keyboard-accessible "..." menu offering the same repositioning as discrete steps/values.
+8. **Dragging alternatives**: WCAG 2.2 SC 2.5.7 (Dragging Movements, AA) — every drag interaction (order-line reprice, drawing-tool node move, rule-graph node move, panel resize) has a non-drag alternative: click-to-select then arrow-key nudge, or a keyboard-accessible "..." menu offering the same repositioning as discrete steps/values. The one grammar and the census of every drag are §3.5.
 9. **Consistent help mechanism**: WCAG 2.2 SC 3.2.6 (Consistent Help, A) — the hotkey cheat-sheet (`?`) and a "Help/Docs" entry point appear in the same relative location/order across every screen.
 10. **Redundant entry**: WCAG 2.2 SC 3.3.7/3.3.8 (Redundant Entry / Accessible Authentication, AA) — order tickets pre-fill from last-used values/defaults where safe; login/API-key entry never requires a cognitive-function test (no CAPTCHA puzzle; 2FA via standard TOTP/WebAuthn is exempt as "object recognition"/allowed alternative).
+
+### 3.5 Keyboard equivalents (E47-D09)
+
+The normative expansion of §3.1 items 6 and 7 and §3.4 item 8, one line per rule; the census of every drag- and hover-only interaction, the order line, the node graph, the palette, the cheatsheet and the inert message are `docs/design/E47/E47-D09.md`:
+
+- K-1 Every value a pointer drags is reached by one grammar, select → adjust → commit / cancel, reused by every surface.
+- K-2 Selecting an object changes nothing and announces the object with its value.
+- K-3 Arrows adjust by one unit (a tick, a bar, a step); `Shift` ×10; `PageUp`/`PageDown` ×100 for ticks and bars where not used to move between objects.
+- K-4 `Enter` commits through the pointer drop's own path: its confirm, the destructive-action policy, its refusals and its audit.
+- K-5 `Esc`, or moving focus away, before a commit restores the value at selection and sends nothing.
+- K-6 The pending value is spoken politely, coalesced while a key is held (E06-D03 D5), never once per repeat.
+- K-7 An exchange-bound adjustment never sends a request per keypress: one commit, one request; stops tighten only by key.
+- K-8 The command palette lists every registered command with its current binding or "unbound"; a command absent from it is a defect.
+- K-9 The cheatsheet lists every command with its current binding, remaps marked, searchable by action or key.
+- K-10 A binding pressed where it is not valid says once, non-modally, that it is not available here and where it is.
+- K-11 A role-gated equivalent keeps its keys and changes nothing, saying its reason (E09-D09 T2).
+- K-12 A bare letter or digit binding is scoped to its focus context and remappable (SC 2.1.4).
 
 ## 4. Colour-independence for buy/sell and all status signalling
 
