@@ -37,9 +37,15 @@ from candleviewer.accounts.verification import (
     verify,
 )
 from candleviewer.app import AppContext
-from candleviewer.exchange.base.errors import ExchangeError, TransportError, UnknownStateError
+from candleviewer.exchange.base.errors import (
+    ExchangeError,
+    RateBudgetExceededError,
+    RateLimitError,
+    TransportError,
+    UnknownStateError,
+)
 from candleviewer.exchange.bybit.key_info import KEY_INFO_PATH, PROBE_PATH
-from candleviewer.exchange.bybit.key_verify import CALL_TIMEOUT_S
+from candleviewer.exchange.bybit.key_verify import CALL_TIMEOUT_S, KeyVerificationCalls
 from candleviewer.exchange.bybit.mapping import map_ret_code
 from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.net.read_only_gate import ReadOnlyGate
@@ -103,12 +109,16 @@ def facade() -> Metrics:
 
 
 async def judge(
-    error: BaseException | None, call: str = "key_info", *, bound_s: float | None = None
+    error: BaseException | None,
+    call: str = "key_info",
+    *,
+    bound_s: float | None = None,
+    offset: Callable[[], int] | None = None,
 ) -> BaseException:
     venue, exchange = Venue(error), ExchangeBybitService()
     if bound_s is not None:
         exchange.key_call_timeout_s = bound_s
-    calls = wiring.JudgedCalls(exchange, cast(Any, venue))
+    calls = wiring.JudgedCalls(exchange, cast(Any, venue), clock_offset_ms=offset)
     with pytest.raises((KeyRefused, VerificationInconclusive)) as caught:
         await getattr(calls, call)()
     await calls.aclose()
@@ -154,6 +164,59 @@ async def test_any_other_error_is_inconclusive_with_a_probe_error_name_only(
     assert isinstance(inconclusive, VerificationInconclusive) and str(inconclusive) == code
     assert inconclusive.__cause__ is None and inconclusive.__suppress_context__
     assert inconclusive.ret_code == (error and error.exchange_ret_code)  # the code alone (#836)
+
+
+async def test_the_local_budgets_refusal_is_rate_limited_and_keeps_its_wait() -> None:
+    """#5283: the governor's refusal under the IP hold is no `exchange_unknown`; its wait stays."""
+    refused = RateBudgetExceededError("an IP-level hold outlasts the wait", retry_after_s=412.5)
+    inconclusive = await judge(refused)
+    assert (
+        isinstance(inconclusive, VerificationInconclusive) and str(inconclusive) == "rate_limited"
+    )
+    assert (inconclusive.ret_code, inconclusive.retry_after_s) == (None, 412.5)
+
+
+@pytest.mark.parametrize(
+    ("measured", "carried"),
+    [(-6000, -6000), (6000, 6000), (0, None)],
+    ids=["behind", "ahead", "unmeasured"],
+)
+async def test_a_clock_refusal_carries_the_hosts_measured_offset_only_once_measured(
+    measured: int, carried: int | None
+) -> None:
+    """#5284: an unmeasured offset reads 0 (`offset_ms`), which is omitted, never shown as 0."""
+    inconclusive = await judge(map_ret_code(10002, TEXT), offset=lambda: measured)
+    assert isinstance(inconclusive, VerificationInconclusive) and str(inconclusive) == "clock_drift"
+    assert (inconclusive.ret_code, inconclusive.clock_offset_ms) == (10002, carried)
+
+
+async def test_the_offset_is_carried_by_a_clock_refusal_alone() -> None:
+    inconclusive = await judge(map_ret_code(10004, TEXT), offset=lambda: -6000)
+    assert (
+        isinstance(inconclusive, VerificationInconclusive) and inconclusive.clock_offset_ms is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("hold_s", "retry_s"), [(0.0, None), (4.0, 4.0)], ids=["no-ip-hold", "ip-hold"]
+)
+async def test_the_wait_reaching_the_api_is_the_ip_hold_only(
+    hold_s: float, retry_s: float | None
+) -> None:
+    """The ruled oracle (#5283 BQ-2): through the real `KeyVerificationCalls._held`, a per-UID
+    10006 hint of 7 s never surfaces; only the IP-wide hold in force does."""
+
+    class Client:
+        async def signed_request(self, *_: object, **__: object) -> object:
+            raise RateLimitError("limited", retry_after_s=7.0, exchange_ret_code=10006)
+
+    governor = SimpleNamespace(ip_hold_remaining_s=lambda: hold_s)
+    real = KeyVerificationCalls(cast(Any, Client()), cast(Any, governor))
+    calls = wiring.JudgedCalls(ExchangeBybitService(), real)
+    with pytest.raises(VerificationInconclusive) as caught:
+        await calls.key_info()
+    assert str(caught.value) == "rate_limited"
+    assert caught.value.retry_after_s == retry_s
 
 
 @pytest.mark.parametrize(
@@ -265,6 +328,28 @@ async def test_after_a_10018_the_next_keys_call_is_inconclusive_at_once_and_neve
     assert (codes, route.call_count, len(signed)) == (["rate_limited", "rate_limited"], 1, 1)
 
 
+async def test_a_10018_and_the_hold_after_it_both_carry_the_holds_remaining_seconds() -> None:
+    """#5283 (E27-Q01 row 34): the limited call has no hint of its own, so it carries the IP hold
+    the 10018 just started (at least 600 s); the next call, refused with nothing sent, the rest."""
+    real = ctx(storage_backend="real")
+    check = wiring.wire_key_selfcheck(cast(AppContext, real), cast(Any, None), facade())
+    assert check is not None
+    caught: list[VerificationInconclusive] = []
+    with respx.mock(assert_all_called=False) as router:
+        route = router.get(f"https://{HOSTS[1]}{KEY_INFO_PATH}")
+        route.respond(json=rest("rest/error_10018.json"))
+        for key in (KEY, UUID(int=12)):
+            calls = check._calls(key, ACCOUNT.exchange_uid)
+            with pytest.raises(VerificationInconclusive) as raised:
+                await asyncio.wait_for(calls.key_info(), timeout=1.0)
+            await calls.aclose()
+            caught.append(raised.value)
+    first, held = caught
+    assert (first.ret_code, held.ret_code, route.call_count) == (10018, None, 1)
+    assert first.retry_after_s is not None and first.retry_after_s >= 590.0  # a 600 s hold
+    assert held.retry_after_s is not None and 0.0 < held.retry_after_s <= first.retry_after_s
+
+
 @pytest.fixture
 def skewed() -> Iterator[respx.MockRouter]:
     """The demo host on an exchange clock `SKEW_MS` behind the host's."""
@@ -316,3 +401,16 @@ async def test_an_unmeasured_skew_is_the_venues_clock_refusal_never_a_verdict(
     with pytest.raises(VerificationInconclusive, match=r"^clock_drift$"):
         await verify_skewed(None)
     assert [c.request.url.path for c in skewed.calls] == [KEY_INFO_PATH] * 2  # one re-sign
+
+
+async def test_a_clock_refusal_through_the_wired_calls_carries_the_offset_the_host_measured(
+    skewed: respx.MockRouter,
+) -> None:
+    """#5284: the guard measured 6 s of the 12 s the host is out by, so the 10002 still comes and
+    names the measured offset; an unmeasured one (above) names none."""
+    with pytest.raises(VerificationInconclusive, match=r"^clock_drift$") as caught:
+        await verify_skewed(-6_000)
+    assert (caught.value.ret_code, caught.value.clock_offset_ms) == (10002, -6_000)
+    with pytest.raises(VerificationInconclusive) as unmeasured:
+        await verify_skewed(None)
+    assert unmeasured.value.clock_offset_ms is None

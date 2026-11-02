@@ -123,6 +123,7 @@ def test_the_docs_example_parses_into_key_facts() -> None:
         permissions=DOCS_REPLY["result"]["permissions"],
         ip_whitelist=("203.0.113.7", "203.0.113.8", "203.0.113.9"),
         expires_at=None,
+        created_at=datetime(2025, 10, 13, 3, 20, 45, tzinfo=UTC),
     )
 
 

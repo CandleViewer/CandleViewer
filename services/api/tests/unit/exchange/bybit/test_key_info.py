@@ -18,6 +18,7 @@ import pytest
 from candleviewer.exchange.base.errors import (
     AuthError,
     ExchangeError,
+    RateBudgetExceededError,
     RateLimitError,
     TransportError,
     UnknownStateError,
@@ -60,7 +61,18 @@ def test_parse_key_info_reads_the_gate_fields(uid: int | str) -> None:
         permissions=load("key_info_trade.json")["result"]["permissions"],
         ip_whitelist=("203.0.113.7",),
         expires_at=datetime(2027, 4, 13, tzinfo=UTC),
+        created_at=datetime(2026, 10, 15, 8, tzinfo=UTC),
     )
+
+
+def test_the_key_creation_time_is_read_as_a_timezone_aware_time() -> None:
+    created = parse_key_info(key_info(createdAt="2026-10-15T08:00:00Z")).created_at
+    assert created == datetime(2026, 10, 15, 8, tzinfo=UTC) and created.utcoffset() is not None
+
+
+@pytest.mark.parametrize("raw", [None, "", "yesterday", 17, "2026-10-15T08:00:00"])
+def test_a_missing_or_unreadable_creation_time_is_none_never_a_malformed_reply(raw: object) -> None:
+    assert parse_key_info(key_info(createdAt=raw)).created_at is None
 
 
 @pytest.mark.parametrize(("flag", "deprecated", "uta"), [(0, 1, False), (1, 0, True)])
@@ -206,6 +218,12 @@ def test_probe_error_is_named_by_the_exchange_code(code: int, name: str) -> None
 def test_any_other_exchange_code_is_exchange_unknown_whatever_its_error_class(code: int) -> None:
     """A code outside the contract's table (#3089) is unknown, whatever class the mapping gives."""
     assert probe_error(map_ret_code(code, "exchange text")) == "exchange_unknown"
+
+
+def test_the_governors_hold_refusal_is_rate_limited_without_an_exchange_code() -> None:
+    """#5283: a refusal by the local budget (nothing sent) is not `exchange_unknown`."""
+    error = RateBudgetExceededError("an IP-level hold outlasts the wait", retry_after_s=30.0)
+    assert probe_error(error) == "rate_limited"
 
 
 def test_the_local_ip_hold_refusal_is_rate_limited_without_an_exchange_code() -> None:

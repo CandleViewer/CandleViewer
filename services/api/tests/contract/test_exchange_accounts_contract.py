@@ -142,7 +142,7 @@ _FAILED_READ_BAD_GATEWAY = (
 _FAILED_READ_VAULT = ("vault_refused",)
 #: The only key statuses a signed call may use (21-database-schema.md §3.2.3a, secrets/broker.py).
 _SIGNABLE_STATUSES = ("active", "rotating")
-_WARNINGS = ["key_expiring_soon", "clock_skew"]
+_WARNINGS = ["key_expiring_soon", "clock_skew", "new_key_restricted"]
 #: Plaintext or envelope fields (C-2.7, 21-database-schema.md §3.2.2) no response may carry.
 _SECRET_FIELDS = frozenset(
     {

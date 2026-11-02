@@ -59,6 +59,7 @@ _DECLARED: dict[str, dict[int, str | None]] = {
         404: "NotFound",
         409: "Conflict",
         422: "KeyRejected",
+        429: "KeyRateLimited",
         502: "KeyExchangeError",
         503: "KeyServiceUnavailable",
     },
@@ -98,10 +99,14 @@ _PINNED: dict[tuple[str, ...], tuple[str, ...]] = {
         "(a refused signature, a clock outside the `recv_window`, a rate limit, an outage",
         "nothing is stored, no stored key or account changes, and the import may be sent again",
         "give `503 exchange_unavailable` with `Retry-After`",
-        "an error answer gives `502 exchange_error`",
-        "Neither answer echoes exchange text (`KeyExchangeProblem`)",
+        "a rate limit (the exchange's `10018`, `10006` or `10429`",
+        "gives `429 exchange_rate_limited` with the `Retry-After` header and `retry_after_seconds`",
+        "any other error answer gives `502 exchange_error`",
+        "stays a `502 exchange_error` and names its cause: `reason` is `clock_drift`",
+        "`clock_offset_ms` is the host clock's measured offset (omitted while it is not measured)",
+        "No answer echoes exchange text (`KeyExchangeProblem`)",
         "`Problem.exchange` holds `ret_code` only (omitted when the exchange sent none)",
-        "A `502` or `503` of an import is never stored for replay",
+        "A `429`, `502` or `503` of an import is never stored for replay",
         "`404` is an account that does not exist",
         "(`idempotency_key_reuse`) or still being processed (`idempotency_in_flight`)",
         "a request that conflicts with stored state (`conflict`)",
@@ -157,6 +162,12 @@ _PINNED: dict[tuple[str, ...], tuple[str, ...]] = {
         "An import whose signed call got an error answer that is not a refusal of the key",
         "`exchange` holds `ret_code` only (`KeyExchangeProblem`)",
     ),
+    ("components", "responses", "KeyRateLimited"): (
+        "An import whose signed call was rate limited, or refused locally while the IP-level hold",
+        "`retry_after_seconds` and `Retry-After` say when to send it again",
+        "`exchange` holds `ret_code` only (`KeyExchangeProblem`), absent for the local refusal",
+        "Never stored for replay",
+    ),
     ("components", "responses", "KeyServiceUnavailable"): (
         "An import that could not be made or recorded, so nothing was stored (`createApiKey`)",
         "`exchange` holds `ret_code` only (`KeyExchangeProblem`)",
@@ -186,7 +197,7 @@ _PINNED: dict[tuple[str, ...], tuple[str, ...]] = {
         "`exchange` with the type of `Problem`, which also admits `ret_msg`, `endpoint` and",
         "so a body built from that class type-checks while it leaks exchange text",
         "A route builds `exchange` from the return code alone, and its provider test validates",
-        "the real `502` and `503` against this schema",
+        "the real `429`, `502` and `503` against this schema",
     ),
     ("components", "schemas", "ApiKeyWithVerification"): (
         "The `201` of `createApiKey`: the key is stored only if every check passes",
@@ -609,7 +620,8 @@ def test_no_failure_example_echoes_exchange_text_or_key_material(
 
 
 @pytest.mark.parametrize(
-    ("operation_id", "status"), [failure for failure in _FAILURES if failure[1] in (502, 503)]
+    ("operation_id", "status"),
+    [f for f in _FAILURES if f[1] in (502, 503) or f == ("createApiKey", 429)],
 )
 def test_the_exchange_facing_failures_are_the_exchange_text_free_problem(
     operation_id: str, status: int
@@ -625,6 +637,23 @@ def test_the_exchange_text_free_problem_answers_the_import_and_the_test() -> Non
 def test_a_502_example_holds_the_return_code_alone() -> None:
     answer = _by_name("createApiKey", 502)["signatureRefused"]
     assert answer["exchange"] == {"ret_code": 10004}
+
+
+def test_the_429_example_is_the_registered_rate_limit_with_its_retry_time() -> None:
+    answer = _by_name("createApiKey", 429)["ipHold"]
+    assert (answer["code"], answer["title"]) == (
+        "exchange_rate_limited", _REGISTRY["exchange_rate_limited"]["title"],
+    )  # fmt: skip
+    assert answer["retry_after_seconds"] >= 1 and answer["exchange"] == {"ret_code": 10018}
+
+
+def test_the_clock_drift_502_names_its_reason_and_the_measured_offset() -> None:
+    answer = _by_name("createApiKey", 502)["clockOutOfSync"]
+    assert (answer["reason"], answer["clock_offset_ms"]) == ("clock_drift", 6000)
+    assert answer["exchange"] == {"ret_code": 10002} and "host clock" in answer["detail"]
+    pointer = next(p for case, p, _ in _EXCHANGE_ANSWERS if case.endswith("clockOutOfSync"))
+    with pytest.raises(SchemaError):  # the reason is a closed value, never exchange text
+        validate_example(pointer, {**answer, "reason": _LEAKING})
 
 
 _LEAKS = ["ret_msg", "endpoint", "request_id"]

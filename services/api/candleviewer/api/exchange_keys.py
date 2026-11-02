@@ -76,6 +76,8 @@ from candleviewer.accounts.exposure_gate import Proceed, Refuse, gate
 from candleviewer.accounts.flatten import Flattener, NoFlatten
 from candleviewer.accounts.key_age import KeyRotationPolicy
 from candleviewer.accounts.key_import import (
+    CLOCK_REASON,
+    RATE_LIMITED,
     Importer,
     KeyImport,
     KeyImported,
@@ -126,6 +128,7 @@ _STATUS: Final = {
     "store_unavailable": 503, "audit_unavailable": 503, "not_implemented": 501,
     "unauthenticated": 401, "idempotency_key_reuse": 409, "idempotency_in_flight": 409,
     "rate_limited": 429, "open_exposure": 409, "exposure_unknown": 409,
+    "exchange_rate_limited": 429,
 }  # fmt: skip
 #: The answers kept for replay; nothing else is (`createApiKey`, Other statuses).
 _REPLAYED: Final = frozenset({201, 404, 409, 422})
@@ -203,6 +206,8 @@ def verification(result: VerificationResult, egress_ip: str | None) -> dict[str,
         shown["probe_ret_code"] = result.probe_ret_code
     if result.clock_offset_ms is not None:
         shown["clock_offset_ms"] = result.clock_offset_ms
+    if result.new_key_restriction_lifts_at is not None:
+        shown["new_key_restriction_lifts_at"] = result.new_key_restriction_lifts_at.isoformat()
     return shown
 
 
@@ -227,7 +232,14 @@ def _refused(exc: AccountsError, egress_ip: str | None) -> JSONResponse:
         extra["verification"] = verification(exc.result, egress_ip)
     if exc.ret_code is not None:
         extra["exchange"] = {"ret_code": exc.ret_code}
-    return _problem(exc.code, exc.detail, **extra)
+    retry_s = None
+    if exc.code == RATE_LIMITED:  # a hold's wait, or a short one when none is known
+        retry_s = exc.retry_after_s or _RETRY_AFTER_S
+    elif exc.reason == CLOCK_REASON:  # the cause and, once measured, the offset (#5284)
+        extra["reason"] = exc.reason
+        if exc.clock_offset_ms is not None:
+            extra["clock_offset_ms"] = exc.clock_offset_ms
+    return _problem(exc.code, exc.detail, retry_s=retry_s, **extra)
 
 
 class _TestBody(BaseModel):

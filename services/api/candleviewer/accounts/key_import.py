@@ -28,6 +28,7 @@ C-3.2, C-3.4); `key_import_wiring` binds its ports. For the acting Owner (SR-E27
 from __future__ import annotations
 
 import asyncio
+import math
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -68,6 +69,7 @@ IO_TIMEOUT_S: Final = 5.0
 CONFLICT, NOT_FOUND, FORBIDDEN, INVALID = "conflict", "not_found", "forbidden", "validation_failed"
 STORE, AUDIT = "store_unavailable", "audit_unavailable"
 NO_ANSWER, ERROR_ANSWER = "exchange_unavailable", "exchange_error"
+RATE_LIMITED = "exchange_rate_limited"
 #: No verdict because the exchange gave no answer, or none in time (`createApiKey`, No verdict).
 _UNANSWERED: Final = frozenset({"transport_error", "timeout", "probe_slow", "probe_clock_step"})
 #: Refusals of the request itself (`denied`); every other failure is an outage (`failure`).
@@ -77,7 +79,16 @@ _NO_VERDICT: Final = {
     NO_ANSWER: "The exchange gave no answer, so the key could not be verified; nothing was stored.",
     ERROR_ANSWER: "The exchange refused the signed call, so the key could not be verified; "
     "nothing was stored.",
+    RATE_LIMITED: "The exchange is limiting requests, so the key could not be verified; "
+    "nothing was stored. Send the import again after the time shown.",
 }
+#: The closed reasons a no-verdict names (`KeyProbeError`): a rate limit and a clock outside the
+#: receive window, the two a user can act on (#5283, #5284). Never exchange text.
+RATE_LIMITED_REASON, CLOCK_REASON = "rate_limited", "clock_drift"
+_CLOCK_DETAIL: Final = (
+    "The exchange refused the signed call because the host clock is out of sync{offset}. "
+    "Synchronise the host clock (NTP) and import again; nothing was stored."
+)
 
 #: The check M2 runs while it holds the pair, given the candidate's calls and the id M2 minted for
 #: it: the verified snapshot to store on a pass, `None` on a refusal.
@@ -92,16 +103,26 @@ def _log() -> Any:
 class KeyImportFailed(AccountsError):
     """An import that stored no usable key, by its answer's problem code. `result` is a refused
     key's verdict, `errors` the `(field, rule, message)` its `422` names and `ret_code` the
-    exchange's return code of a call without a verdict, when it sent one."""
+    exchange's return code of a call without a verdict, when it sent one. For a call without a
+    verdict, `reason` is the closed `KeyProbeError` name where the user can act on it
+    (`rate_limited`, `clock_drift`), `retry_after_s` the whole seconds a rate limit asks the
+    caller to wait and `clock_offset_ms` the host's measured offset, when measured."""
 
     def __init__(
         self, code: str, detail: str, *, result: VerificationResult | None = None,
         errors: tuple[tuple[str, str, str], ...] = (), ret_code: int | None = None,
         transient: bool = False,  # a refusal that clears by itself: the route never replays it
+        reason: str | None = None, retry_after_s: int | None = None,
+        clock_offset_ms: int | None = None,
     ) -> None:  # fmt: skip
         super().__init__(code)
         self.code, self.detail, self.result = code, detail, result
         self.errors, self.ret_code, self.transient = errors, ret_code, transient
+        self.reason, self.retry_after_s, self.clock_offset_ms = (
+            reason,
+            retry_after_s,
+            clock_offset_ms,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +188,28 @@ def problem_code(exc: AccountsError) -> str:
     return FORBIDDEN if isinstance(exc, AccountScopeDeniedError) else STORE
 
 
+def _no_verdict(exc: VerificationInconclusive) -> KeyImportFailed:
+    """The answer of a call without a verdict. A rate limit is `429` with its wait, rounded up to
+    whole seconds (at least 1; unknown stays `None`, the route picks); a clock refusal stays an
+    error answer that names the clock, the measured offset when there is one, and the fix."""
+    reason = str(exc)
+    if reason == RATE_LIMITED_REASON:
+        wait = None if exc.retry_after_s is None else max(1, math.ceil(exc.retry_after_s))
+        return KeyImportFailed(
+            RATE_LIMITED, _NO_VERDICT[RATE_LIMITED], ret_code=exc.ret_code, reason=reason,
+            retry_after_s=wait,
+        )  # fmt: skip
+    if reason == CLOCK_REASON:
+        offset = exc.clock_offset_ms
+        named = "" if offset is None else f" (measured offset {offset} ms)"
+        return KeyImportFailed(
+            ERROR_ANSWER, _CLOCK_DETAIL.format(offset=named), ret_code=exc.ret_code,
+            reason=reason, clock_offset_ms=offset,
+        )  # fmt: skip
+    answer = NO_ANSWER if reason in _UNANSWERED else ERROR_ANSWER
+    return KeyImportFailed(answer, _NO_VERDICT[answer], ret_code=exc.ret_code)
+
+
 def _codes(result: VerificationResult) -> dict[str, object]:
     return {"failures": [f.rule.value for f in result.failures], "warnings": list(result.warnings)}
 
@@ -221,6 +264,8 @@ class KeyImport:
         if isinstance(exc, AccountsError):
             code = problem_code(exc)
             after: dict[str, object] = {"code": code} if result is None else _codes(result)
+            if isinstance(exc, KeyImportFailed) and exc.reason is not None:
+                after["reason"] = exc.reason  # a closed `KeyProbeError` name, never exchange text
         else:  # a defect, M2's store-time refusal or a cancellation: its class, never its text
             code = "cancelled" if isinstance(exc, asyncio.CancelledError) else "error"
             after = {"code": code, "error": type(exc).__name__}
@@ -290,8 +335,7 @@ class KeyImport:
                 account, label, request, check, actor, activate
             )
         except VerificationInconclusive as exc:  # no verdict: nothing stored
-            answer = NO_ANSWER if str(exc) in _UNANSWERED else ERROR_ANSWER
-            raise KeyImportFailed(answer, _NO_VERDICT[answer], ret_code=exc.ret_code) from None
+            raise _no_verdict(exc) from None
         if stored is None:  # a verdict refused the key: nothing stored
             result = seen[-1]
             errors = tuple(("api_key", f.rule.value, f.message) for f in result.failures)

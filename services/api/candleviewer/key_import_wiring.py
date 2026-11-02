@@ -118,7 +118,7 @@ class CandidateVerifier:
                 self._env, signer, uid=account.exchange_uid, recv_window_ms=self._window,
                 clock_offset_ms=self._offset,
             )  # fmt: skip
-            calls = JudgedCalls(self._exchange, venue)
+            calls = JudgedCalls(self._exchange, venue, self._offset)
             try:
                 return await check(calls, signer.key_id)
             finally:

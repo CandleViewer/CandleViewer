@@ -83,9 +83,14 @@ class KeyVerifyingExchange(Protocol):
 
 
 @asynccontextmanager
-async def _judging(exchange: KeyVerifyingExchange) -> AsyncIterator[None]:
+async def _judging(
+    exchange: KeyVerifyingExchange, clock_offset_ms: Callable[[], int] | None = None
+) -> AsyncIterator[None]:
     """One signed call within the adapter's per-call bound, its errors in the M13 verdict
-    vocabulary."""
+    vocabulary. A rate limit keeps `retry_after_s` as the error carries it: the adapter's
+    `KeyVerificationCalls._held` is its only source and sets the IP-wide hold only, so no
+    per-UID wait passes here (no oracle; #5283). A clock refusal keeps the host's measured
+    offset (`clock_offset_ms` reads 0 until measured, which is left out)."""
     try:
         async with asyncio.timeout(exchange.key_call_timeout_s):
             yield
@@ -95,8 +100,13 @@ async def _judging(exchange: KeyVerifyingExchange) -> AsyncIterator[None]:
         verdict = exchange.key_refusal(error)
         if verdict is not None:
             raise KeyRefused(Refusal(verdict[0]), verdict[1]) from None
+        reason = exchange.key_probe_error(error)
+        measured = clock_offset_ms() if clock_offset_ms is not None else 0
         raise VerificationInconclusive(
-            exchange.key_probe_error(error), error.exchange_ret_code
+            reason,
+            error.exchange_ret_code,
+            retry_after_s=error.retry_after_s if reason == "rate_limited" else None,
+            clock_offset_ms=measured or None if reason == "clock_drift" else None,
         ) from None
     except Exception as error:  # cancellation propagates
         if exchange.key_borrow_refused(error):
@@ -107,15 +117,18 @@ async def _judging(exchange: KeyVerifyingExchange) -> AsyncIterator[None]:
 class JudgedCalls:
     """One key's adapter calls, each error translated into the M13 verdict vocabulary."""
 
-    def __init__(self, exchange: KeyVerifyingExchange, calls: VenueCalls) -> None:
-        self._exchange, self._calls = exchange, calls
+    def __init__(
+        self, exchange: KeyVerifyingExchange, calls: VenueCalls,
+        clock_offset_ms: Callable[[], int] | None = None,
+    ) -> None:  # fmt: skip
+        self._exchange, self._calls, self._offset = exchange, calls, clock_offset_ms
 
     async def key_info(self) -> KeyFacts:
-        async with _judging(self._exchange):
+        async with _judging(self._exchange, self._offset):
             return await self._calls.key_info()
 
     async def probe(self) -> ProbeFacts:
-        async with _judging(self._exchange):
+        async with _judging(self._exchange, self._offset):
             return await self._calls.probe()
 
     async def aclose(self) -> None:
@@ -141,7 +154,7 @@ def wire_key_selfcheck(
         venue = exchange.key_verification_calls(
             env, key_id, uid=uid, recv_window_ms=window, clock_offset_ms=offset_ms
         )
-        return JudgedCalls(exchange, venue)
+        return JudgedCalls(exchange, venue, offset_ms)
 
     relational = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "key-selfcheck")
     selfcheck = KeySelfCheck(

@@ -123,8 +123,9 @@ def load(name: str) -> dict[str, Any]:
 
 
 def facts(**result: Any) -> ApiKeyFacts:
+    """The fixture key, older than the 48 h new-key restriction unless a case says otherwise."""
     body = copy.deepcopy(load("key_info_trade.json"))
-    body["result"].update(result)
+    body["result"].update({"createdAt": "2026-09-01T00:00:00Z"} | result)
     return parse_key_info(body)
 
 

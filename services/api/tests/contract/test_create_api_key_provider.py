@@ -170,8 +170,10 @@ async def test_ac1_ac9_a_compliant_key_is_201_with_its_verification_and_clock_sk
     assert (body["key"]["status"], body["key"]["rotation_state"]) == ("active", "ok")
     shown = body["verification"]
     assert 11_000 < shown.pop("clock_offset_ms") < 13_000 and shown.pop("warnings") == [
-        "clock_skew"
-    ]
+        "new_key_restricted",
+        "clock_skew",
+    ]  # the fixture key was created an hour before the rig's clock (#5285)
+    assert shown.pop("new_key_restriction_lifts_at") == "2026-10-17T08:00:00+00:00"
     held = {group: rights for group, rights in shown.pop("permissions").items() if rights}
     assert shown == {
         "passed": True, "uid": "1000001", "uta": True, "read_only": False, "probe_ret_code": 0,
@@ -227,6 +229,44 @@ async def test_an_error_answer_is_a_502_with_its_return_code_alone_and_is_never_
     again = await route.post()  # the same key and body: a first submission, verified again
     assert again.status_code == 502 and "idempotency-replayed" not in again.headers
     assert [r.url.path for r in route.world.sent] == [KEY_INFO_PATH, KEY_INFO_PATH]
+
+
+async def test_a_rate_limit_is_a_429_with_its_wait_and_the_hold_after_it_sends_nothing() -> None:
+    """#5283 (E27-Q01 row 34): the 10018 and the IP hold it starts are `429 exchange_rate_limited`
+    with `retry_after_seconds` and `Retry-After`; neither is kept for replay, the hold sends
+    nothing, and the body holds the return code alone (none for the local refusal)."""
+    route = await booted(swap={KEY_INFO_PATH: "rest/error_10018.json"})
+    limited = await route.post()
+    first = answer(limited, 429, "KeyExchangeProblem")
+    assert (first["code"], first["exchange"]) == ("exchange_rate_limited", {"ret_code": 10018})
+    assert first["retry_after_seconds"] >= 590  # the 600 s IP hold
+    assert limited.headers["retry-after"] == str(first["retry_after_seconds"])
+    held = await route.post()  # the same key and body: a first submission, refused locally
+    second = answer(held, 429, "KeyExchangeProblem")
+    assert "exchange" not in second and "idempotency-replayed" not in held.headers
+    assert 1 <= second["retry_after_seconds"] <= first["retry_after_seconds"]
+    assert held.headers["retry-after"] == str(second["retry_after_seconds"])
+    assert [r.url.path for r in route.world.sent] == [KEY_INFO_PATH]  # the hold sent nothing
+    assert route.world.m2.rows == {}
+
+
+@pytest.mark.parametrize(
+    ("measured", "shown"), [(-6_000, -6_000), (0, None)], ids=["measured", "unmeasured"]
+)
+async def test_a_clock_refusal_is_a_502_naming_the_clock_the_offset_and_the_fix(
+    measured: int, shown: int | None
+) -> None:
+    """#5284 (E27-Q01 row 17, DC-31): still `exchange_error` with the return code alone, now with
+    the closed `reason`, the host's measured offset (omitted while unmeasured) and the fix."""
+    route = await booted(swap={PROBE_PATH: "rest/error_10002.json"}, measured_ms=measured)
+    response = await route.post()
+    body = answer(response, 502, "KeyExchangeProblem")
+    assert (body["code"], body["reason"], body["exchange"]) == (
+        "exchange_error", "clock_drift", {"ret_code": 10002},
+    )  # fmt: skip
+    assert body.get("clock_offset_ms") == shown and "retry-after" not in response.headers
+    assert "host clock is out of sync" in body["detail"] and "Synchronise" in body["detail"]
+    assert route.world.m2.rows == {}
 
 
 async def test_no_answer_in_time_is_a_503_with_retry_after_and_no_exchange_member() -> None:

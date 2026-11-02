@@ -145,6 +145,7 @@ COMPLIANT = ApiKeyFacts(
     permissions=TRADE_ONLY,
     ip_whitelist=(EGRESS_IP,),
     expires_at=NOW + 365 * DAY,
+    created_at=NOW - 30 * DAY,  # the pack's `key_created_offset_ms` default
 )
 
 
@@ -198,7 +199,7 @@ KEY_INFO: dict[str, ApiKeyFacts | type[ExchangeError]] = {
     "expiring_13d": facts(expires_at=NOW + 13 * DAY),
     "expiring_15d": facts(expires_at=NOW + 15 * DAY),
     "expired_key": facts(expires_at=NOW - DAY),
-    "new_key_48h": COMPLIANT,
+    "new_key_48h": facts(created_at=NOW - timedelta(hours=2)),
     "bybit_5xx": TransportError,
     "rate_limited_10018": RateLimitError,
     "ws_auth_timeout": COMPLIANT,
@@ -268,7 +269,7 @@ PIPELINE: dict[str, Verdict] = {
     "expiring_13d": ("passed_with_warning", ("key_expiring_soon",)),
     "expiring_15d": PASSED,
     "expired_key": refused(Rule.KEY_EXPIRED),
-    "new_key_48h": PASSED,
+    "new_key_48h": ("passed_with_warning", ("new_key_restricted",)),
     "bybit_5xx": INCONCLUSIVE,
     "rate_limited_10018": INCONCLUSIVE,
     "ws_auth_timeout": PASSED,
@@ -285,12 +286,7 @@ PIPELINE: dict[str, Verdict] = {
 
 #: Plan verdicts the shipped pipeline does not reach yet: (recorded verdict, why). Pinned, so the
 #: day the pipeline produces them this test fails and the entry is removed.
-PLAN_AHEAD_OF_PIPELINE: dict[str, tuple[str, str]] = {
-    "new_key_48h": (
-        "passed_with_warning",
-        "verification.py has no 48 h new-key warning code (plan TC-130, DC-23)",
-    ),
-}
+PLAN_AHEAD_OF_PIPELINE: dict[str, tuple[str, str]] = {}  # none: #5285 closed the last one
 
 #: E27 threat model AC-15 (test plan section 2): these six inputs are each refused, with five rules
 #: (TC-103a, TC-103d, TC-104, TC-106a, TC-106b, TC-108).

@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from candleviewer.exchange.base.errors import (
     AuthError,
     ExchangeError,
+    RateBudgetExceededError,
     RateLimitError,
     TransportError,
     UnknownStateError,
@@ -82,6 +83,8 @@ class ApiKeyFacts:
     permissions: Mapping[str, object]
     ip_whitelist: tuple[str, ...]
     expires_at: datetime | None
+    #: The exchange's `createdAt` of the key; `None` when the reply holds none or none readable.
+    created_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +106,7 @@ class _KeyInfo(BaseModel):
     ips: list[str] = []
     expiredAt: datetime | None = None
     deadlineDay: Any = None
+    createdAt: datetime | None = None
 
     @field_validator("userID", mode="before")
     @classmethod
@@ -111,6 +115,19 @@ class _KeyInfo(BaseModel):
         if not isinstance(text, str) or not (text.isascii() and text.isdigit()):
             raise ValueError("userID must be ASCII digits")
         return text
+
+    @field_validator("createdAt", mode="before")
+    @classmethod
+    def _created(cls, value: object) -> datetime | None:
+        """Advisory only (#5285): a missing, non-text, naive or unreadable time is `None`, never a
+        malformed reply, so it can only withhold a warning."""
+        if not isinstance(value, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        return parsed if parsed.utcoffset() is not None else None
 
     @field_validator("expiredAt", mode="before")
     @classmethod
@@ -140,6 +157,7 @@ def parse_key_info(body: Mapping[str, Any]) -> ApiKeyFacts:
         permissions=info.permissions,
         ip_whitelist=tuple(info.ips),
         expires_at=None if info.deadlineDay == _NO_DEADLINE else info.expiredAt,
+        created_at=info.createdAt,
     )
 
 
@@ -175,7 +193,7 @@ def probe_error(error: ExchangeError) -> str:
     code = error.exchange_ret_code
     if code is not None:
         return _PROBE_CODES.get(code, "exchange_unknown")
-    if isinstance(error, RateLimitError):
+    if isinstance(error, RateLimitError | RateBudgetExceededError):
         return "rate_limited"
     if isinstance(error, TransportError):
         cause = error.__cause__

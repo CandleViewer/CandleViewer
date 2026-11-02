@@ -39,7 +39,7 @@ import re
 import unicodedata
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from ipaddress import IPv4Address, IPv6Address, ip_network
 from typing import Final, Protocol
@@ -88,6 +88,7 @@ class VerificationWarning(StrEnum):
 
     KEY_EXPIRING_SOON = "key_expiring_soon"
     CLOCK_SKEW = "clock_skew"
+    NEW_KEY_RESTRICTED = "new_key_restricted"
 
 
 class Refusal(StrEnum):
@@ -110,11 +111,18 @@ class KeyRefused(AccountsError):
 class VerificationInconclusive(AccountsError):
     """No verdict: refused signature, clock drift, rate limit, outage, a slow or unreadable reply.
     Import answers 502 (503 with no answer) and stores nothing; a self-check keeps no fresh result
-    (SR-E27-18). `ret_code` is the venue's return code when it sent one, never its text."""
+    (SR-E27-18). `ret_code` is the venue's return code when it sent one, never its text.
+    `retry_after_s` is the wait a rate limit names (its IP-level hold's remaining time) and
+    `clock_offset_ms` the host's measured clock offset for a clock refusal; each is `None` when
+    unknown (#5283, #5284)."""
 
-    def __init__(self, code: str, ret_code: int | None = None) -> None:
+    def __init__(
+        self, code: str, ret_code: int | None = None, *, retry_after_s: float | None = None,
+        clock_offset_ms: int | None = None,
+    ) -> None:  # fmt: skip
         super().__init__(code)
         self.ret_code = ret_code
+        self.retry_after_s, self.clock_offset_ms = retry_after_s, clock_offset_ms
 
 
 class KeyFacts(Protocol):
@@ -132,6 +140,8 @@ class KeyFacts(Protocol):
     def ip_whitelist(self) -> Sequence[str]: ...
     @property
     def expires_at(self) -> datetime | None: ...
+    @property
+    def created_at(self) -> datetime | None: ...
 
 
 class ProbeFacts(Protocol):
@@ -158,6 +168,9 @@ class VerificationPolicy:
     recv_window_ms: int = 5000
     #: 24-internal-schemas §14.2 item 9: warn above 500 ms; blocking stays with the clock guard.
     clock_warn_ms: int = 500
+    #: How long the exchange restricts a new key (DC-23, #5285): a key created less than this ago
+    #: is accepted with a warning, never refused.
+    new_key_restriction_hours: int = 48
 
 
 @dataclass(frozen=True)
@@ -189,6 +202,8 @@ class VerificationResult:
     read_only: bool = False
     can_trade: bool = False
     expires_at: datetime | None = None
+    #: With `NEW_KEY_RESTRICTED` only: the key's `createdAt` plus the restriction, tz-aware UTC.
+    new_key_restriction_lifts_at: datetime | None = None
 
 
 def _token(value: object) -> str | None:
@@ -406,10 +421,17 @@ async def verify(
     if expiry is not None and expiry <= now:
         failures.append(VerificationFailure(Rule.KEY_EXPIRED, "the key has expired"))
     soon = expiry is not None and now < expiry < now + timedelta(days=policy.expiry_warn_days)
+    warnings = (VerificationWarning.KEY_EXPIRING_SOON,) if soon else ()
+    lifts_at: datetime | None = None
+    if facts.created_at is not None:  # unknown or unreadable: no warning, never a failure
+        lifts = facts.created_at.astimezone(UTC) + timedelta(hours=policy.new_key_restriction_hours)
+        if now < lifts:
+            warnings, lifts_at = (*warnings, VerificationWarning.NEW_KEY_RESTRICTED), lifts
     base = replace(
         base,
         ip_whitelist_matches_egress=ip_failure is None,
-        warnings=(VerificationWarning.KEY_EXPIRING_SOON,) if soon else (),
+        warnings=warnings,
+        new_key_restriction_lifts_at=lifts_at,
     )
     if failures:
         return replace(base, failures=tuple(failures))

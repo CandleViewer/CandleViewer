@@ -75,9 +75,14 @@ def load(name: str) -> dict[str, Any]:
     return body
 
 
+#: The fixture key is created an hour before `NOW`, a new key; scenarios not about that start
+#: from a key older than the 48 h restriction (#5285).
+SETTLED = "2026-09-01T00:00:00Z"
+
+
 def facts(**result: Any) -> ApiKeyFacts:
     body = copy.deepcopy(load("key_info_trade.json"))
-    body["result"].update(result)
+    body["result"].update({"createdAt": SETTLED} | result)
     return parse_key_info(body)
 
 
@@ -630,4 +635,77 @@ def test_result_has_no_credential_field() -> None:
         "passed", "uid", "uta", "permissions", "withdraw_enabled", "ip_whitelist",
         "ip_whitelist_matches_egress", "clock_offset_ms", "key_info_ret_code", "probe_ret_code",
         "warnings", "failures", "read_only", "can_trade", "expires_at",
+        "new_key_restriction_lifts_at",
     }  # fmt: skip
+
+
+# --- A key the exchange created less than 48 h ago (#5285, DC-23, E27-TC-130) ------------------
+
+_LIFTS = datetime(2026, 10, 17, 8, tzinfo=UTC)  # the fixture key's `createdAt` plus 48 h
+
+
+def created(age: timedelta) -> str:
+    return (NOW - age).isoformat()
+
+
+async def test_a_key_created_an_hour_ago_passes_with_the_new_key_warning_and_its_lift_time() -> (
+    None
+):
+    body = copy.deepcopy(load("key_info_trade.json"))  # `createdAt` 2026-10-15T08:00:00Z as shipped
+    result, _ = await run(parse_key_info(body))
+    assert (result.passed, result.warnings) == (True, (VerificationWarning.NEW_KEY_RESTRICTED,))
+    assert result.new_key_restriction_lifts_at == _LIFTS
+    assert result.new_key_restriction_lifts_at.utcoffset() == timedelta(0)  # tz-aware UTC
+
+
+@pytest.mark.parametrize(
+    ("age", "warns"),
+    [
+        (timedelta(0), True),
+        (timedelta(hours=47, minutes=59, seconds=59), True),
+        (timedelta(hours=48), False),  # at createdAt + 48 h the restriction is gone
+        (timedelta(hours=48, seconds=1), False),
+        (timedelta(days=30), False),
+    ],
+    ids=["new", "47h59m59s", "48h", "48h1s", "30d"],
+)
+async def test_the_new_key_warning_ends_at_exactly_48_hours(age: timedelta, warns: bool) -> None:
+    result, _ = await run(facts(createdAt=created(age)))
+    assert result.passed
+    assert (VerificationWarning.NEW_KEY_RESTRICTED in result.warnings) is warns
+    assert result.new_key_restriction_lifts_at == (
+        NOW - age + timedelta(hours=48) if warns else None
+    )
+
+
+@pytest.mark.parametrize("raw", [None, "", "yesterday"], ids=["null", "empty", "unreadable"])
+async def test_a_missing_or_unreadable_creation_time_is_no_warning_and_no_failure(raw: Any) -> None:
+    result, _ = await run(facts(createdAt=raw))
+    assert (result.passed, result.warnings, result.new_key_restriction_lifts_at) == (True, (), None)
+
+
+async def test_the_new_key_warning_never_fails_or_relaxes_a_check() -> None:
+    result, _ = await run(facts(createdAt=created(timedelta(hours=1)), ips=["198.51.100.9"]))
+    assert not result.passed  # the warning rides along; it never adds or removes a failure
+    assert result.warnings == (VerificationWarning.NEW_KEY_RESTRICTED,)
+    assert [f.rule for f in result.failures] == [Rule.IP_WHITELIST_MISMATCH]
+
+
+async def test_the_new_key_warning_sits_with_the_other_warnings() -> None:
+    soon = (NOW + timedelta(days=1)).isoformat()
+    result, _ = await run(
+        facts(createdAt=created(timedelta(hours=1)), expiredAt=soon), probe=skewed(12_000)
+    )
+    assert set(result.warnings) == {
+        VerificationWarning.KEY_EXPIRING_SOON, VerificationWarning.CLOCK_SKEW,
+        VerificationWarning.NEW_KEY_RESTRICTED,
+    }  # fmt: skip
+
+
+def test_a_no_verdict_carries_the_retry_time_and_the_measured_offset_when_given() -> None:
+    plain = VerificationInconclusive("timeout")
+    held = VerificationInconclusive(
+        "rate_limited", 10018, retry_after_s=612.5, clock_offset_ms=-6000
+    )
+    assert (plain.retry_after_s, plain.clock_offset_ms) == (None, None)
+    assert (held.ret_code, held.retry_after_s, held.clock_offset_ms) == (10018, 612.5, -6000)

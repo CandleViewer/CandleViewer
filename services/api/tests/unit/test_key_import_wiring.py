@@ -42,6 +42,7 @@ from candleviewer.storage.repositories.accounts import AccountsStoreConflictErro
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+from tests._corpus import rest
 from tests.unit.accounts.test_key_import import ACCT, OWNER, World, key_row
 from tests.unit.accounts.test_key_selfcheck import EGRESS, NOW
 from tests.unit.credentials_m2._service_fakes import _ctx, _Src, _svc
@@ -57,11 +58,13 @@ class Rig(World):
     The accounts store lists and promotes the rows M2 stored."""
 
     def __init__(
-        self, *, skew_ms: int = 0, swap: dict[str, str] | None = None, withdraw: bool = False
-    ) -> None:
+        self, *, skew_ms: int = 0, swap: dict[str, str] | None = None, withdraw: bool = False,
+        measured_ms: int = 0,
+    ) -> None:  # fmt: skip
         super().__init__()
         self.sent: list[httpx.Request] = []
         self.skew_ms, self.swap, self.withdraw = skew_ms, swap or {}, withdraw
+        self.measured_ms = measured_ms  # the guard's offset; 0 until it is measured
         self.m2, self.m2_audit = InMemoryCredentialStore(), AuditLog()
         self.capability: Any = None  # M2's capability, once `boot` minted it
         self.adapter = ExchangeBybitService(rest_transport=httpx.MockTransport(self.answer))
@@ -69,7 +72,10 @@ class Rig(World):
     def answer(self, request: httpx.Request) -> httpx.Response:
         self.sent.append(request)
         name = self.swap.get(request.url.path, REPLIES[request.url.path])
-        body = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+        if name.startswith("rest/"):  # a recorded reply of the shared corpus
+            body = rest(name)
+        else:
+            body = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
         if name == "key_info_trade.json" and self.withdraw:
             body["result"]["permissions"]["Wallet"] = ["Withdraw"]
         if name == "wallet_balance.json":  # the exchange's clock, ahead of the host by the skew
@@ -98,7 +104,7 @@ class Rig(World):
     def importer(self, keys: Any = None) -> KeyImport:
         verifier = wiring.CandidateVerifier(
             keys or self.capability, self.adapter, env="demo", recv_window_ms=5000,
-            clock_offset_ms=lambda: 0,
+            clock_offset_ms=lambda: self.measured_ms,
         )  # fmt: skip
         return KeyImport(
             AccountsRepository(self),  # type: ignore[arg-type]

@@ -24,11 +24,11 @@ on the host clock, so the offset the pipeline derives shows the skew.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Final
 from uuid import UUID
 
-from candleviewer.exchange.base.errors import RateLimitError
+from candleviewer.exchange.base.errors import RateBudgetExceededError, RateLimitError
 from candleviewer.exchange.bybit.config import SIGNED_REST_BASES, EndpointClass, RestClientConfig
 from candleviewer.exchange.bybit.key_info import (
     KEY_INFO_PATH,
@@ -89,10 +89,24 @@ class KeyVerificationCalls:
         if held > CALL_TIMEOUT_S:
             raise RateLimitError("an IP-level hold is in force", retry_after_s=held)
 
+    async def _held[T](self, call: Awaitable[T]) -> T:
+        """`call`, a rate limit of which says when to come back (#5283), only by the IP-wide hold:
+        a 10018, which has just started it, and a refusal under it carry its remaining
+        seconds. A limit with no hold in force (a per-UID or token-bucket wait) carries none: the
+        seconds of one account's limiter are never shown (no oracle)."""
+        try:
+            return await call
+        except (RateLimitError, RateBudgetExceededError) as error:
+            held = self._governor.ip_hold_remaining_s()
+            error.retry_after_s = held if held > 0.0 else None  # never a per-UID bucket's wait
+            raise
+
     async def key_info(self) -> ApiKeyFacts:
         self._refuse_under_ip_hold()
-        body = await self._client.signed_request(
-            "GET", KEY_INFO_PATH, endpoint_class=VERIFY_CLASS, lane=VERIFY_LANE
+        body = await self._held(
+            self._client.signed_request(
+                "GET", KEY_INFO_PATH, endpoint_class=VERIFY_CLASS, lane=VERIFY_LANE
+            )
         )
         return parse_key_info(body)
 
@@ -102,8 +116,14 @@ class KeyVerificationCalls:
         derived offset's error by half of it."""
         self._refuse_under_ip_hold()
         sent = self._now_ms()
-        body = await self._client.signed_request(
-            "GET", PROBE_PATH, params=_PROBE_PARAMS, endpoint_class=VERIFY_CLASS, lane=VERIFY_LANE
+        body = await self._held(
+            self._client.signed_request(
+                "GET",
+                PROBE_PATH,
+                params=_PROBE_PARAMS,
+                endpoint_class=VERIFY_CLASS,
+                lane=VERIFY_LANE,
+            )
         )
         return parse_probe(body, sent_at_ms=sent, received_at_ms=self._now_ms())
 

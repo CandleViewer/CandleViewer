@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -31,7 +32,7 @@ from candleviewer.accounts.verification import (
 from candleviewer.audit.actions import validate_action
 from candleviewer.audit.models import AuditEmission
 from candleviewer.audit.writer import AuditWriter
-from candleviewer.exchange.bybit.key_info import parse_probe
+from candleviewer.exchange.bybit.key_info import parse_key_info, parse_probe
 from candleviewer.observability.logging import reset_logging
 from candleviewer.observability.secret_type import Secret
 from candleviewer.secrets import WithdrawPermissionRejected
@@ -257,6 +258,20 @@ async def test_a_refused_key_is_a_policy_violation_naming_the_account_and_the_ow
     }  # fmt: skip
 
 
+async def test_a_pass_carries_the_new_key_warning_and_the_lift_time_of_the_fixture_key() -> None:
+    """#5285 (row 32): `createdAt` 2026-10-15T08:00Z, an hour before `NOW`: one warning, the key
+    still `active`, and the audit record names the warning (a closed code, no new action)."""
+    body = load("key_info_trade.json")
+    w = World(info=parse_key_info(body))
+    imported = await w.run()
+    assert imported.key.status == "active" and imported.verification.passed
+    assert [str(x) for x in imported.verification.warnings] == ["new_key_restricted"]
+    assert imported.verification.new_key_restriction_lifts_at == datetime(
+        2026, 10, 17, 8, tzinfo=UTC
+    )  # fmt: skip
+    assert w.audit()[0]["after_state"]["warnings"] == ["new_key_restricted"]
+
+
 async def test_a_pass_carries_the_clock_skew_it_measured() -> None:
     body = load("wallet_balance.json")
     w = World(probe=parse_probe(body, sent_at_ms=T - 12_050, received_at_ms=T - 11_950))
@@ -275,7 +290,6 @@ _SLOW = parse_probe(load("wallet_balance.json"), sent_at_ms=T, received_at_ms=T 
         (VerificationInconclusive("timeout"), None, "exchange_unavailable", None),
         (None, _SLOW, "exchange_unavailable", None),  # slower than the receive window
         (VerificationInconclusive("auth_error", 10004), None, "exchange_error", 10004),
-        (VerificationInconclusive("rate_limited", 10006), None, "exchange_error", 10006),
     ],
 )
 async def test_a_call_without_a_verdict_stores_nothing_and_keeps_only_the_return_code(
@@ -287,6 +301,75 @@ async def test_a_call_without_a_verdict_stores_nothing_and_keeps_only_the_return
     assert (failed.value.code, failed.value.ret_code) == (answer, ret_code)
     assert failed.value.result is None and "store" not in w.kinds()
     assert w.kinds()[-1] == ("audit", "failure") and w.audit()[0]["after_state"] == {"code": answer}
+
+
+@pytest.mark.parametrize(
+    ("raised", "retry_s"),
+    [
+        (VerificationInconclusive("rate_limited", 10018, retry_after_s=612.3), 613),  # rounded up
+        (
+            VerificationInconclusive("rate_limited", None, retry_after_s=0.2),
+            1,
+        ),  # the hold's refusal
+        (VerificationInconclusive("rate_limited", 10006), None),  # no hint: the route picks
+    ],
+    ids=["10018", "hold", "unhinted"],
+)
+async def test_a_rate_limit_is_a_429_with_its_retry_time_and_stores_nothing(
+    raised: VerificationInconclusive, retry_s: int | None
+) -> None:
+    """#5283 (E27-Q01 row 34): a limited call and the hold that follows are `exchange_rate_limited`
+    (`429`), never the `502`; the code is the exchange's own, absent for the local refusal."""
+    w = World(info=raised)
+    with pytest.raises(KeyImportFailed) as failed:
+        await w.run()
+    exc = failed.value
+    assert (exc.code, exc.ret_code, exc.retry_after_s, exc.reason) == (
+        "exchange_rate_limited", raised.ret_code, retry_s, "rate_limited",
+    )  # fmt: skip
+    assert exc.result is None and "store" not in w.kinds() and not exc.transient
+    assert w.kinds()[-1] == ("audit", "failure")
+    assert w.audit()[0]["after_state"] == {
+        "code": "exchange_rate_limited",
+        "reason": "rate_limited",
+    }
+
+
+@pytest.mark.parametrize(
+    ("offset", "named"),
+    [
+        (6000, " (measured offset 6000 ms)"),
+        (-6000, " (measured offset -6000 ms)"),
+        (None, ""),
+    ],
+    ids=["ahead", "behind", "unmeasured"],
+)
+async def test_a_clock_refusal_stays_a_502_but_names_the_clock_and_the_fix(
+    offset: int | None, named: str
+) -> None:
+    """#5284 (row 17, DC-31): still `exchange_error` with the venue's code, now with the closed
+    reason, the measured offset (omitted when unmeasured) and the fix; nothing is stored."""
+    w = World(info=VerificationInconclusive("clock_drift", 10002, clock_offset_ms=offset))
+    with pytest.raises(KeyImportFailed) as failed:
+        await w.run()
+    exc = failed.value
+    assert (exc.code, exc.ret_code, exc.reason, exc.clock_offset_ms) == (
+        "exchange_error", 10002, "clock_drift", offset,
+    )  # fmt: skip
+    assert exc.detail == (
+        f"The exchange refused the signed call because the host clock is out of sync{named}. "
+        "Synchronise the host clock (NTP) and import again; nothing was stored."
+    )
+    assert exc.result is None and "store" not in w.kinds()
+    assert w.audit()[0]["after_state"] == {"code": "exchange_error", "reason": "clock_drift"}
+
+
+async def test_another_refused_signature_keeps_the_generic_502_without_a_reason() -> None:
+    w = World(info=VerificationInconclusive("auth_error", 10004))
+    with pytest.raises(KeyImportFailed) as failed:
+        await w.run()
+    assert (failed.value.reason, failed.value.clock_offset_ms) == (None, None)
+    assert failed.value.detail.startswith("The exchange refused the signed call, so the key")
 
 
 @pytest.mark.parametrize(

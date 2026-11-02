@@ -21,6 +21,7 @@ import respx
 from candleviewer.exchange.base.errors import (
     AuthError,
     ClockDriftError,
+    RateBudgetExceededError,
     RateLimitError,
     TransportError,
 )
@@ -294,3 +295,42 @@ async def test_the_service_builds_every_verification_client_on_one_capped_govern
     assert asked(venue) == [(HOSTS["testnet"], KEY_INFO_PATH)]
     with pytest.raises(RuntimeError, match="no signing capability"):
         ExchangeBybitService().key_verification_calls("demo", OTHER_KEY, uid=UID, recv_window_ms=1)
+
+
+@pytest.mark.parametrize("call", ["key_info", "probe"])
+async def test_a_10018_carries_the_ip_hold_it_just_started_and_a_per_uid_limit_none(
+    venue: respx.MockRouter, call: str
+) -> None:
+    """#5283: the wait a rate limit tells the caller is the IP-wide hold, never a per-UID bucket's
+    (no oracle on one account's limiter): the 10018's error has none of its own and takes the
+    hold's remaining seconds."""
+    calls, governor = build("demo")
+    venue.get(f"https://{HOSTS['demo']}{KEY_INFO_PATH}").respond(json=rest("rest/error_10018.json"))
+    venue.get(f"https://{HOSTS['demo']}{PROBE_PATH}").respond(json=rest("rest/error_10018.json"))
+    with pytest.raises(RateLimitError) as limited:
+        await getattr(calls, call)()
+    await calls.aclose()
+    assert limited.value.exchange_ret_code == 10018
+    assert limited.value.retry_after_s == pytest.approx(governor.ip_hold_remaining_s(), abs=1.0)
+    assert limited.value.retry_after_s is not None and limited.value.retry_after_s >= 590.0
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        RateLimitError("per-UID limit", retry_after_s=7.0, exchange_ret_code=10006),
+        RateBudgetExceededError("no token in time", retry_after_s=3.0),
+    ],
+    ids=["10006_hinted", "token_bucket"],
+)
+async def test_a_limit_with_no_ip_hold_in_force_carries_no_wait(error: Exception) -> None:
+    calls, governor = build("demo")
+
+    async def refuse() -> None:
+        raise error
+
+    with pytest.raises(type(error)) as caught:
+        await calls._held(refuse())
+    await calls.aclose()
+    assert governor.ip_hold_remaining_s() == 0.0
+    assert getattr(caught.value, "retry_after_s", 0.0) is None  # the bucket's wait is not shown
