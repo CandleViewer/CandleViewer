@@ -156,7 +156,7 @@ RULED = (
     "for E37-S05. BQ-9 — E09-D09 governs (T2 writes, admin absent); every registry command "
     'listed, "unbound" as the word; A-rows to E10-S05. BQ-10 — deltas on E10-D03\'s chassis '
     "only; the grouping C-row. BQ-11 — keep the shipped inert-binding mechanism; the PROPOSED "
-    "copy as an A-row. `Refs #1308` + `Partial:` until #5387 merges, then `Closes #1308`."
+    "copy as an A-row. `Refs #1308` + `Partial:` until #5387 merges, then the closing keyword for this ticket goes in the boards PR."
 )
 
 PHASES = ("Select", "Adjust", "Commit", "Cancel")
