@@ -37,7 +37,9 @@ changes. A record carries the profile's `name`, `binding_count` and `is_active`,
 activation's before state the `previous_active_id`, never a binding (24 Sec.15.5). Logs carry
 ids, counts, versions, the operation and a refusal's code and rule, never a name or a binding.
 Each `409` and `422` counts once in `hotkey_profile_refusals_total{code,rule}`: a `409` by its
-rule, a `422` by the rule of its first `errors[]` item, a schema refusal's as `schema`.
+rule, a `422` by the rule of its first `errors[]` item. A rule outside the closed set of its code
+(a `422` schema refusal's) counts as that code's fixed label, `binding_conflict` or `schema`, so
+no rule can add a series.
 """
 
 from __future__ import annotations
@@ -99,7 +101,8 @@ _NO_VERSION: Final = 0
 #: The detail of the `503 store_unavailable` for a profile store not wired or not serving.
 STORE_UNAVAILABLE_DETAIL: Final = "The hotkey profile store is unavailable."
 #: `hotkey_profile_refusals_total{code,rule}`'s closed label sets: a `409 conflict` by its rule,
-#: a `422 validation_failed` by its first item's rule, any schema rule as `schema`.
+#: a `422 validation_failed` by its first item's rule. A rule outside its code's set counts as that
+#: code's fixed label (`binding_conflict`, `schema`), so no rule can add a series.
 CONFLICT_RULES: Final = ("binding_conflict", "limit_reached", "name_taken", "profile_active")
 INVALID_RULES: Final = (
     "unknown_action", "duplicate_action", "scope_mismatch", "params_not_allowed", "invalid_keys",
@@ -307,6 +310,8 @@ def make_hotkey_profiles_router(
         rule = errors[0].get("rule", "")  # never empty: a refusal names at least one
         if code == "validation_failed" and rule not in INVALID_RULES:
             rule = "schema"
+        elif code == "conflict" and rule not in CONFLICT_RULES:
+            rule = "binding_conflict"  # a rule the router does not know adds no series
         if refusals is not None:
             refusals.labels(code, rule).inc()
         _log().info("hotkey_profile_refused", operation=operation, code=code, rule=rule)

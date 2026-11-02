@@ -11,7 +11,7 @@ import uuid
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 import httpx
 import pytest
@@ -25,7 +25,7 @@ from candleviewer.api.hotkey_profiles import (
     REFUSAL_SERIES,
     make_hotkey_profiles_router,
 )
-from candleviewer.api.hotkey_rules import VOCABULARY
+from candleviewer.api.hotkey_rules import VOCABULARY, HotkeyBindingConflict, HotkeyBindingsInvalid
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.storage.errors import WriteAheadTimeout
@@ -667,6 +667,34 @@ def test_each_409_and_422_is_counted_once_by_code_and_rule(env: Env) -> None:
     }  # fmt: skip
     assert set(CONFLICT_RULES) | set(INVALID_RULES) >= {r for _, r in env.refusals.counts}
     assert REFUSAL_SERIES == len(CONFLICT_RULES) + len(INVALID_RULES) == 15
+
+
+def test_a_rule_outside_the_closed_set_of_its_code_adds_no_series(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `409` or a `422` whose rule the router does not know counts as the fixed label of its
+    code, `binding_conflict` or `schema`, so the counter never holds a series outside the closed
+    sets that its catalogue `max_series` counts; the answer still names the rule it was given."""
+    errors = [{"field": "bindings[0].keys", "rule": "no_such_rule", "message": "m"}]
+
+    def conflicting(_raw: bytes) -> NoReturn:
+        raise HotkeyBindingConflict(errors)
+
+    def invalid(_raw: bytes) -> NoReturn:
+        raise HotkeyBindingsInvalid(errors)
+
+    sent: list[httpx.Response] = []
+    for judge in (conflicting, invalid):
+        monkeypatch.setattr("candleviewer.api.hotkey_profiles.judge_body", judge)
+        sent.append(env.c.post("/settings/hotkeys", json=SCALPING))
+    assert [(r.status_code, _rules(r)) for r in sent] == [
+        (409, [("bindings[0].keys", "no_such_rule")]),
+        (422, [("bindings[0].keys", "no_such_rule")]),
+    ]
+    assert env.refusals.counts == {
+        ("conflict", "binding_conflict"): 1, ("validation_failed", "schema"): 1,
+    }  # fmt: skip
+    assert {r for _, r in env.refusals.counts} <= set(CONFLICT_RULES) | set(INVALID_RULES)
 
 
 def test_logs_carry_ids_counts_and_codes_never_a_name_or_a_binding(env: Env) -> None:
