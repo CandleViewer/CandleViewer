@@ -4,8 +4,11 @@ SQL or echo, and every 200 within the caps. Two lanes:
 
 - PR lane: the dictionary (`_corpus.cases`), then a derandomised Hypothesis property over the
   whole parameter product (300 examples).
-- Nightly fuzz: not wired yet (PR-2). The same property at 5 000 examples carries E08-X02's
-  `fuzz` marker, which the default lane deselects; no workflow selects this file yet.
+- Nightly fuzz: the same property at 5 000 examples carries E08-X02's `fuzz` marker, which the
+  default lane deselects. `fuzz-nightly.yml` runs it in a step of its own, timed from that count
+  (`scripts/tests/test_fuzz_nightly_budget.py`); derandomised, so a red night replays from the
+  commit, and the step prints no failing query. Deviation from BQ-8, recorded and not resized: the
+  5 000 draws are across both routes, not 5 000 per route.
 
 The world is E12-Q04's (`_market_world`): recorded data, in process, no socket (C-13.5). Its
 client hands a server error back as the 500 it is (`raise_server_exceptions=False`), so the

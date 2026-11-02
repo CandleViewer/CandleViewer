@@ -138,6 +138,15 @@ proposal for E12-Q05 and E12-T05 to confirm against real tape density, not a set
 `tick` floor of 100: on an illiquid symbol 100 prints can span hours, so a floor that is right for BTCUSDT may
 make a legitimate setting unreachable (or, set lower, reopen BR-29); it must be validated per liquidity tier first.
 
+**Rejection cost (SR-E12-01; E12-X02 BQ-5), interim, ruled 2026-11-01, owner ratification on #2701:** a refused
+`tick:1` request adds at most **2 ms** of CPU (median `process_time`) over an unauthenticated refusal, in
+process, and makes no storage call (no recording-start read, no print count, no bar read). Held by `test_caps_tick_1_refusal_costs_under_the_cpu_budget` and the call-set spies of the E12-X02 suite
+(`docs/security/abuse-cases/e12-bars.md`).
+
+**Timestamp grammar (E12-X02 F6, accepted 2026-11-01):** `from` and `to` are read by `datetime.fromisoformat`,
+which takes a superset of RFC 3339 (date-only, basic format, week dates). The superset is harmless: each form
+names one instant, the window caps apply to it, and it is pinned so a stricter parser is a reviewed change.
+
 ## 4. STRIDE table
 
 Risk = L x I (Low/Med/High) is the inherent risk; the Residual column is the risk after the stated control
@@ -337,6 +346,8 @@ the module, not literals.
 | AC-13 | QuestDB outage with builders live; feed gap and clock skew on time bars                                     | BR-34, BR-35 | E12-Q06          |
 | AC-14 | Backfill under 10018 responses next to live order flow                                                      | BR-33        | E12-Q06          |
 
+E12-X02 (#452) executed the seeds it owns: `docs/security/abuse-cases/e12-bars.md` (cases, verdicts, findings).
+
 ## 10. Observability signals
 
 Anything modelled as a threat with no detection signal generates an instrumentation ticket (§11); the signals
@@ -483,6 +494,27 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
     25 ms or less for 20 symbols, and the index-write cost measured on the ingestion soak. REST `/market/bars` reads are bounded by the window caps, the estimate gate and the
     2 s timeout, not by rows. The read's cost is measured in D2-G3; `MAX_TAIL_SCAN_ROWS` is re-sized on the
     target host with the D2-M4 bench.
+  - E12-X02's open findings (#452; `docs/security/abuse-cases/e12-bars.md`, its Findings and Follow-ups), carried
+    here so they outlive #452:
+    - F2: the klines half is fixed in #5348 (a deadline on every klines store read, answered 503; exact from/to
+      time). The bars half (the recording-start read; driver errors on the bar read) is open. Owner: #3287.
+    - F3 (BR-36): no per-user rate limit and no single-flight on the two REST routes. Owner: #528 (E12-Q05), which
+      carries the nightly real-QuestDB contention leg and the k6 battery's CI run. Trigger: if budget #13 fails cross-session on real QuestDB → one security issue, contract-first fix.
+    - F4b: no alert rule on the bars rejection or rebuild rate; it must exclude `reason="unavailable"`.
+      Owner: the Security engineer, with infra-devops for the rule; trigger: filed when the filing freeze lifts, at the latest before the E12-X04 sign-off. #5348 does not fix it: it needs an alert rule with a runbook anchor and promtool tests.
+    - F8 (SR-E12-03): the `volume`/`delta` floor applied is 1, so 10 x `qty_step` is unreachable over the integer
+      wire grammar. Owner: the E12-T05 limits owner (SR-E12-03); trigger: the X01 §3 per-liquidity-tier review of the floors, or the filing freeze lifting, whichever comes first.
+    - F9 (BR-08, SR-E12-11), P2: a row withheld for a failed checksum leaves a silent gap in the REST page.
+      Owned row on #452: owner vw1, trigger: the next E12 bars fix PR, which sets `meta.coverage_holes` for the withheld range and flips the xfail.
+    - The ADR-0033 Decision 2 abuse cases (AC-05, AC-08, AC-11 `rebuild_id`). Owner: #535.
+    - The 10-minute k6 battery: built (`tests/load/k6/bars_abuse.js`), MANUAL / NOT RUN. Its CI run: owner #528
+      (E12-Q05).
+    - Follow-ups (the klines float time is fixed in #5348): one WARN per
+      unauthenticated refusal, to sample if F3's limiter slips; the E08-X02 long parser fuzz is not selected by
+      `fuzz-nightly.yml`. Owner: post-freeze filing.
+    - NOT COVERED: a `limit` outside 1..5000 is answered 422 but neither counted nor logged. Owned row on #452:
+      owner vw1, P2, trigger: the next E12 bars fix PR or an app-level validation handler, whichever lands
+      first; it counts and logs it and flips the xfails.
   - SR-E12-07's subscribe rate limit is built per connection (SR-193; #2293, built by #3301) and per user across a
     user's connections (#3476, K = 4), in each gateway process: a second one would keep its own (E17 model §10).
 - A High residual with no mitigation and no Owner acceptance blocks the E12 epic DoD (ticket acceptance
