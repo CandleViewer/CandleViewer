@@ -16,6 +16,7 @@ import {
 } from "./accountSignals";
 import { createPositionsStore, type PositionsStore, type Withdrawn } from "./positionsStore";
 import type { SaveFile } from "./exportFile";
+import type { OrdersDeps } from "./orders/wsOrders";
 import { startPositionsFeed, type PositionsFeed, type PositionsFeedOptions } from "./wsPositions";
 
 /** The client the feed reads: the app's active one, or a test's fake (`support/fakes.ts`). */
@@ -27,6 +28,8 @@ export interface PositionsDeps {
   /** The feed's seams: the REST API, timers, rAF, clocks and the performance marks. */
   readonly feed?: Omit<PositionsFeedOptions, "client" | "store" | "signals"> | undefined;
   readonly saveFile?: SaveFile | undefined;
+  /** The Working-orders tab's seams (E29-S02): its feed's, its writes and its clock. */
+  readonly orders?: OrdersDeps | undefined;
 }
 
 export interface PositionsSession {

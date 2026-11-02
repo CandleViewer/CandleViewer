@@ -661,16 +661,14 @@ export const D03_TEXT = {
 
 /**
  * PROPOSED words (#911 BQ-15, routed to E29-D03's copy owner through G-W3 and listed in the PR body
- * for the ledger row): the Working orders and Fills placeholders, which no deck or D02 line draws,
- * the words the panel composes where no design gives a string (a trade group's name and the
+ * for the ledger row): the Fills placeholder, which no deck or D02 line draws (E29-S02 replaced the
+ * Working orders one with its tab), the words the panel composes where no design gives a string (a trade group's name and the
  * positions with none, the crossing and value announcements, the export's file name), and the
  * environment words for a session D02 does not draw (TESTNET, the shell badge's PROPOSED word).
  * `filterEmptyOne` is filter-empty's singular, proposed as `blotter.ui.filter_empty#2`: the deck's
  * one form reads "No rows match 1 filters" for the commonest case, one Account chip.
  */
 export const PROPOSED_TEXT = {
-  workingOrdersTitle: "Working orders are not available yet",
-  workingOrdersCause: "Open orders across accounts will be listed here.",
   fillsTitle: "Fills are not available yet",
   fillsCause: "Fills across accounts will be listed here.",
   tradeGroupLabel: "Trade group …{stub}",

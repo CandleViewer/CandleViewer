@@ -1106,12 +1106,8 @@ describe("focus and teardown", () => {
 });
 
 describe("the five tabs (BQ-15)", () => {
+  // Working orders is its own tab since E29-S02 (`orders/orders.integration.test.tsx`)
   it.each([
-    [
-      "Working orders",
-      "Working orders are not available yet",
-      "Open orders across accounts will be listed here.",
-    ],
     ["Fills", "Fills are not available yet", "Fills across accounts will be listed here."],
     [
       "Trade groups",

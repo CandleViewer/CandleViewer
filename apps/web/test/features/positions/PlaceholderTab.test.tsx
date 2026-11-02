@@ -1,6 +1,7 @@
 /**
  * E29-S01 (#911, BQ-15) the placeholder tabs: CMP-026 with a level-2 title and one cause each; Trade
- * groups and Algos in the deck's and D02:166's words, Working orders and Fills PROPOSED (G-W3).
+ * groups and Algos in the deck's and D02:166's words, Fills PROPOSED (G-W3); Working orders is its
+ * own tab since E29-S02.
  */
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
@@ -12,7 +13,6 @@ import {
 
 describe("PlaceholderTab", () => {
   it.each<[PlaceholderTabId, string, string]>([
-    ["working_orders", PROPOSED_TEXT.workingOrdersTitle, PROPOSED_TEXT.workingOrdersCause],
     ["fills", PROPOSED_TEXT.fillsTitle, PROPOSED_TEXT.fillsCause],
     [
       "trade_groups",
@@ -33,7 +33,7 @@ describe("PlaceholderTab", () => {
 
   it("the PROPOSED titles follow the deck's pattern and are not deck strings", () => {
     const deck = Object.values(DECK).map((e) => e.string);
-    for (const text of [PROPOSED_TEXT.workingOrdersTitle, PROPOSED_TEXT.fillsTitle]) {
+    for (const text of [PROPOSED_TEXT.fillsTitle]) {
       expect(text).toMatch(/ are not available yet$/);
       expect(deck).not.toContain(text);
     }

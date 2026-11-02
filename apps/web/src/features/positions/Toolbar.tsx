@@ -10,8 +10,12 @@
  * stored chip of those kinds still shows and removes), Manager and Env (BQ-10, BQ-7), the selection
  * bar and "Close all in view…" (E29-S03, BQ-3), the Updates-paused chip (D01 D13 b's hold), and
  * "Always shown" for the mandatory columns, which stay out of the picker meanwhile (BQ-6).
+ *
+ * The Working-orders tab (E29-S02) passes `end`: the FilterBar keeps its place, and the tab's own
+ * controls (the selection bar, "Cancel all in view…") take the end's (D02 §4, §9.1). Group by, Columns
+ * and Export CSV are the Positions tab's until their orders forms are built.
  */
-import { useId, type JSX } from "react";
+import { useId, type JSX, type ReactNode } from "react";
 import {
   AccountMultiSelect,
   Button,
@@ -61,6 +65,8 @@ export interface ToolbarProps {
   readonly density?: Density | undefined;
   /** The "+ Filter" trigger's id: where focus goes when a state's own Clear filters leaves. */
   readonly addFilterId?: string | undefined;
+  /** The Working-orders tab's end controls, in place of Group by, Columns and Export CSV. */
+  readonly end?: ReactNode;
 }
 
 export function Toolbar({
@@ -74,6 +80,7 @@ export function Toolbar({
   onExport,
   density,
   addFilterId,
+  end,
 }: ToolbarProps): JSX.Element {
   const groupById = useId();
   const directory = new Map(accounts.map((a) => [a.id, a]));
@@ -83,19 +90,23 @@ export function Toolbar({
   return (
     <div className="cv-positions-toolbar" data-part="Toolbar">
       <div className="cv-positions-toolbar__start">
-        <span id={groupById} className="cv-positions-toolbar__label">
-          {D02_TEXT.groupBy.string}
-        </span>
-        <Select
-          aria-labelledby={groupById}
-          options={GROUP_OPTIONS}
-          value={groupBy}
-          onChange={(value) => {
-            const by = GROUP_OPTIONS.find((o) => o.value === value)?.value;
-            if (by !== undefined && by !== groupBy) onGroupBy(by);
-          }}
-          {...(density === undefined ? {} : { density })}
-        />
+        {end === undefined ? (
+          <>
+            <span id={groupById} className="cv-positions-toolbar__label">
+              {D02_TEXT.groupBy.string}
+            </span>
+            <Select
+              aria-labelledby={groupById}
+              options={GROUP_OPTIONS}
+              value={groupBy}
+              onChange={(value) => {
+                const by = GROUP_OPTIONS.find((o) => o.value === value)?.value;
+                if (by !== undefined && by !== groupBy) onGroupBy(by);
+              }}
+              {...(density === undefined ? {} : { density })}
+            />
+          </>
+        ) : null}
         <FilterBar
           filters={chips.map((chip) => ({
             id: `${chip.kind}:${chip.value}`,
@@ -135,26 +146,30 @@ export function Toolbar({
         />
       </div>
       <div className="cv-positions-toolbar__end">
-        <ColumnPicker
-          variant="menu"
-          label={D02_TEXT.columns.string}
-          columns={OPTIONAL_COLUMNS.map((id) => ({
-            id,
-            label: columnLabel(id),
-            visible: shown.has(id),
-          }))}
-          onChange={(id, visible) => {
-            const next = OPTIONAL_COLUMNS.filter((c) => (c === id ? visible : shown.has(c)));
-            onColumns(next);
-          }}
-        />
-        <Button
-          variant="secondary"
-          onClick={onExport}
-          {...(density === undefined ? {} : { density })}
-        >
-          {D02_TEXT.exportCsv.string}
-        </Button>
+        {end ?? (
+          <>
+            <ColumnPicker
+              variant="menu"
+              label={D02_TEXT.columns.string}
+              columns={OPTIONAL_COLUMNS.map((id) => ({
+                id,
+                label: columnLabel(id),
+                visible: shown.has(id),
+              }))}
+              onChange={(id, visible) => {
+                const next = OPTIONAL_COLUMNS.filter((c) => (c === id ? visible : shown.has(c)));
+                onColumns(next);
+              }}
+            />
+            <Button
+              variant="secondary"
+              onClick={onExport}
+              {...(density === undefined ? {} : { density })}
+            >
+              {D02_TEXT.exportCsv.string}
+            </Button>
+          </>
+        )}
       </div>
     </div>
   );

@@ -84,6 +84,23 @@ export const ORDER_TEXT = {
    * a feed state E09-D09 §3.1 registers, E29-D04:459 "no key"), drawn at E17-D01:197.
    */
   cannotReachServer: { string: "Cannot reach server", source: "E17-D01:197" },
+  /** D02 §6.1's column headers (D02:262–274), and §8.2's Cancel with its busy label (N-06). */
+  colAccount: { string: "Account", source: "D02:262" },
+  colSymbol: { string: "Symbol", source: "D02:262" },
+  colSide: { string: "Side", source: "D02:263" },
+  colType: { string: "Type", source: "D02:264" },
+  colQty: { string: "Qty", source: "D02:265" },
+  colFilled: { string: "Filled", source: "D02:266" },
+  colAvgFill: { string: "Avg fill (USDT)", source: "D02:267" },
+  colPrice: { string: "Price (USDT)", source: "D02:268" },
+  colTrigger: { string: "Trigger", source: "D02:269" },
+  colTif: { string: "TIF", source: "D02:270" },
+  colFlags: { string: "Flags", source: "D02:271" },
+  colAge: { string: "Age", source: "D02:272" },
+  colParent: { string: "Parent", source: "D02:273" },
+  colState: { string: "State", source: "D02:274" },
+  cancel: { string: "Cancel", source: "D02:345" },
+  cancelling: { string: "Cancelling…", source: "D02:345" },
 } as const satisfies Readonly<Record<string, CitedText>>;
 
 /** The Age column's units, as D02:272 writes "38 s", "4 m" and "1 h 12 m". */
@@ -306,6 +323,22 @@ export const PROPOSED = {
     "The bulk dialog's title once it becomes the result (D02 §8.3).",
   ),
   "blotter.ui.result.close": proposed("Close", "The result dialog's closing button."),
+  "blotter.ui.orders_empty": proposed(
+    "No working orders",
+    "S-03 on the Working-orders tab: the deck's `blotter.ui.empty` words the Positions tab.",
+  ),
+  "blotter.ui.orders_empty_cause": proposed(
+    "Orders you place on any account appear here.",
+    "S-03's cause on the Working-orders tab, on `blotter.ui.empty_cause`'s pattern.",
+  ),
+  "blotter.ui.col.select": proposed(
+    "Select",
+    "D02 §6.1 draws the select column with no header word; CMP-114 names its own Select.",
+  ),
+  "blotter.ui.col.actions": proposed(
+    "Actions",
+    "D02 §6.1 draws the actions column with no header word; CMP-114 names its own Actions.",
+  ),
 } as const satisfies Readonly<Record<string, ProposedEntry>>;
 
 export type ProposedKey = keyof typeof PROPOSED;

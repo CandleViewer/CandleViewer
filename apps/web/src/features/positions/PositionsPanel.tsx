@@ -1,8 +1,9 @@
 /**
  * SCR-063, the Positions & orders grid panel, on R-130 `/positions` (E29-S01 #911): the page's
  * heading, the panel's notices and the five tabs (E29-D02 §4, D-17), the Positions tab live
- * (`PositionsTab.tsx`) and the other four placeholders (BQ-15). The route tree mounts it lazily
- * (BQ-16), so none of this is in the first bundle.
+ * (`PositionsTab.tsx`), the Working-orders tab live (`orders/WorkingOrdersTab.tsx`, E29-S02) and the
+ * other three placeholders (BQ-15). The route tree mounts it lazily (BQ-16), so none of this is in
+ * the first bundle.
  *
  * - **The session** (`positionsSession.ts`): the feed, the positions store and the account signals,
  *   with the feed's announcements and the sort, live as long as the panel. CMP-042 mounts only the
@@ -18,8 +19,8 @@
  *   `live="off"` and never dismissible while it holds; and a read-only session's one panel-header
  *   notice (S-22, D02 §10.4) led by the `lock`: one `rbac.permission` line per write the session
  *   lacks, verbatim, each its own node, its id keyed by its permission (`noticeIdOf`), in the DOM at
- *   mount, for the gated controls to point at (`32-design-specs.md` G-T2.5). This PR mounts no
- *   write control (BQ-3), so none points yet.
+ *   mount, for the gated controls to point at (`32-design-specs.md` G-T2.5): the Working-orders
+ *   tab's cancels point at its `orders:write` line.
  * - **Announcements:** the panel's announcer (`usePanelAnnouncer`) writes to the shell's; the gated
  *   announcement of the atoms below (G-T2.3) is routed there too, as each screen owns its own
  *   (`ShellLayout`'s provider is a no-op).
@@ -60,6 +61,7 @@ import {
   usePanelState,
   type PanelTab,
 } from "./panelState";
+import { WorkingOrdersTab } from "./orders/WorkingOrdersTab";
 import { PlaceholderTab } from "./PlaceholderTab";
 import {
   usePositionsSession,
@@ -242,6 +244,22 @@ export function PositionsPanel({ deps }: PositionsPanelProps = {}): JSX.Element 
                       notices={notices}
                       saveFile={deps?.saveFile}
                       wall={deps?.feed?.wall}
+                    />
+                  );
+                }
+                if (shown === "working_orders") {
+                  return (
+                    <WorkingOrdersTab
+                      client={client}
+                      positions={session}
+                      announcer={announcer}
+                      notices={notices}
+                      permissionNoticeId={
+                        lines.some((l) => l.permission === "orders:write")
+                          ? noticeIdOf(noticeId, "orders:write")
+                          : undefined
+                      }
+                      deps={deps?.orders}
                     />
                   );
                 }

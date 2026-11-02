@@ -24,3 +24,22 @@ export function reportFiltered(chips: readonly FilterChip[]): void {
   const kinds: FilterKind[] = [...new Set(chips.map((c) => c.kind))].sort();
   report({ name: "blotter.filtered", chips: chips.length, kinds });
 }
+
+/**
+ * E29-S02's cancels (the ticket's Observability; PROPOSED property names, as above): a row's Cancel
+ * sent (`order.cancel_attempted`), and a bulk cancel confirmed (`blotter.cancel_all_invoked`) with
+ * its scope, its route and its counts. Never an order, an account or a figure; a T2 press emits
+ * nothing (D02 §10.4).
+ */
+export const reportCancelAttempted = (): void =>
+  report({ name: "order.cancel_attempted", via: "row" });
+
+export function reportCancelAllInvoked(detail: {
+  readonly scope: "selected" | "all_in_view";
+  readonly route: "per_row" | "cancel_all";
+  readonly orders: number;
+  readonly accounts: number;
+  readonly retry: boolean;
+}): void {
+  report({ name: "blotter.cancel_all_invoked", ...detail });
+}

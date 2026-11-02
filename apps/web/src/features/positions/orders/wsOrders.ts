@@ -39,7 +39,7 @@ import {
   type FeedTimers,
   type PerformanceLike,
 } from "../wsPositions";
-import { ordersApi, type OrdersApi } from "./api";
+import { ordersApi, type OrdersApi, type OrdersWrites } from "./api";
 import type { OrdersStore } from "./ordersStore";
 
 /** S-02's budget, the Positions tab's (#911 BQ-18): no first `snap` in it is "Could not load". */
@@ -67,6 +67,14 @@ export interface OrdersFeedOptions {
   readonly paneId?: string | undefined;
   /** The measures kept at most; defaults to `MAX_MEASURES`. */
   readonly maxMeasures?: number | undefined;
+}
+
+/** What a test injects into the Working-orders tab; the route passes none (the app's API and clocks). */
+export interface OrdersDeps {
+  readonly feed?: Omit<OrdersFeedOptions, "client" | "store"> | undefined;
+  readonly writes?: OrdersWrites | undefined;
+  /** Epoch ms for the Age column; defaults to `Date.now`. */
+  readonly wall?: (() => number) | undefined;
 }
 
 export interface OrdersFeed {

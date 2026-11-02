@@ -112,3 +112,69 @@
   display: inline;
   margin-inline-start: var(--space-inset-xs);
 }
+
+/*
+ * The Working-orders tab (E29-S02): CMP-049's treegrid drawn as CMP-114 draws its own. The select and
+ * actions columns name themselves to assistive technology only, and the box's own label stays
+ * rendered, so it still names the box while the column shows the box alone.
+ */
+.cv-orders[data-select] .cv-table__header:first-child .cv-table__label,
+.cv-orders[data-actions] .cv-table__header:last-child .cv-table__label,
+.cv-orders__select .cv-choice__label {
+  position: absolute;
+  inline-size: 0;
+  block-size: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.cv-orders__select {
+  text-align: center;
+}
+
+/* A section's and an account group's disclosure glyph before their words (the treegrid's ▸ / ▾). */
+.cv-orders__disclosure {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-inline-end: var(--space-inset-xs);
+}
+
+/* Side: the ▲ / ▼ glyph carries the hue, the word stays the text colour (D02 D-6). */
+.cv-orders__side[data-side="buy"] {
+  color: var(--color-buy-default);
+}
+
+.cv-orders__side[data-side="sell"] {
+  color: var(--color-sell-default);
+}
+
+/* The selection bar (D02 §8.3): "2 selected · Cancel selected · Clear selection". */
+.cv-orders__selection {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-inset-sm);
+}
+
+/* The bulk dialog's lists, which scroll with its body at 200 % (D02 §11.5's text-resize line). */
+.cv-orders-bulk {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-xs);
+}
+
+.cv-orders-bulk ul {
+  margin: 0;
+  padding-inline-start: var(--space-inset-md);
+}
+
+.cv-orders-bulk p {
+  margin: 0;
+}
+
+.cv-orders-bulk__footer {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-inset-sm);
+}
