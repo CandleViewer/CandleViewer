@@ -143,12 +143,13 @@ describe("rows 10–12: a topic's age and the server's word", () => {
     seconds(3); // 7 s since its last frame: past T1 (5 s)
     expect(chip()).toHaveAttribute("data-status", "stale");
     expect(chip()).toHaveTextContent("Stale 7 s");
-    expect(chip().getAttribute("aria-label")).toMatch(/^Connection: Stale 7/);
+    expect(chip()).toHaveAccessibleName("Connection: Stale 7 seconds, last data 13:42:05 UTC");
     expect(chip().style.background).toBe("var(--color-surface-raised)");
     seconds(7);
     expect(chip()).toHaveTextContent("Stale 14 s"); // the age at 1 Hz, never announced
     seconds(1); // 15 s: T2
     expect(chip()).toHaveTextContent("Stale 15 s");
+    expect(chip()).toHaveAccessibleName("Connection: Stale 15 seconds, last data 13:42:05 UTC");
     expect(chip().style.background).toBe("var(--color-status-warning-subtle)");
     const glyph = chip().querySelector<HTMLElement>("[data-glyph]");
     expect(glyph?.style.color).toBe("var(--color-status-warning-strong)");
