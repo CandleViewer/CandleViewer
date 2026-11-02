@@ -10,16 +10,18 @@
  *   The row is the model's (count, exposure, uPnL, rPnL today; never a size across symbols, D-15).
  * - **Environment words:** LIVE and DEMO (D02:238, :209); TESTNET is the shell badge's PROPOSED word.
  * - **State lines** (D02 §10.1): Loading and Could not load per account, an account's "No longer
- *   shown" line, and filter-empty's title, so the tab shows and the panel says the same words.
+ *   shown" line, filter-empty's title and a view's result in CMP-049's words, so the tab shows and
+ *   the panel says the same words.
  */
 import type { ReactNode } from "react";
-import type {
-  PositionMode,
-  PositionsGridGroup,
-  PositionsGridLiq,
-  PositionsGridTotals,
+import {
+  rowsWord,
+  type PositionMode,
+  type PositionsGridGroup,
+  type PositionsGridLiq,
+  type PositionsGridTotals,
 } from "@candleviewer/ui";
-import { bindDeck, bindKinds, D02_TEXT, PROPOSED_TEXT } from "./copy";
+import { bindDeck, bindKinds, D02_TEXT, DECK, PROPOSED_TEXT } from "./copy";
 import type { FilterChip } from "./model/filters";
 import type { GroupModel, TotalsModel } from "./model/grouping";
 import type { LiqReading } from "./model/liqTier";
@@ -200,3 +202,14 @@ export const filterEmptyTitle = (count: number): string =>
   count === 1
     ? PROPOSED_TEXT.filterEmptyOne
     : bindKinds("blotter.ui.filter_empty", { count: String(count) });
+
+/**
+ * A view's result in CMP-049's words (D04 §2.6; `15`:592): S-03's title for a book with no open
+ * position, S-04's for one the chips empty, else the rows in view (`rowsWord`).
+ */
+export const resultWords = (open: number, inView: number, chipCount: number): string =>
+  open === 0
+    ? DECK["blotter.ui.empty"].string
+    : inView === 0
+      ? filterEmptyTitle(chipCount)
+      : rowsWord(inView);

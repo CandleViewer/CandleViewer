@@ -131,10 +131,12 @@ function FeedAnnouncements({
   readonly announcer: PanelAnnouncer;
 }): null {
   const snap = usePositions(session.store, (s) => s);
+  const chips = usePanelState("chips");
   const accounts = useAccountSignals(session.signals, (s) => s.accounts);
   const shellEnv = useShellSelector((s) => s.environment);
   useFeedAnnouncements({
     snap,
+    chips,
     accounts,
     environment: shellEnv !== "unknown" ? shellEnv : (snap.accounts[0]?.environment ?? null),
     announcer,
