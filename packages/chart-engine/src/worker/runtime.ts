@@ -949,8 +949,17 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       const vp = inst.viewport;
       const first = Math.floor(vp.leftIndex);
       const last = Math.floor(vp.leftIndex + vp.plotWidth / vp.barSpacing);
+      const plot = vp.panes[0] ?? { plotTop: 0, plotHeight: 0 };
       for (let c = 0; c < cs.length; c += 1) {
-        (cs[c] as CandleSeries).frame(vp.barSpacing, inst.dpr, first, last); // u_geom, u_batch
+        // u_geom, u_batch; the seam spans the plot rect: top to top + height, CSS px
+        (cs[c] as CandleSeries).frame(
+          vp.barSpacing,
+          inst.dpr,
+          first,
+          last,
+          plot.plotTop,
+          plot.plotTop + plot.plotHeight,
+        );
       }
       const f = backend.submit(inst.builder.drawList, inst.builder.drawCount, width, height);
       // The R1 budget closes on the first complete frame after a restore (BQ-49).

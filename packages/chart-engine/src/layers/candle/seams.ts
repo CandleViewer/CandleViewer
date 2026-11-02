@@ -5,12 +5,12 @@
 // the ring's (head, mask). Entries stay sorted by logical index; a mutation rescans only its own
 // range (a store reallocation or a `replace`: everything). An unchanged list patches nothing.
 import type { VertexSource } from "../../scene/gpu-types.js";
-import type { BarStore } from "../../model/BarStore.js";
+import { BAR_FLAG, type BarStore } from "../../model/BarStore.js";
 import { type MutationRange, RangeSlot } from "../../model/counters.js";
 import { CANDLE_STRIDE, type RangePatchSink } from "./ring.js";
 
 /** `flags` bit 0 (24 §19.75): a coverage hole before this bar. */
-export const FLAG_GAP_BEFORE = 1;
+export const FLAG_GAP_BEFORE: number = BAR_FLAG.gapBefore;
 const MIN_CAPACITY = 16;
 
 export class SeamRing implements VertexSource {

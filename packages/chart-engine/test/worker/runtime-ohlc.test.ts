@@ -134,6 +134,29 @@ describe("the gap seam (BQ-8, BQ-12)", () => {
   });
 });
 
+describe("a theme switch (AC 7)", () => {
+  const flags = Uint8Array.from({ length: N }, (_, i) => (i === 30 ? 1 : 0));
+
+  it("OHLC bars and the seam: palette uniforms only, no buffer write, colours re-read", () => {
+    cmd({ k: "addSeries", series: 0, kind: "bars" });
+    bars(flags);
+    view(0, 40);
+    frame();
+    const writes = gl.writes.length;
+    const before = gl.draws.length;
+    const palettes = (): number[][] =>
+      gl.uniforms.filter((u) => u[0] === "u_palette") as number[][];
+    const seen = palettes().length;
+    cmd({ k: "setTheme", theme: { ...THEME, "color.candle.up": "#00ff00" } });
+    frame();
+    expect(gl.writes.length - writes).toBe(0);
+    expect(gl.draws.length - before).toBeGreaterThanOrEqual(3); // stem, ticks, seam still drawn
+    const fresh = palettes().slice(seen);
+    expect(fresh).toHaveLength(gl.draws.length - before); // every batch, the seam's too
+    expect(fresh.every((u) => u.slice(1, 5).join() === "0,1,0,1")).toBe(true);
+  });
+});
+
 describe("dataState (BQ-9)", () => {
   const background = (): boolean | undefined => rt.graph(1)?.get("main/background")?.visible;
 
