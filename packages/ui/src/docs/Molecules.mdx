@@ -140,6 +140,33 @@ roles and names.
 | link         | link                 | its words: time (UTC), actor, action label and code, subject, outcome, severity | The fields are " · " apart in plain text, read as written. No hash, IP or `detail` is shown.    |
 | glyph        | none (`aria-hidden`) | —                                                                               | The octagon (error, critical) or the triangle (warning); the severity word carries the meaning. |
 
+### CopyableCodeBlock (CMP-068, a focusable scroll region)
+
+| Keys            | Action                                                                                    |
+| --------------- | ----------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab | The region, then its Copy: two stops, in that order.                                      |
+| Arrows, PgUp/Dn | On the focused region, the browser scrolls it (both ways: the text never wraps).          |
+| Enter / Space   | On Copy, copies the text exactly; CMP-033 says "Copied" once. The region takes no action. |
+
+| Element | Role                        | Name                             | Notes                                                                               |
+| ------- | --------------------------- | -------------------------------- | ----------------------------------------------------------------------------------- |
+| region  | region (`<pre tabindex=0>`) | `label`, e.g. "Raw record"       | The text as given, never parsed or interpreted as markup; `data-language` names it. |
+| Copy    | button (CMP-033)            | `copyLabel`, else "Copy {label}" | After the region. Its status is the block's only voice.                             |
+
+### AuditActionTrigger (CMP-093, no pattern of its own: a marker line)
+
+| Keys | Action                                                                                                                 |
+| ---- | ---------------------------------------------------------------------------------------------------------------------- |
+| None | No stop of its own: the wrapped control keeps its keys. A gated control's press does nothing and says its reason once. |
+
+| Element | Role       | Name    | Notes                                                                                                                          |
+| ------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| control | its own    | its own | Enabled: `aria-describedby` gains the marker. Gated (T2): the reason alone, the lock leading its label, never `disabled`.      |
+| reason  | text (`p`) | —       | While gated, under the control (2a), unless the host's one notice carries it (`disabledReasonId`, or CMP-079's `notice` form). |
+| marker  | text (`p`) | —       | "Recorded in the audit log · {label} ({code})", or "Recorded · needs your confirmation — …"; always visible, never live.       |
+
+The component makes no request: the endpoint the control calls writes the audit record (`14` §0.5 item 8).
+
 ### SystemHealthTile (CMP-178, a CMP-050 region tile, no pattern of its own)
 
 | Keys            | Action                                                                                                                    |

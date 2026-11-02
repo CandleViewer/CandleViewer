@@ -78,16 +78,17 @@ describe("CopyableCodeBlock (CMP-068)", () => {
   });
 
   it("caps the region at the host's maxHeight through a custom property, and sets none without one", async () => {
-    const capped = await mount(
-      <CopyableCodeBlock code={RAW} language="json" label="Raw record" maxHeight="12rem" />,
+    const host = await mount(
+      <>
+        <CopyableCodeBlock code={RAW} language="json" label="Raw record" maxHeight="12rem" />
+        <CopyableCodeBlock code={RAW} language="json" label="Raw export" />
+        <CopyableCodeBlock code={RAW} language="json" label="Raw sample" maxHeight=" " />
+      </>,
     );
-    const root = capped.querySelector<HTMLElement>('[data-cmp="CMP-068"]');
-    expect(root?.style.getPropertyValue("--cv-codeblock-max-height")).toBe("12rem");
-    document.body.replaceChildren();
-    const free = await mount(<CopyableCodeBlock code={RAW} language="json" label="Raw record" />);
-    expect(free.querySelector<HTMLElement>('[data-cmp="CMP-068"]')?.getAttribute("style")).toBe(
-      null,
-    );
+    const [capped, free, blank] = [...host.querySelectorAll<HTMLElement>('[data-cmp="CMP-068"]')];
+    expect(capped?.style.getPropertyValue("--cv-codeblock-max-height")).toBe("12rem");
+    expect(free?.getAttribute("style")).toBe(null);
+    expect(blank?.getAttribute("style")).toBe(null);
   });
 
   it("never interprets the code: markup in it stays text", async () => {
