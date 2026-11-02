@@ -526,6 +526,36 @@ def field_text(cat: str, cmp_: str, fname: str) -> str | None:
     return None
 
 
+def spec_entry(spec: str, cid: str, name: str) -> list[str]:
+    """§9's bullets for a new entry in the catalogue's form ("**Field**:"), plus its Design line."""
+    m = re.search(
+        rf"^### 9\.(\d) DS-[A-C] {re.escape(name)} \({cid}, PROPOSED\)\n\n(.*?)\n\n",
+        spec,
+        re.DOTALL | re.MULTILINE,
+    )
+    if not m:
+        return []
+    out = [re.sub(r"^- \*\*([^*]+):\*\* ", r"- **\1**: ", ln) for ln in m.group(2).split("\n")]
+    design = (
+        f"- **Design (DS spec):** [E28-D03.md](../design/E28/E28-D03.md) §9.{m.group(1)} "
+        "(E28-D03; owner approval pending; the id allocated at PR 2)"
+    )
+    return [*out, design]
+
+
+def new_entry(cat: str, cid: str) -> list[str]:
+    lines = cat.splitlines()
+    i = next((k for k, ln in enumerate(lines) if ln.startswith(f"### {cid} ")), None)
+    if i is None:
+        return []
+    out = []
+    for ln in lines[i + 2 :]:
+        if not ln.strip() or ln.startswith("#"):
+            break
+        out.append(ln)
+    return out
+
+
 def g_a15(t: Texts, p: list[str]) -> dict[str, Any]:
     """The appended `15` A-rows: Old verbatim at the base, New pending (PR 1) or applied (PR 2)."""
     done: list[str] = []
@@ -553,9 +583,15 @@ def g_a15(t: Texts, p: list[str]) -> dict[str, Any]:
     s14 = section(t.spec, "## 14. ", "## 15. ")
     for ln in s14.splitlines():
         m = re.match(r"^\|\s*(A-\d+)\s*\|\s*new (CMP-\d+) (\w+)\s*\|", ln)
-        if m:  # a new entry: its heading present at HEAD once applied
+        if m:  # a new entry: its heading present at HEAD once applied, its text §9's
             have = f"### {m.group(2)} {m.group(3)} " in t.catalogue
             (done if have else todo).append(m.group(1))
+            if have and new_entry(t.catalogue, m.group(2)) != spec_entry(
+                t.spec, m.group(2), m.group(3)
+            ):
+                p.append(
+                    f"[I] {m.group(1)}: {m.group(2)} in `15` is not §9's entry (modulo the colon form)"
+                )
     if done and todo:
         p.append(f"[I] `15` A-rows: applied {done}, pending {todo} (a mix)")
     return {"a15": len(done) + len(todo), "mode": "applied" if done and not todo else "pending"}
@@ -692,7 +728,21 @@ def drop_cite_91(t: Texts) -> Texts:
         raise SystemExit("self-test: no §9.1")
     i = m.start()
     j = t.spec.index("\n### ", i + 1)
-    return t._replace(spec=t.spec[:i] + t.spec[i:j].replace("§6.1", "§6") + t.spec[j:])
+    t = t._replace(spec=t.spec[:i] + t.spec[i:j].replace("§6.1", "§6") + t.spec[j:])
+    if "### CMP-254 " in t.catalogue:  # once applied, the `15` entry moves with §9.1
+        k = t.catalogue.index("### CMP-254 ")
+        e = t.catalogue.index("\n### ", k + 1)
+        cat = t.catalogue[:k] + t.catalogue[k:e].replace("§6.1", "§6") + t.catalogue[e:]
+        t = t._replace(catalogue=cat)
+    return t
+
+
+def drop_tests_b(t: Texts) -> Texts:
+    """DS-B loses its Tests field, in §9.2 and, once applied, in its `15` entry."""
+    t = sub("spec", "- **Tests:** unit (never", "- unit (never")(t)
+    if "- **Tests**: unit (never" in t.catalogue:
+        t = sub("catalogue", "- **Tests**: unit (never", "- unit (never")(t)
+    return t
 
 
 def apply_one_15(t: Texts) -> Texts:
@@ -738,7 +788,7 @@ MUTATIONS: list[tuple[str, Callable[[Texts], Texts]]] = [
         lambda t: t._replace(changed=(*t.changed, "docs/plan/05-accessibility-standard.md")),
     ),
     ("D: a checklist item reworded", sub("spec", "search/filter", "search")),
-    ("E: a contribution loses its Tests", sub("spec", "- **Tests:** unit (never", "- unit (never")),
+    ("E: a contribution loses its Tests", drop_tests_b),
     ("F: one pointer line applied early (A-13, the last in `14`)", apply_last),
     (
         "H: the T2 statement loses G-T2.5",
@@ -755,6 +805,14 @@ MUTATIONS: list[tuple[str, Callable[[Texts], Texts]]] = [
         sub("spec", '"`title?` · `actions?: ReactNode`', '"`title` · `actions?: ReactNode`'),
     ),
     ("I: one `15` A-row applied early", apply_one_15),
+    (
+        "I: a new entry in `15` drifts from §9 (CMP-255 Tests)",
+        sub(
+            "catalogue",
+            "- **Tests**: unit (never counts unknown as ready), visual, axe.",
+            "- **Tests**: unit (never counts unknown as ready), visual.",
+        ),
+    ),
     (
         "J: a new string reworded where it is used",
         sub("spec", "the example needs this account's equity.", "the example needs the equity."),

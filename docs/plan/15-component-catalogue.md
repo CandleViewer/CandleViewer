@@ -3231,9 +3231,9 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Purpose**: one account × symbol permission in SCR-133's grid, stating its state by glyph and word.
 - **Props**: `state: "allowed" | "blocked" | "notAllowed"` · `viaAllSymbols?: boolean` ("(all)") · `openPosition?: boolean` ("(pos)") · `changed?: boolean` · `account: string` · `symbol: string` · `readOnly?: boolean` · `onToggle` · `onMenu`.
 - **Variants**: comfortable (32 × 32 cell, the word shown); compact (24 × 24 cell, a 12 px glyph, the word in the accessible name and shown on hover or focus).
-- **States**: allowed, blocked, not allowed; × default, hover (`color.surface.hover` under the cell), focus-visible (`color.focus.ring`), changed (the 2 px `color.border.selected` start edge), read-only (T2, stated once in §6.1, rendering 2a per G-T2.1c: CMP-079, `aria-disabled`, one panel notice every cell points at).
+- **States**: allowed, blocked, not allowed; × default, hover (`color.surface.hover` under the cell), focus-visible (`color.focus.ring`), changed (the 2 px `color.border.selected` start edge), read-only (T2, stated once in E28-D03 §6.1, rendering 2a per G-T2.1c: CMP-079, `aria-disabled`, one panel notice every cell points at).
 - **Tokens**: `color.action.primary.default`, `color.text.on-action`, `color.surface.raised`, `color.text.tertiary`, `color.status.danger.strong`, `color.text.primary`, `color.text.secondary`, `color.border.selected`, `color.focus.ring`, `color.surface.hover`, `radius.control`, `size.icon.md`, `size.icon.sm`, `size.row.comfortable`, `size.row.compact`, `type.ui.caption`.
-- **A11y**: a `gridcell` holding a checkbox named "{account}, {symbol}, {state}"; read-only as §6.1; `aria-checked` true only for allowed; "blocked" is not "unchecked" but a separate word in the name; Space toggles; the menu opens on Shift+F10 or the context-menu key; no colour-only meaning (P6–P9).
+- **A11y**: a `gridcell` holding a checkbox named "{account}, {symbol}, {state}"; read-only as E28-D03 §6.1; `aria-checked` true only for allowed; "blocked" is not "unchecked" but a separate word in the name; Space toggles; the menu opens on Shift+F10 or the context-menu key; no colour-only meaning (P6–P9).
 - **Storybook**: Allowed, Blocked, NotAllowed, ViaAllSymbols, OpenPosition, Changed, ReadOnly, Focus, Compact, Comfortable, HighContrast.
 - **Tests**: unit (the state-to-name mapping), visual (both densities, both themes), axe, the keyboard test (Space and the menu).
 - **Design (DS spec):** [E28-D03.md](../design/E28/E28-D03.md) §9.1 (E28-D03; owner approval pending; the id allocated at PR 2)
@@ -3243,12 +3243,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Purpose**: "{ready} of {total} ready" for a trade-group definition from the served `readiness`, with one segment per member.
 - **Props**: `ready: number` · `total: number` · `members: { label: string; state: "ready" | "notReady" | "unknown" | "disabled"; reasonCode?: string }[]`.
 - **Variants**: comfortable (the text, then segments 12 × 8 px with a `space.1` gap); compact (segments 8 × 6 px).
-- **States:**
-  - ready (a `color.status.success.strong` filled segment);
-  - not ready (hollow, a 1 px `color.status.warning.strong` outline);
-  - unknown (hollow, a 1 px `color.text.tertiary` outline, the `help` glyph at the strip's end);
-  - disabled (not drawn, not counted, as served);
-  - loading (the text "Checking readiness", no segments).
+- **States**: ready (a `color.status.success.strong` filled segment); not ready (hollow, a 1 px `color.status.warning.strong` outline); unknown (hollow, a 1 px `color.text.tertiary` outline, the `help` glyph at the strip's end); disabled (not drawn, not counted, as served); loading (the text "Checking readiness", no segments).
 - **Tokens**: `color.status.success.strong`, `color.status.warning.strong`, `color.text.tertiary`, `color.text.primary`, `type.ui.body`, `type.num.sm`, `radius.xs`, `space.1`.
 - **A11y**: the text is the accessible name ("2 of 3 ready"); the segments are `aria-hidden`; the per-member words are in the expanded table, never only in the strip; not a live region (readiness changes announce in the host's status, once).
 - **Storybook**: AllReady, SomeNotReady, StateUnknown, MemberDisabled, Loading, Compact, Comfortable, HighContrast.
