@@ -759,6 +759,15 @@ def test_up_refuses_an_existing_run_dir_without_reading_it(tmp_path: Path) -> No
     assert host.calls() == [] and sorted(path.name for path in run_dir.iterdir()) == ["stack.env"]
 
 
+#: `ENV_READ_BOUND`: the longest `stack.env` the reader takes whole (the test below pins it).
+BOUND: Final = 65536
+
+
+def _ending_at_the_bound(line: bytes) -> bytes:
+    """Lines of `x`, then `line`, so that `line` starts a line and ends at byte `BOUND`."""
+    return b"x" * (BOUND - len(line) - 1) + b"\n" + line
+
+
 @pytest.mark.parametrize(
     ("content", "named"),
     [
@@ -782,6 +791,21 @@ def test_up_refuses_an_existing_run_dir_without_reading_it(tmp_path: Path) -> No
         (b"CV_ACCTFIX_LANE=lane-a\nCV_ACCTFIX_LANE=lane-b\n", False),
         (b"CV_ACCTFIX_LANE=lane-b\nCV_ACCTFIX_LANE=lane-a\n", False),
         (b"x" * 65536 + b"\nCV_ACCTFIX_LANE=lane-a\n", False),
+        pytest.param(
+            _ending_at_the_bound(b"CV_ACCTFIX_LANE=lane-a\n"),
+            True,
+            id="exactly-the-bound-ending-in-this-lane",
+        ),
+        pytest.param(
+            _ending_at_the_bound(b"CV_ACCTFIX_LANE=lane-a") + b"2\n",
+            False,
+            id="lane-line-straddles-the-bound",
+        ),
+        pytest.param(
+            b"CV_ACCTFIX_LANE=lane-a\n" + b"x" * 65536 + b"\nCV_ACCTFIX_LANE=lane-b\n",
+            False,
+            id="second-lane-line-past-the-bound",
+        ),
     ],
     ids=lambda value: value[:26].decode("ascii", "replace") if isinstance(value, bytes) else None,
 )
@@ -789,11 +813,26 @@ def test_names_lane_is_yes_only_when_the_one_lane_line_names_it(
     tmp_path: Path, content: bytes, named: bool
 ) -> None:
     """The reader's whole answer is a boolean: exactly one line starting `CV_ACCTFIX_LANE=`, equal
-    to this lane's, in the first 64 KiB (a name past the bound is not read, so it is not a yes)."""
+    to this lane's, in a file of at most the bound. A longer file is not read whole, so it names
+    no lane, wherever its lane line sits: the bound can cut one line short (`lane-a2` read as
+    `lane-a`) or leave the second of two lines unread."""
     env_file = tmp_path / "stack.env"
     env_file.write_bytes(content)
 
+    assert _stack().ENV_READ_BOUND == BOUND
     assert _stack().names_lane(env_file, LANE) is named
+
+
+def test_names_lane_reads_the_stack_env_up_writes_whole(tmp_path: Path) -> None:
+    """The file `up` writes, whole, is within the bound and names this lane: the bound refuses
+    only what `up` does not write."""
+    host = Host(tmp_path)
+    done = host.run("up", "--project", PROJECT)
+    env_file = host.runtime / PROJECT / "stack.env"
+
+    assert done.returncode == 0, done.stderr
+    assert 0 < env_file.stat().st_size <= BOUND
+    assert _stack().names_lane(env_file, LANE) is True
 
 
 #: `up`'s refusals before any docker call: the arguments after `up --project P`, the case's

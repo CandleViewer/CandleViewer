@@ -77,7 +77,8 @@ LANE_VARIABLE: Final = "CV_ACCTFIX_LANE"
 LANE: Final = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")  # `fullmatch`: a trailing newline is no lane
 #: The label the overlay puts on every container, network and volume of the project.
 LANE_LABEL: Final = "cv.lane"
-#: How much of `stack.env` `names_lane` reads: `up` writes about a kilobyte.
+#: The longest `stack.env` `names_lane` reads whole (a longer file names no lane): `up` writes
+#: about a kilobyte.
 ENV_READ_BOUND: Final = 65536
 SCENARIO: Final = re.compile(r"[a-z0-9_]{1,64}")
 PORT_NAMES: Final = (
@@ -158,14 +159,16 @@ def lane_only(found: Mapping[str, Sequence[tuple[str, str]]], lane: str) -> None
 def names_lane(env_file: Path, lane: str) -> bool:
     """Whether `stack.env` has exactly one `CV_ACCTFIX_LANE=` line, and it names `lane`. Only a
     yes or a no leaves here: the file is opened without following a link, read up to
-    ENV_READ_BOUND bytes and matched line by line, and nothing of it is returned, printed or
-    logged."""
+    ENV_READ_BOUND + 1 bytes and matched line by line, and nothing of it is returned, printed or
+    logged. A file longer than ENV_READ_BOUND is not read whole, so it names no lane."""
     prefix = f"{LANE_VARIABLE}=".encode("ascii")
     descriptor = os.open(env_file, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     try:
-        data = os.read(descriptor, ENV_READ_BOUND)
+        data = os.read(descriptor, ENV_READ_BOUND + 1)
     finally:
         os.close(descriptor)
+    if len(data) > ENV_READ_BOUND:
+        return False
     named = [line for line in data.splitlines() if line.startswith(prefix)]
     return named == [prefix + lane.encode("ascii")]
 
