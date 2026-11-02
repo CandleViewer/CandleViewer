@@ -35,7 +35,7 @@ from candleviewer.bars.emit import BarEmission
 from candleviewer.bars.metrics import bars_endpoint_422_no_data_recorded_total
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
 from candleviewer.bars.reader import BarReader, row_key
-from candleviewer.bars.rows import bar_param_for, bar_row, row_checksum
+from candleviewer.bars.rows import BUILD_VERSIONS, bar_param_for, bar_row, row_checksum
 from candleviewer.bars.series_store import SeriesStore
 from candleviewer.bars.threshold_builders import DeltaBarBuilder, RangeBarBuilder
 from candleviewer.bars.time_builder import TimeBarBuilder
@@ -673,7 +673,8 @@ class TestIncludeOpenFromTheLiveSeries:
     _Q: ClassVar[dict[str, Any]] = {**_P, "bar_type": "time", "param": "1"}
 
     def _live(self) -> tuple[SeriesStore, dict[str, list[dict[str, object]]], list[Bar]]:
-        builder, store, ups = TimeBarBuilder(self._SPEC, "BTCUSDT"), SeriesStore(), []
+        builder, store = TimeBarBuilder(self._SPEC, "BTCUSDT"), SeriesStore()
+        ups: list[BarUpdate] = []
         for t in _TAPE:
             ups += builder.on_trade(t)
         hold = asyncio.run(store.ensure("BTCUSDT", self._SPEC))
@@ -727,3 +728,92 @@ class TestIncludeOpenFromTheLiveSeries:
                 break
         assert len(seen) == len(closed) + 1 and len({t for t, _ in seen}) == len(seen)
         assert [c for _, c in seen] == [True] * len(closed) + [False]
+
+    def test_a_kline_row_at_the_forming_open_time_keeps_one_bar_per_open_time(self) -> None:
+        store, rows, _ = self._live()
+        forming = store.latest("BTCUSDT", self._SPEC.spec_hash, 1)
+        assert forming is not None and forming.forming is not None
+        twin = bar_row(
+            forming.forming.model_copy(update={"closed": True}), self._SPEC, generation=0
+        )
+        twin |= {"source": "kline", "index": None}
+        twin["row_checksum"] = row_checksum(twin)
+        key = bar_param_for(self._SPEC)
+        client = _client(
+            fetch=_Fetch({key: [*rows[key], twin]}),
+            forming=lambda s, sp: _forming_bar(store, s, sp),
+        )
+        bars = client.get("/market/bars", params={**self._Q, "include_open": "true"}).json()["bars"]
+        opens = [b["t"] for b in bars]
+        assert len(opens) == len(set(opens)) and opens.count(iso_us(forming.forming.open_time)) == 1
+
+    def test_the_forming_bar_counts_in_provenance_as_the_running_build(self) -> None:
+        meta = self._get(include_open="true")["meta"]
+        assert meta["spec_hash"] == self._SPEC.spec_hash
+        assert meta["build_version"] == BUILD_VERSIONS["time"] and meta["stale_build"] is False
+
+
+_PARAM = bar_param_for(_SERIES[("time", "1")])
+
+
+class TestOneTimeBarPerOpenTime:
+    """D13: the stored key is `(ts, generation, index)`, so two rows can share one open time (a
+    kline row that landed before the tape close; a rebuild under a new generation). A time bar is
+    served once per open time: tape over kline, then the highest generation, then the highest
+    index, and the `ts` cursor neither repeats nor skips across that open time."""
+
+    _SPEC = _SERIES[("time", "1")]
+    _Q: ClassVar[dict[str, Any]] = {**_P, "bar_type": "time", "param": "1"}
+
+    def _rows(self, twin: str) -> tuple[list[dict[str, object]], int, str]:
+        """The tape rows plus one twin row at the 10th bar's open time; returns the rows, that
+        open time and the close the winner carries."""
+        tape = [r for r in _STORE[_PARAM] if int(str(r["ts"])) >= _T0]
+        base, ts = dict(tape[9]), int(str(tape[9]["ts"]))
+        loser: dict[str, object] = {**base, "close": 1.5}
+        if twin == "kline":
+            loser |= {"source": "kline", "generation": 0, "index": None}
+        elif twin == "older_generation":
+            loser |= {"generation": 0, "index": 77}
+            base["generation"] = 1
+        else:  # "lower_index": same generation, a lower index
+            loser |= {"index": int(str(base["index"])) - 1}
+        for row in (base, loser):
+            row["row_checksum"] = row_checksum(row)
+        return [*tape[:9], base, loser, *tape[10:]], ts, str(base["close"])
+
+    def _walk(self, rows: list[dict[str, object]], limit: int) -> list[dict[str, Any]]:
+        client = _client(fetch=_Fetch({_PARAM: rows}))
+        q = {**self._Q, "limit": limit}
+        cursor, seen = None, []
+        for _ in range(500):
+            body = client.get(
+                "/market/bars", params=q if cursor is None else {**q, "cursor": cursor}
+            ).json()
+            assert len(body["bars"]) <= limit
+            seen += body["bars"]
+            if (cursor := body["meta"]["next_cursor"]) is None:
+                return seen
+        raise AssertionError("paging did not terminate")
+
+    @pytest.mark.parametrize("twin", ["kline", "older_generation", "lower_index"])
+    def test_equal_open_time_rows_serve_one_bar_the_preferred_one(self, twin: str) -> None:
+        rows, ts, winner_close = self._rows(twin)
+        bars = _client(fetch=_Fetch({_PARAM: rows})).get("/market/bars", params=self._Q).json()
+        opens = [b["t"] for b in bars["bars"]]
+        assert len(opens) == len(set(opens)) == len(rows) - 1
+        served = next(b for b in bars["bars"] if b["t"] == iso_us(ts))
+        assert served["c"] == winner_close and served["index"] is not None
+        assert bars["meta"]["count"] == len(rows) - 1
+
+    @pytest.mark.parametrize("limit", [1, 2, 3, 9, 10, 11])
+    @pytest.mark.parametrize("twin", ["kline", "older_generation"])
+    def test_paging_across_the_shared_open_time_neither_repeats_nor_skips(
+        self, twin: str, limit: int
+    ) -> None:
+        rows, ts, winner_close = self._rows(twin)
+        seen = self._walk(rows, limit)
+        assert [b["t"] for b in seen] == [
+            iso_us(int(str(r["ts"]))) for r in rows if r is not rows[10]
+        ]
+        assert next(b for b in seen if b["t"] == iso_us(ts))["c"] == winner_close
