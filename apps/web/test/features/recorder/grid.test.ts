@@ -1,7 +1,7 @@
 /**
- * E16-S01, SCR-140's grid (pure part): the FilterBar's fields and match (BQ-10), the search, the sort with nulls
- * last, the order kept while the page is open (D02 §9.1), a model row in CMP-177's props, D02 §5.1's Why? words,
- * the refusal words (E16-D06 §16.4) and the page deck rows against `E16-D06-copy.json`.
+ * E16-S01, SCR-140's grid (pure part): the filter fields, their chips and match (BQ-10), the search, the sort with
+ * nulls last, the order kept while the page is open (D02 §9.1), a model row in CMP-177's props, D02 §5.1's Why?
+ * words, the refusal words (E16-D06 §16.4) and the page deck rows against `E16-D06-copy.json`.
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -11,7 +11,9 @@ import {
   DEEP_FILTERS,
   FILTER_FIELDS,
   PINNED_FILTER,
+  chipLabel,
   compareRows,
+  filterKey,
   nextOrder,
   rowData,
   rowMatches,
@@ -38,6 +40,18 @@ describe("the grid's filters and search (BQ-10)", () => {
       "Depth",
     ]);
     expect(FILTER_FIELDS[0]?.options.map((o) => o.label)).toEqual(["Manual", "Auto"]);
+  });
+
+  it("test_a_chip_reads_field_colon_value_and_its_key_is_unique_per_pair", () => {
+    expect(chipLabel(AUTO_FILTER)).toBe("Reason: Auto");
+    expect(chipLabel({ field: "attention", value: "yes" })).toBe("Needs attention: Yes");
+    expect(chipLabel({ field: "state", value: "refused" })).toBe("State: Not recording");
+    expect(chipLabel({ field: "zone", value: "x" })).toBe("zone: x"); // a pair no field offers reads as its keys
+    expect(filterKey(AUTO_FILTER)).toBe("reason=auto");
+    const keys = FILTER_FIELDS.flatMap((f) =>
+      f.options.map((o) => filterKey({ field: f.id, value: o.value })),
+    );
+    expect(new Set(keys).size).toBe(keys.length);
   });
 
   it("test_reason_auto_matches_every_trigger_but_manual", () => {

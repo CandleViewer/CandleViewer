@@ -737,7 +737,7 @@ describe(
       expect(writes()).toEqual([NO_MATCH]);
     });
 
-    it("a first chip that matches nothing says so in the bar's own line", async () => {
+    it("a first chip that matches nothing says so in the grid's count line, alone (a1)", async () => {
       await mountPage();
       const writes = politeWrites();
       fireEvent.click(screen.getByRole("button", { name: "Add filter" }));
@@ -745,7 +745,7 @@ describe(
       fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Yes" }));
       await flush();
       expect(screen.queryAllByRole("rowheader")).toHaveLength(0);
-      expect(writes()).toEqual([`Filter added: Needs attention: Yes. ${NO_MATCH}`]);
+      expect(writes()).toEqual([NO_MATCH]);
     });
 
     it("a first search that matches every row says nothing: the count did not change", async () => {

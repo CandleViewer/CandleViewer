@@ -14,8 +14,12 @@ const { apiFetch } = vi.hoisted(() => ({
 }));
 vi.mock("../../../src/lib/http/csrfFetch", () => ({ apiFetch }));
 
-import type { FilterBarFilter } from "@candleviewer/ui";
-import { rowData, type GridSort, type RowContext } from "../../../src/features/recorder/grid";
+import {
+  rowData,
+  type GridSort,
+  type RecorderFilter,
+  type RowContext,
+} from "../../../src/features/recorder/grid";
 import type { RecorderRow } from "../../../src/features/recorder/model";
 import { RecorderGrid, type RecorderGridProps } from "../../../src/features/recorder/RecorderGrid";
 import { CONTEXT, D02_ROWS, NOW, row } from "./gridFixtures";
@@ -43,6 +47,12 @@ const button = (name: string | RegExp): HTMLButtonElement =>
 /** The stop confirmation's Stop recording, found in the dialog (a whole-page role query is slow). */
 const confirmStop = (): HTMLElement =>
   within(screen.getByRole("alertdialog")).getByRole("button", { name: "Stop recording" });
+/** Picks a field's value from Add filter's menu (a click closes it, focus back on Add filter). */
+const pick = (field: string, value: string): void => {
+  fireEvent.click(button("Add filter"));
+  fireEvent.click(screen.getByRole("menuitem", { name: field }));
+  fireEvent.click(screen.getByRole("menuitemcheckbox", { name: value }));
+};
 /** Lets the stubbed fetch and React's updates settle. */
 const settle = () => act(async () => void (await Promise.resolve()));
 /** CMP-044's guard ignores a press in its first 400 ms (E30-D03 D3 (2)). */
@@ -53,7 +63,7 @@ interface HarnessProps extends Partial<Omit<RecorderGridProps, "rows">> {
 }
 
 function Harness({ rows = D02_ROWS, ...props }: HarnessProps): JSX.Element {
-  const [filters, setFilters] = useState<readonly FilterBarFilter[]>([]);
+  const [filters, setFilters] = useState<readonly RecorderFilter[]>([]);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<GridSort | undefined>(undefined);
   return (
@@ -439,20 +449,15 @@ describe("Sort, filters and search (BQ-10; D02 §9.1; KB-02, FM-01, FM-02)", CAS
     expect(screen.getAllByRole("rowheader")[0]).toHaveFocus();
   });
 
-  it("the Reason: Auto chip shows the auto rows; the bar's sentence goes to the page's voice", () => {
-    const say = vi.fn();
-    render(
-      <Harness
-        say={say}
-        filters={[{ field: "reason", value: "auto" }]}
-        onFiltersChange={vi.fn()}
-      />,
-    );
+  it("the Reason: Auto chip shows the auto rows; CMP-055 names its remove by the whole chip", () => {
+    render(<Harness filters={[{ field: "reason", value: "auto" }]} onFiltersChange={vi.fn()} />);
     expect(order()).toEqual(["SOLUSDT", "XRPUSDT"]);
-    expect(screen.getByRole("group", { name: "Active filters" })).toHaveTextContent("Reason: Auto");
+    const chips = screen.getByRole("group", { name: "Active filters" });
+    expect(chips).toHaveTextContent("Reason: Auto");
+    expect(within(chips).getByRole("button", { name: "Remove filter Reason: Auto" })).toBeVisible();
   });
 
-  it("Add filter's menu applies a value; the bar's sentence and the count are one line (D-5309-02)", async () => {
+  it("Add filter's menu applies a value; the count line alone says it (D-5309-02, a1)", async () => {
     const say = vi.fn();
     render(<Harness say={say} />);
     fireEvent.click(button("Add filter"));
@@ -460,8 +465,63 @@ describe("Sort, filters and search (BQ-10; D02 §9.1; KB-02, FM-01, FM-02)", CAS
     fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Yes" }));
     await settle();
     expect(order()).toEqual(["BTCUSDT"]);
-    // Merged, so the count can never overwrite the bar's sentence in the shell's one polite region.
-    expect(say.mock.calls).toEqual([["Filter added: Pinned: Yes. 1 of 5 symbols."]]);
+    expect(say.mock.calls).toEqual([["1 of 5 symbols."]]);
+  });
+
+  it("a chip's remove drops its filter; a chip that changes no count is silent (a1)", async () => {
+    const say = vi.fn();
+    render(<Harness say={say} />);
+    pick("Reason", "Auto");
+    await settle();
+    pick("Pinned", "No"); // both auto rows are unpinned: the rows shown stay two
+    await settle();
+    expect(say.mock.calls).toEqual([["2 of 5 symbols."]]);
+    fireEvent.click(button("Remove filter Reason: Auto"));
+    await settle();
+    expect(order()).toEqual(["ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT"]);
+    expect(screen.getByRole("group", { name: "Active filters" })).toHaveTextContent("Pinned: No");
+    expect(say.mock.calls).toEqual([["2 of 5 symbols."], ["4 of 5 symbols."]]);
+  });
+
+  it("Clear all (from two chips) drops every chip; focus goes to Add filter, never <body>", async () => {
+    const say = vi.fn();
+    render(<Harness say={say} />);
+    pick("Reason", "Auto");
+    pick("State", "Recording");
+    await settle();
+    const clear = button("Clear all");
+    act(() => clear.focus());
+    fireEvent.click(clear);
+    await settle();
+    expect(order()).toHaveLength(5);
+    expect(screen.queryByRole("button", { name: /^Remove filter/ })).toBeNull();
+    expect(button("Add filter")).toHaveFocus();
+    expect(say.mock.calls.at(-1)).toEqual(["5 of 5 symbols."]);
+  });
+
+  it("a chip's remove hands focus to the next chip's own remove, else the previous, else Add filter (delta D-5309-02)", () => {
+    render(<Harness />);
+    pick("Reason", "Auto");
+    pick("State", "Recording");
+    pick("Pinned", "No");
+    const remove = (chip: string): HTMLButtonElement => button(`Remove filter ${chip}`);
+    const first = remove("Reason: Auto");
+    const second = remove("State: Recording");
+    const third = remove("Pinned: No");
+    // The hand-off follows the chips' stable ids: the first chip's remove goes and focus lands on the second's own
+    // button. A positional id would relabel the focused button in place, with no focus event to tell a screen reader.
+    act(() => first.focus());
+    fireEvent.click(first);
+    expect(first).not.toBeInTheDocument();
+    expect(second).toHaveFocus();
+    // The last of the two left: the previous chip's remove.
+    act(() => third.focus());
+    fireEvent.click(third);
+    expect(second).toHaveFocus();
+    // The only one: Add filter, never <body>.
+    fireEvent.click(second);
+    expect(screen.queryByRole("button", { name: /^Remove filter/ })).toBeNull();
+    expect(button("Add filter")).toHaveFocus();
   });
 
   it("a settled query says the count once, and only when the rows it shows changed (D-5309-02)", async () => {
