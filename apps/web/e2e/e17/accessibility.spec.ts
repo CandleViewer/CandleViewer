@@ -64,7 +64,8 @@ const FORCED: readonly Forced[] = [
     drive: (h) => h.sendSystem({ kind: "connection_quality", class: "saturated", queue_pct: 70 }),
     ready: async (page, h) => {
       await patient.poll(() => h.sent.at(-1)?.["p"]).toMatchObject({ class: "saturated" });
-      await patient(chip(page)).toHaveAttribute("data-status", "live");
+      // Row 5: a saturated link reads "Reduced rate ×N" (#5345).
+      await patient(chip(page)).toHaveAttribute("data-status", "delayed");
     },
   },
   {

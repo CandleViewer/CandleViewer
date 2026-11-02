@@ -314,7 +314,7 @@ test(`Q04-T13 a slow-consumer close is Disconnected, then Live again on its own 
 const politeSays = (page: Parameters<typeof region>[0], text: string) =>
   page.locator('[aria-live="polite"]', { hasText: text });
 
-test(`Q04-T14 the exchange's public feed down: a warning row, said politely; the chip stays Live ${PACK}`, async ({
+test(`Q04-T14 the exchange's public feed down: a warning row, said politely; the chip reads Stale, then Live ${PACK}`, async ({
   page,
 }) => {
   covers("§15.9", "D02-row-13", "US-MKT-003#Feed interrupted");
@@ -323,9 +323,15 @@ test(`Q04-T14 the exchange's public feed down: a warning row, said politely; the
   const said = "Exchange feed down — the server is restoring the connection.";
   await patient(page.getByText(said, { exact: true }).first()).toBeVisible();
   await patient(politeSays(page, said)).toHaveCount(1);
-  await expect(chip(page)).toHaveAttribute("data-status", "live");
+  // Row 13 again: the transport stays up, but the chip reads the feed, "Stale — exchange feed down" (#5345).
+  await patient(chip(page)).toHaveAttribute(
+    "aria-label",
+    /^Connection: Stale — exchange feed down(,|$)/,
+  );
+  await expect(chip(page)).toHaveAttribute("data-status", "stale");
   harness.sendSystem({ kind: "exchange_state", public_ws: "connected" });
   await patient(page.getByText(said, { exact: true })).toHaveCount(0);
+  await patient(chip(page)).toHaveAttribute("data-status", "live");
 });
 
 test(`Q04-T15 maintenance and the store down: blocking rows, new orders off, said assertively ${PACK}`, async ({

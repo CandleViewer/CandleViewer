@@ -837,3 +837,269 @@ describe("the page it lives in", () => {
     client.stop(); // it listened to the real document and window
   });
 });
+
+describe("topics(): what the CMP-076 chip reads of each consumer (E17-D02 §3; #5345)", () => {
+  const T = Date.UTC(2026, 10, 1, 13, 42, 5);
+  const staleSnap = (seq: number): TopicFrame => ({
+    kind: "snap",
+    seq,
+    ts: 1_000,
+    ...base,
+    meta: { stale: true },
+    bodies: [{ e: "j", p: {} }],
+  });
+  /** The client's clock (`platformTimers.now`, faked): monotonic, so `vi.setSystemTime` never moves it. */
+  const mono = (): number => performance.now();
+  const pass = (ms: number): void => void vi.advanceTimersByTime(ms);
+  const reading = (client: ReturnType<typeof rig>["client"], i = 0) => client.topics()[i];
+  /** The worker's first word about a consumer: no frame yet. */
+  const answered = (id: string) => data(id, [], { status: "pending" });
+  const DROPPED = reduce(UP, {
+    type: "reconnecting",
+    attempt: 1,
+    nextAttemptAtMs: T + 1_000,
+    lost: { sinceMs: T, lastDataMs: T },
+  });
+  const BACK = reduce(reduce(DROPPED, { type: "connecting" }), {
+    type: "auth_ok",
+    killSwitch: KILL,
+  });
+  /** A ticker body (23 §14.8) with one item per flag, `true` for an item that says `stale`. */
+  const tickers = (...stale: boolean[]) =>
+    ({
+      e: "j",
+      p: {
+        tickers: stale.map((s, i) => ({
+          symbol: `S${i}USDT`,
+          last_price: "1",
+          ts_ms: 1,
+          ...(s && { stale: true }),
+        })),
+      },
+    }) as const;
+
+  it("lists each consumer, aged from its consume time until its first frame; a release drops it", () => {
+    const { client } = rig();
+    const t0 = mono();
+    const live = client.consume(SPEC);
+    pass(500);
+    client.consume({ ...SPEC, ch: "ticker.BTCUSDT" }, RS);
+    expect(client.topics()).toEqual([
+      {
+        ch: SPEC.ch,
+        rs: undefined,
+        source: "live",
+        status: "pending",
+        freshAtMs: null,
+        agedFromMs: t0,
+        lastDataMs: null,
+        serverStale: false,
+        awaitingReconnect: false,
+      },
+      {
+        ch: "ticker.BTCUSDT",
+        rs: RS,
+        source: "replay",
+        status: "pending",
+        freshAtMs: null,
+        agedFromMs: t0 + 500,
+        lastDataMs: null,
+        serverStale: false,
+        awaitingReconnect: false,
+      },
+    ]);
+    live.release();
+    expect(client.topics().map((t) => t.ch)).toEqual(["ticker.BTCUSDT"]);
+  });
+
+  it("clockMs() is the clock its readings are stamped on: timers.now, injected or the platform's", () => {
+    let injected = 5_000_000; // its own origin: the platform's monotonic clock is not it
+    const own = rig({ timers: { now: () => injected } }).client;
+    own.consume(SPEC);
+    injected += 7_000;
+    expect(own.clockMs()).toBe(5_007_000);
+    expect(own.topics()[0]?.agedFromMs).toBe(5_000_000);
+    expect(rig().client.clockMs()).toBe(mono());
+  });
+
+  it("a snapshot and a delta are fresh at their arrival; a message without frames is not", () => {
+    const { client, port, display } = rig();
+    vi.setSystemTime(T);
+    const t0 = mono();
+    client.consume(SPEC);
+    pass(1_000);
+    port.say(data("c1", [snap(1)]));
+    expect(reading(client)).toMatchObject({
+      freshAtMs: t0 + 1_000,
+      agedFromMs: t0 + 1_000,
+      lastDataMs: T + 1_000, // the wall time, for "last data … UTC" alone
+      status: "pending",
+    });
+    pass(2_000);
+    port.say(data("c1", [delta(2)]));
+    pass(6_000);
+    port.say(data("c1", [], { status: "live" }));
+    expect(reading(client)).toMatchObject({ freshAtMs: t0 + 3_000, lastDataMs: T + 3_000 });
+    display.frame(); // the status follows the display, as the handle's does
+    expect(reading(client)?.status).toBe("live");
+  });
+
+  it("meta.stale (or a structured body's own stale) holds from its snapshot to the next one, and is no fresh frame", () => {
+    const { client, port } = rig();
+    const t0 = mono();
+    client.consume(SPEC);
+    pass(1_000);
+    port.say(data("c1", [snap(1)]));
+    pass(1_000);
+    port.say(data("c1", [staleSnap(2)]));
+    expect(reading(client)).toMatchObject({ serverStale: true, freshAtMs: t0 + 1_000 });
+    pass(1_000);
+    port.say(data("c1", [delta(3), reset("gap")]));
+    expect(reading(client)).toMatchObject({ serverStale: true, freshAtMs: t0 + 3_000 });
+    port.say(data("c1", [snap(4)]));
+    expect(reading(client)?.serverStale).toBe(false);
+    const bodyStale: TopicFrame = {
+      kind: "snap",
+      seq: 5,
+      ts: 1_000,
+      ...base,
+      bodies: [{ e: "j", p: { stale: true } }],
+    };
+    port.say(data("c1", [bodyStale]));
+    expect(reading(client)?.serverStale).toBe(true);
+  });
+
+  it("a ticker frame whose every item says stale brings no fresh price; one fresh item in a batch does (23 §14.8)", () => {
+    const { client, port } = rig();
+    const t0 = mono();
+    client.consume({ ...SPEC, ch: "ticker.BTCUSDT" });
+    pass(1_000);
+    // a ticker already stale when subscribed: its snapshot's items say so
+    port.say(data("c1", [{ kind: "snap", seq: 1, ts: 1_000, ...base, bodies: [tickers(true)] }]));
+    expect(reading(client)).toMatchObject({ freshAtMs: null, serverStale: false });
+    pass(1_000);
+    port.say(data("c1", [{ kind: "d", seq: 2, ts: 1_000, ...base, body: tickers(false) }]));
+    expect(reading(client)?.freshAtMs).toBe(t0 + 2_000);
+    pass(5_000);
+    // the symbol crossed 5 s: its item once more, with `stale: true`
+    port.say(data("c1", [{ kind: "d", seq: 3, ts: 1_000, ...base, body: tickers(true) }]));
+    expect(reading(client)?.freshAtMs).toBe(t0 + 2_000);
+    pass(1_000);
+    port.say(data("c1", [{ kind: "d", seq: 4, ts: 1_000, ...base, body: tickers(true, false) }]));
+    expect(reading(client)?.freshAtMs).toBe(t0 + 8_000);
+    pass(1_000);
+    port.say(
+      data("c1", [{ kind: "snap", seq: 5, ts: 1_000, ...base, bodies: [tickers(true, true)] }]),
+    );
+    expect(reading(client)?.freshAtMs).toBe(t0 + 8_000); // a snapshot of stale items alone
+    // another family has no such items: the field is not read there
+    client.consume({ ...SPEC, ch: "trades.BTCUSDT" });
+    port.say(data("c2", [{ kind: "d", seq: 1, ts: 1_000, ...base, body: tickers(true) }]));
+    expect(reading(client, 1)?.freshAtMs).toBe(t0 + 9_000);
+  });
+
+  it("measures silence on the monotonic clock: a step of the wall clock moves only the last data's time", () => {
+    const { client, port } = rig();
+    vi.setSystemTime(T);
+    const t0 = mono();
+    client.consume(SPEC);
+    port.say(data("c1", [snap(1)]));
+    vi.setSystemTime(T - 60_000); // the wall clock steps back a minute
+    pass(1_000);
+    port.say(data("c1", [delta(2)]));
+    expect(reading(client)).toMatchObject({ freshAtMs: t0 + 1_000, lastDataMs: T - 59_000 });
+  });
+
+  it("ages a consumer made before the link came up from its coming up (one made 40 s before it)", () => {
+    const { client, port } = rig();
+    port.say({ t: "state", state: INITIAL_WS_STATE }); // connecting: the first socket opens
+    const t0 = mono();
+    client.consume(SPEC);
+    port.say(answered("c1"));
+    pass(40_000);
+    port.say({ t: "state", state: UP });
+    expect(reading(client)).toMatchObject({ freshAtMs: null, agedFromMs: t0 + 40_000 });
+    expect(reading(client)?.awaitingReconnect).toBe(false); // a first connect owes it nothing
+    pass(300);
+    port.say(data("c1", [snap(1)]));
+    expect(reading(client)).toMatchObject({ freshAtMs: t0 + 40_300, agedFromMs: t0 + 40_300 });
+  });
+
+  it("a consumer made while the link is down awaits the reconnect's snapshot, aged from the link's return", () => {
+    const { client, port } = rig();
+    port.say({ t: "state", state: UP });
+    port.say({ t: "state", state: DROPPED });
+    pass(5_000);
+    const t1 = mono();
+    client.consume(SPEC);
+    port.say(answered("c1"));
+    expect(reading(client)).toMatchObject({ awaitingReconnect: true, agedFromMs: t1 });
+    pass(20_000);
+    port.say({ t: "state", state: BACK });
+    expect(reading(client)).toMatchObject({ awaitingReconnect: true, agedFromMs: t1 + 20_000 });
+    port.say(data("c1", [snap(1)]));
+    expect(reading(client)).toMatchObject({ awaitingReconnect: false, freshAtMs: t1 + 20_000 });
+  });
+
+  it("a drop makes every consumer await the reconnect's snapshot, one not live at it included", () => {
+    const { client, port } = rig();
+    port.say({ t: "state", state: UP });
+    client.consume(SPEC);
+    port.say(answered("c1")); // no snapshot before the drop: the worker sends it no `reset`
+    client.consume({ ...SPEC, ch: "ticker.BTCUSDT" });
+    port.say(data("c2", [snap(1)]));
+    pass(1_000);
+    port.say({ t: "state", state: DROPPED });
+    expect(client.topics().map((t) => t.awaitingReconnect)).toEqual([true, true]);
+    pass(20_000);
+    const back = mono();
+    port.say({ t: "state", state: BACK });
+    expect(client.topics().map((t) => t.agedFromMs)).toEqual([back, back]);
+    port.say(data("c1", [snap(1)]));
+    expect(client.topics().map((t) => t.awaitingReconnect)).toEqual([false, true]);
+  });
+
+  it("a reconnect's reset marks it waiting for its snapshot; any snapshot ends the wait", () => {
+    const { client, port } = rig();
+    client.consume(SPEC);
+    port.say(data("c1", [snap(1)]));
+    port.say(data("c1", [reset("gap")]));
+    expect(reading(client)?.awaitingReconnect).toBe(false);
+    port.say(data("c1", [{ kind: "reset", reason: "reconnect" }]));
+    expect(reading(client)?.awaitingReconnect).toBe(true);
+    port.say(data("c1", [staleSnap(1)]));
+    expect(reading(client)?.awaitingReconnect).toBe(false);
+  });
+
+  it("a delta dropped while the consumer waits for a snapshot after an overflow is not fresh", () => {
+    const { client, port } = rig({ queueLimits: { maxFrames: 3, maxBytes: 1e9 } });
+    const t0 = mono();
+    client.consume(SPEC);
+    port.say(data("c1", [snap(1), delta(2), delta(3), delta(4)])); // voided: it waits for a snapshot
+    const voidedAt = reading(client)?.freshAtMs;
+    pass(4_000);
+    port.say(data("c1", [delta(5)])); // it extends a baseline that is gone
+    expect(reading(client)?.freshAtMs).toBe(voidedAt);
+    port.say(data("c1", [snap(9)]));
+    expect(reading(client)?.freshAtMs).toBe(t0 + 4_000);
+  });
+
+  it("a frame notifies nobody: its reading is written, and no subscriber hears it", () => {
+    const { client, port, display } = rig();
+    const heard = vi.fn();
+    client.subscribe(heard);
+    client.consume(SPEC);
+    port.say(data("c1", [snap(1), delta(2)]));
+    port.say(data("c1", [{ kind: "reset", reason: "reconnect" }]));
+    display.frame();
+    expect(heard).not.toHaveBeenCalled();
+    expect(reading(client)).toMatchObject({ awaitingReconnect: true, freshAtMs: mono() });
+  });
+
+  it("a stopped client reads no topic", () => {
+    const { client } = rig();
+    client.consume(SPEC);
+    client.stop();
+    expect(client.topics()).toEqual([]);
+  });
+});

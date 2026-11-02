@@ -48,10 +48,16 @@ const STATES: readonly [ConnectionStatusProps, string][] = [
     { status: "delayed", lastGoodTs: T0, throttleMultiplier: 4, nowMs: T0 },
     `Reduced rate ×4, ${UTC}`,
   ],
-  [{ status: "stale", lastGoodTs: T0, staleAgeMs: 7_400, nowMs: T0 }, `Stale 7s, ${UTC}`],
+  [{ status: "stale", lastGoodTs: T0, staleAgeMs: 7_400, nowMs: T0 }, `Stale 7 s, ${UTC}`],
   [
     { status: "stale", lastGoodTs: T0, staleAgeMs: 15e3, strong: true, nowMs: T0 },
-    `Stale 15s, ${UTC}`,
+    `Stale 15 s, ${UTC}`,
+  ],
+  // #5345: the two detail states E17-D02 §5 draws on the stale value (rows 12 and 13)
+  [{ status: "stale", lastGoodTs: null, serverStale: true, nowMs: T0 }, "Stale (server)"],
+  [
+    { status: "stale", lastGoodTs: T0, upstreamDown: true, nowMs: T0 },
+    `Stale — exchange feed down, ${UTC}`,
   ],
   [
     { status: "reconnecting", lastGoodTs: T0, attempt: 3, nowMs: T0 + 12e3 },
