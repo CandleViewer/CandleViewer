@@ -85,9 +85,9 @@ export function sameShape(a: DockNode, b: DockNode): boolean {
   );
 }
 
-/** The named preset the docked tree is, or `custom` (an empty dock is `custom`). */
+/** The named preset the docked tree is, or `custom`. An empty dock is `1x1`, its stored form. */
 export function matchPreset(tree: DockTree): Preset {
-  if (tree.root === null) return "custom";
+  if (tree.root === null) return "1x1";
   const leaves = leavesOf(tree.root);
   const mint = (): string => "";
   for (const preset of NAMED_PRESETS) {
