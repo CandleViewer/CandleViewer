@@ -4,6 +4,7 @@ A closed bar whose store write reaches a terminal outcome without being stored i
 here, served in `meta.coverage_holes` by REST `/market/bars` and `/market/klines` and by the WS
 `bars` snapshot (22 `DataMeta`, 23 §13 `snapMeta`), counted by `bars_write_holes_total{reason}`
 and queued for heal (`pending()`, the rebuild path's hand-off). It is never silently dropped.
+`pending()` has no consumer yet: the rebuild executor is a no-op until #535 wires one.
 
 **Identity.** A key is `(symbol, spec_hash, generation, index, open_time_us)`, as a stored row
 (24 §3.1). A time bar is also identified by its open time alone: a stored row at that open time
@@ -13,20 +14,25 @@ and queued for heal (`pending()`, the rebuild path's hand-off). It is never sile
 `[from_us, to_us)` (a bar's span is `[open_time, close_time + 1)`), the reason of its first key,
 the time it was first seen and the number of terminal outcomes it holds. Keys are recorded only
 at a terminal outcome, never per attempt; a repeat raises `count` and is not counted again by the
-metric. A key stored since (`written`) leaves its record, which splits around it. A key stored
-just before its loss is reported is not recorded: the store holds a row for it
-(`MAX_RECENT_WRITTEN` keys are remembered).
+metric. A key stored since (`written`) leaves its record, which splits around it. A key already
+stored when a later write of it is not stored is no hole (the stored row is served): it is
+counted as `superseded` and logged, and not recorded (`MAX_RECENT_KEYS` keys are remembered).
 
-**Bound.** At most `MAX_RANGES_PER_SERIES` records per series. Past that, the oldest records merge
-into one span: a merged span over-reports (a key stored inside it does not split it), never
-under-reports.
+**Bound.** At most `MAX_RANGES_PER_SERIES` records per series and `MAX_TOTAL_RANGES` in all (the
+series with the most merges first). Past either, the oldest records merge into one span: a merged
+span over-reports (a key stored inside it does not split it), never under-reports. A key new to a
+merged span is still counted. At most `MAX_SERIES` series: past that the series changed least
+recently is dropped and logged (`bars_write_holes_series_dropped`), its records with it.
 
 **Reads.** `holes_for` is synchronous and in memory (the WS snapshot build is synchronous): the
 spans inside the page's span, minus the bars the page serves.
 
 **Journal.** One versioned orjson file, `<bars_state_root>/write_holes.json`, written atomically
-(write, flush, fsync, rename, in a worker thread) after every change, and loaded before the writer
-starts. A file that cannot be read back is discarded, logged and counted
+(write, flush, fsync, rename, directory fsync) after every change, one write at a time, and loaded
+before the writer starts. The loop copies the records; serialising and writing run in a worker
+thread, which keeps the file within `MAX_JOURNAL_BYTES` by merging the oldest records. A change is
+written even when a write fails or its waiter is cancelled (the next change or `flush` writes it).
+A file that cannot be read back is discarded, logged and counted
 (`bars_blob_discarded_total{reason="write_holes"}`); it never stops the start.
 """
 
@@ -35,6 +41,7 @@ from __future__ import annotations
 import asyncio
 import bisect
 import os
+import sys
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Sequence
@@ -46,20 +53,30 @@ import orjson
 import structlog
 
 from candleviewer.bars.metrics import (
+    SUPERSEDED,
     WRITE_HOLE_REASONS,
     bars_blob_discarded_total,
     bars_write_holes_total,
 )
 from candleviewer.bars.models import BarKind
 from candleviewer.bars.state_store import SPEC_HASH_PATTERN, SYMBOL_PATTERN
-from candleviewer.observability.context import run_in_thread, spawn
+from candleviewer.observability.context import run_in_thread, spawn, thread_future
 
 JOURNAL_VERSION: Final = 1
 JOURNAL_NAME: Final = "write_holes.json"
 MAX_JOURNAL_BYTES: Final = 8 * 1024 * 1024
 MAX_RANGES_PER_SERIES: Final = 256
-MAX_RECENT_WRITTEN: Final = 4096
-#: The closed `reason` values of `bars_write_holes_total` and of a record.
+#: Records in all; with `MAX_SERIES` it keeps the journal far below `MAX_JOURNAL_BYTES` (a
+#: record serialises to under 200 bytes), which the write enforces as well.
+MAX_TOTAL_RANGES: Final = 16_384
+#: Series held; twice the series a server builds at once, so a retired spec's records stay a while.
+MAX_SERIES: Final = 1_024
+#: Keys remembered as stored lately (a later loss is `superseded`) and as counted lately (a repeat
+#: inside a merged span is not counted again).
+MAX_RECENT_KEYS: Final = 4096
+#: Recorded and superseded losses are logged at most once per series per minute.
+LOG_EVERY_US: Final = 60_000_000
+#: The closed `reason` values of a record (and of `bars_write_holes_total`, with `superseded`).
 HOLE_REASONS: Final = WRITE_HOLE_REASONS
 _KINDS: Final = frozenset(get_args(BarKind))
 
@@ -171,6 +188,7 @@ class _Series:
     kind: str
     bar_param: str
     ranges: list[_Range]
+    touched_us: int = 0  # last record change (the series cap drops the stalest)
 
 
 class HoleRecorder(Protocol):
@@ -197,44 +215,58 @@ def hole_key_for_row(row: dict[str, object], spec_hash: str, kind: str) -> HoleK
 
 class WriteHoleLedger:
     """The ledger of the module docstring. Every method but `load`/`flush` is synchronous and
-    runs on the event loop; the journal write is the only blocking work, in a worker thread."""
+    runs on the event loop; the journal's serialisation and write run in a worker thread."""
 
     def __init__(self, root: Path, *, now_us: Callable[[], int] = _wall_us) -> None:
         self._path = root / JOURNAL_NAME
         self._now = now_us
         self._series: dict[tuple[str, str], _Series] = {}
         self._revisions: dict[tuple[str, str], int] = {}
-        self._recent: OrderedDict[tuple[str, str, int, int, int], None] = OrderedDict()
+        self._recent: OrderedDict[_KeyId, None] = OrderedDict()  # keys stored lately
+        self._counted: OrderedDict[_KeyId, None] = OrderedDict()  # keys counted lately
+        self._logged: dict[tuple[tuple[str, str], str], int] = {}
         self._dirty = False
         self._task: asyncio.Task[None] | None = None
+        self._writing: asyncio.Future[None] | None = None
 
     # -- the write path ---------------------------------------------------------------------
 
     def lost(self, keys: Sequence[HoleKey], reason: str) -> int:
         """Record the terminal outcome of closed bars not stored; returns the keys new to the
-        ledger (the metric's increment). A key with no builder index is not recorded."""
+        ledger (the metric's increment). A key with no builder index is not recorded. A key
+        stored before is not a hole (the stored row is served): it is counted as `superseded`."""
         if reason not in HOLE_REASONS:
             raise ValueError(f"unknown write-hole reason {reason!r}")
-        new = 0
+        new: dict[tuple[str, str], int] = {}
+        superseded: dict[tuple[str, str], int] = {}
         for key in keys:
             gen, idx = key.generation, key.index
-            if gen is None or idx is None or self._recent_key(key) in self._recent:
+            if gen is None or idx is None:
                 continue
             series_key = (key.symbol, key.spec_hash)
-            series = self._series.setdefault(series_key, _Series(key.kind, key.bar_param, []))
-            if self._insert(series, key, gen, idx, reason):
-                new += 1
-            self._changed(series_key)
-        if new:
-            bars_write_holes_total.labels(reason=reason).inc(new)
-            _log().error("bars_write_holes_recorded", reason=reason, bars=new)
-        return new
+            if _key_id(key) in self._recent:
+                superseded[series_key] = superseded.get(series_key, 0) + 1
+                continue
+            series = self._series.get(series_key) or self._add_series(series_key, key)
+            series.touched_us = self._now()
+            added, spans = self._insert(series, key, gen, idx, reason)
+            if added:
+                new[series_key] = new.get(series_key, 0) + 1
+                _remember(self._counted, _key_id(key), MAX_RECENT_KEYS)
+            self._changed(series_key, spans=spans)
+        self._enforce_total()
+        for series_key, n in new.items():
+            bars_write_holes_total.labels(reason=reason).inc(n)
+            self._log_due(series_key, "bars_write_holes_recorded", "error", reason=reason, bars=n)
+        for series_key, n in superseded.items():
+            bars_write_holes_total.labels(reason=SUPERSEDED).inc(n)
+            self._log_due(series_key, "bars_write_holes_superseded", "warning", bars=n)
+        return sum(new.values())
 
     def written(self, keys: Sequence[HoleKey]) -> None:
         """Keys now stored: each leaves its record (and is remembered for `lost`)."""
         for key in keys:
-            self._recent[self._recent_key(key)] = None
-            self._recent.move_to_end(self._recent_key(key))
+            _remember(self._recent, _key_id(key), MAX_RECENT_KEYS)
             series_key = (key.symbol, key.spec_hash)
             series = self._series.get(series_key)
             if series is None:
@@ -245,24 +277,34 @@ class WriteHoleLedger:
                 series.ranges = ranges
                 if not ranges:
                     del self._series[series_key]
-                self._changed(series_key)
-        while len(self._recent) > MAX_RECENT_WRITTEN:
-            self._recent.popitem(last=False)
+                self._changed(series_key, spans=True)
 
-    @staticmethod
-    def _recent_key(key: HoleKey) -> tuple[str, str, int, int, int]:
-        if key.kind == "time":
-            return key.symbol, key.spec_hash, -1, -1, key.open_us
-        gen = -1 if key.generation is None else key.generation
-        return key.symbol, key.spec_hash, gen, -1 if key.index is None else key.index, key.open_us
+    def _add_series(self, series_key: tuple[str, str], key: HoleKey) -> _Series:
+        """A new series; past `MAX_SERIES` the one changed least recently is dropped (logged)."""
+        while len(self._series) >= MAX_SERIES:
+            old_key = min(self._series, key=lambda k: self._series[k].touched_us)
+            dropped = self._series.pop(old_key)
+            _log().error("bars_write_holes_series_dropped", spec_hash=old_key[1],
+                         records=len(dropped.ranges))  # fmt: skip
+            self._changed(old_key, spans=True)
+        series = _Series(key.kind, key.bar_param, [])
+        self._series[series_key] = series
+        return series
 
-    def _insert(self, series: _Series, key: HoleKey, gen: int, idx: int, reason: str) -> bool:
-        """Add `key` (generation `gen`, index `idx`); False when it is a repeat."""
+    def _insert(
+        self, series: _Series, key: HoleKey, gen: int, idx: int, reason: str
+    ) -> tuple[bool, bool]:
+        """Add `key` (generation `gen`, index `idx`): (new to the ledger, spans changed). Inside a
+        merged span a key is new unless it was counted lately (`MAX_RECENT_KEYS`)."""
         p = Present(gen, idx, key.open_us, key.end_us)
         for r in series.ranges:
             if r.holds(series.kind, p):
                 r.count += 1
-                return False
+                if not r.merged or _key_id(key) in self._counted:
+                    return False, False
+                grown = key.end_us > r.to_us  # a key new to a merged span: its whole bar is in
+                r.to_us = max(r.to_us, key.end_us)
+                return True, grown
         open_ = [r for r in series.ranges if not r.merged and r.generation == gen]
         before = next((r for r in open_ if r.last == idx - 1), None)
         after = next((r for r in open_ if r.first == idx + 1), None)
@@ -281,24 +323,42 @@ class WriteHoleLedger:
                 _Range(gen, idx, idx, key.open_us, key.end_us, reason, self._now(), 1)
             )
         series.ranges.sort(key=lambda r: (r.from_us, r.to_us))
-        while len(series.ranges) > MAX_RANGES_PER_SERIES:  # the oldest two become one span
-            a, b = series.ranges[0], series.ranges[1]
-            series.ranges[0:2] = [
-                _Range(a.generation, min(a.first, b.first), max(a.last, b.last),
-                       min(a.from_us, b.from_us), max(a.to_us, b.to_us), a.reason,
-                       min(a.first_seen_us, b.first_seen_us), a.count + b.count, merged=True)
-            ]  # fmt: skip
-        return True
+        while len(series.ranges) > MAX_RANGES_PER_SERIES:
+            _merge_oldest(series)
+        return True, True
 
-    def _changed(self, series_key: tuple[str, str]) -> None:
-        self._revisions[series_key] = self._revisions.get(series_key, 0) + 1
+    def _enforce_total(self) -> None:
+        """At most `MAX_TOTAL_RANGES` records in all: the series with the most merges its oldest."""
+        total = sum(len(s.ranges) for s in self._series.values())
+        while total > MAX_TOTAL_RANGES:
+            series_key = max(self._series, key=lambda k: len(self._series[k].ranges))
+            _merge_oldest(self._series[series_key])
+            total -= 1
+            self._changed(series_key, spans=True)
+
+    def _changed(self, series_key: tuple[str, str], *, spans: bool) -> None:
+        """A change to persist; `spans` when the series' reported spans changed (a render cache
+        keys on the revision)."""
+        if spans:
+            self._revisions[series_key] = self._revisions.get(series_key, 0) + 1
         self._dirty = True
         self._schedule()
+
+    def _log_due(self, series_key: tuple[str, str], event: str, level: str, **fields: Any) -> None:
+        """Log `event` for a series at most once per `LOG_EVERY_US`."""
+        now = self._now()
+        last = self._logged.get((series_key, event))
+        if last is not None and now - last < LOG_EVERY_US:
+            return
+        if len(self._logged) >= 4 * MAX_SERIES:
+            self._logged.clear()
+        self._logged[series_key, event] = now
+        getattr(_log(), level)(event, spec_hash=series_key[1], **fields)
 
     # -- the read path ----------------------------------------------------------------------
 
     def revision(self, symbol: str, spec_hash: str) -> int:
-        """Changes whenever the series' records change (a render cache keys on it)."""
+        """Changes whenever the series' reported spans change (a render cache keys on it)."""
         return self._revisions.get((symbol, spec_hash), 0)
 
     def holes_for(
@@ -324,7 +384,8 @@ class WriteHoleLedger:
         return join_spans(s for s in spans if s[0] < s[1])
 
     def pending(self) -> list[HoleRange]:
-        """Every record, for the heal path (the rebuild executor, a no-op today)."""
+        """Every record, for the heal path. Nothing consumes it yet: the rebuild executor is a
+        no-op until #535 (module docstring)."""
         return [
             HoleRange(sym, h, s.kind, s.bar_param, r.generation, r.first, r.last, r.from_us,
                       r.to_us, r.reason, r.first_seen_us, r.count, r.merged)
@@ -344,33 +405,53 @@ class WriteHoleLedger:
         self._task = spawn(self._flush_loop(), name="bars-write-holes-journal")
 
     async def _flush_loop(self) -> None:
+        """Write while changed. `_dirty` is set again unless the write completed, so neither a
+        failure nor a cancellation loses a change: the next change or `flush` writes it."""
         while self._dirty:
+            snapshot = self._snapshot()
             self._dirty = False
-            data = self._dump()
             try:
-                await run_in_thread(_write_atomic, self._path, data)
-            except Exception as exc:  # kept dirty: the next change or `flush` writes it again
+                await self._write(snapshot)
+            except asyncio.CancelledError:
+                self._dirty = True
+                raise
+            except Exception as exc:
                 self._dirty = True
                 _log().error("bars_write_holes_journal_write_failed", error=type(exc).__name__)
                 return
 
+    async def _write(self, snapshot: _Snapshot) -> None:
+        """One write at a time: a write still running (its waiter cancelled) finishes first. The
+        thread's future is shielded, so a cancelled waiter never cuts a write short."""
+        prior = self._writing
+        if prior is not None and not prior.done():
+            await asyncio.wait({prior})
+        fut = thread_future(_serialise_and_write, self._path, snapshot)
+        fut.add_done_callback(_retrieve)
+        self._writing = fut
+        await asyncio.shield(fut)
+
     async def flush(self) -> None:
-        """Write the journal now if it changed since its last write (the stop path)."""
+        """Write the journal now if it changed since its last write, and wait for the write in
+        flight (the stop path)."""
         task = self._task
         if task is not None:
             await asyncio.gather(task, return_exceptions=True)
         if self._dirty:
             self._task = spawn(self._flush_loop(), name="bars-write-holes-journal")
             await self._task
+        writing = self._writing
+        if writing is not None and not writing.done():
+            await asyncio.wait({writing})
 
-    def _dump(self) -> bytes:
-        series = [
-            {"symbol": sym, "spec_hash": h, "kind": s.kind, "bar_param": s.bar_param,
-             "ranges": [[r.generation, r.first, r.last, r.from_us, r.to_us, r.reason,
-                         r.first_seen_us, r.count, r.merged] for r in s.ranges]}
+    def _snapshot(self) -> _Snapshot:
+        """A copy of the records as plain tuples (cheap; serialised in the worker thread)."""
+        return [
+            (sym, h, s.kind, s.bar_param,
+             [(r.generation, r.first, r.last, r.from_us, r.to_us, r.reason, r.first_seen_us,
+               r.count, r.merged) for r in s.ranges])
             for (sym, h), s in sorted(self._series.items())
         ]  # fmt: skip
-        return orjson.dumps({"v": JOURNAL_VERSION, "series": series})
 
     async def load(self) -> str:
         """Read the journal before the writer starts: `"ok"`, `"missing"` or the reason the file
@@ -384,10 +465,69 @@ class WriteHoleLedger:
         for series_key, series in loaded.items():
             self._series[series_key] = series
             self._revisions[series_key] = self._revisions.get(series_key, 0) + 1
+        self._enforce_total()
         return reason
 
 
+#: `(symbol, spec_hash, generation, index, open_us)`; a time bar's is `(…, -1, -1, open_us)`.
+_KeyId = tuple[str, str, int, int, int]
+_Row = tuple[int, int, int, int, int, str, int, int, bool]
+_Snapshot = list[tuple[str, str, str, str, list[_Row]]]
+
+
+def _key_id(key: HoleKey) -> _KeyId:
+    if key.kind == "time":
+        return key.symbol, key.spec_hash, -1, -1, key.open_us
+    gen = -1 if key.generation is None else key.generation
+    return key.symbol, key.spec_hash, gen, -1 if key.index is None else key.index, key.open_us
+
+
+def _remember(lru: OrderedDict[_KeyId, None], key: _KeyId, bound: int) -> None:
+    lru[key] = None
+    lru.move_to_end(key)
+    while len(lru) > bound:
+        lru.popitem(last=False)
+
+
+def _merge_oldest(series: _Series) -> None:
+    """The series' two oldest records become one merged span."""
+    a, b = series.ranges[0], series.ranges[1]
+    series.ranges[0:2] = [
+        _Range(a.generation, min(a.first, b.first), max(a.last, b.last),
+               min(a.from_us, b.from_us), max(a.to_us, b.to_us), a.reason,
+               min(a.first_seen_us, b.first_seen_us), a.count + b.count, merged=True)
+    ]  # fmt: skip
+
+
+def _retrieve(fut: asyncio.Future[None]) -> None:
+    """Mark a write's outcome retrieved (its waiter may be gone; `_flush_loop` logs failures)."""
+    if not fut.cancelled():
+        fut.exception()
+
+
+def _serialise_and_write(path: Path, snapshot: _Snapshot) -> None:
+    """Worker thread: serialise, keep within `MAX_JOURNAL_BYTES` (merging the oldest records of
+    the largest series, an over-report), then write atomically."""
+    while True:
+        series = [
+            {"symbol": sym, "spec_hash": h, "kind": kind, "bar_param": param,
+             "ranges": [list(r) for r in rows]}
+            for sym, h, kind, param, rows in snapshot
+        ]  # fmt: skip
+        data = orjson.dumps({"v": JOURNAL_VERSION, "series": series})
+        if len(data) <= MAX_JOURNAL_BYTES:
+            break
+        rows = max((s[4] for s in snapshot), key=len)
+        if len(rows) < 2:
+            raise ValueError("the write-hole journal cannot fit its bound")
+        a, b = rows[0], rows[1]
+        rows[0:2] = [(a[0], min(a[1], b[1]), max(a[2], b[2]), min(a[3], b[3]), max(a[4], b[4]),
+                      a[5], min(a[6], b[6]), a[7] + b[7], True)]  # fmt: skip
+    _write_atomic(path, data)
+
+
 def _write_atomic(path: Path, data: bytes) -> None:
+    """Write, flush, fsync, rename, then fsync the directory so the rename is durable."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     with tmp.open("wb") as f:
@@ -395,6 +535,12 @@ def _write_atomic(path: Path, data: bytes) -> None:
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, path)
+    if sys.platform != "win32":
+        fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
 
 def _read_journal(path: Path) -> tuple[dict[tuple[str, str], _Series] | None, str]:

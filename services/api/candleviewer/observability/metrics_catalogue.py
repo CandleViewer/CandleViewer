@@ -1780,11 +1780,13 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         ("reason",),
         "Closed bars not stored, recorded once each as a coverage hole and served in"
         " meta.coverage_holes until stored (reason: sink_timeout, refused, permanent,"
-        " transient_exhausted, shutdown; #5396).",
-        "any = served bar history has a recorded hole; heal is queued (bars.write_holes)",
+        " transient_exhausted, shutdown; #5396); superseded = a later write of a stored bar"
+        " not stored (the stored row is served, no hole).",
+        "any but superseded = served bar history has a recorded hole; heal is queued"
+        " (bars.write_holes); superseded = a stored bar may be out of date",
         _L,
         "E12",
-        max_series=5,
+        max_series=6,
         exported=True,
     ),
     _s(

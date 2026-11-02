@@ -4,17 +4,23 @@ coalesced, bounded, journalled, cleared when stored and reported minus the bars 
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from pathlib import Path
 
 import orjson
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from structlog.testing import capture_logs
 
 from candleviewer.bars.metrics import bars_blob_discarded_total, bars_write_holes_total
 from candleviewer.bars.write_holes import (
     JOURNAL_NAME,
+    LOG_EVERY_US,
+    MAX_JOURNAL_BYTES,
     MAX_RANGES_PER_SERIES,
+    MAX_TOTAL_RANGES,
     HoleKey,
     Present,
     WriteHoleLedger,
@@ -276,6 +282,157 @@ def test_write_holes_spans_join_and_cap_without_dropping_coverage() -> None:
     assert cap_spans(spans, 1) == [(0, 41)]
 
 
+# -- superseded, merged spans, logging -----------------------------------------------------------
+
+
+def test_write_holes_a_stored_key_not_stored_again_is_superseded_not_a_hole(
+    tmp_path: Path,
+) -> None:
+    ledger = WriteHoleLedger(tmp_path)
+    before, holes = _metric("superseded"), _metric("permanent")
+    ledger.written([_key(1)])
+    with capture_logs() as logs:
+        assert ledger.lost([_key(1)], "permanent") == 0
+    assert ledger.pending() == [] and _all(ledger) == []
+    assert (_metric("superseded"), _metric("permanent")) == (before + 1, holes)
+    assert [e["event"] for e in logs] == ["bars_write_holes_superseded"]
+
+
+def test_write_holes_a_new_key_inside_a_merged_span_is_counted_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from candleviewer.bars import write_holes
+
+    monkeypatch.setattr(write_holes, "MAX_RANGES_PER_SERIES", 2)
+    ledger = WriteHoleLedger(tmp_path)
+    assert ledger.lost([_key(0), _key(2), _key(4)], "refused") == 3
+    merged = [r for r in ledger.pending() if r.merged]
+    assert merged and merged[0].from_us <= _key(1).open_us < merged[0].to_us
+    rev = ledger.revision(SYM, H)
+    assert ledger.lost([_key(1)], "refused") == 1  # never counted before, inside the merged span
+    assert ledger.lost([_key(1)], "refused") == 0  # its repeat
+    assert ledger.lost([_key(2)], "refused") == 0  # a key counted before the merge
+    assert ledger.revision(SYM, H) == rev  # the spans did not change: no cache refresh
+
+
+def test_write_holes_a_repeat_does_not_move_the_revision(tmp_path: Path) -> None:
+    ledger = WriteHoleLedger(tmp_path)
+    ledger.lost([_key(1)], "refused")
+    rev = ledger.revision(SYM, H)
+    ledger.lost([_key(1)], "refused")
+    assert ledger.revision(SYM, H) == rev and ledger.pending()[0].count == 2
+
+
+def test_write_holes_recorded_log_is_once_per_series_per_minute(tmp_path: Path) -> None:
+    now = [T0]
+    ledger = WriteHoleLedger(tmp_path, now_us=lambda: now[0])
+    with capture_logs() as logs:
+        ledger.lost([_key(1)], "refused")
+        ledger.lost([_key(3)], "refused")
+        now[0] += LOG_EVERY_US
+        ledger.lost([_key(5)], "refused")
+    assert [e["event"] for e in logs].count("bars_write_holes_recorded") == 2
+
+
+def test_write_holes_past_the_series_cap_the_stalest_series_is_dropped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from candleviewer.bars import write_holes
+
+    monkeypatch.setattr(write_holes, "MAX_SERIES", 2)
+    now = [T0]
+    ledger = WriteHoleLedger(tmp_path, now_us=lambda: now[0])
+    for n, h in enumerate(("a", "b", "c")):
+        now[0] = T0 + n
+        ledger.lost([HoleKey(SYM, h * 64, "time", "1m", 7, 1, T0, T0 + W)], "refused")
+    assert sorted(r.spec_hash for r in ledger.pending()) == ["b" * 64, "c" * 64]
+
+
+# -- the journal's bound and its write path -------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_write_holes_journal_filled_to_the_cap_reloads(tmp_path: Path) -> None:
+    """M1: every series full at the widest values is still a journal `load` accepts."""
+    big = 2**61  # 19 digits
+    ledger = WriteHoleLedger(tmp_path, now_us=lambda: big)
+    per = MAX_RANGES_PER_SERIES
+    hashes = [f"{n:064x}" for n in range(MAX_TOTAL_RANGES // per + 6)]
+
+    def keys(h: str) -> list[HoleKey]:  # never contiguous: one record each until merged
+        return [HoleKey(SYM, h, "tick", "tick:100", big, big + 2 * i, big + 2 * i,
+                        big + 2 * i + 1) for i in range(per)]  # fmt: skip
+
+    for h in hashes:
+        ledger.lost(keys(h), "transient_exhausted")
+    assert len(ledger.pending()) == MAX_TOTAL_RANGES
+    await ledger.flush()
+    assert (tmp_path / JOURNAL_NAME).stat().st_size <= MAX_JOURNAL_BYTES
+    again = WriteHoleLedger(tmp_path)
+    assert await again.load() == "ok"
+    for h in hashes:  # merged where the bound needed it: over-reported, never dropped
+        spans = again.holes_for(SYM, h, 0, 2**62, [])
+        assert all(any(a <= k.open_us and k.end_us <= b for a, b in spans) for k in keys(h))
+
+
+@pytest.mark.asyncio
+async def test_write_holes_journal_over_its_byte_bound_merges_and_reloads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from candleviewer.bars import write_holes
+
+    monkeypatch.setattr(write_holes, "MAX_JOURNAL_BYTES", 2048)
+    ledger = WriteHoleLedger(tmp_path)
+    ledger.lost([_key(2 * i) for i in range(60)], "refused")
+    await ledger.flush()
+    assert (tmp_path / JOURNAL_NAME).stat().st_size <= 2048
+    again = WriteHoleLedger(tmp_path)
+    assert await again.load() == "ok"
+    for i in range(60):  # merged, so over-reported, never dropped
+        k = _key(2 * i)
+        assert any(a <= k.open_us and k.end_us <= b for a, b in _all(again)), i
+
+
+@pytest.mark.asyncio
+async def test_write_holes_a_cancelled_write_loses_no_change_and_writes_never_overlap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M2: the journal task is cancelled while its write runs; a change made meanwhile is on
+    disk after `flush`, and the two writes never run at once."""
+    from candleviewer.bars import write_holes
+
+    real = write_holes._write_atomic
+    gate, entered = threading.Event(), asyncio.Event()
+    loop = asyncio.get_running_loop()
+    running, overlap = [0], [False]
+
+    def slow(path: Path, data: bytes) -> None:
+        running[0] += 1
+        overlap[0] |= running[0] > 1
+        loop.call_soon_threadsafe(entered.set)
+        gate.wait(10)
+        try:
+            real(path, data)
+        finally:
+            running[0] -= 1
+
+    monkeypatch.setattr(write_holes, "_write_atomic", slow)
+    ledger = WriteHoleLedger(tmp_path)
+    ledger.lost([_key(1)], "refused")
+    await entered.wait()
+    ledger.lost([_key(5)], "refused")  # changed while the first write runs
+    task = ledger._task
+    assert task is not None
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    gate.set()
+    await ledger.flush()
+    assert not overlap[0]
+    again = WriteHoleLedger(tmp_path)
+    assert await again.load() == "ok"
+    assert _all(again) == [(T0 + W, T0 + 2 * W), (T0 + 5 * W, T0 + 6 * W)]
+
+
 # -- property: every terminally lost key is counted once and listed until stored ----------------
 
 _EVENTS = st.lists(
@@ -285,38 +442,55 @@ _EVENTS = st.lists(
 
 
 @settings(max_examples=150, deadline=None)
-@given(events=_EVENTS, kind=st.sampled_from(("time", "tick")))
+@given(
+    events=_EVENTS,
+    kind=st.sampled_from(("time", "tick")),
+    served=st.sets(st.tuples(st.integers(0, 3), st.integers(0, 40)), max_size=20),
+)
 def test_write_holes_property_lost_keys_counted_once_and_listed_until_stored(
     tmp_path_factory: pytest.TempPathFactory,
     events: list[tuple[str, int, int]],
     kind: str,
+    served: set[tuple[int, int]],
 ) -> None:
-    ledger = WriteHoleLedger(tmp_path_factory.mktemp("holes"))
-    state: dict[tuple[int, int], str] = {}  # (gen, idx) -> "hole" | "stored"
-    counted = 0
-    before = _metric("refused")
+    """Every key lost before it was stored is counted once, a loss after a store is superseded,
+    and `holes_for` names every key still lost and not served: with merging exercised (at most 4
+    records a series), a random set of bars served, never a false negative."""
+    from candleviewer.bars import write_holes
 
-    def key(gen: int, idx: int) -> HoleKey:
-        # one series: a generation's bars follow the previous one's, index order is time order
-        return _key(idx, gen=gen, kind=kind, open_us=T0 + (gen * 100 + idx) * W)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(write_holes, "MAX_RANGES_PER_SERIES", 4)
+        ledger = WriteHoleLedger(tmp_path_factory.mktemp("holes"))
+        state: dict[tuple[int, int], str] = {}  # (gen, idx) -> "hole" | "stored"
+        counted = superseded = 0
+        before, sup_before = _metric("refused"), _metric("superseded")
 
-    for op, gen, idx in events:
-        if op == "lost":
-            new = ledger.lost([key(gen, idx)], "refused")
-            first = (gen, idx) not in state
-            assert new == int(first)
-            if first:
-                state[gen, idx] = "hole"
-                counted += 1
-        else:
-            ledger.written([key(gen, idx)])
-            state[gen, idx] = "stored"
-    assert _metric("refused") == before + counted
-    spans = _all(ledger)
-    for (gen, idx), what in state.items():
-        k = key(gen, idx)
-        covered = any(a <= k.open_us and k.end_us <= b for a, b in spans)
-        if what == "hole":
-            assert covered, (gen, idx)
-        elif kind == "time":  # a stored time bar is never listed (exact by open time)
-            assert not any(a < k.end_us and k.open_us < b for a, b in spans), (gen, idx)
+        def key(gen: int, idx: int) -> HoleKey:
+            # one series: a generation's bars follow the previous one's, index order is time order
+            return _key(idx, gen=gen, kind=kind, open_us=T0 + (gen * 100 + idx) * W)
+
+        for op, gen, idx in events:
+            if op == "lost":
+                new = ledger.lost([key(gen, idx)], "refused")
+                was = state.get((gen, idx))
+                assert new == int(was is None)
+                if was is None:
+                    state[gen, idx] = "hole"
+                    counted += 1
+                superseded += was == "stored"
+            else:
+                ledger.written([key(gen, idx)])
+                state[gen, idx] = "stored"
+        assert _metric("refused") == before + counted
+        assert _metric("superseded") == sup_before + superseded
+        present = [Present(gen, idx, key(gen, idx).open_us, key(gen, idx).end_us)
+                   for gen, idx in served]  # fmt: skip
+        spans = _all(ledger, present)
+        merged = any(r.merged for r in ledger.pending())
+        for (gen, idx), what in state.items():
+            k = key(gen, idx)
+            covered = any(a <= k.open_us and k.end_us <= b for a, b in spans)
+            if what == "hole" and (gen, idx) not in served:
+                assert covered, (gen, idx)  # no false negative
+            elif kind == "time" and not merged and what == "stored":
+                assert not any(a < k.end_us and k.open_us < b for a, b in spans), (gen, idx)
