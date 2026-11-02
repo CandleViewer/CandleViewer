@@ -75,6 +75,8 @@ export interface ChartConfig {
   /** Bench mode posts `frame` every frame instead of sampling it at 1 Hz (§6). */
   readonly bench: boolean;
   readonly syncGroup: string | null;
+  /** `ChartOptions.memory.sampleIntervalMs` (E11-S15, 26 §7); absent means 5000. */
+  readonly sampleIntervalMs?: number;
 }
 
 /** One column of a columnar buffer: `count` elements of `bytes` each from `offset`. */
@@ -364,6 +366,9 @@ const BYTES: ReadonlySet<number> = new Set([1, 2, 4, 8]);
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+/** `config.sampleIntervalMs`: absent, or a positive safe integer (what `MemorySampler` accepts). */
+const sampleInterval = (v: unknown): boolean =>
+  v === undefined || (typeof v === "number" && Number.isSafeInteger(v) && v >= 1);
 const chartId = (v: unknown): v is ChartId => Number.isSafeInteger(v) && (v as number) >= 0;
 /** An OffscreenCanvas (worker) or an HTMLCanvasElement (inline), reached structurally. */
 const canvasLike = (v: unknown): boolean =>
@@ -515,6 +520,7 @@ export function rejectReason(msg: unknown): string | null {
         canvasLike(msg["canvas"]) &&
         isObj(msg["theme"]) &&
         isObj(msg["config"]) &&
+        sampleInterval(msg["config"]["sampleIntervalMs"]) &&
         (msg["profile"] === undefined || msg["profile"] === "degraded-2d") &&
         (msg["reducedMotion"] === undefined || typeof msg["reducedMotion"] === "boolean")
         ? null

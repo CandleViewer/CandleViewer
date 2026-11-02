@@ -302,6 +302,8 @@ export interface ChartHostOptions {
   readonly theme: ThemeLut;
   readonly syncGroup: string | null;
   readonly bench: boolean;
+  /** `ChartOptions.memory.sampleIntervalMs`, validated by `createChart` (E11-S15); absent: 5000. */
+  readonly sampleIntervalMs?: number;
   /** The app's resolved motion mode at mount (E11-S04 BQ-104); `setMotion` updates it. */
   readonly reducedMotion?: boolean;
   /** The design fonts (E11-S11 BQ-258); every `init` carries them, a restart's included. */
@@ -422,7 +424,11 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   const init = (): void => {
     const canvas = o.canvas();
     const dpr = size?.dpr ?? o.dpr;
-    const config = { bench: o.bench, syncGroup: o.syncGroup };
+    const config = {
+      bench: o.bench,
+      syncGroup: o.syncGroup,
+      ...(o.sampleIntervalMs !== undefined && { sampleIntervalMs: o.sampleIntervalMs }),
+    };
     const extra = {
       ...(forced && { profile: "degraded-2d" as const }),
       ...(reduce && { reducedMotion: true }),

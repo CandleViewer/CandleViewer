@@ -10,6 +10,7 @@ Except `atlas-build.ts`: E11-S11 production bench code over `src/text`, driven b
 Except `candle-ring.ts` and `candle-series.ts`: E12-S06 production bench code over `src/layers`, `src/model` and `src/gl`, driven by Vitest.
 Except `lut-gen.ts`: E11-T04 production bench code over `src/theme`, driven by Vitest (BQ-T04-09).
 Except `resize-drag.ts`: E11-S10 production bench code over `src/worker`, driven by Vitest (BQ-154).
+Except `memory-sample.ts`: E11-S15 production bench code over `src/memory`, driven by Vitest (BQ-S15-12).
 
 This directory is **throwaway prototype code** for the M0 spike ticket E06-K02
 ("Prototype scene A: 100k-bar model, visible-window draw and LOD ladder"). It

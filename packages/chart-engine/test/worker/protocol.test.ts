@@ -104,6 +104,16 @@ describe("Scenario: A malformed message cannot kill the worker (validation)", ()
     ],
     ["an unknown input kind", { ...valid[2], kind: "gamepad" }, "malformed input"],
     ["a zero dpr", { ...valid[0], dpr: 0 }, "malformed init"],
+    [
+      "an init with a fractional sample interval",
+      { ...valid[0], config: { bench: false, syncGroup: null, sampleIntervalMs: 0.5 } },
+      "malformed init",
+    ],
+    [
+      "an init with a zero sample interval",
+      { ...valid[0], config: { bench: false, syncGroup: null, sampleIntervalMs: 0 } },
+      "malformed init",
+    ],
     ["an init without a canvas", { ...valid[0], canvas: undefined }, "malformed init"],
     ["an init with a plain object", { ...valid[0], canvas: {} }, "malformed init"],
     [

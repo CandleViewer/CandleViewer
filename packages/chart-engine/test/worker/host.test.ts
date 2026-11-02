@@ -702,3 +702,18 @@ describe("the page's host env", () => {
     }
   });
 });
+
+describe("Scenario: memory.sampleIntervalMs reaches the worker (E11-S15, 26 §7/§8)", () => {
+  it("carries the configured interval, or 5000, in every init's config", () => {
+    const configs = [{ memory: { sampleIntervalMs: 1000 } }, {}].map((extra) => {
+      const chart = createChart({ container: asHtml(workerDoc()), theme, ...extra });
+      settle();
+      const init = inboxOf(lastWorker(), "init").at(-1) as {
+        config: { sampleIntervalMs?: number };
+      };
+      chart.dispose();
+      return init.config.sampleIntervalMs;
+    });
+    expect(configs).toEqual([1000, 5000]);
+  });
+});
