@@ -53,6 +53,12 @@ MAX_TAIL_SCAN_ROWS: Final = 500_000
 #: runs on QuestDB at a time). A first read that cannot start in time retries on a later `ensure`.
 #: Revisit it with `questdb_pgwire_lock_wait_seconds{wire="bars_hydrate"}`.
 MAX_CONCURRENT_TAIL_READS: Final = 8
+#: SR-E12-04 spec caps: the series (spec) leases one user, one symbol and the process may hold
+#: (`bars.leases.SpecCaps`, `bars.builder_set`). They moved here from `bars/leases.py` (#452 F5)
+#: so every E12 number has one home; `bars.leases` still re-exports them for its old importers.
+CAP_PER_USER: Final = 8
+CAP_PER_SYMBOL: Final = 32
+CAP_GLOBAL: Final = 512
 #: How long past the series store's `timeout_s` the heal driver lets a refresh run (#2787 P4b): a
 #: read its deadline cut still unwinds through its reader, and `LazyPgWire` gives the cut query's
 #: connection up to its `close_timeout_s` (5 s, pinned by a test) to close gracefully; then 1 s of

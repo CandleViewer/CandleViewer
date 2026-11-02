@@ -19,12 +19,14 @@ from dataclasses import dataclass, field
 from typing import Final
 
 from candleviewer.bars.errors import BarsError, SpecCapExceeded
+
+# Explicit re-exports (`as`): the caps live in `bars.limits` (#452 F5); old importers still work.
+from candleviewer.bars.limits import CAP_GLOBAL as CAP_GLOBAL
+from candleviewer.bars.limits import CAP_PER_SYMBOL as CAP_PER_SYMBOL
+from candleviewer.bars.limits import CAP_PER_USER as CAP_PER_USER
 from candleviewer.bars.metrics import bars_spec_cap_rejected_total
 
 GRACE_US: Final = 30_000_000
-CAP_PER_USER: Final = 8
-CAP_PER_SYMBOL: Final = 32
-CAP_GLOBAL: Final = 512
 
 Key = tuple[str, str]  # (symbol, spec_hash)
 

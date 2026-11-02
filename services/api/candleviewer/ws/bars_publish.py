@@ -55,7 +55,7 @@ import structlog
 
 from candleviewer.bars.emit import BarEmission
 from candleviewer.bars.errors import BarSpecError
-from candleviewer.bars.leases import CAP_GLOBAL
+from candleviewer.bars.limits import CAP_GLOBAL
 from candleviewer.bars.metrics import bar_emit_sink_errors_total
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
 from candleviewer.bars.spec import WireBarType, to_wire

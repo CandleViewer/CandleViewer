@@ -45,6 +45,7 @@ import structlog
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, Response
 
+from candleviewer.api.market_refusal import note_refused
 from candleviewer.api.market_response import (
     InvalidCursor,
     build_meta,
@@ -58,6 +59,7 @@ from candleviewer.api.market_response import (
     serialize_bar,
     with_recording_started_at,
 )
+from candleviewer.api.market_time import ts_us
 from candleviewer.bars.errors import BarParamOutOfRange, BarSpecError
 from candleviewer.bars.estimate import estimate_non_time_bars
 from candleviewer.bars.limits import (
@@ -71,7 +73,6 @@ from candleviewer.bars.limits import (
 from candleviewer.bars.metrics import (
     bars_endpoint_422_no_data_recorded_total,
     record_page,
-    record_param_rejected,
 )
 from candleviewer.bars.models import BarSpec
 from candleviewer.bars.reader import BarKey, BarPage, row_key, stored_bar
@@ -93,6 +94,9 @@ def _log() -> Any:
 
 
 class _Principal(Protocol):
+    @property
+    def user_id(self) -> object: ...
+
     def has(self, permission: str) -> bool: ...
 
 
@@ -124,9 +128,18 @@ class _Rejected(Exception):
         self.response = response
 
 
-def _bad_param(reason: str, status: int, detail: str) -> _Rejected:
-    record_param_rejected(reason)
-    return _Rejected(problem(status, "validation_failed", "Invalid param", detail))
+def _refused(reason: str, response: JSONResponse, **values: object) -> JSONResponse:
+    """Count and log one refusal (`api.market_refusal`), then hand the response back."""
+    note_refused("bars", reason, response.status_code, **values)
+    return response
+
+
+def _bad_param(reason: str, status: int, detail: str, bar_type: str, param: str) -> _Rejected:
+    resp = _refused(
+        reason, problem(status, "validation_failed", "Invalid param", detail),
+        bar_type=bar_type, param=param,
+    )  # fmt: skip
+    return _Rejected(resp)
 
 
 def parse_bar_request(bar_type: str, param: str, *, qty_step: Decimal | None = None) -> BarSpec:
@@ -134,36 +147,42 @@ def parse_bar_request(bar_type: str, param: str, *, qty_step: Decimal | None = N
     unsupported). `qty_step` is the symbol's catalogue lot step, the `volume`/`delta` floor's
     base (SR-E12-03); `None` refuses those two bar types."""
     if bar_type not in _BAR_TYPES:
-        raise _bad_param("invalid", 400, "bar_type is not a supported bar type.")
+        raise _bad_param("invalid", 400, "bar_type is not a supported bar type.", bar_type, param)
     if bar_type in ("pnf", "heikin_ashi") or param.startswith("atr:"):
         what = {
             "pnf": "Point-and-figure bars are not available yet",
             "heikin_ashi": "Heikin-Ashi is a chart transform over time bars; use bar_type=time",
         }.get(bar_type, "ATR-sized renko bricks are not available yet (ADR-0033)")
-        raise _bad_param("unsupported", 422, f"{what}; {_TIME_ALTERNATIVE}.")
+        raise _bad_param("unsupported", 422, f"{what}; {_TIME_ALTERNATIVE}.", bar_type, param)
     if len(param) > PARAM_MAX_LEN:
-        raise _bad_param("invalid", 400, f"param must be at most {PARAM_MAX_LEN} characters.")
+        detail = f"param must be at most {PARAM_MAX_LEN} characters."
+        raise _bad_param("invalid", 400, detail, bar_type, param)
     try:
         spec = from_wire(bar_type, param)
     except BarSpecError:
         # Never echo the client's text back (it may be a probe); name the field and the rule.
         raise _bad_param(
-            "invalid", 400, f"param is not valid for bar_type {bar_type}; see the param table."
+            "invalid",
+            400,
+            f"param is not valid for bar_type {bar_type}; see the param table.",
+            bar_type,
+            param,
         ) from None
     try:
         check_param_bounds(spec, bar_type, qty_step=qty_step)
     except BarParamOutOfRange as exc:
-        raise _bad_param("out_of_range", 400, str(exc)) from None
+        raise _bad_param("out_of_range", 400, str(exc), bar_type, param) from None
     return spec
 
 
-def _ts_us(value: str | None) -> int | None:
-    if value is None:
-        return None
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return int(parsed.timestamp() * 1_000_000)
+#: The exact RFC 3339 conversion both routes share (`api.market_time`); kept under its old name.
+_ts_us = ts_us
+
+
+def window_span_us(start_us: int, end_us: int, after_us: int | None) -> int:
+    """The window the read still has to cover, for the SR-E12-02 caps: from the cursor when there
+    is one, else from `from`. A `from` before 1970 must not be clamped up to 1970 (#452 F1)."""
+    return end_us - (start_us if after_us is None else max(start_us, after_us + 1))
 
 
 def _bad(detail: str) -> JSONResponse:
@@ -192,16 +211,19 @@ def make_market_bars_router(
 
     async def _authorize(request: Request) -> None:
         if principal_resolver is None:
-            raise _Rejected(problem(501, "internal_error", "Not implemented",
-                                    "Session verification is not wired yet."))  # fmt: skip
+            raise _Rejected(_refused("unavailable", problem(
+                501, "internal_error", "Not implemented", "Session verification is not wired yet."
+            )))  # fmt: skip
         got = principal_resolver.resolve(request)
         principal: _Principal | None = await got if inspect.isawaitable(got) else got
         if principal is None:
-            raise _Rejected(problem(401, "unauthenticated", "Unauthorized",
-                                    "Sign in to read market data."))  # fmt: skip
+            raise _Rejected(_refused("unauthenticated", problem(
+                401, "unauthenticated", "Unauthorized", "Sign in to read market data."
+            )))  # fmt: skip
         if not principal.has(_REQUIRED_PERMISSION):
             detail = f"Reading market data requires {_REQUIRED_PERMISSION}."
-            raise _Rejected(problem(403, "forbidden", "Forbidden", detail))
+            raise _Rejected(_refused("forbidden", problem(403, "forbidden", "Forbidden", detail),
+                                     user_id=principal.user_id))  # fmt: skip
 
     async def _print_estimate(
         symbol: str, spec: BarSpec, bar_type: str, rng: TimeRange
@@ -215,7 +237,8 @@ def make_market_bars_router(
         (`retryable: false`) and would state a size nobody measured."""
         if trade_totals is None:
             detail = "Recorded trade totals are not available yet; retry shortly."
-            return problem(503, "store_unavailable", "Service unavailable", detail)
+            return _refused("unavailable", problem(503, "store_unavailable",
+                                                   "Service unavailable", detail))  # fmt: skip
         try:
             async with asyncio.timeout(QUERY_TIMEOUT_S):
                 totals = await trade_totals(symbol, rng)
@@ -223,7 +246,8 @@ def make_market_bars_router(
             cause = None if exc.__cause__ is None else type(exc.__cause__).__name__
             _log().warning("market_bars_estimate_failed", error=type(exc).__name__, cause=cause)
             detail = "Trade storage is unavailable; retry shortly or narrow from/to."
-            return problem(503, "store_unavailable", "Service unavailable", detail)
+            return _refused("unavailable", problem(503, "store_unavailable",
+                                                   "Service unavailable", detail))  # fmt: skip
         if estimate_non_time_bars(spec, totals.prints, totals.qty) <= MAX_WINDOW_BARS:
             return None
         cap = f"{MAX_WINDOW_BARS:,}"
@@ -232,7 +256,9 @@ def make_market_bars_router(
         else:  # delta and range: a bound; renko: an estimate (one print can make many bricks)
             per = "estimated at" if spec.kind == "renko" else "at most"
             size = f"may hold more than {cap} {bar_type} bars ({per} one per recorded print)"
-        return _window_too_large(f"The window {size}; narrow from/to.")
+        return _refused("window_too_large",
+                        _window_too_large(f"The window {size}; narrow from/to."),
+                        bar_type=bar_type)  # fmt: skip
 
     @router.get("/market/bars")
     async def get_bars(
@@ -242,6 +268,7 @@ def make_market_bars_router(
         param: str,
         from_: str | None = Query(default=None, alias="from"),
         to: str | None = Query(default=None, alias="to"),
+        # `limit` outside 1..MAX_LIMIT: NOT COVERED by the refusal counter (#452 F4a, owned row).
         limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
         cursor: str | None = Query(default=None),  # length enforced by decode_cursor (#2087 S1)
         include_open: bool = Query(default=False),
@@ -257,12 +284,14 @@ def make_market_bars_router(
         try:
             start_us, end_us = _ts_us(from_), _ts_us(to)
         except ValueError:
-            return _bad("from/to must be RFC 3339 timestamps.")
+            return _refused("bad_window", _bad("from/to must be RFC 3339 timestamps."),
+                            symbol=symbol, from_=from_, to=to)  # fmt: skip
         if start_us is None:
-            return _bad("'from' is required.")
+            return _refused("bad_window", _bad("'from' is required."), symbol=symbol, to=to)
         end_us = now_us() if end_us is None else end_us
         if start_us > end_us:
-            return _bad("'from' must not be after 'to'.")
+            return _refused("bad_window", _bad("'from' must not be after 'to'."),
+                            symbol=symbol, from_=from_, to=to)  # fmt: skip
         after_us: int | None = None
         at_key: BarKey | None = None
         scope = cursor_scope("bars", symbol, f"{bar_type}:{param}")
@@ -277,18 +306,22 @@ def make_market_bars_router(
                     after_us = at_key[0] - 1  # window-cap arithmetic only; not sent to reader
             except InvalidCursor:
                 detail = "The cursor is not valid for this request; restart without it."
-                return problem(400, "invalid_cursor", "Invalid cursor", detail)
+                return _refused("invalid_cursor",
+                                problem(400, "invalid_cursor", "Invalid cursor", detail),
+                                symbol=symbol, cursor_len=len(cursor))  # fmt: skip
         if symbol_listed is None or (reader := reader_provider()) is None:
-            return problem(503, "store_unavailable", "Service unavailable",
-                           "Bar storage is not ready yet.")  # fmt: skip
+            return _refused("unavailable", problem(503, "store_unavailable",
+                            "Service unavailable", "Bar storage is not ready yet."))  # fmt: skip
         if not symbol_listed(symbol):
-            return problem(422, "validation_failed", "Unprocessable entity",
-                           "This symbol is not a listed instrument.")  # fmt: skip
+            return _refused("unknown_symbol", problem(422, "validation_failed",
+                            "Unprocessable entity", "This symbol is not a listed instrument."),
+                            symbol=symbol)  # fmt: skip
         if spec.kind != "time" and recording_started_at_us is None:
             # #2089 adversarial L3: no recording-start source wired is a server state, not a
             # fact about the data — 503, never a misleading `no_data_recorded`.
-            return problem(503, "store_unavailable", "Service unavailable",
-                           "Recording metadata is not available yet; retry shortly.")  # fmt: skip
+            return _refused("unavailable", problem(503, "store_unavailable",
+                            "Service unavailable",
+                            "Recording metadata is not available yet; retry shortly."))  # fmt: skip
         started = await recording_started_at_us(symbol) if recording_started_at_us else None
         if spec.kind != "time" and (started is None or start_us < started):
             # Precedence: before the window cap (22-api /market/bars).
@@ -301,20 +334,23 @@ def make_market_bars_router(
             refused = problem(422, "no_data_recorded", "No data recorded",
                               f"{bar_type.capitalize()} bars need recorded trade data; {when}. "
                               "Choose a later window or use time bars.")  # fmt: skip
+            note_refused("bars", "no_data_recorded", 422, symbol=symbol, bar_type=bar_type)
             return with_recording_started_at(refused, started)
         span_cap = MAX_TIME_WINDOW_US if spec.kind == "time" else MAX_NON_TIME_WINDOW_US
-        span = end_us - max(start_us, (after_us or 0) + 1)
+        span = window_span_us(start_us, end_us, after_us)
         if span > span_cap:
             days = span_cap // 86_400_000_000
-            return _window_too_large(f"A {bar_type} bar window may span at most {days} days.")
+            return _refused("window_too_large", _window_too_large(
+                f"A {bar_type} bar window may span at most {days} days."
+            ), bar_type=bar_type, param=param, from_=from_, to=to)  # fmt: skip
         if spec.kind == "time":
             # SR-E12-02 estimate: ceil(window / interval) <= MAX_WINDOW_BARS, before any query.
             width_us = int(spec.param_value) * 1000
             if -(-span // width_us) > MAX_WINDOW_BARS:
-                return _window_too_large(
+                return _refused("window_too_large", _window_too_large(
                     f"The window holds more than {MAX_WINDOW_BARS:,} {param}-minute bars; "
                     "narrow from/to."
-                )
+                ), bar_type=bar_type, param=param, from_=from_, to=to)  # fmt: skip
         else:
             # Non-time bars (#2093): estimate from the prints the read pages through, which
             # start at the cursor's bar when there is one.
@@ -330,8 +366,9 @@ def make_market_bars_router(
                     else reader.read_bars(symbol, spec, start_us, end_us, limit + 1, at_key=at_key)
                 )
         except (TimeoutError, OSError, ConnectionError):
-            return problem(503, "store_unavailable", "Service unavailable",
-                           "Bar storage did not answer in time; retry shortly.")  # fmt: skip
+            return _refused("unavailable", problem(503, "store_unavailable",
+                            "Service unavailable",
+                            "Bar storage did not answer in time; retry shortly."))  # fmt: skip
         # `has_more` comes from the RAW fetch (#2089 adversarial M1): `read_bars` withholds
         # checksum-failed rows (`page.dropped`) but reports the position of the (limit+1)-th raw
         # row whenever the fetch was full. That row is the next page's first, so a dropped row
@@ -374,4 +411,5 @@ __all__ = [
     "TradeTotalsSource",
     "make_market_bars_router",
     "parse_bar_request",
+    "window_span_us",
 ]

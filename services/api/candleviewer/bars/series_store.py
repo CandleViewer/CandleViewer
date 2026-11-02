@@ -154,8 +154,13 @@ import structlog
 
 from candleviewer.bars.emit import BarEmission
 from candleviewer.bars.errors import SpecCapExceeded
-from candleviewer.bars.leases import CAP_GLOBAL, GRACE_US, Key
-from candleviewer.bars.limits import MAX_CONCURRENT_TAIL_READS, MAX_TAIL, QUERY_TIMEOUT_S
+from candleviewer.bars.leases import GRACE_US, Key
+from candleviewer.bars.limits import (
+    CAP_GLOBAL,
+    MAX_CONCURRENT_TAIL_READS,
+    MAX_TAIL,
+    QUERY_TIMEOUT_S,
+)
 from candleviewer.bars.metrics import (
     bars_series_gap_rereads_total,
     bars_series_gaps_total,

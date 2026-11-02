@@ -1,3 +1,4 @@
+["api_request_rejected_total", "counter", ["route", "reason"], "live", "E12"]
 ["audit_chain_verification_failures_total", "counter", [], "live", "E42"]
 ["auth_audit_outcome_lost_total", "counter", ["action"], "live", "E09"]
 ["auth_breached_list_rows", "gauge", [], "live", "E09"]

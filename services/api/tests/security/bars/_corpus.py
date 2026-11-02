@@ -52,9 +52,6 @@ LIMITS: Final = ("0", "-1", "1", "5000", "5001", "1e3", "1.5", "", "9" * 30, "0x
 CURSORS: Final = ("", "a" * 10_000, "../../", "%00", "null", "e30", "eyJ0cyI6MH0", "\x1b[0m")
 SYMBOLS: Final = ("", "btcusdt", f"BTCUSDT{_Q}", "BTC/USDT", "x" * 200, "ETHUSDT", "BTCUSDT\x00")
 PRICE_TYPES: Final = ("trade", "mark", "", "TRADE", f"trade{_Q}", "x" * 100)
-#: Known gaps, by the #452 findings row that holds their analysis; each names its input only.
-F1: Final = "#452 findings row F1: a window whose `from` is before 1970"
-F7: Final = "#452 findings row F7: a `to` at the last representable instant of year 9999"
 #: The two boolean query parameters (22: `include_open`, `include_delta`, both `boolean`).
 FLAGS: Final = ("include_open", "include_delta")
 #: Their probes: non-boolean text, empty, case variants, look-alikes, NUL, very long, and repeated
@@ -93,14 +90,6 @@ def _klines(**over: object) -> dict[str, object]:
     return {k: v for k, v in base.items() if v is not None}
 
 
-def _known(bar_type: str, window: tuple[str | None, str | None]) -> str | None:
-    """The known gap a window probe hits: F1 on time bars over `PRE_EPOCH`, F7 on `YEAR_9999`
-    (probed on time bars only)."""
-    if window == YEAR_9999:
-        return F7
-    return F1 if bar_type == "time" and window == PRE_EPOCH else None
-
-
 def cases() -> list[Case]:
     """About 450 probes of `getBars` and 250 of `getKlines`: one parameter hostile at a time,
     over a base query the route serves."""
@@ -108,10 +97,8 @@ def cases() -> list[Case]:
     out += [Case("getBars", _bars(bar_type=t)) for t in HOSTILE_BAR_TYPES]
     for bar_type, param in (("time", "1"), ("tick", "100"), ("renko", "30")):
         for window in WINDOWS:
-            if window == YEAR_9999 and bar_type != "time":
-                continue  # one F7 probe, on time bars
             query = _bars(bar_type=bar_type, param=param, **{"from": window[0], "to": window[1]})
-            out.append(Case("getBars", query, _known(bar_type, window)))
+            out.append(Case("getBars", query))
     out += [Case("getBars", _bars(limit=v)) for v in LIMITS]
     out += [Case("getBars", _bars(cursor=v)) for v in CURSORS]
     out += [Case("getBars", _bars(symbol=v)) for v in SYMBOLS]
