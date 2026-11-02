@@ -24,8 +24,8 @@ row gains the column.
 
 Delta bars. After each trade the bar closes when `abs(delta) >= delta_threshold`; closure is final
 (delta moving back below the threshold cannot reopen it). A closing trade may overshoot; nothing is
-split and no `split_from_trade_id` exists. `gap_before` is False unless `mark_gap()` was called
-(an unrecovered tape gap, #529).
+split and no `split_from_trade_id` exists. `gap_before` is False; `tape_gap` is False unless
+`mark_gap()` was called (an unrecovered tape gap, #529, #5396).
 
 Late / out-of-order trades follow the S02 rule still pending ratification (#2013): a closed bar is
 final and a late trade joins the open bar. `on_clock` is a no-op.
@@ -146,7 +146,7 @@ class RangeBarBuilder(_ThresholdBuilder):
             d.gap_before, self._gap = d.gap_before or self._gap, False
             self._open_src = t.ts_event
         elif self._gap_pending and t.ts_event > self._gap_floor:  # `_draft` stamps a new bar
-            d.gap_before, self._gap_pending = True, False
+            d.tape_gap, self._gap_pending = True, False
         d.apply(t)
         if self._open_px is not None:
             d.open = self._open_px

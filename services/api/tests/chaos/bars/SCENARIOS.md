@@ -36,7 +36,7 @@ fix lands, so the fix removes the marker.
 | # | Scenario | C-13.6 | PR | Observed | Negative control |
 |---|---|---|---|---|---|
 | 1 | Process or WS drop mid-bar: resume from store, or marked gapped | #1, #12 | PR-2 | WS drop mid-bar: backfilled, bars == golden, no bar closed twice, `ingest_ws_up` 1 -> 0 -> 1 ✅; restart mid-bar: golden, same epoch, replayed closes identical ✅; tape lag past the ring: `bars_restore_gap_total`, `bar_restore_gap`, WARN ✅ | no backfill loses prints; restart without the tape loses prints; a tape that reaches the ring raises no alarm |
-| 2 | Tape gap (REST backfill ok / down) | #1, #3 | PR-1 | recovered: bars == golden ✅; unrecovered: `GapEvent`, `trade_gaps_total`, health ✅; bar marked (`gap_before`) ✅ (#529 gap-marking fix) | no-backfill run fails the golden |
+| 2 | Tape gap (REST backfill ok / down) | #1, #3 | PR-1 | recovered: bars == golden ✅; unrecovered: `GapEvent`, `trade_gaps_total`, health ✅; bar marked (`tape_gap`, #5396) ✅ (#529 gap-marking fix) | no-backfill run fails the golden |
 | 3 | Out-of-order and duplicate prints | #3 | PR-1 | dup suppressed upstream ✅; reorder amends the closed bar ✅; > 60 s dropped, counted, logged ✅ | with `TradeStream`'s ring replaced by a no-op (monkeypatched), a duplicated frame is double counted by the volume, tick, range and renko folds |
 | 4 | 5xx and 10018 during kline backfill | #5 | PR-2 | every 3rd page limited: complete, nothing lost; 4 limits in a row: full-jitter delays in `[1, cap]`; `loading_older_bars` while earlier pages stay readable; 5 in a row: partial, resumed without refetching; 5xx retried ✅ | the bounds helper rejects an immediate retry and a delay past 60 s |
 | 5 | Store restart / write failure | #10 | PR-2 | short outage (< 7.5 s): store == golden, nothing dropped ✅; nothing reported persisted while the store rejects ✅; long outage: dropped loudly (`bars_write_failed_total{reason="transient_exhausted"}`, `degraded`, ERROR), stored + dropped == submitted ✅; replay of dropped rows: xfail (#531); real QuestDB stop/start: `test_s05b` (integration job) | a sink that acks and discards fails the golden |
@@ -63,8 +63,8 @@ fails on a leaked row or a NaN price.
 
 ## Signals that do not exist (BQ-8)
 
-| Failure | Missing signal | Pinned by |
-|---|---|---|
+| Failure              | Missing signal                                                                                                                                    | Pinned by                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | Unrecovered tape gap | no bars-side health reason: `BarsHealthReason` has no tape-gap member, so the bars report healthy while ingestion reports `trade_gap_unrecovered` | `test_s02_unrecovered_gap_leaves_the_bars_health_unchanged` |
 
 ## Mapping to the ticket's observability names
@@ -86,7 +86,7 @@ not a colour), `trade_duplicates_suppressed_total`, `bars_amended_total`,
 
 - Virtual clock, seeded RNG and the stub transport, as in the ingestion suite.
 - The set's "now" is composed in `_rig.py` as `corrected_now_us(ClockGuard.offset_us,
-  rig.host_now_us)`, the same composition as `app.exchange_corrected_clock`, which
+rig.host_now_us)`, the same composition as `app.exchange_corrected_clock`, which
   `tests/unit/test_bars_clock_wiring.py` pins in the app. `clock="raw"` is the pre-#529
   wiring and exists only for the negative controls.
 - No WS publisher or indicator engine on the emit path. The store seam is opt-in (scenario 5).
