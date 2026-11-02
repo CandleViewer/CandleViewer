@@ -216,20 +216,29 @@ export interface ParentModel {
   readonly algo: AlgoKind | null;
 }
 
-const ALGO_WORDS: Partial<Readonly<Record<AlgoKind, string>>> = {
-  bracket: ORDER_TEXT.bracket.string,
-  twap: ORDER_TEXT.twap.string,
+/**
+ * The algo kind's word before the short id: Bracket and TWAP are D02:273's; Iceberg, Chase and
+ * Scaled are E30-D06's `ticket.order.label.tab.*` (by reference, E30-D02:244); OCO is PROPOSED to
+ * E29-D03's copy owner (`blotter.ui.parent.oco`, G-W3), as no design words it. `none` has no word.
+ */
+const ALGO_WORDS: Partial<Readonly<Record<AlgoKind, () => string>>> = {
+  bracket: () => ORDER_TEXT.bracket.string,
+  twap: () => ORDER_TEXT.twap.string,
+  iceberg: () => ORDER_TEXT.iceberg.string,
+  chase: () => ORDER_TEXT.chase.string,
+  scaled: () => ORDER_TEXT.scaled.string,
+  oco: () => bindProposed("blotter.ui.parent.oco"),
 };
 
 /**
- * "Bracket · #7c1e", "TWAP · #a04f", "Group leg" (D02:273). A kind no design words (and an unknown
- * one, as WS and REST send none today) shows the short id alone (BQ-6); the full id is the name's.
+ * "Bracket · #7c1e", "TWAP · #a04f", "Group leg" (D02:273). A parent whose kind is `none` or not
+ * known (as WS and REST send none today) shows the short id alone (BQ-6); the full id is the name's.
  */
 export function parentWords(parent: ParentModel | null): string {
   if (parent === null) return ORDER_TEXT.none.string;
   if (parent.kind === "leg") return ORDER_TEXT.groupLeg.string;
   const short = `#${parent.id.replace(/-/g, "").slice(0, 4)}`;
-  const word = parent.algo === null ? undefined : ALGO_WORDS[parent.algo];
+  const word = parent.algo === null ? undefined : ALGO_WORDS[parent.algo]?.();
   return word === undefined ? short : `${word}${WORD_SEPARATOR}${short}`;
 }
 

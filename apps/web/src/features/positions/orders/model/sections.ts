@@ -99,20 +99,34 @@ const ENV_WORDS: Readonly<Record<Environment, () => string>> = {
 };
 
 /**
+ * The environment's word, or `null` when there is none to give: no environment yet, or one outside
+ * the union. The directory's `environment` reaches the group unnarrowed (`rowMapping.ts`'s
+ * `accountInfo` passes it through), so a contract break must read as an unknown one and never throw
+ * in a render. Only the record's own keys are words: `toString` is not one.
+ */
+function envWord(environment: Environment | null): string | null {
+  return environment !== null && Object.hasOwn(ENV_WORDS, environment)
+    ? ENV_WORDS[environment]()
+    : null;
+}
+
+/**
  * The account group row, "Main · LIVE · 3 orders" (PROPOSED, BQ-9: board 06 draws it; §6 gives no
  * string). An account the directory does not name shows its id, as the positions grid does; one
- * whose environment is not known yet drops that segment ("Main · 3 orders"), never leaving it empty.
+ * whose environment is not known yet, or not one this client knows, drops that segment ("Main · 3
+ * orders"), never leaving it empty.
  */
 export function groupLabel(group: AccountGroup): string {
   const account = group.label ?? group.accountId;
   const count = String(group.rows.length);
   const one = group.rows.length === 1;
-  if (group.environment === null) {
+  const environment = envWord(group.environment);
+  if (environment === null) {
     return one
       ? bindProposed("blotter.ui.orders_group.no_env.one", { Main: account })
       : bindProposed("blotter.ui.orders_group.no_env", { Main: account, "3": count });
   }
-  const values = { Main: account, LIVE: ENV_WORDS[group.environment]() };
+  const values = { Main: account, LIVE: environment };
   return one
     ? bindProposed("blotter.ui.orders_group.one", values)
     : bindProposed("blotter.ui.orders_group", { ...values, "3": count });

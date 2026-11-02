@@ -23,7 +23,7 @@ const docs = {
   "E30-D02": repoFile("docs/design/E30/E30-D02.md").split("\n"),
 } as const;
 const e30Deck = JSON.parse(repoFile("docs/design/E30/E30-D06-copy.json")) as {
-  strings: Record<string, { string: string; owner: string }>;
+  strings: Record<string, { string: string; owner: string; status?: string }>;
 };
 const deck = JSON.parse(repoFile("docs/design/E29/E29-D06-copy.json")) as {
   strings: Record<string, { string: string }>;
@@ -48,6 +48,35 @@ describe("merged design words, each at its cited line", () => {
     expect(entry?.string).toBe(ORDER_TEXT.indexPrice.string);
     expect(entry?.owner).toContain("E30-D02");
     expect(ORDER_TEXT.indexPrice.source).toBe("E30-D02:243");
+  });
+
+  it("Iceberg, Chase and Scaled are E30's merged tab labels, cited where E30-D02 draws them", () => {
+    for (const [key, cited] of [
+      ["ticket.order.label.tab.iceberg", ORDER_TEXT.iceberg],
+      ["ticket.order.label.tab.chase", ORDER_TEXT.chase],
+      ["ticket.order.label.tab.scaled", ORDER_TEXT.scaled],
+    ] as const) {
+      const entry = e30Deck.strings[key];
+      expect(entry?.string).toBe(cited.string);
+      expect(entry?.owner).toContain("E30-D02");
+      expect(entry?.status).toBe("by-reference");
+      expect(cited.source).toBe("E30-D02:244");
+    }
+    expect(e30Deck.strings["ticket.order.label.tab.twap"]?.string).toBe(ORDER_TEXT.twap.string);
+  });
+
+  it("OCO has no design word, in E30's deck or E29's: it is PROPOSED to E29-D03", () => {
+    for (const entries of [e30Deck.strings, deck.strings])
+      expect(Object.values(entries).map((entry) => entry.string)).not.toContain("OCO");
+    expect(PROPOSED["blotter.ui.parent.oco"].string).toBe("OCO");
+    expect(PROPOSED["blotter.ui.parent.oco"].gap).toContain("no design words OCO");
+  });
+
+  it("DEMO is cited at D02:207, §5.2's Account · env cell, and LIVE at the group header's D02:238", () => {
+    expect(ORDER_TEXT.demo.source).toBe("D02:207");
+    expect(lineOf(ORDER_TEXT.demo)).toContain("| Main · DEMO");
+    expect(ORDER_TEXT.live.source).toBe("D02:238");
+    expect(lineOf(ORDER_TEXT.live)).toContain("Main · LIVE");
   });
 
   it("the side's glyph and its word are apart: D02:263 draws them together", () => {
