@@ -571,6 +571,55 @@ def test_pr_yml_py_filter_covers_the_a11y_gate_logic_and_the_fixture_corpus() ->
     assert re.search(r"^CORPUS_ROOT\b.*\bpackages\W+fixtures\b", corpus, re.MULTILINE)
 
 
+_PLAN_JOIN = re.compile(r'(?:"docs"\s*/\s*"plan"|\b_?PLAN\w*)((?:\s*/\s*"[^"\n]+")+)')
+_PLAN_LITERAL = re.compile(r'"docs/plan/([\w./-]+\.\w+)"')
+#: A bare quoted file name, e.g. `OPENAPI_SPEC_PATH.parent / "29-statechart-adoption-plan.md"`; it
+#: counts only when exactly that name exists somewhere under docs/plan (#5485 delta lens).
+#: README.md only collides by name: the tests that quote it open fixture READMEs, not the plan's.
+_BARE_NAME_IGNORED = frozenset({"README.md"})
+_BARE_NAME_LITERAL = re.compile(r'"([\w.-]+\.(?:md|yaml|yml|json|toml))"')
+#: Names that only appear inside a docstring or comment of a test, never opened by one.
+_PLAN_DOCS_MENTIONED_ONLY = frozenset(
+    {
+        "spikes/e13-o4.md",  # indicator tests cite it in a comment
+    }
+)
+
+
+@functools.cache
+def _plan_docs_read_by_py_tests() -> tuple[str, ...]:
+    found: set[str] = set()
+    for f in (ROOT / "services/api/tests").rglob("*.py"):
+        src = f.read_text(encoding="utf-8")
+        for m in _PLAN_JOIN.finditer(src):
+            parts = re.findall(r'"([^"\n]+)"', m.group(1))
+            found.add("/".join(parts).strip("/"))
+        found.update(_PLAN_LITERAL.findall(src))
+        for name in set(_BARE_NAME_LITERAL.findall(src)) - _BARE_NAME_IGNORED:
+            found.update(
+                p.relative_to(ROOT / "docs/plan").as_posix()
+                for p in (ROOT / "docs/plan").rglob(name)
+                if p.is_file()
+            )
+    return tuple(
+        sorted(
+            f"docs/plan/{n}"
+            for n in found
+            if n not in _PLAN_DOCS_MENTIONED_ONLY and (ROOT / "docs/plan" / n).is_file()
+        )
+    )
+
+
+def test_pr_yml_py_filter_covers_every_plan_doc_services_api_tests_read() -> None:
+    # #5485: a docs-only PR editing docs/plan/21-database-schema.md merged with `py` skipped
+    # although 95 backend test files read it. The list is derived from the test sources, so a
+    # test that starts reading another plan doc fails here until the filter names it.
+    docs = _plan_docs_read_by_py_tests()
+    assert "docs/plan/21-database-schema.md" in docs and len(docs) >= 17, docs
+    py = _filters()["py"]
+    assert [d for d in docs if not any(_matches(d, rule) for rule in py)] == []
+
+
 def test_pr_yml_migrations_filter_covers_the_questdb_ddl_and_its_verifier() -> None:
     # #4014: a DDL-only PR starts no other lane (no filter names backend/), so the lane that holds
     # the lock check starts on the DDL files, their lock and the check's own script.
