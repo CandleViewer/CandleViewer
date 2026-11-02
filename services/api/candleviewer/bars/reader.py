@@ -106,7 +106,8 @@ class BarPage:
 #: every new generation (each builder cold start begins one, #2662), so it is not chronological
 #: across generations, and legacy generation-0 history repeats `(generation, index)` after an old
 #: cold start (#2126 regression (b)). `bars_time` holds NULL-`index` kline rows, so it keeps
-#: `ts, "index"` with a `ts` cursor (unique open time per interval). Non-time kinds order by
+#: `ts, "index"` with a `ts` cursor; rows can share an open time (a kline and a tape row, two
+#: generations), all returned: `/market/bars` serves one per open time. Non-time kinds order by
 #: `ts, generation, "index"` and resume by keyset on that full key, so equal-`ts` siblings (renko
 #: multi-brick, volume splits) are never skipped at a page boundary. Within one generation whose
 #: `index` increases with `ts` this is exactly the contract's `(generation, index)` order.

@@ -173,6 +173,7 @@ from candleviewer.bars.metrics import (
 )
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
 from candleviewer.bars.reader import BarTail, degrade_reason
+from candleviewer.bars.rows import BUILD_VERSIONS
 
 #: The WS `history` cap (`23-ws-protocol.md` §6.1).
 MAX_HISTORY: Final = MAX_TAIL
@@ -237,6 +238,18 @@ class Latest(NamedTuple):
     forming: Bar | None
     oldest_build: int | None
     stale_build: bool = False
+
+
+class LiveTail(NamedTuple):
+    """`live_tail`: what the live series holds beyond storage (`/market/bars?include_open`,
+    #5396). A close reaches the store before the writer, so the closed bars here can be newer than
+    any stored row. `closed`: the closed bars opening at or after the asked time, in index order,
+    each with its `build_version` (None: unknown provenance, as `Latest.stale_build` counts it).
+    `forming`: the in-progress bar, or None."""
+
+    generation: int
+    closed: list[tuple[Bar, int | None]]
+    forming: Bar | None
 
 
 class Hold:
@@ -717,6 +730,23 @@ class SeriesStore:
         marks = [s.stale[b.index] for b in closed if b.index in s.stale]
         oldest = min((m for m in marks if m is not None), default=None)
         return Latest(s.version, s.generation, closed, forming, oldest, stale_build=bool(marks))
+
+    def live_tail(self, symbol: str, spec: BarSpec, since_us: int | None) -> LiveTail | None:
+        """The series' generation, its closed bars opening at or after `since_us` (none for
+        None), oldest first, and its forming bar; None while the store does not keep the series or
+        before a generation is named. O(bars returned): the walk stops at the first older bar."""
+        s = self._series.get((symbol, spec.spec_hash))
+        if s is None or s.generation is None:
+            return None
+        closed: list[tuple[Bar, int | None]] = []
+        if since_us is not None:
+            running = BUILD_VERSIONS[spec.kind]
+            for bar in reversed(s.closed.values()):
+                if bar.open_time < since_us:
+                    break
+                closed.append((bar, s.stale[bar.index] if bar.index in s.stale else running))
+            closed.reverse()
+        return LiveTail(s.generation, closed, s.forming)
 
     async def _settle(self, s: _Series, symbol: str, spec: BarSpec) -> None:
         """Wait for the read in flight (its own `timeout_s` bounds it), then read when one is
