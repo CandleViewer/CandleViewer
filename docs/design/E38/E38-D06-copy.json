@@ -1,0 +1,1486 @@
+{
+  "pack": "E38-D06",
+  "version": "v1",
+  "base": "b005ce6105",
+  "header": "The copy deck is the source for the i18n string ids; v1 is English-only and no string is hardcoded",
+  "statuses": "merged = verbatim in a merged source at the base; RULED = an unmerged parent's text its BQ ruling settled (`ruling`); PROPOSED = owner approval pending. A safety string carries `frozen`, a group of the `frozen` table that lists it in its `ids`, and ships byte for byte. The ids are i18n key names only. D05's A-n marks (`pending`) are read at #5514's head (#1076) and never pinned.",
+  "required": {
+    "demo_rest_only": "env.popover.demo_statement",
+    "not_a_backtest_guarantee": "sim.caveat"
+  },
+  "frozen": {
+    "FZ-01": {
+      "what": "the two required notices",
+      "ids": ["env.popover.demo_statement", "sim.caveat"]
+    },
+    "FZ-02": {
+      "what": "the typed to-live confirm",
+      "ids": [
+        "env.confirm_live.title",
+        "env.confirm_live.intro",
+        "env.confirm_live.now",
+        "env.confirm_live.affects",
+        "env.confirm_live.accounts",
+        "env.confirm_live.demo_orders",
+        "env.confirm_live.field",
+        "env.confirm_live.mismatch",
+        "env.confirm_live.continue"
+      ]
+    },
+    "FZ-03": {
+      "what": "the switch outcome",
+      "ids": ["env.switched.banner_live", "env.failed.fallback"]
+    },
+    "FZ-04": {
+      "what": "every not-permitted and blocked reason",
+      "ids": [
+        "env.switching.reason",
+        "env.blocked.reason",
+        "guard.mismatch",
+        "rbac.env",
+        "paper.reset.alt_reason",
+        "rbac.account_read_only",
+        "sim.export.reason",
+        "rbac.permission",
+        "admin.live.demo_reason",
+        "rbac.view_as"
+      ]
+    },
+    "FZ-05": {
+      "what": "the paper reset confirm",
+      "ids": [
+        "paper.reset.title",
+        "paper.reset.counts",
+        "paper.reset.balance",
+        "paper.reset.history",
+        "paper.reset.typed",
+        "paper.reset.typed_template",
+        "paper.reset.confirm"
+      ]
+    },
+    "FZ-06": {
+      "what": "live eligibility: grant, revoke, acknowledge, reduce-only",
+      "ids": [
+        "admin.live.grant.title",
+        "admin.live.grant.body",
+        "admin.live.grant.confirm",
+        "admin.live.revoke.title",
+        "admin.live.revoke.body",
+        "admin.live.revoke.confirm",
+        "admin.live.ack.title",
+        "admin.live.ack.body",
+        "admin.live.ack.button",
+        "admin.live.reduce_only"
+      ]
+    },
+    "FZ-07": {
+      "what": "the simulated framing",
+      "ids": ["sim.badge.word", "sim.disclosure.lead", "sim.orthogonality"]
+    }
+  },
+  "strings": {
+    "env.pill.word.live": {
+      "string": "LIVE",
+      "screen": "SCR-075",
+      "kind": "word",
+      "owner": "14",
+      "status": "merged",
+      "source": "14:81",
+      "announce": "none"
+    },
+    "env.pill.word.demo": {
+      "string": "DEMO",
+      "screen": "SCR-075",
+      "kind": "word",
+      "owner": "14",
+      "status": "merged",
+      "source": "14:81",
+      "announce": "none"
+    },
+    "env.pill.name.live": {
+      "string": "Trading environment: Live",
+      "screen": "SCR-075",
+      "kind": "name",
+      "owner": "15",
+      "status": "merged",
+      "source": "15:838",
+      "announce": "none"
+    },
+    "env.pill.name.demo": {
+      "string": "Trading environment: Demo",
+      "screen": "SCR-075",
+      "kind": "name",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D05:90",
+      "announce": "none"
+    },
+    "env.pill.name.unconfirmed": {
+      "string": "Trading environment: Live — unconfirmed, reconnecting",
+      "screen": "SCR-075",
+      "kind": "name",
+      "owner": "E10-D03",
+      "status": "merged",
+      "source": "E10D03:214",
+      "announce": "none"
+    },
+    "env.pill.caption.unconfirmed": {
+      "string": "unconfirmed",
+      "screen": "SCR-075",
+      "kind": "caption",
+      "owner": "E10-D03",
+      "status": "merged",
+      "source": "E10D03:214",
+      "announce": "none"
+    },
+    "env.band.live_since": {
+      "string": "LIVE since 14:02 UTC",
+      "screen": "SCR-075",
+      "kind": "label",
+      "owner": "E38-D02",
+      "status": "RULED",
+      "ruling": "D02 BQ-11",
+      "source": "D02:96",
+      "announce": "none"
+    },
+    "env.panel.order_ticket": {
+      "string": "Order ticket - BTCUSDT - LIVE - Main",
+      "screen": "SCR-075",
+      "kind": "name",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:102",
+      "announce": "none"
+    },
+    "env.panel.group_ticket": {
+      "string": "Group ticket - BTCUSDT - LIVE - Scalp",
+      "screen": "SCR-075",
+      "kind": "name",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:103",
+      "announce": "none"
+    },
+    "env.panel.dom": {
+      "string": "DOM - BTCUSDT - LIVE",
+      "screen": "SCR-075",
+      "kind": "name",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:104",
+      "announce": "none"
+    },
+    "env.panel.positions": {
+      "string": "Positions - LIVE - Main",
+      "screen": "SCR-075",
+      "kind": "name",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:105",
+      "announce": "none"
+    },
+    "env.panel.positions_simulated": {
+      "string": "Positions - DEMO - Paper 1, 1 simulated",
+      "screen": "SCR-075",
+      "kind": "name",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D05:342",
+      "announce": "none",
+      "pending": "D05 A-5"
+    },
+    "env.panel.algos": {
+      "string": "Algos - LIVE - Main",
+      "screen": "SCR-075",
+      "kind": "name",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:106",
+      "announce": "none"
+    },
+    "env.panel.chart": {
+      "string": "Chart - BTCUSDT 1m - LIVE",
+      "screen": "SCR-075",
+      "kind": "name",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:107",
+      "announce": "none"
+    },
+    "env.panel.window": {
+      "string": "BTCUSDT DOM - LIVE",
+      "screen": "SCR-075",
+      "kind": "name",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:108",
+      "announce": "none"
+    },
+    "env.popover.title": {
+      "string": "Trading environment",
+      "screen": "SCR-074",
+      "kind": "title",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:118",
+      "announce": "none",
+      "pending": "D05 A-12"
+    },
+    "env.popover.demo_statement": {
+      "string": "Demo uses Bybit's demo matching engine — REST order entry only, no private WS order entry.",
+      "screen": "SCR-075",
+      "kind": "statement",
+      "owner": "14",
+      "status": "merged",
+      "source": "14:1788",
+      "announce": "none",
+      "frozen": "FZ-01"
+    },
+    "env.popover.other_orders": {
+      "string": "3 demo orders still working on DEMO",
+      "screen": "SCR-074",
+      "kind": "label",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:124",
+      "announce": "none"
+    },
+    "env.popover.action.to_live": {
+      "string": "Switch to LIVE…",
+      "screen": "SCR-074",
+      "kind": "button",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:125",
+      "announce": "none"
+    },
+    "env.popover.action.to_demo": {
+      "string": "Switch to DEMO…",
+      "screen": "SCR-074",
+      "kind": "button",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:125",
+      "announce": "none"
+    },
+    "env.popover.parity_link": {
+      "string": "Known demo differences",
+      "screen": "SCR-074",
+      "kind": "link",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D03:165",
+      "announce": "none"
+    },
+    "env.confirm_live.title": {
+      "string": "Switch to LIVE",
+      "screen": "SCR-074",
+      "kind": "title",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D05:341",
+      "announce": "none",
+      "pending": "D05 A-4",
+      "frozen": "FZ-02"
+    },
+    "env.confirm_live.intro": {
+      "string": "You're switching this session to LIVE. Orders will reach Bybit with real funds. Type LIVE to continue.",
+      "screen": "SCR-074",
+      "kind": "body",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D01:296",
+      "announce": "none",
+      "frozen": "FZ-02"
+    },
+    "env.confirm_live.now": {
+      "string": "Now: DEMO (api-demo) -> LIVE (mainnet)",
+      "screen": "SCR-074",
+      "kind": "body",
+      "owner": "14",
+      "status": "merged",
+      "source": "14:1766",
+      "announce": "none",
+      "frozen": "FZ-02"
+    },
+    "env.confirm_live.affects": {
+      "string": "Affects: this session, all panels, all tickets.",
+      "screen": "SCR-074",
+      "kind": "body",
+      "owner": "14",
+      "status": "merged",
+      "source": "14:1767",
+      "announce": "none",
+      "frozen": "FZ-02"
+    },
+    "env.confirm_live.accounts": {
+      "string": "Live accounts available: Main, sub_001",
+      "screen": "SCR-074",
+      "kind": "body",
+      "owner": "14",
+      "status": "merged",
+      "source": "14:1768",
+      "announce": "none",
+      "pending": "D05 A-15",
+      "frozen": "FZ-02"
+    },
+    "env.confirm_live.demo_orders": {
+      "string": "Working demo orders (3) stay on demo and are not migrated.",
+      "screen": "SCR-074",
+      "kind": "body",
+      "owner": "14",
+      "status": "merged",
+      "source": "14:1769–1770",
+      "announce": "none",
+      "frozen": "FZ-02"
+    },
+    "env.confirm_live.field": {
+      "string": "Type LIVE to confirm",
+      "screen": "SCR-074",
+      "kind": "field",
+      "owner": "14",
+      "status": "merged",
+      "source": "14:1771",
+      "announce": "none",
+      "frozen": "FZ-02"
+    },
+    "env.confirm_live.mismatch": {
+      "string": "That doesn't match. Type LIVE exactly.",
+      "screen": "SCR-074",
+      "kind": "error",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:166",
+      "announce": "polite",
+      "pending": "D05 A-2",
+      "frozen": "FZ-02"
+    },
+    "env.confirm_live.continue": {
+      "string": "Continue",
+      "screen": "SCR-074",
+      "kind": "button",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:158",
+      "announce": "none",
+      "frozen": "FZ-02"
+    },
+    "env.confirm.cancel": {
+      "string": "Cancel",
+      "screen": "SCR-074",
+      "kind": "button",
+      "owner": "14",
+      "status": "merged",
+      "source": "14:1772",
+      "announce": "none"
+    },
+    "env.confirm_demo.title": {
+      "string": "Switch to DEMO",
+      "screen": "SCR-074",
+      "kind": "title",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D05:341",
+      "announce": "none",
+      "pending": "D05 A-4"
+    },
+    "env.confirm_demo.body": {
+      "string": "Switch this session to DEMO? Live orders and positions stay on LIVE and keep their native stops.",
+      "screen": "SCR-074",
+      "kind": "body",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:159",
+      "announce": "none"
+    },
+    "env.confirm_demo.confirm": {
+      "string": "Switch to DEMO",
+      "screen": "SCR-074",
+      "kind": "button",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D05:341",
+      "announce": "none",
+      "pending": "D05 A-4"
+    },
+    "env.switching.closing": {
+      "string": "Closing subscriptions…",
+      "screen": "SCR-074",
+      "kind": "status",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:168",
+      "announce": "polite"
+    },
+    "env.switching.reauth": {
+      "string": "Re-authenticating…",
+      "screen": "SCR-074",
+      "kind": "status",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:168",
+      "announce": "polite"
+    },
+    "env.switching.resubscribing": {
+      "string": "Resubscribing…",
+      "screen": "SCR-074",
+      "kind": "status",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:168",
+      "announce": "polite"
+    },
+    "env.switching.reason": {
+      "string": "Switching environment — order entry is paused.",
+      "screen": "SCR-074",
+      "kind": "reason",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:168",
+      "announce": "polite",
+      "frozen": "FZ-04"
+    },
+    "env.switched.banner_live": {
+      "string": "You're now in LIVE. Orders reach Bybit with real funds.",
+      "screen": "SCR-074",
+      "kind": "banner",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:169",
+      "announce": "assertive",
+      "frozen": "FZ-03"
+    },
+    "env.failed.fallback": {
+      "string": "Live trading is turned off for this deployment.",
+      "screen": "SCR-074",
+      "kind": "error",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:170",
+      "announce": "assertive",
+      "frozen": "FZ-03"
+    },
+    "env.blocked.reason": {
+      "string": "2 algos are running: BTC trail, ETH OCO. Stop them or let them finish before switching.",
+      "screen": "SCR-074",
+      "kind": "reason",
+      "owner": "E38-D02",
+      "status": "PROPOSED",
+      "source": "D02:172",
+      "announce": "polite",
+      "pending": "D05 A-15",
+      "frozen": "FZ-04"
+    },
+    "env.submit_word": {
+      "string": "Sell 0.5 BTC · LIVE",
+      "screen": "SCR-075",
+      "kind": "label",
+      "owner": "E30-D04",
+      "status": "PROPOSED",
+      "source": "D02:292",
+      "announce": "none"
+    },
+    "guard.mismatch": {
+      "string": "Order is for a LIVE account while the workspace is DEMO",
+      "screen": "SCR-075",
+      "kind": "reason",
+      "owner": "15",
+      "status": "merged",
+      "source": "15:1709",
+      "announce": "polite",
+      "frozen": "FZ-04"
+    },
+    "rbac.env": {
+      "string": "Live trading isn't enabled for you.",
+      "screen": "SCR-074, SCR-122",
+      "kind": "reason",
+      "owner": "E09-D09",
+      "status": "merged",
+      "source": "E09D09:93",
+      "announce": "polite",
+      "frozen": "FZ-04"
+    },
+    "paper.reset.group": {
+      "string": "Paper account",
+      "screen": "SCR-079",
+      "kind": "heading",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:106",
+      "announce": "none"
+    },
+    "paper.reset.action": {
+      "string": "Reset paper balance",
+      "screen": "SCR-079",
+      "kind": "button",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:106",
+      "announce": "none"
+    },
+    "paper.reset.title": {
+      "string": "Reset the paper balance?",
+      "screen": "SCR-079",
+      "kind": "title",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:122",
+      "announce": "none",
+      "frozen": "FZ-05"
+    },
+    "paper.reset.counts": {
+      "string": "This clears 3 open simulated positions and 2 working orders and sets the balance to 10,000 USDT.",
+      "screen": "SCR-079",
+      "kind": "body",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:123",
+      "announce": "none",
+      "frozen": "FZ-05"
+    },
+    "paper.reset.balance": {
+      "string": "This sets the balance to 10,000 USDT. There are no open simulated positions or working orders.",
+      "screen": "SCR-079",
+      "kind": "body",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:120",
+      "announce": "none",
+      "frozen": "FZ-05"
+    },
+    "paper.reset.history": {
+      "string": "Your simulated history stays in the journal. Live and demo exchange accounts are not affected.",
+      "screen": "SCR-079",
+      "kind": "body",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:124",
+      "announce": "none",
+      "frozen": "FZ-05"
+    },
+    "paper.reset.typed": {
+      "string": "Type Paper 1 to confirm",
+      "screen": "SCR-079",
+      "kind": "field",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:125",
+      "announce": "none",
+      "frozen": "FZ-05"
+    },
+    "paper.reset.typed_template": {
+      "string": "Type {token} to confirm",
+      "screen": "SCR-079",
+      "kind": "field",
+      "owner": "15",
+      "status": "merged",
+      "source": "15:525",
+      "announce": "none",
+      "frozen": "FZ-05"
+    },
+    "paper.reset.balance_label": {
+      "string": "Starting balance (USDT)",
+      "screen": "SCR-079",
+      "kind": "field",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D05:343",
+      "announce": "none",
+      "pending": "D05 A-6"
+    },
+    "paper.reset.confirm": {
+      "string": "Reset paper balance",
+      "screen": "SCR-079",
+      "kind": "button",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:120",
+      "announce": "none",
+      "frozen": "FZ-05"
+    },
+    "paper.reset.done": {
+      "string": "Paper balance reset to 10,000 USDT. A new paper session started.",
+      "screen": "SCR-079",
+      "kind": "status",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:138",
+      "announce": "polite"
+    },
+    "paper.reset.alt_reason": {
+      "string": "Paper reset isn't available in a LIVE session.",
+      "screen": "SCR-079",
+      "kind": "reason",
+      "owner": "E09-D09",
+      "status": "PROPOSED",
+      "source": "D03:143",
+      "announce": "polite",
+      "frozen": "FZ-04"
+    },
+    "rbac.account_read_only": {
+      "string": "You can view this account, not trade it.",
+      "screen": "SCR-079",
+      "kind": "reason",
+      "owner": "E09-D09",
+      "status": "merged",
+      "source": "E09D09:92",
+      "announce": "polite",
+      "frozen": "FZ-04"
+    },
+    "sim.badge.word": {
+      "string": "SIMULATED",
+      "screen": "SCR-099",
+      "kind": "word",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:235",
+      "announce": "none",
+      "frozen": "FZ-07"
+    },
+    "sim.badge.with_account": {
+      "string": "SIMULATED · Paper 1",
+      "screen": "SCR-099",
+      "kind": "label",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:233",
+      "announce": "none"
+    },
+    "sim.drawer.heading": {
+      "string": "Simulated results",
+      "screen": "SCR-099",
+      "kind": "heading",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:112",
+      "announce": "none",
+      "pending": "D05 A-18"
+    },
+    "sim.drawer.name": {
+      "string": "Simulated results — {session}",
+      "screen": "SCR-099",
+      "kind": "name",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:198",
+      "announce": "polite"
+    },
+    "sim.summary.name": {
+      "string": "Simulated summary",
+      "screen": "SCR-099",
+      "kind": "name",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:199",
+      "announce": "none"
+    },
+    "sim.equity.name": {
+      "string": "Simulated equity curve",
+      "screen": "SCR-099",
+      "kind": "name",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:200",
+      "announce": "none"
+    },
+    "sim.r_distribution.name": {
+      "string": "Simulated R distribution",
+      "screen": "SCR-099",
+      "kind": "name",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:201",
+      "announce": "none"
+    },
+    "sim.trades.name": {
+      "string": "Simulated trades",
+      "screen": "SCR-099",
+      "kind": "name",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:202",
+      "announce": "none"
+    },
+    "sim.caveat": {
+      "string": "these results are not a backtest guarantee",
+      "screen": "SCR-099",
+      "kind": "caveat",
+      "owner": "14",
+      "status": "merged",
+      "source": "14:2277",
+      "announce": "none",
+      "frozen": "FZ-01"
+    },
+    "sim.disclosure.heading": {
+      "string": "Simulated with these assumptions",
+      "screen": "SCR-099",
+      "kind": "heading",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:160",
+      "announce": "none"
+    },
+    "sim.disclosure.lead": {
+      "string": "Simulated with a queue, latency and fee model. Your own size can move a real market; this model does not.",
+      "screen": "SCR-099",
+      "kind": "body",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:234",
+      "announce": "none",
+      "frozen": "FZ-07"
+    },
+    "sim.disclosure.fill_model.label": {
+      "string": "Fill model",
+      "screen": "SCR-099",
+      "kind": "label",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:138",
+      "announce": "none"
+    },
+    "sim.disclosure.fill_model.words": {
+      "string": "how orders are matched against the order book",
+      "screen": "SCR-099",
+      "kind": "body",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:138",
+      "announce": "none"
+    },
+    "sim.disclosure.fill_model.book_walk": {
+      "string": "Book walk",
+      "screen": "SCR-099",
+      "kind": "value",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:138",
+      "announce": "none"
+    },
+    "sim.disclosure.fill_model.probabilistic": {
+      "string": "Probabilistic",
+      "screen": "SCR-099",
+      "kind": "value",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:138",
+      "announce": "none"
+    },
+    "sim.disclosure.fill_model.conservative": {
+      "string": "Conservative",
+      "screen": "SCR-099",
+      "kind": "value",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:138",
+      "announce": "none"
+    },
+    "sim.disclosure.queue.label": {
+      "string": "Queue position",
+      "screen": "SCR-099",
+      "kind": "label",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:139",
+      "announce": "none"
+    },
+    "sim.disclosure.queue.words": {
+      "string": "a resting order waits behind the size already at its price",
+      "screen": "SCR-099",
+      "kind": "body",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:139",
+      "announce": "none"
+    },
+    "sim.disclosure.queue.on": {
+      "string": "On",
+      "screen": "SCR-099",
+      "kind": "value",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:139",
+      "announce": "none"
+    },
+    "sim.disclosure.queue.off": {
+      "string": "Off — 35 % chance of a fill on touch",
+      "screen": "SCR-099",
+      "kind": "value",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:139",
+      "announce": "none"
+    },
+    "sim.disclosure.latency.label": {
+      "string": "Latency",
+      "screen": "SCR-099",
+      "kind": "label",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:140",
+      "announce": "none"
+    },
+    "sim.disclosure.latency.words": {
+      "string": "delays applied to your orders and to market data",
+      "screen": "SCR-099",
+      "kind": "body",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:140",
+      "announce": "none"
+    },
+    "sim.disclosure.latency.value": {
+      "string": "Submit 60 ms · Cancel 60 ms · Market data 30 ms",
+      "screen": "SCR-099",
+      "kind": "value",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:140",
+      "announce": "none"
+    },
+    "sim.disclosure.slippage.label": {
+      "string": "Slippage",
+      "screen": "SCR-099",
+      "kind": "label",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:141",
+      "announce": "none"
+    },
+    "sim.disclosure.slippage.words": {
+      "string": "extra price movement against you",
+      "screen": "SCR-099",
+      "kind": "body",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:141",
+      "announce": "none"
+    },
+    "sim.disclosure.slippage.none": {
+      "string": "None beyond the book",
+      "screen": "SCR-099",
+      "kind": "value",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:141",
+      "announce": "none"
+    },
+    "sim.disclosure.slippage.floor": {
+      "string": "{n} ticks minimum",
+      "screen": "SCR-099",
+      "kind": "value",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:141",
+      "announce": "none"
+    },
+    "sim.disclosure.fees.label": {
+      "string": "Fees",
+      "screen": "SCR-099",
+      "kind": "label",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:142",
+      "announce": "none"
+    },
+    "sim.disclosure.fees.words": {
+      "string": "maker and taker fees",
+      "screen": "SCR-099",
+      "kind": "body",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:142",
+      "announce": "none"
+    },
+    "sim.disclosure.fees.account": {
+      "string": "From your Bybit fee rate",
+      "screen": "SCR-099",
+      "kind": "value",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:142",
+      "announce": "none"
+    },
+    "sim.disclosure.fees.set": {
+      "string": "Set: maker {maker_fee_bps} bps, taker {taker_fee_bps} bps",
+      "screen": "SCR-099",
+      "kind": "value",
+      "owner": "E38-D04",
+      "status": "RULED",
+      "ruling": "D04 BQ-05",
+      "source": "D04:142",
+      "announce": "none"
+    },
+    "sim.disclosure.fees.estimated": {
+      "string": "Estimated: maker 2 bps, taker 5.5 bps",
+      "screen": "SCR-099",
+      "kind": "value",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:142",
+      "announce": "none"
+    },
+    "sim.disclosure.funding.label": {
+      "string": "Funding",
+      "screen": "SCR-099",
+      "kind": "label",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:143",
+      "announce": "none"
+    },
+    "sim.disclosure.funding.words": {
+      "string": "funding payments on open positions",
+      "screen": "SCR-099",
+      "kind": "body",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:143",
+      "announce": "none"
+    },
+    "sim.disclosure.funding.applied": {
+      "string": "Applied",
+      "screen": "SCR-099",
+      "kind": "value",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:143",
+      "announce": "none"
+    },
+    "sim.disclosure.funding.not_applied": {
+      "string": "Not applied",
+      "screen": "SCR-099",
+      "kind": "value",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:143",
+      "announce": "none"
+    },
+    "sim.disclosure.unavailable": {
+      "string": "Fill-model settings are not available for this session.",
+      "screen": "SCR-099",
+      "kind": "error",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:154",
+      "announce": "none"
+    },
+    "sim.export.csv": {
+      "string": "Export 42 simulated trades as CSV",
+      "screen": "SCR-099",
+      "kind": "button",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:175",
+      "announce": "none"
+    },
+    "sim.export.reason": {
+      "string": "Your role can't see the journal.",
+      "screen": "SCR-099",
+      "kind": "reason",
+      "owner": "E09-D09",
+      "status": "PROPOSED",
+      "source": "D04:222",
+      "announce": "polite",
+      "frozen": "FZ-04",
+      "pending": "D05 A-21"
+    },
+    "rbac.permission": {
+      "string": "Your role can't {verb}.",
+      "screen": "SCR-099",
+      "kind": "reason",
+      "owner": "E09-D09",
+      "status": "merged",
+      "source": "E09D09:89",
+      "announce": "polite",
+      "frozen": "FZ-04"
+    },
+    "sim.analytics.live": {
+      "string": "Live",
+      "screen": "SCR-099",
+      "kind": "label",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:236",
+      "announce": "none"
+    },
+    "sim.analytics.simulated": {
+      "string": "Simulated",
+      "screen": "SCR-099",
+      "kind": "label",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:236",
+      "announce": "none"
+    },
+    "sim.analytics.heading_live": {
+      "string": "Live results",
+      "screen": "SCR-099",
+      "kind": "heading",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:111",
+      "announce": "none"
+    },
+    "sim.analytics.name": {
+      "string": "Simulated results — analytics",
+      "screen": "SCR-099",
+      "kind": "name",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:111",
+      "announce": "none"
+    },
+    "sim.analytics.group": {
+      "string": "Data set",
+      "screen": "SCR-099",
+      "kind": "name",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D05:348",
+      "announce": "none",
+      "pending": "D05 A-11"
+    },
+    "sim.analytics.changed": {
+      "string": "Showing simulated results",
+      "screen": "SCR-099",
+      "kind": "status",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D05:348",
+      "announce": "polite",
+      "pending": "D05 A-11"
+    },
+    "sim.orthogonality": {
+      "string": "DEMO is where the account is. SIMULATED is who filled it. A trade can be both.",
+      "screen": "SCR-099",
+      "kind": "body",
+      "owner": "E38-D04",
+      "status": "PROPOSED",
+      "source": "D04:128",
+      "announce": "none",
+      "frozen": "FZ-07"
+    },
+    "admin.live.on": {
+      "string": "Live: on",
+      "screen": "SCR-122",
+      "kind": "label",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:188",
+      "announce": "none"
+    },
+    "admin.live.off": {
+      "string": "Live: off — demo only",
+      "screen": "SCR-122",
+      "kind": "label",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:188",
+      "announce": "none"
+    },
+    "admin.live.switch_name": {
+      "string": "Live trading on {account}",
+      "screen": "SCR-122",
+      "kind": "name",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D05:346",
+      "announce": "none",
+      "pending": "D05 A-9"
+    },
+    "admin.live.pending": {
+      "string": "Live: on — awaiting alex's acknowledgement",
+      "screen": "SCR-122",
+      "kind": "label",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:213",
+      "announce": "none",
+      "pending": "D05 A-9"
+    },
+    "admin.live.demo_reason": {
+      "string": "This is a demo account.",
+      "screen": "SCR-122",
+      "kind": "reason",
+      "owner": "E42-D03",
+      "status": "PROPOSED",
+      "source": "D03:211",
+      "announce": "polite",
+      "frozen": "FZ-04"
+    },
+    "admin.live.grant.title": {
+      "string": "Allow live trading for alex?",
+      "screen": "SCR-122",
+      "kind": "title",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D05:344",
+      "announce": "none",
+      "pending": "D05 A-7",
+      "frozen": "FZ-06"
+    },
+    "admin.live.grant.body": {
+      "string": "alex can trade LIVE on sub_001 after acknowledging at next sign-in.",
+      "screen": "SCR-122",
+      "kind": "body",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:195",
+      "announce": "none",
+      "frozen": "FZ-06"
+    },
+    "admin.live.grant.confirm": {
+      "string": "Allow live trading",
+      "screen": "SCR-122",
+      "kind": "button",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D05:344",
+      "announce": "none",
+      "pending": "D05 A-7",
+      "frozen": "FZ-06"
+    },
+    "admin.live.revoke.title": {
+      "string": "Revoke live trading for alex?",
+      "screen": "SCR-122",
+      "kind": "title",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D05:344",
+      "announce": "none",
+      "pending": "D05 A-7",
+      "frozen": "FZ-06"
+    },
+    "admin.live.revoke.body": {
+      "string": "alex holds 2 open LIVE positions on sub_001. They stay manageable in reduce-only mode; new entries are refused.",
+      "screen": "SCR-122",
+      "kind": "body",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:200",
+      "announce": "none",
+      "frozen": "FZ-06"
+    },
+    "admin.live.revoke.confirm": {
+      "string": "Revoke live trading",
+      "screen": "SCR-122",
+      "kind": "button",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D05:344",
+      "announce": "none",
+      "pending": "D05 A-7",
+      "frozen": "FZ-06"
+    },
+    "admin.live.ack.title": {
+      "string": "Live trading enabled",
+      "screen": "SCR-122",
+      "kind": "title",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D05:344",
+      "announce": "assertive",
+      "pending": "D05 A-7",
+      "frozen": "FZ-06"
+    },
+    "admin.live.ack.body": {
+      "string": "You can now trade LIVE on sub_001. Granted by the owner at 14:02 UTC.",
+      "screen": "SCR-122",
+      "kind": "body",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:196",
+      "announce": "assertive",
+      "frozen": "FZ-06"
+    },
+    "admin.live.ack.button": {
+      "string": "I understand",
+      "screen": "SCR-122",
+      "kind": "button",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:196",
+      "announce": "none",
+      "frozen": "FZ-06"
+    },
+    "admin.live.reduce_only": {
+      "string": "Live access was revoked. Your open positions stay manageable — you can reduce or close them; new entries are refused.",
+      "screen": "SCR-122",
+      "kind": "banner",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:202",
+      "announce": "assertive",
+      "frozen": "FZ-06"
+    },
+    "parity.heading": {
+      "string": "Environment parity: known demo differences",
+      "screen": "SCR-137",
+      "kind": "heading",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:149",
+      "announce": "none"
+    },
+    "parity.col.difference": {
+      "string": "Difference",
+      "screen": "SCR-137",
+      "kind": "column",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:153",
+      "announce": "none"
+    },
+    "parity.col.area": {
+      "string": "Area",
+      "screen": "SCR-137",
+      "kind": "column",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:154",
+      "announce": "none"
+    },
+    "parity.col.source": {
+      "string": "Source",
+      "screen": "SCR-137",
+      "kind": "column",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:155",
+      "announce": "none"
+    },
+    "parity.col.last_verified": {
+      "string": "Last verified",
+      "screen": "SCR-137",
+      "kind": "column",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:156",
+      "announce": "none"
+    },
+    "parity.col.status": {
+      "string": "Status",
+      "screen": "SCR-137",
+      "kind": "column",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:157",
+      "announce": "none"
+    },
+    "parity.source.runtime": {
+      "string": "Seen at runtime on {date}",
+      "screen": "SCR-137",
+      "kind": "value",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:155",
+      "announce": "none"
+    },
+    "parity.source.missing": {
+      "string": "Source not recorded",
+      "screen": "SCR-137",
+      "kind": "value",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:155",
+      "announce": "none"
+    },
+    "parity.status.verified": {
+      "string": "Verified",
+      "screen": "SCR-137",
+      "kind": "value",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:159",
+      "announce": "none"
+    },
+    "parity.status.stale": {
+      "string": "Needs re-verification",
+      "screen": "SCR-137",
+      "kind": "value",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:160",
+      "announce": "none"
+    },
+    "parity.status.candidate": {
+      "string": "Candidate",
+      "screen": "SCR-137",
+      "kind": "value",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:161",
+      "announce": "none"
+    },
+    "parity.stale.cell": {
+      "string": "Needs re-verification — last verified 95 days ago",
+      "screen": "SCR-137",
+      "kind": "value",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:172",
+      "announce": "none"
+    },
+    "parity.candidates.heading": {
+      "string": "Candidates from runtime",
+      "screen": "SCR-137",
+      "kind": "heading",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:174",
+      "announce": "none"
+    },
+    "parity.empty.items": {
+      "string": "No known differences recorded.",
+      "screen": "SCR-137",
+      "kind": "body",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:175",
+      "announce": "none"
+    },
+    "parity.empty.candidates": {
+      "string": "No candidates.",
+      "screen": "SCR-137",
+      "kind": "body",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:175",
+      "announce": "none"
+    },
+    "parity.error": {
+      "string": "Couldn't load the parity report — Retry",
+      "screen": "SCR-137",
+      "kind": "error",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:177",
+      "announce": "polite"
+    },
+    "parity.rejection_link": {
+      "string": "Known demo difference: {difference} — see the parity report",
+      "screen": "SCR-137",
+      "kind": "link",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:164",
+      "announce": "none"
+    },
+    "parity.verify": {
+      "string": "Verify {difference}",
+      "screen": "SCR-137",
+      "kind": "button",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D05:353",
+      "announce": "none",
+      "pending": "D05 A-17"
+    },
+    "parity.dismiss": {
+      "string": "Dismiss {failure}",
+      "screen": "SCR-137",
+      "kind": "button",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D05:353",
+      "announce": "none",
+      "pending": "D05 A-17"
+    },
+    "parity.dismiss.title": {
+      "string": "Dismiss {failure}?",
+      "screen": "SCR-137",
+      "kind": "title",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D05:347",
+      "announce": "none",
+      "pending": "D05 A-10"
+    },
+    "parity.dismiss.field": {
+      "string": "Reason for dismissing",
+      "screen": "SCR-137",
+      "kind": "field",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D05:347",
+      "announce": "none",
+      "pending": "D05 A-10"
+    },
+    "parity.dismiss.error": {
+      "string": "Enter a reason.",
+      "screen": "SCR-137",
+      "kind": "error",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D05:347",
+      "announce": "polite",
+      "pending": "D05 A-10"
+    },
+    "rbac.view_as": {
+      "string": "Read-only while viewing as {user}.",
+      "screen": "SCR-137",
+      "kind": "reason",
+      "owner": "E09-D09",
+      "status": "merged",
+      "source": "E09D09:95",
+      "announce": "polite",
+      "frozen": "FZ-04"
+    },
+    "fidelity.heading": {
+      "string": "Paper fidelity: last night's divergence",
+      "screen": "SCR-137",
+      "kind": "heading",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:226",
+      "announce": "none"
+    },
+    "fidelity.breach.p95": {
+      "string": "p95 slippage divergence 1.6 ticks — over the 1 tick threshold. Defect DEF-0142 was opened against the fill model.",
+      "screen": "SCR-137",
+      "kind": "body",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:235",
+      "announce": "none"
+    },
+    "fidelity.breach.fill_rate": {
+      "string": "Resting-limit fill-rate divergence 12 pp — over the 10 pp threshold. Defect DEF-0143 was opened against the fill model.",
+      "screen": "SCR-137",
+      "kind": "body",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:236",
+      "announce": "none"
+    },
+    "fidelity.no_overlap": {
+      "string": "No demo fills overlapped last night's recorded day — nothing to compare.",
+      "screen": "SCR-137",
+      "kind": "body",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D03:238",
+      "announce": "none"
+    },
+    "fidelity.unavailable": {
+      "string": "Unavailable — {detail}",
+      "screen": "SCR-137",
+      "kind": "value",
+      "owner": "15",
+      "status": "merged",
+      "source": "15:2258",
+      "announce": "none"
+    },
+    "fidelity.defect_link": {
+      "string": "Defect DEF-0142",
+      "screen": "SCR-137",
+      "kind": "link",
+      "owner": "E38-D03",
+      "status": "PROPOSED",
+      "source": "D05:353",
+      "announce": "none",
+      "pending": "D05 A-17"
+    }
+  }
+}
