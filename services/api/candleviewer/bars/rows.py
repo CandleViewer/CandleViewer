@@ -63,6 +63,9 @@ _CHECKSUM_FIELDS: Final = (
     "sell_volume", "delta", "min_delta", "max_delta", "delta_pct", "trade_count", "vwap",
     "is_closed", "build_version", "source", "generation", "index",
 )  # fmt: skip
+#: The bar flags (QuestDB 0008, #5396; 21 §4.8). The checksum appends each only when true, as
+#: `name=True`, so a row written before 0008 (every flag false or absent) verifies unchanged.
+FLAG_COLUMNS: Final = ("gap_before", "partial", "tape_gap")
 
 
 class BarPersistError(BarsError):
@@ -110,8 +113,13 @@ def bar_param_for(spec: BarSpec) -> str:
 
 
 def row_checksum(row: dict[str, object]) -> int:
-    """63-bit sha256 prefix over the value columns (SR-E12-11); timestamps are the key, not data."""
-    blob = "\x1f".join(f"{k}={row.get(k)!r}" for k in _CHECKSUM_FIELDS)
+    """63-bit sha256 prefix over the value columns (SR-E12-11); timestamps are the key, not data.
+
+    From 0008 the flags a row holds as true are appended (`FLAG_COLUMNS`, `name=True`): a false
+    or absent flag adds nothing, so a pre-0008 row's checksum is the one it was written with."""
+    fields = [f"{k}={row.get(k)!r}" for k in _CHECKSUM_FIELDS]
+    fields += [f"{k}={True!r}" for k in FLAG_COLUMNS if row.get(k) is True]
+    blob = "\x1f".join(fields)
     return int.from_bytes(hashlib.sha256(blob.encode()).digest()[:8], "big") & 0x7FFF_FFFF_FFFF_FFFF
 
 
@@ -182,6 +190,9 @@ def _row(
         "trade_count": bar.trade_count,
         "vwap": to_double(bar.vwap),
         "is_closed": bar.closed,
+        "gap_before": bar.gap_before,  # the flags as the builder set them (21 §4.8, 0008)
+        "partial": bar.partial,
+        "tape_gap": bar.tape_gap,
         "build_version": BUILD_VERSIONS[spec.kind],
         "source": source,
         "generation": generation,
