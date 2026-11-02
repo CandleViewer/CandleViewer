@@ -48,7 +48,16 @@ Gates (each FAIL led by its name):
   G-CITE      every cite in range and on a non-blank line at its base, and equal to the pins.
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
               deny word in the spec; no deny word in this tool's text or the pins.
-  G-SCOPE     the diff touches only the spec, this tool and the pins file.
+  G-DRAWN     §0's frame rows are all pending ("to draw (PR 2)", PR 1) or all drawn (PR 2).
+              Drawn: §0 names the page id; every frame row names a board of the board table;
+              each board row's Status is `drawn (r<n>[, light])` with its board id and export,
+              the export's number, slug and theme agree with the row, and on disk the PNG's
+              IHDR width × height and sha256 equal the record; the eight simulations of
+              boards 01 and 03 (greyscale, deuteranopia, protanopia, tritanopia) are listed
+              with their sha256 and equal it on disk; and no other E38-D02-*.png sits in
+              `docs/design/E38/img/`.
+  G-SCOPE     the diff touches only the spec, this tool, the pins file and the E38-D02
+              exports in `docs/design/E38/img/`.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e38_d02_env_chrome_audit.py --check
@@ -83,6 +92,22 @@ TOKENS = ROOT / "packages" / "ui" / "tokens"
 CVD_PATH = ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py"
 CONTRAST_PATH = ROOT / "docs" / "design" / "_tools" / "contrast_check.py"
 KEYMAP_REL = "apps/web/src/keymap/keymap.json"
+IMG_REL = "docs/design/E38/img"
+IMG = re.compile(r"docs/design/E38/img/E38-D02-\d\d-[a-z0-9-]+\.png")
+PENDING = "to draw (PR 2)"
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+DRAWN = re.compile(
+    rf"drawn \(r\d+(, light)?\): board id `({UUID})`, "
+    r"`docs/design/E38/img/(E38-D02-(\d\d)-([a-z0-9-]+)\.png)` "
+    r"\((\d+) × (\d+), sha256 `([0-9a-f]{64})`\)"
+)
+RENDER = re.compile(
+    r"^- `(E38-D02-(\d\d)-[a-z0-9-]+-(greyscale|deuteranopia|protanopia|tritanopia)\.png)` "
+    r"\(sha256 `([0-9a-f]{64})`\)$",
+    re.MULTILINE,
+)
+SIMULATED = ("01", "03")
+SIMULATIONS = ("greyscale", "deuteranopia", "protanopia", "tritanopia")
 PATHS: dict[str, str] = {
     "04": "docs/plan/04-security-program.md",
     "13": "docs/plan/13-user-flows.md",
@@ -177,6 +202,7 @@ class Texts:
     tool: str
     changed: list[str] | None
     memo: dict[str, str | None]
+    files: dict[str, bytes]
 
 
 def git(*args: str) -> str | None:
@@ -579,10 +605,79 @@ def g_scope(t: Texts) -> list[str]:
         return ["cannot list the changed paths (git failed)"]
     own = ", ".join(OWN_PATHS)
     return [
-        f"{p} is touched; this ticket owns {own}"
+        f"{p} is touched; this ticket owns {own} and the E38-D02 exports"
         for p in t.changed
-        if p not in OWN_PATHS
+        if p not in OWN_PATHS and not IMG.fullmatch(p)
     ]
+
+
+def png_size(data: bytes) -> tuple[int, int] | None:
+    if data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR" or len(data) < 24:
+        return None
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def on_disk(t: Texts, name: str, sha: str, size: tuple[int, int] | None = None) -> bool:
+    data = t.files.get(name)
+    if data is None or hashlib.sha256(data).hexdigest() != sha:
+        return False
+    return size is None or png_size(data) == size
+
+
+def g_drawn(t: Texts) -> list[str]:
+    s0 = section(t.spec, "## 0.")
+    frames = [r for r in table_rows(s0, "B") if len(r) == 5 and r[0] != "B"]
+    boards = [
+        r for r in table_rows(s0, "") if len(r) == 5 and re.fullmatch(r"\d\d", r[0])
+    ]
+    if not frames:
+        return ["§0 has no frame rows"]
+    pending = [r for r in frames if r[4] == PENDING]
+    if len(pending) == len(frames) and not boards:
+        return []  # PR 1: nothing drawn yet
+    bad = []
+    if pending:
+        bad.append(f"a mix: {len(pending)} frame rows still {PENDING!r}")
+    if not re.search(rf"page id `{UUID}`", s0):
+        bad.append("drawn, but §0 names no page id")
+    nos = {r[0] for r in boards}
+    for r in frames:
+        m = re.fullmatch(r"drawn, board (\d\d)", r[4])
+        if r[4] != PENDING and (m is None or m[1] not in nos):
+            bad.append(f"{r[0]}: Status {r[4]!r} names no board of the board table")
+    listed: set[str] = set()
+    for r in boards:
+        m = DRAWN.fullmatch(r[4])
+        if m is None:
+            bad.append(f"board {r[0]}: Status is not the drawn form")
+            continue
+        light, name, no, slug = m[1], m[3], m[4], m[5]
+        listed.add(name)
+        if no != r[0] or r[1] != f"`E38-D02 / {no} {slug}`":
+            bad.append(f"board {r[0]}: the export names another board or slug")
+        if bool(light) != (r[2] == "light") or slug.endswith("-light") != (
+            r[2] == "light"
+        ):
+            bad.append(
+                f"board {r[0]}: the theme does not agree with its Status and slug"
+            )
+        if not on_disk(t, name, m[8], (int(m[6]), int(m[7]))):
+            bad.append(f"board {r[0]}: {name} is missing or not its W × H and sha256")
+    renders = RENDER.findall(s0)
+    for name, _, _, sha in renders:
+        listed.add(name)
+        if not on_disk(t, name, sha):
+            bad.append(f"{name} is missing or not its sha256")
+    got = sorted(f"{no}-{k}" for _, no, k, _ in renders)
+    want = sorted(f"{no}-{k}" for no in SIMULATED for k in SIMULATIONS)
+    if got != want:
+        bad.append(
+            f"the simulations listed are {got}, not boards 01 and 03 × {SIMULATIONS}"
+        )
+    stray = sorted(set(t.files) - listed)
+    if stray:
+        bad.append(f"E38-D02 PNGs on disk that §0 does not list: {stray}")
+    return bad
 
 
 DEMO_STATEMENT = (
@@ -739,7 +834,7 @@ GATES: dict[str, Callable[[Texts], list[str]]] = {
     "G-STATE": g_state, "G-TOKEN": g_token, "G-CONTRAST": g_contrast, "G-CVD": g_cvd,
     "G-HOTKEY": g_hotkey, "G-T2": lambda t: g_t2(t) + g_t2_keys(t),
     "G-RULED": g_ruled, "G-AROW": g_arow, "G-CITE": g_cite, "G-HYGIENE": g_hygiene,
-    "G-SCOPE": g_scope,
+    "G-DRAWN": g_drawn, "G-SCOPE": g_scope,
 }  # fmt: skip
 
 
@@ -777,7 +872,13 @@ def load() -> Texts:
         else ""
     )
     tool = (ROOT / TOOL_REL).read_text(encoding="utf-8")
-    return Texts(spec, pins, tool, changed_paths(), {})
+    img = ROOT / IMG_REL
+    files = (
+        {f.name: f.read_bytes() for f in sorted(img.glob("E38-D02-*.png"))}
+        if img.is_dir()
+        else {}
+    )
+    return Texts(spec, pins, tool, changed_paths(), {}, files)
 
 
 def fill(t: Texts) -> str:
@@ -822,6 +923,42 @@ def set_cell(row: str, col: int, value: str) -> Callable[[Texts], Texts]:
         return replace(t, spec="\n".join(ls))
 
     return f
+
+
+def with_file(name: str, data: bytes | None) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        files = {k: v for k, v in t.files.items() if k != name}
+        if data is not None:
+            files[name] = data
+        return replace(t, files=files)
+
+    return f
+
+
+def one_pixel_wider(t: Texts) -> Texts:
+    """Board 05's IHDR width plus one; the record's sha256 is moved to match, so only the size is off."""
+    name = "E38-D02-05-scr-075-modal-and-banners.png"
+    data = bytearray(t.files[name])
+    data[16:20] = (int.from_bytes(data[16:20], "big") + 1).to_bytes(4, "big")
+    old = hashlib.sha256(t.files[name]).hexdigest()
+    new = hashlib.sha256(bytes(data)).hexdigest()
+    return replace(
+        t, spec=t.spec.replace(old, new, 1), files={**t.files, name: bytes(data)}
+    )
+
+
+def swap_twins(t: Texts) -> Texts:
+    """Board 01's greyscale and deuteranopia simulations share a size; swapping their bytes keeps it."""
+    a = "E38-D02-01-scr-074-switch-to-live-greyscale.png"
+    b = "E38-D02-01-scr-074-switch-to-live-deuteranopia.png"
+    return replace(t, files={**t.files, a: t.files[b], b: t.files[a]})
+
+
+def swap_boards(t: Texts) -> Texts:
+    """Two dark boards' bytes swapped: both sizes and sha256 then disagree with the record."""
+    a = "E38-D02-04-scr-075-panel-placements.png"
+    b = "E38-D02-06-switch-diagram-and-matrix.png"
+    return replace(t, files={**t.files, a: t.files[b], b: t.files[a]})
 
 
 def drop_row(lead: str) -> Callable[[Texts], Texts]:
@@ -873,6 +1010,16 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-RULED", "the pill made a status again (§3.1)", sub("the pill inside it is a button, CMP-017's anchor", "the pill inside it is a `role=\"status\"` element, CMP-017's anchor")),
     ("G-RULED", "the pill made a status again (§9)", sub("- **The pill:** a button named", "- **The pill:** `role=\"status\"`, named")),
     ("G-RULED", "the exports drop tritanopia", sub("protanopia and tritanopia renders", "protanopia renders")),
+    ("G-DRAWN", "board 05's PNG one pixel wider than its record", one_pixel_wider),
+    ("G-DRAWN", "two same-size simulations of board 01 swap bytes", swap_twins),
+    ("G-DRAWN", "two dark boards swap bytes", swap_boards),
+    ("G-DRAWN", "a simulation missing on disk", with_file("E38-D02-03-scr-075-band-and-signal-tritanopia.png", None)),
+    ("G-DRAWN", "an extra E38-D02 PNG on disk", with_file("E38-D02-09-extra.png", b"\x89PNG\r\n\x1a\n")),
+    ("G-DRAWN", "a frame row back to pending (a mix)", set_cell("B11", 4, PENDING)),
+    ("G-DRAWN", "a frame row names a board not drawn", set_cell("B15", 4, "drawn, board 09")),
+    ("G-DRAWN", "a light twin recorded as dark", set_cell("07", 2, "dark")),
+    ("G-DRAWN", "the page id dropped", lambda t: replace(t, spec=re.sub(rf"page id `{UUID}`", "page id pending", t.spec))),
+    ("G-DRAWN", "a simulation unlisted", drop_row("- `E38-D02-01-scr-074-switch-to-live-protanopia.png`")),
 )  # fmt: skip
 
 
