@@ -405,6 +405,46 @@ describe("A11Y-305A-01, D6 (ruled option (c)): a bare navigation key is never re
       notified: true,
     });
   });
+
+  it("C-5335-d02: Ctrl+F is the browser's find, never reported, in any view, and never taken", () => {
+    const countInert = vi.fn();
+    const notify = vi.fn();
+    const d = createDispatcher({
+      isValid: () => false,
+      execute: vi.fn(),
+      notify,
+      now: () => 0,
+      countInert,
+    });
+    // `watchlist.filter` is the Watchlist view's: elsewhere its chord was explained through `anywhere`, and in the view
+    // with no filter to focus (loading, a failed read, no list) it was explained as the view's own
+    const left = { status: "unbound" };
+    for (const view of [[], ["Watchlist"], ["Rules"], ["Chart"]]) {
+      const at = ctx(...view);
+      const press = { code: "KeyF", target: button() };
+      expect(d(ev("f", { ...press, ctrlKey: true }), at), view.join()).toEqual(left);
+      expect(d(ev("f", { ...press, metaKey: true }), at), `Cmd+F, ${view.join()}`).toEqual(left);
+    }
+    expect([notify.mock.calls.length, countInert.mock.calls.length]).toEqual([0, 0]);
+  });
+
+  it("pin: Del and Alt+↑/↓ pressed where the Watchlist view does not run them still say where they work", () => {
+    const { d, notify } = dispatcher(() => false);
+    const at = ctx("Watchlist");
+    expect(d(ev("Delete", { target: button() }), at)).toMatchObject({
+      status: "inert",
+      commandId: "watchlist.remove",
+    });
+    expect(d(ev("ArrowUp", { altKey: true, target: button() }), at)).toMatchObject({
+      status: "inert",
+      commandId: "watchlist.move_up",
+    });
+    expect(d(ev("ArrowDown", { altKey: true, target: button() }), at)).toMatchObject({
+      status: "inert",
+      commandId: "watchlist.move_down",
+    });
+    expect(notify).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe("key auto-repeat: only a stepper repeats (G-07, A11Y-305A-02 / WCAG 2.3.1, BQ-3)", () => {

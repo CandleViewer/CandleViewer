@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createMemoryRouter, type RouteObject } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { SHELL_MAIN_ID } from "../../src/features/app-shell/ShellLayout";
+import { KeymapHost } from "../../src/keymap/KeymapHost";
 import { buildRoutes } from "../../src/routes/tree";
 import { WatchlistRoute } from "../../src/features/watchlist/WatchlistRoute";
 import { ROUTE_MANIFEST } from "../../src/routes/manifest";
@@ -164,6 +165,25 @@ describe("feature routes load on first visit (C-14.3; #5335's read)", () => {
     render(<RouterProvider router={router} />);
     await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
     expect(router.state.location.search).toBe("?next=%2Fwatchlist%2Fx");
+  });
+});
+
+describe("Ctrl+F on a screen that is not SCR-100 (C-5335-d02)", () => {
+  beforeEach(() => resetMeClaims());
+
+  it("is the browser's find: no 'not available here' notice, and the key is not taken", async () => {
+    claimsFor("owner");
+    const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/risk"] });
+    render(
+      <>
+        <RouterProvider router={router} />
+        <KeymapHost />
+      </>,
+    );
+    await screen.findByRole("heading", { name: /R-150 — owned by E12/ }, ROUTE_WAIT);
+    // fireEvent answers false for a default-prevented event: true means the browser keeps its find
+    expect(fireEvent.keyDown(document.body, { key: "f", code: "KeyF", ctrlKey: true })).toBe(true);
+    expect(screen.queryByRole("region", { name: "Notifications", hidden: true })).toBeNull();
   });
 });
 
