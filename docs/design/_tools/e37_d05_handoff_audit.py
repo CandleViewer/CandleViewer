@@ -130,7 +130,7 @@ PX = re.compile(r"\b\d+(?:\.\d+)? ?px\b")
 SOFT = re.compile(r"\b(?:undo|just|simply|anytime)\b", re.IGNORECASE)
 COMPONENTS = (
     "CMP-146", "CMP-147", "CMP-148", "CMP-149", "CMP-150", "CMP-151", "CMP-152", "CMP-153",
-    "CMP-158", "CMP-234", "CMP-235", "CMP-236", "CMP-237", "CMP-238", "CMP-254",
+    "CMP-157", "CMP-158", "CMP-234", "CMP-235", "CMP-236", "CMP-237", "CMP-238", "CMP-254",
 )  # fmt: skip
 SHEET_FIELDS = ("Props", "States", "Tokens", "Name", "Owner story")
 FIELDS = (

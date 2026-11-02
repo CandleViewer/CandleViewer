@@ -1,20 +1,20 @@
 # E37-D05 — Hand-off (§A–§F; the node-graph editor pack)
 
-Components: **CMP-146** … **CMP-153**, **CMP-236** … **CMP-238**, the SCR-082 variants of **CMP-158**, **CMP-234** and **CMP-235**, and **CMP-254 NodeListOutline** (PROPOSED id). The spec is `E37-D05.md`; this file places it, states the contract, carries the copy-ready A-rows, the Storybook list with fixtures and the test hooks. Status as the spec: Draft, owner approval pending (#2701).
+Components: **CMP-146** … **CMP-153**, **CMP-236** … **CMP-238**, the SCR-082 variants of **CMP-158**, **CMP-234** and **CMP-235**, and **CMP-254 NodeListOutline** (PROPOSED id), with **CMP-157 MetricPickerCombobox** as a cited owner (BQ-05). The spec is `E37-D05.md`; this file places it, states the contract, carries the copy-ready A-rows, the Storybook list with fixtures and the test hooks. Status as the spec: Draft, owner approval pending (#2701).
 
 ## §A Placement
 
 Where each consuming story reads which part (spec section numbers).
 
-| Consumer                                              | Reads                                                                                    |
-| ----------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| E37-S01 canvas, palette, ports, pointer connect       | §2; §3.1 … §3.7, §3.12 … §3.14; §4; §5; §7; §8.1 (canvas, palette, connect rows); §D; §E |
-| E37-S02 node library and inspector                    | §3.2 … §3.5, §3.8; §8.1 (node, type, part rows); §9 (FZ-1 … FZ-4, FZ-10 … FZ-13)         |
-| E37-S03 validation, cycles, orphans                   | §3.10; §8.1 (validation, problems, refusal rows); FI-3, FI-4, FI-10                      |
-| E37-S04 round-trip switching, the indicator, the diff | §3.11; §8.1 (indicator, panel rows); §8.2; §9 (FZ-5 … FZ-9, FZ-14 … FZ-16); §10          |
-| E37-S05 keyboard-equal authoring                      | §3.15; §6; §8.1 (aria, announce, outline, connect rows)                                  |
-| E37-Q01 the black-box test plan                       | §2; §10; §13; §E                                                                         |
-| E37-D06 design QA                                     | §13, run verbatim                                                                        |
+| Consumer                                              | Reads                                                                                       |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| E37-S01 canvas, palette, ports, pointer connect       | §2; §3.1 … §3.7, §3.12 … §3.14; §4; §5; §7; §8.1 (canvas, palette, connect rows); §D; §E    |
+| E37-S02 node library and inspector                    | §3.2 … §3.5, §3.8; §8.1 (node, type, part rows); §9 (FZ-1, FZ-6 … FZ-9); §8.2 (FS-1 … FS-3) |
+| E37-S03 validation, cycles, orphans                   | §3.10; §8.1 (validation, problems, refusal rows); FI-3, FI-4, FI-10                         |
+| E37-S04 round-trip switching, the indicator, the diff | §3.11; §8.1 (indicator, panel rows); §8.2; §9 (FZ-2 … FZ-5, FZ-10 … FZ-12); FS-8; §10       |
+| E37-S05 keyboard-equal authoring                      | §3.15; §6; §8.1 (aria, announce, outline, connect rows)                                     |
+| E37-Q01 the black-box test plan                       | §2; §10; §13; §E                                                                            |
+| E37-D06 design QA                                     | §13, run verbatim                                                                           |
 
 ## §B The contract table
 
@@ -30,17 +30,18 @@ Where each consuming story reads which part (spec section numbers).
 | CMP-151   | `text` · `position` · `color?` (`15`:1862; A-8)                                                                                                                                   | outside the IR and its hash                            |
 | CMP-152   | `source` · `target` · `selected?` · `label?` (`15`:1870; A-9)                                                                                                                     | `label` = the order index only                         |
 | CMP-153   | `node` · `onChange` · `onClose` (`15`:1879; A-10)                                                                                                                                 | titled by the node's name                              |
-| CMP-158   | none for the rule-editor variant (`15`:1926)                                                                                                                                      | sentence FZ-1 + FZ-2                                   |
+| CMP-158   | none for the rule-editor variant (`15`:1926)                                                                                                                                      | sentence FS-1 + FS-2 (E36-D05)                         |
 | CMP-234   | `diagnostics` · `onFocusAnchor` (`15`:3022; A-11)                                                                                                                                 | `anchor.kind` node or edge on SCR-082                  |
 | CMP-235   | `mode` · `onChange` · `lossyWarning?` · `dirty` (`15`:3032; A-12)                                                                                                                 | the constructs = the panel's rows                      |
 | CMP-236   | `categories` · `query` · `onQueryChange` · `onAddNode(type, position?)` (`15`:3041; A-13)                                                                                         | each entry gains `graphOnly`, `needsNativeStop`        |
 | CMP-237   | `kind` · `dataType: PortType` · `connected` · `label` · `compatible?` (`15`:3050; A-14)                                                                                           | six types incl. `trigger`                              |
 | CMP-238   | `bounds` · `viewport` · `nodes` · `onNavigate` (`15`:3059; A-15)                                                                                                                  | `aria-hidden`                                          |
+| CMP-157   | `value` · `onChange` · `category?` (`15`:1917; no A-row)                                                                                                                          | cited owner: E36-D03's entry, built by E36-S01         |
 | CMP-254   | PROPOSED (A-16): `rule` · `selection` · `onSelect` · `onConnect` · `onDisconnect` · `onDelete` · `onRename` · `onInspect` · `onCollapse` · `onMove` · `diagnostics` · `readOnly?` | E37-S05 types them                                     |
 
 ## §C Copy-ready rows (applied only by the closing PR, after #5448 and #5495 merge; never in this PR)
 
-One `15` commit with the `E37-D05 —` lead-in (E36-D03's form), then the `14` lines. Each Old text or anchor stands exactly once in its file at the base (G-SHEET checks); the re-pin commit re-reads them after D03's `15` rows land (D05-C3). Tokens, Storybook additions, Motion and Usage are D03 §12's rows, not repeated here.
+One `15` commit with the `E37-D05 —` lead-in (E36-D03's form), then the `14` lines. Each Old text or anchor stands exactly once in its file at the base (G-SHEET checks); the A-row PR re-reads them after D03's `15` rows land (D05-C3). Tokens, Storybook additions, Motion and Usage are D03 §12's rows, not repeated here. Each A-row is anchored by its unique Old text or anchor (BQ-23 as ruled); D02 §17 cites CMP-238 at lines 2762–2767 of an older `15`, and its A11y line is `15`:3060 at the base.
 
 - **A-1 → `15` CMP-146, Props** (D02 §17). After "`onConnect` · `readOnly?`." add: " **E37-D05 —** `onConnect(source, sourcePort, target, targetPort)`, as the shipped `GraphEdge` (memo C7); the region is described by the rule's plain-language sentence (E37-D02 §14)."
 - **A-2 → `15` CMP-146, API sketch** (D02 §17). Old: "onConnect: (source: string, target: string) => void;". New: "onConnect: (source: string, sourcePort: string, target: string, targetPort: string) => void;".
@@ -104,7 +105,7 @@ Every story renders in dark and light at compact density, under the title `RuleE
 | CMP-146           | ForcedColors                                                                                    | `s-graph`                                                                            | `forced-colors: active`                     |
 | CMP-147           | OnBarClose · OnFill · OnTimer                                                                   | `s-form` `n1` with each trigger                                                      | N-1                                         |
 | CMP-148           | Default · Connected · KeyboardConnectDemo                                                       | `s-form` `n2`, unconnected, connected, connecting                                    | N-1, PT-4                                   |
-| CMP-149           | PlaceOrder · ModifySl · Flatten                                                                 | `s-form` `n3` with each action                                                       | N-1; FZ-3, FZ-10                            |
+| CMP-149           | PlaceOrder · ModifySl · Flatten                                                                 | `s-form` `n3` with each action                                                       | N-1; FS-3 (E36-D05), FZ-6                   |
 | CMP-150           | And · Or · Not                                                                                  | `s-graph` `n3` / `n4`; a `none_of` gate                                              | N-1; the `graph-only` badge                 |
 | CMP-151           | Default                                                                                         | one comment at (0, 120)                                                              | N-1                                         |
 | CMP-147 … CMP-151 | Hover · Dragging · SelectedAndFocused · ReadOnly · ReducedMotion                                | `s-form` (`s-graph` for CMP-150; one comment for CMP-151, without Dragging's port)   | N-2, N-6, N-5, N-10                         |
@@ -113,6 +114,7 @@ Every story renders in dark and light at compact density, under the title `RuleE
 | CMP-152           | ConnectReducedMotion · CyclePath                                                                | `s-form`; `cycle`                                                                    | M-3 reduce; ED-9                            |
 | CMP-153           | TriggerNodeInspector · ConditionNodeInspector · ActionNodeInspector                             | `s-form` `n1` / `n2` / `n3`                                                          | open                                        |
 | CMP-153           | LogicGateNodeInspector · CommentNodeInspector · DetailsDisclosure · FocusReturn · ReducedMotion | `s-graph` `n3`; one comment; `s-form` `n3`                                           | A-10; M-16                                  |
+| CMP-157           | E36-D03's six stories (`15`:1920), none added                                                   | the vocabulary fixture                                                               | the Condition drawer                        |
 | CMP-158           | InRuleEditor                                                                                    | none                                                                                 | default                                     |
 | CMP-234           | GraphAnchored · Valid · WithErrors · WithWarnings                                               | `cycle`; `s-form`; `orphan`                                                          | FI-4, FI-10                                 |
 | CMP-235           | GraphActive · LossyWarning · DirtyUnsaved                                                       | `s-form`; `s-graph`; `s-form` edited                                                 | the four indicator states; the dirty prompt |
@@ -134,5 +136,5 @@ Every story renders in dark and light at compact density, under the title `RuleE
 ## §F References and the copy deck as data
 
 - **Motion:** D03 §7 by pinned reference (spec §5). **Keyboard, script, landmarks:** D04 §4–§6 by id (spec §6). **Tiers:** D03 §8 (spec §7).
-- **The copy deck as data:** `docs/design/E37/E37-D05-copy-deck.jsonl` holds every row of spec §8.1 and §9 and §8.2's cited keys as JSON Lines, one row per line: the first line carries `pack`, `version`, `base`, `fields` and §8.4's slot `samples`; each row line carries `"list": "rows"` (key, text, component, state, max_length, context, kind, status, source) or `"list": "cited"` (key, text, where). The tool fails if the twin and the tables differ; with the spec, this hand-off and the pins file absent it checks the twin alone (deck-only mode).
-- **The audit:** `python3 -I docs/design/_tools/e37_d05_handoff_audit.py --check`.
+- **The copy deck as data:** `docs/design/E37/E37-D05-copy-deck.jsonl` holds every row of spec §8.1 and §9 and §8.2's cited keys as JSON Lines, one row per line: the first line carries `pack`, `version`, `base`, `fields`, `flags`, §8.4's slot `samples` and the `caps` with their status and source (R-4); each row line carries `"list": "rows"` (key, text, component, state, max_length, context, kind, status, source, and the `frozen` flag: an FZ id or null) or `"list": "cited"` (key, text, where). Status is `merged`, `RULED` or `PROPOSED` (R-2). The tool fails if the twin and the tables differ; `--stage deck` checks the twin alone (PR 1a), `--stage full` everything (this PR).
+- **The audit:** `python3 -I docs/design/_tools/e37_d05_handoff_audit.py --stage full --check` (and `--stage deck --check` for the deck alone).
