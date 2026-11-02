@@ -10,6 +10,7 @@ what this tests. The fake `RowFetcher` evaluates the reader's parameterised SQL 
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from decimal import Decimal
 from typing import Any, ClassVar
@@ -22,12 +23,20 @@ from prometheus_client import REGISTRY
 from candleviewer.api._generated.openapi_models import KlineResponse, Problem
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.market import MarketDataPrincipal
-from candleviewer.api.market_bars import TradeTotalsSource, make_market_bars_router
+from candleviewer.api.market_bars import (
+    FormingBarSource,
+    TradeTotalsSource,
+    make_market_bars_router,
+)
+from candleviewer.api.market_response import iso_us
+from candleviewer.app import _forming_bar
 from candleviewer.bars.activity_builders import TickBarBuilder, VolumeBarBuilder
+from candleviewer.bars.emit import BarEmission
 from candleviewer.bars.metrics import bars_endpoint_422_no_data_recorded_total
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
 from candleviewer.bars.reader import BarReader, row_key
 from candleviewer.bars.rows import bar_param_for, bar_row, row_checksum
+from candleviewer.bars.series_store import SeriesStore
 from candleviewer.bars.threshold_builders import DeltaBarBuilder, RangeBarBuilder
 from candleviewer.bars.time_builder import TimeBarBuilder
 from candleviewer.domain.sql_names import ts_us_from_row
@@ -96,8 +105,9 @@ class _Fetch:
     """Evaluates `build_range_query`'s params: (symbol, bar_param, start, to[, key x5]); limit is
     inlined. The optional key binds are the #2017 keyset `(ts, generation, index) >= key`."""
 
-    def __init__(self) -> None:
+    def __init__(self, store: dict[str, list[dict[str, object]]] | None = None) -> None:
         self.calls = 0
+        self._store = _STORE if store is None else store
 
     async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
         self.calls += 1
@@ -111,7 +121,7 @@ class _Fetch:
                 int(str(params[6])),
                 -1 if "IS NULL" in sql else int(str(params[8])),
             )
-        rows = [r for r in sorted(_STORE.get(str(bar_param), []), key=row_key)
+        rows = [r for r in sorted(self._store.get(str(bar_param), []), key=row_key)
                 if r["symbol"] == symbol and start <= int(str(r["ts"])) < to
                 and (key is None or row_key(r) >= key)]  # fmt: skip
         return rows[:limit]
@@ -151,6 +161,7 @@ def _client(
     recording_us: int | None = _T0, fetch: _Fetch | None = None, wired: bool = True,
     recording_wired: bool = True, totals: TradeTotalsSource | None = _tape_totals,
     qty_step: Callable[[str], Decimal | None] | None = _step,
+    forming: FormingBarSource | None = None,
 ) -> TestClient:  # fmt: skip
     reader = BarReader(fetch or _Fetch(), _noop)
 
@@ -163,7 +174,7 @@ def _client(
             lambda: reader if wired else None,
             recording_started_at_us=started if recording_wired else None, trade_totals=totals,
             principal_resolver=_Resolver(perms), symbol_listed=lambda s: s == "BTCUSDT",
-            qty_step=qty_step, now_us=lambda: _NOW,
+            qty_step=qty_step, forming_bar=forming, now_us=lambda: _NOW,
         )
     )  # fmt: skip
     return TestClient(app, client=("127.0.0.1", 50000))
@@ -502,6 +513,11 @@ class TestRequestEdges:
         finally:
             _STORE["tick:100"].remove(forming)
 
+    def test_include_open_without_a_forming_source_serves_closed_bars_only(self) -> None:
+        q = {**_P, **self._Q, "include_open": "true"}
+        bars = _client().get("/market/bars", params=q).json()["bars"]
+        assert bars and all(b["confirm"] for b in bars)
+
     def test_no_resolver_fails_closed_501(self) -> None:
         app = FastAPI()
         app.include_router(make_market_bars_router(lambda: None, now_us=lambda: _NOW))
@@ -647,3 +663,67 @@ def _iso_t(row: dict[str, object]) -> str:
     from candleviewer.api.market_response import iso_us
 
     return iso_us(int(str(row["ts"])))
+
+
+class TestIncludeOpenFromTheLiveSeries:
+    """D3: `include_open` serves the series store's forming bar, built by the real time builder.
+    Storage holds closed bars only (`WriterSink`), so no row below is a fabricated forming one."""
+
+    _SPEC = _SERIES[("time", "1")]
+    _Q: ClassVar[dict[str, Any]] = {**_P, "bar_type": "time", "param": "1"}
+
+    def _live(self) -> tuple[SeriesStore, dict[str, list[dict[str, object]]], list[Bar]]:
+        builder, store, ups = TimeBarBuilder(self._SPEC, "BTCUSDT"), SeriesStore(), []
+        for t in _TAPE:
+            ups += builder.on_trade(t)
+        hold = asyncio.run(store.ensure("BTCUSDT", self._SPEC))
+        asyncio.run(store.emit(BarEmission(self._SPEC, 0, ups)))
+        hold.release()
+        # amended closes repeat a bar; the first bar opens before the window's `from` (_T0)
+        closed = [b for b in final_bars(ups) if b.closed and b.open_time >= _T0]
+        rows = [bar_row(b, self._SPEC, generation=0) for b in closed]
+        return store, {bar_param_for(self._SPEC): rows}, closed
+
+    def _get(self, **extra: Any) -> dict[str, Any]:
+        store, rows, _ = self._live()
+        client = _client(fetch=_Fetch(rows), forming=lambda s, sp: _forming_bar(store, s, sp))
+        body: dict[str, Any] = client.get("/market/bars", params={**self._Q, **extra}).json()
+        return body
+
+    def test_include_open_appends_the_forming_bar_after_the_closed_ones(self) -> None:
+        store, _, closed = self._live()
+        forming = store.latest("BTCUSDT", self._SPEC.spec_hash, 1)
+        assert forming is not None and forming.forming is not None and closed
+        body = self._get(include_open="true")
+        assert [b["confirm"] for b in body["bars"]] == [True] * len(closed) + [False]
+        assert body["bars"][-1]["t"] == iso_us(forming.forming.open_time)
+        assert body["meta"]["count"] == len(closed) + 1
+
+    @pytest.mark.parametrize("flag", [{}, {"include_open": "false"}])
+    def test_without_include_open_there_is_no_forming_bar(self, flag: dict[str, str]) -> None:
+        assert all(b["confirm"] for b in self._get(**flag)["bars"])
+
+    def test_a_forming_bar_past_the_window_is_not_served(self) -> None:
+        store, _, closed = self._live()
+        forming = store.latest("BTCUSDT", self._SPEC.spec_hash, 1)
+        assert forming is not None and forming.forming is not None
+        body = self._get(include_open="true", to=_iso(forming.forming.open_time))
+        assert [b["confirm"] for b in body["bars"]] == [True] * len(closed)
+
+    @pytest.mark.parametrize("limit", [40, 7, 500, 0])  # 0: exactly the closed count (full page)
+    def test_paging_serves_the_forming_bar_once_on_the_last_page(self, limit: int) -> None:
+        store, rows, closed = self._live()
+        limit = limit or len(closed)
+        client = _client(fetch=_Fetch(rows), forming=lambda s, sp: _forming_bar(store, s, sp))
+        q = {**self._Q, "include_open": "true", "limit": limit}
+        cursor, seen = None, []
+        for _ in range(300):
+            body = client.get(
+                "/market/bars", params=q if cursor is None else {**q, "cursor": cursor}
+            ).json()
+            assert len(body["bars"]) <= limit
+            seen += [(b["t"], b["confirm"]) for b in body["bars"]]
+            if (cursor := body["meta"]["next_cursor"]) is None:
+                break
+        assert len(seen) == len(closed) + 1 and len({t for t, _ in seen}) == len(seen)
+        assert [c for _, c in seen] == [True] * len(closed) + [False]
