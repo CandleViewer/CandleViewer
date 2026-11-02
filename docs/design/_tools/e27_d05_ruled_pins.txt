@@ -1,10 +1,13 @@
 # E27-D05 pins: KEY|line|words that stand on that line at the base (the tool's G10).
 # `--repin` keeps every hand-written pin still cited and adds the line's opening words.
 05|33|4. Destructive/irreversible actions (submit market order, flatten all, c
+05|47|| | Open Watchlist / symbol search | `/` | Only active when focus is not
+05|61|| | Size preset 1–5 | `1`..`5` | Context-scoped to trading views only (d
 05|96|3. **Focus is never silently stolen**: a live price update, a new fill n
 05|97|4. **Modal dialogs** (order confirm, flatten-all confirm, Demo→Live swit
 05|99|6. **Visible focus indicator**: WCAG 2.2 SC 2.4.11 (Focus Not Obscured,
 05|100|7. **Target size**: WCAG 2.2 SC 2.5.8 (Target Size, Minimum, AA) — all c
+05|102|9. **Consistent help mechanism**: WCAG 2.2 SC 3.2.6 (Consistent Help, A)
 05|107|**Rule (non-negotiable, applies everywhere)**: colour is always a _reinf
 05|125|1. **Text contrast (WCAG 1.4.3, AA)**: body text and labels ≥4.5:1 again
 05|126|2. **Non-text/UI component contrast (WCAG 1.4.11, AA)**: buttons, form-f
@@ -70,12 +73,18 @@
 23|1316|| `system` | `feature_flags`: per flag key, last-write-wins, a key is ne
 D02|1339|| E27-D05 (#818) a11y review | §9; the 200 % reflow and forced colours;
 D03|38|(E27-D05) · the handoff pack (E27-D06) · design QA (E27-D07) · implement
+D03|150|| [ ] | SCR-079 (`14:1753`) equity, available balance, used margin, unre
+D03|153|| [ ] | SCR-079 (`14:1753`) rate-limit budget usage | the Owner's deploy
 D03|182|CMP-034: permanently masked
 D03|192|## 0. The boards (drawn; ten under the lever-4 cap)
 D03|338|### 2.1 CMP-175 KeyPermissionBadge — the variant set (AC2, AC3)
+D03|491|- Static text: not focusable. The word is its text; the glyph is `aria-h
 D03|508|### 2.2 CMP-176 AccountKeyRow — the row, blocked and disabled
+D03|518|| key and rights | line 1 | the masked id with the rights and withdrawal
+D03|523|| notice | line 2, in place of its three facts | the blocked sentence, t
 D03|657|### 2.3 CMP-034 MaskedValue — permanently masked (AC4)
 D03|702|#### CMP-201 PasswordField — the write-only variant (BQ-8 rider)
+D03|712|| Behaviour | — | `type=password` always, never re-filled; paste allowed
 D03|748|#### CMP-028 — the KEK-unavailable notice (BQ-9; frames 17, 29, 41 and 4
 D03|778|#### CMP-035 — the 900 s rotation overlap (BQ-10; frame 38)
 D03|791|polite once, with focus on stage 5's heading if the wizard is open (`D02
@@ -114,6 +123,8 @@ D03|1453|| Consequences | a list read in order (list semantics): what stops, the
 D03|1455|| Typed label (rung 3) | CMP-040 + a text field: "Type sub_002 to confir
 D03|1457|| Marker | revoke: "Recorded in the audit log · API key revoked (api_key
 D03|1458|| Footer | [Cancel] first and initially focused, then the confirm. The c
+D03|1494|confirm, where it is drawn). The first Tab from Cancel therefore reaches
+D03|1495|an input is unmet, moves focus to the first unmet input. In the group, T
 D03|1524|## 8. SCR-079 — Account detail drawer, and SCR-019's account tasks (boar
 D03|1541|| Header | `h2` "{label} · {ENV} · {kind}" (`e27.scr079.h2`): the enviro
 D03|1542|| Balances | the caption "Balances · as of {hh:mm:ss} UTC" (CMP-036 `fre
@@ -125,7 +136,7 @@ D03|1605|| 76 | `SCR-019 / account task pending` | status | both tasks unchecked
 D03|1609|## 9. Contrast, greyscale and colour vision — the measured matrix
 D03|1805|the built screens is E27-D05's.
 D03|1871|### 10.1 The T2 rule (stated once)
-D03|1903|### 10.2 The gated set
+D03|1905|E27-D02's eight rows (`D02:1016-1025`) carried into hi-fi; the legs in t
 D03|1910|| Verify and save; Add a key… (`createApiKey`) | SCR-126 (frame 29), SCR
 D03|1911|| Rotate key… (`rotateApiKey`) | SCR-125 row menu (frames 13, 17), SCR-1
 D03|1912|| Test key… (`testApiKey`) | SCR-125 row menu (frame 11), SCR-128 (frame
@@ -136,7 +147,8 @@ D03|1916|| Position mode, margin mode (`updateExchangeAccount`) | SCR-079 (frame
 D03|1917|| Tasks `sub_account`, `api_key` (CMP-097 steps) | SCR-019 (frame 78) |
 D03|1921|| Session | `/admin/accounts` (SCR-125..129) | SCR-079 key facts (rights
 D03|1927|| Owner viewing as alex (a Manager) | T3: SCR-155 (every read answers as
-D03|1930|### 10.3 What is NOT T2
+D03|1932|Over-converting is as wrong as under-converting (E09-D09 §2.1; `D02:1027
+D03|1936|`aria-busy="true"`, focusable, the validating copy beside it (D18); a ke
 D03|1945|- **The validity look** — form validity, E42-D03's form for a rung confi
 D03|1958|- **T3** — every admin route for a Manager, a Viewer and a view-as sessi
 D03|1961|## 11. Keyboard, focus and live regions (board 10)
@@ -152,6 +164,8 @@ D03|1982|| Compromise card (a region of SCR-128) | `role="region"` labelled by i
 D03|1983|| SCR-079 drawer | `role="dialog"`, `aria-modal="true"`, labelled by the
 D03|1984|| SCR-019 account tasks (content) | CMP-097's ordered list; the card's c
 D03|1986|**Text resize at 1280 × 800** (R1; `05:131`; BQ-4 reads the ticket's "20
+D03|1989|| Surface | 125 % zoom (1024 × 640 CSS px) | 200 % zoom (640 × 400 CSS p
+D03|1990|| ------------------------ | -------------------------------------------
 D03|1991|| SCR-125 list | every column kept | one card per account: the label lin
 D03|1994|| Test and SCR-129 dialogs | unchanged | they fill the viewport; the bod
 D03|1995|| SCR-127 wizard | unchanged | it fills the viewport; the stepper collap
@@ -184,6 +198,7 @@ D03|2036|| SCR-079's key is rejected while the drawer is open | assertive | once
 D03|2037|| the session's access changes mid-session (`permission_change`) | E09-D
 D03|2038|| a keystroke on a T2 control | polite | once per press | the reason sen
 D03|2043|The countdown never speaks per tick, the health chips never speak on a r
+D03|2258|| `e27.scr126.invalid.key_empty` | CMP-040 inline error on press · frame
 D03|2700|| D03-C1 | **"cosy".** The ticket asks for compact, cosy and comfortable
 D03|2707|| D03-C8 | **A distinct critical hue (DS-6)**, BQ-6's OWNER-LEVEL rider.
 D03|2708|| D03-C9 | **The verdict line's own announcement vs `15:935`.** E27-D02
@@ -191,10 +206,12 @@ D03|2710|| D03-C11 | **The unmet rung confirm.** E27-D02 allows a native `disabl
 D03|2721|| D03-H2 | **E27-D05 (#818), the a11y review.** §9's matrix and forced-c
 D03|3018|## Appendix A. The `15` and `14` edits, old → new
 D03|3112|| SCR-079 · insert before `14:1756` | — | ``- **Hi-fi (E27-D03):** [E27-
+D04|92|is information, not motion. A text change once a second is a one-shot st
 D04|150|## 4. Reduced motion, focus and announcements
 D04|152|- **The reduce column.** Rows 2a, 2b, 6 and 7 take E05-D03's reduce cell
 D04|155|- **One mechanism.** Reduce is driven by `data-motion` only, never by a
 D04|157|- **No flash anywhere.** No row starts a flash, so HS-1 and HS-1b (`E05-
+D04|158|MR-1 holds with no flash counted. MR-2 holds through rows 6 and 7 as E05
 D04|161|- **Focus moves only on a user action, with the one carve-out below.** D
 D04|163|- **The one server-driven focus move.** The stage 4 to 5 change (M-3) ar
 D04|167|- **Danger from the server never moves focus.** A withdrawal-detected, K
