@@ -10,23 +10,22 @@ values, the default-deny pins and the mutations).
 
 1. **Values.** Every `{{KIND:key}}` placeholder is written by `--fill` as `VALUE<!--=KIND:key-->`:
    COUNT (rows of the spec's and the hand-off's own tables; the register's E47-D06 rows; the
-   inventory screens the register tags `chrome`) and SUM (the ceiling of a panel: the figures of
-   the spec's §4 table). `--check` re-derives each anchored value (G-ANCHOR) and FAILs a
+   inventory screens the register tags `chrome`); no cap is summed (BQ-4 as ruled). `--check` re-derives each anchored value (G-ANCHOR) and FAILs a
    placeholder left behind or a stray HTML comment (G-MARKER). `--fill` also writes the mutation
    rows ({{MUTATIONS}}) from this file's constants.
 2. **Cites.** Every `NN`:line and KEY:line cite of both documents resolves to a non-blank line at
    its pinned commit (G-CITE); every "verbatim" copy string occurs on its cited line (G-QUOTE);
    every Old fragment of the hand-off's A-rows occurs verbatim on its cited line (G-AROW).
-3. **Gates.** One FAIL line per gate: G-PENDING (the BQ heading names the pending ruling's
-   comment; BQ-0 ... BQ-15 once each, each "Default built:", none RULED), G-PIN (the start line
+3. **Gates.** One FAIL line per gate: G-PENDING (the BQ heading carries the RULED stamp with the
+   ruling's and the BQ list's comments; BQ-0 ... BQ-15 once each, each stamped RULED), G-PIN (the start line
    and the version line name every in-flight pack's PR and pinned sha and say they re-pin),
    G-BOARDS (at most ten boards, light twins at most a third, each PENDING, the not-drawn
    paragraph), G-INV (every inventory row fills its four layers, names a grammar, claims no
    exemption; every screen the register tags `canvas` is in the inventory), G-PARITY (every oracle
    row is complete and names an inventory surface; P-1 ... P-5 are AC2's five footprint columns;
    every surface designed here has a row), G-COLS (the footprint, profile and ladder sets equal
-   `05`'s first column at the base), G-CAP (every figure of §4 occurs on its cited line; no cap is
-   added), G-T2 (§10 states the T2 paragraph; §7 cites it; the hand-off names CMP-079 and
+   `05`'s first column at the base), G-CAP (every figure of §4 occurs on its cited line; each row is
+   merged or PROPOSED; no cap is added), G-T2 (§10 states the T2 paragraph; §7 cites it; the hand-off names CMP-079 and
    CMP-019), G-FINDINGS (§12 equals the register's E47-D06 rows), G-NOCLAIM (no conformance claim
    for the canvas alone), G-PUBLIC (no URL, host or local path), G-UNMERGED (no link to
    an unmerged pack), G-KEYWORD (no closing keyword followed by an issue number), G-HEUR, G-WALK
@@ -99,6 +98,7 @@ CITE_FILES = {
     "KM": "apps/web/src/keymap/keymap.json",
     "E47J": "docs/plan/backlog/E47.json",
     "R32": ".claude/rules/32-design-specs.md",
+    "PW": "apps/web/src/chart/a11y/politeWriter.ts",
     "README": "docs/design/README.md",
     **{k: v[0] for k, v in INFLIGHT.items()},
 }
@@ -109,10 +109,14 @@ FILE_BASE = {
     **{v[0]: v[1] for v in INFLIGHT.values()},
 }
 
-RULING_PENDING = "6569517180"  # the BQ list on #1305; the ruling will answer it
+BQ_LIST_ID = "6569517180"  # the BQ list on #1305
+RULING_ID = "6570047499"  # the orchestrator's ruling of record on it
 BQ_HEAD = (
-    "## The questions BQ-0 … BQ-15 — defaults built; ruling pending" f" (comment {RULING_PENDING})"
+    f"## The questions BQ-0 … BQ-15 — RULED (orchestrator, comment {RULING_ID},"
+    f" on the BQ list {BQ_LIST_ID})"
 )
+RULED_STAMP = f"RULED ({RULING_ID}"
+CAP_STATUS = ("merged", "PROPOSED")
 BQ_IDS = tuple(f"BQ-{n}" for n in range(16))
 GRAMMARS = ("cursor-window", "sparse set", "native DOM")
 AC2_COLS = ("Bid vol", "Ask vol", "Delta", "Imbalance flag", "Estimated badge")
@@ -134,7 +138,7 @@ CLAIM_RE = re.compile(
     re.IGNORECASE,
 )
 _KW = "|".join(("clo" + "se[sd]?", "fix" + "(?:e[sd])?", "resol" + "ve[sd]?"))
-KEYWORD_RE = re.compile(rf"\b(?:{_KW}):?\s+#\d+", re.IGNORECASE)
+KEYWORD_RE = re.compile(rf"\b(?:{_KW}):?\s*#\d+", re.IGNORECASE)
 URL_RE = re.compile(r"https?://|\bwww\.|/home/|\.local\b|\bpenpot\.[a-z]", re.IGNORECASE)
 AGENT_RE = re.compile(r"worker|\bagent\b|\blane\b", re.IGNORECASE)
 OWNER_OK_RE = re.compile(r"\bE\d\d-[A-Z]+\d\d\b|\bowner\b|\blead\b")
@@ -315,10 +319,6 @@ def cap_rows(spec: str) -> list[list[str]]:
     return first_table(spec, "## 4.")[1:]
 
 
-def figure(cell: str) -> int:
-    return int(cell.replace(",", ""))
-
-
 def walk_items(hand: str) -> list[str]:
     return [ln for ln in body(hand, "## §E") if ln.startswith("- [ ]")]
 
@@ -336,12 +336,6 @@ def compute_values(t: Texts) -> Values:
     }
     surf = surface_of()
     v["COUNT:cat.chrome"] = str(sum(1 for s in inv_screens(t.spec) if surf.get(s) == "chrome"))
-    sums: dict[str, int] = {}
-    for row in cap_rows(t.spec):
-        if len(row) >= 3 and re.fullmatch(r"[0-9][0-9,]*", row[2]):
-            sums[row[0]] = sums.get(row[0], 0) + figure(row[2])
-    for panel, total in sums.items():
-        v[f"SUM:{panel}"] = f"{total:,}"
     return v
 
 
@@ -376,10 +370,10 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "M-6",
         "G-PENDING",
-        "mark BQ-6 as ruled",
+        "drop BQ-6's RULED stamp",
         "spec",
-        "- **BQ-6 — table alternatives per surface.** Default built:",
-        "- **BQ-6 — table alternatives per surface.** RULED:",
+        "- **BQ-6 — table alternatives per surface.** RULED (6570047499)",
+        "- **BQ-6 — table alternatives per surface.** Default built",
     ),
     Mutation("M-7", "G-RULED", "re-word BQ-0's default", "spec", "pre-staged under", "built under"),
     Mutation(
@@ -470,10 +464,10 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "M-23",
         "G-WALK",
-        "add two walkthrough items in the hand-off's §E",
+        "add three walkthrough items in the hand-off's §E",
         "hand",
         "- [ ] Record `approved`",
-        "- [ ] one more.\n- [ ] and another.\n- [ ] Record `approved`",
+        "- [ ] one more.\n- [ ] and another.\n- [ ] and a third.\n- [ ] Record `approved`",
     ),
     Mutation(
         "M-24",
@@ -669,13 +663,13 @@ def g_pending(t: Texts) -> list[Finding]:
     lines = bq_lines(t.spec)
     bad: list[str] = []
     if head != BQ_HEAD:
-        bad.append("the heading does not name the pending ruling")
+        bad.append("the heading lacks the RULED stamp or its comment ids")
     for bq in BQ_IDS:
         rows = [ln for ln in lines if ln.startswith(f"- **{bq} — ")]
         if len(rows) != 1:
             bad.append(f"{bq} appears {len(rows)} times")
-        elif "Default built:" not in rows[0] or "RULED" in rows[0]:
-            bad.append(f"{bq} is not 'Default built:'")
+        elif not rows[0].split(".** ", 1)[-1].startswith(RULED_STAMP):
+            bad.append(f"{bq} is not stamped {RULED_STAMP})")
     return [("G-PENDING", b, "spec", region) for b in bad]
 
 
@@ -796,7 +790,7 @@ def g_cap(t: Texts) -> list[Finding]:
     _, _, region = section(t.spec, "## 4.")
     bad: list[str] = []
     for r in cap_rows(t.spec):
-        if len(r) != 4 or not re.fullmatch(r"[0-9][0-9,]*", r[2]):
+        if len(r) != 5 or not re.fullmatch(r"[0-9][0-9,]*", r[2]) or r[4] not in CAP_STATUS:
             bad.append(f"cap row {r[:2]} is malformed")
             continue
         src = cited_text(r[3])
