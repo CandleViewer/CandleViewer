@@ -87,11 +87,25 @@ function parseCss(source: string): CssRule[] {
 
 const NONE = /^(?:none|0|0px|0 none|none 0|initial|unset|revert)(?:\s*!important)?$/iu;
 
+const IMPORTANT = /!\s*important\s*$/iu;
+
+/**
+ * Whether an `outline` shorthand value draws nothing: a keyword reset, or a style of `none` / `hidden`, a width of
+ * `0` or a `transparent` colour among its parts (`2px solid transparent`, `0 solid`, `thin none`). A value that
+ * names the ring token is the replacement itself, never a removal.
+ */
+function removesOutlineShorthand(value: string): boolean {
+  const v = value.replace(IMPORTANT, "").trim();
+  if (v === "" || /focus-ring/u.test(v)) return false;
+  if (NONE.test(v) || /^(?:initial|unset|revert|revert-layer)$/iu.test(v)) return true;
+  return splitTop(v, " ").some((t) => /^(?:none|hidden|transparent|0|0px)$/iu.test(t.trim()));
+}
+
 /** Whether a rule removes the outline. */
 function removesOutline(rule: CssRule): boolean {
   const get = (k: string): string => rule.decls.get(k) ?? "";
   return (
-    NONE.test(get("outline")) ||
+    removesOutlineShorthand(get("outline")) ||
     /^(?:none|hidden|initial|unset)(?:\s*!important)?$/iu.test(get("outline-style")) ||
     /^0(?:px)?(?:\s*!important)?$/iu.test(get("outline-width")) ||
     /^transparent(?:\s*!important)?$/iu.test(get("outline-color")) ||
@@ -99,10 +113,19 @@ function removesOutline(rule: CssRule): boolean {
   );
 }
 
+/** The declaration of the rule that removes the outline is `!important`. */
+function removalIsImportant(rule: CssRule): boolean {
+  return ["outline", "outline-style", "outline-width", "outline-color", "all"].some(
+    (k) =>
+      IMPORTANT.test(rule.decls.get(k) ?? "") &&
+      removesOutline({ ...rule, decls: new Map([[k, rule.decls.get(k) ?? ""]]) }),
+  );
+}
+
 /** The rule draws the ring as an `outline` in the ring token: the only replacement that counts. */
 const drawsRing = (rule: CssRule): boolean => {
   const outline = rule.decls.get("outline") ?? "";
-  return !NONE.test(outline) && /focus-ring/u.test(outline);
+  return !removesOutlineShorthand(outline) && /focus-ring/u.test(outline);
 };
 
 const shadowRing = (rule: CssRule): boolean =>
@@ -232,8 +255,14 @@ function ringRuleExists(file: string, selector: string, corpus: Corpus = CORPUS)
 }
 
 /** The element's own `:focus-visible` rule in the same file draws the ring. */
-function hasOwnRing(file: string, selector: string, corpus: Corpus): boolean {
-  return ringRuleExists(file, `${selector}:focus-visible`, corpus);
+function hasOwnRing(file: string, selector: string, corpus: Corpus, important = false): boolean {
+  // a `!important` removal beats a plain ring of equal or lower specificity: the ring must be `!important` too
+  return (corpus.get(file) ?? []).some(
+    (r) =>
+      r.selector === `${selector}:focus-visible` &&
+      drawsRing(r) &&
+      (!important || IMPORTANT.test(r.decls.get("outline") ?? "")),
+  );
 }
 
 /** The reason a suppression is acceptable, else `undefined`. */
@@ -254,7 +283,8 @@ function acceptedBy(
     return forced ? "registered box-shadow with a forced-colors outline" : undefined;
   }
   if (excludesFocusVisible(s.selector)) return "excludes :focus-visible";
-  if (hasOwnRing(s.file, s.selector, corpus)) return "own :focus-visible ring";
+  if (hasOwnRing(s.file, s.selector, corpus, removalIsImportant(s.rule)))
+    return "own :focus-visible ring";
   return sites[`${s.file}|${s.selector}`] === undefined ? undefined : "registered site";
 }
 
@@ -333,6 +363,11 @@ describe("focus-ring guard: the checker itself", () => {
       "outline: unset",
       "outline-color: transparent",
       "all: unset",
+      "outline: 2px solid transparent",
+      "outline: 0 solid",
+      "outline: thin none",
+      "outline: 1px solid transparent !important",
+      "outline: revert",
     ]) {
       expect(check(`.a:focus { ${decl}; }`), decl).toEqual(["bare:.a:focus"]);
     }
@@ -363,6 +398,27 @@ describe("focus-ring guard: the checker itself", () => {
     ).toEqual([undefined]);
   });
 
+  it("does not mistake a drawn outline for a removal", () => {
+    for (const decl of [
+      "outline: 2px solid var(--color-focus-ring)",
+      "outline: 2px solid red",
+      "outline: thin solid currentColor",
+      "outline: 0.5px solid red",
+    ]) {
+      expect(check(`.a:focus { ${decl}; }`), decl).toEqual([]);
+    }
+  });
+
+  it("does not take a plain own ring against an !important removal, only an !important one", () => {
+    const ring = ".a:focus-visible { outline: 2px solid var(--color-focus-ring); }";
+    const importantRing =
+      ".a:focus-visible { outline: 2px solid var(--color-focus-ring) !important; }";
+    expect(check(`.a { outline: none !important } ${ring}`)).toEqual(["bare:.a"]);
+    expect(check(`.a { outline: 2px solid transparent !important } ${ring}`)).toEqual(["bare:.a"]);
+    expect(check(`.a { outline: none !important } ${importantRing}`)).toEqual([undefined]);
+    expect(check(`.a { outline: none } ${ring}`)).toEqual([undefined]);
+  });
+
   it("does not take an own :focus-visible rule that draws nothing, or a ring in another rule", () => {
     expect(check(".a { outline: none } .a:focus-visible { color: red }")).toEqual(["bare:.a"]);
     expect(check(".a { outline: none } .b { outline: 2px solid var(--color-focus-ring) }")).toEqual(
@@ -387,8 +443,18 @@ describe("focus-ring guard: the checker itself", () => {
   });
 });
 
-const SPELLINGS =
-  /outline(?:Style|Width|Color)?["']?\s*[:=]\s*["'`]?(?:none|0|hidden|transparent|initial|unset)\b|\ball["']?\s*[:=]\s*["'`]?unset\b|\boutline-(?:none|0|hidden)\b|focus:outline-none/u;
+/** A removing value: a reset keyword, `0` / `0px`, or `none` / `hidden` / `transparent` among the words. */
+const REMOVING = String.raw`(?:[^"'\x60;}]*?\b(?:none|hidden|transparent|initial|unset|revert)\b|0(?:px)?(?=[\s"'\x60;}]|$))`;
+const SPELLINGS = new RegExp(
+  [
+    String.raw`\boutline(?:Style|Width|Color|-style|-width|-color)?["']?\s*[:=]\s*["'\x60]?${REMOVING}`,
+    // el.style.setProperty("outline", "none")
+    String.raw`setProperty\(\s*["']outline(?:-style|-width|-color)?["']\s*,\s*["'\x60]${REMOVING}`,
+    String.raw`\ball["']?\s*[:=]\s*["'\x60]?unset\b`,
+    String.raw`\boutline-(?:none|0|hidden)\b|focus:outline-none`,
+  ].join("|"),
+  "u",
+);
 
 describe("focus-ring guard: no outline removal outside CSS files", () => {
   it("recognises every spelling", () => {
@@ -401,10 +467,25 @@ describe("focus-ring guard: no outline removal outside CSS files", () => {
       '<a class="outline-hidden">',
       '<a class="focus:outline-none">',
       'el.style.outline = "0"',
+      'style={{ outline: "0px" }}',
+      'style={{ outlineWidth: "0px" }}',
+      'style={{ outline: "2px solid transparent" }}',
+      'style={{ outline: "0 solid" }}',
+      'style={{ outline: "thin none" }}',
+      'el.style.setProperty("outline", "none")',
+      "el.style.setProperty('outline-style', 'hidden')",
+      'el.style.setProperty("outline", "2px solid transparent")',
     ]) {
       expect(SPELLINGS.test(line), line).toBe(true);
     }
-    expect(SPELLINGS.test('style={{ outline: "2px solid var(--color-focus-ring)" }}')).toBe(false);
+    for (const line of [
+      'style={{ outline: "2px solid var(--color-focus-ring)" }}',
+      'style={{ outlineOffset: "0px" }}',
+      'el.style.setProperty("outline-offset", "0")',
+      'el.style.setProperty("outline", "2px solid var(--color-focus-ring)")',
+    ]) {
+      expect(SPELLINGS.test(line), line).toBe(false);
+    }
   });
 
   it("finds none in inline styles, Tailwind classes or markup", () => {

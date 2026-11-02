@@ -508,14 +508,28 @@ const COVERED: Readonly<Record<string, string>> = {
     "ui Dialog row (the mechanism); focus in and back in symbol-search/SymbolSearch.test.tsx",
   // QuickSwitcher.tsx is not listed on purpose: it only mounts SymbolSearch, which holds the one Dialog.
 };
-const DIALOG_SOURCE =
-  /role="(?:alert)?dialog"|<Dialog\b|<ConfirmDialog\b|<Drawer\b|<InfoPanel\b|aria-modal/u;
+/**
+ * Whether a source declares a dialog: by role (`role="dialog"`, `role: "alertdialog"`, `role={"dialog"}`), by
+ * `aria-modal="true"`, or by mounting a ui dialog component. A selector string (`'[role="dialog"]'`), a comment
+ * and a bare mention never count, so a `.ts` helper that builds a dialog is found and a lookup is not.
+ */
+const DIALOG_SOURCE = new RegExp(
+  [
+    String.raw`(?<![\[\w-])role\s*[=:]\s*\{?\s*["'\x60](?:alert)?dialog["'\x60]`,
+    String.raw`(?<![\[\w-])aria-modal\s*=\s*\{?\s*["'\x60]?true`,
+    String.raw`<(?:Dialog|ConfirmDialog|Drawer|InfoPanel)\b`,
+  ].join("|"),
+  "u",
+);
+const stripComments = (text: string): string =>
+  text.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/(^|[^:\w"'])\/\/.*$/gmu, "$1");
+const declaresDialog = (text: string): boolean => DIALOG_SOURCE.test(stripComments(text));
 
 function sources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = join(dir, e.name);
     if (e.isDirectory()) return sources(p);
-    return /\.tsx$/u.test(e.name) && !/\.(stories|test)\.tsx$/u.test(e.name) ? [p] : [];
+    return /\.tsx?$/u.test(e.name) && !/\.(stories|test)\.tsx?$/u.test(e.name) ? [p] : [];
   });
 }
 
@@ -523,10 +537,38 @@ describe("dialog conformance: nothing built is missing", () => {
   it("every dialog source in apps/web/src has a row, or is named here with its reason", () => {
     const root = join(import.meta.dirname, "..", "src");
     const found = sources(root)
-      .filter((p) => DIALOG_SOURCE.test(readFileSync(p, "utf8")))
+      .filter((p) => declaresDialog(readFileSync(p, "utf8")))
       .map((p) => relative(root, p).split("\\").join("/"))
       .sort();
     expect(found).toEqual(Object.keys(COVERED).sort());
+  });
+});
+
+describe("the source scan can fail", () => {
+  it("finds a dialog by role in a .ts file, in every spelling", () => {
+    for (const src of [
+      'const a = { role: "dialog" };',
+      "const a = { role: 'alertdialog' };",
+      '<div role="alertdialog" />',
+      '<div role={"dialog"} />',
+      'el.setAttribute("x", 1); const p = { role:`dialog` };',
+      '<section aria-modal="true" />',
+      "<Dialog open />",
+    ]) {
+      expect(declaresDialog(src), src).toBe(true);
+    }
+  });
+  it("ignores a selector, a comment and an unrelated role", () => {
+    for (const src of [
+      "el.closest('[role=\"dialog\"]');",
+      "document.querySelectorAll('[aria-modal=\"true\"]');",
+      '// role="dialog" is set by the host',
+      "/* <Dialog open /> */ const a = 1;",
+      '<div role="button" aria-label="dialog" />',
+      "const dialogRole = 1;",
+    ]) {
+      expect(declaresDialog(src), src).toBe(false);
+    }
   });
 });
 
@@ -547,6 +589,73 @@ describe("the matrix can fail", () => {
     ),
   };
 
+  /** Takes focus on open like a dialog should, but unmounts without handing it back: focus falls to body. */
+  const lossy: Row = {
+    id: "lossy",
+    role: "dialog",
+    esc: "cancels",
+    scrim: "none",
+    mount: simple(({ open, cancel }) =>
+      open ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Lossy"
+          tabIndex={-1}
+          ref={(el) => {
+            el?.focus();
+            el?.addEventListener("keydown", (e) => {
+              if (e.key !== "Escape") return;
+              (document.activeElement as HTMLElement | null)?.blur();
+              cancel();
+            });
+          }}
+        >
+          <button type="button">One</button>
+        </div>
+      ) : null,
+    ),
+  };
+  /** Focuses a control and keeps Esc working, but Esc confirms instead of cancelling. */
+  const confirming: Row = {
+    id: "confirming",
+    role: "dialog",
+    esc: "cancels",
+    scrim: "none",
+    mount: simple(({ open, spies, cancel }) =>
+      open ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Confirming"
+          tabIndex={-1}
+          ref={(el) => {
+            el?.focus();
+            el?.addEventListener("keydown", (e) => {
+              if (e.key !== "Escape") return;
+              spies.confirm();
+              cancel();
+            });
+          }}
+        >
+          <button type="button">One</button>
+        </div>
+      ) : null,
+    ),
+  };
+
+  it("a dialog that never takes focus fails `focusIn`", async () => {
+    expect(await OBSERVE.focusIn(bare)).toBe(false);
+  });
+  it("a dialog Esc cannot close fails `escape`", async () => {
+    expect(await OBSERVE.escape(bare)).toBe(false);
+  });
+  it("an Esc that confirms fails `escape`", async () => {
+    expect(await OBSERVE.escape(confirming)).toBe(false);
+  });
+  it("a dialog that drops focus to body on close fails `return`", async () => {
+    expect(await OBSERVE.return(lossy)).toBe(false);
+  });
   it("an untrapped Tab escapes to the page behind it, so `trap` fails", async () => {
     expect(await OBSERVE.trap(bare)).toBe(false);
   });
