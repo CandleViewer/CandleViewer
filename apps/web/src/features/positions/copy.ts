@@ -640,7 +640,9 @@ export interface BoundText {
  * words `acct.announce.stale` by §4.1's variant (D03:329), and the deck keys only the failure one.
  * No client reads B19, so no lock's cause is known: every role hears the cause-not-shown sentence,
  * and a stale notice under a covering kill switch the kill-switch sentence (D03 §4.1, RT-07). Both
- * are assertive, once per episode (D03 §8.3). The deck's gap is routed to E29-D06's owner.
+ * are assertive, once per episode (D03 §8.3). The deck's gap is routed to E29-D06's owner. D03:329's
+ * conditional ending ("2 open positions have no confirmed exchange-side stop.") is left off: the WS
+ * `positions` row carries no `native_stop_present` (`23`:917), so no client can count them.
  */
 export const D03_TEXT = {
   staleAnnounce: {

@@ -43,7 +43,10 @@ import type { PositionsStore } from "./positionsStore";
 export const COMMIT_INTERVAL_MS = 100;
 /** S-02's "E29-S01 budget" (#911 BQ-18, `14`:2963). */
 export const SNAPSHOT_BUDGET_MS = 5_000;
-/** The pane the feed's subscriptions belong to (C8); the panel sets its visibility. */
+/**
+ * The pane the feed's subscriptions belong to (C8). Nothing sets its visibility yet (no pane host),
+ * so the client reads it as `visible`, its default for a pane never set (`core/flowControl.ts`).
+ */
 export const POSITIONS_PANE_ID = "scr-063";
 /** The client metric `ws_frame_apply_seconds{topic="positions"}` (the ticket's Observability). */
 export const APPLY_MEASURE = "ws_frame_apply_seconds";

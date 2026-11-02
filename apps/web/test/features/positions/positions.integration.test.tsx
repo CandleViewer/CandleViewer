@@ -2,8 +2,9 @@
  * E29-S01 (#911) integration: the real `PositionsPanel` (SCR-063) with the real `positionsApi` behind
  * a fake `fetch` and fake topic handles (BQ-19: no MSW, no new dependency), read through the
  * accessibility tree. Three accounts, grouping (account, trade group), filter and clear with their
- * results said, the empty state only for a book read, loading while nothing is read, a failed
- * snapshot and Retry, an account withdrawn, the Viewer and the notices under the toolbar, the
+ * results said, the empty state only for a book read, loading while nothing is read and a load's
+ * result said once, a failed snapshot and Retry, an account withdrawn and served again, a
+ * narrowing's reload left unsaid, the Viewer and the notices under the toolbar, the
  * account states and the locks as far as no B20 allows, a tab switch that keeps them, the kill
  * switch, the deep links and per-user persistence, CSV export, the announcements (StrictMode
  * included), focus never left on `body`, and the client half of manager scope (BQ-13: the server
@@ -515,6 +516,33 @@ describe("Empty state", () => {
   );
 });
 
+describe("a load's result (D04:273, D05:285, `15`:530; CMP-049 mounts with the rows, silent)", () => {
+  it.each([
+    ["the rows in view in CMP-049's words", snapshot, "5 rows"],
+    [
+      "S-03's title for a book read empty",
+      { positions: [] } satisfies Positions,
+      "No open positions",
+    ],
+  ])(
+    "PR1: a first load's lines, then once the book is read its result, said once: %s",
+    SCREEN,
+    async (_case, book, result) => {
+      await open({ hangPositions: true });
+      expect(region("polite")).toBe(
+        "Loading Main · LIVE… Loading Sub-1 · LIVE… Loading Sub-2 · LIVE…",
+      );
+      positionsHandle()?.push(snap(book));
+      await settle(TICK);
+      idle(5_000); // the region's budget after the loading lines
+      expect(region("polite")).toBe(result);
+      const said = regionSeq("polite");
+      idle(10_000);
+      expect(regionSeq("polite")).toBe(said); // once per load
+    },
+  );
+});
+
 describe("a failed snapshot (S-02)", () => {
   it(
     "no snapshot within the 5 s budget: Could not load per account, said once, no row of them; Retry re-subscribes, focus kept",
@@ -540,6 +568,8 @@ describe("a failed snapshot (S-02)", () => {
       expect(within(panel).queryByText(/Could not load/)).toBeNull();
       expect(before?.released).toBe(true);
       expect(positionsHandle()).not.toBe(before);
+      // the tab's root, named by its tab: focus never lands on an unnamed node
+      expect(document.activeElement).toBe(within(panel).getByRole("group", { name: "Positions" }));
       expect(document.activeElement).toBe(panel.querySelector('[data-part="PositionsTab"]'));
       positionsHandle()?.push(snap(snapshot));
       await settle(TICK);
@@ -598,6 +628,52 @@ describe("an account withdrawn (S-08)", () => {
       expect(screen.getByText(withdrawnLines[2] as string)).toBeVisible();
     },
   );
+
+  it(
+    "S08: a revoke, Retry, a sub_ok naming all three and a snap with no Sub-2 position: every line goes, Sub-2's too",
+    SCREEN,
+    async () => {
+      await open();
+      positionsHandle()?.push(snap(snapshot));
+      await settle(TICK);
+      positionsHandle()?.push(reset("revoked"));
+      await settle(TICK);
+      expect(screen.getByText(withdrawnLines[2] as string)).toBeVisible();
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      await settle(TICK);
+      // the Retry's own subscription: its sub_ok names the three, and Sub-2 has no position open
+      positionsHandle()?.setEffective({ exchange_account_ids: [MAIN, SUB1, SUB2] });
+      positionsHandle()?.push(
+        snap({ positions: snapshot.positions.filter((p) => p.exchange_account_id !== SUB2) }),
+      );
+      await settle(TICK);
+      expect(headers().map((h) => h.split(" · ")[0])).toEqual(["Main", "Sub-1"]);
+      for (const line of withdrawnLines) expect(screen.queryByText(line)).toBeNull();
+    },
+  );
+
+  it(
+    "PN: a narrowing's reload says no loading line naming the account it withdraws; its F-02 line is said once",
+    SCREEN,
+    async () => {
+      await open();
+      positionsHandle()?.push(snap(snapshot));
+      await settle(TICK);
+      vi.stubGlobal("fetch", fakeFetch([MAIN, SUB1]));
+      positionsHandle()?.push(reset("narrowed"));
+      await settle(TICK);
+      await settle(TICK);
+      // written at once: no loading line went first to start the region's budget
+      expect(region("polite")).toBe(withdrawnLines[2]);
+      const said = regionSeq("polite");
+      positionsHandle()?.push(
+        snap({ positions: snapshot.positions.filter((p) => p.exchange_account_id !== SUB2) }),
+      );
+      await settle(TICK);
+      idle(10_000); // past every region's budget: the reload's result is not said either
+      expect(regionSeq("polite")).toBe(said);
+    },
+  );
 });
 
 describe("the Viewer (S-22)", () => {
@@ -650,6 +726,13 @@ const notice = (
   }) satisfies SystemUpdate;
 
 describe("the account states and the locks (BQ-14; no B20 subscription)", () => {
+  /** The glyph leading a slot line (D03 §4.1's "Tone, glyph"; §4.4's lock). */
+  const glyphOf = (line: Element): string | null | undefined =>
+    line
+      .closest('[data-cmp="CMP-028"]')
+      ?.querySelector(".cv-callout__glyph svg")
+      ?.getAttribute("data-icon");
+
   it(
     "reconciling, seeded at mount under StrictMode: the header's 'checking', one slot line with live off, said once by the account's label",
     SCREEN,
@@ -662,6 +745,7 @@ describe("the account states and the locks (BQ-14; no B20 subscription)", () => 
       expect(groupRow("Sub-1 · LIVE")).toHaveTextContent("checking");
       const slot = screen.getByText(/^Sub-1 · LIVE — Reconciling with the exchange…/);
       expect(slot.closest('[role="status"], [role="alert"]')).toBeNull();
+      expect(glyphOf(slot)).toBe("refresh");
       // held until its label is known (never "…0002"), and heard although StrictMode remounted the panel
       expect(region("polite")).toBe(
         "Reconciling Sub-1 with Bybit. Closing, cancelling and tightening stops still work.",
@@ -705,11 +789,11 @@ describe("the account states and the locks (BQ-14; no B20 subscription)", () => 
       await settle(TICK);
       expect(groupRow("Sub-2 · LIVE")).toHaveTextContent(/Stale — locked since \d\d:\d\d:\d\d UTC/);
       // no client reads B19, so even the Owner reads and hears the lock with its cause withheld (D03 §4.1)
-      expect(
-        screen.getByText(
-          "Sub-2 · LIVE is stale — new orders are locked until the owner resolves it; closing, cancelling and tightening stops still work.",
-        ),
-      ).toBeVisible();
+      const lockLine = screen.getByText(
+        "Sub-2 · LIVE is stale — new orders are locked until the owner resolves it; closing, cancelling and tightening stops still work.",
+      );
+      expect(lockLine).toBeVisible();
+      expect(glyphOf(lockLine)).toBe("lock");
       expect(screen.queryByText(/could not reconcile/)).toBeNull();
       expect(region("assertive")).toBe(
         "Sub-2 is locked for new orders until the owner resolves it. Closing, cancelling and tightening stops still work.",
