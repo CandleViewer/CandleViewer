@@ -92,6 +92,9 @@ Roles & grants:
 CREATE ROLE cv_owner LOGIN PASSWORD :'owner_pw';        -- migrations only
 CREATE ROLE cv_app   LOGIN PASSWORD :'app_pw';          -- runtime
 CREATE ROLE cv_ro    LOGIN PASSWORD :'ro_pw';           -- analytics/read models
+CREATE ROLE cv_backup  LOGIN PASSWORD :'backup_pw';     -- backup sidecar: dumps (ADR-0041)
+CREATE ROLE cv_restore NOLOGIN PASSWORD :'restore_pw';  -- backup sidecar: restore jobs only
+GRANT cv_owner TO cv_restore;                            -- the objects' owner's rights
 ALTER DEFAULT PRIVILEGES FOR ROLE cv_owner IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO cv_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE cv_owner IN SCHEMA public
@@ -100,15 +103,31 @@ ALTER DEFAULT PRIVILEGES FOR ROLE cv_owner IN SCHEMA public
 REVOKE UPDATE, DELETE ON audit_log FROM cv_app, cv_ro;
 ```
 
-**Backup roles (ADR-0041, #3319; not yet created).** Two roles are used only by the backup sidecar and never by the
-API process. `cv_backup` runs dumps: LOGIN, CONNECT, USAGE on `public`, SELECT on every table and sequence, and no
-INSERT, UPDATE, DELETE, TRUNCATE or DDL. `cv_restore` runs restore jobs only, with the rights of the objects' owner,
-which a whole-database restore needs. It is created `NOLOGIN`; the Owner's host-side step for a restore job enables
-login with `VALID UNTIL` the job's deadline and the runbook's closing step sets `NOLOGIN` again (ADR-0041 section 1).
-Their credentials exist only in the sidecar, as password files on secret mounts;
-the API never holds an owner, restore or dump DSN and never uses `cv_app` for a backup or a restore. Their grants land
-in one revision with the engine's first code PR, and that PR adds both roles to the block above and to the role
-privilege matrix; passwords never appear in a migration.
+**Backup roles (ADR-0041 section 1, #3319).** Two roles are used only by the backup sidecar and never by the API
+process; `infra/scripts/pg_bootstrap.sql` creates both as a superuser, and revision `0066_backup_role_grants` holds
+`cv_backup`'s grants (a migration runs as `cv_owner`, which can neither create a role nor make one a member of
+itself). Passwords never appear in a migration.
+
+- `cv_backup` runs dumps. The bootstrap creates it `LOGIN` with the password `-v backup_pw=...` supplies, or
+  `NOLOGIN` with no password when none is supplied (fail closed, C-12.2: no default password); an existing role is
+  left as it is, so a cluster bootstrapped without one is given its login by a superuser's `ALTER ROLE`. The
+  revision grants it CONNECT on the database, USAGE on `public` and SELECT on every table and sequence there, and
+  the default privileges `FOR ROLE cv_owner` give it SELECT on every table and sequence created later. It holds no
+  INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES or TRIGGER, no sequence USAGE or UPDATE, no DDL and no membership.
+- `cv_restore` runs restore jobs only, with the rights of the objects' owner through its membership in `cv_owner`,
+  which a whole-database restore needs. It is created `NOLOGIN`, with the password `-v restore_pw=...` supplies, if
+  any. The Owner's host-side step for one restore job enables its login with `VALID UNTIL` the job's deadline, and
+  the runbook's closing step sets `NOLOGIN` again and ends any open session of the role. `VALID UNTIL` binds password
+  authentication only, so the host rule `pg_hba.conf` applies to `cv_restore` from the sidecar's container must be
+  `scram-sha-256`. The revision refuses to upgrade while `cv_restore` can log in.
+- Both credentials exist only in the sidecar, as password files on secret mounts. The API never holds an owner,
+  restore or dump DSN and never uses `cv_app` for a backup or a restore: its start refuses in `live` while its login
+  is a member of `cv_backup`, `cv_restore` or `cv_owner` (§9.1, `storage/guarded_privileges.py`).
+
+The role privilege matrix is `services/api/tests/integration/storage/test_backup_roles_pg.py`: `cv_backup` reads
+every table and sequence, one created later included, and holds nothing else; `cv_restore` is `NOLOGIN`, a member of
+`cv_owner` only, refused a login while `NOLOGIN` and once its `VALID UNTIL` has passed, over a `scram-sha-256` host
+rule; the revision round-trips on a seeded database.
 
 ### 1.2 Enum types
 
@@ -5141,7 +5160,7 @@ A restore drill into a scratch namespace runs **monthly** and is a PRR gate item
 - Single linear history on `main` (no branching heads). `alembic heads` must return exactly one revision — enforced in CI.
 - Revision id format: `NNNN_<slug>` (`0001_initial`, `0002_add_trade_groups`) so file order matches apply order.
 - Migrations run as `cv_owner`; the app role `cv_app` has no DDL privileges. The backup roles `cv_backup` and `cv_restore` are used only by the backup sidecar (§1.1, ADR-0041).
-- What the revisions revoke from `cv_app` (DELETE, TRUNCATE, UPDATE and, on `account_profile_revisions`, INSERT) is pinned per table in `candleviewer/storage/guarded_privileges.py`; a unit tripwire keeps it equal to the revisions' `upgrade()`s, and the API checks at start-up that its login holds none of it (`20-architecture.md`, "Guarded privileges at boot", #3998). A new REVOKE joins the pinned table in the same PR.
+- What the revisions revoke from `cv_app` (DELETE, TRUNCATE, UPDATE and, on `account_profile_revisions`, INSERT) is pinned per table in `candleviewer/storage/guarded_privileges.py`; a unit tripwire keeps it equal to the revisions' `upgrade()`s, and the API checks at start-up that its login holds none of it (`20-architecture.md`, "Guarded privileges at boot", #3998). A new REVOKE joins the pinned table in the same PR. The same check refuses a login that is a member of `cv_backup`, `cv_restore` or `cv_owner` (§1.1 "Backup roles", ADR-0041).
 - QuestDB DDL lives in `backend/db/questdb/NNNN_*.sql`, applied by a small idempotent runner keyed on a `_cv_migrations` table inside QuestDB. DuckDB views are recreated from source on every start (they hold no state).
   - `_cv_migrations` is a WAL table: an `INSERT` is acknowledged once it is committed to the sequencer, but a `SELECT` sees it only after QuestDB's apply job has run. So before it reads the record set the runner waits (async, bounded 30 s, backoff 20 ms doubling to 250 ms) until `wal_tables()` shows `writerTxn` has reached `sequencerTxn` (#3064). A stale read would re-run the newest file.
   - The record is not the only guard (#3093). QuestDB has no transactional DDL, so a file's statements and its record cannot be atomic, and the pinned 8.1.1 rejects `ADD COLUMN IF NOT EXISTS` (0003, 0005 and 0006 use a plain `ADD COLUMN`). A run that died between them would fail the next run with `column '…' already exists`, and a re-run of 0004 would drop and re-create the six `bars_*` tables, emptying them. So the runner checks the live effect of a statement before it issues it, after waiting for that table's WAL apply (`table_columns()` lags an accepted `ALTER`):
@@ -5269,6 +5288,7 @@ One row per Alembic revision under `services/api/candleviewer/migrations/version
 | `0061_password_history`           | `0060_recording_write_owner_only` | `password_history` (§3.1.1a): the retired Argon2id hashes behind SR-028's reuse rule, 4 kept per user, `ph_pwd_argon` and the `SECRET:` comment of `password_hash` — **#2110 / #2330**; the downgrade refuses while any row exists                                                                                                                                                                                                                                |
 | `0063_rule_version_account_refs`  | `0061_password_history`           | `rule_versions.account_refs`, a nullable `text[]` with no default (§3.4.2): the accounts a version's IR names, written with each version, so the scoped reads of `GET /rules` take the account dimension inside the query; NULL until computed, and no non-Owner read scope admits NULL — **#2291** (SR-051); the downgrade drops the column (derived data)                                                                                                       |
 | `0064_orders_origin`              | `0063_rule_version_account_refs`  | `orders.origin` and `origin_ref`, two nullable `text` columns, and CHECKs `ord_origin` and `ord_origin_ref`, each added `NOT VALID` then validated (§3.3.4): where a rule's order came from, read for a resumed create's rate lane (24 §8.4) — **E35-T11 #5003**; the downgrade drops both                                                                                                                                                                        |
+| `0066_backup_role_grants`         | `0064_orders_origin`              | `cv_backup`'s CONNECT, USAGE on `public`, SELECT on every table and sequence and the matching default privileges `FOR ROLE cv_owner`, each guarded by the roles' existence; refuses while `cv_restore` can log in (§1.1 "Backup roles", ADR-0041) — **#3319 B1a**; no role, password or table change; the downgrade revokes the same grants; on `main`'s head at merge (C-5.3)                                                                                    |
 
 #### Plan-era names with no revision file
 
