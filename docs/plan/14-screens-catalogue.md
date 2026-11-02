@@ -1224,6 +1224,7 @@ Drag preview                Drop zones
 - **Design sign-off acceptance checklist:** [ ] ladder rows, heatmap trail, bid/ask columns, working-order column and position marker drawn at 3 depth tiers [ ] green=bid / red=ask convention with a user-configurable theme and a non-colour (side label) encoding [ ] centred / free-scroll / recentre behaviour drawn [ ] arm/disarm affordance for click-trading drawn and unmistakable in LIVE [ ] accessible grid alternative confirmed equal-status [ ] _(estimated)_ chips on queue-position and iceberg markers [ ] performance acceptance against the mandatory WebGL spike recorded (see Performance)
 - **Design decision (DES-HEATMAP-01):** [E17-D03.md](../design/E17/E17-D03.md) (E17-D03; the 2–8 device-px column band and the 3 px target confirmed as the target, the clamped outcomes on 1 080 p / 1 440 p open for the owner's real-display walkthrough (C1); the `cell` slot becomes the PROPOSED auto / pinned / re-deriving / clamped columns chip, §3; the debounced re-snapshot is drawn like the depth-tier rebuild, never as Stale, §4).
 - **UX research:** [e21-dom-heatmap.md](../design/research/e21-dom-heatmap.md) (E21-D01; heuristic research memo; a pointer only, it changes no requirement here).
+- **Hi-fi spec:** [E21-D02.md](../design/E21/E21-D02.md) (E21-D02; text first, boards pending; a pointer only, it changes no requirement here).
 
 ### SCR-051 — Heatmap & ladder settings dialog
 
