@@ -13,13 +13,17 @@ bar, composited rows (`opacity.disabled`) by the E22-D03 `over()` method; C the 
 field table — every bound, default, step and validation message the spec states, cross-read from
 `docs/plan/22-api-openapi.yaml` (a bound the spec does not carry verbatim is a FAIL) — and the
 unit forms this spec adds to the E25 number-format sheet; D the greyscale / deuteranopia
-statement; E the board plan (<= 10 boards, light twins <= one third, ids PENDING in PR 1); F the
+statement; E the board plan (<= 10 boards, light twins <= one third) in the mode §0's heading
+names: PENDING (every row PENDING, no id, no export committed) or drawn (every row its export
+path and board uuid, the page id, the exports table equal to the committed PNGs - their IHDR size
+and sha256 - with the greyscale / deuteranopia renders of 01-09; uuids only inside §0); F the
 spec's own tables and strings (the apply state machine never reaches "applied" before the 200 and
 its unknown-outcome leg re-reads before any value is shown, the three confirmation variants and
 the fetch point on the Apply press, the T2 matrix with every write locked for a Manager, Viewer and
 view-as and the admin link omitted rather than locked, the motion pairs, the fixed sentences, the
 E25-D02 strings carried verbatim, the hygiene patterns, the rule ids) and the two `14` pointer
-lines; H every P-row's `pairs.mjs` registration claim cross-read from `tools/contrast/pairs.mjs`
+lines, and §12's A-1 as applied (the CMP-069 Tokens line in `15` equal to its proposed text); H
+every P-row's `pairs.mjs` registration claim cross-read from `tools/contrast/pairs.mjs`
 (read, never written) and the counts the spec types in words.
 
 Usage: python3 -I docs/design/_tools/e25_d04_drawer_dialog_hifi_audit.py [--json]
@@ -28,15 +32,23 @@ Usage: python3 -I docs/design/_tools/e25_d04_drawer_dialog_hifi_audit.py [--json
 `--check` exits 1 on a gated FAIL, a lost reproduction, a failed table or string gate, or a number
 the tool prints that the spec's own text does not carry (section G, drift). `--self-test` applies
 MUTATIONS to the spec in memory (the file is never written): each must raise exactly one new FAIL,
-no two the same, and the clean spec must pass before and after. Stdout is UTF-8.
+no two the same, and the clean spec must pass before and after. The boards mutations run on the
+drawn view: the committed state once §0 is drawn, or, while §0 is PENDING, one synthesised in
+memory (made-up ids and PNG headers, never written), so the drawn gate is proven before the draw.
+Stdout is UTF-8.
 """
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import io
 import json
 import re
+import struct
 import sys
+import zlib
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -47,8 +59,11 @@ TOOLS = ROOT / "docs" / "design" / "_tools"
 SPEC = ROOT / "docs" / "design" / "E25" / "E25-D04.md"
 OPENAPI = ROOT / "docs" / "plan" / "22-api-openapi.yaml"
 SCREENS = ROOT / "docs" / "plan" / "14-screens-catalogue.md"
+CATALOGUE = ROOT / "docs" / "plan" / "15-component-catalogue.md"
 PAIRS_MJS = ROOT / "tools" / "contrast" / "pairs.mjs"
 CONSTITUTION = ROOT / "CONSTITUTION.md"
+IMG_REL = "docs/design/E25/img"
+IMG = ROOT / IMG_REL
 THEMES = ("dark", "light", "high-contrast")
 BAR: dict[str, float | None] = {"text": 4.5, "non-text": 3.0}
 BAR.update({"decorative": None, "reported": None, "rejected-text": 4.5, "rejected-non-text": 3.0})
@@ -180,14 +195,14 @@ P4|CMP-021 links: Detector settings, Methodology docs, glossary, the audit link 
 P5|CMP-227 section and inline badge outline and glyph on the overlay (the word carries)|info.default|overlay|non-text|PROPOSED (D05 CR-5)
 P6|callout sentence, badge word (t1 on info.subtle)|t1|info.subtle|text|registered
 P7|callout body copy (t2 on info.subtle)|t2|info.subtle|text|PROPOSED (CR-1)
-P8|info callout edge and glyph (info.strong on info.subtle)|info.strong|info.subtle|non-text|PROPOSED (D03 CR-1)
+P8|info callout edge and glyph (info.strong on info.subtle)|info.strong|info.subtle|non-text|registered
 P9|inline badge glyph inside the callout (info.default on info.subtle)|info.default|info.subtle|non-text|PROPOSED (D03 CR-1)
 P10|armed-rule warning title, rule names (t1 on warning.subtle)|t1|warn.subtle|text|registered
 P11|armed-rule warning body (t2 on warning.subtle)|t2|warn.subtle|text|PROPOSED (CR-1)
 P12|warning callout edge and glyph (warning.strong on warning.subtle)|warn.strong|warn.subtle|non-text|registered
 P13|failed-apply title "Not applied" (t1 on danger.subtle)|t1|danger.subtle|text|registered
 P14|failed-apply before → after body (t2 on danger.subtle)|t2|danger.subtle|text|PROPOSED (CR-1)
-P15|danger callout edge and glyph; the CMP-040 error glyph (danger.strong on danger.subtle)|danger.strong|danger.subtle|non-text|PROPOSED (D03 CR-1)
+P15|danger callout edge and glyph; the CMP-040 error glyph (danger.strong on danger.subtle)|danger.strong|danger.subtle|non-text|registered
 P16|focus ring on the overlay (every stop)|ring|overlay|non-text|registered
 P17|Apply, Confirm "Apply changes", the recording CTA: CMP-001 primary label; the Toggle knob on its on track (on-action on action.primary)|on-action|a.primary|text|registered
 P18|Toggle on track, the primary fill against the overlay|a.primary|overlay|non-text|PROPOSED (CR-1)
@@ -213,18 +228,20 @@ P36|rejected: a hued danger word (danger.strong on danger.subtle)|danger.strong|
 
 # Reproductions (to the hundredth): E25-D02 §16 (overlay, sunken, the dimmed label, text.disabled),
 # E25-D05 §12.1 (the section badge on overlay), E25-D03 §8.1 (the shared fills and actions).
+# P8, P12, P15 and P34 are re-pinned at the refresh base (4c662fd5b): the light status tokens moved on
+# main (#5140, #5161) and the sibling specs keep the earlier light values (D04-C9).
 REPRO: dict[str, tuple[float, float, float]] = {
     "P1": (13.27, 14.37, 15.02),
     "P2": (8.14, 8.26, 13.27),
     "P3": (5.20, 5.44, 10.36),
     "P5": (5.73, 3.20, 5.73),
     "P6": (10.74, 15.44, 12.16),
-    "P8": (7.30, 4.34, 7.30),
+    "P8": (7.30, 5.30, 7.30),
     "P9": (4.64, 3.44, 4.64),
     "P10": (9.86, 15.62, 11.16),
-    "P12": (7.56, 4.11, 7.56),
+    "P12": (7.56, 4.90, 7.56),
     "P13": (12.06, 14.64, 13.66),
-    "P15": (7.83, 3.85, 7.83),
+    "P15": (7.83, 6.33, 7.83),
     "P19": (10.17, 12.82, 11.51),
     "P20": (12.33, 14.58, 13.96),
     "P21": (4.20, 3.86, 5.72),
@@ -236,7 +253,7 @@ REPRO: dict[str, tuple[float, float, float]] = {
     "P27": (7.50, 8.26, 12.22),
     "P32": (3.81, 2.81, 4.14),
     "P33": (2.64, 3.44, 2.64),
-    "P34": (7.30, 4.34, 7.30),
+    "P34": (7.30, 5.30, 7.30),
 }
 
 
@@ -534,24 +551,123 @@ def section(spec: str, start: str, end: str) -> str:
     return spec[i:j] if i >= 0 and j > i else ""
 
 
-def boards(spec: str, problems: list[str]) -> dict[str, Any]:
+# §0's two modes: PENDING (the text PR and PR 2 before the draw) and drawn (PR 2 after it)
+PENDING_HEAD = "## 0. The boards (Penpot) — PENDING"
+DRAWN_HEAD = "## 0. The boards (Penpot) — drawn"
+UUID_RX = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+PAGE_RX = re.compile(r"page id `([0-9a-f-]{36})`")
+EXPORT_RX = re.compile(r"^\| `(docs/design/E25/img/E25-D04-\d\d-[a-z0-9-]+\.png)` +\|")
+CVD_SUFFIXES = ("-greyscale", "-deuteranopia")
+SWATCH_BOARD = "10"  # the swatch board: no greyscale / deuteranopia render (§0)
+PNG_SIG = b"\x89PNG\r\n\x1a\n"
+Files = dict[str, bytes]
+
+
+def read_exports() -> Files:
+    """Every committed E25-D04 PNG, by its repo path."""
+    if not IMG.is_dir():
+        return {}
+    return {f"{IMG_REL}/{f.name}": f.read_bytes() for f in sorted(IMG.glob("E25-D04-*.png"))}
+
+
+def png_size(data: bytes) -> tuple[int, int] | None:
+    if data[:8] != PNG_SIG or data[12:16] != b"IHDR":
+        return None
+    w, h = struct.unpack(">II", data[16:24])
+    return int(w), int(h)
+
+
+def s0_of(spec: str) -> str:
+    return section(spec, "\n## 0.", "\n## 1.")
+
+
+def export_base(row: list[str]) -> str:
+    return f"{IMG_REL}/E25-D04-{row[0]}-{row[1].strip('`')}"
+
+
+def expected_exports(rows: list[list[str]]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for r in rows:
+        out[export_base(r) + ".png"] = r[0]
+        if r[0] != SWATCH_BOARD:
+            out.update({export_base(r) + sfx + ".png": r[0] for sfx in CVD_SUFFIXES})
+    return out
+
+
+def drawn_gate(rows: list[list[str]], s0: str, files: Files, problems: list[str]) -> int:
+    expected = expected_exports(rows)
+    ids: list[str] = []
+    for r in rows:
+        main = export_base(r) + ".png"
+        if len(r) < 6 or r[4] != f"`{main}`":
+            problems.append(f"board {r[0]}: the Export cell is not `{main}`")
+        m = re.fullmatch(r"`([0-9a-f-]{36})`", r[5] if len(r) > 5 else "")
+        if not m or not UUID_RX.fullmatch(m.group(1)):
+            problems.append(f"board {r[0]}: the Id cell is not a board uuid")
+        else:
+            ids.append(m.group(1))
+    if len(set(ids)) != len(ids):
+        problems.append("board plan: a board id repeats")
+    page = PAGE_RX.search(s0)
+    if not page or not UUID_RX.fullmatch(page.group(1)) or page.group(1) in ids:
+        problems.append("board plan: §0 does not pin the page id (one uuid, not a board's)")
+    table = {
+        m.group(1): cells(ln) for ln in s0.splitlines() if (m := EXPORT_RX.match(ln)) is not None
+    }
+    lacks = sorted(set(expected) - set(table))
+    extra = sorted(set(table) - set(expected))
+    if lacks or extra:
+        problems.append(f"exports table: lacks {lacks}, extra {extra}")
+    for path, row in table.items():
+        name = path.rsplit("/", 1)[1]
+        data = files.get(path)
+        size = png_size(data) if data is not None else None
+        if data is None:
+            problems.append(f"export {name}: no such file")
+        elif size is None:
+            problems.append(f"export {name}: not a PNG")
+        elif len(row) < 3 or row[1] != f"{size[0]} × {size[1]}":
+            problems.append(f"export {name}: the size cell is not the PNG's {size[0]} × {size[1]}")
+        elif row[2] != f"`{hashlib.sha256(data).hexdigest()}`":
+            problems.append(f"export {name}: the sha256 is not the file's")
+    stray = sorted(set(files) - set(table))
+    if stray:
+        problems.append(f"exports: committed but not in §0's table: {stray}")
+    return len(table)
+
+
+def boards(spec: str, problems: list[str], files: Files) -> dict[str, Any]:
     rows = [cells(ln) for ln in spec.splitlines() if BOARD_RX.match(ln)]
     slugs = [r[1] for r in rows]
     themes = [r[3].lower() for r in rows]
     twins = sum(1 for t in themes if t.startswith("light"))
-    if len(rows) > MAX_BOARDS:
+    s0 = s0_of(spec)
+    mode = "drawn" if s0.startswith("\n" + DRAWN_HEAD) else "pending"
+    out: dict[str, Any] = {"boards": len(rows), "light_twins": twins, "slugs": slugs, "mode": mode}
+    if len(rows) > MAX_BOARDS:  # the plan itself is wrong: the per-row gates would only echo it
         problems.append(f"board plan: {len(rows)} boards, over {MAX_BOARDS}")
+        return out
     if twins > len(rows) // 3:
         problems.append(f"board plan: {twins} light twins of {len(rows)}, over one third")
     if len(set(slugs)) != len(slugs):
         problems.append("board plan: a slug repeats")
-    if any(len(r) < 6 or r[5] != "PENDING" for r in rows):
-        problems.append("board plan: a board row is not PENDING in PR 1")
-    if len(rows) <= MAX_BOARDS and f"{len(rows)} boards" not in spec:
+    if f"{len(rows)} boards" not in spec:
         problems.append(f"board plan: the spec does not state {len(rows)} boards")
     if twins <= len(rows) // 3 and f"{twins} light twins" not in spec:
         problems.append(f"board plan: the spec does not state {twins} light twins")
-    return {"boards": len(rows), "light_twins": twins, "slugs": slugs}
+    out["exports"] = 0
+    if mode == "drawn":
+        out["exports"] = drawn_gate(rows, s0, files, problems)
+        return out
+    if not s0.startswith("\n" + PENDING_HEAD):
+        problems.append("board plan: §0's heading names neither PENDING nor drawn")
+    if any(len(r) < 6 or r[4] != "—" or r[5] != "PENDING" for r in rows):
+        problems.append("board plan: a board row is not PENDING while §0 is PENDING")
+    if UUID_RX.search(s0):
+        problems.append("board plan: a page id or uuid in a PENDING §0")
+    if files:
+        problems.append(f"board plan: {len(files)} E25-D04 export(s) committed while §0 is PENDING")
+    return out
 
 
 def counts(spec: str, problems: list[str]) -> dict[str, Any]:
@@ -560,7 +676,7 @@ def counts(spec: str, problems: list[str]) -> dict[str, Any]:
         out[k] = sum(1 for ln in spec.splitlines() if rx.match(ln))
         if out[k] != EXPECT_STATES[k]:
             problems.append(f"{k} rows: {out[k]} (E25-D02 carries {EXPECT_STATES[k]})")
-    for k, rx in (
+    for k, pat in (
         ("F", r"^\| F-\d+ "),
         ("AP", r"^\| AP-\d+ "),
         ("CF", r"^\| CF-\d+ "),
@@ -575,7 +691,7 @@ def counts(spec: str, problems: list[str]) -> dict[str, Any]:
         ("H", r"^\| H-\d+ "),
         ("CP", r"^\| CP-\d+ "),
     ):
-        out[k] = sum(1 for ln in spec.splitlines() if re.match(rx, ln))
+        out[k] = sum(1 for ln in spec.splitlines() if re.match(pat, ln))
     return out
 
 
@@ -676,6 +792,23 @@ T2_OMITTED = (
 POINTER = "**Hi-fi (E25-D04):**"
 
 
+A1_FIELD = "- **Tokens**: "
+
+
+def a1_applied(spec: str, problems: list[str]) -> bool:
+    """§12's A-1 is applied verbatim: the Tokens line after CMP-069's heading in `15` is its text."""
+    row = next((ln for ln in spec.splitlines() if ln.startswith("| A-1 ")), None)
+    prop = cells(row)[4] if row and len(cells(row)) > 4 else ""
+    want = prop[1:-1] if len(prop) > 1 and prop[0] == prop[-1] == '"' else ""
+    cat = CATALOGUE.read_text(encoding="utf-8") if CATALOGUE.exists() else ""
+    blk = section(cat, "### CMP-069 ", "\n### ")
+    got = next((ln[len(A1_FIELD) :] for ln in blk.splitlines() if ln.startswith(A1_FIELD)), None)
+    if not want or got != want:
+        problems.append("15 CMP-069 Tokens is not §12's A-1 proposed text verbatim")
+        return False
+    return True
+
+
 def window(text: str, i: int, j: int, span: int = 60) -> str:
     return text[max(0, i - span) : j + span]
 
@@ -719,11 +852,11 @@ def table_gates(spec: str, fl: dict[str, Any], problems: list[str]) -> dict[str,
         problems.append("apply machine: the unknown-outcome leg shows a value before the re-read")
     # the three confirmation variants carry their fixed strings; the variant is decided on the press
     for cf, strings in CONFIRM.items():
-        row = next((ln for ln in lines if ln.startswith(f"| {cf} ")), None)
-        if row is None:
+        cf_row = next((ln for ln in lines if ln.startswith(f"| {cf} ")), None)
+        if cf_row is None:
             problems.append(f"confirmation variant {cf} missing")
             continue
-        lost = [s for s in strings if s not in row]
+        lost = [s for s in strings if s not in cf_row]
         if lost:
             problems.append(f"confirmation {cf} lacks {lost}")
     if FETCH_POINT not in spec:
@@ -788,9 +921,12 @@ def table_gates(spec: str, fl: dict[str, Any], problems: list[str]) -> dict[str,
                 f"14 {scr}: no `Hi-fi (E25-D04)` pointer line after the Wireframes line"
             )
     out["pointer_lines"] = screens.count(POINTER)
+    # A-1 as applied: the CMP-069 Tokens line in `15` equals §12's A-1 proposed text verbatim
+    out["a1_applied"] = a1_applied(spec, problems)
     # hygiene and rule ids
+    outside_s0 = spec.replace(s0_of(spec), "")  # §0 alone may pin the page id and board ids
     for name, rx in FORBIDDEN.items():
-        if rx.search(spec):
+        if rx.search(outside_s0 if name == "page id or uuid" else spec):
             problems.append(f"hygiene: {name}")
     constitution = CONSTITUTION.read_text(encoding="utf-8")
     ids = sorted(set(RULE_RX.findall(spec)))
@@ -876,7 +1012,7 @@ def registration(spec: str, problems: list[str]) -> dict[str, Any]:
     return {"registry_pairs": len(reg), "claims_checked": checked}
 
 
-def evaluate(spec: str) -> tuple[list[str], dict[str, Any]]:
+def evaluate(spec: str, files: Files) -> tuple[list[str], dict[str, Any]]:
     problems: list[str] = []
     out: dict[str, Any] = {}
     out["tokens"] = tokens(spec)
@@ -884,7 +1020,7 @@ def evaluate(spec: str) -> tuple[list[str], dict[str, Any]]:
     out["matrix"] = matrix(problems)
     out["fields"] = fields(problems)
     out["cvd"] = cvd(problems)
-    out["boards"] = boards(spec, problems)
+    out["boards"] = boards(spec, problems, files)
     out["counts"] = counts(spec, problems)
     out["gates"] = table_gates(spec, out["fields"], problems)
     out["registration"] = registration(spec, problems)
@@ -973,7 +1109,107 @@ MUTATIONS: tuple[tuple[str, str, str], ...] = (
         "timeout → CF-2 — ",
     ),
     ("a registration claim is wrong", "unregistered (E05)", "registered"),
+    (
+        "the applied A-1 drifts from §12",
+        "the dialog it links to keeps `font.lineheight.normal`.",
+        "the dialog it opens keeps `font.lineheight.normal`.",
+    ),
 )
+
+
+View = tuple[str, Files]
+Mutation = tuple[str, bool, Callable[[View], View | None]]  # (name, on the drawn view, apply)
+
+
+def literal(old: str, new: str) -> Callable[[View], View | None]:
+    def apply(view: View) -> View | None:
+        spec, files = view
+        return None if old not in spec else (spec.replace(old, new, 1), files)
+
+    return apply
+
+
+def row_pending(view: View) -> View | None:
+    spec, n = re.subn(
+        r"^(\| 02 +\|.*\| )`[0-9a-f-]{36}`( +\|)$", r"\1PENDING\2", view[0], flags=re.MULTILINE
+    )
+    return (spec, view[1]) if n == 1 else None
+
+
+def first_export(spec: str) -> re.Match[str] | None:
+    rx = r"^(\| `[^`]+\.png` +\| )(\d+) × (\d+)( +\| `)([0-9a-f]{64})(` +\|)$"
+    return re.search(rx, spec, flags=re.MULTILINE)
+
+
+def sha_drifts(view: View) -> View | None:
+    m = first_export(view[0])
+    if not m:
+        return None
+    sha = m.group(5)[:-1] + ("0" if m.group(5)[-1] != "0" else "1")
+    return view[0][: m.start(5)] + sha + view[0][m.end(5) :], view[1]
+
+
+def size_drifts(view: View) -> View | None:
+    m = first_export(view[0])
+    if not m:
+        return None
+    return view[0][: m.start(3)] + str(int(m.group(3)) + 1) + view[0][m.end(3) :], view[1]
+
+
+def render_missing(view: View) -> View | None:
+    gone = next((k for k in sorted(view[1]) if k.endswith(CVD_SUFFIXES[1] + ".png")), None)
+    return None if gone is None else (view[0], {k: v for k, v in view[1].items() if k != gone})
+
+
+def uuid_outside(view: View) -> View | None:
+    old = "## 20. Summary"
+    tag = f" (`{synth_uuid(999)}`)"
+    return None if old not in view[0] else (view[0].replace(old, old + tag, 1), view[1])
+
+
+def plan() -> list[Mutation]:
+    return [
+        *[(m[0], False, literal(m[1], m[2])) for m in MUTATIONS],
+        ("a drawn board row is left PENDING (the drawn view)", True, row_pending),
+        ("an export's sha256 drifts (the drawn view)", True, sha_drifts),
+        ("an export's size cell drifts (the drawn view)", True, size_drifts),
+        ("a greyscale / deuteranopia render is missing (the drawn view)", True, render_missing),
+        ("a uuid outside §0 (the drawn view)", True, uuid_outside),
+    ]
+
+
+def synth_uuid(i: int) -> str:
+    return f"{i:08x}-0000-4000-8000-{i:012x}"
+
+
+def fake_png(w: int, h: int) -> bytes:
+    ihdr = b"IHDR" + struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+    return PNG_SIG + struct.pack(">I", 13) + ihdr + struct.pack(">I", zlib.crc32(ihdr))
+
+
+def drawn_view(spec: str, files: Files) -> tuple[View, bool]:
+    """The drawn state: the committed one, or (§0 PENDING) one synthesised in memory."""
+    s0 = s0_of(spec)
+    if s0.startswith("\n" + DRAWN_HEAD):
+        return (spec, files), False
+    rows = [cells(ln) for ln in s0.splitlines() if BOARD_RX.match(ln)]
+    fake: Files = {}
+    table = ["", "| Export | Size | sha256 |", "| --- | --- | --- |"]
+    for k, path in enumerate(expected_exports(rows)):
+        fake[path] = fake_png(2032, 1000 + k)
+        sha = hashlib.sha256(fake[path]).hexdigest()
+        table.append(f"| `{path}` | 2032 × {1000 + k} | `{sha}` |")
+    lines = s0.split("\n")
+    last = 0
+    for k, ln in enumerate(lines):
+        if BOARD_RX.match(ln):
+            r = cells(ln)
+            lines[k] = f"| {r[0]} | {r[1]} | {r[2]} | {r[3]} | `{export_base(r)}.png` | "
+            lines[k] += f"`{synth_uuid(int(r[0]))}` |"
+            last = k
+    lines[last + 1 : last + 1] = table
+    lines[1] = DRAWN_HEAD + f" (PR 2; page id `{synth_uuid(100)}`)"
+    return (spec.replace(s0, "\n".join(lines), 1), fake), True
 
 
 def read(path: Path) -> str:
@@ -983,19 +1219,30 @@ def read(path: Path) -> str:
 def self_test(spec_path: Path) -> int:
     spec = read(spec_path)
     before = spec_path.read_bytes()
-    base, _ = evaluate(spec)
+    files = read_exports()
+    base, _ = evaluate(spec, files)
     ok = not base
     print(f"clean spec: rc {1 if base else 0} ({len(base)} problem(s))")
     for p in base:
         print(f"  {p}")
+    dview, synth = drawn_view(spec, files)
+    dbase, _ = evaluate(*dview)
+    ok = ok and not dbase
+    kind = "synthesised in memory (§0 PENDING)" if synth else "the committed state"
+    print(f"drawn view, {kind}: rc {1 if dbase else 0} ({len(dbase)} problem(s))")
+    for p in dbase:
+        print(f"  {p}")
     seen: dict[str, str] = {}
-    for no, (name, old, new) in enumerate(MUTATIONS, start=1):
-        if spec.count(old) < 1:
+    muts = plan()
+    for no, (name, on_drawn, apply) in enumerate(muts, start=1):
+        start, ref = (dview, dbase) if on_drawn else ((spec, files), base)
+        view = apply(start)
+        if view is None:
             ok = False
             print(f"mutation {no:02d} {name}: DOES NOT APPLY (the text to mutate is gone)")
             continue
-        got, _ = evaluate(spec.replace(old, new, 1))
-        fresh = [p for p in got if p not in base]
+        got, _ = evaluate(*view)
+        fresh = [p for p in got if p not in ref]
         rc = 1 if got else 0
         dup = [p for p in fresh if p in seen]
         caught = rc == 1 and len(fresh) == 1 and not dup
@@ -1005,20 +1252,20 @@ def self_test(spec_path: Path) -> int:
         for p in fresh:
             print(f"  {p}")
             seen.setdefault(p, name)
-    restored, _ = evaluate(spec)
+    restored, _ = evaluate(spec, read_exports())
     same = spec_path.read_bytes() == before
     ok = ok and not restored and same
     print(
         f"restore: rc {1 if restored else 0}; spec file byte-identical: {same}; "
-        f"--self-test: {'ok' if ok else 'FAIL'} - {len(MUTATIONS)} mutations in memory, "
+        f"--self-test: {'ok' if ok else 'FAIL'} - {len(muts)} mutations in memory, "
         f"{len(seen)} distinct FAILs"
     )
     return 0 if ok else 1
 
 
 def main(argv: list[str] | None = None) -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(encoding="utf-8")
     argv = sys.argv[1:] if argv is None else argv
     spec_path = SPEC
     for flag in ("--check", "--self-test"):
@@ -1029,7 +1276,7 @@ def main(argv: list[str] | None = None) -> int:
     if "--self-test" in argv:
         return self_test(spec_path)
     spec = read(spec_path) if spec_path.exists() else ""
-    problems, out = evaluate(spec)
+    problems, out = evaluate(spec, read_exports())
     if "--json" in argv:
         print(json.dumps(out, ensure_ascii=False, indent=1, default=str))
     else:
@@ -1061,7 +1308,11 @@ def main(argv: list[str] | None = None) -> int:
                 f"   {p['pair']}: {d['a']} -> {d['a_grey']} / {d['a_deut']}; {d['b']} -> "
                 f"{d['b_grey']} / {d['b_deut']}; separation {sep[0]:.2f} / {sep[1]:.2f} / {sep[2]:.2f}"
             )
-        print(f"E. boards {out['boards']['boards']}, light twins {out['boards']['light_twins']}")
+        bd = out["boards"]
+        print(
+            f"E. boards {bd['boards']}, light twins {bd['light_twins']}, §0 {bd['mode']}, "
+            f"exports {bd.get('exports', 0)}"
+        )
         print(f"F. counts {out['counts']}; gates {out['gates']}")
         print(f"G. drift {len(out['drift'])}")
         print(f"H. registration {out['registration']}")
