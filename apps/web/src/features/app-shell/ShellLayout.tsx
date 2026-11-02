@@ -1,4 +1,4 @@
-import { useRef, type JSX } from "react";
+import { useEffect, useRef, type JSX } from "react";
 import { Outlet } from "react-router";
 import { GatedAnnounceProvider } from "@candleviewer/ui";
 import { ShellAnnouncer } from "./announcer";
@@ -16,6 +16,7 @@ import {
 } from "./slots";
 import { TopBarSlot } from "./TopBarSlot";
 import { useRouteFocus } from "./useRouteFocus";
+import { SHELL_PERF_MARKS, markShellStage } from "../../shell/perfMarks.js";
 
 /** id of the shell's one `main` landmark. */
 export const SHELL_MAIN_ID = "cv-main";
@@ -30,6 +31,9 @@ const ignoreGatedAnnouncement = (): void => undefined;
 export function ShellLayout(): JSX.Element {
   const mainRef = useRef<HTMLElement>(null);
   useRouteFocus(mainRef);
+  // Budget #10 (E10-Q04): a child's effects run first, so the chrome and its first route element
+  // are both committed here; marked once per page load (perfMarks).
+  useEffect(() => markShellStage(SHELL_PERF_MARKS.routeMounted), []);
   return (
     // Surfaces own the gated announcement (G-T2.3); E17-D02 §11: the shell announcer is the one region, so the
     // atoms' own announcement is a no-op here (ruling on #5135, option A).

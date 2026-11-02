@@ -7,6 +7,7 @@ import { resolveDevServerUrl, type DevServerUrl } from "../src/main/devServer";
 import { logAuditEvent } from "../src/main/logger";
 import { CrashLogRefusedError } from "../src/main/crashLog";
 import { GpuKeepRefusedError } from "../src/main/gpuRecovery";
+import { MAIN_PERF_MARKS } from "../src/main/perfMarks";
 import type * as CrashLogModule from "../src/main/crashLog";
 
 // src/main/index.ts calls app.on(...) / app.whenReady() at module scope, so
@@ -686,5 +687,32 @@ describe("the GPU-process crash signal and its relaunch (F15, E10-S04)", () => {
     // A page that reads cv:gpu:info before the exit lands sees the crash answered (#4951).
     const info = (await ipcListener("cv:gpu:info")(from)) as { lastCrash: unknown };
     expect(info.lastCrash).toMatchObject({ reason: "crashed", retried: true });
+  });
+});
+
+describe("budget #10 stage marks on the main process's timeline (E10-Q04)", () => {
+  const names = (): string[] =>
+    performance
+      .getEntriesByType("mark")
+      .map((entry) => entry.name)
+      .filter((name) => (Object.values(MAIN_PERF_MARKS) as string[]).includes(name));
+
+  it("marks module start, whenReady, the window, then its first paint, each once", async () => {
+    await vi.waitFor(() => expect(BrowserWindow).toHaveBeenCalled());
+    expect(names()).toEqual(["shell_main_start_ms", "whenReady", "window_created"]);
+    const win = vi.mocked(BrowserWindow).mock.results[0]?.value as { once: Mock; show: Mock };
+    const onShow = win.once.mock.calls.find(([event]) => event === "ready-to-show")?.[1];
+    if (typeof onShow !== "function") {
+      throw new Error("no ready-to-show listener registered");
+    }
+    (onShow as () => void)();
+    expect(win.show).toHaveBeenCalled();
+    createMainWindow(undefined); // a second window marks nothing
+    expect(names()).toEqual([
+      "shell_main_start_ms",
+      "whenReady",
+      "window_created",
+      "shell_first_paint_ms",
+    ]);
   });
 });

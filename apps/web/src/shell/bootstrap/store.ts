@@ -31,6 +31,7 @@ import {
   type DegradedFacts,
 } from "../../features/system-states/degradedIssues.js";
 import { toLatencyIndicator, type LatencyIndicator } from "../../lib/telemetry/latencyIndicator.js";
+import { SHELL_PERF_MARKS, markShellStage } from "../perfMarks.js";
 import type { GpuCrash } from "../ShellPort.js";
 import { REACHABLE, type Reachability } from "./reachability.js";
 
@@ -158,7 +159,10 @@ export function setShellState(patch: Partial<ShellState>): void {
   const was = state;
   state = { ...state, ...patch };
   // Latched on the first live link; only `resetShellState` (logout, a stopped shell) clears it.
-  if (patch.connection?.kind === "live" && !state.everLive) state = { ...state, everLive: true };
+  if (patch.connection?.kind === "live" && !state.everLive) {
+    state = { ...state, everLive: true };
+    markShellStage(SHELL_PERF_MARKS.wsLive); // budget #10: once per page load (perfMarks)
+  }
   // SCR-157: another build, or the state's end (E10-D04 T-18), ends the answer, so an incompatible
   // build that comes back is the server's answer again and opens the dialog (T-15)
   if (state.serverProtocol !== was.serverProtocol || state.serverVersion !== was.serverVersion) {

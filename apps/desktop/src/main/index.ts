@@ -20,6 +20,10 @@ import { checkForUpdate } from "./updateChannel.js";
 import { createCrashLog, type CrashLog } from "./crashLog.js";
 import type { GpuCrash, GpuLastCrash } from "./gpuCrash.js";
 import { createGpuRecovery } from "./gpuRecovery.js";
+import { MAIN_PERF_MARKS, markMainStage } from "./perfMarks.js";
+
+// Budget #10 stage marks (E10-Q04): this module's own code starts here.
+markMainStage(MAIN_PERF_MARKS.mainStart);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -225,6 +229,7 @@ export function createMainWindow(devServerUrl: DevServerUrl | undefined): Browse
   // created hidden and shown only on first paint to avoid a white flash and
   // to keep the measured cold-start honest (budget #10, <=3s cold start).
   win.once("ready-to-show", () => {
+    markMainStage(MAIN_PERF_MARKS.firstPaint);
     win.show();
   });
 
@@ -254,6 +259,7 @@ export function createMainWindow(devServerUrl: DevServerUrl | undefined): Browse
   });
 
   void win.loadURL(devServerUrl ?? APP_ENTRY_URL);
+  markMainStage(MAIN_PERF_MARKS.windowCreated);
 
   return win;
 }
@@ -431,6 +437,7 @@ app.on("window-all-closed", () => {
 applyGpuFlags();
 
 void app.whenReady().then(() => {
+  markMainStage(MAIN_PERF_MARKS.whenReady);
   // One CSP value for both delivery points: the dev-server response hook and
   // the app:// handler.
   const csp = buildCsp();

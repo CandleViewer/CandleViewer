@@ -20,6 +20,7 @@ import {
   applyChartColorMode,
   readStoredChartColorMode,
 } from "./preferencesApply.js";
+import { SHELL_PERF_MARKS, markShellStage } from "../perfMarks.js";
 import {
   type BootstrapPhase,
   type Keymap,
@@ -110,6 +111,7 @@ export async function runBootstrap(deps: BootstrapDeps = {}): Promise<void> {
   }
 
   setShellState({ bootstrap: { kind: "ready" } });
+  markShellStage(SHELL_PERF_MARKS.bootstrapReady);
 }
 
 function classifyMeFailure(reason: unknown): BootstrapPhase {
