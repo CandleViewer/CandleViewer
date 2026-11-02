@@ -549,9 +549,56 @@ def test_the_deferred_lanes_are_the_ones_whose_job_skips_a_pull_request() -> Non
         for lane, job in JOBS.items()
         if "uses" in job
         for inner in _load(job["uses"].removeprefix("./.github/workflows/"))["jobs"].values()
-        if " ".join(str(inner.get("if", "")).split()) == "${{ github.event_name != 'pull_request' }}"
+        if " ".join(str(inner.get("if", "")).split())
+        == "${{ github.event_name != 'pull_request' }}"
     }
     assert skipping == set(re.findall(r'"([\w-]+)"', listed)) == {"integration"}
+
+
+#: E03-T14 (S1): a diff outside the engine and protocol filters, e.g. only services/api.
+ENGINE_OFF = {
+    "needs.changed-paths.outputs.engine": "false",
+    "needs.changed-paths.outputs.protocol": "false",
+    RESULTS["engine-bench"]: "skipped",
+}
+
+
+def test_resolver_reports_engine_bench_not_applicable_on_a_non_engine_diff() -> None:
+    proc = _run(ENGINE_OFF, "pull_request")
+    notice = [line for line in proc.stdout.splitlines() if line.startswith("::notice")]
+    assert (proc.returncode, "CI-GATE" in proc.stderr) == (0, False)
+    assert notice == [
+        "::notice title=engine-bench not applicable::engine-bench: not applicable"
+        " — no engine or protocol path changed"
+    ]
+    assert "ci-required conclusion: success" in proc.stdout
+
+
+def test_resolver_does_not_report_engine_bench_when_a_path_applies() -> None:
+    proc = _run({"needs.changed-paths.outputs.protocol": "false"}, "pull_request")
+    assert proc.returncode == 0
+    assert "not applicable" not in proc.stdout
+
+
+def test_resolver_writes_the_not_applicable_lane_to_the_job_summary(tmp_path: Path) -> None:
+    _needs("bash", "node")
+    summary = tmp_path / "summary.md"
+    values = {f"needs.{job}.result": "success" for job in JOBS}
+    values |= {f"needs.gates.outputs.{gate}": "success" for gate in JOBS["gates"]["outputs"]}
+    values |= {f"needs.changed-paths.outputs.{o}": "true" for o in JOBS["changed-paths"]["outputs"]}
+    values |= ENGINE_OFF
+    env = {"PATH": os.environ.get("PATH", ""), "GITHUB_STEP_SUMMARY": str(summary)}
+    env |= {name: _value(expr, values) for name, expr in RESOLVER["env"].items()}
+    run = subprocess.run(
+        ["bash", "-c", RESOLVER["run"]],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert run.returncode == 0
+    assert "| engine-bench | not applicable |" in summary.read_text(encoding="utf-8")
 
 
 #: A draft pull request's run: PR_DRAFT renders true, and the deferred lanes' jobs skipped.
