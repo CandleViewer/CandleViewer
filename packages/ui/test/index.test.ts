@@ -216,8 +216,13 @@ describe("@candleviewer/ui positions grid and CMP-049's treegrid (E29-S01)", () 
     ["UpdatesPausedChip", Atoms.UpdatesPausedChip],
     ["liqSentence", Atoms.liqSentence],
     ["pnlReading", Atoms.pnlReading],
+    ["rowsWord", Atoms.rowsWord],
   ])("exports %s from the package entry as a function", (_name, value) => {
     expect(typeof value).toBe("function");
+  });
+
+  it("rowsWord says a count as CMP-049's result line does", () => {
+    expect([0, 1, 5].map((n) => Atoms.rowsWord(n))).toEqual(["No rows", "1 row", "5 rows"]);
   });
 
   it("exports the default and narrow column lists", () => {
