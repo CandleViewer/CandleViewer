@@ -11,7 +11,7 @@ from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from decimal import Context, Decimal
 from itertools import count
-from typing import Any, Final, NamedTuple
+from typing import Any, Final, NamedTuple, get_args
 from uuid import UUID
 
 from candleviewer.domain.order_link import EXT_ID, OUR_ID
@@ -116,9 +116,14 @@ _PAGE = port.MAX_EVENT_PAGE
 _SYMBOL: Final = re.compile(r"[A-Z0-9]{4,20}")
 #: The SQLSTATE Postgres refuses text holding NUL with, as it decodes the bound value (22021).
 _NUL_TEXT: Final = "22021"
-#: The CHECKs (`0029_oms_core`'s, and `ord_lifecycle`, which the order vocabulary's revision adds)
-#: a value of the types can break, each true where SQL's is false: a NULL leaves a CHECK unknown,
-#: which passes it.
+#: `ord_origin`'s seven values (`0064_orders_origin`, 24 Sec.8.1): the `OrderOrigin` literal's.
+_ORIGINS: Final = frozenset(get_args(port.OrderOrigin))
+#: The CHECKs (`0029_oms_core`'s, `ord_lifecycle`, which the order vocabulary's revision adds, and
+#: `ord_origin` and `ord_origin_ref`, which `0064_orders_origin` adds) a value of the types can
+#: break, each true where SQL's is false: a NULL leaves a CHECK unknown, which passes it. `NewOrder`
+#: and `OrderRow` hold an origin pair to its two CHECKs as they are built (`require_origin`), so
+#: the fake meets a refused pair only on a row set past that, as Postgres meets one it is handed
+#: some other way; `test_write_ahead_fake.py` pins the pairs.
 _ORDER_CHECKS: Final[dict[str, Callable[[port.NewOrder | Row], bool]]] = {
     # a `NewOrder` has no count: the column's default, 0
     "ord_attempts": lambda o: not 0 <= getattr(o, "submit_attempts", 0) <= 10,
@@ -129,6 +134,8 @@ _ORDER_CHECKS: Final[dict[str, Callable[[port.NewOrder | Row], bool]]] = {
     "ord_limit_px": lambda o: o.order_type == "Limit" and o.price is not None and o.price <= 0,
     "ord_link_fmt": lambda o: not any(p.fullmatch(o.order_link_id) for p in (OUR_ID, EXT_ID)),
     "ord_no_self": lambda o: o.parent_order_id == o.id,
+    "ord_origin": lambda o: o.origin is not None and o.origin not in _ORIGINS,
+    "ord_origin_ref": lambda o: _origin_ref_broken(o.origin, o.origin_ref),
     "ord_qty": lambda o: o.qty <= 0,
     "ord_sl_px": lambda o: o.stop_loss is not None and o.stop_loss <= 0,
     "ord_tp_px": lambda o: o.take_profit is not None and o.take_profit <= 0,
@@ -186,12 +193,24 @@ SUBMISSION_AUDIT_TIMEOUT_S: Final = 0.5
 
 
 def _canonical(ref: str) -> bool:
-    """`tg_ref_fmt`'s rule, which `ia_ref_fmt` shares: canonical lower-case UUID text."""
+    """`tg_ref_fmt`'s rule, which `ia_ref_fmt` and `ord_origin_ref`'s `rule` arm share: canonical
+    lower-case UUID text."""
     try:
         require_client_ref(ref)
     except ValueError:
         return False
     return True
+
+
+def _origin_ref_broken(origin: str | None, ref: str | None) -> bool:
+    """`ord_origin_ref` (`0064_orders_origin`), a CASE with one arm per origin, true where the CHECK
+    is false: no origin names no ref; a rule's order names its rule's id as canonical lower-case
+    UUID text; any other origin's ref is free."""
+    if origin is None:
+        return ref is not None
+    if origin == "rule":
+        return ref is None or not _canonical(ref)
+    return False
 
 
 def _bindable(values: Iterable[object]) -> None:
