@@ -372,11 +372,14 @@ All engines are **incremental** (no recompute from history on each tick) and **c
 
 ```mermaid
 flowchart TB
-    CMD["OrderCommand (ticket / chart / DOM / rule)"] --> VAL["Validator<br/>instrument filters, tick/lot, RBAC scope,<br/>environment match, risk caps"]
-    VAL --> FAN["TradeGroupFanout<br/>resolve target accounts,<br/>apply per-account profile"]
-    FAN --> SIZ["Sizer<br/>% equity / fixed $ / fixed qty / risk-based"]
+    CMD["OrderCommand (ticket / chart / DOM / rule)"] --> FAN["TradeGroupFanout<br/>resolve target accounts,<br/>environment match (route of the account's environment),<br/>apply per-account profile"]
+    FAN --> SIZ["Sizer<br/>% equity / fixed $ / fixed qty / risk-based,<br/>rounded to tick and lot"]
     SIZ --> SLG["NativeStopGuard<br/>ensures every child order has an exchange SL"]
-    SLG --> ROUTE{"Account type"}
+    SLG --> VAL["Validator<br/>instrument filters on the sized order,<br/>profile limits"]
+    VAL --> RISK["Risk gate<br/>per-account and per-manager caps"]
+    RISK --> GATES["Gates<br/>live, kill switch, order-entry gate,<br/>pre-flight rate reserve"]
+    GATES --> LINK["orderLinkId + write-ahead persist<br/>(B1 VALIDATE)"]
+    LINK --> ROUTE{"Account type"}
     ROUTE -->|live| WSTRD["WS Trade adapter"]
     ROUTE -->|demo| RESTA["REST adapter"]
     ROUTE -->|paper| PAPER["Paper Matcher"]
@@ -385,20 +388,22 @@ flowchart TB
     SM --> BUSP(["bus: oms.*"])
     PRIV["Private WS: order/execution/position/wallet, execution.fast optional"] --> SM
     RECON["Reconciler (startup, reconnect, periodic 30 s, on demand)"] --> SM
-    ALGO["AlgoSupervisor<br/>OCO, iceberg, TWAP, chase, scaled, brackets"] --> VAL
+    ALGO["AlgoSupervisor<br/>OCO, iceberg, TWAP, chase, scaled, brackets"] --> FAN
     SM --> ALGO
 ```
 
-| Component           | Responsibility                                                                                                                                                                                                                                             | Interface                                |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `Validator`         | Instrument filters (tick size, lot size, min notional, leverage), RBAC scope check, environment match, per-account and per-manager risk caps, kill-switch state                                                                                            | `validate(cmd, ctx) -> ValidatedCommand` |
-| `TradeGroupFanout`  | Expands one ticket into N child orders (one per selected account), creates a `trade_group` row whose UUID is the `group22` segment of every child's `orderLinkId` (`24-internal-schemas.md` §8.3), budgets per-UID rate limits across the fan-out          | `fanout(cmd) -> list[ChildOrder]`        |
-| `Sizer`             | Applies per-account profile sizing rule; rounds to lot size; rejects if below min notional                                                                                                                                                                 | `size(account, cmd) -> Decimal`          |
-| `NativeStopGuard`   | **Invariant P4**: refuses to submit any position-opening order that does not carry `stopLoss` (or an immediately-following `trading-stop` call); raises `NakedPositionAlert` and force-closes if an exchange-side SL is missing after `T_sl = 3 s`         | `ensure(child) -> child`                 |
-| `OrderStateMachine` | Canonical lifecycle; idempotent transitions keyed by `orderLinkId`; exchange facts pair through the bound `orderId` (`24-internal-schemas.md` §8.3 rule 7); reconciles optimistic local state with exchange truth                                          | `apply(event)`                           |
-| `AlgoSupervisor`    | Emulated algos as small state machines: OCO (race two orders, cancel loser on fill), iceberg (client-side slicing), TWAP (timed slices), chase (cancel/replace to best ± offset, capped), scaled ladder (equal/linear/geometric), brackets (entry → TP/SL) | `start(algo_spec)`, `cancel(algo_id)`    |
-| `Reconciler`        | One B19 job per account, on startup, each private-WS reconnect, every 30 s and on demand (`24-internal-schemas.md` §8.5): reads on `poll`, pairs by bound `orderId`, else full match; 2 min of failed fetches refuse its entry (`account_stale`)           | `async reconcile(account)`               |
-| `KillSwitch`        | Owner-level FREEZE per manager or global: blocks new orders, optionally cancels working orders and flattens                                                                                                                                                | `freeze(scope)`, `thaw(scope)`           |
+| Component           | Responsibility                                                                                                                                                                                                                                                                                                         | Interface                                |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `Validator`         | Instrument filters (tick size, lot size, min notional, leverage) on the sized, rounded order, profile limits (the environment match is made earlier, at the route step, before sizing). RBAC is enforced upstream at the API; risk caps and switches are the Risk gate and Gates nodes (`24-internal-schemas.md` §8.4) | `validate(cmd, ctx) -> ValidatedCommand` |
+| `TradeGroupFanout`  | Expands one ticket into N child orders (one per selected account), creates a `trade_group` row whose UUID is the `group22` segment of every child's `orderLinkId` (`24-internal-schemas.md` §8.3), budgets per-UID rate limits across the fan-out                                                                      | `fanout(cmd) -> list[ChildOrder]`        |
+| `Sizer`             | Applies per-account profile sizing rule; rounds to lot size; rejects if below min notional                                                                                                                                                                                                                             | `size(account, cmd) -> Decimal`          |
+| `NativeStopGuard`   | **Invariant P4**: refuses to submit any position-opening order that does not carry `stopLoss` (or an immediately-following `trading-stop` call); raises `NakedPositionAlert` and force-closes if an exchange-side SL is missing after `T_sl = 3 s`                                                                     | `ensure(child) -> child`                 |
+| `OrderStateMachine` | Canonical lifecycle; idempotent transitions keyed by `orderLinkId`; exchange facts pair through the bound `orderId` (`24-internal-schemas.md` §8.3 rule 7); reconciles optimistic local state with exchange truth                                                                                                      | `apply(event)`                           |
+| `AlgoSupervisor`    | Emulated algos as small state machines: OCO (race two orders, cancel loser on fill), iceberg (client-side slicing), TWAP (timed slices), chase (cancel/replace to best ± offset, capped), scaled ladder (equal/linear/geometric), brackets (entry → TP/SL)                                                             | `start(algo_spec)`, `cancel(algo_id)`    |
+| `Reconciler`        | One B19 job per account, on startup, each private-WS reconnect, every 30 s and on demand (`24-internal-schemas.md` §8.5): reads on `poll`, pairs by bound `orderId`, else full match; 2 min of failed fetches refuse its entry (`account_stale`)                                                                       | `async reconcile(account)`               |
+| `KillSwitch`        | Owner-level FREEZE per manager or global: blocks new orders, optionally cancels working orders and flattens                                                                                                                                                                                                            | `freeze(scope)`, `thaw(scope)`           |
+
+**Step order of one child order.** The owner is `24-internal-schemas.md` §8.4 (the submission pipeline, implemented by `oms/submit.py` and B1's `VALIDATE`). The figure above draws that order, not a second statement of it; where they differ, §8.4 wins. Validation and risk judge the sized and rounded order, never the raw command.
 
 **Order state machine.**
 
@@ -1253,7 +1258,6 @@ sequenceDiagram
     API->>AZ: authorize(user, accounts) + kill-switch check
     AZ-->>API: ok (scoped subset)
     API->>OMS: submit(command)
-    OMS->>OMS: Validator: instrument filters, env match, per-account risk caps
     OMS->>FO: fanout(command)
     FO->>PG: INSERT trade_group(id, ...) + child orders (state=Draft)
     FO->>RB: pre-flight reserve(entry, 1 + sl_cost) for EVERY target account
@@ -1264,9 +1268,10 @@ sequenceDiagram
     else reservations held (or best_effort)
         RB-->>FO: admitted=[A,B], deferred=[C]
         par one task per ADMITTED account (no shared queue -> no head-of-line blocking)
-            FO->>FO: apply per-account profile (leverage, sizing rule, SL/TP offsets)
+            FO->>FO: apply per-account profile (leverage, sizing rule, SL/TP offsets), size and round
             FO->>SG: ensure native SL attached (sl_cost already reserved)
             SG-->>FO: child with stopLoss set
+            FO->>OMS: validate the sized order, risk gate, switches, pre-flight rate reserve, orderLinkId + write-ahead persist (24-internal-schemas.md §8.4)
             FO->>BY: place_order(orderLinkId per 24-internal-schemas.md §8.3, reduceOnly=false, stopLoss=...)
             BY-->>FO: ack{orderId}
             FO->>PG: child -> Submitted (orderId bound)
@@ -1296,6 +1301,8 @@ sequenceDiagram
         OMS->>BUS: alert NakedPositionAlert (critical)
     end
 ```
+
+**Step order inside each child.** The per-account task runs the pipeline of `24-internal-schemas.md` §8.4, which owns the order. This view adds only the fan-out and rate-budget steps around it (§4.3 reservation before placement).
 
 **Narrative — why admission control precedes placement.** Bybit rate limits are per-UID, so the accounts in one group hold _independent_ budgets that can be exhausted independently (e.g. account C also runs a grid rule that just burned its `entry` bucket). Discovering that mid-loop would leave a group half-placed with no defined semantics, so the fan-out reserves for all accounts first (§4.3) and then either refuses the whole ticket (`atomic`) or proceeds with an explicit `PartiallyAdmitted` group (`best_effort`). Placement itself runs one `asyncio.Task` per account — never a sequential loop — so a throttled account cannot head-of-line-block its siblings; observed cross-account skew is bounded by the defer deadline and tracked by `oms_fanout_skew_seconds`. The `critical` bucket is reserved so that the native-SL attach and the reduce-only escape hatch at the bottom of this diagram can always execute even on an account whose entry budget is at zero — which is what makes principle P4 hold under rate pressure rather than only under ideal conditions. Trailing stops in `sl_spec`/`tp_spec` are translated from percent/ATR units to Bybit's absolute price distance by `OMS.TrailingTranslator` before this diagram's `place_order`/`set_trading_stop` calls (§9 rule 6).
 

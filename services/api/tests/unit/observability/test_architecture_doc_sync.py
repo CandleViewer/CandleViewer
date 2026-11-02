@@ -95,3 +95,30 @@ def test_architecture_log_fields_and_dashboards_documented() -> None:
     dash_sec = _section(text, "### 12.4", "### 12.5")
     dashboards = list((ROOT / "infra" / "grafana" / "dashboards").glob("*.json"))
     assert len(re.findall(r"^\d\. \*\*", dash_sec, re.M)) == len(dashboards) or dashboards == []
+
+
+def test_architecture_order_flowchart_sizes_before_validating() -> None:
+    """E29 #4945: section 3.5 shows the step order of 24 section 8.4, not the stale one."""
+    text = (PLAN / "20-architecture.md").read_text(encoding="utf-8")
+    section = _section(text, "### 3.5 OMS", "**Order state machine.**")
+    nodes = ["FAN[", "SIZ[", "SLG[", "VAL[", "RISK[", "GATES[", "LINK[", "ROUTE{"]
+    positions = [section.index(n) for n in nodes]
+    assert positions == sorted(positions)
+
+
+def test_architecture_fanout_sequence_has_no_early_validator_line() -> None:
+    """E29 #4945: the section 10.2 sequence validates the sized order, after the native stop."""
+    text = (PLAN / "20-architecture.md").read_text(encoding="utf-8")
+    section = _section(text, "### 10.2", "### 10.3")
+    assert "Validator:" not in section.split("fanout(")[0]
+    assert section.index("ensure native SL") < section.index("validate the sized order")
+
+
+def test_architecture_order_flowchart_edges_into_validator_chain() -> None:
+    """E29 #4945: only SLG feeds VAL; algo child orders enter at FAN."""
+    text = (PLAN / "20-architecture.md").read_text(encoding="utf-8")
+    section = _section(text, "### 3.5 OMS", "**Order state machine.**")
+    edges = re.findall(r"(\w+)(?:\[[^\n]*?\])?\s*-->\s*(?:\|[^|]*\|\s*)?(\w+)", section)
+    into = {node: [a for a, b in edges if b == node] for node in ("VAL", "RISK", "GATES", "LINK")}
+    assert into == {"VAL": ["SLG"], "RISK": ["VAL"], "GATES": ["RISK"], "LINK": ["GATES"]}
+    assert ("ALGO", "FAN") in edges
