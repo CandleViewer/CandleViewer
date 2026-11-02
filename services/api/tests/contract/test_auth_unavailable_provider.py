@@ -221,6 +221,27 @@ def test_the_503_spends_none_of_the_address_s_second_factor_budget(
     assert stack.scraped("auth_login_failures_total", method=factor) == failures
 
 
+def test_an_enrolment_refused_at_the_seal_records_its_user(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The keyring passes the check, then refuses the seal, where M2's refusal names no user: the
+    record still names the enrolling user, whom the handler knows (as the confirm routes' do)."""
+    headers = _methodless(stack, "carol")
+    seal = stack.keyring.seal_totp_seed
+
+    async def down_at_the_seal(seed: bytes | bytearray, user_id: uuid.UUID) -> tuple[bytes, str]:
+        stack.keyring.down = DOWN
+        return await seal(seed, user_id)
+
+    monkeypatch.setattr(stack.keyring, "seal_totp_seed", down_at_the_seal)
+    answer = stack.client.post("/auth/mfa/enroll", headers=headers, json={"method": "totp"})
+    assert answer.status_code == 503, answer.text
+    carol = next(u for u in stack.users.users.values() if u.username == "carol")
+    (record,) = stack.audit.of(_ACTION)
+    assert (record["actor_user_id"], record["actor_label"]) == (carol.id, str(carol.id))
+    assert record["after_state"]["operation"] == "authMfaEnroll"
+
+
 @pytest.mark.parametrize("operation", ["redeemInvite", "confirmInvite"])
 def test_an_invite_request_met_by_the_503_executes_once_when_sent_again(
     stack: Stack, operation: str

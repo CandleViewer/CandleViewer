@@ -1131,7 +1131,7 @@ def make_auth_router(
         try:
             result = await auth_service.mfa.enroll(str(user.id), body, account_name=user.username)
         except MfaKeyringUnavailable as exc:  # it went down since the check: no method created
-            return await _mfa_unavailable(request, "authMfaEnroll", exc)
+            return await _mfa_unavailable(request, "authMfaEnroll", exc, user.id)
         content = {
             "method_id": str(result.method_id),
             "method": result.method.value,

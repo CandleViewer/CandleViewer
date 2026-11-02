@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import re
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Final
 
 import structlog
@@ -64,7 +64,7 @@ def unavailable_row(
     *,
     user_id: uuid.UUID | None = None,
     actor_ip: str | None = None,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """The audit columns of one `auth.mfa_unavailable` (BQ-8): the operation, the user (the
     error's own, else `user_id`), the address and the bounded reason; never a code or a key."""
     user = exc.user_id or user_id
@@ -80,7 +80,9 @@ def unavailable_row(
     }
 
 
-async def record_unavailable(emit: Callable[..., Awaitable[None]], row: dict[str, Any]) -> None:
+async def record_unavailable(
+    emit: Callable[..., Awaitable[None]], row: Mapping[str, object]
+) -> None:
     """Write `row` as `auth.mfa_unavailable` through `emit`, bounded by the audit timeout; a
     record that fails is counted and logged, never raised (the answer is decided). A cancellation
     is counted too and propagates."""

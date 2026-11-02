@@ -268,13 +268,13 @@ async def open_at_boot(
     try:
         # One origin (`load_keyring` checked); the rows' own KEK versions, as they opened.
         await audit(LOADED, _keyring_fields(rows, rows[0]["origin"]))
-        if rows[0]["origin"] == IMPORTED:
-            await _legacy_window(store, kek.env_name)
     except BaseException as exc:
         ring.close()  # a keyring is never used unrecorded
         if not isinstance(exc, Exception):
             raise
         return None, AUDIT_DOWN
+    if rows[0]["origin"] == IMPORTED:  # after the record, so an error here is no audit failure
+        await _closed_on_cancel(ring, _legacy_window(store, kek.env_name))
     return ring, None
 
 
