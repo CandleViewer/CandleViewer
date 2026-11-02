@@ -19,7 +19,7 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from candleviewer.api.view_as_policy import OWN_OPERATIONS
+from candleviewer.api.view_as_policy import OWN_OPERATIONS, REFUSED_READ_OPERATIONS
 from tests.contract.rbac.rbac_harness import (
     MATRIX_PATH,
     VIEW_TARGETS,
@@ -34,20 +34,33 @@ with MATRIX_PATH.open(encoding="utf-8") as _fh:
     _OPS: dict[str, dict[str, Any]] = yaml.safe_load(_fh)["operations"]
 
 
+def _key_operation(key: str) -> tuple[str, str]:
+    method, template = key.split(" ", 1)
+    return method, template
+
+
+#: The matrix rows of the policy's refused reads (`REFUSED_READS`), whatever their state: a live
+#: view-as context answers them `403 view_as_read_only`, not as the target.
+_REFUSED = tuple(key for key in _OPS if _key_operation(key) in REFUSED_READ_OPERATIONS)
+
+
 def _executed_reads(*, own: bool) -> tuple[str, ...]:
     return tuple(
         key
         for key, row in _OPS.items()
         if row["state"] == "executed"
         and key.startswith("GET ")
-        and (("GET", key.split(" ", 1)[1]) in OWN_OPERATIONS) is own
+        and key not in _REFUSED
+        and (_key_operation(key) in OWN_OPERATIONS) is own
     )
 
 
-#: Every executed read but the viewer's own, by matrix key.
+#: Every executed read but the viewer's own and the refused ones, by matrix key.
 _READS = _executed_reads(own=False)
 #: The viewer's own reads: they act on the viewer's session, as the viewer.
 _OWN_READS = _executed_reads(own=True)
+#: The refused reads the app serves (none while `exportWorkspace` is not mounted).
+_REFUSED_SERVED = tuple(key for key in _REFUSED if _OPS[key]["state"] == "executed")
 
 
 def _get(client: TestClient, key: str, headers: dict[str, str]) -> Any:
@@ -122,3 +135,17 @@ def test_some_read_refuses_the_target_and_answers_the_owner(target: str) -> None
 def test_the_viewers_own_reads_answer_as_the_viewer(world: World, key: str, target: str) -> None:
     status, body = _answer(_get(world.client, key, bearer_viewing(target)))
     assert (status, _OPS[key]["outcomes"]["owner"]) == (200, "allow"), (key, body)
+
+
+def test_the_refused_reads_excluded_here_are_exactly_the_policys() -> None:
+    """Every refused read has a matrix row, so a future mount is excluded from the "answers as
+    the target" expectation and falls under the 403 test below."""
+    assert {_key_operation(key) for key in _REFUSED} == REFUSED_READ_OPERATIONS
+    assert not set(_REFUSED) & set(_READS) and not set(_REFUSED) & set(_OWN_READS)
+
+
+@pytest.mark.parametrize("target", VIEW_TARGETS)
+@pytest.mark.parametrize("key", _REFUSED_SERVED)
+def test_a_refused_read_answers_view_as_read_only(world: World, key: str, target: str) -> None:
+    status, body = _answer(_get(world.client, key, bearer_viewing(target)))
+    assert (status, body["code"]) == (403, "view_as_read_only"), (key, body)

@@ -4,6 +4,11 @@ Callers come from the session (`SessionAuditPrincipalResolver`); RBAC (C-12.4) r
 through `auth.scopes.enforce()`, each denial audited as `rbac.denied`: `workspaces:read` to read,
 `workspaces:write` to write, `scope: self`. A missing, deleted or foreign workspace/layout is the
 same 404 (D18); a live foreign id is also audited (`object_kind` workspace|layout), on reads too.
+A read's denial records are budgeted per acting user (`DenialBudget`, the alert deliveries' bound):
+repeated foreign-id reads stay a 404 each, but cannot flood the audit log, and the next record a
+caller earns carries the count the budget held back. The budget is per acting user across
+target owners: a held record keeps only its count, not its object id. Held counts are logged
+under the shared `alert_denied_audit_held*` event names. A write's denial is always recorded.
 Writes are not audited (D20). Bodies are read raw so the byte and depth caps run before pydantic.
 Evaluation order (D13): 401, 403, 413, 422, 400, 404, no-op 200, 412, 409, write (the last four
 are the repository's, in one transaction). Logs carry ids, counts and outcomes, never content.
@@ -27,6 +32,7 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from candleviewer.api.alert_deliveries import DenialBudget
 from candleviewer.api.drawings_models import MAX_JSON_DEPTH, format_errors
 from candleviewer.api.idempotency import (
     IdempotencyCache,
@@ -487,16 +493,20 @@ def make_workspaces_router(
     metrics: WorkspacesMetricsLike | None = None,
     timer: Callable[[], float] = time.perf_counter,
     idempotency: IdempotencyCache | None = None,
+    denials: DenialBudget | None = None,
 ) -> APIRouter:
     """`audit` is mandatory (a denial must leave its `rbac.denied` record). No resolver (no
     identity store: nothing can verify a session) fails closed with 401; no store with 503.
     `metrics` records 412s, panes per changed layout write and per-operation duration
     (stands in for `http_request_duration_seconds` until platform gap #2421); `None` records
     nothing. `idempotency` is this router's own Idempotency-Key LRU (D23; the helper is shared,
-    ruling Q5, the instance is not): a new one if None, separate from the /drawings cache."""
+    ruling Q5, the instance is not): a new one if None, separate from the /drawings cache.
+    `denials` budgets the read paths' `rbac.denied` records per acting user (a new
+    `DenialBudget` with the shipped bound if None)."""
     if audit is None:
         raise TypeError("make_workspaces_router: an audit emitter is required")
     cache = IdempotencyCache() if idempotency is None else idempotency
+    budget = DenialBudget() if denials is None else denials
 
     class _TimedRoute(_ProblemRoute):
         def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
@@ -567,16 +577,33 @@ def make_workspaces_router(
             raise _Problem("store_unavailable", "The workspace store is unavailable.")
         return repo
 
+    async def deny(p: AuditPrincipal, kind: _Kind, oid: str, mode: str) -> None:
+        """One `rbac.denied` record for a live foreign id, the viewer's while viewing (#3085).
+        A read's record is within the acting user's denial budget: past it the denial is counted,
+        not written, and the next record carries the count (`after_state.suppressed_before`); a
+        record that is not written gives its slot and its count back."""
+        who = str(p.actor_id)
+        carried: int | None = 0
+        if mode == "read" and (carried := budget.admit(who)) is None:
+            return
+        extra = {"after_state": {"suppressed_before": carried}} if carried else {}
+        try:
+            await audit.emit(
+                "rbac.denied", actor_label=who, actor_user_id=p.actor_id,
+                actor_ip=p.ip, session_id=p.session_id, request_id=p.request_id, object_kind=kind,
+                object_id=oid, outcome=AuditOutcome.DENIED, severity=Severity.WARNING,
+                reason=f"not_owner:workspaces:{mode}:self", **extra,
+            )  # fmt: skip
+        except BaseException:
+            if mode == "read":  # not written: its slot and its count go back to the budget
+                budget.restore(who, carried or 0)
+            raise
+
     async def not_found(p: AuditPrincipal, kind: _Kind, oid: str, mode: str) -> _Problem:
         """Same 404 for a missing, deleted or foreign id; a foreign live id is audited once."""
         owner = str(p.user_id)
         if await store().exists_for_other_owner(owner, kind, oid):
-            await audit.emit(  # the viewer acts while viewing (#3085)
-                "rbac.denied", actor_label=str(p.actor_id), actor_user_id=p.actor_id,
-                actor_ip=p.ip, session_id=p.session_id, request_id=p.request_id, object_kind=kind,
-                object_id=oid, outcome=AuditOutcome.DENIED, severity=Severity.WARNING,
-                reason=f"not_owner:workspaces:{mode}:self",
-            )  # fmt: skip
+            await deny(p, kind, oid, mode)
         return _not_found(kind)
 
     @router.get("/workspaces")
@@ -677,12 +704,7 @@ def make_workspaces_router(
         elif await store().exists_for_other_owner(owner, "workspace", wid):
             found = ("workspace", wid)
         if found is not None:
-            await audit.emit(  # the viewer acts while viewing (#3085)
-                "rbac.denied", actor_label=str(p.actor_id), actor_user_id=p.actor_id,
-                actor_ip=p.ip, session_id=p.session_id, request_id=p.request_id,
-                object_kind=found[0], object_id=found[1], outcome=AuditOutcome.DENIED,
-                severity=Severity.WARNING, reason=f"not_owner:workspaces:{mode}:self",
-            )  # fmt: skip
+            await deny(p, found[0], found[1], mode)
         return _not_found("workspace" if lid is None else "layout")
 
     @router.get("/layout-presets")

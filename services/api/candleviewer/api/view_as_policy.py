@@ -10,6 +10,10 @@ or its operation is one of these:
   the classification of 24-internal-schemas.md section 8.10, or need none for a cancel or a close,
   each protective in whole; so the guard passes them on once a handler has registered
   (`ProtectiveWrites`). Until then it refuses them as any write: fail closed.
+
+One live read is refused all the same (`REFUSED_READS`): the guard answers it `view_as_read_only`,
+with its refusal record, as it answers any write. It is refused whether or not its route is
+mounted yet, so the route's ticket inherits the refusal.
 """
 
 from __future__ import annotations
@@ -51,6 +55,21 @@ PROTECTIVE_WRITES: Final[Mapping[str, tuple[tuple[str, str], str]]] = MappingPro
         "closeAllPositions": (("POST", "/positions/close-all"), "E29-T07"),
     }
 )
+
+
+#: The reads refused in a live view-as context, by operationId: (METHOD, contract path template),
+#: and the ticket that mounts the route. `exportWorkspace` (SR-E15-19, #5435): a portable bundle
+#: of the target's workspace is a copy the viewer would carry out of the view (22,
+#: `exportWorkspace`). A held context refuses every read already. A test pins the pairs to the
+#: contract.
+REFUSED_READS: Final[Mapping[str, tuple[tuple[str, str], str]]] = MappingProxyType(
+    {
+        "exportWorkspace": (("GET", "/workspaces/{workspaceId}/export"), "E15-S07"),
+    }
+)
+
+#: `REFUSED_READS`' operations, as the guard matches them.
+REFUSED_READ_OPERATIONS: Final = frozenset(operation for operation, _ in REFUSED_READS.values())
 
 
 class ProtectiveWrites:
