@@ -201,12 +201,13 @@ jobs:
       - run: npm install -g corepack@latest && corepack enable && corepack prepare pnpm@12.5.1 --activate
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: node tools/ci/run-allowed-postinstall.mjs
-      - name: Turbo test:cov (chart-engine, protocol, rule-graph) --filter=...[origin/main]
+      - name: Turbo test:cov (chart-engine, protocol, rule-graph, dock) --filter=...[origin/main]
         run: >
           pnpm turbo run test:cov
           --filter='@candleviewer/chart-engine...[origin/main]'
           --filter='@candleviewer/protocol...[origin/main]'
           --filter='@candleviewer/rule-graph...[origin/main]'
+          --filter='@candleviewer/dock...[origin/main]'
           --summarize
       - name: Record which packages turbo scheduled (coverage gate N/A vs CI-COV-003)
         if: always()
@@ -215,6 +216,7 @@ jobs:
           --filter='@candleviewer/chart-engine...[origin/main]'
           --filter='@candleviewer/protocol...[origin/main]'
           --filter='@candleviewer/rule-graph...[origin/main]'
+          --filter='@candleviewer/dock...[origin/main]'
       - name: Record lane duration in job summary
         if: always()
         run: node tools/ci/write-turbo-summary.mjs unit-engine >> "$GITHUB_STEP_SUMMARY"
@@ -228,6 +230,7 @@ jobs:
             packages/chart-engine/coverage/lcov.info
             packages/protocol/coverage/lcov.info
             packages/rule-graph/coverage/lcov.info
+            packages/dock/coverage/lcov.info
             packages/chart-engine/junit.xml
             packages/protocol/junit.xml
           retention-days: 14
