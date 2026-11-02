@@ -64,7 +64,9 @@ async def test_s06_bars_follow_the_exchange_clock_through_a_host_jump(
     await _jump(rig, bars, skew)
     expected = await golden.golden_bars(golden.venue_tape(rig, SYMBOL), SPECS, SYMBOL)
     for label in SPECS:
-        golden.assert_matches_golden(expected[label], bars.bars(label), label)
+        golden.assert_matches_golden(
+            expected[label], bars.bars(label), label, kind=SPECS[label].kind
+        )
         golden.assert_monotonic(bars.bars(label), label)
     assert _dropped() == dropped, "venue-correct prints dropped as late"
     assert bars.amended("time:5s") == 0, "a host jump re-emitted closed bars"
@@ -88,7 +90,9 @@ async def test_s06_dense_jump_forward_and_back_leaves_the_bars_equal_to_the_gold
     await bars.finish()
     expected = await golden.golden_bars(golden.venue_tape(rig, SYMBOL), SPECS, SYMBOL)
     for label in SPECS:
-        golden.assert_matches_golden(expected[label], bars.bars(label), label)
+        golden.assert_matches_golden(
+            expected[label], bars.bars(label), label, kind=SPECS[label].kind
+        )
     assert bars.amended("time:5s") == 0
 
 
@@ -101,7 +105,9 @@ async def test_s06_negative_control_raw_host_clock_plus_two_minutes_drops_correc
     assert _dropped() > dropped, "the raw host clock no longer loses prints: control is stale"
     expected = await golden.golden_bars(golden.venue_tape(rig, SYMBOL), SPECS, SYMBOL)
     with pytest.raises(AssertionError, match="differs from the golden"):
-        golden.assert_matches_golden(expected["time:5s"], bars.bars("time:5s"), "time:5s")
+        golden.assert_matches_golden(
+            expected["time:5s"], bars.bars("time:5s"), "time:5s", kind="time"
+        )
     with pytest.raises(AssertionError, match="volume not conserved"):
         golden.assert_conserved(expected["time:5s"], bars.bars("time:5s"), "time:5s")
 
@@ -126,4 +132,4 @@ async def test_s06_backward_jump_never_opens_a_bar_before_its_predecessor(
         golden.assert_monotonic(bars.bars(label), label)
     assert _dropped() == dropped
     expected = await golden.golden_bars(golden.venue_tape(rig, SYMBOL), SPECS, SYMBOL)
-    golden.assert_matches_golden(expected["time:5s"], bars.bars("time:5s"), "time:5s")
+    golden.assert_matches_golden(expected["time:5s"], bars.bars("time:5s"), "time:5s", kind="time")

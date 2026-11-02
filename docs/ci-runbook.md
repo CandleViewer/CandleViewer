@@ -226,6 +226,20 @@ signal (labels `qa`, `area/recorder-replay`, `priority/p1`). Triage from the job
 the `chaos-recorder-junit` artifact; a failing negative control (`test_pinned_assertion_fails_*`)
 means the pinned-bytes assertion stopped proving anything, not that pins were lost.
 
+**Nightly bars chaos (#529).** `chaos-bars-nightly.yml` runs the bars chaos suite
+(`services/api/tests/chaos/bars`, E12-Q06; catalogue in its `SCENARIOS.md`: WS and process drops
+mid-bar, tape gaps, out-of-order and duplicate prints, the kline backfill rate limit, host clock
+jumps, the store outage and the delisted symbol) on `main` daily at 03:41 UTC and on demand, the
+same shape as the recorder chaos nightly above: one `chaos-bars` job, one pytest call with
+`-m "chaos and not flaky"`, `--no-cov`, no retries, a 10-minute step limit and a 25-minute job
+limit. Fakes and the virtual clock only, so the PR lane's `db-chaos` shards run it too; the one
+QuestDB test (`test_s05b_questdb_container.py`) skips here and runs in the integration job's
+storage chaos step. Not required (C-9.1), but a red night blocks the next release (C-9.2) and
+files under the `chaos-bars` signal (labels `qa`, `area/ingestion`, `priority/p1`). Triage from the
+job log (`-rA`) and the `chaos-bars-junit` artifact; a failing negative control
+(`test_*_negative_control_*`) means an invariant helper stopped proving anything, and a strict xfail
+that turns into a failure means its defect was fixed: remove the marker in the fix's PR.
+
 **Nightly issues, one per signal (#1849).** `fixture-drift.yml` (signal `fixture-drift`),
 `perf-storage-nightly.yml` (`perf-storage`), `perf-ingestion-nightly.yml` (`perf-ingestion-soak`,
 `perf-e08-q04-pack`, and `perf-e08-q04-full` on a dispatch with `profile=full` and on the Sunday
@@ -236,7 +250,8 @@ means the pinned-bytes assertion stopped proving anything, not that pins were lo
 labels `qa`, `area/backend-platform`, `priority/p1`), `perf-recorder-nightly.yml`
 (`perf-recorder`, labels `perf`, `area/recorder-replay`; nightly at 02:47 UTC and on dispatch,
 E16-Q04) and `chaos-recorder-nightly.yml` (`chaos-recorder`, labels `qa`, `area/recorder-replay`,
-`priority/p1`; nightly at 03:33 UTC and on dispatch, E16-Q04) report a red signal through
+`priority/p1`; nightly at 03:33 UTC and on dispatch, E16-Q04) and `chaos-bars-nightly.yml` (`chaos-bars`, labels `qa`,
+`area/ingestion`, `priority/p1`; nightly at 03:41 UTC and on dispatch, E12-Q06) report a red signal through
 `_nightly-issue.yml`, from scheduled and manual runs alike; `dast-admin` and `e2e-auth-real` report
 from `main` only, so a dispatch on a branch files nothing. Its `report` job comments on the
 newest open issue that `github-actions[bot]` opened with the signal's title prefix and all its
