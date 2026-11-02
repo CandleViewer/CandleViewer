@@ -2,6 +2,7 @@
 // state-sorted order (BQ-42), switching program and texture only when they change. No allocation
 // per frame (§3.2 rule 4): plain loops over retained batches, counters on the trace.
 import type { RetainedBatch } from "../scene/batch-builder.js";
+import type { BatchUniforms } from "../scene/gpu-types.js";
 import type { PaneUniforms } from "../viewport/transform.js";
 import type { GlBuffers } from "./buffers.js";
 import { GL, type GL2Like } from "./gl-types.js";
@@ -11,9 +12,17 @@ import type { DrawTrace } from "./trace.js";
 
 /** Each batch is `count` instances of one 4-vertex strip quad: 2 triangles each. */
 export const QUAD_VERTICES = 4;
+/**
+ * Strip vertices per instance, indexed by `PROGRAM` (E12-S06, BQ-15): every program draws one
+ * quad today; a batch block's `vertices` overrides it (the OHLC ticks' 10-vertex strip, PR 2).
+ */
+export const PROGRAM_VERTICES: readonly number[] = [4, 4, 4, 4, 4];
 
 /** A batch's pane uniform block (E11-S03), written by `writePaneUniforms` once per frame. */
 export type PaneUniformSource = (batch: RetainedBatch) => PaneUniforms | null;
+
+export type { BatchUniforms };
+export type BatchUniformSource = (batch: RetainedBatch) => BatchUniforms | null;
 
 export function submitDrawList(
   gl: GL2Like,
@@ -25,10 +34,12 @@ export function submitDrawList(
     buffers: GlBuffers;
     trace: DrawTrace;
     paneUniforms?: PaneUniformSource | null;
+    batchUniforms?: BatchUniformSource | null;
   },
 ): void {
   const { programs, textures, buffers, trace } = parts;
   const panes = parts.paneUniforms ?? null;
+  const own = parts.batchUniforms ?? null;
   trace.begin();
   let program = -1;
   let texture = -1;
@@ -54,10 +65,14 @@ export function submitDrawList(
         texture = b.texture;
         trace.textureSwitches += 1;
       }
+      const blk = own === null ? null : own(b);
+      if (blk !== null) programs.setBatchUniforms(program, blk);
+      const vertices =
+        blk !== null && blk.vertices > 0 ? blk.vertices : (PROGRAM_VERTICES[b.program] ?? 4);
       gl.bindVertexArray(vao);
-      gl.drawArraysInstanced(GL.TRIANGLE_STRIP, 0, QUAD_VERTICES, b.count);
+      gl.drawArraysInstanced(GL.TRIANGLE_STRIP, 0, vertices, b.count);
       trace.draws += 1;
-      trace.triangles += 2 * b.count;
+      trace.triangles += (vertices - 2) * b.count;
       if (trace.enabled) trace.nodes.push(b.nodeId);
     }
   } finally {

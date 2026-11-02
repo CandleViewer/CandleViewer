@@ -242,6 +242,27 @@ describe("backpressure", () => {
     host.dispose();
   });
 
+  it("keeps a budget per series: two series of one store never conflate (E12-S06)", () => {
+    const host = hostOn(workerDoc());
+    settle();
+    const w = lastWorker();
+    for (let i = 0; i < 3; i += 1) {
+      for (const series of [0, 1]) {
+        const b = one();
+        host.data("bars", "append", b.layout, b.buffer, series);
+      }
+    }
+    vi.advanceTimersByTime(0);
+    type Data = Extract<ToWorker, { t: "data" }>;
+    const of = (series: number): number =>
+      (inboxOf(w, "data") as Data[]).filter((m) => m.series === series).length;
+    expect([of(0), of(1)]).toEqual([2, 2]); // each series has its own two in flight
+    settle(); // the worker acks each batch with its series: each lane frees its own slot
+    expect([of(0), of(1)]).toEqual([3, 3]);
+    expect(host.counters.conflated).toBe(0);
+    host.dispose();
+  });
+
   it("drops the oldest held-back batch beyond the queue bound", () => {
     const host = hostOn(workerDoc());
     settle();

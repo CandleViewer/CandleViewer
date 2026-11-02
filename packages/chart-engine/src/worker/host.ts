@@ -326,7 +326,13 @@ export interface ChartHost {
   /** Coalesced to one `sync` per frame (last wins). */
   sync(groupId: string, timeRange: readonly [number, number], crosshair: number | null): void;
   /** Hands `buffer` over (it is detached on return) under the two-in-flight rule. */
-  data(store: StoreId, op: DataOp, layout: BufferLayout, buffer: ArrayBuffer): void;
+  data(
+    store: StoreId,
+    op: DataOp,
+    layout: BufferLayout,
+    buffer: ArrayBuffer,
+    series?: number,
+  ): void;
   command(cmd: Command): void;
   /** Resolves the PNG, or null when it cannot encode; rejects `ExportUnavailableError` (BQ-92). */
   exportPng(): Promise<unknown>;
@@ -389,9 +395,13 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   // The open wheel row per fold key in the pending batch (-1: none) and its float64 sums.
   const folded = new Int32Array(FOLD_KEYS).fill(-1);
   const sums = new Float64Array(FOLD_KEYS * 2);
-  const unacked = new Map<StoreId, number>();
-  const queues = new Map<StoreId, PendingData[]>();
-  const resyncAsked = new Set<StoreId>();
+  // E12-S06: in-flight counts, held batches and resync asks per lane, a store or one series of
+  // it, so two series' batches never conflate into each other (the per-store merge gap).
+  const unacked = new Map<string, number>();
+  const queues = new Map<string, PendingData[]>();
+  const resyncAsked = new Set<string>();
+  const laneOf = (store: StoreId, series: number | undefined): string =>
+    series === undefined ? store : `${store}#${series}`;
   const exports = new Map<number, (msg: { blob: unknown; reason?: ExportRejectReason }) => void>();
   let exportSeq = 0;
   /** Set once by the degraded-2d handoff and kept across worker restarts (BQ-53). */
@@ -423,9 +433,11 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
     for (const cmd of retained.values()) link.post({ t: "command", id, cmd }, []);
   };
 
-  function send(store: StoreId, batch: PendingData): void {
-    unacked.set(store, (unacked.get(store) ?? 0) + 1);
-    link.post({ t: "data", id, store, ...batch }, [batch.buffer]);
+  function send(store: StoreId, series: number | undefined, batch: PendingData): void {
+    const lane = laneOf(store, series);
+    unacked.set(lane, (unacked.get(lane) ?? 0) + 1);
+    const tag = series === undefined ? {} : { series };
+    link.post({ t: "data", id, store, ...batch, ...tag }, [batch.buffer]);
   }
 
   const settleExports = (): void => {
@@ -437,11 +449,12 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
     deliver(msg): void {
       if (disposed) return;
       if (msg.t === "ack") {
-        unacked.set(msg.store, Math.max(0, (unacked.get(msg.store) ?? 0) - 1));
-        const queue = queues.get(msg.store);
+        const lane = laneOf(msg.store, msg.series);
+        unacked.set(lane, Math.max(0, (unacked.get(lane) ?? 0) - 1));
+        const queue = queues.get(lane);
         const next = queue?.shift();
-        if (next !== undefined) send(msg.store, next);
-        if ((queue?.length ?? 0) === 0) resyncAsked.delete(msg.store);
+        if (next !== undefined) send(msg.store, msg.series, next);
+        if ((queue?.length ?? 0) === 0) resyncAsked.delete(lane);
         return;
       }
       if (msg.t === "exported") {
@@ -579,25 +592,26 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
       pendingSync = { t: "sync", groupId, timeRange, crosshair };
       schedule();
     },
-    data(store, op, layout, buffer): void {
+    data(store, op, layout, buffer, series): void {
       if (disposed) return;
       const batch: PendingData = { op, layout, buffer: move(buffer) };
-      if ((unacked.get(store) ?? 0) < MAX_UNACKED) {
-        send(store, batch);
+      const lane = laneOf(store, series);
+      if ((unacked.get(lane) ?? 0) < MAX_UNACKED) {
+        send(store, series, batch);
         return;
       }
-      let queue = queues.get(store);
+      let queue = queues.get(lane);
       if (queue === undefined) {
         queue = [];
-        queues.set(store, queue);
+        queues.set(lane, queue);
       }
       if (conflate(queue, batch)) link.counters.conflated += 1;
       if (queue.length > MAX_QUEUED) {
         queue.shift();
         link.counters.messagesDropped += 1;
         // The store now has a hole: ask the data layer to re-send it, once per overload episode.
-        if (!resyncAsked.has(store)) {
-          resyncAsked.add(store);
+        if (!resyncAsked.has(lane)) {
+          resyncAsked.add(lane);
           o.listener.resync(store);
         }
       }

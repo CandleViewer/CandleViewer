@@ -8,7 +8,10 @@ describe("instance layouts (E11-T05, BQ-87)", () => {
   it.each(Object.entries(PROGRAM))("%s: the shader's `in` attributes are its layout's", (_, id) => {
     const layout = INSTANCE_LAYOUTS[id];
     const vertex = PROGRAMS[id]?.vertex ?? "";
-    const declared = [...vertex.matchAll(/^in \w+ (\w+);$/gm)].map((m) => m[1]);
+    // E12-S06: `layout(location = N) in` (the candle's int attributes) counts as an `in` too.
+    const declared = [...vertex.matchAll(/^(?:layout\(location = \d+\) )?in \w+ (\w+);$/gm)].map(
+      (m) => m[1],
+    );
     expect(declared.filter((n) => n !== "a_corner")).toEqual(layout?.attributes.map(([n]) => n));
   });
 

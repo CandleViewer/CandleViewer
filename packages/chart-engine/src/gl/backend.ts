@@ -5,7 +5,7 @@
 // drops every GL object and `restore()` rebuilds them from CPU state (BQ-49). E11-T05's
 // `Canvas2DBackend` (src/canvas2d) is the seam's second implementation (README BQ-85).
 import type { RetainedBatch, UploadSink } from "../scene/batch-builder.js";
-import { GlBuffers, type VertexSource } from "./buffers.js";
+import { type AttributeLayout, GlBuffers, type VertexSource } from "./buffers.js";
 import { GL, type GL2Like } from "./gl-types.js";
 import {
   ContextLostError,
@@ -15,7 +15,7 @@ import {
   ProgramCompileError,
 } from "./program-cache.js";
 import { GlRegistry } from "./registry.js";
-import { type PaneUniformSource, submitDrawList } from "./submit.js";
+import { type BatchUniformSource, type PaneUniformSource, submitDrawList } from "./submit.js";
 import { ATLAS_TEXTURE, GlTextures } from "./textures.js";
 import { DrawTrace } from "./trace.js";
 
@@ -63,8 +63,11 @@ export interface RenderBackend extends UploadSink {
   takeUploadedBytes(): number;
   /** Where each batch's pane uniform block comes from (E11-S03, closes BQ-59's setters). */
   setPaneUniforms(source: PaneUniformSource | null): void;
-  /** Gives a drawing node its instance ring (the store-to-node mapping is the runtime's). */
-  attach(nodeId: string, source: VertexSource): void;
+  /** Where each batch's own uniforms come from (E12-S06: the candle parts). */
+  setBatchUniforms(source: BatchUniformSource | null): void;
+  /** Gives a drawing node its instance ring (the store-to-node mapping is the runtime's); nodes
+   * given one source share its buffer (E12-S06), `layout` binds its int attributes. */
+  attach(nodeId: string, source: VertexSource, layout?: AttributeLayout | null): void;
   /** The clear colour, from the theme's background token. */
   setBackground(css: string | undefined): void;
   /** The SDF atlas's packed rows into texture `ATLAS_TEXTURE` (E11-S11; 2D draws text by font). */
@@ -83,6 +86,7 @@ export class GLBackend implements RenderBackend, LossCapable {
   readonly drawsIn2d = false;
   readonly loss: LossCapable = this;
   paneUniforms: PaneUniformSource | null = null;
+  batchUniforms: BatchUniformSource | null = null;
   private readonly rgb = [0, 0, 0];
   private background: string | undefined = "#000";
 
@@ -102,8 +106,12 @@ export class GLBackend implements RenderBackend, LossCapable {
     if (this.failure === null) this.buffers.uploadSubRange(batch, from, to);
   }
 
-  attach(nodeId: string, source: VertexSource): void {
-    this.buffers.attach(nodeId, source);
+  attach(nodeId: string, source: VertexSource, layout: AttributeLayout | null = null): void {
+    this.buffers.attach(nodeId, source, layout);
+  }
+
+  setBatchUniforms(source: BatchUniformSource | null): void {
+    this.batchUniforms = source;
   }
 
   submit(
