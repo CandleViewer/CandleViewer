@@ -1,8 +1,9 @@
 /**
  * E29-S01 (#911) the feed's announcements, owned by the panel (`feedAnnouncements.ts`): each
- * crossing once even when StrictMode runs the mount's effects twice, the loading and could-not-load
- * lines once per episode, each account withdrawn once with the lines of one change in one message,
- * and a line a focus move already spoke left unsaid (E29-D05 §5.4, F-02).
+ * crossing once even when StrictMode runs the mount's effects twice, a start's and a Retry's loading
+ * lines and each one's result once (never a narrowing's reload), could not load once per failure,
+ * each account withdrawn once with the lines of one change in one message, and a line a focus move
+ * already spoke left unsaid (E29-D05 §5.4, F-02).
  */
 import { StrictMode, createElement, type ReactNode } from "react";
 import { renderHook } from "@testing-library/react";
@@ -10,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { generated } from "@candleviewer/protocol";
 import type { PanelAnnouncer } from "../../../src/features/positions/announce";
 import { useFeedAnnouncements } from "../../../src/features/positions/feedAnnouncements";
+import type { FilterChip } from "../../../src/features/positions/model/filters";
 import {
   accountInfo,
   type AccountInfo,
@@ -51,6 +53,7 @@ function committed(then: (store: ReturnType<typeof createPositionsStore>) => voi
 }
 
 const NONE = new Map();
+const NO_CHIPS: readonly FilterChip[] = [];
 const NOBODY = new WeakSet<Withdrawn>();
 
 describe("the panel's feed announcements", () => {
@@ -69,6 +72,7 @@ describe("the panel's feed announcements", () => {
       () =>
         useFeedAnnouncements({
           snap: after,
+          chips: NO_CHIPS,
           accounts: NONE,
           environment: "live",
           announcer,
@@ -95,6 +99,7 @@ describe("the panel's feed announcements", () => {
     const announcer = fakeAnnouncer();
     const props = (snap: PositionsSnapshot) => ({
       snap,
+      chips: NO_CHIPS,
       accounts: NONE,
       environment: "live" as const,
       announcer,
@@ -110,6 +115,51 @@ describe("the panel's feed announcements", () => {
     ]);
   });
 
+  it("says a start's and a Retry's loading lines and each one's result once; a narrowing's reload says neither (S-01)", () => {
+    const store = createPositionsStore();
+    const steps: PositionsSnapshot[] = [];
+    const step = (then: () => void): void => {
+      then();
+      store.commit();
+      steps.push(store.getSnapshot());
+    };
+    step(() => {
+      store.setStarted(true);
+      store.setAccounts(accounts);
+    });
+    step(() => store.applyFrames([snap(snapshot)]));
+    step(() => store.applyFrames([reset("narrowed")])); // the directory has not answered yet
+    step(() => store.applyFrames([snap({ positions: [] })]));
+    step(() => store.applyFrames([reset("revoked")]));
+    step(() => store.markRetrying());
+    step(() => store.applyFrames([snap({ positions: [] })]));
+    const announcer = fakeAnnouncer();
+    const props = (snap: PositionsSnapshot) => ({
+      snap,
+      chips: NO_CHIPS,
+      accounts: NONE,
+      environment: "live" as const,
+      announcer,
+      spokenByFocus: NOBODY,
+    });
+    const [first, ...rest] = steps as [PositionsSnapshot, ...PositionsSnapshot[]];
+    const { rerender } = renderHook((p: ReturnType<typeof props>) => useFeedAnnouncements(p), {
+      initialProps: props(first),
+    });
+    for (const next of rest) rerender(props(next));
+    const loading = "Loading Main · LIVE… Loading Sub-1 · LIVE… Loading Sub-2 · LIVE…";
+    expect(announcer.said).toEqual([
+      ["polite", loading],
+      ["polite", "5 rows"],
+      [
+        "polite",
+        "No longer shown — access to Main was withdrawn. No longer shown — access to Sub-1 was withdrawn. No longer shown — access to Sub-2 was withdrawn.",
+      ],
+      ["polite", loading],
+      ["polite", "No open positions"],
+    ]);
+  });
+
   it("says could not load once per failure (RT-15)", () => {
     const store = createPositionsStore();
     store.setStarted(true);
@@ -120,6 +170,7 @@ describe("the panel's feed announcements", () => {
     const announcer = fakeAnnouncer();
     const props = (snap: PositionsSnapshot) => ({
       snap,
+      chips: NO_CHIPS,
       accounts: NONE,
       environment: "live" as const,
       announcer,
@@ -139,6 +190,7 @@ describe("the panel's feed announcements", () => {
     const announcer = fakeAnnouncer();
     const props = (snap: PositionsSnapshot) => ({
       snap,
+      chips: NO_CHIPS,
       accounts: NONE,
       environment: "live" as const,
       announcer,

@@ -23,9 +23,10 @@
  *   come (D02 §10.4, `32-design-specs.md` G-T2.5).
  * - **Announcements** (`announce.ts`): the filtered result after a chip change (D04 §2.6, D05 §8.1,
  *   polite, once per change, latest wins), the focused row's and the totals' changed values (RT-16).
- * - **Focus** never drops to `body` (D05 §5.4): Retry hands it to the tab, Clear filters to "+ Filter"
- *   (as CMP-055's Clear all does), and a focused row whose account is withdrawn to that account's line
- *   (F-02), which then speaks itself and the panel's RT-15 stays silent for it.
+ * - **Focus** never drops to `body` (D05 §5.4): Retry hands it to the tab's root, a group named by
+ *   the tab's word; Clear filters to "+ Filter" (as CMP-055's Clear all does); and a focused row
+ *   whose account is withdrawn to that account's line (F-02), which then speaks itself and the
+ *   panel's RT-15 stays silent for it.
  */
 import {
   useEffect,
@@ -47,9 +48,9 @@ import {
   ErrorState,
   Icon,
   PositionsGrid,
-  rowsWord,
   Skeleton,
   Tag,
+  type IconName,
   type PositionsGridColumnId,
   type TableSort,
 } from "@candleviewer/ui";
@@ -71,6 +72,7 @@ import {
   gridGroups,
   gridTotals,
   loadingLine,
+  resultWords,
   totalsLabel,
   withdrawnLine,
   type GridRow,
@@ -116,6 +118,14 @@ const toneOf = (signal: AccountSignal): "info" | "warning" | "danger" =>
     : signal.oms?.state === "desync"
       ? "warning"
       : "danger";
+
+/** D03 §4.1's glyph of an account state's line: `refresh`, the warning triangle, a lock's `lock`. */
+const glyphOf = (signal: AccountSignal): IconName =>
+  signal.oms?.state === "reconciling"
+    ? "refresh"
+    : signal.oms?.state === "desync"
+      ? "warning"
+      : "lock";
 
 /** The slot's order (D03 §4.2): a lock, then Verifying, then Reconciling. */
 const severityOf = (signal: AccountSignal): number =>
@@ -267,13 +277,9 @@ export function PositionsTab({
     if (!filterChanged.current) return;
     filterChanged.current = false;
     if (!gridShown) return; // the loading or failed state's own line says what is shown
-    const text = view.filterEmpty
-      ? filterEmptyTitle(chips.length)
-      : view.empty
-        ? DECK["blotter.ui.empty"].string
-        : rowsWord(view.rows.length);
+    const text = resultWords(snap.rows.length, view.rows.length, chips.length);
     announcer.say("polite", text, "filter");
-  }, [chips, view, gridShown, announcer]);
+  }, [chips, snap.rows, view, gridShown, announcer]);
 
   // F-02 (E29-D05 §5.4): when the focused row's account is withdrawn, focus goes to its line, which
   // speaks itself, so the panel's RT-15 stays silent for it. The row is the one that last held
@@ -485,8 +491,16 @@ export function PositionsTab({
     );
   }
 
+  // the root is Retry's focus target: a group named by its tab, so focus never lands unnamed
   return (
-    <div className="cv-positions__tab" data-part="PositionsTab" ref={root} tabIndex={-1}>
+    <div
+      className="cv-positions__tab"
+      data-part="PositionsTab"
+      ref={root}
+      tabIndex={-1}
+      role="group"
+      aria-label={D02_TEXT.tabPositions.string}
+    >
       <Toolbar
         accounts={snap.accounts}
         chips={chips}
@@ -504,6 +518,7 @@ export function PositionsTab({
         <div className="cv-positions__slot" data-part="AccountSlot">
           <Callout
             tone={toneOf(slot[1])}
+            icon={glyphOf(slot[1])}
             live="off"
             title={bindKinds(slotLine.line, {
               label: label(slot[0]),

@@ -8,8 +8,12 @@
  *   StrictMode mount) says nothing again.
  * - **RT-07, RT-11:** each account's episode once (`accountAnnouncements`), held until the directory
  *   lists the account, so its label, never an id stub, names it (D03:327-330).
- * - **S-01:** loading, said once per loading episode (D02:388, "announced once"; the deck marks
- *   `blotter.ui.loading` `announce: "none"`, a conflict routed to E29-D02's and E29-D06's owners).
+ * - **S-01 and its result:** a first load's loading lines, and each Retry's, said once (D02:388,
+ *   "announced once"; the deck marks `blotter.ui.loading` `announce: "none"`, a conflict routed to
+ *   E29-D02's and E29-D06's owners); when that load ends with the book read, its result, once, in
+ *   CMP-049's words (D04:273, D05:285, `15`:530's "load results"), which CMP-049 cannot say: it
+ *   mounts with the rows. A narrowing's reload says neither: its directory read may withdraw an
+ *   account the lines would name, and F-02's line says what changed.
  * - **RT-15:** could not load, once per failure (the tab's lines show with no live role); and each
  *   account withdrawn, once, its lines in one message, except the line a focus move already spoke
  *   (E29-D05 §5.4, F-02: "the line is heard once").
@@ -23,7 +27,8 @@ import {
   type PanelAnnouncer,
   type SaidEpisodes,
 } from "./announce";
-import { accountWords, failedLines, loadingLine, withdrawnLine } from "./gridModel";
+import { accountWords, failedLines, loadingLine, resultWords, withdrawnLine } from "./gridModel";
+import { applyFilters, type FilterChip } from "./model/filters";
 import type { Environment } from "./model/rowMapping";
 import type { PositionsSnapshot, Withdrawn } from "./positionsStore";
 
@@ -39,6 +44,8 @@ export function showsLoading(snap: PositionsSnapshot): boolean {
 
 export interface FeedAnnouncementsInputs {
   readonly snap: PositionsSnapshot;
+  /** The panel's filter chips: a load's result is the rows they leave in view. */
+  readonly chips: readonly FilterChip[];
   readonly accounts: ReadonlyMap<string, AccountSignal>;
   readonly environment: Environment | null;
   readonly announcer: PanelAnnouncer;
@@ -48,6 +55,7 @@ export interface FeedAnnouncementsInputs {
 
 export function useFeedAnnouncements({
   snap,
+  chips,
   accounts,
   environment,
   announcer,
@@ -85,15 +93,23 @@ export function useFeedAnnouncements({
     sayAll(announcer, next.batch);
   }, [accounts, snap.accounts, snap.withdrawn, announcer]);
 
-  // S-01: once per loading episode, once the accounts are known.
-  const wasLoading = useRef(false);
+  // S-01 and its result: owed for a start's load and each Retry's, never a narrowing's reload.
+  const load = useRef<"owed" | "said" | "done">("owed");
   useEffect(() => {
-    const loading = showsLoading(snap) && snap.accounts.length > 0;
-    if (loading && !wasLoading.current) {
+    if (snap.status === "idle" || snap.status === "snapshot_failed" || snap.status === "revoked") {
+      load.current = "owed"; // what loads next is a start's or a Retry's
+    } else if (showsLoading(snap)) {
+      if (load.current !== "owed" || snap.accounts.length === 0) return;
+      load.current = "said";
       announcer.say("polite", snap.accounts.map(loadingLine).join(" "));
+    } else if (snap.source !== "none") {
+      if (load.current === "said") {
+        const inView = applyFilters(snap.rows, chips).length;
+        announcer.say("polite", resultWords(snap.rows.length, inView, chips.length));
+      }
+      load.current = "done"; // the book is read: a reload from here is a narrowing's
     }
-    wasLoading.current = loading;
-  }, [snap, announcer]);
+  }, [snap, chips, announcer]);
 
   // RT-15: could not load, once per failure.
   const wasFailed = useRef(false);
