@@ -21,16 +21,16 @@ for the owner, not a QA judgement (precedent `docs/qa/a11y/e47-t01-sweep.md`:15,
 
 ## 1. Summary
 
-| Area                             | State on 2026-11-02                                                                                        | Evidence    |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------- |
-| Children                         | every E05 child closed except #263 (this ticket) and E05-D03 (#162, design, in progress)                   | GitHub      |
-| Regression pack                  | defined; per-PR = the existing a11y lane, unchanged; no nightly VR, a named deviation (CV-1, ruling BQ-4)  | pack A, B   |
-| Fixed defect to red evidence     | 6 of 6 fixed defects have named red evidence on the pre-fix code (F-3: the sweep driver's `heading-order`) | pack C      |
-| Epic regression run (local legs) | unit, `storybook:test`, the full axe sweep, coverage (heuristic): section 3.1                              | section 3.1 |
-| Epic regression run (VR)         | CI: the merge-group lane at `1c4f51bb5` green, 5,736 cells, 0 diffs; this PR's lane added when run         | section 3.2 |
-| Coverage (`packages/ui`)         | 99.51 % lines, 95.07 % branches (floor 80 %, `02` :34); heuristic, local run                               | section 6   |
-| Open P0 / P1 in E05 scope        | none in `packages/ui`; #2289 (P1, Penpot `semantic-dark` token set) is an open in / out-of-scope question  | section 7   |
-| Verdict                          | **PROPOSED: PASS_WITH_CARRIES, `approved: pending (owner)`**                                               | section 9   |
+| Area                             | State on 2026-11-02                                                                                         | Evidence    |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------- |
+| Children                         | every E05 child closed except #263 (this ticket) and E05-D03 (#162, design, in progress)                    | GitHub      |
+| Regression pack                  | defined; per-PR = the existing a11y lane, unchanged; no nightly VR, a named deviation (CV-1, ruling BQ-4)   | pack A, B   |
+| Fixed defect to red evidence     | 6 of 6 fixed defects have named red evidence on the pre-fix code (F-3: the sweep driver's `heading-order`)  | pack C      |
+| Epic regression run (local legs) | unit, `storybook:test`, the full axe sweep, coverage (heuristic): section 3.1                               | section 3.1 |
+| Epic regression run (VR)         | CI: the merge-group lane at `1c4f51bb5` green, 5,736 cells, 0 diffs; this PR's lane: run 41456872944, green | section 3.2 |
+| Coverage (`packages/ui`)         | 99.51 % lines, 95.07 % branches (floor 80 %, `02` :34); heuristic, local run                                | section 6   |
+| Open P0 / P1 in E05 scope        | none open in E05 scope (#2289 retired, closed not planned 2026-11-02 11:57Z, CV-14 withdrawn)               | section 7   |
+| Verdict                          | **PROPOSED: PASS_WITH_CARRIES, `approved: pending (owner)`**                                                | section 9   |
 
 ## 2. Acceptance criteria (E05-Q03)
 
@@ -79,8 +79,7 @@ Local VR is not authoritative: the token fonts draw only where installed and bas
 moved or deleted by this PR. At the base, the merge-group run 41442501010 of `1c4f51bb5` (2026-11-02): all 14 `vr`
 shards green, the summary "VR matrix: 5736 cells (956 stories x 3 themes x 2 densities)", 5,751 tests (5,736 cells, 14
 font probes, 1 baseline audit), 0 diffs, shards 189 s to 270 s; the `storybook` job green in 166 s. The README edit puts
-this PR on the `e2e` filter, so its own `a11y` lane runs the same matrix; its run id and shard results are added here
-when CI has run it.
+this PR on the `e2e` filter, so its own `a11y` lane ran the same matrix: run 41456872944 of this PR's head `a3731c0d7`: 14 `vr` shards, `storybook`, `a11y`, green.
 
 ## 4. Exploratory and manual
 
@@ -105,7 +104,7 @@ of section 3.2; a carry is an open row with an owner, none P0 or P1.
 ## 6. Coverage and the white-box statement (`docs/plan/03-testing-strategy.md` §11.4)
 
 Coverage (heuristic), 2026-11-02, branch head on `1c4f51bb5`: the floor for `packages/ui` is 80 % (`02` :34, C-9.4; the
-package's `vitest.config.ts` thresholds are lines, statements and functions 80 %, branches 70 %), the same reading as
+package's `vitest.config.mjs` thresholds are lines, statements and functions 80 %, branches 70 %), the same reading as
 `docs/qa/e09-signoff.md`:74.
 
 | Package       | Lines   | Statements | Functions | Branches | Source                                                      |
@@ -125,11 +124,10 @@ fresh code review; the reviewers' own checklist runs on every PR:
 
 ## 7. Open defects in E05 scope (GitHub, 2026-11-02)
 
-- Open issues labelled `area/design-system` at P0 or P1: one bug, #2289 (P1, filed 2026-10-13 from E09-D06): the design
-  file's `semantic-dark` token set resolves to light values. It is in the Penpot file, not in `packages/ui` (whose
-  generated tokens are the source of truth). **Open question for the owner:** is #2289 in or out of E05's scope? In
-  scope, it blocks Done under `03` §16 (no open P0 / P1) until fixed; out of scope, it is routed to the design lane.
-  CV-14. Every other P0 / P1 in that label is an E47, E49, E21 or E26 ticket, not a defect against E05. #1478 (P2,
+- Open issues labelled `area/design-system` at P0 or P1: none open in E05 scope. #2289 (P1, the design file's
+  `semantic-dark` token set resolving to light values) was closed not planned with the `retired` label at 11:57Z on
+  2026-11-02, superseded by the per-set Penpot file convention; CV-14 is withdrawn and there is no owner scope
+  question. Every other P0 / P1 in that label is an E47, E49, E21 or E26 ticket, not a defect against E05. #1478 (P2,
   CMP-244 for E10) is a feature, not a defect. D4 and D5 are unfiled rows (coordinator ruling 2026-10-31), P2 or lower
   by `03` §11.3.
 - Open child: E05-D03 (#162, motion recipes, P1 design task, in progress). The epic DoD (`02` §2.2, line 1) needs it
@@ -137,35 +135,35 @@ fresh code review; the reviewers' own checklist runs on every PR:
 
 ## 8. Accepted deviations and carries (owners)
 
-| Id    | Item                                                                                                                    | Owner                                     | Status                   |
-| ----- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | ------------------------ |
-| CV-1  | No nightly VR (pack B; ruling BQ-4: no workflow edit). If the owner wants it literally, it is the one allowed second PR | the owner                                 | Deviation                |
-| CV-2  | E04 alerting path not wired for the lane; the nightly's `report` job is the route (BQ-14)                               | E04 owner                                 | Deviation                |
-| CV-3  | "Tagged" composition stories replaced by named tests (BQ-6, ruled ACCEPT)                                               | the owner (acknowledgement)               | Deviation                |
-| CV-4  | OQ-5: Combobox-in-Dialog and Menu-in-Drawer stories (C53, C55)                                                          | E05 design-system lane (a story PR)       | open                     |
-| CV-5  | D4: Checkbox `Indeterminate` shows no visible "Mixed" word                                                              | E05 design-system lane                    | open row, unfiled        |
-| CV-6  | D5: stacked Table at high-contrast compact, row fills about 1.07 : 1                                                    | E05 design-system lane                    | open row, unfiled        |
-| CV-7  | Q02 OR-1..OR-8: screen-reader, keyboard-only, zoom, reduced-motion passes and the role sign-offs                        | the owner                                 | owner-run                |
-| CV-8  | Q02 AD-1: pa11y-ci not run (axe is its engine)                                                                          | E05's QA owner                            | accepted (Q02 §5.1)      |
-| CV-9  | Q02 FU-5: the e05-q02 drivers wired into CI or a nightly                                                                | the E05-T03 harness owner                 | open                     |
-| CV-10 | High-contrast danger pair at 4.54 : 1 (under 7 : 1), routed on #30 (6440565699, 6455402494)                             | E05 tokens                                | open                     |
-| CV-11 | Storybook host font gap (#30, 6532235733): the WOFF2 files are vendored (#5304), no `@font-face` declares them yet      | E05 design-system lane                    | open                     |
-| CV-12 | E05-X02 accepted-risk entries expire 2026-11-20 (#30, 6562710996)                                                       | the owner                                 | dated                    |
-| CV-13 | The manual protocol repeats per release candidate and is not claimed by the pack (BQ-15)                                | QA, per release candidate                 | by design                |
-| CV-14 | #2289 (P1): the Penpot `semantic-dark` token set resolves to light values; in or out of E05's scope (section 7)         | the owner (the question); the design lane | open question            |
-| CV-15 | E05-D03 (#162) open: needed Done or descoped for #30, not for #263                                                      | the E05 design lane                       | in progress              |
-| CV-16 | `vr/matrix.ts` :40-43 has no quarantine tag, so C-9.3's quarantine cannot apply to a VR cell (pack F, ruling BQ-8)      | the VR harness owner (E05-T04)            | gate change, not this PR |
-| CV-17 | The Q02 manual driver (leg (d), step 3) not re-run at 956 stories; its result is carried at `67fe8b526` (905 stories)   | the owner (with CV-7)                     | carried                  |
+| Id    | Item                                                                                                                    | Owner                               | Status                   |
+| ----- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------------ |
+| CV-1  | No nightly VR (pack B; ruling BQ-4: no workflow edit). If the owner wants it literally, it is the one allowed second PR | the owner                           | Deviation                |
+| CV-2  | E04 alerting path not wired for the lane; the nightly's `report` job is the route (BQ-14)                               | E04 owner                           | Deviation                |
+| CV-3  | "Tagged" composition stories replaced by named tests (BQ-6, ruled ACCEPT)                                               | the owner (acknowledgement)         | Deviation                |
+| CV-4  | OQ-5: Combobox-in-Dialog and Menu-in-Drawer stories (C53, C55)                                                          | E05 design-system lane (a story PR) | open                     |
+| CV-5  | D4: Checkbox `Indeterminate` shows no visible "Mixed" word                                                              | E05 design-system lane              | open row, unfiled        |
+| CV-6  | D5: stacked Table at high-contrast compact, row fills about 1.07 : 1                                                    | E05 design-system lane              | open row, unfiled        |
+| CV-7  | Q02 OR-1..OR-8: screen-reader, keyboard-only, zoom, reduced-motion passes and the role sign-offs                        | the owner                           | owner-run                |
+| CV-8  | Q02 AD-1: pa11y-ci not run (axe is its engine)                                                                          | E05's QA owner                      | accepted (Q02 §5.1)      |
+| CV-9  | Q02 FU-5: the e05-q02 drivers wired into CI or a nightly                                                                | the E05-T03 harness owner           | open                     |
+| CV-10 | High-contrast danger pair at 4.54 : 1 (under 7 : 1), routed on #30 (6440565699, 6455402494)                             | E05 tokens                          | open                     |
+| CV-11 | Storybook host font gap (#30, 6532235733): the WOFF2 files are vendored (#5304), no `@font-face` declares them yet      | E05 design-system lane              | open                     |
+| CV-12 | E05-X02 accepted-risk entries expire 2026-11-20 (#30, 6562710996)                                                       | the owner                           | dated                    |
+| CV-13 | The manual protocol repeats per release candidate and is not claimed by the pack (BQ-15)                                | QA, per release candidate           | by design                |
+| CV-14 | withdrawn: #2289 retired 2026-11-02 11:57Z (closed not planned; superseded by the per-set Penpot file convention)       | none                                | withdrawn                |
+| CV-15 | E05-D03 (#162) open: needed Done or descoped for #30, not for #263                                                      | the E05 design lane                 | in progress              |
+| CV-16 | `vr/matrix.ts` :40-43 has no quarantine tag, so C-9.3's quarantine cannot apply to a VR cell (pack F, ruling BQ-8)      | the VR harness owner (E05-T04)      | gate change, not this PR |
+| CV-17 | The Q02 manual driver (leg (d), step 3) not re-run at 956 stories; its result is carried at `67fe8b526` (905 stories)   | the owner (with CV-7)               | carried                  |
 
 ## 9. Proposed verdict
 
 **PROPOSED: PASS_WITH_CARRIES as of 2026-11-02. `approved: pending (owner)`.** This is a proposal for the owner, not a
 sign-off; the §16 checkbox, named reviewer and timestamp are the owner's or QA's act (C-10.4; e08 precedent,
 `docs/qa/e08-signoff.md`:194). Every fixed E05 defect has named red evidence on its revert; the local legs (heuristic)
-are green; the VR lane at the base is green; no P0 or P1 defect is open in `packages/ui`. It is not a clean pass: no
-nightly VR (CV-1, a named deviation); #2289 (P1, CV-14) is an open in / out-of-scope question for the owner and, if in
-scope, blocks Done under `03` §16; the owner-run legs (CV-7) and the open rows CV-4 to CV-6, CV-9 to CV-12 and CV-15 to
-CV-17 are carried with owners. This PR's own VR lane is added to section 3.2 when CI has run it.
+are green; the VR lane at the base is green; no P0 or P1 defect is open in E05 scope. It is not a clean pass: no
+nightly VR (CV-1, a named deviation); no P0 or P1 is open in E05 scope (CV-14, #2289, is withdrawn: retired
+2026-11-02 11:57Z); the owner-run legs (CV-7) and the open rows CV-4 to CV-6, CV-9 to CV-12 and CV-15 to
+CV-17 are carried with owners. This PR's own VR lane (run 41456872944, green) is in section 3.2.
 
 `approved: pending (owner)`
 
@@ -177,9 +175,8 @@ CV-17 are carried with owners. This PR's own VR lane is added to section 3.2 whe
 > to F-3) have named red evidence on their revert (F-3: the sweep driver's `heading-order`). Local legs (heuristic):
 > unit 4,139 tests; Storybook 956 stories; the full axe sweep 11,190 cells at 0 / 0 / 0 / 0 with the negative
 > control tripped; coverage `packages/ui` 99.51 % lines (floor 80 %). VR (CI): 5,736 cells, 0 diffs at the base;
-> this PR's lane when run. Deviations and carries with owners: section 8 (no nightly VR; OQ-5; D4; D5; the owner-run
-> OR-1..OR-8; AD-1; FU-5; the high-contrast danger pair; the font-face gap; the X02 expiry on 2026-11-20; #2289, a P1
-> in the Penpot token file, an open in / out-of-scope question for the owner; E05-D03, #162, still open for #30; the
+> this PR's lane run 41456872944, green. Deviations and carries with owners: section 8 (no nightly VR; OQ-5; D4; D5; the owner-run
+> OR-1..OR-8; AD-1; FU-5; the high-contrast danger pair; the font-face gap; the X02 expiry on 2026-11-20; E05-D03, #162, still open for #30; the
 > VR quarantine-tag gap; the manual driver carried at 905 stories). P2 / P3 deferrals need the owner's acknowledgement (`03` §16).
 >
 > `approved: pending (owner)`

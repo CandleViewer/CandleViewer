@@ -46,7 +46,7 @@ each (2,699 s runner time in all; the budget is 360 s per shard, CI-A11Y-007), t
 and the lane 666 s of wall clock from the first job's start to the last's end. That is within the ~15 min PR budget
 (ADR-0019 decision drivers). At this pack's base the lane is the merge-group run 41442501010 of `1c4f51bb5`
 (2026-11-02): 14 `vr` shards green, 189 s to 270 s of job wall each (3,102 s in all, budget 360 s), the `storybook` job
-166 s (budget 600 s), 0 VR diffs. This PR's own lane run is added to the sign-off record when CI has run it.
+166 s (budget 600 s), 0 VR diffs. This PR's own lane: run 41456872944 of this PR's head `a3731c0d7`: 14 `vr` shards, `storybook`, `a11y`, green.
 
 ## B. Nightly sweep (BQ-4, part two): no nightly VR, a named deviation
 
@@ -74,7 +74,7 @@ test; every fix file and every named test is byte-identical at `1c4f51bb5`. In a
 run again green. The revert is `git show --format= <fix sha> -- <src paths> | git apply -R` (D1: note 1), the restore
 `git checkout -- packages/ui/src && git clean -fd packages/ui/src`.
 
-| Id  | Defect (log)                                                                 | Fix               | Test (file, title)                                                                                                                                                                                                                                                                                                  | Reverted                                                                  | Red on revert                         | Green restored                  |
+| Id  | Defect (log)                                                                 | Fix               | Test (file, title)                                                                                                                                                                                                                                                                                                  | Reverted                                                                  | Red on revert (heuristic)             | Green restored                  |
 | --- | ---------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------- | ------------------------------- |
 | D1  | A gated control announces nothing on a refused activation (Q01, #5131)       | #5135 `55a9e5daa` | `packages/ui/test/RbacGate.test.tsx`:112 "denied: Enter, click and a dispatched click each announce the reason once, never call the handler"; and the gated-announce tests of the eight atoms (`Button`, `Checkbox`, `ColorSwatch`, `IconButton`, `RadioGroup`, `SegmentedControl`, `Slider`, `Toggle` `.test.tsx`) | the eight atoms' announce call neutralised (see note 1)                   | 9 of 9 files, 18 of 342 tests         | 342 of 342                      |
 | D2  | The Dialog card overflows at 200 % zoom, its body cannot scroll (Q01, #5143) | #5149 `c61092c7f` | `packages/ui/test/dialog-css.test.ts`:79 "in the narrow query the layer has a definite row, so the card's max-height: 100% resolves (#5143)"                                                                                                                                                                        | `dialog.css` hunk reversed                                                | 1 of 12 tests                         | 12 of 12                        |
@@ -89,8 +89,7 @@ Notes:
    each of the eight atoms #5135 changed, `useGatedAnnounce()` was replaced by a no-op, so a refused activation announces
    nothing, as before the fix. The failing tests include the RbacGate abuse check (section D) and every atom's
    gated-announce test. The neutralisation, per atom `<A>` of the eight:
-   `sed -i 's/const announceGated = useGatedAnnounce();/const announceGated = (_reason?: string): void => undefined;/'
-packages/ui/src/components/<A>.tsx`.
+   `sed -i 's/const announceGated = useGatedAnnounce();/const announceGated = (_reason?: string): void => undefined;/' packages/ui/src/components/<A>.tsx`.
 2. F-3: the fix sits in the story itself, so the story's play function moves with it, and axe rates `heading-order`
    moderate, which neither the `storybook` job nor `merge --strict` fails on; a VR row cannot be reverted and run locally
    (README, Visual regression). The red evidence is therefore the E05-Q02 axe driver's own result (its per-cell rule ids):

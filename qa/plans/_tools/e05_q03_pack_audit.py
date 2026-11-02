@@ -200,7 +200,7 @@ def main() -> int:
         head, rest = pack.split(BEGIN, 1)
         tail = rest.split(END, 1)[1]
         pack = f"{head}{BEGIN}\n\n{matrix_block(names)}\n\n{END}{tail}"
-        PACK.write_text(pack, encoding="utf-8")
+        PACK.write_text(pack, encoding="utf-8", newline="\n")
     fails = check(pack, record, names)
     for f in fails:
         print("FAIL", f)
