@@ -44,6 +44,11 @@ minimised. A named grid keeps only its cells; panes beyond them come back minimi
 not assume floating persists. A `grid_preset` that is neither `custom` nor a named preset is
 refused (`unknown_preset`).
 
+A layout with no pane stores as the default `1x1` with no panes. A layout whose panes are all
+floating or minimised has no stored form, and `toLayoutInput` refuses it (`empty_dock`): `float` of
+the last docked pane yields such a tree, so the app keeps one pane docked or handles `empty_dock`
+before it stores. `fromLayout` and every operation share the dock's one minter.
+
 Ids come from an injected minter (`counterMinter`); one minter per dock keeps node and pane ids
 apart. `pnpm --filter @candleviewer/dock test:cov` runs the suite, the 1000-operation property
 test included, at the 85 % floor.
