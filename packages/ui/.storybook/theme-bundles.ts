@@ -31,6 +31,7 @@ import "../src/components/datepicker.css";
 import "../src/components/densitytoggle.css";
 import "../src/components/dialog.css";
 import "../src/components/divider.css";
+import "../src/components/dock.css";
 import "../src/components/drawer.css";
 import "../src/components/emptystate.css";
 import "../src/components/errorstate.css";

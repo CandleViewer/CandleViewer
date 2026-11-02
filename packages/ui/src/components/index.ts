@@ -379,3 +379,10 @@ export type {
 
 export { FileDrop, formatFileSize } from "./FileDrop.js";
 export type { FileDropAction, FileDropPreview, FileDropProps } from "./FileDrop.js";
+
+export { DockPanel, PanelHeader } from "./DockPanel.js";
+export type { DockPanelProps, PanelHeaderProps } from "./DockPanel.js";
+export { SPLIT_STEP, SPLIT_STEP_LARGE, SplitPane } from "./SplitPane.js";
+export type { SplitPaneCell, SplitPaneProps } from "./SplitPane.js";
+export { DockGridView } from "./DockGridView.js";
+export type { DockGridViewProps, DockViewLeaf, DockViewNode } from "./DockGridView.js";
