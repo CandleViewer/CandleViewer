@@ -353,6 +353,7 @@ Full standard owned by `05-accessibility-standard.md`; testing execution summari
 - **Automated, every PR**: `vitest-axe` on component unit tests; `@axe-core/playwright` on every E2E suite's key screens; `pa11y-ci` sweep across the full screens catalogue (`14-screens-catalogue.md`) nightly.
 - **Lighthouse CI**: runs on the app-shell load path (login, dashboard, a representative chart+DOM screen) on every PR to main, gating on an a11y score threshold and flagging (non-blocking, tracked) performance regressions.
 - **Manual screen-reader passes**: scheduled per release (not per PR) covering NVDA + VoiceOver on the primary trading flow (order ticket, DOM ladder, rule editors) and admin screens, run by QA with accessibility-team support; findings logged with the same severity taxonomy as §11.3, P2 minimum severity for any WCAG 2.2 AA violation.
+  The scripts, pins and the living regression checklist are in `docs/qa/a11y/sr/` (`05` §8.4).
 - **Keyboard-only pass**: every screen in the catalogue must be fully operable keyboard-only (documented per-screen in `14-screens-catalogue.md`'s hotkeys/a11y column); verified as part of the exploratory charter for that screen's epic.
 - Target: **WCAG 2.2 AA** across the web app, including owner/admin screens; no screen ships without an a11y section in its screens-catalogue entry and a passing automated sweep.
 

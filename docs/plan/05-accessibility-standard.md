@@ -283,6 +283,12 @@ Combos are pinned versions, not "latest" floating targets, to keep results repro
 - QA/SDET incorporates the task script into the manual regression suite before each release per `03-testing-strategy.md` / `07-release-and-prr.md` PRR gates.
 - **Accessibility statement and conformance report (E47-D13):** the Accessibility role re-issues the in-product statement and regenerates the conformance report (`docs/plan/a11y/47-conformance-report.md`) for every release and for any change touching an in-scope screen; the statement carries the version it applies to, its issue date and its review date, and one older than the running release is flagged for re-issue, never shown as current (`docs/design/E47/E47-D13.md` §8). The pinned AT-version changelog of §8.1 stays in the regression checklist (§8.2 item 4).
 
+### 8.4 Executed cadence and results location
+
+Scripts, templates and the living regression checklist (§8.2 item 4), which carries the dated pin changelog (§8.1), live
+in `docs/qa/a11y/sr/`, on the cadence §8.1 sets. Pass records and transcripts live under `qa/evidence/e47/sr/`. An agent-run pass is recorded as "(heuristic)" and counts
+toward none of the §8.1 passes. Failures are routed as register findings or expiring exceptions, never absorbed.
+
 ## 9. Automated gates (CI-enforced)
 
 1. **axe-core**: run against every screen's DOM (Playwright + `@axe-core/playwright`) in CI on every PR touching frontend code. Zero new "serious"/"critical" axe violations is a merge-blocking check; existing "moderate"/"minor" violations are tracked as backlog tickets with a burn-down target before R3 (Trading on demo).
