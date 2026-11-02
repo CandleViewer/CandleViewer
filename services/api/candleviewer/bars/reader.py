@@ -473,8 +473,8 @@ class BarReader:
         raw = await self._conn.fetch(sql, *params)
         current = BUILD_VERSIONS[spec.kind]
         bars: list[tuple[int, Bar]] = []
-        builds: dict[BuildKey, int] = {}
-        dropped = skipped = malformed = unknown = 0
+        builds: dict[BuildKey, int | None] = {}
+        dropped = skipped = malformed = 0
         error = ""
         for n, row in enumerate(reversed(raw)):
             if n and n % TAIL_YIELD_EVERY == 0:
@@ -493,9 +493,7 @@ class BarReader:
                 continue
             bars.append(got)
             gen, bar = got
-            if built is None:  # unknown provenance: stale, and no part of the minimum (24 §3.1)
-                unknown += 1
-            elif built < current:
+            if built is None or built < current:  # None: unknown provenance (24 §3.1)
                 builds[gen, bar.index, bar.open_time] = built
         if malformed:
             _log().warning(
@@ -506,7 +504,7 @@ class BarReader:
             self._truncated(spec, window, since)
         return BarTail(
             bars, skipped=skipped + malformed, builds=builds, dropped=dropped, since_us=since,
-            fetched=len(raw), bounded=bounded, unknown_builds=unknown,
+            fetched=len(raw), bounded=bounded,
         )  # fmt: skip
 
 
@@ -531,9 +529,11 @@ class BarTail:
 
     bars: list[tuple[int, Bar]]
     skipped: int = 0
-    #: `BuildKey -> build_version` of the rows built below the running code (§6.1
-    #: `meta.build_version` is the lowest among the bars a snapshot sends).
-    builds: dict[BuildKey, int] = field(default_factory=dict)
+    #: `BuildKey -> build_version` of the rows built below the running code, or None for a row
+    #: with no recorded version (NULL, or below 1): unknown provenance, stale as `read_bars` reads
+    #: it (24 §3.1, #5396 ruling 5). §6.1 `meta.build_version` is the lowest recorded among the
+    #: bars a snapshot sends, so a None stays out of it; `meta.stale_build` counts both.
+    builds: dict[BuildKey, int | None] = field(default_factory=dict)
     dropped: int = 0
     #: Where the read stopped: its start (µs, see `bounded`) and the rows the query returned, before
     #: drops and skips. `fetched` below the limit: every builder row from `since_us` on was
@@ -547,19 +547,20 @@ class BarTail:
     #: rows below it, so an empty read says only that none lies from `since_us` on, and the
     #: series store judges no first close above index 0 against it (D2-H1a).
     bounded: bool = False
-    #: Bars served whose row has no recorded `build_version` (NULL, or below 1): unknown
-    #: provenance, so stale (`stale_build`) as `read_bars` reads them, and outside `builds`, which
-    #: gives the lowest recorded version (24 §3.1, #5396 ruling 5).
-    unknown_builds: int = 0
 
     @property
     def integrity_degraded(self) -> bool:
         return self.dropped > 0
 
     @property
+    def unknown_builds(self) -> int:
+        """Bars served with no recorded `build_version`: unknown provenance (`builds`)."""
+        return sum(v is None for v in self.builds.values())
+
+    @property
     def stale_build(self) -> bool:
         """A bar served was built below the running version or has no recorded one (24 §3.1)."""
-        return bool(self.builds) or self.unknown_builds > 0
+        return bool(self.builds)
 
 
 #: The stored columns a tail bar takes as data: a NULL in any of them skips the row.

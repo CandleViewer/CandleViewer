@@ -19,6 +19,9 @@ reads no storage itself.
   row; a version the ledger does not know suppresses nothing. Checksums are computed only for
   the bars that open inside a recorded span, so a series with no record pays one lookup. It
   rides in `meta`, so it is on every chunk and in either encoding.
+  `stale_build: true` (#5396, 23 §13) when a closed bar sent was built below the running version
+  or has no recorded one (a NULL `build_version`, which stays out of the `build_version`
+  minimum); absent otherwise.
 - **Encodings.** Only the form the subscription receives is built. Binary: kind-4 frames at the
   `covering_scales` of the bars sent (no bars: one empty frame). The whole snapshot goes structured
   when the instrument scales are unknown or a value does not fit kind 4 (§3.4's trigger, logged).
@@ -137,6 +140,8 @@ class BarsSnapshotSource:
         flow = sub.effective.get("include_delta") is True
         build = BUILD_VERSIONS[spec.kind] if latest.oldest_build is None else latest.oldest_build
         meta: Item = {"spec_hash": spec.spec_hash, "build_version": build, "include_delta": flow}
+        if latest.stale_build:  # §6.1, #5396: absent reads false
+            meta["stale_build"] = True
         if self._holes is not None and bars:
             spans = _coverage_holes(self._holes, symbol, spec, latest.generation, bars)
             if spans:  # a list built per build, never changed after: the cache shares it

@@ -229,7 +229,8 @@ async def test_bar_flags_a_null_build_version_is_stale_on_the_range_and_tail_rea
     row["row_checksum"] = row_checksum(row)
     page = await _reader([row]).read_bars(SYM, SPEC, T0, T0 + 10 * MIN, 10)
     tail = await _reader([row]).read_tail(SYM, SPEC, 1)
-    assert (page.stale, tail.stale_build, tail.builds, tail.unknown_builds) == (True, True, {}, 1)
+    assert (page.stale, tail.stale_build, tail.unknown_builds) == (True, True, 1)
+    assert list(tail.builds.values()) == [None]
     assert stored_bar(page.rows[0]).build_version is None
 
 

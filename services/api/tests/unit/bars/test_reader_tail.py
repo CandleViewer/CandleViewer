@@ -686,11 +686,11 @@ async def test_read_tail_names_only_the_rows_built_below_the_running_code(
     reads it, and no part of the minimum."""
     rows = [_row(1, gen=1), _row(0, {"build_version": None}, gen=1)]
     tail = await _read(rows)
-    assert (tail.builds, tail.unknown_builds, tail.stale_build) == ({}, 1, True)
+    assert (tail.builds, tail.unknown_builds, tail.stale_build) == ({(1, 0, T0): None}, 1, True)
     assert not (await _read([_row(1, gen=1)])).stale_build
     monkeypatch.setitem(BUILD_VERSIONS, "time", BUILD_VERSIONS["time"] + 1)
     tail = await _read(rows)
-    assert (tail.builds, tail.unknown_builds) == ({(1, 1, T0 + MIN): 1}, 1)
+    assert (tail.builds, tail.unknown_builds) == ({(1, 0, T0): None, (1, 1, T0 + MIN): 1}, 1)
 
 
 async def test_read_tail_keeps_the_builds_of_two_runs_that_reused_a_bar_key(
