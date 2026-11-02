@@ -6,7 +6,7 @@ deck and the pins file from the working tree, and every cited file AS TEXT with
 `git show`: the plan docs, E09-D09, E10-D03, E10-D04, the design-spec rules and the
 sprint calendar at the pinned base (`BASE`), and the five unmerged parents at their
 pinned heads (`REF_OF`): the E38-D01 memo at #5451's, E38-D02 at #5494's, E38-D03 at
-#5493's, E38-D04 at #5490's and E38-D05 at its head (#1076), each "if it merges as is".
+#5493's, E38-D04 at #5490's and E38-D05 at #5514's head (#1076, unpinned), each "if it merges as is".
 For the token names it imports `packages/ui/tokens/tests/verify_tokens.py` (the token
 loader) from the working tree and never re-implements it. Default-deny: a gate that
 cannot read its input FAILs.
@@ -15,7 +15,7 @@ Two stages, named by `--stage` (required; never guessed from the working tree). 
 deck stage is PR 1a's: the copy deck and this tool land first, so it reads neither the
 pack nor the pins file and runs G-COPY on the deck alone (ids, the status vocabulary,
 owners, sources, the verbatim match, the rulings, the frozen flags, the two required
-notices), G-HYGIENE on the deck and this tool, and G-SCOPE against those two files. The
+notices, the frozen groups' members), G-HYGIENE on the deck and this tool, and G-SCOPE against those two files. The
 full stage is PR 1b's: it runs every gate, and any of the four files missing FAILs
 G-SCOPE (default-deny).
 
@@ -23,7 +23,7 @@ One status vocabulary (the orchestrator's ruling on BQ-07, shared with E37): `me
 (verbatim in a merged source at the base), `RULED` (an unmerged parent's text that its
 BQ ruling settled, named in `ruling`), `PROPOSED` (owner approval pending). A safety
 string carries `frozen`, a group id (`FZ-nn`) of the deck's `frozen` table; ids are key
-names only. D05 has no PR yet: its cites are read at its draft head and never pinned.
+names only. D05 (#5514) is read at its PR's head and never pinned (BQ-04).
 
 Gates (each FAIL led by its name):
   G-STATES     every state id of D02's and D03's state tables, every frame name of
@@ -33,11 +33,15 @@ Gates (each FAIL led by its name):
                cited source line at its ref; its status is `merged` exactly when its
                source is merged, `RULED` only with a ruling its parent records, else
                `PROPOSED`; every string names an owner; every `frozen` id is in the
-               deck's table and every group is used; the required notices and every
-               reason carry `frozen`; the two notices are present with their texts and
-               sources and quoted in the pack; §8's tables and its frozen table equal
-               the deck; AC 2 reads "approved: pending (owner)"; the COPY anchors
-               equal the deck's counts.
+               deck's table, every group is used and its `ids` list exactly the
+               strings that carry it; every reason is in FZ-04 and the two required
+               notices in FZ-01; a frozen string carries no double or edge space and,
+               on a one-line source outside a fenced wireframe, stands on it byte
+               for byte; the two notices are present with
+               their texts and sources and quoted in the pack; §8's tables and its
+               frozen table equal the deck; every quoted string of §3.3 is a deck
+               string of SCR-079; AC 2 reads "approved: pending (owner)"; the COPY
+               anchors equal the deck's counts.
   G-COMPONENT  the eleven catalogue components of the ticket each have a §9 row naming
                a screen, and their `15` heading at the base starts with the row's name.
   G-TOKEN      every token the pack names resolves in the merged token sets of every
@@ -95,10 +99,10 @@ STAGES = (DECK, FULL)
 BASE = "b005ce6105c2675c90aed6550d6220def0d9f227"  # origin/main
 D01_REF = "4774b2f8cd7b67a1ee934fe88546568f7aa3e34c"  # #5451's head (the memo)
 D02_REF = "292ce7953775deabf4ffde139db2a887be9592e8"  # #5494's head (E38-D02)
-D03_REF = "133a45628ebca6b5955aa89d0208b92efb64d52a"  # #5493's head (E38-D03)
+D03_REF = "75c776d82236961a8af1fbafa47d217bb82f6720"  # #5493's design-approved head
 D04_REF = "2c47253340e130e6b88d25ed209fd1666e01418d"  # #5490's head (E38-D04)
-D05_REF = "89d2d790ea73dcc87dc216c5d344d2b9296ffc68"  # E38-D05's draft head, unpinned
-# D05 has no PR yet (#1076): read at its draft head, never pinned, re-read at its PR
+D05_REF = "ae76d1ac9fb3deb57b400e4c015bc50dd3a7c4c4"  # #5514's head (E38-D05), unpinned
+# D05 (#1076) is read at #5514's head and never pinned (BQ-04); re-read if #5514 moves
 UNPINNED = ("D05",)
 TOKENS = ROOT / "packages" / "ui" / "tokens"
 PATHS: dict[str, str] = {
@@ -132,8 +136,11 @@ MERGED = ("14", "15", "E09D09", "E10D03")
 STATUSES = ("merged", "RULED", "PROPOSED")
 RULING = re.compile(r"(D0[1-5]) (BQ-\d\d)")
 FROZEN_ID = re.compile(r"FZ-\d\d")
-# the kinds that are safety strings by kind: every not-permitted or blocked reason
-FROZEN_KINDS = ("reason",)
+# the kinds that are safety strings by kind, and the one group each belongs to: every
+# not-permitted or blocked reason is FZ-04
+FROZEN_KINDS = {"reason": "FZ-04"}
+# the group of the two required notices
+REQUIRED_GROUP = "FZ-01"
 # the two notices the ticket names, verbatim, with their sources
 REQUIRED = {
     "env.popover.demo_statement": (
@@ -233,6 +240,20 @@ def lines_at(t: Texts, key: str, a: int, b: int) -> str:
     if not 0 < a <= b <= len(ls):
         raise LookupError(f"{key}:{a} is past the end of {PATHS[key]}")
     return norm(" ".join(ls[a - 1 : b]).replace("|", " "))
+
+
+def raw_line(t: Texts, key: str, n: int) -> str:
+    """One cited line as it stands, whitespace kept; "" inside a fenced wireframe,
+    whose padding is layout, not copy."""
+    ls = at(t, key).split("\n")
+    if not 0 < n <= len(ls):
+        raise LookupError(f"{key}:{n} is past the end of {PATHS[key]}")
+    fenced = sum(1 for ln in ls[: n - 1] if ln.lstrip().startswith("```")) % 2 == 1
+    return "" if fenced else ls[n - 1]
+
+
+def strip_code(text: str) -> str:
+    return re.sub(r"`[^`\n]*`", "", text)
 
 
 def cells(line: str) -> list[str]:
@@ -436,6 +457,13 @@ def g_copy(t: Texts, vals: dict[str, str]) -> list[str]:
         bad.append("the deck has no `frozen` table")
         groups = {}
     bad += [f"frozen group {g!r} is not FZ-nn" for g in groups if not FROZEN_ID.fullmatch(g)]
+    members: dict[str, list[str]] = {}
+    for g, grp in groups.items():
+        ids = grp.get("ids") if isinstance(grp, dict) else None
+        if not isinstance(ids, list) or not isinstance(grp.get("what"), str):
+            bad.append(f"frozen group {g}: not an object with `what` and `ids`")
+            ids = []
+        members[g] = [str(i) for i in ids]
     used: set[str] = set()
     for sid, s in strings.items():
         if not isinstance(s, dict):
@@ -457,12 +485,19 @@ def g_copy(t: Texts, vals: dict[str, str]) -> list[str]:
                 bad.append(f"{sid}: frozen {fz!r} is not a group of the deck's table")
         elif sid in REQUIRED or s.get("kind") in FROZEN_KINDS:
             bad.append(f"{sid}: a safety string without its `frozen` flag")
+        want = REQUIRED_GROUP if sid in REQUIRED else FROZEN_KINDS.get(str(s.get("kind")))
+        if want and fz is not None and fz != want:
+            bad.append(f"{sid}: frozen {fz!r}, but its kind belongs to {want}")
         if not m:
             bad.append(f"{sid}: source {s.get('source')!r} is not KEY:line")
             continue
         a = int(m[2])
         if norm(text) not in lines_at(t, m[1], a, int(m[3] or a)):
             bad.append(f"{sid}: not verbatim at {m[0]}")
+        elif fz is not None and (
+            text != norm(text) or (not m[3] and text not in (raw_line(t, m[1], a) or text))
+        ):
+            bad.append(f"{sid}: frozen, but not byte for byte at {m[0]} (whitespace)")
         if (status == "merged") != (m[1] in MERGED):
             bad.append(f"{sid}: {status} from {m[1]} (`merged` exactly when merged)")
         ruling = s.get("ruling")
@@ -473,6 +508,10 @@ def g_copy(t: Texts, vals: dict[str, str]) -> list[str]:
         elif ruling is not None:
             bad.append(f"{sid}: a `ruling` on a {status} string")
     bad += [f"frozen group {g} has no string" for g in groups if g not in used]
+    for g, ids in members.items():
+        carry = [k for k, v in strings.items() if isinstance(v, dict) and v.get("frozen") == g]
+        if len(set(ids)) != len(ids) or sorted(ids) != sorted(carry):
+            bad.append(f"frozen group {g}: its `ids` are not the strings that carry it")
     for sid, (text, src) in REQUIRED.items():
         s = strings.get(sid)
         if not isinstance(s, dict) or s.get("string") != text or s.get("source") != src:
@@ -507,8 +546,23 @@ def g_copy(t: Texts, vals: dict[str, str]) -> list[str]:
         bad.append(f"frozen group {g} is in {'the deck' if g in groups else '§8'} only")
     for g, row in fz_rows.items():
         ids = sorted(k for k, v in strings.items() if isinstance(v, dict) and v.get("frozen") == g)
-        if len(row) < 3 or sorted(re.findall(r"`([a-z0-9_.]+)`", row[1])) != ids:
+        grp = groups.get(g)
+        what = grp.get("what") if isinstance(grp, dict) else None
+        if len(row) < 3 or sorted(re.findall(r"`([a-z0-9_.]+)`", row[1])) != ids or row[2] != what:
             bad.append(f"frozen group {g}: §8's row differs from the deck")
+    screen = {
+        v.get("string")
+        for v in strings.values()
+        if isinstance(v, dict) and v.get("screen") == "SCR-079"
+    }
+    quoted = re.findall(r'"([^"\n]+)"', strip_code(section(t.spec, "### 3.3")))
+    if not quoted:
+        bad.append("§3.3 quotes no string")
+    bad += [
+        f'§3.3 quotes "{q}", which is no SCR-079 string of the deck'
+        for q in quoted
+        if q not in screen
+    ]
     ac2 = [ln for ln in t.spec.split("\n") if ln.startswith("| AC 2 ")]
     if len(ac2) != 1 or "approved: pending (owner)" not in ac2[0]:
         bad.append('AC 2 does not read "approved: pending (owner)"')
@@ -1033,6 +1087,30 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts], tuple[str, ...]], ...
         FULL_ONLY,
     ),
     ("G-COPY", "a frozen-table row dropped", drop_row("FZ-03"), FULL_ONLY),
+    (
+        "G-COPY",
+        "a whitespace-only drift in a frozen string",
+        deck_edit(_set("rbac.view_as", "string", "Read-only while viewing  as {user}.")),
+        BOTH,
+    ),
+    (
+        "G-COPY",
+        "a reason moved to the wrong frozen group",
+        deck_edit(_set("env.blocked.reason", "frozen", "FZ-02")),
+        BOTH,
+    ),
+    (
+        "G-COPY",
+        "a non-reason string's frozen flag dropped",
+        deck_edit(_del("paper.reset.title", "frozen")),
+        BOTH,
+    ),
+    (
+        "G-COPY",
+        "a §3.3 quote that is no deck string",
+        sub('Confirm "Reset paper balance"', 'Confirm "Reset balance"'),
+        FULL_ONLY,
+    ),
 )
 
 
