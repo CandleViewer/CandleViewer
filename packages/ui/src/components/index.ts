@@ -1,7 +1,7 @@
 export { SwatchLegendItem } from "./SwatchLegendItem.js";
 export type { DirectionalSwatchColor, SwatchLegendItemProps } from "./SwatchLegendItem.js";
 
-export { Table } from "./Table.js";
+export { Table, rowsWord } from "./Table.js";
 export type {
   TableCellOptions,
   TableCellProps,

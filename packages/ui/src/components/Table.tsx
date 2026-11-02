@@ -376,7 +376,9 @@ const FALLBACK_PAGE_ROWS = 10;
 /** What a control inside an `interactive` cell looks like: these leave the Tab order while the grid roves. */
 const TABBABLE = "a[href], button, input, select, textarea, [tabindex]";
 
-const rowsWord = (n: number): string => (n === 0 ? "No rows" : n === 1 ? "1 row" : `${n} rows`);
+/** The load result's words (the table's polite line): a host's own result line says a count the same way. */
+export const rowsWord = (n: number): string =>
+  n === 0 ? "No rows" : n === 1 ? "1 row" : `${n} rows`;
 
 function NumericCell<T>({ column, row }: { column: TableNumericColumn<T>; row: T }): JSX.Element {
   const value = column.cell(row);
