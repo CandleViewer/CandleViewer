@@ -42,10 +42,21 @@ Gates (at least one mutation each in `--self-test`; the pins gate besides):
                   every §C Old cell equal to its line at the base (a code line after stripping),
                   every cite (bare or backtick-wrapped key) in range, non-blank and content-pinned at the base (the pins file
                   hashes every cited line; a rebase that moves or edits one fails `--check` until
-                  the cite is verified by content and `--repin-ruled` re-pins it), `git diff` against the merge-base
-                  empty outside the pack (PR 1) or equal to `15` + the `14` line with §C applied
-                  (PR 2), no closing keyword, no hex outside an anchor, no local path, no agent
-                  name, no URL or Penpot host, the mutation list equal to the tool's.
+                  the cite is verified by content and `--repin-ruled` re-pins it); once PR 2 has
+                  landed §C, every row's New text at its line at the base instead of its Old cell;
+                  no closing keyword, no hex outside an anchor, no local path, no agent name, no
+                  URL or Penpot host, the mutation list equal to the tool's.
+  (i) G-BOARDS    §14's register, the drawn / PR-3 mode: ten boards 01 ... 10 in order, each
+                  `E14-D08 / NN slug`, 04 light (twin of 03), 09 high contrast (twin of 01 · 03 ·
+                  05), every other board dark; every Status cell "to draw (PR 3)" (pending) or the
+                  drawn form with a board id, its export, W x H and sha256 (drawn), a mix FAILs;
+                  drawn, the page id named, each export a PNG of that size and sha256, the greyscale
+                  and deuteranopia renders of 01, 03, 04 and 06 present with the sha256 §14 lists,
+                  no two boards sharing an id.
+  (j) G-SCOPE     `git diff` against the merge-base: the pack's four files only (PR 1); `15` and
+                  the `14` line equal to the base with §C applied exactly (PR 2); once §C has
+                  landed, the four files plus, in the drawn mode only, the exports, the renders and
+                  `docs/design/_tools/sheets/e14-d08/` (PR 3).
   G-RULED-PIN     a default-deny pin set over every unit of the pack and the hand-off
                   (`e14_d08_ruled_pins.txt`); `--repin-ruled` is the only writer.
 
@@ -84,6 +95,22 @@ DS_SRC = "packages/ui/tokens"
 PAIRS_REL = "tools/contrast/pairs.mjs"
 RGBA_REL = "tools/style-dictionary/formats/json-flat-rgba.js"
 CVD_REL = "docs/design/_tools/cvd_sim.py"
+IMG_DIR = "docs/design/E14/img/"
+SHEETS_DIR = "docs/design/_tools/sheets/e14-d08/"  # a committed board script, the drawn mode only
+STATUS_PENDING = "to draw (PR 3)"  # §14's Status cell before the draw
+BOARD_THEME = {"04": "light", "09": "high contrast"}  # every other board dark (BQ-14)
+BOARD_TWIN = {"04": "03", "09": "01 · 03 · 05"}  # twins 04 and 09 (<= 3)
+CVD_BOARDS = ("01", "03", "04", "06")  # §14: the renders beside these boards
+CVD_KINDS = ("greyscale", "deuteranopia")
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+DRAWN = re.compile(
+    rf"drawn \((r\d+)(?:, (light|high contrast))?\): board id `({UUID})`, "
+    r"`(docs/design/E14/img/E14-D08-(\d\d)-([a-z0-9-]+)\.png)` \((\d+) × (\d+), sha256 `([0-9a-f]{64})`\)"
+)
+PAGE_ID = re.compile(rf"page id `({UUID})`")
+RENDER_SHA = re.compile(
+    r"`(E14-D08-\d\d-[a-z0-9-]+-(?:greyscale|deuteranopia)\.png)` \(sha256 `([0-9a-f]{64})`\)"
+)
 PATHS: dict[str, str] = {
     "05": "docs/plan/05-accessibility-standard.md",
     "11": "docs/plan/11-user-stories.md",
@@ -1256,6 +1283,7 @@ class Texts:
     cat14: str
     changed: list[str] | None
     values: dict[str, str]
+    blobs: dict[str, bytes] | None = None  # the self-test's image overlay; None = the disk
 
 
 def one(gate: str, problems: list[str]) -> list[Finding]:
@@ -1572,8 +1600,40 @@ def mutation_paragraph(spec: str) -> str:
     return blk.split("\n", 2)[2] if blk.count("\n") >= 2 else ""
 
 
+def landed_at(got: list[str], new: list[str]) -> bool:
+    """The New lines stand here; the last one may run on past its final stop (a later PR's tail)."""
+    return (
+        len(got) == len(new)
+        and got[:-1] == new[:-1]
+        and (got[-1] == new[-1] or got[-1].startswith(new[-1].rstrip(".")))
+    )
+
+
+def landed_rows(t: Texts) -> tuple[list[str], list[str]]:
+    """(ids landed at the base, ids not): a row is landed when its New lines stand at its line at
+    the base (insert rows: after it); a line a later PR extended past the New text's final stop
+    counts. PR 2 applies §C, so from PR 3 on every row is landed."""
+    yes: list[str] = []
+    no: list[str] = []
+    for r in a_rows_export(t.spec, t.env.at_base(CAT_REL), t.env.at_base(SCR_REL)):
+        ls = lines_of(t.env.at_base(str(r["file"])))
+        new = [str(x).rstrip() for x in r["new"]] if isinstance(r["new"], list) else []
+        n = int(str(r["line"]))
+        end = next((i for i in range(n, len(ls)) if ls[i].startswith("#")), len(ls))
+        starts = [n - 1] if str(r["op"]).startswith("replace") else range(n, end)  # inserts: in order
+        if new and any(landed_at([x.rstrip() for x in ls[i : i + len(new)]], new) for i in starts):
+            yes.append(str(r["id"]))
+        else:
+            no.append(str(r["id"]))
+    return yes, no
+
+
 def old_cell_problems(t: Texts) -> list[str]:
-    """Every §C Old cell is its line at the base, verbatim (a code line after stripping)."""
+    """Every §C Old cell is its line at the base, verbatim (a code line after stripping); once §C
+    has landed (PR 3), every row's New text at its line at the base instead."""
+    yes, no = landed_rows(t)
+    if yes and len(yes) * 2 >= len(yes) + len(no):
+        return [f"{aid}: §C has landed, but its New text is not at its line at the base" for aid in no]
     bad: list[str] = []
     for r in c_rows(t.spec):
         m = FIELD.fullmatch(r[2]) if len(r) == 7 else None
@@ -1608,40 +1668,167 @@ def g_hygiene(t: Texts) -> list[Finding]:
                 bad.append(f"{doc}:{i} carries a URL, a host or a Penpot id parameter")
     bad += old_cell_problems(t)
     bad += cite_pin_problems(t)
-    # the diff against the merge-base
-    if t.changed is None:
-        bad.append("cannot list the changed paths (`git diff` / `git status` failed)")
-    else:
-        other = [p for p in t.changed if p not in OWN_PATHS]
-        if not {CAT_REL, SCR_REL} & set(t.changed):
-            for p in other:
-                bad.append(f"PR 1 changes {p}, outside the pack's four files")
-        else:
-            rows = a_rows_export(t.spec, t.env.at_base(CAT_REL), t.env.at_base(SCR_REL))
-            want15, bad15 = apply_rows(
-                t.env.at_base(CAT_REL), [r for r in rows if r["file"] == CAT_REL]
-            )
-            want14, bad14 = apply_rows(
-                t.env.at_base(SCR_REL), [r for r in rows if r["file"] == SCR_REL]
-            )
-            bad += bad15 + bad14
-            if t.cat15 != want15:
-                bad.append("PR 2: `15` is not the base with §C applied exactly (an extra byte)")
-            if t.cat14 != want14:
-                bad.append("PR 2: `14` is not the base with A-37 applied exactly")
-            for p in other:
-                if p not in (CAT_REL, SCR_REL):
-                    bad.append(f"PR 2 changes {p}, outside `15`, `14` and the pack's four files")
     # the mutation list
     para = mutation_paragraph(t.spec)
     gates_named = re.findall(r"\*\*(G-[A-Z-]+)\*\*", para)
-    if len(re.findall(r"\bM-\d+\b", para)) != len(MUTATIONS):
-        bad.append(
-            f"§16 lists {len(re.findall(r'M-\\d+', para))} mutations; the tool has {len(MUTATIONS)}"
-        )
+    listed = len(re.findall(r"\bM-\d+\b", para))
+    if listed != len(MUTATIONS):
+        bad.append(f"§16 lists {listed} mutations; the tool has {len(MUTATIONS)}")
     if gates_named != [g.__name__.upper().replace("G_", "G-") for g in GATES] + ["G-RULED-PIN"]:
         bad.append("§16 does not name each gate once, in the tool's order")
     return one("G-HYGIENE", bad)
+
+
+def g_scope(t: Texts) -> list[Finding]:
+    bad: list[str] = []
+    if t.changed is None:
+        return one("G-SCOPE", ["cannot list the changed paths (`git diff` / `git status` failed)"])
+    other = [p for p in t.changed if p not in OWN_PATHS]
+    yes, no = landed_rows(t)
+    if yes and not no:  # PR 3: §C has landed at the base
+        drawn = board_mode(t.spec) == "drawn"
+        allowed = set(board_exports(t.spec)) if drawn else set()
+        for p in other:
+            if p not in allowed and not (drawn and p.startswith(SHEETS_DIR)):
+                bad.append(
+                    f"PR 3 changes {p}, outside the pack's four files"
+                    + ("" if drawn else " (exports and renders only in the drawn mode)")
+                )
+    elif not {CAT_REL, SCR_REL} & set(t.changed):
+        for p in other:
+            bad.append(f"PR 1 changes {p}, outside the pack's four files")
+    else:
+        rows = a_rows_export(t.spec, t.env.at_base(CAT_REL), t.env.at_base(SCR_REL))
+        want15, bad15 = apply_rows(t.env.at_base(CAT_REL), [r for r in rows if r["file"] == CAT_REL])
+        want14, bad14 = apply_rows(t.env.at_base(SCR_REL), [r for r in rows if r["file"] == SCR_REL])
+        bad += bad15 + bad14
+        if t.cat15 != want15:
+            bad.append("PR 2: `15` is not the base with §C applied exactly (an extra byte)")
+        if t.cat14 != want14:
+            bad.append("PR 2: `14` is not the base with A-37 applied exactly")
+        for p in other:
+            if p not in (CAT_REL, SCR_REL):
+                bad.append(f"PR 2 changes {p}, outside `15`, `14` and the pack's four files")
+    return one("G-SCOPE", bad)
+
+
+# ---------------------------------------------------------------------------- §14: the boards
+
+
+def board_rows(spec: str) -> list[list[str]]:
+    return [r for r in table_after(sec(spec, "## 14."), "#") if r and re.fullmatch(r"\d\d", r[0])]
+
+
+def board_mode(spec: str) -> str:
+    """'pending' when every §14 Status cell is PENDING, else 'drawn' (a mix FAILs G-BOARDS)."""
+    rows = board_rows(spec)
+    return "pending" if all(len(r) > 5 and r[5] == STATUS_PENDING for r in rows) else "drawn"
+
+
+def png_size(data: bytes | None) -> tuple[int, int] | None:
+    """The width and height from a PNG's IHDR chunk; None when the bytes are not a PNG."""
+    if data is None or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        return None
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def blob(t: Texts, rel: str) -> bytes | None:
+    if t.blobs is not None:
+        return t.blobs.get(rel)
+    try:
+        return (ROOT / rel).read_bytes()
+    except OSError:
+        return None
+
+
+def board_exports(spec: str) -> list[str]:
+    """Every path the drawn mode commits: the ten exports and the renders of 01, 03, 04 and 06."""
+    out: list[str] = []
+    for r in board_rows(spec):
+        m = DRAWN.fullmatch(r[5]) if len(r) > 5 else None
+        if m:
+            out.append(m[4])
+            if r[0] in CVD_BOARDS:
+                out += [m[4][: -len(".png")] + f"-{k}.png" for k in CVD_KINDS]
+    return out
+
+
+def boards_drawn(t: Texts) -> list[str]:
+    bad: list[str] = []
+    rows = board_rows(t.spec)
+    statuses = [r[5] if len(r) > 5 else "" for r in rows]
+    if STATUS_PENDING in statuses:
+        return [f"§14 mixes PENDING and drawn rows ({statuses.count(STATUS_PENDING)} PENDING)"]
+    s14 = sec(t.spec, "## 14.")
+    if not PAGE_ID.search(s14):
+        bad.append("§14 does not name the page id")
+    listed = dict(RENDER_SHA.findall(s14))
+    ids: list[str] = []
+    for r in rows:
+        m = DRAWN.fullmatch(r[5]) if len(r) > 5 else None
+        if not m:
+            bad.append(f"board {r[0]}: the Status cell is not the drawn form")
+            continue
+        _, theme, bid, rel, nn, slug, w, h, sha = m.groups()
+        ids.append(bid)
+        want_slug = r[1].strip("`").split(" ")[-1]
+        if nn != r[0] or slug != want_slug:
+            bad.append(f"board {r[0]}: the export {rel} is not E14-D08-{r[0]}-{want_slug}.png")
+        if (theme or None) != BOARD_THEME.get(r[0]):
+            bad.append(f"board {r[0]}: the theme word {theme!r} is not {BOARD_THEME.get(r[0])!r}")
+        data = blob(t, rel)
+        size = png_size(data)
+        if data is None or size is None:
+            bad.append(f"board {r[0]}: {rel} is missing or not a PNG")
+            continue
+        if size != (int(w), int(h)):
+            bad.append(f"board {r[0]}: {rel} is {size[0]} × {size[1]}, the cell says {w} × {h}")
+        if hashlib.sha256(data).hexdigest() != sha:
+            bad.append(f"board {r[0]}: {rel}'s sha256 is not the cell's")
+        if r[0] in CVD_BOARDS:
+            for k in CVD_KINDS:
+                rr = rel[: -len(".png")] + f"-{k}.png"
+                rd = blob(t, rr)
+                if png_size(rd) is None or rd is None:
+                    bad.append(f"board {r[0]}: the {k} render {rr} is missing")
+                    continue
+                want = listed.get(Path(rr).name)
+                if want is None:
+                    bad.append(f"board {r[0]}: §14 does not list the {k} render with its sha256")
+                elif hashlib.sha256(rd).hexdigest() != want:
+                    bad.append(f"board {r[0]}: the {k} render's sha256 is not §14's")
+    if len(set(ids)) != len(ids):
+        bad.append("two boards share an id")
+    return bad
+
+
+def g_boards(t: Texts) -> list[Finding]:
+    rows = board_rows(t.spec)
+    bad: list[str] = []
+    if [r[0] for r in rows] != [f"{i:02d}" for i in range(1, 11)]:
+        bad.append(f"§14's register is not boards 01 ... 10 in order ({len(rows)} rows)")
+    slugs: list[str] = []
+    for r in rows:
+        if len(r) != 6:
+            bad.append(f"board {r[0]}: {len(r)} cells, not 6")
+            continue
+        m = re.fullmatch(r"`E14-D08 / (\d\d) ([a-z0-9]+(?:-[a-z0-9]+)*)`", r[1])
+        if not m or m[1] != r[0]:
+            bad.append(f"board {r[0]}: the name is not `E14-D08 / {r[0]} <slug>`")
+        else:
+            slugs.append(m[2])
+        want_theme = {"light": "light", "high contrast": "high contrast"}.get(
+            BOARD_THEME.get(r[0], ""), "dark"
+        )
+        if r[3] != want_theme:
+            bad.append(f"board {r[0]}: theme {r[3]!r}, ruled {want_theme!r}")
+        if r[4] != BOARD_TWIN.get(r[0], "—"):
+            bad.append(f"board {r[0]}: twin of {r[4]!r}, ruled {BOARD_TWIN.get(r[0], '—')!r}")
+    if len(set(slugs)) != len(slugs):
+        bad.append("two boards share a slug")
+    if board_mode(t.spec) == "drawn":
+        bad += boards_drawn(t)
+    return one("G-BOARDS", bad)
 
 
 def g_pins(t: Texts) -> list[Finding]:
@@ -1652,7 +1839,8 @@ def g_pins(t: Texts) -> list[Finding]:
 
 
 GATES: tuple[Callable[[Texts], list[Finding]], ...] = (
-    g_ledger, g_token, g_contrast, g_cvd, g_handle, g_stories, g_entry, g_hygiene,
+    g_ledger, g_token, g_contrast, g_cvd, g_handle, g_stories, g_entry, g_hygiene, g_boards,
+    g_scope,
 )  # fmt: skip
 
 
@@ -1798,6 +1986,83 @@ def with_memo(t: Texts, key: str, old: str, new: str) -> Texts:
     return replace(t, env=Env(t.env.base, memo))
 
 
+def board_cell(n: str, col: int, value: str) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        ls = lines_of(t.spec)
+        for i, ln in enumerate(ls):
+            cells = split_row(ln) if ln.startswith("| ") else []
+            if len(cells) == 6 and cells[0] == n and cells[1].startswith("`E14-D08 /"):
+                cells[col] = value
+                ls[i] = "| " + " | ".join(cells) + " |"
+                return replace(t, spec="\n".join(ls))
+        raise SystemExit(f"self-test: §14 has no board {n}")
+
+    return f
+
+
+def fake_png(w: int, h: int, tag: str) -> bytes:
+    """A PNG signature and IHDR of w x h, then the tag (the gate reads the size and the sha256)."""
+    return (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + w.to_bytes(4, "big")
+            + h.to_bytes(4, "big") + b"\x08\x06\x00\x00\x00" + tag.encode())  # fmt: skip
+
+
+def drawn_view(t: Texts, only: str | None = None) -> Texts:
+    """The PR 3 view: §14's Status cells drawn (all, or `only` one), every export and render a fake
+    PNG of 2032 x 1800 in the overlay, the page id and the render list under the register, the
+    exports in the diff and the pins re-written for the view (the positive control N-1)."""
+    blobs: dict[str, bytes] = {}
+    ls = lines_of(t.spec)
+    renders: list[str] = []
+    for i, ln in enumerate(ls):
+        cells = split_row(ln) if ln.startswith("| ") else []
+        if len(cells) != 6 or not re.fullmatch(r"\d\d", cells[0]) or not cells[1].startswith("`E14-D08 /"):
+            continue
+        n = cells[0]
+        if only is not None and n != only:
+            continue
+        slug = cells[1].strip("`").split(" ")[-1]
+        rel = f"{IMG_DIR}E14-D08-{n}-{slug}.png"
+        blobs[rel] = fake_png(2032, 1800, "board " + n)
+        sha = hashlib.sha256(blobs[rel]).hexdigest()
+        th = BOARD_THEME.get(n)
+        cells[5] = (f"drawn (r2{', ' + th if th else ''}): board id `00000000-0000-4000-8000-0000000000{n}`, "
+                    f"`{rel}` (2032 × 1800, sha256 `{sha}`)")  # fmt: skip
+        ls[i] = "| " + " | ".join(cells) + " |"
+        if n in CVD_BOARDS:
+            for k in CVD_KINDS:
+                rr = rel[: -len(".png")] + f"-{k}.png"
+                blobs[rr] = fake_png(2032, 1800, f"render {n} {k}")
+                renders.append(f"`{Path(rr).name}` (sha256 `{hashlib.sha256(blobs[rr]).hexdigest()}`)")
+    spec = "\n".join(ls)
+    head = "## 14. The board plan"
+    k = spec.index(head)
+    end = spec.index("\n\n", k + len(head) + 2)
+    note = ("\n\nDrawn on page id `00000000-0000-4000-8000-000000000000`; the renders: "
+            + "; ".join(renders) + ".")  # fmt: skip
+    spec = spec[:end] + note + spec[end:]
+    v = replace(t, spec=spec, blobs=blobs, changed=[*OWN_PATHS, *blobs])
+    return replace(v, pins=write_pins(all_units(v.spec, v.hand), cite_hashes(v.env, v.spec, v.hand)))
+
+
+RENDER_NAME = re.compile(r"-(?:greyscale|deuteranopia)\\.png$")
+
+
+def swap_blobs(t: Texts, a: str, b: str) -> Texts:
+    assert t.blobs is not None
+    ka, kb = (next(k for k in t.blobs if f"E14-D08-{n}-" in k and not RENDER_NAME.search(k)) for n in (a, b))
+    blobs = dict(t.blobs)
+    blobs[ka], blobs[kb] = t.blobs[kb], t.blobs[ka]
+    return replace(t, blobs=blobs)
+
+
+def alter_render(t: Texts) -> Texts:
+    assert t.blobs is not None
+    k = next(k for k in t.blobs if k.endswith("-greyscale.png"))
+    blobs = dict(t.blobs)
+    blobs[k] = blobs[k] + b"x"
+    return replace(t, blobs=blobs)
+
+
 M = Mutation
 # grouped by gate, in the tool's order; §16 lists them under the same numbers
 MUTATIONS: tuple[Mutation, ...] = (
@@ -1816,20 +2081,31 @@ MUTATIONS: tuple[Mutation, ...] = (
       lambda t: with_memo(t, "D05", "\n| 8   | anchor marker ring", "\n| 8x  | anchor marker ring")),
     M("G-CVD", "alter a simulated value in §8's V-table", anchor_edit("CVD:v1.grey.dark", "9.99")),
     M("G-HANDLE", "alter the 8 px glyph's row coverage in §6", anchor_edit("HANDLE:g8.c12", "0.68")),
-    M("G-STORIES", "drop D05's MeasurePinned from A-10", subst("MeasurePinned, MeasureAcrossGap, DensityComposite, HighContrast, ForcedColors, ReducedMotion, Greyscale, PositionTool", "MeasureAcrossGap, DensityComposite, HighContrast, ForcedColors, ReducedMotion, Greyscale, PositionTool")),
-    M("G-ENTRY", "add an undeclared field bullet to A-12",
-      subst("- **Motion (E14-D08)**: none by design; the snap, selection and undo feedback pairs are E14-D09's (#353) and will append here.<br>- **Usage (E14-D08)**: `docs/design/E14/E14-D08.md`",
-            "- **Motion (E14-D08)**: none by design; the snap, selection and undo feedback pairs are E14-D09's (#353) and will append here.<br>- **Composition**: a note.<br>- **Usage (E14-D08)**: `docs/design/E14/E14-D08.md`")),
+    M("G-STORIES", "add a story to A-10's Old cell (`15`'s six) that its New cell lacks",
+      subst("Fibonacci, KeyboardDrawDemo.", "Fibonacci, KeyboardDrawDemo, Polygon.")),
+    M("G-ENTRY", "re-word a hand-off checklist label away from `16` §11.4's",
+      subst("**Final Penpot link** — PR 3: the per-set file", "**Final Penpot links** — PR 3: the per-set file", "hand")),
     M("G-HYGIENE", "write a closing keyword against #352 in §17",
       subst("the closing line rides on PR 3 alone", "Closes #352")),
     M("G-HYGIENE", "leave a `{{` placeholder inside a code span of §0",
       subst("**Nothing here is built or published.**", "**Nothing here is built or published.** (`{{SHA:BASE}}`)")),
-    M("G-HYGIENE", "misquote A-3's Old cell by one letter",
-      subst("base drawing-tools primitive kit (per digest 10", "base drawing-tool primitive kit (per digest 10")),
+    M("G-HYGIENE", "misquote A-3's landed New cell by one letter",
+      subst("**Purpose**: the drawing primitives — stroke, fill", "**Purpose**: the drawing primitive — stroke, fill")),
     M("G-HYGIENE", "re-point a `22` cite one line off its pinned content (a rebase's drift)",
-      subst("`22`:21697–21742 (`DrawingTool`)", "`22`:21698–21742 (`DrawingTool`)")),
+      subst("`22`:22981–23026 (`DrawingTool`)", "`22`:22982–23026 (`DrawingTool`)")),
     M("G-HYGIENE", "re-point a backtick-wrapped `PAIRS` cite one line off its pinned content",
       subst("`PAIRS`:70–74", "`PAIRS`:70–75")),
+    M("G-BOARDS", "make board 09 a dark board", board_cell("09", 3, "dark")),
+    M("G-BOARDS", "a drawn Status cell for 01 while the other nine are PENDING (a mix)",
+      lambda t: drawn_view(t, only="01")),
+    M("G-BOARDS", "swap the bytes of two same-size exports (the size holds; the sha256 catches it)",
+      lambda t: swap_blobs(drawn_view(t), "01", "02")),
+    M("G-BOARDS", "a render's bytes that are not the sha256 §14 lists for it",
+      lambda t: alter_render(drawn_view(t))),
+    M("G-SCOPE", "commit an export while every board is PENDING",
+      lambda t: replace(t, changed=[*OWN_PATHS, IMG_DIR + "E14-D08-01-x.png"])),
+    M("G-SCOPE", "touch `15` after PR 2 landed §C",
+      lambda t: replace(t, changed=[*OWN_PATHS, CAT_REL])),
     M("G-RULED-PIN", "re-word one pinned sentence of §5",
       subst("Until the field exists, D04's client rule stands as the fallback", "Until the field exists, D04's client rule is the fallback")),
 )  # fmt: skip
@@ -1847,7 +2123,7 @@ def ascii_line(s: str) -> str:
 
 
 def selftest() -> tuple[bool, list[str]]:
-    base = replace(load(), changed=[SPEC_REL])  # the PR-1 view; N-1 below plants the PR-2 one
+    base = replace(load(), changed=[SPEC_REL])  # the pending view; N-1 below plants the drawn one
     disk = [hashlib.sha256(read_raw(r).encode()).hexdigest() for r in OWN_PATHS]
     before = digest(base)
     base_found = [f for f in audit(base) if f.level == "FAIL"]
@@ -1863,14 +2139,13 @@ def selftest() -> tuple[bool, list[str]]:
         ok &= good
         mark = "ok  " if good else "FAIL"
         out.append(ascii_line(f"{mark} M-{i} {m.gate}: {m.what} -> {', '.join(gates) or 'none'}"))
-    rows = a_rows_export(base.spec, base.env.at_base(CAT_REL), base.env.at_base(SCR_REL))
-    c15, _ = apply_rows(base.env.at_base(CAT_REL), [r for r in rows if r["file"] == CAT_REL])
-    c14, _ = apply_rows(base.env.at_base(SCR_REL), [r for r in rows if r["file"] == SCR_REL])
-    pr2 = replace(base, cat15=c15, cat14=c14, changed=[CAT_REL, SCR_REL])
-    extra = [f for f in audit(pr2) if f.level == "FAIL"]
+    pr3 = drawn_view(base)
+    extra = [f for f in audit(pr3) if f.level == "FAIL"]
     ok &= not extra
-    out.append(ascii_line(f"{'ok  ' if not extra else 'FAIL'} N-1 PR 2 with §C applied exactly -> "
+    out.append(ascii_line(f"{'ok  ' if not extra else 'FAIL'} N-1 PR 3 drawn, every export and render at its size and sha256 -> "
                           f"{', '.join(sorted({f.gate for f in extra})) or 'none'}"))  # fmt: skip
+    for f in extra[:5]:
+        out.append(ascii_line(f"  N-1 {f.gate}: {f.msg}"))
     restored = digest(base) == before and disk == [
         hashlib.sha256(read_raw(r).encode()).hexdigest() for r in OWN_PATHS
     ]
