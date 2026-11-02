@@ -538,6 +538,23 @@
             - textbox "Key for Redo drawing"
             - button "Record Redo drawing"
             - button "Save Redo drawing" [disabled]
+        - row "Chart Toggle data-table alternative view Alt+T Unbind Toggle data-table alternative view Reset Toggle data-table alternative view Ctrl for Toggle data-table alternative view Alt for Toggle data-table alternative view Shift for Toggle data-table alternative view Key for Toggle data-table alternative view Record Toggle data-table alternative view Save Toggle data-table alternative view":
+          - cell "Chart"
+          - rowheader "Toggle data-table alternative view"
+          - cell "Alt+T Unbind Toggle data-table alternative view Reset Toggle data-table alternative view":
+            - text: Alt+T
+            - button "Unbind Toggle data-table alternative view"
+            - button "Reset Toggle data-table alternative view" [disabled]
+          - cell "Ctrl for Toggle data-table alternative view Alt for Toggle data-table alternative view Shift for Toggle data-table alternative view Key for Toggle data-table alternative view Record Toggle data-table alternative view Save Toggle data-table alternative view":
+            - checkbox "Ctrl for Toggle data-table alternative view"
+            - text: Ctrl for Toggle data-table alternative view
+            - checkbox "Alt for Toggle data-table alternative view"
+            - text: Alt for Toggle data-table alternative view
+            - checkbox "Shift for Toggle data-table alternative view"
+            - text: Shift for Toggle data-table alternative view Key for Toggle data-table alternative view
+            - textbox "Key for Toggle data-table alternative view"
+            - button "Record Toggle data-table alternative view"
+            - button "Save Toggle data-table alternative view" [disabled]
         - row "DOM Market order (click) Ctrl+click Unbind Market order (click) Reset Market order (click) Ctrl for Market order (click) Alt for Market order (click) Shift for Market order (click) Key for Market order (click) Record Market order (click) Save Market order (click)":
           - cell "DOM"
           - rowheader "Market order (click)"
@@ -1155,6 +1172,159 @@
             - textbox "Key for Rename node"
             - button "Record Rename node"
             - button "Save Rename node" [disabled]
+        - row "Rules Add node Ctrl+Shift+N Unbind Add node Reset Add node Ctrl for Add node Alt for Add node Shift for Add node Key for Add node Record Add node Save Add node":
+          - cell "Rules"
+          - rowheader "Add node"
+          - cell "Ctrl+Shift+N Unbind Add node Reset Add node":
+            - text: Ctrl+Shift+N
+            - button "Unbind Add node"
+            - button "Reset Add node" [disabled]
+          - cell "Ctrl for Add node Alt for Add node Shift for Add node Key for Add node Record Add node Save Add node":
+            - checkbox "Ctrl for Add node"
+            - text: Ctrl for Add node
+            - checkbox "Alt for Add node"
+            - text: Alt for Add node
+            - checkbox "Shift for Add node"
+            - text: Shift for Add node Key for Add node
+            - textbox "Key for Add node"
+            - button "Record Add node"
+            - button "Save Add node" [disabled]
+        - row "Rules Nudge node left Ctrl+← Unbind Nudge node left Reset Nudge node left Ctrl for Nudge node left Alt for Nudge node left Shift for Nudge node left Key for Nudge node left Record Nudge node left Save Nudge node left":
+          - cell "Rules"
+          - rowheader "Nudge node left"
+          - cell "Ctrl+← Unbind Nudge node left Reset Nudge node left":
+            - text: Ctrl+←
+            - button "Unbind Nudge node left"
+            - button "Reset Nudge node left" [disabled]
+          - cell "Ctrl for Nudge node left Alt for Nudge node left Shift for Nudge node left Key for Nudge node left Record Nudge node left Save Nudge node left":
+            - checkbox "Ctrl for Nudge node left"
+            - text: Ctrl for Nudge node left
+            - checkbox "Alt for Nudge node left"
+            - text: Alt for Nudge node left
+            - checkbox "Shift for Nudge node left"
+            - text: Shift for Nudge node left Key for Nudge node left
+            - textbox "Key for Nudge node left"
+            - button "Record Nudge node left"
+            - button "Save Nudge node left" [disabled]
+        - row "Rules Nudge node right Ctrl+→ Unbind Nudge node right Reset Nudge node right Ctrl for Nudge node right Alt for Nudge node right Shift for Nudge node right Key for Nudge node right Record Nudge node right Save Nudge node right":
+          - cell "Rules"
+          - rowheader "Nudge node right"
+          - cell "Ctrl+→ Unbind Nudge node right Reset Nudge node right":
+            - text: Ctrl+→
+            - button "Unbind Nudge node right"
+            - button "Reset Nudge node right" [disabled]
+          - cell "Ctrl for Nudge node right Alt for Nudge node right Shift for Nudge node right Key for Nudge node right Record Nudge node right Save Nudge node right":
+            - checkbox "Ctrl for Nudge node right"
+            - text: Ctrl for Nudge node right
+            - checkbox "Alt for Nudge node right"
+            - text: Alt for Nudge node right
+            - checkbox "Shift for Nudge node right"
+            - text: Shift for Nudge node right Key for Nudge node right
+            - textbox "Key for Nudge node right"
+            - button "Record Nudge node right"
+            - button "Save Nudge node right" [disabled]
+        - row "Rules Nudge node up Ctrl+↑ Unbind Nudge node up Reset Nudge node up Ctrl for Nudge node up Alt for Nudge node up Shift for Nudge node up Key for Nudge node up Record Nudge node up Save Nudge node up":
+          - cell "Rules"
+          - rowheader "Nudge node up"
+          - cell "Ctrl+↑ Unbind Nudge node up Reset Nudge node up":
+            - text: Ctrl+↑
+            - button "Unbind Nudge node up"
+            - button "Reset Nudge node up" [disabled]
+          - cell "Ctrl for Nudge node up Alt for Nudge node up Shift for Nudge node up Key for Nudge node up Record Nudge node up Save Nudge node up":
+            - checkbox "Ctrl for Nudge node up"
+            - text: Ctrl for Nudge node up
+            - checkbox "Alt for Nudge node up"
+            - text: Alt for Nudge node up
+            - checkbox "Shift for Nudge node up"
+            - text: Shift for Nudge node up Key for Nudge node up
+            - textbox "Key for Nudge node up"
+            - button "Record Nudge node up"
+            - button "Save Nudge node up" [disabled]
+        - row "Rules Nudge node down Ctrl+↓ Unbind Nudge node down Reset Nudge node down Ctrl for Nudge node down Alt for Nudge node down Shift for Nudge node down Key for Nudge node down Record Nudge node down Save Nudge node down":
+          - cell "Rules"
+          - rowheader "Nudge node down"
+          - cell "Ctrl+↓ Unbind Nudge node down Reset Nudge node down":
+            - text: Ctrl+↓
+            - button "Unbind Nudge node down"
+            - button "Reset Nudge node down" [disabled]
+          - cell "Ctrl for Nudge node down Alt for Nudge node down Shift for Nudge node down Key for Nudge node down Record Nudge node down Save Nudge node down":
+            - checkbox "Ctrl for Nudge node down"
+            - text: Ctrl for Nudge node down
+            - checkbox "Alt for Nudge node down"
+            - text: Alt for Nudge node down
+            - checkbox "Shift for Nudge node down"
+            - text: Shift for Nudge node down Key for Nudge node down
+            - textbox "Key for Nudge node down"
+            - button "Record Nudge node down"
+            - button "Save Nudge node down" [disabled]
+        - row "Rules Nudge node left (large step) Ctrl+Shift+← Unbind Nudge node left (large step) Reset Nudge node left (large step) Ctrl for Nudge node left (large step) Alt for Nudge node left (large step) Shift for Nudge node left (large step) Key for Nudge node left (large step) Record Nudge node left (large step) Save Nudge node left (large step)":
+          - cell "Rules"
+          - rowheader "Nudge node left (large step)"
+          - cell "Ctrl+Shift+← Unbind Nudge node left (large step) Reset Nudge node left (large step)":
+            - text: Ctrl+Shift+←
+            - button "Unbind Nudge node left (large step)"
+            - button "Reset Nudge node left (large step)" [disabled]
+          - cell "Ctrl for Nudge node left (large step) Alt for Nudge node left (large step) Shift for Nudge node left (large step) Key for Nudge node left (large step) Record Nudge node left (large step) Save Nudge node left (large step)":
+            - checkbox "Ctrl for Nudge node left (large step)"
+            - text: Ctrl for Nudge node left (large step)
+            - checkbox "Alt for Nudge node left (large step)"
+            - text: Alt for Nudge node left (large step)
+            - checkbox "Shift for Nudge node left (large step)"
+            - text: Shift for Nudge node left (large step) Key for Nudge node left (large step)
+            - textbox "Key for Nudge node left (large step)"
+            - button "Record Nudge node left (large step)"
+            - button "Save Nudge node left (large step)" [disabled]
+        - row "Rules Nudge node right (large step) Ctrl+Shift+→ Unbind Nudge node right (large step) Reset Nudge node right (large step) Ctrl for Nudge node right (large step) Alt for Nudge node right (large step) Shift for Nudge node right (large step) Key for Nudge node right (large step) Record Nudge node right (large step) Save Nudge node right (large step)":
+          - cell "Rules"
+          - rowheader "Nudge node right (large step)"
+          - cell "Ctrl+Shift+→ Unbind Nudge node right (large step) Reset Nudge node right (large step)":
+            - text: Ctrl+Shift+→
+            - button "Unbind Nudge node right (large step)"
+            - button "Reset Nudge node right (large step)" [disabled]
+          - cell "Ctrl for Nudge node right (large step) Alt for Nudge node right (large step) Shift for Nudge node right (large step) Key for Nudge node right (large step) Record Nudge node right (large step) Save Nudge node right (large step)":
+            - checkbox "Ctrl for Nudge node right (large step)"
+            - text: Ctrl for Nudge node right (large step)
+            - checkbox "Alt for Nudge node right (large step)"
+            - text: Alt for Nudge node right (large step)
+            - checkbox "Shift for Nudge node right (large step)"
+            - text: Shift for Nudge node right (large step) Key for Nudge node right (large step)
+            - textbox "Key for Nudge node right (large step)"
+            - button "Record Nudge node right (large step)"
+            - button "Save Nudge node right (large step)" [disabled]
+        - row "Rules Nudge node up (large step) Ctrl+Shift+↑ Unbind Nudge node up (large step) Reset Nudge node up (large step) Ctrl for Nudge node up (large step) Alt for Nudge node up (large step) Shift for Nudge node up (large step) Key for Nudge node up (large step) Record Nudge node up (large step) Save Nudge node up (large step)":
+          - cell "Rules"
+          - rowheader "Nudge node up (large step)"
+          - cell "Ctrl+Shift+↑ Unbind Nudge node up (large step) Reset Nudge node up (large step)":
+            - text: Ctrl+Shift+↑
+            - button "Unbind Nudge node up (large step)"
+            - button "Reset Nudge node up (large step)" [disabled]
+          - cell "Ctrl for Nudge node up (large step) Alt for Nudge node up (large step) Shift for Nudge node up (large step) Key for Nudge node up (large step) Record Nudge node up (large step) Save Nudge node up (large step)":
+            - checkbox "Ctrl for Nudge node up (large step)"
+            - text: Ctrl for Nudge node up (large step)
+            - checkbox "Alt for Nudge node up (large step)"
+            - text: Alt for Nudge node up (large step)
+            - checkbox "Shift for Nudge node up (large step)"
+            - text: Shift for Nudge node up (large step) Key for Nudge node up (large step)
+            - textbox "Key for Nudge node up (large step)"
+            - button "Record Nudge node up (large step)"
+            - button "Save Nudge node up (large step)" [disabled]
+        - row "Rules Nudge node down (large step) Ctrl+Shift+↓ Unbind Nudge node down (large step) Reset Nudge node down (large step) Ctrl for Nudge node down (large step) Alt for Nudge node down (large step) Shift for Nudge node down (large step) Key for Nudge node down (large step) Record Nudge node down (large step) Save Nudge node down (large step)":
+          - cell "Rules"
+          - rowheader "Nudge node down (large step)"
+          - cell "Ctrl+Shift+↓ Unbind Nudge node down (large step) Reset Nudge node down (large step)":
+            - text: Ctrl+Shift+↓
+            - button "Unbind Nudge node down (large step)"
+            - button "Reset Nudge node down (large step)" [disabled]
+          - cell "Ctrl for Nudge node down (large step) Alt for Nudge node down (large step) Shift for Nudge node down (large step) Key for Nudge node down (large step) Record Nudge node down (large step) Save Nudge node down (large step)":
+            - checkbox "Ctrl for Nudge node down (large step)"
+            - text: Ctrl for Nudge node down (large step)
+            - checkbox "Alt for Nudge node down (large step)"
+            - text: Alt for Nudge node down (large step)
+            - checkbox "Shift for Nudge node down (large step)"
+            - text: Shift for Nudge node down (large step) Key for Nudge node down (large step)
+            - textbox "Key for Nudge node down (large step)"
+            - button "Record Nudge node down (large step)"
+            - button "Save Nudge node down (large step)" [disabled]
         - row "Replay Play / pause Space Unbind Play / pause Reset Play / pause Ctrl for Play / pause Alt for Play / pause Shift for Play / pause Key for Play / pause Record Play / pause Save Play / pause":
           - cell "Replay"
           - rowheader "Play / pause"
@@ -1350,7 +1520,7 @@
 - complementary "Side panels":
   - button "Notifications"
 - contentinfo:
-  - text: "Connection: offline"
+  - text: "Connection: reconnecting"
   - status "System status": "WS latency: unavailable"
   - text: "12:00:00 UTC Trading environment: Demo v0.1.0"
 - status
