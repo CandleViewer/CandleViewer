@@ -349,6 +349,8 @@ jobs:
               # tool green without the scan (#4348). It sat in `py` until the py lane, which runs
               # nothing for docs, made every boards PR's merge group run it (#4355).
               - 'docs/**/*.py'
+              # Python under qa/ (the regression-pack audit tools) is scanned the same way (#5340).
+              - 'qa/**/*.py'
 
   # --- Gates (#3076): one step per always-on or sub-minute gate. A step's id is its
   # `ci-required` lane and `gates` exports its outcome under it, so each gate is judged as its

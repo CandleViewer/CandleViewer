@@ -55,7 +55,29 @@ export interface WsHarness {
   sendTicker(symbol: string, fields?: Partial<TickerRow>): void;
   /** Test-only: the age of every data frame sent from now on (`GatewayOptions.ageMs`). */
   setFrameAge(ms: number): void;
+  /**
+   * E17-Q04 (#569): replies to the client's `t` frames wait until `release(t)`. `hello` keeps a new socket in its
+   * first connect (E17-D02 row 1); `resync` keeps a stream resyncing (row 9). Each held frame is still logged.
+   */
+  hold(t: Held): void;
+  release(t: Held): void;
+  /** E17-Q04: what the gateway holds from now on, with no frame sent (a release during an outage); the next `auth_ok` and snapshots carry it. */
+  setKillSwitch(value: Readonly<Record<string, unknown>>): void;
+  /** E17-Q04: any `system` payload as the next `d` on `system` (15.9: kill_switch, shutdown_notice, connection_quality). */
+  sendSystem(body: Readonly<Record<string, unknown>>): void;
+  /** E17-Q04: an `err` frame (10.3), which the app shows as a modal, a badge or a toast by its code. */
+  sendErr(code: string, message?: string): void;
+  /**
+   * E17-Q04: the server closes the live socket with `code` and `reason`, its `bye` (4.4) first when given. New sockets
+   * are answered (unlike `kill`): whether the client comes back is its close policy's decision (9.2).
+   */
+  closeWith(
+    close: Readonly<{ code: number; reason: string; bye?: Readonly<Record<string, unknown>> }>,
+  ): void;
 }
+
+/** The client frames whose replies `hold` can keep back. */
+export type Held = "hello" | "resync";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../../..");
 /** The build's version (`apps/web/package.json`, what `__CV_APP_VERSION__` is): no SCR-157 band. */
@@ -161,6 +183,15 @@ export async function installWsHarness(
   heartbeat?: Heartbeat,
   gateway: GatewayOptions = {},
 ): Promise<WsHarness> {
+  return startWsHarness(page, heartbeat, gateway);
+}
+
+/** The same fake gateway under the name the E17-Q04 (#569) specs call it by. */
+export async function startWsHarness(
+  page: Page,
+  heartbeat?: Heartbeat,
+  gateway: GatewayOptions = {},
+): Promise<WsHarness> {
   const frames: { conn: number; frame: Frame }[] = [];
   const sent: Frame[] = [];
   const clientCloses: { code: number; reason: string }[] = [];
@@ -173,6 +204,12 @@ export async function installWsHarness(
   let stalled: Conn | undefined;
   let current: Conn | undefined;
   let ageMs = gateway.ageMs ?? 0;
+  // The kill switch the gateway last held: the `auth_ok` and every `system` snapshot carry it, and `sendSystem`
+  // moves it when its body carries one (15.9), so a resync never answers a state the gateway did not hold.
+  let killSwitch: Readonly<Record<string, unknown>> = { engaged: false, scope: "global" };
+  const currentKillSwitch = () => killSwitch;
+  const held = new Set<Held>();
+  const parked: [Conn, Frame][] = [];
   const now = (): number => EPOCH_MS + (tick += 1);
 
   const send = (c: Conn, frame: Frame): void => {
@@ -187,6 +224,7 @@ export async function installWsHarness(
 
   /** 4.2, 4.3, 5.2, 5.3, 7.5, 9.1: the replies a gateway owes each client frame. */
   function answer(c: Conn, f: Frame): void {
+    if ((f.t === "hello" || f.t === "resync") && held.has(f.t)) return void parked.push([c, f]);
     const p = (f["p"] ?? {}) as Record<string, unknown>;
     const id = f["id"];
     switch (f.t) {
@@ -218,7 +256,7 @@ export async function installWsHarness(
         c.authed = true;
         if (first) authed += 1;
         else reauthed += 1;
-        const killSwitch = { engaged: false, scope: "global" };
+        const killSwitch = currentKillSwitch();
         send(c, {
           t: "auth_ok",
           id,
@@ -255,9 +293,11 @@ export async function installWsHarness(
       case "resync": {
         const ch = String(f["ch"]);
         const last = c.seq.get(ch) ?? 0;
-        // Only `system` has a body to re-send here; a ticker resync waits for the next `sendTicker`.
+        // Only `system` has a body to re-send here; a ticker resync waits for the next `sendTicker`. Its snapshot is
+        // the first one's (12.1), the kill switch included: without it the client keeps the switch unknown (WS-E06).
+        const body = { ...HEALTH, kill_switch: currentKillSwitch() };
         if (ch === "system")
-          data(c, "snap", ch, HEALTH, last + 1, { reason: "client_resync", previous_seq: last });
+          data(c, "snap", ch, body, last + 1, { reason: "client_resync", previous_seq: last });
         return;
       }
       case "ping":
@@ -332,6 +372,33 @@ export async function installWsHarness(
     },
     setFrameAge(ms) {
       ageMs = ms;
+    },
+    hold: (t) => void held.add(t),
+    release(t) {
+      held.delete(t);
+      const due = parked.filter(([, f]) => f.t === t);
+      parked.splice(0, parked.length, ...parked.filter(([, f]) => f.t !== t));
+      for (const [c, f] of due) answer(c, f);
+    },
+    setKillSwitch(value) {
+      killSwitch = value;
+    },
+    sendSystem(body) {
+      if (!current) throw new Error("sendSystem: no live connection");
+      const ks = body["kill_switch"];
+      if (typeof ks === "object" && ks !== null && !Array.isArray(ks))
+        killSwitch = ks as Record<string, unknown>;
+      data(current, "d", "system", body, (current.seq.get("system") ?? 0) + 1);
+    },
+    sendErr(code, message = code) {
+      if (!current) throw new Error("sendErr: no live connection");
+      send(current, { t: "err", ts: now(), p: { code, message } });
+    },
+    closeWith({ code, reason, bye }) {
+      if (!current) throw new Error("closeWith: no live connection");
+      if (bye !== undefined) send(current, { t: "bye", p: bye });
+      void current.route.close({ code, reason });
+      current = undefined;
     },
     sendTicker(symbol, fields = {}) {
       if (!current) throw new Error("sendTicker: no live connection");

@@ -1,6 +1,6 @@
 // E08-Q05 (#282) slice 1: the e2e WS harness against the REAL web client: handshake (23 4.2, 4.3), lost transport and
 // reconnect (4.4, 9.2), silent server and heartbeat watchdog (9.1), sequence gap and resync (7.5, 12.3). Every frame both
-// ways is checked against 23's schemas. No UI renders the connection state yet (CMP-076/077/078), so this reads the wire.
+// ways is checked against 23's schemas. This file reads the wire; what the chrome shows is E17-Q04's (`e2e/e17/`).
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -87,6 +87,29 @@ test("desync: a sequence gap makes the client resync", async ({ page }) => {
   expect(harness.sent.flatMap(schemaErrors)).toEqual([]);
 });
 
+// E17-Q04 (#569): a resync snapshot carries the kill switch the gateway last held, one engaged through `sendSystem` too.
+test("resync: the system snapshot carries the kill switch last set", async ({ page }) => {
+  const harness = await signedIn(page);
+  harness.sendSystem({ kind: "kill_switch", kill_switch: { engaged: true, scope: "global" } });
+  harness.desync();
+  await expect
+    .poll(() => harness.sent.at(-1))
+    .toMatchObject({
+      t: "snap",
+      ch: "system",
+      meta: { reason: "client_resync" },
+      p: { kill_switch: { engaged: true, scope: "global" } },
+    });
+  expect(harness.sent.flatMap(schemaErrors)).toEqual([]);
+  // a release with no frame sent: the next resync says disengaged
+  harness.setKillSwitch({ engaged: false, scope: "global" });
+  harness.desync();
+  await expect
+    .poll(() => harness.sent.at(-1))
+    .toMatchObject({ t: "snap", ch: "system", p: { kill_switch: { engaged: false } } });
+  expect(harness.sent.flatMap(schemaErrors)).toEqual([]);
+});
+
 // #304 S10 (E04-D02-F11): the test-only frame-age knob. The C-d e2e (hold 150 ms for 60 ticker frames and see one
 // "System status" change) needs a mounted surface that consumes a topic; none does at this base, so only the knob is
 // checked here and C-d stays a row for E10-Q03 (#302).
@@ -99,6 +122,28 @@ test("setFrameAge stamps each data frame that far behind the server's clock", as
   const aged = Number(harness.sent.at(-1)?.["ts"]);
   expect(fresh - aged).toBe(149); // one tick of the server's counter later, 150 ms older
   expect(harness.sent.flatMap(schemaErrors)).toEqual([]);
+});
+
+// E17-Q04 (#569): the controls the E17 specs drive. A held `hello` gets no `welcome`; each frame they make is a 23 frame
+// (an `err` has no payload schema: its envelope is checked).
+test("hold, sendSystem, sendErr and closeWith send 23 frames", async ({ page }) => {
+  await stubSession(page, { role: "owner" });
+  const harness = await H.startWsHarness(page);
+  harness.hold("hello");
+  await page.goto("/terminal");
+  await expect.poll(() => harness.connections()).toBe(1);
+  expect(harness.sent).toEqual([]);
+  harness.release("hello");
+  await expect.poll(() => harness.authenticated()).toBe(1);
+  harness.sendSystem({ kind: "kill_switch", kill_switch: { engaged: true, scope: "global" } });
+  harness.sendErr("subscription_limit");
+  const bye = { code: 4429, reason: "slow_consumer", message: "m", reconnect: true };
+  harness.closeWith({ code: 4429, reason: "slow_consumer", bye });
+  expect(harness.sent.map((f) => f.t)).toEqual(["welcome", "auth_ok", "snap", "d", "err", "bye"]);
+  expect(harness.sent.filter((f) => f.t !== "err").flatMap(schemaErrors)).toEqual([]);
+  const envelope = ajv.getSchema("cv://ws/v1/envelope.schema.json");
+  expect(harness.sent.filter((f) => f.t === "err").map((f) => envelope?.(f))).toEqual([true]);
+  await expect.poll(() => harness.authenticated()).toBe(2); // 4429 with reconnect: true comes back
 });
 
 test("fixture tickers translate into valid 23 ticker payloads", () => {
