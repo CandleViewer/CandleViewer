@@ -229,10 +229,11 @@
 /*
  * The tab's toast stack ("Order notifications"), until CMP-212's one counted stack: the bottom start
  * corner, so it never covers the shell's stack at the bottom end. Both stay until dismissed (WCAG
- * 2.2.1). The selector names the region by its PROPOSED label (`blotter.ui.toasts`); a test holds
- * the two together.
+ * 2.2.1). CMP-045 portals the region to `document.body`, so no selector under the tab reaches it:
+ * this one finds it by the tab's own toast ids (`TOAST_ID` in `WorkingOrdersTab.tsx`), never by
+ * its PROPOSED label (n5); a test holds the two together.
  */
-.cv-toast-region[aria-label="Order notifications"] {
+.cv-toast-region:has([data-toast-id^="orders-toast-"]) {
   inset-inline-start: var(--space-inset-lg);
   inset-inline-end: auto;
 }

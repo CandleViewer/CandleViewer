@@ -22,7 +22,6 @@ import {
 } from "../../../../src/features/app-shell/announcer";
 import { positionsApi, type ExchangeAccount } from "../../../../src/features/positions/api";
 import { ordersApi, type OrdersWrites } from "../../../../src/features/positions/orders/api";
-import { bindProposed } from "../../../../src/features/positions/orders/copy";
 import type * as ViewModule from "../../../../src/features/positions/orders/view";
 import { LINGER_MS } from "../../../../src/features/positions/orders/ordersStore";
 import { resetPanelState, updatePanelState } from "../../../../src/features/positions/panelState";
@@ -530,6 +529,41 @@ describe("a row's Cancel (D02 §8.2)", () => {
     },
   );
 
+  it(
+    "busy holds through a fill; it ends at the 202's state, the order's end or unknown (n6)",
+    SCREEN,
+    async () => {
+      await openOrders(); // each DELETE answers 202 with the order cancel_pending
+      const push = (id: string, lifecycle: string, at: number): void =>
+        ws.live("orders")[0]?.push(delta(moved(id, { lifecycle_state: lifecycle }, at)));
+      fireEvent.click(cancelOf(ETH)); // submitted
+      await settle(TICK);
+      // a fill moves it, but not to the 202's state: busy holds, and a press sends nothing
+      push(ETH, "partially_filled", 1_793_455_340_000);
+      await settle(TICK);
+      expect(cancelOf(ETH)).toHaveAttribute("aria-busy", "true");
+      fireEvent.click(cancelOf(ETH));
+      await settle(TICK);
+      expect(deletes()).toEqual([ETH]);
+      // it reaches cancel_pending (busy by its own state), then the venue refuses: free again
+      push(ETH, "cancel_pending", 1_793_455_341_000);
+      await settle(TICK);
+      push(ETH, "partially_filled", 1_793_455_342_000);
+      await settle(TICK);
+      expect(cancelOf(ETH)).not.toHaveAttribute("aria-busy");
+      expect(cancelOf(ETH)).not.toHaveAttribute("aria-disabled");
+      // one parked unknown is let go too: its own reason shows, not busy
+      fireEvent.click(cancelOf(COND));
+      await settle(TICK);
+      push(COND, "unknown", 1_793_455_343_000);
+      await settle(TICK);
+      expect(cancelOf(COND)).not.toHaveAttribute("aria-busy");
+      expect(cancelOf(COND)).toHaveAccessibleDescription(
+        "We could not confirm this order with Bybit; checking.",
+      );
+    },
+  );
+
   it("a market order's sent toast names no price (code n5)", SCREEN, async () => {
     const body = snapshotBody();
     const market = {
@@ -865,7 +899,7 @@ describe("Cancel-all partial failure", () => {
   );
 
   it(
-    "once sent, Esc closes the view and cancels nothing; the result comes as a toast (design m12)",
+    "once sent, the dismissing button reads Close: it closes the view and cancels nothing; the result comes as a toast (design m12, m1)",
     SCREEN,
     async () => {
       let answer: (res: Response) => void = () => undefined;
@@ -879,8 +913,11 @@ describe("Cancel-all partial failure", () => {
       fireEvent.click(screen.getByRole("button", { name: "Cancel all in view…" }));
       await settle(500);
       await confirmBulk("Cancel 5 orders");
-      expect(screen.getByRole("alertdialog")).toHaveAttribute("aria-busy", "true");
-      fireEvent.keyDown(screen.getByRole("alertdialog"), { key: "Escape" });
+      const confirm = screen.getByRole("alertdialog");
+      expect(confirm).toHaveAttribute("aria-busy", "true");
+      // it keeps nothing back once sent, so it says what it does (m1); Esc does the same (N-M1)
+      expect(within(confirm).queryByRole("button", { name: "Keep orders" })).toBeNull();
+      fireEvent.click(within(confirm).getByRole("button", { name: "Close" }));
       await settle(TICK);
       expect(screen.queryByRole("alertdialog")).toBeNull();
       focusHeld();
@@ -1325,7 +1362,7 @@ describe("the toolbar, the tree and the toasts", () => {
   });
 
   it(
-    "the tab's one toast region has its own name, and a failure stays until dismissed (design m9)",
+    "the tab's one toast region has its own name, and a failure stays until dismissed (design m9, n5)",
     SCREEN,
     async () => {
       await openOrders({ cancel: () => json(502, { code: "exchange_error" }) });
@@ -1335,9 +1372,13 @@ describe("the toolbar, the tree and the toasts", () => {
       expect(within(stack).getByText("Not cancelled: BTCUSDT Buy 0.15 on Sub-1.")).toBeVisible();
       await settle(20_000);
       expect(within(stack).getByText("Not cancelled: BTCUSDT Buy 0.15 on Sub-1.")).toBeVisible();
-      // its corner is not the shell's: the stylesheet names the region by this very label
+      // its corner is not the shell's: CMP-045 portals the region to the body, out of the tab, so
+      // the stylesheet finds it by the tab's own toast ids, never by its PROPOSED label (n5)
+      expect(stack.parentElement).toBe(document.body);
+      const corner = '.cv-toast-region:has([data-toast-id^="orders-toast-"])';
+      expect(stack.matches(corner)).toBe(true);
       const css = repoFile("apps/web/src/features/positions/positions.css");
-      expect(css).toContain(`.cv-toast-region[aria-label="${bindProposed("blotter.ui.toasts")}"]`);
+      expect(css).toContain(`${corner} {`);
     },
   );
 

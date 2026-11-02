@@ -376,7 +376,10 @@ export const PROPOSED = {
     "Cancel results",
     "The bulk dialog's title once it becomes the result (D02 §8.3).",
   ),
-  "blotter.ui.result.close": proposed("Close", "The result dialog's closing button."),
+  "blotter.ui.result.close": proposed(
+    "Close",
+    "The result dialog's closing button, and the bulk confirm's dismissing one while its send runs (m1).",
+  ),
   "blotter.ui.orders_empty": proposed(
     "No working orders",
     "S-03 on the Working-orders tab: the deck's `blotter.ui.empty` words the Positions tab.",

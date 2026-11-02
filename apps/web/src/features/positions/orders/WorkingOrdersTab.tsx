@@ -17,15 +17,16 @@
  *   lock on the button, CMP-016's echo, its reason node; the menu item's second line); a scope's
  *   reason points at its one notice (2a, G-T2.5), the menu item's too, with no second line. Busy is
  *   "Cancelling…" with a static ⟳ (CMP-057's look), never T2, and holds until the row shows the
- *   cancel (a frame, a read, the row leaving), so a second press sends nothing. One click sends it,
- *   no question, and a toast without Undo names the order (D01 D7); a protective take-profit asks
- *   first (D02 §8.2), and its confirm reads the row again before it sends.
+ *   cancel (it reaches the 202's state, ends, goes `unknown` or leaves; a fill meanwhile keeps it
+ *   busy), so a second press sends nothing. One click sends it, no question, and a toast without
+ *   Undo names the order (D01 D7); a protective take-profit asks first (D02 §8.2), and its confirm
+ *   reads the row again before it sends.
  * - **Bulk** (D02 §8.3; `model/bulk.ts`): "2 selected · Cancel selected · Clear selection" and
  *   "Cancel all in view…" (present while rows are in view, §9.2) open `BulkCancelDialog`; Confirm
  *   reads the targets again, so no row that is a native stop at Confirm is sent (C-2.6, BQ-4); one
  *   that turns native while a per-row run is still sending meets the server's `403`, which stays
- *   the enforcement. Once sent, `Esc` and "Keep orders" close the view and cancel nothing; the
- *   result then comes as a toast.
+ *   the enforcement. Once sent, `Esc` and the dismissing button, which then reads "Close" (m1),
+ *   close the view and cancel nothing; the result then comes as a toast.
  * - **A sent cancel is never aborted** (D02 §8.3, "never silently dropped"): leaving the tab stops
  *   its reads (the feed's own), never a write, so every confirmed target is sent and answered. An
  *   answer that comes after the tab has gone changes nothing on screen and is said instead, once,
@@ -195,6 +196,11 @@ const OVERSCAN = 10;
 const FIRST_WINDOW = 30;
 /** The toasts a tab holds at most (C-2.18): the newest stay. */
 const MAX_TOASTS = 3;
+/**
+ * The tab's toast ids' prefix. CMP-045 portals the region to `document.body`, out of the tab's
+ * subtree, so `positions.css` finds the tab's corner by these ids, never by a PROPOSED label (n5).
+ */
+const TOAST_ID = "orders-toast-";
 /** The Age column repaints at most once a second (D02:272), never announced. */
 const AGE_TICK_MS = 1_000;
 /** A shell cause takes REST down with the socket (D02:397; `connectionRegion.ts`). */
@@ -214,8 +220,21 @@ let toastSeq = 0;
 /** A cancel in flight from this client: the row's lifecycle at the press, and whether the server took it. */
 interface Pending {
   readonly from: string | null;
+  /** The order's state in the server's `202` (`22` `cancelOrder`), `null` until it answers or when it gave none. */
+  readonly to: string | null;
   readonly taken: boolean;
 }
+
+/**
+ * The store's row shows a cancel the server took (n6): it reached the `202`'s state, ended, went
+ * `unknown` or left. A `202` with no state to read falls back to the row leaving the state it was
+ * pressed in. Any other move (a fill meanwhile) keeps the row busy.
+ */
+const shows = (row: OrderRowModel | undefined, pending: Pending): boolean =>
+  row === undefined ||
+  row.state.terminal ||
+  row.state.lifecycle === "unknown" ||
+  (pending.to === null ? row.state.lifecycle !== pending.from : row.state.lifecycle === pending.to);
 
 interface Span {
   readonly first: number;
@@ -662,14 +681,12 @@ export function WorkingOrdersTab({
     return () => clearInterval(tick);
   }, [view.length, wall]);
 
-  // A cancel the server took stays busy until its row shows it: a frame or a read moves its state
-  // off the one it was pressed in, or the row leaves (design m5). The store's row is what the gate
-  // reads, so the 202's own state never ends it: a second press meanwhile sends nothing.
+  // A cancel the server took stays busy until its row shows it (`shows`, n6): a frame or a read
+  // brings the row to the 202's state, ends it or parks it `unknown`, or the row leaves. The store's
+  // row is what the gate reads, so a second press meanwhile sends nothing.
   useEffect(() => {
-    const lifecycleOf = new Map(snap.rows.map((r) => [r.id, r.state.lifecycle]));
-    const done = [...cancelling].filter(
-      ([id, p]) => p.taken && (!lifecycleOf.has(id) || lifecycleOf.get(id) !== p.from),
-    );
+    const rowOf = new Map(snap.rows.map((r) => [r.id, r]));
+    const done = [...cancelling].filter(([id, p]) => p.taken && shows(rowOf.get(id), p));
     if (done.length === 0) return;
     setCancelling((all) => {
       const next = new Map(all);
@@ -749,7 +766,7 @@ export function WorkingOrdersTab({
 
   const toast = (item: Omit<ToastItem, "id">): void => {
     toastSeq += 1;
-    const next = { ...item, id: `orders-toast-${toastSeq}` };
+    const next = { ...item, id: `${TOAST_ID}${toastSeq}` };
     setToasts((all) => [...all, next].slice(-MAX_TOASTS));
   };
   /**
@@ -770,7 +787,8 @@ export function WorkingOrdersTab({
   const sendCancel = (pressed: OrderRowModel): void => {
     const row = view.find((r) => r.id === pressed.id);
     if (row === undefined || gateOf(row).kind !== "allowed") return;
-    setCancelling((all) => new Map(all).set(row.id, { from: row.state.lifecycle, taken: false }));
+    const from = row.state.lifecycle;
+    setCancelling((all) => new Map(all).set(row.id, { from, to: null, taken: false }));
     reportCancelAttempted();
     // no abort signal: leaving the tab never stops a cancel that was sent (N-M1)
     void writes
@@ -781,7 +799,7 @@ export function WorkingOrdersTab({
           if (outcome.kind === "accepted")
             setCancelling((all) =>
               all.has(row.id)
-                ? new Map(all).set(row.id, { from: row.state.lifecycle, taken: true })
+                ? new Map(all).set(row.id, { from, to: outcome.lifecycle, taken: true })
                 : all,
             );
           else release(row.id);
@@ -881,7 +899,7 @@ export function WorkingOrdersTab({
     send(plan, true);
   };
   const onCloseBulk = (): void => {
-    // once sent, Esc and "Keep orders" close the view and cancel nothing (CMP-043 H22, design m12):
+    // once sent, Esc and "Close" close the view and cancel nothing (CMP-043 H22, design m12, m1):
     // the first send's result comes as a toast; a retry's is dropped (code m8)
     const waiting = showing.current;
     if (

@@ -6,7 +6,9 @@
  *   or past ten rows in view the active chips restated (the list when no chip is set); the count
  *   per account; and the rows left
  *   out, the native-stop line first (D02 §8.5). LIVE adds the typed word (D01 D7); nothing is sent
- *   before Confirm, and "Keep orders" sends nothing.
+ *   before Confirm, and "Keep orders" sends nothing. While the send runs that button reads "Close"
+ *   (m1): like `Esc`, it closes the view and cancels nothing (CMP-043 H22), and the answer comes
+ *   as a toast.
  * - **Result** (CMP-043): one line per account, a failure in its reason's words and the rows it left
  *   under it, nothing dropped (the "Cancel-all partial failure" scenario); "Retry failed" sends a new
  *   request for the failed targets only (BQ-8). The lines in its body describe it (`aria-describedby`),
@@ -124,7 +126,12 @@ export function BulkCancelDialog({
             ? bindProposed("blotter.ui.bulk.cancel_confirm.one")
             : bindProposed("blotter.ui.bulk.cancel_confirm", { "4": n })
         }
-        cancelLabel={bindProposed("blotter.ui.bulk.cancel_keep")}
+        // once sent it keeps nothing back: it closes the view (m1)
+        cancelLabel={
+          state?.phase === "sending"
+            ? bindProposed("blotter.ui.result.close")
+            : bindProposed("blotter.ui.bulk.cancel_keep")
+        }
         confirmVariant="danger"
         variant={live ? "typed" : "standard"}
         {...(live ? { typedConfirmValue: bindProposed("blotter.ui.bulk.typed_word") } : {})}
