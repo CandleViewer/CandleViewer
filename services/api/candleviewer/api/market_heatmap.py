@@ -21,6 +21,12 @@ connected and stops when it is gone, releasing its slot. A storage failure, a de
 page past the read bounds (`HeatmapReadLimit`) is 503. The cursor names the older remainder's
 end and is bound to `(heatmap, symbol, from:bucket:grouping:depth:normalize)`
 (`api.market_response`), so the next page repeats the request with it.
+
+The body is streamed (22 `getHeatmap` "Bounds", E21-X02): its fields before and after the two
+matrices, then each matrix `BODY_BLOCK_ROWS` rows at a time, every part encoded on the engine's
+bounded fold executor (`run_fold`), so the event loop only hands bytes on. Every cell is checked
+finite before the first byte, and a cell that is not is refused there, as `allow_nan=False`
+refuses it.
 """
 
 from __future__ import annotations
@@ -29,14 +35,17 @@ import asyncio
 import inspect
 import re
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Final, Protocol
 
+import numpy as np
+import numpy.typing as npt
+import orjson
 import structlog
 from fastapi import APIRouter, Query, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from candleviewer.api.market_response import (
     InvalidCursor,
@@ -57,6 +66,7 @@ from candleviewer.orderflow.heatmap_history import (
     HeatmapReadLimit,
     Normalize,
     read_heatmap_history,
+    run_fold,
 )
 from candleviewer.storage.errors import StorageError
 
@@ -77,6 +87,8 @@ _DATE_TIME: Final = re.compile(
 RETRY_AFTER_S: Final = 1
 #: One page's whole read and build (budgets #1 and #14 bound the common case far below it).
 READ_TIMEOUT_S: Final = 30.0
+#: Rows of one matrix that a step of the streamed body encodes (one step on the fold executor).
+BODY_BLOCK_ROWS: Final = 16
 
 
 def _log() -> Any:
@@ -128,10 +140,12 @@ def _z(us: int) -> str:
     return iso_us(us).replace("+00:00", "Z")
 
 
-def serialize_heatmap(page: HeatmapHistory, next_cursor: str | None) -> dict[str, object]:
-    """`HeatmapResponse` (22): axes, matrices and the recorded-history fields."""
+def _fields(
+    page: HeatmapHistory, next_cursor: str | None
+) -> tuple[dict[str, object], dict[str, object]]:
+    """`HeatmapResponse` (22) without its matrices: the fields before them and after, in order."""
     q = page.query
-    return {
+    head: dict[str, object] = {
         "symbol": q.symbol,
         "from": _z(page.from_us),
         "to": _z(page.to_us),
@@ -139,8 +153,8 @@ def serialize_heatmap(page: HeatmapHistory, next_cursor: str | None) -> dict[str
         "price_grouping": q.price_grouping,
         "times": [_z(t) for t in page.times_us],
         "prices": [format(p, "f") for p in page.prices],
-        "bid_matrix": page.bid_matrix,
-        "ask_matrix": page.ask_matrix,
+    }
+    tail: dict[str, object] = {
         "max_value": page.max_value,
         "normalize": q.normalize,
         "estimated": page.estimated,
@@ -161,6 +175,42 @@ def serialize_heatmap(page: HeatmapHistory, next_cursor: str | None) -> dict[str
         "clamped": page.clamped,
         "next_cursor": next_cursor,
     }
+    return head, tail
+
+
+def serialize_heatmap(page: HeatmapHistory, next_cursor: str | None) -> dict[str, object]:
+    """`HeatmapResponse` (22) as one object: the fields the route streams (`heatmap_body`)."""
+    head, tail = _fields(page, next_cursor)
+    return {**head, "bid_matrix": page.bid_matrix, "ask_matrix": page.ask_matrix, **tail}
+
+
+def _ends(page: HeatmapHistory, next_cursor: str | None) -> tuple[bytes, bytes]:
+    """Fold executor: the body before the first matrix row and after the last, once every cell
+    is checked finite (one that is not raises here, before any byte is sent)."""
+    if not (np.isfinite(page.bid).all() and np.isfinite(page.ask).all()):
+        raise ValueError("a heatmap cell is not finite")
+    head, tail = _fields(page, next_cursor)
+    return orjson.dumps(head)[:-1] + b',"bid_matrix":[', b"]," + orjson.dumps(tail)[1:]
+
+
+def _block(matrix: npt.NDArray[np.float64], lo: int) -> bytes:
+    """Fold executor: rows `lo` to `lo + BODY_BLOCK_ROWS` of `matrix`, as JSON array items."""
+    rows = np.ascontiguousarray(matrix[lo : lo + BODY_BLOCK_ROWS])
+    return orjson.dumps(rows, option=orjson.OPT_SERIALIZE_NUMPY)[1:-1]
+
+
+async def heatmap_body(page: HeatmapHistory, ends: tuple[bytes, bytes]) -> AsyncIterator[bytes]:
+    """The streamed `HeatmapResponse`: `ends`' head, each matrix a block of rows at a time, then
+    `ends`' tail; every block is encoded on the fold executor, never on the loop."""
+    head, tail = ends
+    yield head
+    for n, matrix in enumerate((page.bid, page.ask)):
+        if n:
+            yield b'],"ask_matrix":['
+        for lo in range(0, len(matrix), BODY_BLOCK_ROWS):
+            part = await run_fold(_block, matrix, lo)
+            yield b"," + part if lo else part
+    yield tail
 
 
 def _record(page: HeatmapHistory, started: float) -> None:
@@ -286,15 +336,18 @@ def make_market_heatmap_router(
         next_cursor = None if page.remainder is None else encode_cursor(scope, page.remainder[1])
         _log().info("market_heatmap_served", symbol=symbol, columns=len(page.times_us),
                     rows=len(page.prices), sources=sorted(page.sources))  # fmt: skip
-        return JSONResponse(status_code=200, content=serialize_heatmap(page, next_cursor))
+        ends = await run_fold(_ends, page, next_cursor)
+        return StreamingResponse(heatmap_body(page, ends), media_type="application/json")
 
     return router
 
 
 __all__ = [
+    "BODY_BLOCK_ROWS",
     "MAX_PER_USER",
     "MAX_WINDOW_DAYS",
     "MAX_WINDOW_US",
+    "heatmap_body",
     "make_market_heatmap_router",
     "serialize_heatmap",
 ]

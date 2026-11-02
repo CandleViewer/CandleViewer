@@ -28,19 +28,25 @@ a symbol and a time range.
 - **Downsample.** A span older than `DOWNSAMPLE_AGE_US` is 1 s data (21 §7): its segment states
   `max(bucket, 1000)` and its rows weigh the native columns they stand for.
 
-The CPU folds run in a worker thread (`asyncio.to_thread`), one at a time, so the event loop
-never aggregates; `checkpoint` is awaited between reads, so a caller can stop a read whose client
-has gone, and a cancellation ends it at its next await.
+The CPU folds run on a bounded executor of their own (`run_fold`, `MAX_CONCURRENT_FOLDS` for
+the whole process, 22 `getHeatmap` "Bounds"), one at a time for a read, so the event loop never
+aggregates and no fold takes a thread of the loop's default executor; the route encodes its
+response there too. A page keeps its matrices as arrays: their lists (`bid_matrix`) are built
+only when asked for. `checkpoint` is awaited between reads, so a caller can stop a read whose
+client has gone, and a cancellation ends it at its next await.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import zlib
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Final, Literal, Protocol
+from functools import partial
+from typing import Final, Literal, Protocol, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -73,6 +79,11 @@ MAX_ANCHOR_TRIES: Final = 4
 CELL_SPAN_ROWS: Final = 32_768
 #: C-2.18: the most recorded deltas one reconstructed minute may hold.
 BOOK_CHANGE_ROWS: Final = 262_144
+#: 22 `getHeatmap` "Bounds": the most backfill folds, and steps of a response's encoding, that run
+#: at once in the process (C-2.18), on worker threads of their own (`run_fold`).
+MAX_CONCURRENT_FOLDS: Final = 2
+#: The fold workers' thread names start with this.
+FOLD_THREAD_PREFIX: Final = "cv-heatmap-fold"
 
 
 class HeatmapQueryError(ValueError):
@@ -173,9 +184,9 @@ class Segment:
     resolution_ms: int
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class HeatmapHistory:
-    """A served page: `bid_matrix[i][j]` is `prices[i]` at `times_us[j]` (row-major)."""
+    """A served page: `bid[i, j]` is `prices[i]` at `times_us[j]` (row-major, C-contiguous)."""
 
     query: HeatmapQuery
     from_us: int
@@ -183,8 +194,8 @@ class HeatmapHistory:
     effective_bucket_ms: int
     times_us: tuple[int, ...]
     prices: tuple[Decimal, ...]
-    bid_matrix: list[list[float]]
-    ask_matrix: list[list[float]]
+    bid: npt.NDArray[np.float64]
+    ask: npt.NDArray[np.float64]
     max_value: float
     samples: tuple[int, ...]
     estimated_columns: tuple[bool, ...]
@@ -201,6 +212,66 @@ class HeatmapHistory:
     @property
     def estimated(self) -> bool:
         return any(self.estimated_columns)
+
+    @property
+    def bid_matrix(self) -> list[list[float]]:
+        """`bid` as lists (`HeatmapResponse.bid_matrix`); the route encodes the array itself."""
+        return cast(list[list[float]], self.bid.tolist())
+
+    @property
+    def ask_matrix(self) -> list[list[float]]:
+        return cast(list[list[float]], self.ask.tolist())
+
+
+class _FoldPool:
+    """`size` worker threads of their own, entered through a semaphore of the same size, so the
+    executor's queue never holds a waiting fold (C-2.18). A slot is given back when its fold ends
+    on its thread, not when its caller stops waiting: a cancelled caller's fold keeps its worker
+    until it returns. The semaphore is made on the running loop when first needed, and again if
+    that loop changes, as `bars.series_store._ReadSlots` makes its own; the workers at the first
+    fold."""
+
+    def __init__(self, size: int) -> None:
+        self.size = size
+        self._pool: ThreadPoolExecutor | None = None
+        self._held: tuple[asyncio.AbstractEventLoop, asyncio.Semaphore] | None = None
+
+    def gate(self) -> asyncio.Semaphore:
+        """The running loop's semaphore of `size` slots."""
+        loop = asyncio.get_running_loop()
+        held = self._held
+        if held is None or held[0] is not loop:
+            held = self._held = (loop, asyncio.Semaphore(self.size))
+        return held[1]
+
+    async def run[**P, T](self, fn: Callable[P, T], /, *args: P.args, **kwargs: P.kwargs) -> T:
+        loop, gate = asyncio.get_running_loop(), self.gate()
+        await gate.acquire()
+        try:
+            if self._pool is None:
+                self._pool = ThreadPoolExecutor(self.size, thread_name_prefix=FOLD_THREAD_PREFIX)
+            job = self._pool.submit(fn, *args, **kwargs)
+        except BaseException:
+            gate.release()
+            raise
+        job.add_done_callback(partial(_freed, loop, gate))
+        return await asyncio.wrap_future(job)
+
+
+def _freed(loop: asyncio.AbstractEventLoop, gate: asyncio.Semaphore, _job: Future[object]) -> None:
+    """A fold ended on its thread: its slot goes back on its own loop (a closed one has none)."""
+    with contextlib.suppress(RuntimeError):
+        loop.call_soon_threadsafe(gate.release)
+
+
+#: The process's one fold executor (22 `getHeatmap` "Bounds").
+FOLDS: Final = _FoldPool(MAX_CONCURRENT_FOLDS)
+
+
+async def run_fold[**P, T](fn: Callable[P, T], /, *args: P.args, **kwargs: P.kwargs) -> T:
+    """Run `fn` on the bounded fold executor (`MAX_CONCURRENT_FOLDS` at once), never on the loop
+    or its default executor; the wait for a slot is the caller's (a read's deadline counts it)."""
+    return await FOLDS.run(fn, *args, **kwargs)
 
 
 def book_checksum(bids: Sequence[Level], asks: Sequence[Level]) -> int:
@@ -444,8 +515,9 @@ def _segments(
 
 def _empty(q: HeatmapQuery, first_us: int | None) -> HeatmapHistory:
     """No recorded history in the window: empty axes and matrices, `history = "none"`."""
+    none = np.zeros((0, 0))
     return HeatmapHistory(
-        q, q.from_us, q.to_us, q.time_bucket_ms, (), (), [], [], 0.0, (), (), first_us,
+        q, q.from_us, q.to_us, q.time_bucket_ms, (), (), none, none, 0.0, (), (), first_us,
         "none", (), False, None, 0, frozenset(),
     )  # fmt: skip
 
@@ -497,7 +569,7 @@ async def _reconstruct(
             continue  # no book recorded for this minute: its columns stay samples = 0
         changes = await reader.book_changes(q.symbol, q.depth, anchor.ts_us, hi)
         unverified += anchor.checksum is None
-        await asyncio.to_thread(grid.fold_book, anchor, changes, lo, hi)
+        await run_fold(grid.fold_book, anchor, changes, lo, hi)
     return unverified
 
 
@@ -528,14 +600,14 @@ async def read_heatmap_history(
             raise HeatmapReadLimit("a stored-cell span holds more rows than one page may")
         if span.rows:
             held = True
-            await asyncio.to_thread(grid.fold_cells, span.rows, downsampled_before)
+            await run_fold(grid.fold_cells, span.rows, downsampled_before)
         pieces.append((span.lo_us, span.hi_us, span.tier))
         await _checkpoint(checkpoint)
     if not held:  # BQ-3: the recorded book only where no cell was stored
         unverified = await _reconstruct(reader, q, grid, checkpoint)
         pieces = [(plan.c0_us, plan.end_us, "reconstructed")]
-    page = await asyncio.to_thread(grid.page)
-    bid, ask, peak = await asyncio.to_thread(_normalize, page, q.normalize)
+    page = await run_fold(grid.page)
+    bid, ask, peak = await run_fold(_normalize, page, q.normalize)
     c0 = plan.c0_us + page.first_col * bus
     remainder = (lo, c0) if c0 > lo else None
     segments = _segments(pieces, c0, plan.end_us, plan.bucket_ms, downsampled_before)
@@ -546,8 +618,8 @@ async def read_heatmap_history(
         effective_bucket_ms=plan.bucket_ms,
         times_us=tuple(range(c0, plan.end_us, bus)),
         prices=page.prices,
-        bid_matrix=bid.tolist(),
-        ask_matrix=ask.tolist(),
+        bid=bid,
+        ask=ask,
         max_value=peak,
         samples=tuple(grid.samples[page.first_col :]),
         estimated_columns=tuple(grid.estimated[page.first_col :]),
@@ -566,7 +638,10 @@ __all__ = [
     "BUCKETS",
     "CELL_SPAN_ROWS",
     "DOWNSAMPLE_AGE_US",
+    "FOLDS",
+    "FOLD_THREAD_PREFIX",
     "MAX_COLUMNS",
+    "MAX_CONCURRENT_FOLDS",
     "BookAnchor",
     "BookChange",
     "CellRow",
@@ -579,4 +654,5 @@ __all__ = [
     "Segment",
     "book_checksum",
     "read_heatmap_history",
+    "run_fold",
 ]
