@@ -279,6 +279,20 @@ _Contract for E11-S12 (#418 PR-0; rulings BQ-S12-01 to BQ-S12-15, all as propose
 - **Drawings** are never registered with a decimation seam. The thresholds, band and timings are
   internal constants exported for tests and bench, not `ChartOptions` (BQ-S12-14).
 
+_Contract for E11-S15 (#448 PR-0, BQ-S15-03 as overridden by the orchestrator), additive to the tier drivers above:_
+
+- **Memory tier**: effective candle tier = `max(zoomTier, loadTier, memoryTier)`. The memory governor
+  (§7) raises `memoryTier` by one when it leaves `ok` (to `pressure`, or straight to `over`): one
+  degradation rung per pressure episode, announced once, re-armed only after a sample falls below the
+  recovery threshold (§7). The rung and its announcement are once per episode; `ENGINE_MEMORY_PRESSURE`
+  stays one per worsening edge of §7's edge set, so `ok` → `pressure` → `over` raises two codes and one
+  rung. Further relief comes from the eviction planner's drops only, not from more tiers, since held GL
+  bytes do not shrink with the tier. It resets `memoryTier` to 0 only when its state returns to `ok`;
+  the frame-time driver's 2,000 ms recovery never lowers it, so the two drivers cannot fight. A move of the effective tier raises `ENGINE_LOD_STEPDOWN` or
+  `ENGINE_LOD_STEPUP` (§11) as the other drivers do; the one-transition-per-2 s limit binds `loadTier`
+  only. `setLod(levels)` pins all three and suspends the governor's tier input until `setLod("auto")`;
+  eviction (§7) is not suspended by a pin.
+
 ### 3.7 Text rendering (SDF atlas)
 
 Footprint cells are the densest text surface in the product, so text is a first-class subsystem.
@@ -451,26 +465,118 @@ Shipped by E11-S10 PR 2 (package README BQ-149), additive: `resize` gains option
 
 Shipped by E11-S06 PR 1 (package README BQ-194, BQ-199, BQ-203), additive: `KEY` codes `up` 9, `down` 10, `pageUp` 11 and `pageDown` 12, and a `key` row's `y` slot names its target (0 the plot, 1 the time axis, 2 the price axis; anything else is rejected); `init.config.timeZone?` (a string, UTC by default); worker → main `axes { id, price, time, priceName, timeName, priceGutter, timeZone, say? }`, the retained axis labels in value order, the axis stops' names, the measured price gutter and an axis key's announcement, posted when one of them changes, never on a still frame.
 
+Contract for E11-S15 (#448 PR-0, BQ-S15-02 and BQ-S15-13), additive: every `frame` sample gains `memory { state, usedMb, budgetMb, tier }`, with `state` one of `ok`, `pressure`, `over` (§7's pressure band), `usedMb` the `MemoryAccount` sum in MiB, `budgetMb` the chart's `memoryBudgetMb` and `tier` the governor's `memoryTier` (§3.6). The state's worsening edges (§7's edge set: `ok` → `pressure`, `ok` → `over`, `pressure` → `over`) reach the host as one `error { code: ENGINE_MEMORY_PRESSURE, recoverable: true }` each (§11), never per sample; recovery edges show only in `frame.memory`. The `viewport` message gains `loadingRanges: { fromTime, toTime }[]`, the ranges asked for through `visibleRangeNeedsData` and not yet answered by a `prependHistory` (BQ-S15-07), sent on change; the app (E11-S13) draws the loading band and its DOM-mirror text from it. `backingStorePx` is capped per axis at the probed `min(MAX_TEXTURE_SIZE, MAX_RENDERBUFFER_SIZE, MAX_VIEWPORT_DIMS)` (the Canvas2D backend at the browser's canvas area limit), and the GL backend compares `drawingBufferWidth/Height` after each resize and sizes its submit to the drawing buffer (F-12).
+
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
 
 ---
 
 ## 7. Memory budgets
 
-| Item                            | Formula                                                                     | 100k-bar / 4 h-heatmap case      |
-| ------------------------------- | --------------------------------------------------------------------------- | -------------------------------- |
-| BarStore                        | 100k × (8 + 4×4 + 4 + 4 + 1) B = 33 B a slot (`BAR_BYTES`, E12-S06 `flags`) | 3.3 MB                           |
-| GPU candle buffers              | 100k × 20 B (`CandleRing`: 4 × i32 OHLC + i32 meta, one buffer per series)  | 2.0 MB                           |
-| FootprintStore                  | 20k bars × 40 cells × 18 B                                                  | 14.4 MB                          |
-| Footprint glyph runs            | 20k × 40 × 12 B                                                             | 9.6 MB                           |
-| Heatmap fine ring               | 2048 × 512 × 2 B                                                            | 2.1 MB                           |
-| Heatmap coarse ring             | 14400 × 512 × 2 B                                                           | 14.7 MB                          |
-| SDF atlas (both families)       | 1024 × 1024 × 1 B                                                           | 1.0 MB                           |
-| Profile / indicators / drawings | —                                                                           | ≤ 8 MB                           |
-| Framebuffers @2× DPI, 2560×1440 | —                                                                           | ≈ 60 MB                          |
-| **Total per chart instance**    |                                                                             | **≈ 115 MB** (budget 600 MB, R7) |
+Every figure here is in MiB (2^20 B), the unit of `memoryBudgetMb` and `gpuMemoryMbEstimate`. Each
+formula is the one its allocator charges (E11-S15 BQ-S15-05), so the estimator, the counters and this
+table agree: a power-of-two ring is charged at its capacity, not its bar count, and RG16F is 4 B a texel.
 
-Eviction policy: footprint cells and heatmap columns outside a 3× viewport window are dropped from GPU buffers (kept in CPU stores until a memory-pressure threshold, then re-fetched from the backend on demand). A `MemoryGovernor` samples usage every 5 s and steps down retained history when over 70 % of the budget, logging each step.
+| Item                            | Formula (what the allocator holds)                                                          | 100k-bar / 4 h-heatmap case         |
+| ------------------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------- |
+| BarStore                        | `slots(bars)` × 33 B (`BAR_BYTES`: 8 + 4×4 + 4 + 4 + 1 `flags`), `slots` below the table    | 131,072 × 33 B = 4.1                |
+| GPU candle buffers              | `slots(bars)` × 20 B (`CandleRing`: 4 × i32 OHLC + i32 meta, the store's slots, per series) | 2.5                                 |
+| FootprintStore                  | cells × 18 B + (bars + 1) × 4 B offsets                                                     | 20k bars × 40 cells: 13.8           |
+| Footprint glyph runs            | cells × 12 B (provisional until E18)                                                        | 9.2                                 |
+| Heatmap fine ring               | 2048 × 512 × 4 B (RG16F) + 2048 × 8 B `colTime`                                             | 4.0                                 |
+| Heatmap coarse ring             | 14,400 × 512 × 4 B (RG16F; provisional until E21)                                           | 28.1                                |
+| SDF atlas (both families)       | 1024 × 1024 × 1 B (R8)                                                                      | 1.0                                 |
+| Profile / indicators / drawings | fixed allowance                                                                             | 8.0                                 |
+| Default framebuffer             | one buffer, upper bound: `backingStorePx` padded to 128 px per axis (drag) × 4 B            | 5120 × 2944 (2560 × 1440 @2×): 57.5 |
+| **Total per chart instance**    |                                                                                             | **≈ 128 MiB** (budget 600, R7)      |
+
+`slots(bars)` is what the BarStore holds: `max(pow2(bars), pow2(min(1024, maxBars)))` (the store starts at
+`pow2(min(initialCapacity 1024, maxBars))` and never holds fewer, so 1 bar is charged 33 KiB, not 33 B),
+and `pow2(1.25 · maxBars)` once `bars ≥ maxBars`. The framebuffer row is the padded upper bound: the
+first size, a DPR change and the settle after a drag trim to the exact size (5120 × 2880: 56.25 MiB).
+
+The old 2 B/texel heatmap rows read the R16F case; the ring allocates RG16F (`HeatmapRing.bytes`), so
+the table follows the allocator. Charging bar count instead of capacity under-reads a 30 d × 1 m load
+(43,200 bars: 1.36 MiB against 2.06 MiB held, −34 %), which would fail US-CHART-010's ±20 %.
+
+**Budget scope** (BQ-S15-08 with the orchestrator's rider): R7 here is this document's §1 engine
+requirement (memory), not `32-risk-register.md`'s R7. Its 600 MB is the engine's slice (GPU + JS
+heap) of `06` budget #7, the resident memory of one chart window with its panes, which live inside one
+chart instance. The two are not in conflict; the app (E15) may pass a smaller `memoryBudgetMb`.
+
+Eviction policy: footprint cells and heatmap columns outside a `memory.viewportWindowMultiplier` (3×, §8) viewport window are dropped from GPU buffers (kept in CPU stores until a memory-pressure threshold, then re-fetched from the backend on demand). A `MemoryGovernor` samples usage every `memory.sampleIntervalMs` (5000 ms, §8) and steps down retained history when over 70 % of the budget; this is the pressure threshold every other mention cites. The contract below sets what it samples and how it steps down.
+
+_Contract for E11-S15 (#448 PR-0; BQ-S15-01 to BQ-S15-14 as ruled by the orchestrator, with its
+overrides of BQ-S15-03 and BQ-S15-12 and its riders), implemented by its code PRs:_
+
+- **Estimator** (BQ-S15-05, BQ-S15-06): a pure function of the load parameters returns one item per row
+  above, by the same formulas, plus `totalBytes`, `budgetBytes` (`memoryBudgetMb` × 2^20) and
+  `requiresConfirmation` (`totalBytes` above the pressure threshold of `budgetBytes`). It is calibrated
+  against the engine's own counters (the stores' `bytes`, `GlBuffers.bytes`, `GlTextures.bytes`) within
+  US-CHART-010's ±20 % (`11-user-stories.md` NFR); the user-agent
+  memory check is E11-Q03's. It is exported as `estimateLoad` (§8). The engine never starts or refuses a
+  load: the confirm surface is the app's.
+- **Default lookbacks** (BQ-S15-11, flagged for the owner's nod): exported `DEFAULT_LOOKBACK_DAYS`
+  (values in the constants table below), each sized so the estimate at 1 m bars and 40 cells stays under
+  the pressure threshold of the default budget. Chart 30 d is 43,200 bars (65,536 slots: BarStore 2.06 +
+  GPU 1.25 MiB); footprint 3 d is 4,320 bars × 40 cells (store 3.0 + glyph runs 2.0 MiB); profile 7 d
+  is charged in the fixed 8 MiB allowance; replay 1 d is 1,440 bars (2,048 slots: BarStore 66 + GPU 40 KiB). With both
+  heatmap rings, the atlas, the allowance and the padded framebuffer the worst case is ≈ 107 MiB, 18 %
+  of 600 MiB. The app's `memory.defaultLookbackDays` setting overrides them; the engine only exports
+  the defaults.
+- **What is sampled** (BQ-S15-01): a `MemoryAccount` sums registered sources `{ id, bytes() }`: GL
+  buffers and textures and the default framebuffer now, each store when its owner wires it into the
+  worker (E12-S06 bars, E18 footprint, E21 heatmap). `usedMb` is that sum / 2^20.
+- **When** (BQ-S15-12): the account is sampled every `memory.sampleIntervalMs` (5000, §8) on the
+  existing 1 s tick, and on resize (a change of `backingStorePx`), never per frame. A synchronous check
+  of the `maxBars` and `memoryBudgetMb` ceilings also runs on every `data` batch before it is applied:
+  the ticket enforces them "at every ingest point" (`backlog/E11.json` E11-S15). No timer: the 1 s tick
+  is the `frame` sample (§6), which a parked loop (§3.2) does not emit, so a parked chart is not woken,
+  and memory cannot grow without a `data` message or a resize. A sample costs ≤ 0.2 ms (a `budget(0.2)`
+  perf test with the bench scene as baseline) and allocates nothing.
+- **State** (BQ-S15-02): `ok | pressure | over`, a plain enum (C-2.20, no statechart). `ok` → `pressure`
+  at the pressure threshold above; `pressure` → `ok` only below the recovery threshold (a band against
+  evict/re-fetch oscillation); `over` at the over threshold (from `ok` or `pressure`), back to
+  `pressure` below it (both in the constants table below). **Edge set:** each worsening move (`ok` → `pressure`, `ok` → `over`, `pressure` → `over`,
+  whether by usage or by GPU out-of-memory) raises exactly one `ENGINE_MEMORY_PRESSURE` (§11); recovery
+  moves raise none and show only in `frame.memory` (§6). Never per sample.
+- **Response, in order** (reconciles "steps down retained history"): on leaving `ok`, raise `memoryTier`
+  by one (§3.6): one degradation rung per pressure episode, announced once, re-armed only after a sample
+  falls below the recovery threshold. The rung and its announcement are once per episode;
+  `ENGINE_MEMORY_PRESSURE` stays one per worsening edge of the edge set above. Further relief comes from
+  the eviction planner's drops only, not from more tiers, since held GL bytes do not shrink with the
+  tier: the planner drops GPU ranges outside the `memory.viewportWindowMultiplier` window, CPU stores
+  kept. On `over`, it also drops CPU ranges at the edge far from
+  the viewport (whole bars, never the visible window) and stops paging: no `visibleRangeNeedsData` is
+  emitted, and the store rejects a `prependHistory` batch that arrives anyway. That is the store refusing
+  data, not the engine refusing a load. A dropped range is remembered, and panning back requests exactly
+  that range through `visibleRangeNeedsData` (§9).
+- **Eviction planner** (BQ-S15-04): a pure `EvictionPlanner` maps `{ loaded range, visible range,
+memory.viewportWindowMultiplier (3, §8), bar boundaries }` to the GPU-drop ranges and, under `over`,
+  the CPU-drop ranges: whole bars, never the multiplier's window, GPU before CPU, deterministic for the same input. Layers join through an
+  internal `registerEvictable(layer, evict(fromTime, toTime))` seam in the worker (E12-S06 candles, E18
+  footprint, E21 heatmap); it is not package API.
+- **GPU out-of-memory** (BQ-S15-14): `OUT_OF_MEMORY` after a buffer or texture allocation moves the
+  governor to `over` (a worsening edge, so one `ENGINE_MEMORY_PRESSURE`, recoverable; none if already
+  `over`), never a silent blank; the heatmap
+  half of §11's row (drop the coarse ring, then halve rows) is E21's.
+
+**Internal constants** (E11-S15, cross-BQ ruling 3): every figure of this contract that no owner doc
+fixes, in one place; none touches a safety invariant. The 70 % pressure threshold is the eviction-policy
+paragraph's above. `memory.sampleIntervalMs` (5000) and `memory.viewportWindowMultiplier` (3) are not
+here: they are the ticket's config keys, `ChartOptions.memory` (§8).
+
+| Name                       | Value                                      | Used in                   | Status                                                                 |
+| -------------------------- | ------------------------------------------ | ------------------------- | ---------------------------------------------------------------------- |
+| Recovery threshold         | 60 % of the budget                         | §7 State, §11             | internal constant — no owner doc fixes it                              |
+| Over threshold             | 100 % of the budget                        | §7 State, §11             | internal constant — no owner doc fixes it                              |
+| Paging distance            | 1× visible span from the loaded edge       | §9 paging trigger         | internal constant — no owner doc fixes it                              |
+| Paging debounce            | 250 ms on the viewport stream              | §9 paging trigger         | internal constant — no owner doc fixes it                              |
+| Sample cost budget         | ≤ 0.2 ms, zero allocation                  | §7 When                   | internal constant — no owner doc fixes it                              |
+| `MAX_BARS_CEILING`         | 2^21 bars                                  | §8 `ChartOptions.maxBars` | internal constant — no owner doc fixes it                              |
+| `MEMORY_BUDGET_CEILING_MB` | 4096 MiB                                   | §8 `memoryBudgetMb`       | internal constant — no owner doc fixes it                              |
+| `MEMORY_BUDGET_FLOOR_MB`   | 64 MiB                                     | §8 `memoryBudgetMb`       | internal constant — no owner doc fixes it                              |
+| `DEFAULT_LOOKBACK_DAYS`    | chart 30, footprint 3, profile 7, replay 1 | §7 Default lookbacks      | internal constant — no owner doc fixes it; flagged for the owner's nod |
 
 ---
 
@@ -489,8 +595,9 @@ export interface ChartOptions {
   timeZone?: "UTC" | string; // default 'UTC'
   density?: "comfortable" | "compact" | "dense";
   syncGroup?: string;
-  maxBars?: number; // default 200_000
-  memoryBudgetMb?: number; // default 600
+  maxBars?: number; // default 200_000; integer in [1, MAX_BARS_CEILING] (E11-S15, F-08)
+  memoryBudgetMb?: number; // default 600 (MiB); integer in [MEMORY_BUDGET_FLOOR_MB, MEMORY_BUDGET_CEILING_MB]
+  memory?: { sampleIntervalMs?: number; viewportWindowMultiplier?: number }; // E11-S15 (§7): 5000, 3
   fonts?: readonly { family: string; weight: number; bytes: ArrayBuffer; version?: string }[]; // SDF atlas (E11-S11 BQ-258)
 }
 
@@ -515,6 +622,31 @@ export interface Chart {
 
 // Mounts into `container` and returns synchronously; capability detection is lazy (E11-T01).
 export function createChart(opts: ChartOptions): Chart;
+
+// E11-S15 (F-08): checked by createChart before anything mounts; pinned by a test.
+export const MAX_BARS_CEILING = 2 ** 21; // 2,097,152 bars: a 2^22-slot BarStore, 132 MiB
+export const MEMORY_BUDGET_CEILING_MB = 4096;
+export const MEMORY_BUDGET_FLOOR_MB = 64; // one default framebuffer plus the atlas must fit
+
+// E11-S15 (§7, BQ-S15-05/06/11): pure, no allocation of the stores it models; one item per §7 row.
+export interface LoadEstimateParams {
+  bars: number;
+  maxBars?: number; // default 200_000
+  footprintBars?: number; // 0 when no footprint layer
+  cellsPerBar?: number; // default 40
+  heatmapFineColumns?: number; // 0 when no heatmap layer
+  heatmapCoarseColumns?: number;
+  heatmapRows?: number; // default 512
+  backingStorePx: readonly [number, number];
+}
+export interface LoadEstimate {
+  items: readonly { item: string; bytes: number }[];
+  totalBytes: number;
+  budgetBytes: number; // budgetMb × 2^20
+  requiresConfirmation: boolean; // totalBytes above §7's pressure threshold of budgetBytes
+}
+export function estimateLoad(params: LoadEstimateParams, budgetMb: number): LoadEstimate;
+export const DEFAULT_LOOKBACK_DAYS: Readonly<{ chart: 30; footprint: 3; profile: 7; replay: 1 }>;
 
 export interface Pane {
   readonly id: PaneId;
@@ -660,6 +792,8 @@ export interface FrameStats {
   lodFootprint: 0 | 1 | 2 | 3;
   barsPerColumn: number; // E11-S12: 1 / (barSpacing · dpr); > 1 means candle columns aggregate
   gpuMemoryMbEstimate: number;
+  memoryState: "ok" | "pressure" | "over"; // E11-S15 (§7): the governor's state at the last sample
+  memoryUsedMb: number; // E11-S15: the MemoryAccount sum (MiB) behind memoryState
   renderProfile: "full" | "reduced" | "degraded-2d";
 }
 
@@ -711,6 +845,20 @@ above. It defines the supporting types this sketch names but leaves open (`Theme
 records each choice in the package README's "Design deltas". The pre-§8 palette/flags handle is served
 at `@candleviewer/chart-engine/compat`, never from the package root.
 
+_Contract for E11-S15 (#448 PR-0, BQ-S15-09 with the orchestrator's rider; F-08, threat model CE-D02):_
+`createChart` throws `RangeError` before mounting when `maxBars` or `memoryBudgetMb` is outside its
+range above. `MAX_BARS_CEILING` is 2^21, not 2^22: the store's ceiling capacity is `pow2(1.25 · maxBars)`,
+so 2^22 bars would hold 264 MiB in the BarStore (2^23 × 33 B, 44 % of the default budget) and, with the GPU
+copy (2^23 × 20 B, 160 MiB), 424 MiB (71 %, `pressure` from bars alone), where 2^21 holds 132 + 80 MiB.
+**Behaviour change:** the 64 MiB floor rejects a `memoryBudgetMb` of 1 to 63, which is accepted
+today. The floor is a guard, not a working size: at 64 MiB the default framebuffer alone passes the
+pressure threshold (§7), so such a chart sits in `pressure`. `ChartOptions` gains `memory`, `FrameStats`
+gains `memoryState` and `memoryUsedMb`, and the package gains `MAX_BARS_CEILING`,
+`MEMORY_BUDGET_CEILING_MB`, `MEMORY_BUDGET_FLOOR_MB`, `estimateLoad`, `LoadEstimateParams`,
+`LoadEstimate` and `DEFAULT_LOOKBACK_DAYS` (all additive). The engine announces nothing: the
+once-per-episode step-down announcement (§3.6) is the app's, "reusing E11-S12's aggregation-indicator
+channel" (the ticket's accessibility criterion), never per sample.
+
 React binding (in `apps/web`, deliberately thin). As shipped (E11-T01): `syncGroup` is a field of
 `options`, `label` names the chart region (05 §6.1), `onFrameStats` is optional, and the crosshair is
 read with the `useCrosshair()` hook rather than an `onCrosshair` prop:
@@ -759,6 +907,8 @@ Snapshot handling: a `snapshot` frame replaces the store wholesale (`setData`) a
 
 Paging (scroll-back): when the viewport approaches the loaded history edge, the engine emits `visibleRangeNeedsData`; the app requests a page over REST, and `prependHistory` splices it in, preserving the on-screen position by adjusting `barSpacing` anchors rather than the viewport indices.
 
+Contract for E11-S15 (#448 PR-0, BQ-S15-07), the paging trigger: the worker emits `visibleRangeNeedsData { fromTime, toTime }` when the visible range comes within the paging distance of the loaded edge, debounced by the paging debounce on the viewport stream (both §7 internal constants) and cancelled if the range is covered again before it fires. An evicted range (§7) emits exactly its own bounds. A range in flight (listed in the `viewport` message's `loadingRanges`, §6) is not asked for again until its `prependHistory` lands or a different range is needed. Nothing is emitted before recorded history (E11-D01 D2) or while the governor is `over` (§7). The engine does no I/O (C-2.16).
+
 ---
 
 ## 10. Replay integration
@@ -780,7 +930,9 @@ Replay uses exactly the same series and the same frame types — only the subscr
 | SDF atlas cache record invalid                             | Discarded and regenerated (bad shape, version, key-bound checksum or slot bounds, or F-03's re-derived trading glyphs differ); `ENGINE_ATLAS_CACHE_INVALID` (recoverable) once per launch (E11-S11)                                                                  |
 | SDF atlas not generated                                    | No bytes, a failed face load, an unmapped glyph, an overflow or a raster fault: `ENGINE_ATLAS_GENERATION_FAILED` once, `details.atlasReason`; no fallback face (E11-S11)                                                                                             |
 | Shader compile failure                                     | `ENGINE_SHADER_COMPILE_FAILED` with program, renderer and info log; the whole chart goes `degraded-2d` on a new canvas, not a simpler program (README BQ-54)                                                                                                         |
-| Out-of-memory on texture allocation                        | Heatmap drops the coarse ring first, then halves rows; `MemoryGovernor` logs and emits a stats event                                                                                                                                                                 |
+| Out-of-memory on buffer or texture allocation              | `gl.getError()` returns `OUT_OF_MEMORY` after the allocation: the governor moves to `over` (§7; one `ENGINE_MEMORY_PRESSURE`, recoverable, unless already `over`), never a silent blank; the heatmap drops the coarse ring first, then halves rows (E21)             |
+| Memory use at §7's pressure threshold                      | State `pressure` (recovery, over: §7): one `memoryTier` step per episode, announced once (§3.6); GPU eviction outside the multiplier window; CPU drops, paging stopped at `over`; `ENGINE_MEMORY_PRESSURE` (recoverable) once per worsening edge (E11-S15)           |
+| Drawing buffer smaller than the backing store              | Backing store capped to the probed limits (§6), submit sized to `drawingBufferWidth/Height`; code `ENGINE_DRAWING_BUFFER_CLAMPED` (recoverable, informational) once per chart (E11-S15, F-12)                                                                        |
 | Data sequence gap                                          | Engine keeps the last consistent state and requests a snapshot; UI shows a per-pane stale badge                                                                                                                                                                      |
 | Frame budget exceeded for 3 consecutive frames             | Raise the candle load tier by one (§3.6); if already at the lowest, reduce DPI of the heatmap layer (a no-op seam until E21); log the step; code `ENGINE_LOD_STEPDOWN` (recoverable, informational)                                                                  |
 | Frames under 85 % of budget for 2,000 ms after a load step | Lower the candle load tier by one (§3.6, at most one tier transition per 2 s); log the step; code `ENGINE_LOD_STEPUP` (recoverable, informational; E11-S12)                                                                                                          |
