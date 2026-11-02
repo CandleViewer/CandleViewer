@@ -6834,6 +6834,15 @@ The orchestrator assigned this number on 2026-11-02 (ruling of record on #5331, 
 - Two settings are PROPOSED to this document's owner: `admin_area_coalesce_seconds` (300 s default, 0 = record every request, max 3600) and the 4096-key bound on open windows (the oldest window's summary is written on eviction; a full map records every request).
 - No `22` change, no migration, no new action.
 
+### 19.97 2026-11-02 — 22 `x-error-codes`: `step_up_unavailable` and `lifecycle_unavailable` (E17, #2828)
+
+The orchestrator assigned this number on 2026-11-02 (16:50Z), with its rulings on #2828; it is kept through every rebase.
+
+- The orchestrator's rulings of record on #2828 (BQ-01, BQ-03, BQ-05 and BQ-06), contract first (C-6.1), in the first of the ticket's two changes: every contract-side change, and no router. The second change moves the routers onto the catalogue and changes no status.
+- `x-error-codes` gains two REST-only `503` codes. `step_up_unavailable` (not retryable): step-up is not wired on this server, so an action it gates is refused and nothing is done; it replaces the uncatalogued `service_unavailable` the step-up guards answer with, and no generic `service_unavailable` is added. `lifecycle_unavailable` (retryable): the one statechart-gateway handler answers both a refused inbox (`GatewayOverloadedError`, E50-T15, CV-C33) and a command the admission refused because the machine is latched degraded until an operator acknowledges it (`GatewayDegradedError`, E50-T63, `29-statechart-adoption-plan.md` §1.3), so its title names both; that handler's `503` and `Retry-After: 1` are unchanged.
+- PROPOSED, ruled by the orchestrator on #5529 (2026-11-02) and kept: the name `lifecycle_unavailable`; both titles; `step_up_unavailable` not retryable; `lifecycle_unavailable` retryable, because a refused command did nothing and the inbox-full cause clears quickly. For the degraded cause, `Retry-After: 1` does not help until an operator acknowledges the machine; the second change tells the two causes apart with `errors[].rule`.
+- No `Problem` change: the specific slug a remapped refusal keeps (a rule-engine `RuleError` code, a support-bundle `BUNDLE_*` code) rides the existing `errors[].rule` (the `name_taken` precedent), not a new `reason` member. No operation, response, WS frame, chart or `machine_hash` changes; `error_codes.py` and `errorCodes.ts` are regenerated.
+
 ### 19.98 2026-11-02 — §3.2, §3.5, 23 §6.1: builders materialise a bar only on open, close and amend; the forming bar on demand (E12, #2022, #2015)
 
 The orchestrator assigned this number in its rulings of record on #2022 (2026-11-02, 17:37Z); it is kept through every rebase.
