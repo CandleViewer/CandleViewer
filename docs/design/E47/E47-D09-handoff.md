@@ -127,4 +127,4 @@ Contrast: every ratio (the "unbound" word, the pending label, the lock row) is m
 4. The order line sends nothing until `Enter`, through the drag's confirm path; `Esc` restores; never one amend per keypress.
 5. The palette lists all 75<!--=COUNT:palette--> commands with their current binding or "unbound"; the cheatsheet is searchable by action or key and shows remaps.
 6. The inert message says where an action works; SCR-113 reports conflicts before Save; refusals name no internals.
-7. The chart keys are E06-D03's and the node graph E37-D02's, with node move and pan added; the BQ defaults are built, the ruling pending.
+7. The chart keys are E06-D03's and the node graph E37-D02's, with node Move mode added and the pan through it; BQ-0 … BQ-15 are RULED as the defaults (comment 6566806943).

@@ -16,8 +16,10 @@ form follows the E47-D04 tool (the same modes, anchored values, default-deny pin
 2. **Cites.** Every `NN`:line and KEY:line cite of both documents resolves to a non-blank line at
    its pinned commit (G-CITE); every "verbatim" copy string occurs on its cited line (G-QUOTE);
    every Old fragment of the hand-off's A-rows occurs verbatim on its cited line (G-AROW).
-3. **Gates.** One FAIL line per gate: G-PENDING (the BQ section names comment 6566521186 and
-   carries BQ-0 ... BQ-15 once each, each "default built; ruling pending"), G-BOARDS (at most ten
+3. **Gates.** One FAIL line per gate: G-RULED (the heading names the ruling 6566806943 and the
+   list 6566521186; the ruling's sentence verbatim, bold dropped), G-PENDING (BQ-0 ... BQ-15 once
+   each, the nine the ruling pins "ruled as the default, pinned", the other seven "ruled as the
+   default"), G-BOARDS (at most ten
    boards, twins at most a third, each pending or drawn with its id and PNG, the not-drawn
    paragraph), G-GRAMMAR (the four phases; every census row states select, adjust with a unit or
    "none:", commit and cancel; every unit row filled), G-CENSUS (every `14` line naming a drag or a
@@ -130,10 +132,32 @@ UNMERGED_PATHS = (
     "E37-D04.md",
 )
 
-BQ_COMMENT = "6566521186"  # the BQ list on #1308; no ruling yet
-BQ_PENDING_HEAD = f"defaults built; ruling pending (comment {BQ_COMMENT})"
-BQ_PENDING = "default built; ruling pending"
+RULING_ID = "6566806943"  # the rulings of record on #1308 (2026-11-02 01:20Z)
+BQ_LIST_ID = "6566521186"  # the BQ list on #1308
+BQ_DEFAULT = "ruled as the default"
+BQ_PINNED = "ruled as the default, pinned (the ruled sentence above)"
 BQ_IDS = tuple(f"BQ-{n}" for n in range(16))
+BQ_PINNED_IDS = tuple(f"BQ-{n}" for n in (2, 3, 5, 6, 7, 8, 9, 10, 11))
+# The ruling of record, its bold marks dropped (one paragraph).
+RULED = (
+    "Rulings of record — E47-D09 (#1308) BQ-0..BQ-11 (orchestrator, 01:20Z 2026-11-02, under "
+    "the owner's 2026-10-29 delegation): all ORCH-defaults as proposed (6566521186). Pins: "
+    "BQ-2 — the shipped key wins where it shipped; `?` is a PROPOSED alias A-row (scoped, "
+    "remappable); the seven-row drift is a C-row table, no §3.2 cell edits. BQ-3 — the "
+    "K-rules stated once (unit, `Shift` ×10, `PageUp` / `PageDown` ×100, `Enter` commits, "
+    "`Esc` restores, the pending value shown and spoken); merged twins mapped as instances, "
+    "divergences C-rows, KB-14 stands. BQ-5 — the order line: arrows move a pending price "
+    "that sends nothing; `Enter` commits through the drop's own path (SCR-040's confirm "
+    "choice, US-SET-003's policy, the wrong-side refusal); stops tighten only; never one "
+    "amend per keypress; Live never weaker than Demo — handed to E31-D01 as PROPOSED. BQ-6 — "
+    "adopt E06-D03 D6 / D5 by cite; the `05` :36 cite is fixed in this PR as D04's ruling "
+    "fixed :63. BQ-7 — D5's three parameters for every adjustment, one polite region, state "
+    "updated once per frame. BQ-8 — E37-D02 §13 by cite + node Move mode only; keys as A-rows "
+    "for E37-S05. BQ-9 — E09-D09 governs (T2 writes, admin absent); every registry command "
+    'listed, "unbound" as the word; A-rows to E10-S05. BQ-10 — deltas on E10-D03\'s chassis '
+    "only; the grouping C-row. BQ-11 — keep the shipped inert-binding mechanism; the PROPOSED "
+    "copy as an A-row. `Refs #1308` + `Partial:` until #5387 merges, then `Closes #1308`."
+)
 
 PHASES = ("Select", "Adjust", "Commit", "Cancel")
 DRAG_HOVER_RE = re.compile(r"\b(?:drag|hover)", re.IGNORECASE)
@@ -498,12 +522,12 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "M-15",
-        "mark BQ-7 settled without a ruling",
+        "mark the pinned BQ-7 as an unpinned default",
         "G-PENDING",
         "spec",
         "## The questions",
-        "a hand-off row to E47-D07 — default built; ruling pending",
-        "a hand-off row to E47-D07 — RULED",
+        "a hand-off row to E47-D07 — ruled as the default, pinned (the ruled sentence above)",
+        "a hand-off row to E47-D07 — ruled as the default",
     ),
     Mutation(
         "M-16",
@@ -612,6 +636,15 @@ MUTATIONS: tuple[Mutation, ...] = (
         "",
         "- K-12 A bare letter",
         "- A bare letter",
+    ),
+    Mutation(
+        "M-28",
+        "drop 'Live never weaker than Demo' from the ruled BQ-5 sentence",
+        "G-RULED",
+        "spec",
+        "## The questions",
+        "never one amend per keypress; Live never weaker than Demo — handed",
+        "never one amend per keypress — handed",
     ),
 )
 
@@ -774,21 +807,29 @@ def g_arow(t: Texts) -> list[Finding]:
     return out
 
 
-def g_pending(t: Texts) -> list[Finding]:
+def g_ruled(t: Texts) -> list[Finding]:
     s, e, region = section(t.spec, "## The questions")
     head = t.spec.split("\n")[s - 1] if s else ""
     lines = t.spec.split("\n")[s:e]
     bad: list[str] = []
-    if BQ_PENDING_HEAD not in head:
-        bad.append("the heading does not say the defaults are built and the ruling pending")
-    if not any(BQ_COMMENT in ln for ln in lines):
-        bad.append(f"the BQ comment {BQ_COMMENT} is not named")
+    if f"RULED (orchestrator, comment {RULING_ID}, on the BQ list {BQ_LIST_ID})" not in head:
+        bad.append("the heading does not name the ruling and the list")
+    if RULED not in lines:
+        bad.append("the ruled sentence is not verbatim")
+    return [("G-RULED", b, "spec", region) for b in bad]
+
+
+def g_pending(t: Texts) -> list[Finding]:
+    s, e, region = section(t.spec, "## The questions")
+    lines = t.spec.split("\n")[s:e]
+    bad: list[str] = []
     for bq in BQ_IDS:
         rows = [ln for ln in lines if ln.startswith(f"- **{bq}**")]
+        want = BQ_PINNED if bq in BQ_PINNED_IDS else BQ_DEFAULT
         if len(rows) != 1:
             bad.append(f"{bq} appears {len(rows)} times")
-        elif BQ_PENDING not in rows[0]:
-            bad.append(f"{bq} is not marked '{BQ_PENDING}'")
+        elif want not in rows[0] or (want == BQ_DEFAULT and BQ_PINNED in rows[0]):
+            bad.append(f"{bq} is not marked '{want}'")
     return [("G-PENDING", b, "spec", region) for b in bad]
 
 
@@ -1134,7 +1175,7 @@ def repin(t: Texts) -> int:
 def findings(t: Texts, values: Values) -> list[Finding]:
     out: list[Finding] = []
     out += g_anchor(t, values) + g_marker(t) + g_cite(t) + g_quote(t) + g_arow(t)
-    out += g_pending(t) + g_boards(t) + g_grammar(t) + g_census(t) + g_chord(t)
+    out += g_ruled(t) + g_pending(t) + g_boards(t) + g_grammar(t) + g_census(t) + g_chord(t)
     out += g_order(t) + g_coalesce(t) + g_palette(t) + g_findings(t) + g_t2(t) + g_norm(t)
     out += g_heur(t) + g_walk(t) + g_owner(t)
     out += g_lines(t, "G-UNMERGED", lambda ln: any(p in ln for p in UNMERGED_PATHS), "a path")
