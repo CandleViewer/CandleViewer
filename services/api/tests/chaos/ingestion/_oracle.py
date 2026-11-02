@@ -67,13 +67,14 @@ class BookOracle:
 class TradeOracle:
     """Every print the exchange emitted, newest last (bounded like the endpoint)."""
 
-    def __init__(self) -> None:
+    def __init__(self, limit: int = RECENT_TRADE_LIMIT) -> None:
+        self.limit = limit  # #1944: a small page lets a lost run fall off it
         self.prints: dict[str, deque[dict[str, Any]]] = {}
 
     def apply(self, msg: dict[str, Any]) -> None:
         for rec in msg.get("data", []):
             sym = rec["s"]
-            ring = self.prints.setdefault(sym, deque(maxlen=RECENT_TRADE_LIMIT))
+            ring = self.prints.setdefault(sym, deque(maxlen=self.limit))
             ring.append(rec)
 
     def recent_trade_body(self, symbol: str, limit: int) -> dict[str, Any]:

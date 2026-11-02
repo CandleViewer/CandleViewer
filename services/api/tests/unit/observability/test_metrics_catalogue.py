@@ -470,6 +470,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     from candleviewer.bars.metrics import EXPORTED_NAMES, export_bars_metrics
     from candleviewer.bars.time_builder import bars_built_total
     from candleviewer.ingestion.metrics import BOOK_EXPORTED_NAMES as BOOK_NAMES
+    from candleviewer.ingestion.metrics import HEAL_EXPORTED_NAMES as HEAL_NAMES
     from candleviewer.net.metrics import NET_EXPORTED_NAMES
     from candleviewer.observability.audit_query_metrics import EXPORTED_NAMES as AUDIT_NAMES
     from candleviewer.orderflow.heatmap_metrics import EXPORTED_NAMES as HEATMAP_NAMES
@@ -498,6 +499,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     others |= REPLAY_NAMES
     others |= INDICATOR_NAMES
     others |= BOOK_NAMES
+    others |= HEAL_NAMES
     others |= HEATMAP_NAMES
     others |= LIQUIDITY_NAMES
     exported = {s.name for s in live_specs() if s.exported} - others
