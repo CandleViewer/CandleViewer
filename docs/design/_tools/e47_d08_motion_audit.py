@@ -81,7 +81,7 @@ OWN_BOARDS = re.compile(
     r"docs/design/E47/img/E47-D08-\d\d-[a-z0-9-]+\.png|\.prettierignore"
     r"|docs/design/_tools/sheets/(?:e47-d08/[A-Za-z0-9._/-]+|MANIFEST\.sha256)"
 )
-PENDING_CELL = "pending: drawn later in this PR"
+PENDING_CELL = "pending: drawn in their own PR"
 SPEC_LINES = 600
 HAND_LINES = 150
 
@@ -557,7 +557,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "spec",
         "## 0.",
         "| 10  | `E47-D08 / 10 forced-reduce`",
-        "| 11  | `E47-D08 / 11 extra` | more | dark | pending: drawn later in this PR |\n"
+        "| 11  | `E47-D08 / 11 extra` | more | dark | pending: drawn in their own PR |\n"
         "| 10  | `E47-D08 / 10 forced-reduce`",
     ),
     Mutation(
@@ -755,8 +755,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-KEYWORD",
         "hand",
         "## §I",
-        "boards pending, drawn later in this PR.",
-        f"boards pending, drawn later in this PR. {KW} #1307.",
+        "boards pending, drawn in their own PR.",
+        f"boards pending, drawn in their own PR. {KW} #1307.",
     ),
     Mutation(
         "M-27",

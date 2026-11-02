@@ -96,7 +96,7 @@ Old is a verbatim fragment of the cited line at `85b6b6c1c` (D03 at `73fefc62b`;
 | QA-6 | 200 % zoom, then a 320 CSS px wide window; then `forced-colors: active`                                                            | every W string, chip and T2 reason wraps, never clipped or ellipsised; every pause control's target is at least 24 × 24 CSS px; under forced colours the focus ring, the replay frame's `border` and the lock glyph render in system colours                                                                                                     |
 | QA-7 | an alert storm: ten alert toasts raised inside 1 000 ms, under `safe`                                                              | at most CMP-212's `max` 3 toasts enter (`15`:2761), each one opacity transition; from the fourth alert the counted toast's text changes in place with no entrance (`15`:2766); under `reduce` no toast animates (I-6); no 1 s window holds 3 flashes (FR-7)                                                                                      |
 
-## §H The board plan (drawn later in this PR; a Penpot pass)
+## §H The board plan (drawn in their own PR; a Penpot pass)
 
 The boards of spec §0 on page `E47-D08 — Motion`; frames named `<surface>/<tier> · <theme>`. Data: the seeded TICKS stream, declared synthetic on every board's face.
 
@@ -115,7 +115,7 @@ The boards of spec §0 on page `E47-D08 — Motion`; frames named `<surface>/<ti
 
 ## §I Summary for #1307
 
-1. Text-first motion layer + hand-off + default-deny audit tool; 10<!--=COUNT:boards--> boards pending, drawn later in this PR.
+1. Text-first motion layer + hand-off + default-deny audit tool; 10<!--=COUNT:boards--> boards pending, drawn in their own PR.
 2. The flash-rate budget applies in both motion modes.
 3. 41<!--=COUNT:inv.rows--> surfaces, each with its full, canvas-calm and reduced variant, checked against its owning spec row.
 4. Per cell 500 ms; per region at most 2 combined starts a second in every theme; the 40 Hz simulation proves it with the arbiter.
