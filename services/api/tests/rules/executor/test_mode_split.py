@@ -3,7 +3,8 @@
 24 §11.5: the IR's own `mode` is never read for routing (BQ-12). The rig is a `RulesService` over an
 in-memory store, the evaluator on and the clocks frozen: `executor` is the sink an OMS would sit
 behind (E35-T09 to E35-T12), `simulated` the simulation sink. The evaluator stays off by default:
-`test_evaluator_wiring.py::test_evaluator_not_constructed_when_flag_off` pins it.
+`test_evaluator_wiring.py::test_evaluator_not_constructed_when_flag_off` pins it. Since E35-T09 the
+executor records each armed action's result (`records`, in memory) and counts it (`counted`).
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.rules import service as rules_service
 from candleviewer.rules.evaluator.engine import EvaluationResult
 from candleviewer.rules.executor.dispatch import AuditDispatch, FireDispatch
+from candleviewer.rules.executor.results import BLOCKED_DETAIL, ROW_UNREAD
 from candleviewer.rules.ir.models import MetricRef, RuleScope
 from candleviewer.rules.manager import (
     TICK_DISARM_TIMEOUT_S,
@@ -39,7 +41,7 @@ from candleviewer.rules.manager import (
 from candleviewer.rules.runner import EvalTick, RuleEvaluationRunner
 from candleviewer.rules.scope import ActionRequest, ScopeInstanceRef
 from candleviewer.rules.service import RereadFailure, RulesService
-from tests.rules.executor.request_builders import action_request
+from tests.rules.executor.request_builders import Counted, Records, action_request
 from tests.rules.test_evaluator import Clock
 from tests.rules.test_scope_wiring import OWNER, Source
 from tests.rules.test_scope_wiring import A as ACCOUNT
@@ -62,6 +64,8 @@ class Rig:
     clock: Clock
     executor: list[ActionRequest]
     simulated: list[ActionRequest]
+    records: Records
+    counted: Counted
 
     async def row(self, rid: str) -> RuleRow:
         row = await self.store.get(rid)
@@ -99,12 +103,12 @@ class Rig:
         assert self.svc._audits is not None
         return self.svc._audits
 
-    async def fire(self, price: str = "150") -> None:
+    async def fire(self, price: str = "150", trigger: str = "on_price_update") -> None:
         """One tick: the rules evaluate and their fires are queued, not yet run."""
         self.clock.t += 2_000  # past the default cooldown
         assert self.svc.metric_source is not None
         self.svc.metric_source.push(PRICE, Decimal(price), self.clock.t)
-        await self.runner.process(EvalTick("on_price_update", "BTCUSDT"))
+        await self.runner.process(EvalTick(trigger, "BTCUSDT"))
 
     async def settle(self) -> None:
         await asyncio.gather(*self.svc._tasks)
@@ -129,9 +133,10 @@ async def rig(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Rig]:
     async def audit(event: str, data: dict[str, str]) -> None:
         return None
 
-    store = InMemoryRuleStore()
+    store, records, counted = InMemoryRuleStore(), Records(), Counted()
     svc = RulesService()
     svc.bind(store=store, action_sink=to_executor, simulation_sink=to_simulation)
+    svc.bind(records=(records, records), metrics=counted.metrics)
     svc.wire_scope(Source(), "demo", audit)
     await svc.refresh_scope(OWNER)
     ctx: Any = SimpleNamespace(settings=SimpleNamespace(rules_evaluator_enabled=True))
@@ -139,7 +144,7 @@ async def rig(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Rig]:
     mgr, runner = svc.manager(), svc.runner
     assert mgr is not None and runner is not None
     try:
-        yield Rig(svc, mgr, store, runner, clock, executor, simulated)
+        yield Rig(svc, mgr, store, runner, clock, executor, simulated, records, counted)
     finally:
         await svc.stop(1.0)
 
@@ -151,7 +156,7 @@ async def test_a_simulate_rule_never_reaches_the_oms_sink(rig: Rig) -> None:
     await rig.settle()
     assert rig.executor == []
     assert [(r.rule_id, r.mode) for r in rig.simulated] == [(rid, "simulate")]
-    assert not rig.svc.actions_blocked_total  # a simulate action is never an armed fire dropped
+    assert rig.counted.blocked() == {} and rig.records.runs == {}  # no armed fire, no records
     assert (await rig.row(rid)).simulation_fires == 1  # and the evaluation is still recorded
 
 
@@ -197,7 +202,8 @@ async def test_a_mode_change_between_evaluation_and_dispatch_is_honoured_at_disp
     with capture_logs() as logs:
         await rig.settle()
     assert rig.executor == [] and rig.simulated == []  # dropped: it reached neither sink
-    assert dict(rig.svc.actions_blocked_total) == {"mode_changed": 1}
+    assert rig.counted.blocked() == {"mode_changed": 1}
+    assert rig.records.results() == [("a1", "skipped", "mode_changed")]
     skipped = {"event": "rules.action_skipped", "log_level": "info"}
     assert [e for e in logs if e.get("rule_id") == rid] == [
         skipped | {"rule_id": rid, "reason": "mode_changed"}
@@ -231,7 +237,8 @@ async def test_a_changed_row_between_evaluation_and_dispatch_drops_the_fire(
     change(await rig.row(rid))
     await rig.settle()
     assert rig.executor == [] and rig.simulated == []
-    assert dict(rig.svc.actions_blocked_total) == {"mode_changed": 1}
+    assert rig.counted.blocked() == {"mode_changed": 1}
+    assert rig.records.results() == [("a1", "skipped", "mode_changed")]
 
 
 async def test_an_action_in_flight_when_the_service_stops_drops(rig: Rig) -> None:
@@ -243,7 +250,7 @@ async def test_an_action_in_flight_when_the_service_stops_drops(rig: Rig) -> Non
     await rig.settle()
     rig.svc._manager = manager  # for the fixture's `stop()`
     assert rig.executor == [] and rig.simulated == []
-    assert dict(rig.svc.actions_blocked_total) == {"mode_changed": 1}
+    assert rig.counted.blocked() == {"mode_changed": 1}
 
 
 def _fail_the_dispatch_read(
@@ -294,7 +301,8 @@ async def test_a_failed_reread_at_dispatch_sends_nothing_and_is_counted(
     reason: RereadFailure,
 ) -> None:
     """Fail closed (24 §11.5 check 1): the action reaches neither sink and is counted under its
-    reason, logged once with the rule id and that reason only; nothing raises out of its task."""
+    reason, logged once with the rule id and that reason only; nothing raises out of its task. The
+    unread row counts as one no longer armed (BQ-6): `skipped`, `mode_changed`, its own detail."""
     rid = await rig.add("armed")
     await rig.fire()  # evaluated as armed: its fire is queued and has not run
     _fail_the_dispatch_read(monkeypatch, rig.store, failure)
@@ -302,8 +310,10 @@ async def test_a_failed_reread_at_dispatch_sends_nothing_and_is_counted(
     with capture_logs() as logs:
         await rig.settle()
     assert rig.executor == [] and rig.simulated == []
-    assert dict(rig.svc.dispatch_reread_failed_total) == {reason: 1}
-    assert not rig.svc.actions_blocked_total  # 24 §11.9 has no `blocked_by` for it yet (K2)
+    assert rig.counted.reread() == {reason: 1} and rig.counted.blocked() == {"mode_changed": 1}
+    assert rig.records.results() == [("a1", "skipped", "mode_changed")]
+    ((_, event),) = rig.records.events
+    assert event.payload["blocked_detail"] == BLOCKED_DETAIL[ROW_UNREAD]
     skipped = {"event": "rules.action_skipped", "log_level": "warning"}
     assert [e for e in logs if e.get("rule_id") == rid] == [
         skipped | {"rule_id": rid, "reason": reason}
@@ -334,12 +344,13 @@ async def test_a_cancelled_reread_is_never_swallowed(
     lost = {"event": "rules.dispatch_worker_lost", "log_level": "error"}
     assert [e for e in logs if e["log_level"] == "error"] == [lost | {"worker": worker.get_name()}]
     assert rig.executor == [] and rig.simulated == []
-    assert not rig.svc.dispatch_reread_failed_total and not rig.svc.actions_blocked_total
+    assert rig.counted.reread() == {} and rig.counted.blocked() == {}
+    assert rig.records.events == []  # nothing is written for a fire cut short
 
 
 def test_the_reread_failure_counter_is_catalogued_with_its_closed_reasons() -> None:
     (spec,) = [s for s in CATALOGUE if s.name == "rule_dispatch_reread_failed_total"]
-    assert (spec.kind, spec.labels, spec.status) == ("counter", ("reason",), "planned")
+    assert (spec.kind, spec.labels, spec.status) == ("counter", ("reason",), "live")
     assert spec.max_series == len(get_args(RereadFailure)) == 2
 
 

@@ -441,7 +441,7 @@ def test_a_record_names_the_viewer_in_place_of_the_viewed_target_only(
 async def test_a_rules_record_while_viewing_names_the_viewer() -> None:
     emitter = _Emitter()
     with _VIEWING():
-        await make_rules_audit(emitter)("create", {"rule_id": "r1", "actor": str(_TARGET)})
+        await make_rules_audit(emitter)("rule.created", {"rule_id": "r1", "actor": str(_TARGET)})
     ((_, fields),) = emitter.records
     assert (fields["actor_user_id"], fields["actor_label"]) == (str(_VIEWER), str(_VIEWER))
 

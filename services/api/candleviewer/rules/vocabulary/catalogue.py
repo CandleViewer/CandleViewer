@@ -88,10 +88,10 @@ ACTIONS: tuple[ActionSpec, ...] = (
     ActionSpec("arm_chase_limit", "Arm chase limit", _obj([], {"params": {"type": "object"}}), _OW, True, False, True),
     ActionSpec("start_iceberg_slice", "Start iceberg slice", _obj([], {"params": {"type": "object"}}), _OW, True, False, True),
     ActionSpec("start_twap", "Start TWAP", _obj([], {"params": {"type": "object"}}), _OW, True, False, True),
-    ActionSpec("send_notification", "Send notification", _obj(["channel", "severity", "template"], {"channel": {"type": "string"}, "severity": {"type": "string"}, "template": {"type": "string"}, "vars": {"type": "object"}}), (), False, False, False),
+    ActionSpec("send_notification", "Send notification", _obj(["channel", "severity", "template"], {"channel": {"type": "string"}, "severity": {"type": "string"}, "template": {"type": "string"}, "vars": {"type": "object"}}), (), False, False, True),
     ActionSpec("log_journal_tag", "Log journal tag", _obj(["tag"], {"tag": {"type": "string"}, "note": {"type": "string"}}), (), False, True, False, "Closes the rule/outcome loop."),
     ActionSpec("set_variable", "Set variable", _obj(["name", "value"], {"name": {"type": "string"}, "value": {}, "ttl_ms": {"type": "integer"}}), (), False, True, False, "Rule-scoped variable store."),
-    ActionSpec("emit_signal", "Emit signal", _obj(["signal_name"], {"signal_name": {"type": "string"}, "payload": {"type": "object"}}), (), False, False, False, "Chains rules."),
+    ActionSpec("emit_signal", "Emit signal", _obj(["signal_name"], {"signal_name": {"type": "string"}, "payload": {"type": "object"}}), (), False, False, True, "Chains rules."),
     ActionSpec("pause_rule", "Pause rule", _obj(["rule_id"], {"rule_id": {"type": "string"}}), (), False, True, False, "A rule may pause itself."),
     ActionSpec("enable_rule", "Enable rule", _obj(["rule_id"], {"rule_id": {"type": "string"}}), (), False, True, False, "Cannot target itself."),
 )  # fmt: skip

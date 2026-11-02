@@ -9,9 +9,10 @@ module, but it does no real work until its owning epic lands.
 from __future__ import annotations
 
 import asyncio
-from collections import Counter
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Final, Literal
+from dataclasses import replace
+from time import monotonic
+from typing import TYPE_CHECKING, Any, Final
 from uuid import UUID, uuid4
 
 import structlog
@@ -20,7 +21,12 @@ from candleviewer.observability import spawn
 from candleviewer.observability.health import HealthReport, HealthStatus
 from candleviewer.rules.evaluator import Evaluator, SnapshotBuilder
 from candleviewer.rules.evaluator.engine import EvaluationResult
-from candleviewer.rules.executor.dispatch import AuditDispatch, Fire, FireDispatch
+from candleviewer.rules.executor.dispatch import AuditDispatch, Fire, FireDispatch, JobKind
+from candleviewer.rules.executor.engine import ActionExecutor, RowVerdict
+from candleviewer.rules.executor.metrics import ExecutorMetrics
+from candleviewer.rules.executor.metrics import RereadFailure as RereadFailure
+from candleviewer.rules.executor.ports import ActionAudit, AlertPort, RunRecords
+from candleviewer.rules.executor.results import BlockedBy
 from candleviewer.rules.ir.models import Rule
 from candleviewer.rules.manager import (
     Audit,
@@ -40,12 +46,10 @@ from candleviewer.rules.scope import ActionRequest, EvaluableMode, ScopeInstance
 from candleviewer.rules.vocabulary import MetricRegistry, default_registry
 
 #: Bound on a dispatch's re-read of the rule's row (24 §11.5 check 1), the 2 s the manager gives
-#: its disarm beside the tick (`TICK_DISARM_TIMEOUT_S`).
+#: its disarm beside the tick (`TICK_DISARM_TIMEOUT_S`). Why one failed is `RereadFailure`
+#: (`rule_dispatch_reread_failed_total{reason}`): `timeout`, no answer within it (or the store's
+#: own `TimeoutError`), or `store_error`, the read raised anything else.
 REREAD_TIMEOUT_S: Final = 2.0
-#: `rule_dispatch_reread_failed_total{reason}`, a closed set: why a dispatch's re-read of the row
-#: failed, its action dropped and nothing sent. `timeout`: no answer within `REREAD_TIMEOUT_S` (or
-#: the store's own `TimeoutError`); `store_error`: the read raised anything else.
-RereadFailure = Literal["timeout", "store_error"]
 
 
 def _log() -> Any:
@@ -61,8 +65,9 @@ def _owner_uuid(rule: Rule) -> UUID | None:
 
 
 async def _discard_actions(_req: ActionRequest) -> None:
-    """A sink that runs nothing: the simulation sink until E35-S05 swaps it, and the executor's
-    downstream until E35-T09 to E35-T12 bind the handlers behind it."""
+    """A sink that runs nothing: the simulation sink until E35-S05 swaps it. As the executor's
+    downstream it is no stand-in: the handler table refuses every action no handler is bound for
+    (`unavailable`) until E35-T10 to E35-T13 bind them."""
 
 
 async def _never_dispatched(_req: ActionRequest) -> None:
@@ -98,17 +103,14 @@ class RulesService:
         # Private: only reachable through the scope gate, then `_route`.
         self._action_sink: ActionSink = _discard_actions  # the executor's downstream: no OMS yet
         self._simulation_sink: ActionSink = _discard_actions
-        #: `rule_actions_blocked_total{reason}` until E35-T09 makes it a metric (24 §11.9): the
-        #: armed actions a dispatch dropped (`mode_changed`), those of the fires the full queue
-        #: refused (`backpressure`) and those of the audit-only jobs the audit queue shed (`scope`).
-        self.actions_blocked_total: Counter[str] = Counter()
-        #: Of those `scope` ones, the actions whose denial's audit was shed, not written.
-        self.audits_shed_total = 0
-        #: `rule_dispatch_reread_failed_total{reason}` until E35-T09 makes it a metric: the armed
-        #: actions dropped because the dispatch's re-read failed (24 §11.5 names no `blocked_by`).
-        self.dispatch_reread_failed_total: Counter[RereadFailure] = Counter()
+        # E35-T09: the executor's records written ahead, its alerts and its metrics (unbound: no
+        # record can be written, so no armed action is handed over; no alert; nothing counted).
+        self._records: tuple[RunRecords, ActionAudit] | None = None
+        self._alerts: AlertPort | None = None
+        self._metrics = ExecutorMetrics()
+        self._executor: ActionExecutor | None = None  # while the evaluator runs
         self._dispatch: FireDispatch | None = None  # the fire queue, while the evaluator runs
-        self._audits: AuditDispatch | None = None  # the audit-only jobs' queue, beside it
+        self._audits: AuditDispatch | None = None  # the record-only jobs' queue, beside it
 
     def bind(
         self,
@@ -118,6 +120,9 @@ class RulesService:
         broadcast: Broadcast | None = None,
         action_sink: ActionSink | None = None,
         simulation_sink: ActionSink | None = None,
+        records: tuple[RunRecords, ActionAudit] | None = None,
+        alerts: AlertPort | None = None,
+        metrics: ExecutorMetrics | None = None,
     ) -> None:
         """Composition-root wiring (store / audit / WS fan-out / action executor); before `start`.
         Each option is set only when given, so a later call (E35-S05's simulation sink, the
@@ -125,11 +130,21 @@ class RulesService:
 
         `action_sink` is the executor's downstream and `simulation_sink` where the actions of a
         simulate rule go (E35-S05 swaps it). Both are stored privately and reached only through
-        `ScopedActionEmitter`, which routes by the stored row's mode (`_route`)."""
+        `ScopedActionEmitter`, which routes by the stored row's mode (`_route`). A bound
+        `action_sink` stands in for the engine-internal handlers no slice has bound, never for an
+        action that would reach the OMS (`ActionExecutor`). `records` are the executor's two
+        write-ahead ports, `alerts` its partial-fire and write-ahead alerts and `metrics` its
+        series (E35-T09, `rules_oms_wiring`)."""
         if action_sink is not None:
             self._action_sink = action_sink
         if simulation_sink is not None:
             self._simulation_sink = simulation_sink
+        if records is not None:
+            self._records = records
+        if alerts is not None:
+            self._alerts = alerts
+        if metrics is not None:
+            self._metrics = metrics
         if store is not None:
             self._store = store
         if audit is not None:
@@ -223,63 +238,77 @@ class RulesService:
 
     async def _route(self, req: ActionRequest) -> None:
         """Where a gated action goes (24 §11.5): by the mode the stored row had when the rule was
-        evaluated, never the IR's own `mode`. An armed rule's action goes to the executor, unless
-        it is `dry_run_only`: that one is simulated, as every action of a simulate rule is."""
+        evaluated, never the IR's own `mode`. An armed rule's action goes back to the executor,
+        which passed it through the emitter, unless it is `dry_run_only`: that one is simulated,
+        as every action of a simulate rule is."""
         if req.mode == "armed" and not req.payload.dry_run_only:
-            await self._execute(req)
+            if self._executor is None:
+                raise RuntimeError("an armed action outside a running executor")
+            await self._executor.hand_over(req)
         else:
             await self._simulation_sink(req)
 
-    async def _execute(self, req: ActionRequest) -> None:
-        """The executor sink: nothing is handed on before the stored row is read again (24 §11.5
-        check 1), one point read per action, bounded by `REREAD_TIMEOUT_S`, in a dispatch worker
-        and never on the evaluation tick (C-2.20). A rule that is gone (or a stopped service),
-        no longer armed, or on another active version or `ir_hash` than the fire was evaluated
-        under drops the action as `skipped`, `mode_changed`. A read that fails or does not answer
-        in time drops it under its `RereadFailure`, never raised out of the task. Each drop is
-        counted and logged with the rule id until E35-T09 records results; nothing is sent."""
+    async def _check_one(self, req: ActionRequest) -> RowVerdict:
+        """Check 1 (24 §11.5): the stored row read again, one point read per action, bounded by
+        `REREAD_TIMEOUT_S`, in a dispatch worker and never on the evaluation tick (C-2.20). A rule
+        that is gone (or a stopped service), no longer armed, or on another active version or
+        `ir_hash` than the fire was evaluated under is `mode_changed`; a read that fails or does
+        not answer in time is `unread`, counted under its `RereadFailure` (BQ-6). Each is logged
+        with the rule id; the executor skips the rest of the fire."""
         manager = self._manager
         try:
             async with asyncio.timeout(REREAD_TIMEOUT_S):
                 stored = await manager.current_mode(req.rule_id) if manager is not None else None
         except Exception as failed:  # never `CancelledError`, which is no `Exception`
             reason: RereadFailure = "timeout" if isinstance(failed, TimeoutError) else "store_error"
-            self.dispatch_reread_failed_total[reason] += 1
+            self._metrics.reread_failed(reason)
             _log().warning("rules.action_skipped", rule_id=req.rule_id, reason=reason)
-            return
+            return "unread"
         if (
             stored is None
             or stored.mode != "armed"
             or stored.version != req.version
             or stored.ir_hash != req.ir_hash
         ):
-            self.actions_blocked_total["mode_changed"] += 1
             _log().info("rules.action_skipped", rule_id=req.rule_id, reason="mode_changed")
-            return
-        await self._action_sink(req)
+            return "mode_changed"
+        return "armed"
+
+    async def _recheck(self, req: ActionRequest) -> BlockedBy | None:
+        """The checks that exist, run again before `retry_once`'s retry (24 §11.9): check 1, then
+        the scope re-check. E35-T10 adds its checks here."""
+        if await self._check_one(req) != "armed":
+            return "mode_changed"
+        resolver = self.scope_resolver
+        if resolver is None:
+            return "scope"
+        refused = resolver.check_action(req.rule_scope, req.owner, req.environment, req.instance)
+        return None if refused is None else "scope"
 
     def _refused(self, fire: Fire, first: bool) -> None:
         """A fire the full queue refused (24 §11.5), on the tick: each of its actions is counted
-        `backpressure`, and its rule's first refusal of the episode is logged as `rules.blocked`
-        with that reason, the audit action and reason §15.5 names, until E35-T09 registers it and
-        records each action; the rest are counted, not logged."""
-        self.actions_blocked_total["backpressure"] += len(fire.requests)
+        `blocked` (`backpressure`), its rule's first refusal of the episode is logged as
+        `rules.blocked` with that reason, and its records go off the tick, as one record-only job
+        on the audit queue, offered and never awaited (BQ-4): a full one sheds it (`_shed`)."""
+        for req in fire.requests:
+            self._metrics.refused(req.action_type, "backpressure")
         if first:
             _log().warning(
                 "rules.blocked", rule_id=fire.rule_id, run_id=str(fire.run_id),
                 reason="backpressure", actions=len(fire.requests),
             )  # fmt: skip
+        if self._audits is not None:
+            self._audits.offer(replace(fire, kind="refused_fire"))
 
-    def _shed(self, fire: Fire, first: bool) -> None:
-        """An audit-only job the full audit queue shed, on the tick: the tick's scope gate refused
-        its actions first, so each is counted `scope` (24 §11.5: the first refusal wins), never
-        `backpressure`, and as shed; its rule's first of the episode is logged, saying so."""
-        self.actions_blocked_total["scope"] += len(fire.requests)
-        self.audits_shed_total += len(fire.requests)
+    def _shed(self, job: Fire, first: bool) -> None:
+        """A record-only job the full audit queue shed, on the tick: counted under its kind
+        (`rule_records_shed_total{kind}`), never awaited; its actions were counted when the job was
+        offered. Its rule's first of the episode is logged, saying which records were lost."""
+        self._metrics.shed("refused_fire" if job.kind == "refused_fire" else "scope_denial")
         if first:
             _log().warning(
-                "rules.blocked", rule_id=fire.rule_id, run_id=str(fire.run_id),
-                reason="scope", actions=len(fire.requests), audit="shed",
+                "rules.records_shed", rule_id=job.rule_id, run_id=str(job.run_id),
+                kind=job.kind, actions=len(job.requests),
             )  # fmt: skip
 
     def registry(self) -> MetricRegistry | None:
@@ -311,23 +340,32 @@ class RulesService:
         emitter = self.action_emitter(self._route) if scoped else None
         audit_only = self.action_emitter(_never_dispatched) if scoped else None
         env = self._scope_env
-        dispatch = self._dispatch = FireDispatch(self._refused)
-        audits = self._audits = AuditDispatch(self._shed)
+        run_records, action_audit = self._records or (None, None)
+        stand_in = None if self._action_sink is _discard_actions else self._action_sink
+        executor = self._executor = ActionExecutor(
+            check_one=self._check_one, recheck=self._recheck, records=run_records,
+            audit=action_audit, alerts=self._alerts, metrics=self._metrics, stand_in=stand_in,
+        )  # fmt: skip
+        dispatch = self._dispatch = FireDispatch(self._refused, executor.execute)
+        audits = self._audits = AuditDispatch(self._shed, executor.execute)
         dispatch.start()
         audits.start()
 
         def _on_fire(item: EvaluableRule, result: EvaluationResult) -> None:
             """Offer one evaluation's actions, never awaited (C-2.20), each stamped with the stored
             row's mode as read with this tick's work list. Only a fired result's actions reach the
-            routing emitter (`_route`), on the fire queue; a scope-skipped result's go through the
-            audit-only one, on the audit queue: audited per action, never dispatched, whatever the
-            emitter's re-check finds, and never in a fire's slot or lane."""
+            routing emitter (`_route`), on the fire queue, with the run row's facts; a
+            scope-skipped result's go through the audit-only one, on the audit queue: audited per
+            action, never dispatched, whatever the emitter's re-check finds, and never in a fire's
+            slot or lane. The tick's scope gate refused them, so each counts under `scope` as it
+            is offered, written or shed (BQ-5)."""
             if emitter is None or audit_only is None or env is None:
                 return
+            kind: JobKind
             if result.fired:
-                emit, queue = emitter.emit, dispatch
+                emit, queue, kind = emitter.emit, dispatch, "fire"
             elif result.skipped_reason == "scope":
-                emit, queue = audit_only.emit, audits
+                emit, queue, kind = audit_only.emit, audits, "scope_denial"
             else:
                 return
             rule = item.rule
@@ -349,7 +387,15 @@ class RulesService:
                 )
                 for action in rule.actions
             )  # fmt: skip
-            queue.offer(Fire(str(rule.rule_id), run_id, reqs, emit))
+            if kind == "scope_denial":
+                for req in reqs:
+                    self._metrics.refused(req.action_type, "scope")
+            queue.offer(
+                Fire(
+                    str(rule.rule_id), run_id, reqs, emit, kind=kind, version_id=item.version_id,
+                    trigger_type=result.trigger_type, metric_values=result.metric_values,
+                )
+            )  # fmt: skip
 
         def _factory(rule: Rule, snaps: SnapshotBuilder) -> Evaluator:
             if emitter is None or env is None:
@@ -390,19 +436,26 @@ class RulesService:
 
     async def stop(self, grace_s: float) -> None:
         """Stop the module within `grace_s` seconds: the runner first, so no fire is offered
-        after it; the workers of the fire queue and of the audit queue then drain them within that
-        one grace, while the manager still answers the re-reads; then the manager cancels its tick
-        disarms in flight and stops the live B9 rule charts."""
+        after it; the workers of the fire queue, then of the audit queue in what is left of that
+        one grace, drain them while the manager still answers the re-reads; then the manager
+        cancels its tick disarms in flight and stops the live B9 rule charts. A cancel during the
+        runner's stop or the fire queue's drain goes on to the caller, and ends both queues'
+        workers at once too (#5231's carry RC-02): no queue outlives the module."""
         self._started = False
-        if self.runner is not None:
-            await self.runner.stop()
-        self.runner = self.metric_source = None
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + grace_s
-        for queue in (self._dispatch, self._audits):
-            if queue is not None:
-                await queue.stop(max(0.0, deadline - loop.time()))
-        self._dispatch = self._audits = None
+        deadline, drained = monotonic() + grace_s, False
+        try:
+            if self.runner is not None:
+                await self.runner.stop()
+            self.runner = self.metric_source = None
+            if self._dispatch is not None:
+                await self._dispatch.stop(max(0.0, deadline - monotonic()))
+            drained = True
+        finally:
+            if self._dispatch is not None and not drained:
+                await self._dispatch.stop(0.0)  # a no-op once its own stop has begun
+            if self._audits is not None:
+                await self._audits.stop(max(0.0, deadline - monotonic()) if drained else 0.0)
+            self._dispatch = self._audits = self._executor = None
         if self._manager is not None:
             await self._manager.stop()
         self._registry = None
