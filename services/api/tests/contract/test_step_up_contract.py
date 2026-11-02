@@ -167,6 +167,15 @@ def test_step_up_description_states_the_approved_rotation_rule(
         "When either record cannot be written, the grant just made is ended and the answer is "
         "`503 audit_unavailable`: nothing is elevated, nothing is rotated and the old tokens keep "
         "working.",
+        # C-7: a refused grant record ends the grant too; what stands of a refused rotation is
+        # voided, and a lost void is counted (C-2.9).
+        "The same holds for a step-up whose `auth.step_up_granted` cannot be recorded once its "
+        "grant is stored.",
+        "A refused `auth.session_created` comes after the rotation's `auth.session_revoked`, which "
+        "then stands: an `auth.step_up_failed` row (reason `unrotated`) voids it and names the "
+        "ended grant; when `auth.step_up_granted` is all that stands, the row's reason is "
+        "`grant_ended`.",
+        "A row the audit writer refuses too is lost, counted and alerted (`AuthAuditOutcomeLost`).",
         # C-8: the conditional claim, no grace for the old token.
         "of a step-up and a `POST /auth/refresh` of the same session exactly one rotates it, and "
         "the old token gets no grace period",
