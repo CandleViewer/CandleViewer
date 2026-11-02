@@ -336,6 +336,33 @@ def test_footprint_group_flags_map_bit0_to_confirm_and_ignore_reserved_bits(
     assert bar["confirm"] is confirm
 
 
+@pytest.mark.parametrize(
+    ("name", "flags", "confirm"),
+    [("bars_flags_gap_partial", 0b0000_0110, False), ("bars_flags_reserved_bits", 0xF9, True)],
+)
+def test_bars_flags_vector_reads_confirm_from_bit0_alone(
+    name: str, flags: int, confirm: bool
+) -> None:
+    """#5396 golden vectors (section 3.4): kind-4 `flags` bit1 `gap_before` / bit2 `partial`, and
+    reserved bits 3-7, decode as `ok`, keep the byte as sent, and leave `confirm` on bit0."""
+    raw = encode(dict(cvwb_vectors.vector_frames())[name])
+    decoded = decode(raw)
+    assert decoded.records[0][-1] == flags
+    (bar,) = cvwb_vectors.structured(decoded)["bars"]
+    assert bar["confirm"] is confirm
+    seeds = {n: e for n, e, _ in cvwb_vectors.corpus_seeds()}
+    assert seeds[f"valid-{name}"] == "ok"
+
+
+def test_bars_reserved_flag_bits_are_ignored_on_receive() -> None:
+    """Bits 3-7 change nothing a decoder reports: the twin equals the same bar with bit0 only."""
+    frame = dict(cvwb_vectors.vector_frames())["bars_flags_reserved_bits"]
+    plain = Frame(BARS, ((*frame.records[0][:11], 0b1),), 0, 2, 3, 0)
+    assert cvwb_vectors.structured(decode(encode(frame))) == cvwb_vectors.structured(
+        decode(encode(plain))
+    )
+
+
 def test_footprint_group_count_is_refused_up_front_at_the_28_byte_stride() -> None:
     """SR-128: the group count is checked against the 28-byte v2 prefix before any group is read.
     Two groups in 48 bytes would pass a 24-byte (pre-flags) or 8-byte (v1) stride and only fail

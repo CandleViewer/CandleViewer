@@ -228,5 +228,51 @@
       ],
       "estimated": false
     }
+  },
+  {
+    "name": "bars_flags_gap_partial",
+    "body_kind": 4,
+    "structured": {
+      "bars": [
+        {
+          "generation": 7,
+          "index": 42,
+          "t_ms": 60000,
+          "o": "65000.12",
+          "h": "65100.00",
+          "l": "64900.00",
+          "c": "65050.50",
+          "v": "1234.567",
+          "turnover": "9000000000.000",
+          "trades": 321,
+          "delta": "-4.567",
+          "confirm": false
+        }
+      ],
+      "coalesced": false
+    }
+  },
+  {
+    "name": "bars_flags_reserved_bits",
+    "body_kind": 4,
+    "structured": {
+      "bars": [
+        {
+          "generation": 7,
+          "index": 42,
+          "t_ms": 60000,
+          "o": "65000.12",
+          "h": "65100.00",
+          "l": "64900.00",
+          "c": "65050.50",
+          "v": "1234.567",
+          "turnover": "9000000000.000",
+          "trades": 321,
+          "delta": "-4.567",
+          "confirm": true
+        }
+      ],
+      "coalesced": false
+    }
   }
 ]
