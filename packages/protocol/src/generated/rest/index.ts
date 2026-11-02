@@ -3583,6 +3583,13 @@ export interface paths {
      *     at most 31 days and an estimated 250 000 bars. Cursor semantics are stated once, on the
      *     `MarketCursor` parameter. A page that would exceed the response ceiling (SR-E12-01)
      *     returns 422 `response_too_large`.
+     *
+     *     **Integrity and provenance (#5396).** Each bar carries `gap_before` and `partial`
+     *     (`Bar`), the flags its stored row holds, so a bar that may not match a complete tape
+     *     window is marked as such. `meta` (`BarsMeta`) carries the series' `spec_hash`, the
+     *     lowest `build_version` among the bars served and `stale`, as the WS `bars` snapshot
+     *     does (23 §6.1). A range of the window the server cannot serve is listed in
+     *     `meta.coverage_holes`. All of these are optional and additive (C-6.3).
      */
     get: operations["getBars"];
     put?: never;
@@ -3765,6 +3772,11 @@ export interface paths {
      *     at most 31 days and an estimated 250 000 bars. Cursor semantics are stated once, on the
      *     `MarketCursor` parameter. A page that would exceed the response ceiling (SR-E12-01)
      *     returns 422 `response_too_large`.
+     *
+     *     **Integrity and provenance (#5396).** As on `/market/bars`: each bar carries
+     *     `gap_before` and `partial` (both `false` on a bar not built from the tape), and `meta`
+     *     (`BarsMeta`) carries `spec_hash`, `build_version` and `stale`. Optional and additive
+     *     (C-6.3).
      */
     get: operations["getKlines"];
     put?: never;
@@ -7805,6 +7817,11 @@ export interface components {
       cvd?: components["schemas"]["Decimal"] | null;
       delta?: components["schemas"]["Decimal"] | null;
       /**
+       * @description True when a gap precedes this bar: the recorded trade tape had a gap before the bar's first print, or the builder marked a discontinuity before it (24 §3.3), so the bar may be incomplete at its start. The same flag as the stored row's `gap_before` (21 §4.8) and the WS `bars` item's (23 §14.3). Absent means `false`: a bar not built from the tape (a `kline` row) and a row stored before the column existed both read `false`. Optional, additive (C-6.3).
+       * @default false
+       */
+      gap_before: boolean;
+      /**
        * Format: int64
        * @description ADR-0033 series generation (= epoch): an opaque id that a builder cold start or a rebuild replaces, normally with a higher one; index restarts inside it. Compare for equality only: a change in either direction is a new epoch. Never read it as a time. Always present on /market/bars.
        */
@@ -7820,6 +7837,11 @@ export interface components {
       min_delta?: components["schemas"]["Decimal"] | null;
       o: components["schemas"]["Decimal"];
       /**
+       * @description True when the bar is not built from a complete tape window (24 §3.1), such as the first bar a builder forms after it starts inside the bar's window, so its open, volume and order flow may cover only part of the bar. The same flag as the stored row's `partial` (21 §4.8) and the WS `bars` item's (23 §14.3). Absent means `false`, as for `gap_before`. Optional, additive (C-6.3).
+       * @default false
+       */
+      partial: boolean;
+      /**
        * Format: date-time
        * @description Bar open time; not unique for non-time bars.
        */
@@ -7827,6 +7849,18 @@ export interface components {
       trades?: number;
       turnover?: components["schemas"]["Decimal"];
       v: components["schemas"]["Decimal"];
+    };
+    /** @description `DataMeta` extended with the build provenance of the bars served (SR-E12-14), named as the WS `bars` snapshot `meta` names it (23 §6.1, §13 `snapMeta`), so REST and WS state it the same way. Every member added here is optional and additive (C-6.3): an answer without them is read as `stale: false` with its build provenance unknown. */
+    BarsMeta: components["schemas"]["DataMeta"] & {
+      /** @description The lowest bar builder version among the bars served, by the WS `bars` snapshot rule (23 §6.1): a served bar is never traced to newer code than the code that built it. A page with no bar carries the running version. */
+      build_version?: number;
+      /** @description The served series' bar spec hash (24 §3.1), the WS `bars` snapshot's `meta.spec_hash` for the same series. */
+      spec_hash?: string;
+      /**
+       * @description True when a bar served was built below the running builder version, so `build_version` is below the running one and a later read may serve that window rebuilt. Absent means `false`.
+       * @default false
+       */
+      stale: boolean;
     };
     /** @enum {string} */
     BarType: "time" | "tick" | "volume" | "range" | "delta" | "renko" | "pnf" | "heikin_ashi";
@@ -8158,7 +8192,7 @@ export interface components {
       symbol?: components["schemas"]["Symbol"];
     };
     DataMeta: components["schemas"]["PageMeta"] & {
-      /** @description Requested-range gaps the local cache has no bars for yet (QA defect #1622 blocker 1 / E08-S06 "Cache hit" scenario — `GET /market/klines` is cache-only until a live `KlineFetcher` lands, so it reports holes here instead of silently pretending the exchange was consulted). */
+      /** @description Requested-range gaps the local cache has no bars for yet (QA defect #1622 blocker 1 / E08-S06 "Cache hit" scenario — `GET /market/klines` is cache-only until a live `KlineFetcher` lands, so it reports holes here instead of silently pretending the exchange was consulted). On `/market/bars` and `/market/klines` a range of the window the server cannot serve from its store is listed here too, so a missing range is named, never silently absent (#5396). */
       coverage_holes?: {
         /** @description Gap end, exchange epoch microseconds. */
         end_us: number;
@@ -9373,7 +9407,7 @@ export interface components {
       bar_type?: components["schemas"]["BarType"];
       bars: components["schemas"]["Bar"][];
       interval?: string;
-      meta: components["schemas"]["DataMeta"];
+      meta: components["schemas"]["BarsMeta"];
       symbol: components["schemas"]["Symbol"];
     };
     /** @description Response object. Readers must ignore unknown properties (C-6.3). */

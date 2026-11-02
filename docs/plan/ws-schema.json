@@ -1471,6 +1471,16 @@
                 "default": false,
                 "description": "Optional. True when a late trade re-closed an already-confirmed bar at this (generation, index); the client replaces the stored bar by key and re-renders (§8.2). Structured payloads only: binary records carry no amended bit, so a frame that carries an amended close is always sent structured, even on a binary subscription (§3.4)."
               },
+              "gap_before": {
+                "type": "boolean",
+                "default": false,
+                "description": "Optional. True when a gap precedes this bar: the recorded trade tape had a gap before the bar's first print, or the builder marked a discontinuity before it (24 §3.3), so the bar may be incomplete at its start. Kind 4 carries it as flags bit1 (§3.4). Absent means false (22 `Bar.gap_before`)."
+              },
+              "partial": {
+                "type": "boolean",
+                "default": false,
+                "description": "Optional. True when the bar is not built from a complete tape window (24 §3.1), such as the first bar a builder forms after it starts inside the bar's window. Kind 4 carries it as flags bit2 (§3.4). Absent means false (22 `Bar.partial`)."
+              },
               "delta": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
               },

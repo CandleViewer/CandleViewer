@@ -94,6 +94,19 @@ _DEAD_ALLOWED: Final = {
         "PageMeta: present only where a cheap exact count exists; neither route counts its "
         "window (`market_response.build_meta`)"
     ),
+    **{
+        member: (
+            "#5396 contract first (C-6.1): declared before the server sends it; #5396's "
+            "follow-up serves it and removes this row"
+        )
+        for member in (
+            "KlineResponse.bars[].gap_before",
+            "KlineResponse.bars[].partial",
+            "KlineResponse.meta.spec_hash",
+            "KlineResponse.meta.build_version",
+            "KlineResponse.meta.stale",
+        )
+    },
 }
 
 

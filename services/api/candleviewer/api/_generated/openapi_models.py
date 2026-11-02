@@ -321,7 +321,7 @@ class DataMeta(PageMeta):
     coverage_holes: Annotated[
         list[CoverageHole] | None,
         Field(
-            description='Requested-range gaps the local cache has no bars for yet (QA defect #1622 blocker 1 / E08-S06 "Cache hit" scenario — `GET /market/klines` is cache-only until a live `KlineFetcher` lands, so it reports holes here instead of silently pretending the exchange was consulted).'
+            description='Requested-range gaps the local cache has no bars for yet (QA defect #1622 blocker 1 / E08-S06 "Cache hit" scenario — `GET /market/klines` is cache-only until a live `KlineFetcher` lands, so it reports holes here instead of silently pretending the exchange was consulted). On `/market/bars` and `/market/klines` a range of the window the server cannot serve from its store is listed here too, so a missing range is named, never silently absent (#5396).'
         ),
     ] = None
 
@@ -1689,27 +1689,45 @@ class Bar(BaseModel):
         StrictBool | None,
         Field(description="False for the in-progress bar (Bybit `confirm` semantics)."),
     ] = None
+    gap_before: Annotated[
+        StrictBool,
+        Field(
+            description="True when a gap precedes this bar: the recorded trade tape had a gap before the bar's first print, or the builder marked a discontinuity before it (24 §3.3), so the bar may be incomplete at its start. The same flag as the stored row's `gap_before` (21 §4.8) and the WS `bars` item's (23 §14.3). Absent means `false`: a bar not built from the tape (a `kline` row) and a row stored before the column existed both read `false`. Optional, additive (C-6.3)."
+        ),
+    ] = False
+    partial: Annotated[
+        StrictBool,
+        Field(
+            description="True when the bar is not built from a complete tape window (24 §3.1), such as the first bar a builder forms after it starts inside the bar's window, so its open, volume and order flow may cover only part of the bar. The same flag as the stored row's `partial` (21 §4.8) and the WS `bars` item's (23 §14.3). Absent means `false`, as for `gap_before`. Optional, additive (C-6.3)."
+        ),
+    ] = False
     delta: Decimal | None = None
     cvd: Decimal | None = None
     min_delta: Decimal | None = None
     max_delta: Decimal | None = None
 
 
-class KlineResponse(BaseModel):
-    symbol: Annotated[
-        str,
+class BarsMeta(DataMeta):
+    spec_hash: Annotated[
+        str | None,
         Field(
-            description="Bybit USDT linear perpetual symbol. v1 accepts USDT-quoted linear symbols only.",
-            examples=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
-            pattern="^[A-Z0-9]{2,20}USDT$",
+            description="The served series' bar spec hash (24 §3.1), the WS `bars` snapshot's `meta.spec_hash` for the same series.",
+            pattern="^[0-9a-f]{64}$",
         ),
-    ]
-    interval: str | None = None
-    bar_type: (
-        Literal["time", "tick", "volume", "range", "delta", "renko", "pnf", "heikin_ashi"] | None
-    ) = None
-    bars: list[Bar]
-    meta: DataMeta
+    ] = None
+    build_version: Annotated[
+        JsonInt | None,
+        Field(
+            description="The lowest bar builder version among the bars served, by the WS `bars` snapshot rule (23 §6.1): a served bar is never traced to newer code than the code that built it. A page with no bar carries the running version.",
+            ge=1,
+        ),
+    ] = None
+    stale: Annotated[
+        StrictBool,
+        Field(
+            description="True when a bar served was built below the running builder version, so `build_version` is below the running one and a later read may serve that window rebuilt. Absent means `false`."
+        ),
+    ] = False
 
 
 class FootprintCell(BaseModel):
@@ -7298,6 +7316,23 @@ class KeyTestResult(BaseModel):
             description="The verification as far as the pipeline got. Omitted when the REST half reached no verdict (a timeout, an outage, a refused signature, a clock outside the `recv_window` or a rate limit): an earlier check's standing result is never shown in its place, because an outage must not read as a pass (SR-E27-18). A key the exchange refused before its rights were read is `KeyVerificationNotRead`.\n"
         ),
     ] = None
+
+
+class KlineResponse(BaseModel):
+    symbol: Annotated[
+        str,
+        Field(
+            description="Bybit USDT linear perpetual symbol. v1 accepts USDT-quoted linear symbols only.",
+            examples=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+            pattern="^[A-Z0-9]{2,20}USDT$",
+        ),
+    ]
+    interval: str | None = None
+    bar_type: (
+        Literal["time", "tick", "volume", "range", "delta", "renko", "pnf", "heikin_ashi"] | None
+    ) = None
+    bars: list[Bar]
+    meta: BarsMeta
 
 
 class HeatmapResponse(BaseModel):

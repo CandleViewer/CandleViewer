@@ -709,8 +709,9 @@ class Bar(BaseModel):
     turnover: Notional
     vwap: Px
     closed: bool
-    partial: bool                 # True when the bar began before recording started
-    gap_before: bool              # True when a data gap precedes this bar
+    partial: bool                 # True when not built from a complete tape window (began
+                                  # before recording or the builder's first print)
+    gap_before: bool              # True when a data gap precedes this bar (§3.3)
     synthetic: bool = False       # densify() filler (§3.3) — never persisted
 ```
 
@@ -726,6 +727,8 @@ view-only (never persisted or sent on the wire), and consumers key densified vie
 outside densified views, a bar's persistence and wire identity for every bar kind is `(spec_hash/bar_param, generation, index)` (21 §4.8, 22 `/market/bars`, 23 §8.2; `generation` is ADR-0033's generation/epoch, an opaque u64: a cold start begins a new one (the cold-start time in ms, above any epoch this process or the discarded blob recorded), and `index` restarts at 0 only inside a fresh generation, so no two bars of a series share the identity, barring the clock-regression residual and a restore whose tape lost trades after the watermark (24 §3.5)) because `open_time` is not unique for tick/volume/range/renko/delta bars (#2014, #2662);
 golden vectors in `packages/fixtures/golden/bars/`; TS mirror generated into
 `packages/protocol/src/generated/bars/`.
+
+**Stored and served flags (#5396).** `partial` and `gap_before` are part of a bar's stored row and of both wires, not only of the in-memory `Bar`: the `bars_*` columns `partial` and `gap_before` (21 §4.8, QuestDB 0008), 22 `Bar.partial` / `Bar.gap_before` on `/market/bars` and `/market/klines`, and the 23 §14.3 item's `partial` / `gap_before` (CVWB kind 4 flags bit2 / bit1, 23 §3.4). Each surface carries the value the builder set, and a bar read back from the store, a series' tail included, carries the stored value. An absent or pre-0008 value reads `false`, and a bar not built from the tape (`kline` source) is `false` in both. REST `meta` carries the series' `spec_hash` and the lowest `build_version` among the bars served, with `stale` true when that is below the running version (22 `BarsMeta`; the WS snapshot rule, 23 §6.1).
 
 `min_delta`/`max_delta` require tracking the running intrabar delta path, not just the endpoint (research 08 §2) — they are the input to exhaustion and absorption reads.
 
@@ -4105,14 +4108,14 @@ class RecordingState(BaseModel):
 
 **Recorder status closed sets** (E16-D02, #323). The server decides `refusal` and the storage `write_gate_reason` that the recorder status contract carries (`23-ws-protocol.md` §15.8); clients never derive them, and readers tolerate a value they do not know (C-6.3). `refusal` holds one value: with both stop refusals it is `position_open`. The two start refusals are `RecorderCapRefused.cause`; E16-T08 serves the stop refusals from the policy's trigger refs.
 
-| Value            | Field               | Raised by                   | Meaning                                                                           |
-| ---------------- | ------------------- | --------------------------- | --------------------------------------------------------------------------------- |
+| Value            | Field               | Raised by                   | Meaning                                                                                                                                            |
+| ---------------- | ------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `symbol_cap`     | `refusal`           | `RecordingPolicy` (E16-T02) | an auto-start is refused at `CV_RECORDER_MAX_SYMBOLS`, or a chart-open start at `CV_RECORDER_MAX_AUTO_SYMBOLS` (E16-FR-01), and retried every tick |
-| `disk_pressure`  | `refusal`           | `RecordingPolicy` (E16-T07) | a chart-open start is refused from disk level 2, or on a refused volume           |
-| `chart_open`     | `refusal`           | `RecordingPolicy` (E16-T08) | a stop is refused while a chart of the symbol is open                             |
-| `position_open`  | `refusal`           | `RecordingPolicy` (E16-T08) | a stop is refused while a position is open (INV-B11-a)                            |
-| `disk_halt`      | `write_gate_reason` | `DiskBudget` (E16-T07)      | the write gate is closed at level 3                                               |
-| `volume_refused` | `write_gate_reason` | `DiskBudget` (E16-T07)      | the write gate is closed because the volume was refused at boot (SR-096, §13.4.1) |
+| `disk_pressure`  | `refusal`           | `RecordingPolicy` (E16-T07) | a chart-open start is refused from disk level 2, or on a refused volume                                                                            |
+| `chart_open`     | `refusal`           | `RecordingPolicy` (E16-T08) | a stop is refused while a chart of the symbol is open                                                                                              |
+| `position_open`  | `refusal`           | `RecordingPolicy` (E16-T08) | a stop is refused while a position is open (INV-B11-a)                                                                                             |
+| `disk_halt`      | `write_gate_reason` | `DiskBudget` (E16-T07)      | the write gate is closed at level 3                                                                                                                |
+| `volume_refused` | `write_gate_reason` | `DiskBudget` (E16-T07)      | the write gate is closed because the volume was refused at boot (SR-096, §13.4.1)                                                                  |
 
 **Auto-record lifecycle.** Opening a chart adds `chart_open` to `reasons` and starts recording within 2 s. Closing the last chart for that symbol removes the reason; if `reasons` becomes empty, recording continues for a `linger_minutes` grace period (default 15) before stopping, so a quick chart close/reopen does not punch a hole in the data. A symbol with an open position **cannot** stop recording while the position is open, regardless of chart state.
 
@@ -6678,3 +6681,11 @@ The orchestrator assigned this number on 2026-10-31 (23:40Z, with #5267's unique
 - §6.3 gains "Read-time bucketing": how `GET /market/heatmap` builds a bucket from the stored native columns (grouped prices, summed sizes over the bucket's native count, `samples` summed, a NULL `samples` counting 1, `estimated` if any), how a window with no stored cell is rebuilt from the recorded book, and the snapshot `checksum` (CRC32 of the stored `bids` text then `asks` text), skipped on a mismatch and `estimated` when NULL. No writer computes the checksum yet (E16).
 - 22 `getHeatmap` documents the recorded read, the clamp (2 000 columns, 512 rows, the bucket coarsened along its enum), newest-first paging with a bound `cursor`, the 2-per-user backfill limit (`429 rate_limited`) and abort handling, and gains `401` and `429`. `HeatmapResponse` gains `first_available`, `history`, `samples`, `estimated_columns`, `effective_time_bucket_ms`, `segments` (the new `HeatmapSegment`), `clamped` and `next_cursor`, all additive (C-6.3). `getOrderbookSnapshot` is unchanged.
 - With them: `21-database-schema.md` §7 (the effective resolution past 180 days) and `23-ws-protocol.md` §6.1.1 (the REST fields of scroll-back). No WS frame, table, column, chart or `machine_hash` change, and no migration.
+
+### 19.81 2026-11-01 — §3.1, 21 §4.8, 22 `Bar` / `BarsMeta`, 23 §3.4 / §14.3: bar flags and build provenance end to end, contract first (E12, #5396)
+
+The orchestrator assigned this number on #5396 (2026-11-01, 23:30Z).
+
+- The orchestrator's ruling on #5396, contract first (C-6.1), additive (C-6.3): a bar's `gap_before` and `partial` (§3.1) reach the store and both wires. 22 `Bar` gains both, optional with default `false`; 23 §14.3's bar item gains both, optional with default `false`, and CVWB kind 4 carries them as `flags` bit1 (`gap_before`) and bit2 (`partial`), bits 3–7 reserved, with no `format_version` change: the record stride is unchanged and a decoder that reads bit0 alone stays correct.
+- 22 `KlineResponse.meta` becomes `BarsMeta`, `DataMeta` plus `spec_hash`, `build_version` (the lowest among the bars served, the WS snapshot rule of 23 §6.1) and `stale` (true when a bar served was built below the running version), all optional, so `/market/bars` and `/market/klines` state build provenance as the WS `bars` snapshot does. `DataMeta.coverage_holes` notes that a range the server cannot serve from its store is listed there.
+- 21 §4.8: the six `bars_*` tables gain `gap_before BOOLEAN` and `partial BOOLEAN` (QuestDB `backend/db/questdb/0008_bars_gap_partial_columns.sql`, C-5.8); a row stored before them reads `false`. No Postgres table, so no Alembic revision. No DEDUP key, chart or `machine_hash` change. The server persists and serves the flags in the follow-up of #5396.

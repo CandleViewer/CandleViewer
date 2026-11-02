@@ -4539,6 +4539,8 @@ CREATE TABLE bars_time (
   imbalance_count INT,            -- stacked diagonal imbalances in this bar
   is_closed       BOOLEAN,
   build_version   INT,            -- bumped when the builder algorithm changes → triggers rebuild
+  gap_before      BOOLEAN,        -- a gap precedes the bar (24 §3.3); added by 0008 (#5396)
+  partial         BOOLEAN,        -- not built from a complete tape window (24 §3.1); 0008
   generation      LONG,           -- series generation (= epoch, ADR-0033); a builder cold start's time in ms, opaque, normally rising
   index           LONG            -- Bar.index (24 §3.1): strictly increasing per (symbol, bar_param, generation)
 ) TIMESTAMP(ts) PARTITION BY MONTH WAL
@@ -4563,6 +4565,8 @@ Identical column set (differing only in `bar_param` semantics) for:
 `bars_renko` and `bars_range` additionally carry `open_source_ts` (the timestamp of the trade that opened the brick) because their bars are not time-aligned.
 
 All six tables also carry two integrity columns added by `backend/db/questdb/0003_bars_integrity_columns.sql` (E12-T02, requested by the E12-X01 STRIDE model): `source SYMBOL CAPACITY 8 CACHE` (`tape` | `kline` | `parquet`; a kline row is refused over a tape row for rows written by this process; the stored-row check lands with E12-T05, #1996) and `row_checksum LONG` (63-bit sha256 prefix over the value columns, verified on read). `bar_param` is rendered from the validated spec (`5m`, `tick:500`, …), never from client text.
+
+All six tables also carry the two bar flags added by `backend/db/questdb/0008_bars_gap_partial_columns.sql` (#5396, contract first): `gap_before BOOLEAN` (a gap precedes the bar: the recorded tape had a gap before its first print, or the builder marked a discontinuity before it, 24 §3.3) and `partial BOOLEAN` (the bar is not built from a complete tape window, 24 §3.1). They are the stored twins of 22 `Bar.gap_before` / `Bar.partial` and of the 23 §14.3 bar item's flags, written as the builder set them, and served as stored. QuestDB has no NULL `BOOLEAN`, so a row written before 0008, and a `kline` row, reads `false` in both: the documented default. Additive (C-5.1); no DEDUP key change, no Postgres table and so no Alembic revision. Migration note: the QuestDB runner applies 0008 once, as it does 0003; existing rows need no backfill, and the file's header gives the operator's inverse (QuestDB batches have no down step).
 
 `row_checksum` is an **unkeyed** sha256 prefix: tamper-evidence against naive edits only (an attacker with write access can recompute it); an HMAC is out of scope for E12-T02. A NULL checksum is untrusted on read (integrity event, `reason=missing`) except for pre-0003 legacy rows, which have NULL `source` _and_ NULL `row_checksum`. Source precedence: a `kline` row is refused over a `tape`/`parquet` row written by this process (stored-row check: E12-T05, #1996).
 

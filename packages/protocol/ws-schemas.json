@@ -225,6 +225,11 @@
               "delta": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
               },
+              "gap_before": {
+                "default": false,
+                "description": "Optional. True when a gap precedes this bar: the recorded trade tape had a gap before the bar's first print, or the builder marked a discontinuity before it (24 §3.3), so the bar may be incomplete at its start. Kind 4 carries it as flags bit1 (§3.4). Absent means false (22 `Bar.gap_before`).",
+                "type": "boolean"
+              },
               "generation": {
                 "description": "ADR-0033 series generation (= epoch): an opaque id that a builder cold start or a rebuild replaces, normally with a higher one; index restarts inside it. Compare for equality only: a change in either direction is a new epoch. Never read it as a time. Part of the coalescing key (§8.2).",
                 "minimum": 0,
@@ -249,6 +254,11 @@
               },
               "o": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
+              },
+              "partial": {
+                "default": false,
+                "description": "Optional. True when the bar is not built from a complete tape window (24 §3.1), such as the first bar a builder forms after it starts inside the bar's window. Kind 4 carries it as flags bit2 (§3.4). Absent means false (22 `Bar.partial`).",
+                "type": "boolean"
               },
               "t_ms": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs",

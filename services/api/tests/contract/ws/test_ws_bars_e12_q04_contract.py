@@ -60,6 +60,13 @@ _DEAD_ALLOWED: Final = {
         "never sent per bar: the client sums `delta` (23 §6.1 include_delta); dropping it from "
         "the schema would break cv.v1 (C-6.3)"
     ),
+    **{
+        member: (
+            "#5396 contract first (C-6.1): declared before the server sends it; #5396's "
+            "follow-up serves it and removes this row"
+        )
+        for member in ("BarsBatch.bars[].gap_before", "BarsBatch.bars[].partial")
+    },
 }
 
 
