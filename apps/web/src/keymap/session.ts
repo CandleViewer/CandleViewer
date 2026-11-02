@@ -11,6 +11,7 @@
  * `startViewAs` never views as an Owner. Any other user is the keymap's once `22` `getViewAs` answers `204` for them,
  * and not before: while a context, live or held, is found, and while the read is unanswered or failed, `keymapUser()`
  * is null, so the profile is the defaults, a remap holds for the page only, and nothing is stored, queued or marked.
+ * Until the read answers, character keys are inert too, so one the user turned off never fires (WCAG 2.1.4).
  * The shell's one view-as source (`lib/auth/viewAsContext`, read with `/me` at boot; E42-S03) is asked first: a context
  * it holds, live or ended, makes `keymapUser()` null as well.
  */
@@ -96,6 +97,16 @@ export async function readViewAs(): Promise<void> {
   if (viewAs !== asked) return; // `/me` named another user, or the session ended, meanwhile
   asked.state = state;
   viewAsListeners.forEach((l) => l());
+}
+
+/**
+ * `/me` names a user other than an Owner whose view-as read has not answered for this sign-in: their profile is not
+ * known yet, so the dispatcher keeps character keys inert (WCAG 2.1.4) while every other key keeps its default.
+ */
+export function viewAsPending(): boolean {
+  const user = meUser();
+  if (user === null || isOwner()) return false;
+  return !(viewAs?.user === user && (viewAs.state === "none" || viewAs.state === "found"));
 }
 
 /** The keymap's read answered `204` for `user`'s sign-in: their session holds no view-as context. */

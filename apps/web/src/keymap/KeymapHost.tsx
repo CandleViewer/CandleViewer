@@ -14,6 +14,7 @@ import { Cheatsheet } from "./Cheatsheet";
 import { reportHotkey } from "./analytics";
 import { flushAuditOutbox, recordAudit } from "./audit";
 import { appArm, isCommandValid, registerCommand, runCommand, setArmPort } from "./registry";
+import { viewAsPending } from "./session";
 import { cycleRegion, toggleReducedMotionAnnounced } from "./shellCommands";
 import { startProfileSync } from "./sync";
 
@@ -119,6 +120,7 @@ export function KeymapHost(): JSX.Element {
   useEffect(() => {
     const dispatch = createDispatcher({
       bindings,
+      characterKeysInert: viewAsPending, // until the view-as read answers, read at each press
       now: () => Date.now(),
       arm: appArm, // BQ-5: whatever E30 injected, read at each press
       isValid: (c: KeymapCommand) => isCommandValid(c.id),

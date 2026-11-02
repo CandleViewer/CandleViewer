@@ -92,6 +92,11 @@ export function isSingleLetter(binding: string): boolean {
   return /^(?:Shift\+)?\p{L}$/u.test(binding);
 }
 
+/** A key that types a character, Shift aside (WCAG 2.1.4): a letter, digit, punctuation or symbol; the arrows are not. */
+export function isCharacterKey(binding: string): boolean {
+  return /^(?:Shift\+)?[^←→↑↓]$/u.test(binding);
+}
+
 /** Default binding for a command id; throws on unknown ids so typos fail loudly. */
 export function bindingFor(id: string): string {
   const c = BY_ID.get(id);

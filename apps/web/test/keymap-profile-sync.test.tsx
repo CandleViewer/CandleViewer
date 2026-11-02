@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { generated } from "@candleviewer/protocol";
 import type { Keymap } from "../src/shell/bootstrap/store";
@@ -1006,6 +1006,71 @@ describe("BQ-14: nothing is sent while a view is live", () => {
     await vi.advanceTimersByTimeAsync(0);
     rebind("chart.footprint_toggle", "Alt+Q");
     expect([lines(server.calls), keymapKeys()]).toEqual([[`GET ${VIEW_AS}`, `GET ${VIEW_AS}`], []]);
+  });
+});
+
+describe("until the view-as read answers, character keys are inert and every other key keeps its default", () => {
+  /**
+   * A Manager whose stored profile moves the footprint toggle to `Alt+Q` and the table toggle to `G`, the host mounted
+   * over a focused Chart view, and the view-as read on the wire until `answer` answers it `204`.
+   */
+  async function unanswered() {
+    window.localStorage.setItem(
+      `${DEVICE}:u-2`,
+      JSON.stringify({ "chart.footprint_toggle": "Alt+Q", "chart.table_toggle": "G" }),
+    );
+    const server = stubServer();
+    let reply = (): void => undefined;
+    server.view = () =>
+      new Promise<Response>((resolve) => {
+        reply = () => resolve(new Response(null, { status: 204 }));
+      });
+    signIn("u-2", "manager");
+    const ran: string[] = [];
+    stops.push(
+      m.registerCommand("chart.footprint_toggle", () => void ran.push("footprint")),
+      m.registerCommand("chart.table_toggle", () => void ran.push("table")),
+    );
+    render(
+      <>
+        <m.KeymapHost />
+        <div data-keymap-context="Chart">
+          <button type="button">Chart</button>
+        </div>
+      </>,
+    );
+    screen.getByRole("button", { name: "Chart" }).focus();
+    await vi.advanceTimersByTimeAsync(0);
+    const press = (key: string, altKey = false): void =>
+      act(() => void fireEvent.keyDown(document.activeElement ?? window, { key, altKey }));
+    const answer = async (): Promise<void> => {
+      reply();
+      await act(() => vi.advanceTimersByTimeAsync(0));
+    };
+    return { ran, press, answer };
+  }
+
+  it("a character key runs nothing", async () => {
+    const { ran, press } = await unanswered();
+    press("f");
+    expect(ran).toEqual([]);
+  });
+
+  it("a modifier chord runs its default", async () => {
+    const { ran, press } = await unanswered();
+    press("t", true);
+    expect(ran).toEqual(["table"]);
+  });
+
+  it("the stored profile applies once the read answers 204, and not before", async () => {
+    const { ran, press, answer } = await unanswered();
+    press("q", true);
+    press("g");
+    expect(ran).toEqual([]);
+    await answer();
+    press("q", true);
+    press("g");
+    expect(ran).toEqual(["footprint", "table"]);
   });
 });
 
