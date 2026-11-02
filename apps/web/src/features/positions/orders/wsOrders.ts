@@ -22,6 +22,9 @@
  *   the positions feed: an account that leaves the subscription but stays listed
  *   (`account_disabled`, `key_revoked`) is not named, because the directory still lists it; its
  *   rows leave with the narrowing and no "No longer shown" line follows (fail-safe: none stays).
+ * - **The amends** (PR3a): each frame's items reach the amend store through the orders store's
+ *   observer; the drain runs the amend's stale bound beside the linger, and a commit of a live view
+ *   prunes the amends of orders it no longer shows.
  */
 import { useEffect } from "react";
 import type { ConsumerSpec, TopicHandle, WsClient } from "../../../lib/ws/api";
@@ -39,7 +42,9 @@ import {
   type FeedTimers,
   type PerformanceLike,
 } from "../wsPositions";
-import { ordersApi, type OrdersApi, type OrdersWrites } from "./api";
+import { ordersApi, type AmendWrites, type OrdersApi, type OrdersWrites } from "./api";
+import type { AmendStore, AmendStoreOptions } from "./amendStore";
+import type { ArmTokenSource } from "./model/amend";
 import type { OrdersStore } from "./ordersStore";
 
 /** S-02's budget, the Positions tab's (#911 BQ-18): no first `snap` in it is "Could not load". */
@@ -54,6 +59,8 @@ export const MAX_MEASURES = 1_000;
 export interface OrdersFeedOptions {
   readonly client: Pick<WsClient, "consume" | "getState" | "subscribe">;
   readonly store: OrdersStore;
+  /** The session's amends: their stale bound runs each frame, their prune after each commit. */
+  readonly amends?: AmendStore | undefined;
   readonly api?: OrdersApi | undefined;
   readonly timers?: Pick<FeedTimers, "setTimeout" | "clearTimeout"> | undefined;
   readonly raf?: ((callback: (frameTimeMs: number) => void) => number) | undefined;
@@ -71,8 +78,14 @@ export interface OrdersFeedOptions {
 
 /** What a test injects into the Working-orders tab; the route passes none (the app's API and clocks). */
 export interface OrdersDeps {
-  readonly feed?: Omit<OrdersFeedOptions, "client" | "store"> | undefined;
+  readonly feed?: Omit<OrdersFeedOptions, "client" | "store" | "amends"> | undefined;
   readonly writes?: OrdersWrites | undefined;
+  /** The amend's write (`amendOrder`); defaults to the app's. */
+  readonly amendWrites?: AmendWrites | undefined;
+  /** The session's arm token (E30-S04 injects one); none by default, so it fails closed (P3-BQ-5). */
+  readonly arm?: ArmTokenSource | undefined;
+  /** Makes the session's amend store (`createAmendStore` by default): a test keeps a handle on it. */
+  readonly createAmends?: ((options: AmendStoreOptions) => AmendStore) | undefined;
   /** Epoch ms for the Age column; defaults to `Date.now`. */
   readonly wall?: (() => number) | undefined;
 }
@@ -93,7 +106,7 @@ const isDown = (state: Pick<WsState, "link" | "outage">): boolean =>
   state.outage !== null || state.link.kind === "offline";
 
 export function startOrdersFeed(options: OrdersFeedOptions): OrdersFeed {
-  const { client, store } = options;
+  const { client, store, amends } = options;
   const api = options.api ?? ordersApi;
   const timers = options.timers ?? platformTimers;
   const now = options.now ?? ((): number => performance.now());
@@ -173,6 +186,13 @@ export function startOrdersFeed(options: OrdersFeedOptions): OrdersFeed {
     });
   }
 
+  /** A live view settles which orders are shown: an amend whose order is not among them leaves. */
+  function pruneAmends(target: AmendStore): void {
+    const view = store.getSnapshot();
+    if (view.source !== "ws" || target.getSnapshot().mutations.size === 0) return;
+    target.prune(new Set(view.rows.map((row) => row.id)));
+  }
+
   /**
    * One animation frame's work. The next frame is asked for in `finally`: a throw here (a store
    * listener's, say) is reported by the frame that raised it, and the feed keeps draining.
@@ -191,9 +211,10 @@ export function startOrdersFeed(options: OrdersFeedOptions): OrdersFeed {
         store.setEffective(orders.effective);
       }
       store.expire(now());
+      amends?.expire(now());
       if (store.takeNarrowed()) loadAccounts(true); // 23 §9.5: the directory says who left
       store.setLink(!isDown(client.getState()));
-      store.commit();
+      if (store.commit() && amends !== undefined) pruneAmends(amends);
     } finally {
       if (!stopped) scheduler?.post("frame", true); // the next animation frame drains again
     }

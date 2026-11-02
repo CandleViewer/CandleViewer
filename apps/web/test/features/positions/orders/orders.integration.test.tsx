@@ -1628,15 +1628,24 @@ describe("axe and teardown", () => {
   );
 
   it(
-    "leaving the tab releases the orders subscription; the positions feed runs on",
+    "leaving the tab keeps the session's orders subscription (P3-BQ-8); the panel's unmount releases it",
     SCREEN,
     async () => {
-      await openOrders();
+      const { unmount } = await openOrders();
+      const handle = ws.live("orders")[0];
+      const subs = ws.subs.length;
       expect(ws.live("orders")).toHaveLength(1);
       fireEvent.click(screen.getByRole("tab", { name: "Positions" }));
       await settle(TICK);
-      expect(ws.live("orders")).toEqual([]);
+      expect(ws.live("orders")).toEqual([handle]);
       expect(ws.live("positions")).toHaveLength(1);
+      fireEvent.click(screen.getByRole("tab", { name: "Working orders" }));
+      await settle(TICK);
+      expect(ws.live("orders")).toEqual([handle]); // the return re-subscribes nothing
+      expect(ws.subs.length).toBe(subs);
+      unmount();
+      expect(ws.live("orders")).toEqual([]);
+      expect(ws.live("positions")).toEqual([]);
     },
   );
 

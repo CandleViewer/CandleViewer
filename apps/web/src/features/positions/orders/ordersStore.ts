@@ -27,6 +27,8 @@
  * - **Commits.** Inputs only mark the store dirty; `commit()`, which the feed calls once per
  *   animation frame, publishes one snapshot. The default order is kept between commits and sorted
  *   again only when the set of rows or a sort key changes, so a frame of updates is O(rows).
+ * - **The amend observer** (PR3a): each item the store accepts goes to `onItem` in arrival order,
+ *   never one it dropped, so the amend engine judges the frames themselves, not a commit's sum.
  */
 import { useSyncExternalStore } from "react";
 import type { TopicFrame } from "../../../lib/ws/api";
@@ -162,7 +164,16 @@ export interface OrdersStore {
   commit(): boolean;
 }
 
-export function createOrdersStore(): OrdersStore {
+export interface OrdersStoreOptions {
+  /**
+   * Each item the store accepts, in arrival order, once its drops are behind it (a malformed, an
+   * older, a late or an unscoped item never reaches it): the amend engine's observer (PR3a,
+   * P3-BQ-7). `via` says whether a snapshot (a read) or a delta (one step) carried it.
+   */
+  readonly onItem?: ((item: WsOrder, via: "snap" | "delta") => void) | undefined;
+}
+
+export function createOrdersStore(options: OrdersStoreOptions = {}): OrdersStore {
   let snapshot = EMPTY;
   const listeners = new Set<() => void>();
   let dirty = false;
@@ -273,7 +284,7 @@ export function createOrdersStore(): OrdersStore {
     touch(true);
   }
 
-  function upsert(item: unknown, nowMs: number): void {
+  function upsert(item: unknown, nowMs: number, via: "snap" | "delta"): void {
     const id = orderIdOf(item);
     const stamp = stampOf(item);
     if (id === null || stamp === null) return; // `23` §15.1 requires both: a malformed item goes
@@ -293,6 +304,11 @@ export function createOrdersStore(): OrdersStore {
     }
     if (stateOfItem(item).terminal) startLinger(id, nowMs);
     else if (lingers.delete(id)) touch(true);
+    try {
+      options.onItem?.(item as WsOrder, via);
+    } catch {
+      // the amend overlay never costs the mirror a frame (`23` §6.2: `orders` drops none)
+    }
   }
 
   /**
@@ -371,7 +387,7 @@ export function createOrdersStore(): OrdersStore {
     for (const body of bodies) {
       const payload = payloadOf(body);
       if (payload === null) continue;
-      for (const item of payload.orders) upsert(item, nowMs);
+      for (const item of payload.orders) upsert(item, nowMs, "snap");
     }
     // The snapshot holds open orders only: a held or untracked row, a lingering one and the
     // focused one stay; any other order it does not list is gone (`23` §6.2.3).
@@ -407,7 +423,7 @@ export function createOrdersStore(): OrdersStore {
     if (!wsBaseline) return; // the client never extends a void baseline (23 §7.1)
     const payload = payloadOf(body);
     if (payload === null) return;
-    for (const item of payload.orders) upsert(item, nowMs);
+    for (const item of payload.orders) upsert(item, nowMs, "delta");
     for (const id of payload.removed) {
       if (typeof id === "string") removeId(id.toLowerCase(), nowMs, ts); // after the upserts
     }

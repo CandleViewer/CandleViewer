@@ -4,8 +4,9 @@
  * "Cancel all in view…" with the bulk dialog. The amend flow, the protective display and the arm
  * are PR3's; no CMP-011 toggle (BQ-12) and no chord (BQ-15).
  *
- * - **The feed** (`wsOrders.ts`) runs while the tab is mounted (CMP-042 mounts the selected tab
- *   only): its store, its `orders` subscription and its REST reads are released on unmount.
+ * - **The feed** (`wsOrders.ts`), its store and the amends are the positions session's (P3-BQ-8):
+ *   started on the tab's first mount, they run for the session (CMP-042 mounts the selected tab
+ *   only), so a tab switch re-subscribes nothing and an answer that lands meanwhile is kept.
  * - **The treegrid** (D-1): the sections at level 1 ("Working · 3", "Conditional — not triggered ·
  *   2"), each account's group at level 2 ("Main · LIVE · 3 orders"), the orders at level 3, with
  *   `aria-posinset` and `aria-setsize` from the model (F-03); the select column (CMP-005, D-3), D02
@@ -107,8 +108,8 @@ import {
   type OrderRowModel,
 } from "./model/orderRow";
 import { groupLabel, sectionsOf, type AccountGroup, type OrdersSection } from "./model/sections";
-import { createOrdersStore, useOrders } from "./ordersStore";
-import { startOrdersFeed, type OrdersDeps, type OrdersFeed } from "./wsOrders";
+import { useOrders } from "./ordersStore";
+import type { OrdersDeps } from "./wsOrders";
 import {
   accountOf,
   chipsInOrderWords,
@@ -600,25 +601,6 @@ function OrderRow({
   );
 }
 
-/** The orders feed for as long as the tab is mounted (its store, subscription and reads). */
-function useOrdersFeedSession(
-  client: FeedClient | null,
-  feed: OrdersDeps["feed"],
-): { readonly store: ReturnType<typeof createOrdersStore>; readonly retry: () => void } {
-  const [store] = useState(createOrdersStore);
-  const running = useRef<OrdersFeed | null>(null);
-  useEffect(() => {
-    if (client === null) return undefined;
-    const started = startOrdersFeed({ ...feed, client, store });
-    running.current = started;
-    return () => {
-      started.stop();
-      if (running.current === started) running.current = null;
-    };
-  }, [client, store, feed]);
-  return { store, retry: () => running.current?.retry() };
-}
-
 export function WorkingOrdersTab({
   client,
   positions,
@@ -635,7 +617,11 @@ export function WorkingOrdersTab({
   const bulkReasonId = `${ids}-bulk-reason`;
   const writes = deps?.writes ?? ordersWrites;
   const wall = deps?.wall ?? Date.now;
-  const { store, retry } = useOrdersFeedSession(client, deps?.feed);
+  const { store, retry, start } = positions.orders;
+  // the session's feed (P3-BQ-8): started once, and never stopped by the tab's unmount
+  useEffect(() => {
+    start();
+  }, [start]);
   const snap = useOrders(store, (s) => s);
   // the open positions alone (code m5): a mark tick leaves the string equal, so nothing re-renders
   const openKeys = usePositions(positions.store, openPositionKeys);

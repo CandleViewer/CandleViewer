@@ -342,6 +342,56 @@ describe("BQ-1: every amend step says amend; the state and the terms tell them a
   });
 });
 
+describe("the amend observer (PR3a, P3-BQ-7): every accepted item, in arrival order", () => {
+  it("sees a snapshot's items as reads and a delta's as steps, in order", () => {
+    const seen: [string, string, "snap" | "delta"][] = [];
+    const store = live(
+      createOrdersStore({
+        onItem: (item, via) => seen.push([item.id, String(item.lifecycle_state), via]),
+      }),
+    );
+    expect(seen.filter(([, , via]) => via === "snap").map(([id]) => id)).toEqual(
+      snapshotBody().orders.map((o) => o.id),
+    );
+    seen.length = 0;
+    apply(store, [d("amend_request", TS + 1_000), d("amend_accepted", TS + 2_000)]);
+    expect(seen).toEqual([
+      [ETH, "amend_pending", "delta"],
+      [ETH, "submitted", "delta"],
+    ]);
+  });
+
+  it("never sees an item the store dropped: older, late, malformed or unscoped", () => {
+    const seen: string[] = [];
+    const store = live(createOrdersStore({ onItem: (item) => seen.push(item.id) }));
+    seen.length = 0;
+    apply(store, [d("cancel_lost_race", TS + 4_000)]);
+    store.expire(NOW + LINGER_MS);
+    store.commit();
+    const held = wsItem(snapshotBody(), ETH).updated_at_ms;
+    const older = { ...wsItem(deltaBody("amend_request"), ETH), updated_at_ms: held - 1 };
+    const unscoped = { ...wsItem(deltaBody("amend_request"), ETH), exchange_account_id: "x" };
+    apply(store, [
+      delta({ orders: [older, unscoped, { id: ETH }] }),
+      d("cancel_lost_race", TS + 3_000),
+    ]);
+    expect(seen).toEqual([TP]);
+  });
+
+  it("an observer that throws never costs the mirror a frame (23 §6.2)", () => {
+    const store = live(
+      createOrdersStore({
+        onItem: () => {
+          throw new Error("overlay");
+        },
+      }),
+    );
+    apply(store, [d("amend_request", TS + 1_000), d("cancel_lost_race", TS + 2_000)]);
+    expect(rowOf(store, ETH)?.state.word).toBe("Amending");
+    expect(rowOf(store, TP)?.state.word).toBe("Filled");
+  });
+});
+
 describe("held and untracked (BQ-6, S9): shown, never managed, and kept when removed", () => {
   it("an adopted untracked order arrives with `removed` and stays, never lingering", () => {
     const store = live();

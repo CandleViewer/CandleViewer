@@ -9,6 +9,8 @@ import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AccountsOutcome, ExchangeAccount } from "../../../../src/features/positions/api";
 import type { OrdersApi, OrdersOutcome } from "../../../../src/features/positions/orders/api";
+import { createAmendStore } from "../../../../src/features/positions/orders/amendStore";
+import { AMEND_STALE_MS } from "../../../../src/features/positions/orders/model/amend";
 import {
   priceLabel,
   stateLabel,
@@ -528,5 +530,34 @@ describe("no exchange text reaches the DOM (BQ-2, BQ-3; SR-E29-06)", () => {
     const list = screen.getByRole("list", { name: "working orders" });
     expect(list.textContent).toContain("Unknown — checking");
     expect(list.textContent).not.toMatch(/ret_?msg|ret_?code|detail|already filled|110001/i);
+  });
+});
+
+describe("the amends (PR3a): the stale bound each frame, a live view's prune", () => {
+  it("runs the amend's stale bound in the drain, and prunes only on a live view's commit", async () => {
+    const amends = createAmendStore({
+      writes: { amendOrder: () => new Promise(() => undefined) },
+      arm: { token: () => "arm-token-1" },
+      now: () => Date.now(),
+      performance: null,
+    });
+    store = createOrdersStore({ onItem: (item, via) => amends.observe(item, via) });
+    start(fakeApi(), { amends });
+    await settle();
+    ordersHandle()?.push(snap(snapshotBody()));
+    await settle(FRAME);
+    const eth = store.getSnapshot().rows.find((r) => r.id === ETH);
+    expect(eth === undefined ? null : amends.press(eth, "price", "2495.00").kind).toBe("sent");
+    await settle(AMEND_STALE_MS - FRAME);
+    expect(amends.getSnapshot().mutations.get(ETH)?.phase).toBe("pending");
+    await settle(2 * FRAME); // the first frame past the bound
+    expect(amends.getSnapshot().mutations.get(ETH)?.phase).toBe("unconfirmed");
+    ordersHandle()?.push(reset("resnapshot"));
+    await settle(FRAME);
+    expect(store.getSnapshot().source).toBe("last_good");
+    expect(amends.getSnapshot().mutations.has(ETH)).toBe(true);
+    ordersHandle()?.push(snap({ orders: snapshotBody().orders.filter((o) => o.id !== ETH) }));
+    await settle(FRAME);
+    expect(amends.getSnapshot().mutations.has(ETH)).toBe(false);
   });
 });

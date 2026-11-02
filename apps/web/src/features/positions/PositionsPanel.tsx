@@ -8,7 +8,8 @@
  * - **The session** (`positionsSession.ts`): the feed, the positions store and the account signals,
  *   with the feed's announcements and the sort, live as long as the panel. CMP-042 mounts only the
  *   selected tab, so a tab switch keeps the book, every account's state and its "since", and says
- *   nothing again; the feed runs, and speaks, while another tab shows.
+ *   nothing again; the feed runs, and speaks, while another tab shows. The Working-orders tab's
+ *   feed, store and amends are the session's too (P3-BQ-8), from that tab's first visit.
  * - **View state** (BQ-16): per user on this device under `panelState.ts`'s versioned key, in the
  *   `layoutStore` shape; R-130's `?groupBy=` and `?account=` deep links (`12` §7) set the view
  *   over it without being stored, and the server re-validates an account's scope whatever a link says.
@@ -164,7 +165,7 @@ export function PositionsPanel({ deps }: PositionsPanelProps = {}): JSX.Element 
   const active = useSyncExternalStore(subscribeActiveClient, getActiveClient, getActiveClient);
   const client: FeedClient | null = deps?.client ?? active;
   const announcer = usePanelAnnouncer();
-  const session = usePositionsSession(client, deps?.feed);
+  const session = usePositionsSession(client, deps?.feed, deps?.orders, announcer);
   const [sort, setSort] = useState<SortState | null>(null);
   const [ready, setReady] = useState(false);
 
