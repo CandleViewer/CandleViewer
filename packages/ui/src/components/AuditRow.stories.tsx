@@ -1,7 +1,18 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import type { JSX } from "react";
-import { expect, userEvent, within } from "storybook/test";
-import { AuditRow, AuditRowList, type AuditRowProps } from "./AuditRow.js";
+import { useState, type JSX } from "react";
+import { expect, userEvent, waitFor, within } from "storybook/test";
+import {
+  AuditRow,
+  AuditRowDiff,
+  AuditRowList,
+  auditColumns,
+  auditGridRowKey,
+  auditGridRows,
+  type AuditGridRow,
+  type AuditRowProps,
+} from "./AuditRow.js";
+import { AUDIT_MARKERS } from "./auditDiffModel.js";
+import { Table } from "./Table.js";
 
 type Entry = AuditRowProps["entry"];
 
@@ -238,5 +249,478 @@ export const LongText: Story = {
   play: async ({ canvasElement }) => {
     const link = links(canvasElement)[0] as HTMLElement;
     await expect(link.scrollWidth).toBeLessThanOrEqual(link.clientWidth);
+  },
+};
+
+/*
+ * The grid row (E42-D04 §4 Columns, AL-2, AL-3; §6's diff): SCR-135's CMP-049 grid at 1280, as the page draws it, with
+ * the rows the stories name expanded. The worked example's later rows (§1): alex's order on LIVE, the flag write and
+ * its intent, the failed tamper check's records, a refused flag write, a withheld state and the break at 1,204,118.
+ */
+const ORDER_LIVE = entry(1204118, "2026-10-22T14:01:50.212409+00:00", "orders.submit", {
+  actor_user_id: ALEX,
+  actor_username: "alex",
+  subject_type: "order",
+  subject_id: "0c000000-0000-4000-8000-000000000001",
+  subject_label: "BTCUSDT",
+  environment: "live",
+  ip: "100.84.12.9",
+  reason: "validated",
+  detail: {
+    before: null,
+    after: { symbol: "BTCUSDT", side: "buy", qty: "0.250", price: "64010.0" },
+  },
+  entry_hash: "3c9a5e2f1b",
+  prev_hash: "7d1e0b44aa",
+});
+/** Its own id: the compact rows' denial (`DENIED`, 1,204,117) shares the grid stories (A-5520-05). */
+const FLAG_WRITE = entry(1204113, "2026-10-22T14:01:40.551203+00:00", "flags.change", {
+  subject_type: "feature_flag",
+  subject_id: "trading.one_click",
+  severity: "warning",
+  environment: "live",
+  ip: "100.84.12.9",
+  detail: {
+    before: {
+      value: false,
+      overrides: {},
+      description: "One-click trading; requires an explicit arm.",
+    },
+    after: {
+      value: true,
+      overrides: { [ALEX]: true },
+      description: "One-click trading; requires an explicit arm.",
+      phase: "outcome",
+    },
+  },
+  entry_hash: "4b1d9a0c2e",
+  prev_hash: "3c9a5e2f1b",
+});
+const FLAG_REFUSED = entry(1204116, "2026-10-22T14:00:02.118034+00:00", "flags.change", {
+  subject_type: "feature_flag",
+  subject_id: "trading.one_click",
+  outcome: "failure",
+  severity: "warning",
+  reason: "credential_in_reason",
+  environment: "live",
+  detail: {
+    before: { value: false },
+    after: {
+      value: true,
+      overrides: null,
+      reason: AUDIT_MARKERS.credential,
+      evidence_url: null,
+      result: "credential_in_reason",
+    },
+  },
+  entry_hash: "5e2a0b1c3d",
+  prev_hash: "4b1d9a0c2e",
+});
+const FLAG_INTENT = {
+  ...INTENT,
+  environment: "live" as const,
+  entry_hash: "6f3b1c2d4e",
+  prev_hash: "5e2a0b1c3d",
+};
+const VERIFY_FAILED = entry(1204121, "2026-10-22T14:05:07.004211+00:00", "admin.audit_verify", {
+  outcome: "failure",
+  severity: "critical",
+  detail: {
+    before: null,
+    after: {
+      from_id: 204119,
+      to_id: 1204118,
+      verified: false,
+      first_bad_id: 1204118,
+      kind: "prev_hash_mismatch",
+    },
+  },
+  entry_hash: "8a1c2b3d4e",
+  prev_hash: "7f0b1c2d3e",
+});
+const VERIFY_STARTED = { ...STARTED, entry_hash: "7f0b1c2d3e", prev_hash: "6f3b1c2d4e" };
+const KEY_IMPORT = entry(1204105, "2026-10-22T11:12:40.330117+00:00", "api_key.import", {
+  actor_user_id: null,
+  actor_username: "system:key-selfcheck",
+  subject_type: "exchange_account",
+  subject_label: "sub_002",
+  outcome: "failure",
+  severity: "critical",
+  environment: "live",
+  detail: {
+    before: null,
+    after: {
+      rules: ["withdrawal_permission"],
+      key_id_masked: "ab12…9f",
+      api_secret: AUDIT_MARKERS.secret,
+      passphrase: "unredacted",
+      reason: AUDIT_MARKERS.credential,
+    },
+  },
+  entry_hash: "9b2c3d4e5f",
+  prev_hash: "8a1c2b3d4e",
+});
+const EXPORT_WITHHELD = {
+  ...ELIDED,
+  environment: "live" as const,
+  entry_hash: "0c1d2e3f4a",
+  prev_hash: "9b2c3d4e5f",
+};
+const PROJECTED: Entry = {
+  ...ORDER_LIVE,
+  id: 1204104,
+  environment: null,
+  ip: null,
+  reason: null,
+  subject_label: null,
+  detail: {},
+  entry_hash: null,
+  prev_hash: null,
+};
+const DELETED = entry(1203990, "2026-10-21T09:40:00.000000+00:00", "orders.submit", {
+  actor_user_id: null,
+  actor_username: "deleted-user-3f9a1c2b7e04",
+  subject_type: "order",
+  subject_label: "ETHUSDT",
+  environment: "demo",
+  entry_hash: "1d2e3f4a5b",
+  prev_hash: "0c1d2e3f4a",
+});
+
+/**
+ * SCR-135's grid, its expanded and selected rows held as the page holds them; stacked, it stays a grid of cards
+ * (AL-28, `reflow="grid"`). `width` is the content column, 59rem (944 px at 1280) unless a story narrows it.
+ */
+function Grid({
+  entries,
+  expanded = [],
+  selectedId,
+  view,
+  afterBreakId,
+  width = "59rem",
+}: {
+  readonly entries: readonly Entry[];
+  readonly expanded?: readonly number[];
+  readonly selectedId?: number;
+  readonly view?: "raw" | "own";
+  readonly afterBreakId?: number;
+  readonly width?: string;
+}): JSX.Element {
+  // Entry ids key the rows and name the diff rows: a story that repeats one draws a broken grid (A-5520-05).
+  const ids = entries.map((one) => one.id);
+  if (new Set(ids).size !== ids.length)
+    throw new Error(`Grid: duplicate entry ids in ${ids.join(", ")}`);
+  const [open, setOpen] = useState<ReadonlySet<number>>(new Set(expanded));
+  const toggle = (id: number, next: boolean): void =>
+    setOpen((now) => {
+      const set = new Set(now);
+      if (next) set.add(id);
+      else set.delete(id);
+      return set;
+    });
+  return (
+    <div style={{ maxWidth: width, color: "var(--color-text-primary)" }}>
+      <Table<AuditGridRow>
+        grid
+        reflow="grid"
+        caption="Audit log, newest first. All times UTC. Role at the time is not recorded yet."
+        columns={auditColumns()}
+        rows={auditGridRows(entries, open)}
+        rowKey={auditGridRowKey}
+        renderRow={(row, grid) =>
+          row.kind === "entry" ? (
+            <AuditRow
+              variant="row"
+              grid={grid}
+              entry={row.entry}
+              diffId={`audit-diff-${row.entry.id}`}
+              expanded={open.has(row.entry.id)}
+              onExpandedChange={(next) => toggle(row.entry.id, next)}
+              onOpen={() => undefined}
+              selected={row.entry.id === selectedId}
+              {...(view === undefined ? {} : { view })}
+            />
+          ) : (
+            <AuditRowDiff
+              grid={grid}
+              entry={row.entry}
+              id={`audit-diff-${row.entry.id}`}
+              onExpandedChange={(next) => toggle(row.entry.id, next)}
+              {...(afterBreakId === undefined ? {} : { afterBreakId })}
+            />
+          )
+        }
+      />
+    </div>
+  );
+}
+
+const gridOf = (canvas: HTMLElement): HTMLElement => within(canvas).getByRole("grid");
+const rowOf = (canvas: HTMLElement, id: number): HTMLElement => {
+  const row = canvas.querySelector<HTMLElement>(`tr[data-entry="${id}"]`);
+  if (row === null) throw new Error(`no row ${id}`);
+  return row;
+};
+const diffOf = (canvas: HTMLElement, id: number): HTMLElement => {
+  const row = canvas.querySelector<HTMLElement>(`#audit-diff-${id}`);
+  if (row === null) throw new Error(`no diff row ${id}`);
+  return row;
+};
+/** Laid out (a browser): jsdom lays nothing out, so the plays' size checks hold only where a box has a width. */
+const laidOut = (el: HTMLElement): boolean => el.getBoundingClientRect().width > 0;
+
+/** No served value under a redacted name, no marker and no full hash ever shows (C-2.7; AL-4, AD-3). */
+const showsNoRedactedValue = async (canvas: HTMLElement): Promise<void> => {
+  await expect(canvas).not.toHaveTextContent("unredacted");
+  await expect(canvas.textContent ?? "").not.toMatch(/<redacted:|<hashed:pii>/);
+};
+
+/** AL-2's grid: one row per entry under the nine headers; Time states newest first; no row is expanded. */
+export const Default: Story = {
+  render: () => <Grid entries={[ORDER_LIVE, FLAG_WRITE, FLAG_REFUSED, DENIED]} />,
+  play: async ({ canvasElement }) => {
+    const grid = gridOf(canvasElement);
+    const time = within(grid).getByRole("columnheader", { name: /^Time/ });
+    await expect(time).toHaveAttribute("aria-sort", "descending");
+    await expect(within(grid).getAllByRole("button", { name: /^Record / })).toHaveLength(4);
+    await expect(rowOf(canvasElement, ORDER_LIVE.id)).toHaveTextContent("Order submitted");
+    await showsNoRedactedValue(canvasElement);
+  },
+};
+
+/** AL-3: Space expands the row; its diff row follows, a dl per field with Before and After, unchanged fields folded. */
+export const ExpandedDiff: Story = {
+  render: () => <Grid entries={[ORDER_LIVE, FLAG_WRITE, DENIED]} expanded={[FLAG_WRITE.id]} />,
+  play: async ({ canvasElement }) => {
+    const toggle = within(rowOf(canvasElement, FLAG_WRITE.id)).getByRole("button");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(toggle).toHaveAttribute("aria-controls", `audit-diff-${FLAG_WRITE.id}`);
+    const diff = diffOf(canvasElement, FLAG_WRITE.id);
+    await expect(diff).toHaveTextContent("Changed value");
+    await expect(diff).toHaveTextContent("BeforeOFFAfterON");
+    await expect(within(diff).getByRole("button", { name: "1 unchanged field" })).toBeVisible();
+  },
+};
+
+/** A system actor's row reads as its writer recorded it; a code with no label reads as itself. */
+export const SystemActor: Story = {
+  render: () => <Grid entries={[MAINTENANCE, LANE]} />,
+  play: async ({ canvasElement }) => {
+    await expect(rowOf(canvasElement, MAINTENANCE.id)).toHaveTextContent("system:maintenance");
+    await expect(rowOf(canvasElement, LANE.id)).toHaveTextContent("audit.lane_started");
+  },
+};
+
+/**
+ * D2: critical and error are high (the octagon, semibold, the danger rule); warning takes the triangle. Every
+ * expander is a 24 x 24 target, the high rule drawn over its column, not taken from it (WCAG 2.5.8).
+ */
+export const HighSeverity: Story = {
+  render: () => <Grid entries={[VERIFY_FAILED, CRITICAL, ERROR, FLAG_WRITE, ORDER_LIVE]} />,
+  play: async ({ canvasElement }) => {
+    await expect(rowOf(canvasElement, VERIFY_FAILED.id)).toHaveAttribute(
+      "data-severity",
+      "critical",
+    );
+    await expect(rowOf(canvasElement, ERROR.id)).toHaveTextContent("Error");
+    await expect(rowOf(canvasElement, FLAG_WRITE.id)).toHaveTextContent("Warning");
+    const toggles = within(gridOf(canvasElement)).getAllByRole("button", { name: /^Record / });
+    await expect(toggles).toHaveLength(5);
+    if (laidOut(gridOf(canvasElement))) {
+      for (const toggle of toggles) {
+        const box = toggle.getBoundingClientRect();
+        await expect(box.width, toggle.getAttribute("aria-label") ?? "").toBeGreaterThanOrEqual(24);
+        await expect(box.height).toBeGreaterThanOrEqual(24);
+      }
+    }
+  },
+};
+
+/** §6: a nested path keeps its keys, "overrides › {user}", added beside the changed value. */
+export const ExpandedNested: Story = {
+  render: () => <Grid entries={[FLAG_WRITE]} expanded={[FLAG_WRITE.id]} />,
+  play: async ({ canvasElement }) => {
+    await expect(diffOf(canvasElement, FLAG_WRITE.id)).toHaveTextContent(
+      `Added overrides › ${ALEX}`,
+    );
+  },
+};
+
+/**
+ * AL-4, AD-3: a secret, a credential and a value under a secret-named field show their words alone, never a value,
+ * a marker or a hash; a fingerprint keeps its Copy.
+ */
+export const ExpandedSecret: Story = {
+  render: () => <Grid entries={[KEY_IMPORT]} expanded={[KEY_IMPORT.id]} />,
+  play: async ({ canvasElement }) => {
+    const diff = diffOf(canvasElement, KEY_IMPORT.id);
+    await expect(diff).toHaveTextContent("Secret — never recorded");
+    await expect(diff).toHaveTextContent("Hidden — secret-named field");
+    await expect(diff).toHaveTextContent("Redacted — it held a credential");
+    await expect(within(diff).getByRole("button", { name: "Copy key_id_masked" })).toBeVisible();
+    await showsNoRedactedValue(canvasElement);
+  },
+};
+
+/** §6: a state withheld by the server reads "Withheld" once under its term, its pair's fields listed, no status word. */
+export const ExpandedWithheld: Story = {
+  render: () => (
+    <Grid
+      entries={[
+        {
+          ...FLAG_WRITE,
+          id: 1204099,
+          detail: { before: null, after: { value: true }, elided: ["before"] },
+        },
+        EXPORT_WITHHELD,
+      ]}
+      expanded={[1204099, EXPORT_WITHHELD.id]}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await expect(diffOf(canvasElement, 1204099)).toHaveTextContent(
+      "Withheld — too large to show here",
+    );
+    await expect(diffOf(canvasElement, 1204099)).not.toHaveTextContent(/Changed|Added|Removed/);
+  },
+};
+
+/** §6's request shape: a refused write and an intent head their blocks; the second term is Requested, never After. */
+export const ExpandedRequested: Story = {
+  render: () => (
+    <Grid entries={[FLAG_REFUSED, FLAG_INTENT]} expanded={[FLAG_REFUSED.id, FLAG_INTENT.id]} />
+  ),
+  play: async ({ canvasElement }) => {
+    const refused = diffOf(canvasElement, FLAG_REFUSED.id);
+    await expect(refused).toHaveTextContent("Not applied — credential_in_reason");
+    await expect(refused).toHaveTextContent("Requested");
+    await expect(refused).toHaveTextContent("not sent — the existing overrides stay");
+    await expect(diffOf(canvasElement, FLAG_INTENT.id)).toHaveTextContent(
+      "Intent — the outcome is a separate record",
+    );
+    await showsNoRedactedValue(canvasElement);
+  },
+};
+
+/** D3: a write-ahead record's result reads Started or Intent, never Success; the started check's diff heads so. */
+export const WriteAhead: Story = {
+  render: () => <Grid entries={[VERIFY_STARTED, FLAG_INTENT]} expanded={[VERIFY_STARTED.id]} />,
+  play: async ({ canvasElement }) => {
+    await expect(rowOf(canvasElement, VERIFY_STARTED.id)).toHaveTextContent("Started");
+    await expect(rowOf(canvasElement, FLAG_INTENT.id)).toHaveTextContent("Intent");
+    await expect(diffOf(canvasElement, VERIFY_STARTED.id)).toHaveTextContent(
+      "Started — the result is a separate record",
+    );
+  },
+};
+
+/** AL-25: a Manager's projection, its nulled Environment and IP "not shown in your view", its diff hidden. */
+export const OwnProjection: Story = {
+  render: () => <Grid entries={[PROJECTED]} expanded={[PROJECTED.id]} view="own" />,
+  play: async ({ canvasElement }) => {
+    await expect(rowOf(canvasElement, PROJECTED.id)).toHaveTextContent("not shown in your view");
+    await expect(diffOf(canvasElement, PROJECTED.id)).toHaveTextContent("Not shown in your view");
+  },
+};
+
+/** CG-33: a purged user's pseudonym, cut to 4 hex in the grid with its whole words kept; never a link. */
+export const DeletedActor: Story = {
+  render: () => <Grid entries={[DELETED]} />,
+  play: async ({ canvasElement }) => {
+    const row = rowOf(canvasElement, DELETED.id);
+    await expect(row).toHaveTextContent("deleted-user-3f9a…");
+    await expect(within(row).queryByRole("link")).toBeNull();
+  },
+};
+
+/** AD-5: an entry at or after the break says so in its expanded row, in the danger treatment; an older one does not. */
+export const AfterBreak: Story = {
+  render: () => (
+    <Grid
+      entries={[VERIFY_FAILED, ORDER_LIVE, FLAG_WRITE]}
+      expanded={[ORDER_LIVE.id, FLAG_WRITE.id]}
+      selectedId={ORDER_LIVE.id}
+      afterBreakId={1204118}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const line = "Not verified — at or after the break at entry 1,204,118.";
+    await expect(diffOf(canvasElement, ORDER_LIVE.id)).toHaveTextContent(line);
+    await expect(diffOf(canvasElement, FLAG_WRITE.id)).not.toHaveTextContent(line);
+    await expect(rowOf(canvasElement, ORDER_LIVE.id)).toHaveAttribute("aria-selected", "true");
+  },
+};
+
+/**
+ * AL-28 at 400 % (a 20rem content column): the rows stack into cards that stay a grid (`reflow="grid"`), and Role and
+ * Action keep their room on the card's line, never zero width; nothing scrolls sideways.
+ */
+export const Reflow: Story = {
+  render: () => <Grid entries={[ORDER_LIVE, FLAG_WRITE]} width="20rem" />,
+  play: async ({ canvasElement }) => {
+    const grid = gridOf(canvasElement);
+    await expect(rowOf(canvasElement, ORDER_LIVE.id)).toHaveTextContent("Order submitted");
+    await expect(within(grid).getAllByRole("gridcell").length).toBeGreaterThan(0);
+    if (laidOut(grid)) {
+      const table = canvasElement.querySelector<HTMLElement>(".cv-table");
+      await waitFor(() => expect(table).toHaveAttribute("data-layout", "stacked"));
+      for (const id of [ORDER_LIVE.id, FLAG_WRITE.id]) {
+        for (const fit of rowOf(canvasElement, id).querySelectorAll<HTMLElement>(
+          ".cv-audit-row__fit",
+        )) {
+          await expect(fit.getBoundingClientRect().width, fit.dataset["fit"]).toBeGreaterThan(0);
+        }
+      }
+      const region = canvasElement.querySelector<HTMLElement>(".cv-table__region");
+      await expect(region?.scrollWidth).toBeLessThanOrEqual(region?.clientWidth ?? 0);
+    }
+  },
+};
+
+/** The pointer on a row: CMP-049's surface.hover under every cell. */
+export const RowHover: Story = {
+  render: () => <Grid entries={[ORDER_LIVE, FLAG_WRITE, DENIED]} />,
+  play: async ({ canvasElement }) => {
+    await userEvent.hover(rowOf(canvasElement, FLAG_WRITE.id));
+    await expect(rowOf(canvasElement, FLAG_WRITE.id)).toHaveTextContent("Flag changed");
+  },
+};
+
+/** Tab into the grid: its one stop is the first expander, with CMP-039's ring; → moves the ring to the Time cell. */
+export const RowFocusVisible: Story = {
+  render: () => <Grid entries={[ORDER_LIVE, FLAG_WRITE, DENIED]} />,
+  play: async ({ canvasElement }) => {
+    const toggle = within(rowOf(canvasElement, ORDER_LIVE.id)).getByRole("button");
+    await userEvent.tab();
+    await expect(toggle).toHaveFocus();
+    await expect(toggle.matches(":focus-visible")).toBe(true);
+    await userEvent.keyboard("{ArrowRight}");
+    await expect(rowOf(canvasElement, ORDER_LIVE.id).children[1]).toHaveFocus();
+  },
+};
+
+/** Long values wrap inside their cells, between words or anywhere in a long one; no cell clips or truncates. */
+export const RowLongText: Story = {
+  render: () => (
+    <Grid
+      entries={[
+        {
+          ...CRITICAL,
+          actor_username: "system:key-selfcheck",
+          subject_type: "exchange_account",
+          subject_label: "sub_002 · Managed account for the APAC desk, Business KYC tier",
+          environment: "testnet",
+          ip: "2001:db8:85a3::8a2e:370:7334",
+        },
+        { ...DELETED, id: 1203989, action: "security.key_policy_violation" },
+      ]}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const row = rowOf(canvasElement, CRITICAL.id);
+    await expect(row).toHaveTextContent("Business KYC tier");
+    for (const cell of row.querySelectorAll<HTMLElement>("td")) {
+      await expect(cell.scrollWidth).toBeLessThanOrEqual(cell.clientWidth);
+    }
   },
 };

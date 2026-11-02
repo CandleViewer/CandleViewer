@@ -270,8 +270,39 @@ export type {
   AuditFilters,
 } from "./AuditFilterBar.js";
 
-export { AUDIT_ACTION_LABELS, AUDIT_ROW_COPY, AuditRow, AuditRowList } from "./AuditRow.js";
-export type { AuditRowListProps, AuditRowProps } from "./AuditRow.js";
+export {
+  AUDIT_ACTION_LABELS,
+  AUDIT_GRID_COPY,
+  AUDIT_ROW_COPY,
+  AuditRow,
+  AuditRowDiff,
+  AuditRowList,
+  auditAfterBreakText,
+  auditColumns,
+  auditGridRowKey,
+  auditGridRows,
+  auditRecordName,
+} from "./AuditRow.js";
+export type {
+  AuditGridRow,
+  AuditRowDiffProps,
+  AuditRowGridProps,
+  AuditRowListProps,
+  AuditRowProps,
+} from "./AuditRow.js";
+
+export { AUDIT_DIFF_COPY, AuditDiff, auditValueWords } from "./AuditDiff.js";
+export type { AuditDiffProps } from "./AuditDiff.js";
+export { AUDIT_VALUE_CUT, auditDiffModel, groupDigits } from "./auditDiffModel.js";
+export type {
+  AuditDiffEntry,
+  AuditDiffFact,
+  AuditDiffField,
+  AuditDiffHead,
+  AuditDiffModel,
+  AuditValue,
+  AuditValueKind,
+} from "./auditDiffModel.js";
 
 export { Avatar } from "./Avatar.js";
 export type { AvatarProps, AvatarSize } from "./Avatar.js";

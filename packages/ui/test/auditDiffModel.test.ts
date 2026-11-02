@@ -4,24 +4,31 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   AUDIT_MARKERS,
+  REDACTOR_EMBED_LIMITS,
   REDACTOR_NAME_RULES,
   auditDiffModel,
   isRedactedName,
   type AuditDiffEntry,
 } from "../src/components/auditDiffModel.js";
 
-/** The repository's root, from packages/ui/test. */
-const ROOT = resolve(import.meta.dirname, "../../..");
-const REDACTOR = resolve(ROOT, "services/api/candleviewer/audit/redact.py");
-const EVIDENCE = resolve(ROOT, "services/api/candleviewer/admin/flags/evidence.py");
+/**
+ * The server files the mirror reads, from packages/ui/test. Relative literals, so the turbo-inputs governance test
+ * (scripts/tests/test_ui_turbo_test_inputs.py) finds both and holds them in ui's `test` and `test:cov` inputs: a change
+ * to either reruns this test (BQ-10).
+ */
+const REDACTOR = resolve(import.meta.dirname, "../../../services/api/candleviewer/audit/redact.py");
+const EVIDENCE = resolve(
+  import.meta.dirname,
+  "../../../services/api/candleviewer/admin/flags/evidence.py",
+);
 
 /**
- * The sha256 of redact.py's decision code, `def _normalise(` up to `def _redact_sequence(`: the name normalisation,
- * the classifier, the OTP context, the version exemption and the mapping walk. Any edit there may change which names
- * the server treats as secret, so it fails here until the mirror in auditDiffModel.ts is re-read against it and this
- * pin is moved in the same PR (CG-27; BQ-10).
+ * The sha256 of redact.py from `REDACTION_MARKER = ` to the end of the file: the markers, every name set, the
+ * exemptions, the embedded-JSON bounds and all the code that applies them. Any edit there may change what the server
+ * treats as secret, so it fails here until the mirror in auditDiffModel.ts is re-read against it and this pin is moved
+ * in the same PR (CG-27; BQ-10).
  */
-const PINNED_LOGIC_DIGEST = "c6b630456d760b811d3b83628a3b7c6409eb1a3e1c5b1683551b4d001d8c35a5";
+const PINNED_REDACTOR_DIGEST = "192099da934103dc9bf351bdc1b5ec33eea9cb4cb677019e714d18be1d85aeb7";
 
 /** The server's source, read-only. A file that moved or cannot be read fails the test: never a skip (BQ-10). */
 const source = (path: string): string => {
@@ -29,20 +36,100 @@ const source = (path: string): string => {
   return readFileSync(path, "utf-8").replace(/\r\n/g, "\n");
 };
 
-/** The quoted strings of the Python literal assigned to `name`, failing closed when it cannot be found. */
-function pythonStrings(text: string, name: string, shape: RegExp): string[] {
-  const found = shape.exec(text);
-  expect(found, `${name} could not be parsed out of redact.py`).not.toBeNull();
-  const body = found?.[1] ?? "";
+/** A literal's body holds string literals, commas and whitespace only: no name, call or operator (S-5520-01). */
+const literalOnly = (body: string): boolean =>
+  body.replace(/"[^"]*"/g, "").replace(/[\s,]/g, "") === "";
+
+/**
+ * The quoted strings of the Python literal `shape` matches in `text` (its first group the literal's body, closed where
+ * the statement ends); undefined when the literal is missing, empty, or anything but string literals, such as a set
+ * composed with another (`frozenset({...} | _MORE)`), a name inside it, or a tuple added to another. The parity tests
+ * fail closed on undefined.
+ */
+function pythonStrings(text: string, shape: RegExp): string[] | undefined {
+  const body = shape.exec(text)?.[1];
+  if (body === undefined || !literalOnly(body)) return undefined;
   const words = [...body.matchAll(/"([^"]*)"/g)].map((m) => m[1] ?? "");
-  expect(words.length, `${name} parsed to nothing`).toBeGreaterThan(0);
-  return words;
+  return words.length === 0 ? undefined : words;
 }
+
+/** A name set's literal, closed: `NAME: frozenset[str] = frozenset({ "a", "b" })` and nothing after it. */
+const setShape = (name: string): RegExp =>
+  new RegExp(`^${name}: frozenset\\[str\\] = frozenset\\(\\s*\\{([^}]*)\\}\\s*\\)\\s*$`, "m");
+/** The suffix tuple's literal, closed: nothing added to it on its line. */
+const SUFFIX_SHAPE = /^_SECRET_SUFFIXES: tuple\[str, \.\.\.\] = \(([^)]*)\)\s*$/m;
+/** The pass-through table: one `MappingProxyType({...})`, a comment allowed after the dict. */
+const PASS_THROUGH_SHAPE =
+  /^_ENUM_PASS_THROUGH: [^\n]*= MappingProxyType\(\s*\{([\s\S]*?)\}\s*(?:#[^\n]*)?\n\)\s*$/m;
+const PASS_THROUGH_ENTRY = /"(\w+)":\s*frozenset\(\{([^}]*)\}\)/g;
+
+/** The pass-through table's entries, sorted; undefined unless the body is literal entries alone (no `**`, no name). */
+function passThroughEntries(text: string): [string, string[]][] | undefined {
+  const body = PASS_THROUGH_SHAPE.exec(text)?.[1];
+  if (body === undefined || body.replace(PASS_THROUGH_ENTRY, "").replace(/[\s,]/g, "") !== "") {
+    return undefined;
+  }
+  const entries = [...body.matchAll(PASS_THROUGH_ENTRY)].map((m): [string, string[]] | undefined =>
+    literalOnly(m[2] ?? "")
+      ? [m[1] ?? "", sorted([...(m[2] ?? "").matchAll(/"([^"]*)"/g)].map((w) => w[1] ?? ""))]
+      : undefined,
+  );
+  return entries.length === 0 || entries.includes(undefined)
+    ? undefined
+    : (entries as [string, string[]][]);
+}
+
+/** A string constant's literal, closed: `NAME = "..."` (an annotation allowed) and nothing after it. */
+const literal = (text: string, name: string): string | undefined =>
+  new RegExp(`^${name}(?::[^=]*)? = "([^"]+)"\\s*$`, "m").exec(text)?.[1];
 
 const sorted = (values: Iterable<string>): string[] => [...values].sort();
 
+describe("the parity parser fails closed on a literal it cannot read whole (S-5520-01)", () => {
+  const set = (body: string): string =>
+    `_SECRET_EXACT_NAMES: frozenset[str] = frozenset(\n    {\n        ${body}\n    }\n)\n`;
+
+  it("reads a closed literal", () => {
+    expect(pythonStrings(set('"key",\n        "sid",'), setShape("_SECRET_EXACT_NAMES"))).toEqual([
+      "key",
+      "sid",
+    ]);
+  });
+
+  it.each([
+    [
+      "a set composed around its literal",
+      '_SECRET_EXACT_NAMES: frozenset[str] = frozenset(\n    {"key", "sid"} | _ADAPTER_HEADER_NAMES\n)\n',
+    ],
+    ["a bare name inside the literal", set('"key",\n        _EXTRA_NAME,')],
+    ["a call inside the literal", set('"key",\n        str("sid"),')],
+    ["no literal at all", "_SECRET_EXACT_NAMES: frozenset[str] = _load_names()\n"],
+  ])("%s", (_name, text) => {
+    expect(pythonStrings(text, setShape("_SECRET_EXACT_NAMES"))).toBeUndefined();
+  });
+
+  it("a suffix tuple added to another, and a marker built from parts", () => {
+    const tuple = '_SECRET_SUFFIXES: tuple[str, ...] = ("_key", "_secret") + _MORE\n';
+    expect(pythonStrings(tuple, SUFFIX_SHAPE)).toBeUndefined();
+    expect(literal('REDACTION_MARKER = "<redacted:" + "secret>"\n', "REDACTION_MARKER")).toBe(
+      undefined,
+    );
+  });
+
+  it("a pass-through table spread from another, or with a name for its words", () => {
+    const spread =
+      '_ENUM_PASS_THROUGH: Mapping[str, frozenset[str]] = MappingProxyType(\n    {"bearer": frozenset({"matched"}), **_MORE}\n)\n';
+    const named =
+      '_ENUM_PASS_THROUGH: Mapping[str, frozenset[str]] = MappingProxyType(\n    {"bearer": frozenset({"matched", _WORD})}\n)\n';
+    expect(passThroughEntries(spread)).toBeUndefined();
+    expect(passThroughEntries(named)).toBeUndefined();
+  });
+});
+
 describe("the redactor's name rules, mirrored (CG-27; BQ-10: read-only, fail closed)", () => {
-  const redactor = source(REDACTOR);
+  // Read inside each test: a moved file fails each parity test, and the model's own tests still run.
+  let read: string | undefined;
+  const redactorText = (): string => (read ??= source(REDACTOR));
 
   it.each([
     ["_SECRET_FIELD_FRAGMENTS", REDACTOR_NAME_RULES.fragments],
@@ -50,26 +137,20 @@ describe("the redactor's name rules, mirrored (CG-27; BQ-10: read-only, fail clo
     ["_OTP_MARKERS", REDACTOR_NAME_RULES.otpMarkers],
     ["_METADATA_VERSION_NAMES", REDACTOR_NAME_RULES.versionNames],
   ] as const)("%s holds the same names", (name, mirror) => {
-    const shape = new RegExp(`^${name}: frozenset\\[str\\] = frozenset\\(\\s*\\{([^}]*)\\}`, "m");
-    expect(sorted(mirror)).toEqual(sorted(pythonStrings(redactor, name, shape)));
+    const words = pythonStrings(redactorText(), setShape(name));
+    expect(words, `${name} could not be read whole out of redact.py`).toBeDefined();
+    expect(sorted(mirror)).toEqual(sorted(words ?? []));
   });
 
   it("_SECRET_SUFFIXES holds the same suffixes", () => {
-    const shape = /^_SECRET_SUFFIXES: tuple\[str, \.\.\.\] = \(([^)]*)\)/m;
-    expect(sorted(REDACTOR_NAME_RULES.suffixes)).toEqual(
-      sorted(pythonStrings(redactor, "_SECRET_SUFFIXES", shape)),
-    );
+    const words = pythonStrings(redactorText(), SUFFIX_SHAPE);
+    expect(words, "_SECRET_SUFFIXES could not be read whole out of redact.py").toBeDefined();
+    expect(sorted(REDACTOR_NAME_RULES.suffixes)).toEqual(sorted(words ?? []));
   });
 
   it("_ENUM_PASS_THROUGH holds the same names and words", () => {
-    const shape =
-      /^_ENUM_PASS_THROUGH: [^\n]*= MappingProxyType\(\s*\{([\s\S]*?)\}\s*(?:#[^\n]*)?\n\)/m;
-    const found = shape.exec(redactor);
-    expect(found, "_ENUM_PASS_THROUGH could not be parsed out of redact.py").not.toBeNull();
-    const entries = [...(found?.[1] ?? "").matchAll(/"(\w+)":\s*frozenset\(\{([^}]*)\}\)/g)].map(
-      (m) => [m[1] ?? "", sorted([...(m[2] ?? "").matchAll(/"([^"]*)"/g)].map((w) => w[1] ?? ""))],
-    );
-    expect(entries.length).toBeGreaterThan(0);
+    const entries = passThroughEntries(redactorText());
+    expect(entries, "_ENUM_PASS_THROUGH could not be read whole out of redact.py").toBeDefined();
     const mirror = Object.entries(REDACTOR_NAME_RULES.passThrough).map(([key, words]) => [
       key,
       sorted(words),
@@ -78,29 +159,34 @@ describe("the redactor's name rules, mirrored (CG-27; BQ-10: read-only, fail clo
   });
 
   it("the version exemption's digit limit and the normalisation are the same", () => {
-    const digits = /^_VERSION_MAX_DIGITS = (\d+)$/m.exec(redactor);
+    const digits = /^_VERSION_MAX_DIGITS = (\d+)$/m.exec(redactorText());
     expect(digits, "_VERSION_MAX_DIGITS could not be parsed").not.toBeNull();
     expect(REDACTOR_NAME_RULES.versionMaxDigits).toBe(Number(digits?.[1]));
-    expect(redactor).toContain('_NORMALISE_RE = re.compile(r"[^a-z0-9]")');
-    expect(redactor).toContain('_CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")');
+    expect(redactorText()).toContain('_NORMALISE_RE = re.compile(r"[^a-z0-9]")');
+    expect(redactorText()).toContain('_CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")');
+  });
+
+  it("the embedded-JSON bounds are the same: _MAX_EMBED_DEPTH and _MAX_EMBED_BYTES", () => {
+    const depth = /^_MAX_EMBED_DEPTH = (\d+)$/m.exec(redactorText());
+    const bytes = /^_MAX_EMBED_BYTES = (\d+)(?: \* (\d+))?$/m.exec(redactorText());
+    expect(depth, "_MAX_EMBED_DEPTH could not be parsed").not.toBeNull();
+    expect(bytes, "_MAX_EMBED_BYTES could not be parsed").not.toBeNull();
+    expect(REDACTOR_EMBED_LIMITS.depth).toBe(Number(depth?.[1]));
+    expect(REDACTOR_EMBED_LIMITS.bytes).toBe(Number(bytes?.[1]) * Number(bytes?.[2] ?? 1));
   });
 
   it("the four markers are the server's", () => {
-    const literal = (text: string, name: string): string | undefined =>
-      new RegExp(`^${name}(?::[^=]*)? = "([^"]+)"`, "m").exec(text)?.[1];
-    expect(literal(redactor, "REDACTION_MARKER")).toBe(AUDIT_MARKERS.secret);
-    expect(literal(redactor, "PII_HASH_PREFIX")).toBe(AUDIT_MARKERS.personal);
-    expect(literal(redactor, "OVERSIZE_MARKER")).toBe(AUDIT_MARKERS.oversize);
+    expect(literal(redactorText(), "REDACTION_MARKER")).toBe(AUDIT_MARKERS.secret);
+    expect(literal(redactorText(), "PII_HASH_PREFIX")).toBe(AUDIT_MARKERS.personal);
+    expect(literal(redactorText(), "OVERSIZE_MARKER")).toBe(AUDIT_MARKERS.oversize);
     expect(literal(source(EVIDENCE), "REDACTED_CREDENTIAL")).toBe(AUDIT_MARKERS.credential);
   });
 
-  it("the decision code is the one the mirror was read against (re-read the mirror, then move the pin)", () => {
-    const start = redactor.indexOf("def _normalise(");
-    const end = redactor.indexOf("def _redact_sequence(");
-    expect(start, "def _normalise( is gone").toBeGreaterThan(0);
-    expect(end, "def _redact_sequence( is gone").toBeGreaterThan(start);
-    const digest = createHash("sha256").update(redactor.slice(start, end), "utf8").digest("hex");
-    expect(digest).toBe(PINNED_LOGIC_DIGEST);
+  it("redact.py is the one the mirror was read against, constants to end (re-read the mirror, then move the pin)", () => {
+    const start = redactorText().indexOf("REDACTION_MARKER = ");
+    expect(start, "REDACTION_MARKER = is gone").toBeGreaterThan(0);
+    const digest = createHash("sha256").update(redactorText().slice(start), "utf8").digest("hex");
+    expect(digest).toBe(PINNED_REDACTOR_DIGEST);
   });
 });
 
@@ -300,6 +386,132 @@ describe("auditDiffModel: a value under a redacted name that is no marker (secre
     );
     expect(m.shape).toBe("request");
     expect(m.flagged).toBe(true);
+  });
+});
+
+describe("auditDiffModel: past each bound it follows, the client fails closed (S-5520-02)", () => {
+  const model = (value: Record<string, unknown>) =>
+    auditDiffModel(
+      entry({
+        action: "orders.submit",
+        subject_type: "order",
+        detail: { before: null, after: value },
+      }),
+    );
+  /** `inner` under `levels` nested lists. */
+  const lists = (levels: number, inner: unknown): unknown =>
+    Array.from({ length: levels }).reduce<unknown>((value) => [value], inner);
+  /** `inner` as JSON inside `hops` nested JSON strings, each under a `body` key. */
+  const strings = (hops: number, inner: Record<string, unknown>): string =>
+    Array.from({ length: hops - 1 }).reduce<string>(
+      (text) => JSON.stringify({ body: text }),
+      JSON.stringify(inner),
+    );
+  const legs = (m: ReturnType<typeof model>) => m.fields.find((f) => f.path[0] === "legs")?.after;
+  const body = (m: ReturnType<typeof model>) => m.fields.find((f) => f.path[0] === "body")?.after;
+
+  it("within the depth it follows, a list's values read as a value", () => {
+    const m = model({ legs: lists(50, { note: "plain" }) });
+    expect(legs(m)?.kind).toBe("value");
+    expect(m.flagged).toBe(false);
+  });
+
+  it("past it, a value is hidden and its record flagged, a secret-named one included", () => {
+    for (const inner of [{ note: "plain" }, { password: "plain" }]) {
+      const m = model({ legs: lists(70, inner) });
+      expect(legs(m)).toEqual({ kind: "secret_named" });
+      expect(m.flagged).toBe(true);
+      expect(JSON.stringify(m)).not.toContain("plain");
+    }
+  });
+
+  it("embedded JSON is followed four strings deep, as the server does", () => {
+    const m = model({ body: strings(4, { note: "plain" }) });
+    expect(body(m)?.kind).toBe("value");
+    expect(m.flagged).toBe(false);
+    expect(body(model({ body: strings(4, { sessionId: "plain" }) }))).toEqual({
+      kind: "secret_named",
+    });
+  });
+
+  it("a fifth string, which the server replaces, is hidden and flags the record, a secret in it or not", () => {
+    for (const inner of [{ note: "plain" }, { sessionId: "plain" }]) {
+      const m = model({ body: strings(5, inner) });
+      expect(body(m)).toEqual({ kind: "secret_named" });
+      expect(m.flagged).toBe(true);
+      expect(JSON.stringify(m)).not.toContain("plain");
+    }
+  });
+
+  it("an embedded JSON string over 64 KiB of UTF-8, which the server replaces, is hidden and flags the record", () => {
+    const ascii = JSON.stringify({ note: "x".repeat(66_000) });
+    // 40,000 two-byte characters: under 64 Ki UTF-16 units, over 64 KiB as the server counts them.
+    const wide = JSON.stringify({ note: "é".repeat(40_000) });
+    for (const text of [ascii, wide]) {
+      const m = model({ body: text });
+      expect(body(m)).toEqual({ kind: "secret_named" });
+      expect(m.flagged).toBe(true);
+    }
+    // At the bound itself the string is still read.
+    const at = JSON.stringify({ note: "x".repeat(64 * 1024 - 11) });
+    expect(at.length).toBe(64 * 1024);
+    expect(body(model({ body: at }))?.kind).toBe("value");
+  });
+});
+
+describe("auditDiffModel: one strict marker rule for the leaf and the flag (S-5520-04, C-5520-03)", () => {
+  const model = (value: Record<string, unknown>) =>
+    auditDiffModel(
+      entry({
+        action: "orders.submit",
+        subject_type: "order",
+        detail: { before: null, after: value },
+      }),
+    );
+  const kindOf = (value: Record<string, unknown>) =>
+    model(value).fields.find((f) => f.path.join("/") === Object.keys(value)[0])?.after;
+
+  it("a personal marker is the prefix and a 64-hex digest, nothing else", () => {
+    expect(kindOf({ note: `${AUDIT_MARKERS.personal}${HEX}` })).toEqual({
+      kind: "personal",
+      hex8: "a3f1c2d4",
+    });
+    for (const text of [
+      `${AUDIT_MARKERS.personal}not-a-hex-digest`,
+      `${AUDIT_MARKERS.personal}${HEX.slice(0, 63)}`,
+      `${AUDIT_MARKERS.personal}${HEX.toUpperCase()}`,
+    ]) {
+      // No marker the server writes: under a plain name it is the value as served, and flags nothing.
+      expect(kindOf({ note: text })).toMatchObject({ kind: "value", text });
+      expect(model({ note: text }).flagged).toBe(false);
+    }
+  });
+
+  it.each([
+    ["a malformed personal marker", `${AUDIT_MARKERS.personal}hunter2`],
+    ["a well-formed personal marker", `${AUDIT_MARKERS.personal}${HEX}`],
+    ["the credential marker", AUDIT_MARKERS.credential],
+    ["the oversize marker", AUDIT_MARKERS.oversize],
+  ])(
+    "under a secret name, %s is not what the server writes there: hidden, the record flagged",
+    (_n, text) => {
+      expect(kindOf({ password: text })).toEqual({ kind: "secret_named" });
+      expect(model({ password: text }).flagged).toBe(true);
+    },
+  );
+
+  it("under a secret name the server's own marker reads as the secret it replaced", () => {
+    expect(kindOf({ password: AUDIT_MARKERS.secret })).toEqual({ kind: "secret" });
+    expect(model({ password: AUDIT_MARKERS.secret }).flagged).toBe(false);
+  });
+
+  it("kek_version keeps a version under 10^9 only (redact.py's _VERSION_INT_LIMIT)", () => {
+    expect(kindOf({ kek_version: 999_999_999 })).toMatchObject({ kind: "value", numeric: true });
+    expect(kindOf({ kek_version: "999999999" })).toMatchObject({ kind: "value" });
+    for (const value of [1_000_000_000, "1000000000", 0, -3, 2.5]) {
+      expect(kindOf({ kek_version: value }), String(value)).toEqual({ kind: "secret_named" });
+      expect(model({ kek_version: value }).flagged).toBe(true);
+    }
   });
 });
 
