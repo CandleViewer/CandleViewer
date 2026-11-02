@@ -17,7 +17,9 @@ Gates (each FAIL led by its name):
               is the surface's own, and its `14` heading at the base names the surface.
   G-T2        §10.1 (BQ-13 RULED): the analytics view switch is a read, never T2, not even in a
               view-as session, and §6 says so; Export is T2 with `rbac.permission` and
-              `journal:read`.
+              `journal:read`, names CMP-079, the `lock`'s "Not available", G-T2.2 and G-T2.3,
+              and each `DS` quote marked verbatim stands in its cited `DS` lines at the base;
+              A-1 lists CMP-079 and CMP-019 (G-T2.6).
   G-DISCLOSE  every `FillModelConfig` field §5's B rows name is a field of the class at `24`
               §12.1 at the base; the six rows the ticket asks for are present.
   G-WORDS     every N row's accessible name begins with "Simulated"; CA-5 and CA-6 stand verbatim
@@ -426,7 +428,23 @@ def g_t2(t: Texts, vals: dict[str, str]) -> list[str]:
         bad.append("§6 does not say the view switch is never T2")
     if "`rbac.permission`" not in export or "`journal:read`" not in export:
         bad.append("§10.1: Export must be T2 with `rbac.permission` and `journal:read`")
+    for need in ("CMP-079", '"Not available"', "G-T2.2", "G-T2.3"):
+        if need not in export:
+            bad.append(f"§10.1: Export does not name {need} (G-T2.1d, G-T2.2, G-T2.3)")
+    ds = at(t, "DS").split("\n")
+    for m in re.finditer(VERBATIM, export):
+        lo, hi = int(m[1]), int(m[2])
+        cited = norm(" ".join(ds[lo - 1 : hi]).replace("**", ""))
+        if norm(m[3]) not in cited:
+            bad.append(f"§10.1: a quote marked verbatim is not in `DS`:{lo}\u2013{hi}")
+    a1 = next((ln for ln in section(t.spec, "## 13.").split("\n") if "**A-1" in ln), "")
+    for need in ("CMP-079", "CMP-019"):
+        if need not in a1:
+            bad.append(f"A-1 on CMP-099 does not list {need} (G-T2.6)")
     return bad
+
+
+VERBATIM = re.compile(r"verbatim \(`DS`:(\d+)\u2013(\d+)\): (.+?)(?:\. | \(|\.$)")
 
 
 def g_arow(t: Texts, vals: dict[str, str]) -> list[str]:
@@ -587,6 +605,18 @@ def drop_row(row: str) -> Callable[[Texts], Texts]:
     return f
 
 
+A1_T2 = ", wrapped by CMP-079 RbacGate and led by the CMP-019 `lock`"
+
+
+def a1_without(name: str) -> Callable[[Texts], Texts]:
+    """A-1 loses one of its two T2 components."""
+    kept = {
+        "CMP-079": ", led by the CMP-019 `lock`",
+        "CMP-019": ", wrapped by CMP-079 RbacGate",
+    }[name]
+    return sub(A1_T2, kept)
+
+
 MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     (
         "G-CONTRAST",
@@ -686,6 +716,34 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "a catalogue file in the diff",
         lambda t: replace(t, changed=[*OWN_PATHS, PATHS["15"]]),
     ),
+    (
+        "G-T2",
+        "§10.1 without CMP-079",
+        sub("CMP-079 RbacGate (`15`:890) wraps it; it", "It"),
+    ),
+    (
+        "G-T2",
+        "§10.1 without the lock's name",
+        sub(', accessible name "Not available"', ""),
+    ),
+    (
+        "G-T2",
+        "§10.1 without G-T2.3",
+        sub(
+            " G-T2.3, verbatim (`DS`:47\u201348): `Enter`, `Space` or a bound hotkey on a T2"
+            " control changes nothing and re-shows the reason inline with one polite"
+            " announcement (board 02's G-T2.3 inset).",
+            "",
+        ),
+    ),
+    ("G-T2", "§10.1's G-T2.2 named G-T2", sub("G-T2.2, verbatim", "G-T2, verbatim")),
+    (
+        "G-T2",
+        "a G-T2.3 quote off its DS text",
+        sub("one polite announcement (", "an announcement ("),
+    ),
+    ("G-T2", "A-1 without CMP-079", a1_without("CMP-079")),
+    ("G-T2", "A-1 without CMP-019", a1_without("CMP-019")),
 )
 
 
