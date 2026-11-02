@@ -141,6 +141,10 @@ export interface BarsSymbolBarTypeParam {
      * Arbitrary-precision decimal as a string; never a JSON number.
      */
     max_delta?: string;
+    /**
+     * Optional, renko only (#2130, PROPOSED). Sent only as false: this brick is a flat brick of a multi-brick run and does not own the run's volume; the run's last brick does (24 §3.3 Renko (a)). Absent means true, so a client that ignores it counts each contract once. Kind 4 carries it inverted as flags bit4 (§3.4). Never on a non-renko bar (22 `Bar.volume_allocated`).
+     */
+    volume_allocated?: boolean;
   }[];
   coalesced?: boolean;
   coalesced_count?: number;

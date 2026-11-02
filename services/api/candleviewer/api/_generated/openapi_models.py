@@ -1693,6 +1693,12 @@ class Bar(BaseModel):
     cvd: Decimal | None = None
     min_delta: Decimal | None = None
     max_delta: Decimal | None = None
+    volume_allocated: Annotated[
+        StrictBool,
+        Field(
+            description="Renko only (#2130, from PR 2; PROPOSED). False when this brick does not own its run's volume: when one trade completes several bricks, only the last carries the run's volume, delta, trades and turnover, and the earlier ones are flat, with zero of each (24 §3.3 Renko (a)). Sent only as `false`; absent means `true`, so a client that ignores it still counts each contract once. A consumer that attributes per-trade data to bricks by `t` (every brick of a run shares it) attributes it to the brick that owns the volume only. Never sent on a non-renko bar. The inverse of the stored row's `volume_unallocated` (21 §4.8); the same flag as the WS `bars` item's (23 §14.3). Optional, additive (C-6.3)."
+        ),
+    ] = True
 
 
 class KlineResponse(BaseModel):

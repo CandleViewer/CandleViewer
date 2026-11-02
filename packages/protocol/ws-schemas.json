@@ -264,6 +264,11 @@
               },
               "v": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
+              },
+              "volume_allocated": {
+                "default": true,
+                "description": "Optional, renko only (#2130, PROPOSED). Sent only as false: this brick is a flat brick of a multi-brick run and does not own the run's volume; the run's last brick does (24 §3.3 Renko (a)). Absent means true, so a client that ignores it counts each contract once. Kind 4 carries it inverted as flags bit4 (§3.4). Never on a non-renko bar (22 `Bar.volume_allocated`).",
+                "type": "boolean"
               }
             },
             "required": [
