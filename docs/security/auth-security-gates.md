@@ -4,22 +4,22 @@ Owner: Security. Threat model: `docs/security/threat-models/e09-auth-rbac.md` (E
 
 ## What runs
 
-| Gate                                                  | Where                                                                  | Blocks on                                                                                                                   |
-| ----------------------------------------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Auth Semgrep pack (`security/semgrep/auth/`, 9 rules) | CI step `security-auth` (job `read-only-scans` in `_job-security.yml`) | any finding on the auth surface                                                                                             |
-| Rule fixtures (`security/semgrep/auth/fixtures/`)     | `tools/ci/check_auth_semgrep.py`                                       | a rule with no positive or no negative fixture; a rule not firing/over-firing on its fixtures                               |
-| Suppression policy                                    | same script                                                            | `nosem`/`nosec`/`noqa: S…` in auth/accounts/secrets/api without `reason= owner= review=YYYY-MM-DD`, or past its review date |
-| gitleaks token shapes                                 | `.gitleaks.toml` (`cv-*` rules), `.husky/pre-commit`, CI `gitleaks`    | session/refresh/invite token, recovery code, TOTP secret                                                                    |
-| ZAP authenticated scan                                | `.github/workflows/dast-auth-zap.yml`, `security/zap/`                 | high alerts; any loss of the logged-in indicator                                                                            |
-| SCA                                                   | `dependabot.yml` (pip/npm), CI `pip-audit` / `npm-audit` + alert gate  | high/critical advisories (argon2-cffi, TOTP, starlette cookie/session)                                                      |
-| Bandit                                                | CI `bandit` (`[tool.bandit]`, no rule skipped)                         | medium+ — B105/B106/B311 stay active for token/recovery-code generation (CSPRNG only, SR-012/SR-022)                        |
+| Gate                                                   | Where                                                                  | Blocks on                                                                                                                   |
+| ------------------------------------------------------ | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Auth Semgrep pack (`security/semgrep/auth/`, 13 rules) | CI step `security-auth` (job `read-only-scans` in `_job-security.yml`) | any finding on the auth surface                                                                                             |
+| Rule fixtures (`security/semgrep/auth/fixtures/`)      | `tools/ci/check_auth_semgrep.py`                                       | a rule with no positive or no negative fixture; a rule not firing/over-firing on its fixtures                               |
+| Suppression policy                                     | same script                                                            | `nosem`/`nosec`/`noqa: S…` in auth/accounts/secrets/api without `reason= owner= review=YYYY-MM-DD`, or past its review date |
+| gitleaks token shapes                                  | `.gitleaks.toml` (`cv-*` rules), `.husky/pre-commit`, CI `gitleaks`    | session/refresh/invite token, recovery code, TOTP secret                                                                    |
+| ZAP authenticated scan                                 | `.github/workflows/dast-auth-zap.yml`, `security/zap/`                 | high alerts; any loss of the logged-in indicator                                                                            |
+| SCA                                                    | `dependabot.yml` (pip/npm), CI `pip-audit` / `npm-audit` + alert gate  | high/critical advisories (argon2-cffi, TOTP, starlette cookie/session)                                                      |
+| Bandit                                                 | CI `bandit` (`[tool.bandit]`, no rule skipped)                         | medium+ — B105/B106/B311 stay active for token/recovery-code generation (CSPRNG only, SR-012/SR-022)                        |
 
 ## Rule → SR map
 
 `no-raw-account-id` SR-051 · `no-adhoc-authz` SR-017 · `no-target-user-on-self-service` SR-026 ·
 `stepup-required` SR-025 · `no-secret-logging` SR-122 · `no-jwt-in-browser-storage` SR-012 ·
 `cookie-flags` (+`-domain`, `-writer-location`, `-raw-header`) SR-012 · `argon2-params` SR-011 ·
-`audit-write-required` SR-112.
+`audit-write-required` and `audit-write-required-route-scope` SR-060, SR-062.
 Each finding message names its SR id.
 
 ## Allowlists
@@ -30,7 +30,9 @@ exclude needs Security review (CODEOWNERS).
 `audit-write-required` allow-lists whole files whose audit is emitted below the handler (`api/rules.py`,
 `api/rules_crud.py`, `api/step_up.py`) or that are not audited actions (`api/telemetry.py`), plus an exact-route
 `pattern-not` list for the drawings and workspaces writes (not C-2.9 by #357 item 11 and #402 D20; foreign-id denials
-audited as `rbac.denied` where recorded). A new route in those routers is still flagged. The rule cannot see new
+audited as `rbac.denied` where recorded). A new route in those routers is still flagged. Its companion `audit-write-required-route-scope` flags those same exact routes
+anywhere outside `api/drawings.py`, `api/workspaces.py` and `api/csp_report.py`, so the list cannot cover a different endpoint
+under another router prefix. The rule cannot see new
 behaviour inside an approved handler: revisit when E40 exposes `drawings.alert_id` and the 3.8.5 hotkey routes land.
 `cookie-flags` allow-lists one function in one file (C-12.9, ADR-0038 4b): outside
 `write_auth_cookie` (`services/api/candleviewer/api/csrf.py`), `set_cookie` needs `httponly=True`,

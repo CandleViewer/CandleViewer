@@ -347,7 +347,7 @@ weak = PasswordHasher(memory_cost=1024, time_cost=3, parallelism=4)  # ruleid: a
 strong = PasswordHasher(memory_cost=65536, time_cost=3, parallelism=4)  # ok: argon2-params
 
 
-# --- audit-write-required (SR-112) ----------------------------------------
+# --- audit-write-required (SR-060, SR-062) --------------------------------
 @router.post("/accounts")  # ruleid: audit-write-required
 async def create_bad(body):
     return await svc.create(body)
@@ -397,6 +397,16 @@ async def put_alert_bad(body):
 @router.delete("/workspaces/{workspaceId}/layouts/{layoutId}")  # ok: audit-write-required
 async def delete_layout_ok():
     return await svc.delete()
+
+
+@router.put("/workspaces/{workspaceId}/share")  # ruleid: audit-write-required
+async def put_ws_share_bad(body):
+    return await svc.put(body)
+
+
+@router.post("/workspaces/{workspaceId}/share")  # ruleid: audit-write-required
+async def post_ws_share_bad(body):
+    return await svc.share(body)
 
 
 @router.delete("/workspaces/{workspaceId}/share")  # ruleid: audit-write-required

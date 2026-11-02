@@ -3,11 +3,11 @@ rules:
     languages: [python]
     severity: ERROR
     message: >-
-      C-2.9 / SR-112: a mutating route handler contains no audit call
+      C-2.9 / SR-060, SR-062: a mutating route handler contains no audit call
       (_audit(...), audit_*(...) or writer.emit(...)). Every state-changing
       auth/account action writes an append-only audit record.
     metadata:
-      sr: SR-112
+      sr: SR-060, SR-062
     patterns:
       - pattern-either:
           - pattern: |
@@ -62,11 +62,11 @@ rules:
     languages: [python]
     severity: ERROR
     message: >-
-      C-2.9: this route is on the audit-write-required UI-state list, which covers only
+      C-2.9 / SR-060, SR-062: this route is on the audit-write-required UI-state list, which covers only
       api/drawings.py and api/workspaces.py. Elsewhere (e.g. under APIRouter(prefix=...)) it is a
       different endpoint: add an audit call or get it classified.
     metadata:
-      sr: SR-112
+      sr: SR-060, SR-062
     patterns:
       # keep identical to the audit-write-required pattern-not entries above
       - pattern-either:
