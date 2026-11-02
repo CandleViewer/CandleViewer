@@ -419,7 +419,8 @@ PANEL_TAB = re.compile(r"\((\d)\)(?:\.(\d+))?")
 def g_annot(t: Texts, vals: dict[str, str]) -> list[str]:
     """Panel stops nest under D02's groups (0)-(5) as (g) or (g).n, a range written (g).a … (g).b;
     the groups never go back, every group appears, and each group's n run 1.. without a gap.
-    The popover and dialog run P1 ... and K1 ... (BQ-18)."""
+    The popover and dialog run P1 ... and K1 ... (BQ-18). The T2 paragraph's rows "under the
+    popover's one notice" (board 05's view-as column) are exactly the P-stop rows with a T2 id."""
     rows = table_rows(section(t.spec, "## 10."), "A-")
     bad: list[str] = []
     if not rows:
@@ -481,6 +482,11 @@ def g_annot(t: Texts, vals: dict[str, str]) -> list[str]:
     for pre, ns in seqs.items():
         if sorted(ns) != list(range(1, max(ns) + 1)):
             bad.append(f"the {pre} tab sequence {ns} has a gap or runs out of order")
+    one = re.search(r";\s*([^;]*?) under the popover's one notice", t2_par)
+    named = set(re.findall(r"A-\d\d", one[1])) if one else set()
+    pt2 = {r[0] for r in rows if len(r) == 8 and re.search(r"\bP\d", r[4]) and "T2-" in r[7]}
+    if par and named != pt2:
+        bad.append(f"the one notice names {sorted(named)}, not the P-stop T2 rows {sorted(pt2)}")
     return bad
 
 
@@ -764,6 +770,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-DRAWN", "drop the page id from the as-built paragraph", sub("page id `b96edf38-8e58-8006-8008-e2d74e25e66a`", "page id pending")),
     ("G-AROWS", "give M-05's Enter in `16` a duration §2 does not name", sub_in("16", "data ink 1.00 → 0.85 over `normal` / `standard`", "data ink 1.00 → 0.85 over `slow` / `standard`")),
     ("G-DRAWN", "give board 02 board 01's id", sub("drawn (r2): `b96edf38-8e58-8006-8008-e2de792f4444`", "drawn (r2): `b96edf38-8e58-8006-8008-e2de41735bab`")),
+    ("G-ANNOT", "move A-26 from the popover's one notice to rendering 2b", lambda t: sub("; A-22, A-23, A-25 (also `readonly`) and A-26 under", "; A-22, A-23 and A-25 (also `readonly`) under")(sub("A-21 and the A-16", "A-21, A-26 and the A-16")(t))),
 )  # fmt: skip
 
 
