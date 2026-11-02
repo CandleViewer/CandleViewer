@@ -532,6 +532,7 @@ from candleviewer.view_as_wiring import (
     SessionViewAsRefusals,
     build_view_as,
 )
+from candleviewer.wallet_rest_wiring import wire_wallet_rest
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.bars_publish import BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
@@ -2549,7 +2550,7 @@ def create_app(
     # serves the `wallet` topic built above, and its key standing reads the self-check's results
     # (none on the fake backend).
     account_health = wire_account_health(
-        resolved, metrics_facade, topic=ws_wallet, selfcheck=selfcheck
+        resolved, metrics_facade, topic=ws_wallet, selfcheck=selfcheck, rest=wire_wallet_rest(ctx)
     )
     app.state.account_health = account_health
     ctx.accounts.attach_account_health(account_health.feed)

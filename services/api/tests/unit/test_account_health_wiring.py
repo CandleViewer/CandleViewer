@@ -86,7 +86,8 @@ def _stop_failures(logs: Sequence[Mapping[str, Any]]) -> list[tuple[str, str]]:
     ]
 
 
-async def test_the_stand_ins_log_what_is_unbound_and_the_wallet_read_is_unavailable() -> None:
+async def test_the_stand_ins_log_what_is_unbound_and_the_fake_wallet_read_is_unavailable() -> None:
+    """The fake backend's stand-in (C-13.5): the real backend binds the exchange's read (#5282)."""
     episode = HealthTransition(ACC, HealthState.DEGRADED, HealthState.DOWN, "no_success", T0)
     with capture_logs() as logs:
         await LoggingDeadMansSwitch().account_down(episode)

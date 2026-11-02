@@ -31,9 +31,10 @@ read the boot-time clock, and the loops sleep on the event loop's: a wall-clock 
 A pass that raises is logged by its error type (a message may echo exchange text, C-12.6) and the
 next one runs. A loop that ends, or whose passes keep failing, is a fault: `AccountsService`
 reports it as a degraded `accounts` check (AGENTS.md §5.2), and an ended loop is logged critical.
-Two bindings are stand-ins that fail closed until their owners land: the exchange's wallet read is
-unavailable (E29), so sizing is off once a snapshot is stale after a failed attempt, or a period
-old; the dead-man's-switch hook (E39) logs the episode.
+The wallet REST read is the exchange's on the real backend (`wallet_rest_wiring.py`, #5282); the
+fake backend keeps a stand-in that fails closed, so sizing there is off once a snapshot is stale
+after a failed attempt, or a period old. The dead-man's-switch hook (E39) is a stand-in that logs
+the episode.
 
 The runtime serves health and balances on the WS `wallet` topic (`accounts/wallet_topic.py`), which
 `create_app` builds on the gateway's hub and hands in: the topic's snapshots read the runtime's
@@ -53,7 +54,7 @@ from __future__ import annotations
 import asyncio
 import math
 from collections import Counter
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Protocol, cast, get_args
 from uuid import UUID
@@ -102,6 +103,7 @@ from candleviewer.storage.repositories.key_selfcheck_sqlalchemy import SqlAlchem
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+from candleviewer.wallet_rest_wiring import ExchangeWalletRest
 
 if TYPE_CHECKING:
     from candleviewer.accounts.service import AccountHealthFeed
@@ -210,14 +212,14 @@ class LoggingDeadMansSwitch:
 
 
 class UnavailableWalletRest:
-    """The REST wallet port until E29 implements `TradingPort.wallet()`: every read is unavailable,
-    so every reconciliation attempt fails. With the wallet stream (#848) the only refresh, sizing
-    is off once a snapshot is stale after a failed attempt, or a period old: fail closed. The
-    reconciler logs each failed attempt (`wallet.reconcile_failed`, a warning), one per tracked
-    account that is not healthy every `CV_ACCOUNT_HEARTBEAT_S`: expected, until E29 binds this."""
+    """The REST wallet port of the fake backend (C-13.5), which has no exchange: every read is
+    unavailable, so every reconciliation attempt fails. With the wallet stream (#848) the only
+    refresh, sizing is off once a snapshot is stale after a failed attempt, or a period old: fail
+    closed. The reconciler logs each failed attempt (`wallet.reconcile_failed`, a warning). The
+    real backend binds `ExchangeWalletRest` instead (`wallet_rest_wiring.py`, #5282)."""
 
     async def wallet(self, account_id: UUID) -> WalletSnapshot:
-        raise WalletUnavailable("no exchange adapter implements TradingPort.wallet yet")
+        raise WalletUnavailable("the fake backend has no exchange wallet read")
 
 
 def _passes(span_s: float, every_s: float) -> int:
@@ -629,7 +631,10 @@ class _UsableKeys(Protocol):
 
 
 def _repository_source(
-    settings: Settings, standings: KeyStandings, key_ages: KeyAgeNotices
+    settings: Settings,
+    standings: KeyStandings,
+    key_ages: KeyAgeNotices,
+    refs: Callable[[Iterable[SelfCheckTargetRow]], None] | None = None,
 ) -> tuple[MonitoredAccounts | None, Release | None, EpisodeStore | None]:
     """The real backend's tracking source: the usable-key read of the stored-key self-check, on a
     store of its own bound to the process environment (C-2.11), reduced to the ids of the enabled
@@ -638,7 +643,8 @@ def _repository_source(
     registration time and status, after the standing and the ids are taken: it only reports, so a
     job that raises is logged by its error type, once per change, and never keeps an account from
     being tracked. The runtime never holds a row, and the store is typed as the read alone. The
-    fake backend has none. The dead-man's-switch episode journal shares its pool and environment."""
+    fake backend has none. The dead-man's-switch episode journal shares its pool and environment.
+    `refs` takes the same rows after the standing (the wallet REST read's account refs, #5282)."""
     if settings.storage_backend != "real":
         return None, None, None
     env = settings.environment.value
@@ -661,6 +667,8 @@ def _repository_source(
         foreign_said = foreign
         own = [row for row in rows if row.account.env == env]
         standings.observe(own, began=began)
+        if refs is not None:  # the wallet read's account refs: the same rows, no read of its own
+            refs(own)
         enabled = frozenset(row.account.id for row in own if row.account.is_enabled)
         try:  # last: neither the standing nor the tracked set waits on a job that only reports
             key_ages.observe(
@@ -699,7 +707,8 @@ def wire_account_health(
     the key standing reads (`None` on the fake backend, which has none). The rest are the seams of
     the bindings that land later and of the tests: the clock (the standing reads its wall time, the
     one the self-check dates passes on, and ages its last good read on the monotonic one), the
-    loops' sleep, the exchange's wallet read (E29), the dead-man's-switch hook (E39), and the
+    loops' sleep, the exchange's wallet read (`wallet_rest_wiring.py`; the fake backend's stand-in
+    where it is `None`), the dead-man's-switch hook (E39), and the
     tracking source with the release of its pool and the episode journal on its database
     (`monitored` is the repository read; with none of the three given, the real backend's, which
     also feeds the standing). A `release` or a `journal` without the `monitored` it goes with is
@@ -721,7 +730,12 @@ def wire_account_health(
     if monitored is None:
         if release is not None or journal is not None:
             raise ValueError("a release or a journal goes with the `monitored` read: pass it too")
-        monitored, release, journal = _repository_source(settings, standings, key_ages)
+        monitored, release, journal = _repository_source(
+            settings,
+            standings,
+            key_ages,
+            rest.observe if isinstance(rest, ExchangeWalletRest) else None,
+        )
     thresholds = HealthThresholds.from_settings(settings)
     monitor = AccountHealthMonitor(
         clock, dms or LoggingDeadMansSwitch(), thresholds, journal=journal

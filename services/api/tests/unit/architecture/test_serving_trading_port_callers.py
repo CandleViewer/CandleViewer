@@ -10,7 +10,8 @@ serving loop for trading would sign there and send outside the OMS's anchors and
 audit (C-2.9). An attribute `trading_port` anywhere in `candleviewer/` or `cvdev/`, called or
 passed on, a call that reaches it by its name, or the method added back fails here, and a
 security review decides it (C-2.2). The file also pins `exposure_port`, the serving loop's one
-remaining port builder, to its one product caller, the exposure read (`exposure_wiring.py`).
+remaining port builder, to its two product callers, the exposure read (`exposure_wiring.py`) and
+the wallet reconciler's REST read (`wallet_rest_wiring.py`, #5282), both reads on the `poll` lane.
 
 Limits: these are AST checks, as in `test_account_rest_transport_callers.py`: an alias of the
 method or a name built at run time is not caught.
@@ -30,10 +31,10 @@ from candleviewer.exchange.bybit.service import ExchangeBybitService
 ROOTS = (Path(candleviewer.__file__).resolve().parent, Path(cvdev.__file__).resolve().parent)
 #: The adapter's method that built a port signed on the serving loop, removed in #913 L1d-2c.
 NAME = "trading_port"
-#: The serving loop's one remaining port builder (#913 L1d-2c), and its one product caller: the
-#: exposure read (#898 B2a).
+#: The serving loop's one remaining port builder (#913 L1d-2c), and its product callers: the
+#: exposure read (#898 B2a) and the wallet reconciler's read (#5282).
 EXPOSURE = "exposure_port"
-EXPOSURE_CALLERS = ["candleviewer/exposure_wiring.py"]
+EXPOSURE_CALLERS = ["candleviewer/exposure_wiring.py", "candleviewer/wallet_rest_wiring.py"]
 #: The calls that reach an attribute by its name.
 BY_NAME = frozenset({"getattr", "attrgetter", "methodcaller"})
 

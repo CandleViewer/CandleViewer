@@ -12,7 +12,7 @@ from uuid import UUID
 
 from candleviewer.account_health_wiring import AccountHealthRuntime, wire_account_health
 from candleviewer.accounts.service import AccountHealthFeed, AccountsService
-from candleviewer.accounts.wallet import WalletSnapshot
+from candleviewer.accounts.wallet import WalletRestPort, WalletSnapshot
 from candleviewer.accounts.wallet_topic import WalletTopic
 from candleviewer.observability.context import spawn
 from candleviewer.observability.metrics import Metrics
@@ -154,6 +154,7 @@ class Rig:
         settings: Settings | None = None,
         metrics: Metrics | None = None,
         journal: Journal | None = None,
+        rest_port: WalletRestPort | None = None,
     ) -> None:
         self.clock = FakeClock()
         self.sleeper = Sleeper(self.clock)
@@ -174,7 +175,7 @@ class Rig:
             clock=self.clock,
             sleep=self.sleeper.sleep,
             dms=self.dms,
-            rest=self.rest if rest else None,
+            rest=rest_port or (self.rest if rest else None),
             monitored=self._monitored if source else None,
             release=self._release if source else None,
             topic=self.topic,
