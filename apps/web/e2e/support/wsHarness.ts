@@ -89,7 +89,10 @@ export interface WsHarness {
   closeWith(
     close: Readonly<{ code: number; reason: string; bye?: Readonly<Record<string, unknown>> }>,
   ): void;
-  /** Every account-scoped private `sub` (6.2) and every `machines.` one, in arrival order. */
+  /**
+   * Every account-scoped private `sub` (6.2) and every account-scoped machine `sub` (6.4's kinds,
+   * `SCOPED_MACHINE`: the harness refuses each), in arrival order. A global `machines.` topic is neither.
+   */
   privateSubs(): readonly PrivateSub[];
   /** A `positions` frame (6.2.3): the first a `snap`, then `d`s, as the server sends them. */
   sendPositions(body: PositionsBody): void;
@@ -137,7 +140,10 @@ const ACCOUNT_SCOPED = new Set([
   "trade_groups",
   "rules",
 ]);
-/** 6.4: an account-scoped machine kind; with no runtime machine (B20 today) no entity has an entry. */
+/**
+ * 6.4's account-scoped machine kinds, `machines.<kind>:<id>.state`: the harness holds no entity, so it
+ * refuses each such `sub` `account_scope_denied`, as the gateway refuses one with no entry (B20 today).
+ */
 const SCOPED_MACHINE =
   /^machines\.(order|trade_group|leg|algo|reconciliation|risk_lockout):[^.]+\.state$/;
 const ID = (n: number): string => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
