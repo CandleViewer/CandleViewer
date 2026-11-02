@@ -254,7 +254,7 @@ describe("sources (BQ-18)", () => {
     store.applyRest(restItems.slice(0, 2), 1_000);
     store.commit();
     expect(store.getSnapshot()).toMatchObject({ status: "loading", source: "rest", asOfMs: 1_000 });
-    expect(store.getSnapshot().rows.map((r) => r.size)).toEqual(["0.250", "0.100"]);
+    expect(store.getSnapshot().rows.map((r) => r.size)).toEqual(["0.25", "0.1"]);
     store.applyFrames([snap(snapshot, 2_000)]);
     store.commit();
     expect(store.getSnapshot()).toMatchObject({ status: "live", source: "ws", asOfMs: 2_000 });

@@ -11,7 +11,9 @@
  * - **Resets.** A `reset` voids the WS baseline (`lib/ws/api.ts`): the rows shown stay as the last
  *   good view until the next `snap` replaces them. `narrowed` and `revoked` drop the accounts' rows
  *   at once from every cache, rows, liquidation state and balances alike (OM-I04, SR-E29-11), and
- *   each withdrawn account gets E29-D05 F-02's "No longer shown" line.
+ *   each withdrawn account gets E29-D05 F-02's "No longer shown" line. The line stands in place of
+ *   the rows (D02 §10.1, board 17) until the account is served again: a `snap` with its rows, or a
+ *   directory that lists it.
  * - **A narrowing** (`23` §9.5) arrives as a bare `reset`: the consumer API carries no
  *   `removed_accounts`, and the handle's `effective` keeps the old list (E17's registry does not
  *   edit it). Its accounts wait as candidates: one the narrowed `snap` serves was kept; the feed
@@ -286,6 +288,12 @@ export function createPositionsStore(options: PositionsStoreOptions = {}): Posit
     }
   }
 
+  /** Keeps the withdrawn lines `keep` accepts; the list changes only when one goes. */
+  function keepWithdrawn(keep: (accountId: string) => boolean): void {
+    const kept = withdrawn.filter((w) => keep(w.accountId));
+    if (kept.length !== withdrawn.length) withdrawn = kept;
+  }
+
   /** SR-E29-11: an account's rows, liquidation state and balances leave every cache now. */
   function dropAccounts(accountIds: ReadonlySet<string>): void {
     if (accountIds.size === 0) return;
@@ -368,6 +376,11 @@ export function createPositionsStore(options: PositionsStoreOptions = {}): Posit
       // a narrowing's `snap` is built under the new scope (`23` §9.5): an account it serves stayed
       for (const key of ws.keys()) pendingNarrowing.delete(accountOfKey(key));
       if (pendingNarrowing.size === 0) pendingNarrowing = null;
+    }
+    // an account this `snap` serves is in scope again: its "No longer shown" line goes
+    if (withdrawn.length > 0) {
+      const served = new Set([...ws.keys()].map(accountOfKey));
+      keepWithdrawn((accountId) => !served.has(accountId));
     }
     wsBaseline = true;
     everSnapped = true;
@@ -568,6 +581,7 @@ export function createPositionsStore(options: PositionsStoreOptions = {}): Posit
       const next = new Map(accounts.map((a) => [a.id, a]));
       const gone = new Set<string>();
       for (const id of directory?.keys() ?? []) if (!next.has(id)) gone.add(id);
+      keepWithdrawn((accountId) => !next.has(accountId)); // listed again: the line goes
       // a shown account, or a narrowing's candidate, gets its line; labels from the old directory
       const named = new Set([...heldAccounts(), ...(pendingNarrowing ?? [])]);
       noteWithdrawn([...gone].filter((id) => named.has(id)));
