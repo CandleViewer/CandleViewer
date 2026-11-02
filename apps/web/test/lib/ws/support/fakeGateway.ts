@@ -131,10 +131,11 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
   let denials = 0;
   let rebuildsToRefuse = 0;
   let ctlsToRefuse = 0;
+  let ctlRefusal = "resync_rate_limited";
   let subsToFail = 0;
   let snapsWithheld = false;
   let unsubsToFail = 0;
-  const refusedTopics = new Set<string>();
+  const refusedTopics = new Map<string, string>();
   const now = () => Date.now() + skewMs;
 
   /** What `sub_ok.effective` says: the options after the clamps (5.2), a heatmap's throttle following its bucket (6.1). */
@@ -276,8 +277,9 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
       const made: Sub[] = [];
       const results = topics.map((entry) => {
         const ch = String(entry["ch"]);
-        if (refusedTopics.has(ch))
-          return { ch, ok: false, error: { code: "forbidden", message: "refused" } };
+        const refusal = refusedTopics.get(ch);
+        if (refusal !== undefined)
+          return { ch, ok: false, error: { code: refusal, message: "refused" } };
         if (subs.has(keyOf(ch, rs))) {
           problems.push(`${ch} subscribed twice`);
           return { ch, ok: false, error: { code: "duplicate_subscription", message: "twice" } };
@@ -335,13 +337,15 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
         asked["time_bucket_ms"] !== undefined &&
         asked["time_bucket_ms"] !== sub.effective["time_bucket_ms"];
       if ((rebucketed && rebuildsToRefuse > 0) || ctlsToRefuse > 0) {
-        if (rebucketed && rebuildsToRefuse > 0) rebuildsToRefuse -= 1;
+        const rebuild = rebucketed && rebuildsToRefuse > 0;
+        if (rebuild) rebuildsToRefuse -= 1;
         else ctlsToRefuse -= 1;
-        // the rebuild budget (SR-193, 5.4): nothing is applied and no snapshot follows
+        // the rebuild budget (SR-193, 5.4), or what `refuseCtls` names: nothing is applied and no snapshot follows
+        const code = rebuild ? "resync_rate_limited" : ctlRefusal;
         return later("ctl_ok", () =>
           reply(
             "err",
-            { ch: sub.ch, ...namedBy(sub), p: { code: "resync_rate_limited", message: "budget" } },
+            { ch: sub.ch, ...namedBy(sub), p: { code, message: "budget" } },
             frame["id"],
           ),
         );
@@ -583,9 +587,10 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
     refuseRebuilds(n: number) {
       rebuildsToRefuse = n;
     },
-    /** The next `n` `ctl`s of any kind are refused `resync_rate_limited`: a server that does so to a throttle too. */
-    refuseCtls(n: number) {
+    /** The next `n` `ctl`s of any kind are refused with `code`: `resync_rate_limited` (a server that does so to a throttle too), or a quota's `subscription_limit` (5.4). */
+    refuseCtls(n: number, code = "resync_rate_limited") {
       ctlsToRefuse = n;
+      ctlRefusal = code;
     },
     /** The snapshots a `sub`, a `resync` or a retune would bring are not sent; `conn.snap(ch, reason)` still sends one. */
     withholdSnaps(on: boolean) {
@@ -599,9 +604,9 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
     failSubs(n: number) {
       subsToFail = n;
     },
-    /** A `sub` of `ch` is answered `forbidden`. */
-    refuseTopic(ch: string) {
-      refusedTopics.add(ch);
+    /** A `sub` of `ch` is answered `code`: `forbidden`, or a quota's `subscription_limit` (5.2). */
+    refuseTopic(ch: string, code = "forbidden") {
+      refusedTopics.set(ch, code);
     },
     /** The next `n` `auth` frames, re-auths included, are refused. */
     refuseAuths(n: number) {
