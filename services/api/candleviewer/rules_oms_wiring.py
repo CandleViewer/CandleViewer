@@ -16,7 +16,7 @@ E35-T13 binds `send_notification`'s handler over the `rule.notify` outbox writer
 (`rule_notification_handler`) and refuses start above the signal chain's depth cap
 (`rule_signal_depth`).
 Outcome and severity go as their values (C-3.3 keeps `audit` from this module, as from
-`oms_stream_wiring`). Nothing here logs: the input snapshot is financial and confidential (21
+`oms_stream_wiring`). Nothing here logs an input snapshot: it is financial and confidential (21
 §3.4.3).
 """
 

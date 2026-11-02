@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from candleviewer.rules.executor.control import NotificationHandler
 from candleviewer.rules.executor.gates import Gates
 from candleviewer.rules.executor.handlers import (
     HANDLERS,
@@ -73,6 +74,10 @@ class _Bound:
 
     async def send(self, prepared: Prepared, *, client_ref: str) -> HandlerAnswer:
         raise AssertionError("never reached")
+
+
+class _Cancels(_Bound):
+    capability: Capability = "oms_cancel"
 
 
 async def test_unavailable_action_blocks_arming_with_a_safety_warning() -> None:
@@ -166,3 +171,17 @@ def test_the_engines_own_types_are_never_bound_by_the_composition_root() -> None
         "enable_rule",
         "log_journal_tag",
     }
+
+
+@pytest.mark.parametrize(
+    "engine", [{"handlers": {"cancel_order": _Cancels()}}], indirect=True, ids=["second-bind"]
+)
+async def test_each_bind_of_handlers_adds_to_the_earlier_ones(engine: EngineRig) -> None:
+    """BQ-2 of #5005: the composition root binds handlers in more than one call (E35-T11's and
+    E35-T12's in calls of their own), each adding to an earlier one's: the rig's
+    `send_notification` and this test's `cancel_order` both reach the executor's table."""
+    executor = engine.svc._executor
+    assert executor is not None
+    table = executor._handlers
+    assert isinstance(table["send_notification"].handler, NotificationHandler)
+    assert isinstance(table["cancel_order"].handler, _Cancels)

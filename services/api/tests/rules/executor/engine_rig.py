@@ -1,9 +1,9 @@
 """A `RulesService` rig for E35-T13's engine-internal actions (24 §11.5): the evaluator on, its
-runner driven by hand (`process`, never its task), the clocks frozen, the records in memory and the
-checks' ports open, so each fire's actions run through the real executor and the engine's own
-handlers. `drain` runs every waiting signal through the runner, until none waits. A rule may be
-stored past the validator (`trigger`, `owner`), as a version saved before a check or brought in by
-an upcaster would be (BQ-4 of #5005)."""
+runner driven by hand (`process`, never its task), the clocks frozen, the records and the `rules`
+broadcasts in memory and the checks' ports open, so each fire's actions run through the real
+executor and the engine's own handlers. `drain` runs every waiting signal through the runner, until
+none waits. A rule may be stored past the validator (`trigger`, `owner`), as a version saved before
+a check or brought in by an upcaster would be (BQ-4 of #5005)."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from candleviewer.rules import manager as manager_module
 from candleviewer.rules import service as rules_service
 from candleviewer.rules.executor import control as control_module
 from candleviewer.rules.executor.control import NotificationHandler, NotifyRow
@@ -83,6 +84,23 @@ class AskedStops:
         return True
 
 
+class Frames:
+    """The manager's `rules` broadcast hook, recording each frame it is given; it raises once a
+    test sets `fail`, as a hub that is gone would, and waits while a test's `held` is unset."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict[str, Any]] = []
+        self.fail = False
+        self.held: asyncio.Event | None = None
+
+    async def __call__(self, payload: dict[str, Any]) -> None:
+        if self.fail:
+            raise ConnectionError("the hub is gone")
+        if self.held is not None:
+            await self.held.wait()
+        self.sent.append(dict(payload))
+
+
 @dataclass
 class EngineRig:
     svc: RulesService
@@ -96,6 +114,7 @@ class EngineRig:
     outbox: FakeOutbox = field(default_factory=FakeOutbox)
     principals: Principals = field(default_factory=lambda: Principals(frozenset({ACCOUNT})))
     stops: AskedStops = field(default_factory=AskedStops)
+    frames: Frames = field(default_factory=Frames)
 
     @property
     def bus(self) -> SignalBus:
@@ -138,12 +157,16 @@ class EngineRig:
         self.svc.metric_source.push(PRICE, Decimal(price), self.clock.t)
         await self.runner.process(EvalTick("on_price_update", "BTCUSDT"))
 
-    async def settle(self) -> None:
+    async def settle(self, *, broadcasts: bool = True) -> None:
+        """Every fire run and recorded, then (`broadcasts`) every move's `rules` broadcast, which
+        runs beside the move as the manager's tracked task."""
         async with asyncio.timeout(10):  # a guard: a fire that never ends fails the test
             await asyncio.gather(*self.svc._tasks)
             for queue in (self.svc._dispatch, self.svc._audits):
                 assert queue is not None
                 await queue.idle()
+            if broadcasts:
+                await asyncio.gather(*self.mgr._stop_broadcasts)
 
     async def drain(self) -> list[int]:
         """Settle, then each waiting signal through the runner as its task would, settling after
@@ -169,15 +192,21 @@ class EngineRig:
 
 
 @pytest.fixture
-async def engine(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[EngineRig]:
+async def engine(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> AsyncIterator[EngineRig]:
+    """The rig, started. A test parametrized with `indirect=True` hands it binds of its own
+    (`signal_max_depth`, `handlers`), made after the rig's and before the start."""
     clock = Clock()
     monkeypatch.setattr(rules_service, "default_clocks", lambda: (clock, clock))
     monkeypatch.setattr(RuleEvaluationRunner, "start", lambda self: None)  # driven by hand
-    # A control move's bound and a notification write's (2 s each) are tested at 0 by themselves;
-    # here they are lifted, so a loaded host (coverage, a load average far above the cores) never
-    # decides a scenario, as #5002's auto-disarm tests lift theirs.
+    # A control move's bound and a notification write's (2 s each) are tested at 0 by themselves,
+    # and a moved rule's broadcast's own bound by #5002's stop tests; here they are lifted, so a
+    # loaded host (coverage, a load average far above the cores) never decides a scenario, as
+    # #5002's auto-disarm tests lift theirs.
     monkeypatch.setattr(control_module, "CONTROL_TIMEOUT_S", 60.0)
     monkeypatch.setattr(control_module, "NOTIFY_TIMEOUT_S", 60.0)
+    monkeypatch.setattr(manager_module, "STOP_TIMEOUT_S", 60.0)
     audits: list[tuple[str, dict[str, Any]]] = []
 
     async def audit(event: str, data: dict[str, Any]) -> None:
@@ -187,11 +216,13 @@ async def engine(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[EngineRig]:
         return None
 
     store, records, counted, outbox = InMemoryRuleStore(), Records(), Counted(), FakeOutbox()
+    frames = Frames()
     svc = RulesService()
     svc.bind(store=store, audit=audit, handlers={"send_notification": NotificationHandler(outbox)})
     svc.bind(records=(records, records), metrics=counted.metrics, switches=Switches())
     principals, stops = Principals(frozenset({ACCOUNT})), AskedStops()
-    svc.bind(principal=principals, stop_check=stops)
+    svc.bind(principal=principals, stop_check=stops, broadcast=frames)
+    svc.bind(**getattr(request, "param", {}))
     svc.wire_scope(Source(), "demo", scope_audit)
     ctx: Any = SimpleNamespace(settings=SimpleNamespace(rules_evaluator_enabled=True))
     await svc.start(ctx)
@@ -199,7 +230,8 @@ async def engine(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[EngineRig]:
     assert mgr is not None and runner is not None
     try:
         yield EngineRig(
-            svc, mgr, store, runner, clock, records, counted, audits, outbox, principals, stops
-        )
+            svc, mgr, store, runner, clock, records, counted, audits, outbox, principals, stops,
+            frames,
+        )  # fmt: skip
     finally:
         await svc.stop(1.0)

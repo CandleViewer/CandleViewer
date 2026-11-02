@@ -79,7 +79,10 @@ class SignalSource(Protocol):
     def listen(self, wake: Callable[[], None]) -> None: ...
 
 
-def _owner(rule: Rule) -> UUID | None:
+def rule_owner(rule: Rule) -> UUID | None:
+    """The rule's owner, its `created_by`, or `None` when it names no owner: the one reading of
+    it, by which `RulesService` stamps a fire's owner (so its signal's) and `_delivers` filters
+    each signal, so the two never drift apart (RE-S3)."""
     try:
         return UUID(str(rule.created_by)) if rule.created_by else None
     except ValueError:
@@ -91,7 +94,7 @@ def _delivers(tick: EvalTick, rule: Rule) -> bool:
     never on an `on_signal` tick that carries none; every other trigger evaluates as it did."""
     if rule.trigger.type != "on_signal":
         return True
-    return tick.signal is not None and _owner(rule) == tick.signal.owner
+    return tick.signal is not None and rule_owner(rule) == tick.signal.owner
 
 
 def _instances(rule: Rule, tick: EvalTick) -> list[str]:

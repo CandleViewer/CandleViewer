@@ -92,12 +92,14 @@ async def test_a_rule_control_move_names_the_rule_as_its_actor() -> None:
     label never rides `after_state`, which keeps the two users' ids, the run and the node."""
     emitter = _Emitter()
     audit = make_rules_audit(emitter)
+    armer = str(uuid.UUID(int=0xA2))
     actor = {"rule_actor": "rule:r9@v2", "actor_type": "rule", "owner_user_id": _ACTOR,
-             "armed_by_user_id": _ACTOR, "run_id": "u1", "node_id": "p1"}  # fmt: skip
+             "armed_by_user_id": armer, "run_id": "u1", "node_id": "p1"}  # fmt: skip
     for event, reason in (("rule.disarmed", "pause_rule"), ("rule.simulated", "enable_rule")):
         await audit(event, {"rule_id": "r1", "from": "armed", "reason": reason} | actor)
     assert [action for action, _ in emitter.records] == ["rules.disarm", "rules.simulate"]
     for _, fields in emitter.records:
         assert (fields["actor_label"], fields["actor_user_id"]) == ("rule:r9@v2", None)
         assert fields["object_id"] == "r1" and "rule_actor" not in fields["after_state"]
-        assert fields["after_state"]["owner_user_id"] == _ACTOR
+        after = fields["after_state"]
+        assert (after["owner_user_id"], after["armed_by_user_id"]) == (_ACTOR, armer)

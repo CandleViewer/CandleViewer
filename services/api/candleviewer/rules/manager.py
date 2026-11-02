@@ -500,8 +500,9 @@ class RulesManager:
         self._sim_window: dict[str, tuple[str, int]] = {}
         #: rule_id -> its disarm in flight above a hard cap (#3232): one per rule, `stop()` cancels.
         self._tick_disarms: dict[str, asyncio.Task[None]] = {}
-        #: The `rules` broadcasts of the forced stops (E35-T10), each run beside the move, never
-        #: inside its caller's bound, so a slow broadcast never reads as a failed move.
+        #: The `rules` broadcasts of the forced stops (E35-T10) and of the rule-control moves
+        #: (E35-T13), each run beside the move, never inside its caller's bound, so a slow
+        #: broadcast never reads as a failed move.
         self._stop_broadcasts: set[asyncio.Task[None]] = set()
         #: Forced disarms run one at a time, so their re-read of the row and chart holds (#3232).
         self._disarming = asyncio.Lock()
@@ -532,8 +533,8 @@ class RulesManager:
             self._left_armed = left_armed
 
     async def stop(self) -> None:
-        """Cancel the tick disarms in flight (their rules stay armed, skipped) and the forced
-        stops' broadcasts still running, then the charts."""
+        """Cancel the tick disarms in flight (their rules stay armed, skipped) and the broadcasts
+        of the forced stops and the control moves still running, then the charts."""
         tasks = [*self._tick_disarms.values(), *self._stop_broadcasts]
         for task in tasks:
             task.cancel()
@@ -1209,16 +1210,17 @@ class RulesManager:
         task.add_done_callback(self._stop_broadcasts.discard)
         return "moved"
 
-    async def _broadcast_stop(self, rule_id: str, payload: dict[str, Any]) -> None:
+    async def _broadcast_stop(
+        self, rule_id: str, payload: dict[str, Any], failed: str = "rules.stop_broadcast_failed"
+    ) -> None:
         """The moved rule's `rules` broadcast, under its own bound: one that fails or runs late is
-        logged by the error's class, and the move stands."""
+        logged by the error's class, under `failed` (a forced stop's, or a control move's), and the
+        move stands."""
         try:
             async with asyncio.timeout(STOP_TIMEOUT_S):
                 await self._bc({"topic": "rules", **payload})
         except Exception as lost:  # the hook names no error type
-            _log().warning(
-                "rules.stop_broadcast_failed", rule_id=rule_id, error=type(lost).__name__
-            )
+            _log().warning(failed, rule_id=rule_id, error=type(lost).__name__)
 
     async def control_rule(self, request: ControlRequest) -> ControlSkip | None:
         """The system path of `pause_rule` and `enable_rule` (24 §11.5; E35-T13, BQ-7): no session
@@ -1226,8 +1228,10 @@ class RulesManager:
         system rule (§11.8), and in a B9 state that takes the move; else the reason it was not
         moved. The move is recorded (`rule.disarmed` with the reason `pause_rule`, or
         `rule.simulated` with `enable_rule`) under the acting rule as its actor, before the row is
-        written, then broadcast. Forced moves run one at a time, on the row read again; its caller
-        bounds it."""
+        written. Forced moves run one at a time, on the row read again; its caller bounds the move,
+        and its `rules` broadcast then runs beside the caller under a bound of its own
+        (`_broadcast_stop`, as a forced stop's), so a slow or failed one never reads as a failed
+        move."""
         event, takes, mode, action = _CONTROL_MOVES[request.move]
         async with self._disarming:
             row = await self._s.get(request.target)
@@ -1251,12 +1255,10 @@ class RulesManager:
                 row, event, action, moved | _rule_actor(request), reason=request.move
             ):
                 return "control_state"
-        try:  # the rule has moved: a broadcast that fails is no failed move
-            await self._bc({"topic": "rules", **moved})
-        except Exception as lost:  # the hook names no error type
-            _log().warning(
-                "rules.control_broadcast_failed", rule_id=row.id, error=type(lost).__name__
-            )
+        failed = "rules.control_broadcast_failed"
+        task = spawn(self._broadcast_stop(row.id, moved, failed), name="rule-control-broadcast")
+        self._stop_broadcasts.add(task)
+        task.add_done_callback(self._stop_broadcasts.discard)
         return None
 
     async def _disarm_on_tick(self, row: RuleRow) -> None:

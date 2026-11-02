@@ -63,6 +63,7 @@ from candleviewer.rules.runner import (
     PushedMetricSource,
     RuleEvaluationRunner,
     default_clocks,
+    rule_owner,
 )
 from candleviewer.rules.scope import ActionRequest, EvaluableMode, ScopeInstanceRef
 from candleviewer.rules.vocabulary import MetricRegistry, default_registry
@@ -82,13 +83,6 @@ OWN_TYPES: Final = frozenset(
 def _log() -> Any:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)
-
-
-def _owner_uuid(rule: Rule) -> UUID | None:
-    try:
-        return UUID(str(rule.created_by)) if rule.created_by else None
-    except ValueError:
-        return None
 
 
 async def _discard_actions(_req: ActionRequest) -> None:
@@ -274,7 +268,7 @@ class RulesService:
         """Re-read grants/freeze for each rule owner; a failed refresh fails closed."""
         if self.scope_state is None:
             return
-        for owner in {o for o in (_owner_uuid(r) for r in rules) if o is not None}:
+        for owner in {o for o in (rule_owner(r) for r in rules) if o is not None}:
             try:
                 await self.scope_state.refresh(owner)
             except Exception:
@@ -511,7 +505,7 @@ class RulesService:
             else:
                 return
             rule = item.rule
-            owner = _owner_uuid(rule)
+            owner = rule_owner(rule)
             if owner is None:
                 return  # fail closed: no owner => no scope to resolve => no action
             sym, _, acct = result.scope_instance.partition("@")
@@ -548,7 +542,7 @@ class RulesService:
                 # No scope wiring: fail closed. Bare evaluator, simulate-only (see below);
                 # it records results but no action is ever emitted.
                 return Evaluator(rule, snaps, wall, mono, on_result=self.evaluation_sink())
-            owner = _owner_uuid(rule)
+            owner = rule_owner(rule)
             return self.build_evaluator(
                 rule, snaps, wall, mono, owner=owner or UUID(int=0),
                 environment=env, on_result=self.evaluation_sink(),
