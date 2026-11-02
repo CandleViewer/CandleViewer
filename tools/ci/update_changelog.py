@@ -5,7 +5,7 @@ with `--preview` (writes nothing; job summary); a reviewed sync PR runs it witho
 
 Usage:
     python tools/ci/update_changelog.py (--commits-json PATH | --since-last-tag [--rev REV])
-        [--changelog PATH] [--preview] [--summary PATH]
+        [--changelog PATH] [--preview] [--summary PATH] [--pr-labels-json PATH]
 
 Idempotent merge (a pure function of the file and the commit list; a re-run is byte-identical):
 exact-duplicate entries in Unreleased collapse (first occurrence wins); existing and curated
@@ -13,9 +13,18 @@ entries stay verbatim and in place; a commit is present when an entry line under
 or a `## X.Y.Z — YYYY-MM-DD` heading ENDS with its `(sha7)` or the last `(#N)` of its subject
 (never a mid-line mention, never the header above the first `##`); any other content inside
 Unreleased raises ChangelogFormatError. `--commits-json` holds `[{"sha", "message"}]`;
-`--since-last-tag` uses `tools/ci/collect_commits.py`.
+`--since-last-tag` uses `tools/ci/collect_commits.py`. `--pr-labels-json` is the merged PRs'
+labels (#3347): a `security`-labelled `feat`/`fix`/`perf` moves to Security. Produce it with
+`gh pr list --state merged --limit <N> --json number,labels > labels.json`, with `<N>` covering
+every PR since the last release tag (the default lists only 30 open PRs); a pending commit whose
+`(#N)` is missing from the file is warned about. The tool itself makes no network call.
 
-Exit codes: 0 updated or no change, 1 ChangelogFormatError or a git/shallow-repository error.
+Security wording guard (#3347, 07 §3): a sync (not `--preview`) whose Security section would hold
+a line failing `check_security_wording`, or a commit whose `Changelog-Security:` footer failed it,
+fails and writes nothing; `--preview` only warns.
+
+Exit codes: 0 updated or no change, 1 ChangelogFormatError, a git/shallow-repository error or a
+Security wording-guard failure (sync only).
 """
 
 from __future__ import annotations
@@ -38,6 +47,7 @@ from tools.ci.changelog_lib import (  # noqa: E402
     build_changelog_update,
     check_security_wording,
     parse_commit,
+    pr_number,
 )
 from tools.ci.collect_commits import (  # noqa: E402
     CollectCommitsError,
@@ -75,6 +85,11 @@ class MergeResult:
     duplicates: int
     security_violations: list[str]
     dropped_footers: list[str] = field(default_factory=list)
+    # `dropped_footers` holds every rejected footer (empty or failing the guard: a warning);
+    # `refused_footers` only the non-empty ones that failed the guard (these fail a sync).
+    refused_footers: list[str] = field(default_factory=list)
+    label_skipped: list[str] = field(default_factory=list)
+    pending_commits: list[ParsedCommit] = field(default_factory=list)
 
 
 def _default_changelog() -> str:
@@ -87,9 +102,38 @@ def _default_changelog() -> str:
     return "\n".join(lines)
 
 
-def _load_commits(path: Path) -> list[ParsedCommit]:
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    return [parse_commit(item["sha"], item["message"]) for item in raw]
+class PrLabelsError(Exception):
+    """The `--pr-labels-json` file is unreadable or not `gh pr list --json number,labels` shape."""
+
+
+def load_pr_labels(path: Path | None) -> dict[int, frozenset[str]]:
+    """PR number -> label names, from `gh pr list --json number,labels` output (#3347)."""
+    if path is None:
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return {int(pr["number"]): frozenset(lb["name"] for lb in pr["labels"]) for pr in raw}
+    except (OSError, KeyError, ValueError, TypeError) as exc:
+        raise PrLabelsError(f"not a gh pr list --json number,labels file ({exc!r})") from exc
+
+
+def _labels_missing(commits: list[ParsedCommit], labels: dict[int, frozenset[str]]) -> list[str]:
+    """sha7 of each commit whose subject ends with a `(#N)` that `labels` does not hold."""
+    out = []
+    for commit in commits:
+        number = pr_number(commit.subject_line)
+        if number is not None and number not in labels:
+            out.append(commit.sha[:7])
+    return out
+
+
+def _parse(raw: list[dict[str, str]], labels: dict[int, frozenset[str]]) -> list[ParsedCommit]:
+    out = []
+    for item in raw:
+        number = pr_number(item["message"].partition("\n")[0])
+        found = labels.get(number, frozenset()) if number is not None else frozenset()
+        out.append(parse_commit(item["sha"], item["message"], found))
+    return out
 
 
 def _render_unreleased_section(existing: dict[Category, list[str]]) -> list[str]:
@@ -191,6 +235,8 @@ def merge_unreleased(changelog_text: str, commits: list[ParsedCommit]) -> MergeR
     seen = {line.rstrip() for line in present}
     pending_commits = [c for c in commits if not is_referenced(c, tokens)]
     dropped = [c.sha[:7] for c in pending_commits if c.security_rejected is not None]
+    refused = [c.sha[:7] for c in pending_commits if c.security_rejected]
+    skipped = [c.sha[:7] for c in pending_commits if c.security_label_skipped]
     update = build_changelog_update(pending_commits)
     pending = 0
     for cat, new_lines in update.entries.items():
@@ -206,7 +252,17 @@ def merge_unreleased(changelog_text: str, commits: list[ParsedCommit]) -> MergeR
     security = check_security_wording(entries.get(Category.SECURITY, []))
     total = sum(len(lines) for lines in entries.values())
     return MergeResult(
-        text, changed, section, total, pending, duplicates, security.violations, dropped
+        text,
+        changed,
+        section,
+        total,
+        pending,
+        duplicates,
+        security.violations,
+        dropped,
+        refused,
+        skipped,
+        pending_commits,
     )
 
 
@@ -243,6 +299,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--changelog", type=Path, default=Path("CHANGELOG.md"))
     parser.add_argument("--preview", action="store_true", help="write nothing; print the result")
     parser.add_argument("--summary", type=Path, default=None, help="append a markdown report")
+    parser.add_argument(
+        "--pr-labels-json",
+        type=Path,
+        default=None,
+        help="merged PRs' labels: gh pr list --state merged --limit <N> --json number,labels",
+    )
     args = parser.parse_args(argv)
     if args.rev is not None and not args.since_last_tag:
         parser.error("--rev needs --since-last-tag")
@@ -252,16 +314,21 @@ def main(argv: list[str] | None = None) -> int:
     else:
         text = _default_changelog()
     try:
+        labels = load_pr_labels(args.pr_labels_json)
         if args.since_last_tag:
             rev = args.rev or "HEAD"
             tag = last_final_tag(rev)
             origin = f"{tag}..{rev}" if tag else f"{rev} (no final v* tag reachable)"
-            commits = [parse_commit(c["sha"], c["message"]) for c in commits_since_last_tag(rev)]
+            commits = _parse(commits_since_last_tag(rev), labels)
         else:
-            commits, origin = _load_commits(args.commits_json), str(args.commits_json)
+            raw = json.loads(args.commits_json.read_text(encoding="utf-8"))
+            commits, origin = _parse(raw, labels), str(args.commits_json)
         result = merge_unreleased(text, commits)
     except (ChangelogFormatError, CollectCommitsError) as exc:
         print(f"::error::{_escape(f'{args.changelog}: {exc}')}")
+        return 1
+    except PrLabelsError as exc:
+        print(f"::error::{_escape(f'{args.pr_labels_json}: {exc}')}")
         return 1
 
     section = "\n".join(result.section).rstrip("\n")
@@ -284,6 +351,19 @@ def main(argv: list[str] | None = None) -> int:
         "its Security line is missing, check the fixing PR's body"
         for sha in result.dropped_footers
     ]
+    warnings += [
+        f"commit {sha} is labelled security but its subject failed the wording check: "
+        "it stays under its type section"
+        for sha in result.label_skipped
+    ]
+    if args.pr_labels_json is not None:
+        missing = _labels_missing(result.pending_commits, labels)
+        if missing:
+            warnings.append(
+                f"{len(missing)} pending commit(s) have a PR number missing from "
+                f"{args.pr_labels_json} (first: {', '.join(missing[:5])}): their security label "
+                "was not checked; list merged PRs with --state merged and a --limit covering them"
+            )
     if result.pending > PENDING_WARN_THRESHOLD:
         warnings.insert(
             0,
@@ -295,6 +375,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.summary is not None:
         with args.summary.open("a", encoding="utf-8") as fh:
             fh.write(_summary(counts, section))
+    if not args.preview and (result.security_violations or result.refused_footers):
+        # #3347: a wording-guard failure fails the sync, and nothing is written.
+        print(
+            "::error::Security changelog wording check failed (docs/plan/07-release-and-prr.md "
+            f"§3); nothing written. Lines: {len(result.security_violations)}, refused footers: "
+            f"{', '.join(result.refused_footers) or 'none'}. Keep Security lines to the impact; "
+            "the detail stays in the internal finding tracker. To unblock a refused footer, "
+            "add an impact-only line under Unreleased Security ending with that commit's (#N) "
+            "or (sha7)."
+        )
+        return 1
     if args.preview or not result.changed:
         return 0
     args.changelog.write_text(result.text, encoding="utf-8", newline="\n")
