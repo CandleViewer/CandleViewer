@@ -318,9 +318,6 @@ importers:
       '@candleviewer/config':
         specifier: workspace:*
         version: link:../../packages/config
-      '@candleviewer/dock':
-        specifier: workspace:*
-        version: link:../../packages/dock
       '@candleviewer/fixtures':
         specifier: workspace:*
         version: link:../../packages/fixtures

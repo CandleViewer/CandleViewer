@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   DockError,
+  close,
   counterMinter,
+  float,
   fromLayout,
   leavesOf,
   toLayoutInput,
@@ -12,7 +14,7 @@ import {
   type ReadContext,
   type StoredArrangement,
 } from "../src/index.js";
-import { leaf, preset, shape, treeOf } from "./fixtures.js";
+import { ctx, leaf, preset, shape, treeOf } from "./fixtures.js";
 
 const KNOWN = new Set(["chart", "dom", "tape", "positions"]);
 const read: ReadContext = {
@@ -128,6 +130,22 @@ describe("serialisation (Gherkin: Serialisation matches the stored schema)", () 
         expect.objectContaining({ code: "unknown_preset", path: "grid_preset" }),
       );
     }
+  });
+
+  it("toLayoutInput_emptyDock: no pane at all stores as 1x1 with no panes and reads back empty", () => {
+    const empty = close(preset("1x1", ["a"]), "a", ctx());
+    expect(empty.root).toBeNull();
+    const out = toLayoutInput(empty, new Map());
+    expect(out).toEqual({ grid_preset: "1x1", grid_spec: null, panes: [] });
+    const back = fromLayout(out, read);
+    expect(back.tree.root).toBeNull();
+    expect(toLayoutInput(back.tree, back.panes)).toEqual(out);
+  });
+
+  it("toLayoutInput_noPaneDocked_rejects: floating the last docked pane leaves no stored form", () => {
+    const floated = float(preset("1x1", ["a"]), "a", ctx());
+    expect(floated.root).toBeNull();
+    expect(code(() => toLayoutInput(floated, new Map()))).toBe("empty_dock");
   });
 
   it("refuses more than 16 panes on write", () => {
