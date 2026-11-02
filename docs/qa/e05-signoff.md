@@ -34,17 +34,25 @@ for the owner, not a QA judgement (precedent `docs/qa/a11y/e47-t01-sweep.md`:15,
 
 ## 2. Acceptance criteria (E05-Q03)
 
-| AC                                          | State                                 | Evidence                                                                                                                        |
-| ------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| 1. Every fixed defect has a regression test | pass                                  | pack C: D1 to D3 (Q01), F-1 and F-2 (Q02) red on a unit-test revert; F-3 red on the sweep driver; the F-3 unit test an addition |
-| 2. Per-PR pack fits the pipeline budget     | pass (per PR); no nightly VR, CV-1    | pack A: at `1c4f51bb5` shards 189 s to 270 s against 360 s, the `storybook` job 166 s against 600 s                             |
-| 3. Triage workflow is unambiguous           | pass                                  | `packages/ui/README.md`, "Reviewing a diff" plus this PR's routing addendum (pack F); the VR quarantine-tag gap is CV-16        |
-| 4. Epic sign-off is explicit                | proposed, `approved: pending (owner)` | section 5 (pass / fail per story group), section 8 (deviations and carries with owners), section 10 (the proposed comment)      |
+| AC                                          | State                                               | Evidence                                                                                                                        |
+| ------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| 1. Every fixed defect has a regression test | pass                                                | pack C: D1 to D3 (Q01), F-1 and F-2 (Q02) red on a unit-test revert; F-3 red on the sweep driver; the F-3 unit test an addition |
+| 2. Per-PR pack fits the pipeline budget     | partial: per-PR pass; no nightly VR, deviation CV-1 | pack A: at `1c4f51bb5` shards 189 s to 270 s against 360 s, the `storybook` job 166 s against 600 s                             |
+| 3. Triage workflow is unambiguous           | pass                                                | `packages/ui/README.md`, "Reviewing a diff" plus this PR's routing addendum (pack F); the VR quarantine-tag gap is CV-16        |
+| 4. Epic sign-off is explicit                | proposed, `approved: pending (owner)`               | section 5 (pass / fail per story group), section 8 (deviations and carries with owners), section 10 (the proposed comment)      |
 
-DoD rows: (1) pack defined and wired per PR; no nightly VR is the named deviation CV-1 (row 1 counts as landed with it,
-ruling BQ-2 / BQ-4); "tagged" is replaced by selection by name (BQ-6, Deviation); (2) met by the named red evidence
-(BQ-5, BQ-6, Deviation); (3) met; (4) section 3; (5) section 10, posted on #263 as a proposal and pointed to from #30;
-(6) the README section "Not breaking the design system", pointed to by a comment on E10 (#37).
+| DoD row                                  | Status                     | Evidence                                                                                         |
+| ---------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------ |
+| 1. Pack defined and wired per PR         | landed with deviation CV-1 | no nightly VR (ruling BQ-2 / BQ-4); "tagged" replaced by selection by name (BQ-6, CV-3)          |
+| 2. Every fixed defect has red evidence   | met                        | pack C (BQ-5, BQ-6)                                                                              |
+| 3. Triage workflow documented            | met                        | `packages/ui/README.md`, pack F                                                                  |
+| 4. Epic regression run recorded          | met                        | section 3                                                                                        |
+| 5. Proposed QA comment on #263, from #30 | pending post               | section 10; posted on #263 as a proposal and pointed to from #30 after this PR merges            |
+| 6. Contributor note pointed to from E10  | pending post               | the README section "Not breaking the design system"; a comment on E10 (#37) after this PR merges |
+
+Rows 5 and 6 are comments, not files, so this PR cannot land them: per ruling BQ-0 to BQ-2 the PR references #263 with
+a `Partial:` line and uses no closing keyword; the ticket closes only once rows 5 and 6 are posted and the owner signs
+off.
 
 ## 3. The epic regression run
 
@@ -55,14 +63,14 @@ ruling BQ-2 / BQ-4); "tagged" is replaced by selection by name (BQ-6, Deviation)
 | (c) unit (heuristic)                              | `pnpm --filter @candleviewer/ui test`              | 219 files, 4,139 tests passed, 0 failed (38 s); the F-3 test adds one per Typography story (9)                                                                                                                                                                                |
 | (b) interaction + axe, default cell (heuristic)   | `pnpm --filter @candleviewer/ui storybook:test`    | 89 files, 956 stories passed, 5 skipped (the `perf` stories), 0 failed (53 s)                                                                                                                                                                                                 |
 | (d) full axe sweep + `merge --strict` (heuristic) | Q02 report §7 step 2                               | 956 stories (5 `perf` excluded), 11,190 cells (956 x 6 at no-preference, 909 x 6 at reduce), 0 errored, 0 off-site; critical / serious / moderate / minor 0 / 0 / 0 / 0; negative control tripped (`image-alt`, `button-name`); `merge --strict` exit 0 (6 workers, 38.1 min) |
-| (d) manual driver (heuristic)                     | Q02 report §7 step 3                               | at `67fe8b526` (905 stories): 91 of 91 driver tests, 10,774 check records, all pass; not re-run                                                                                                                                                                               |
+| (d) manual driver (heuristic)                     | Q02 report §7 step 3                               | at `67fe8b526` (905 stories): 91 of 91 driver tests, 10,774 check records, all pass; not re-run, CV-17                                                                                                                                                                        |
 | revert tests (heuristic)                          | pack C                                             | 6 of 6 red on revert, 6 of 6 green restored (F-3 on the sweep driver and on the added test)                                                                                                                                                                                   |
 | coverage (heuristic)                              | `pnpm --filter @candleviewer/ui test:cov`          | 4,139 tests; `src/**` lines 99.51 %, statements 98.34 %, functions 99.04 %, branches 95.07 %; thresholds met (section 6)                                                                                                                                                      |
 | lint, typecheck (heuristic)                       | `pnpm --filter @candleviewer/ui lint`, `typecheck` | clean at `67fe8b526`                                                                                                                                                                                                                                                          |
 
 The driver results are counts only, no per-cell file is committed: the sweep does not differ from v1's in kind (no
-finding at any impact). The manual driver was not re-run on the new base: the ruling asks for a re-run of the unit,
-Storybook and axe legs only when the counts change; its result stands at `67fe8b526` (842 to 905 stories since v1).
+finding at any impact). The manual driver was not re-run on the new base although the story count changed (905 to 956);
+its result is carried at `67fe8b526` (842 to 905 stories since v1) as CV-17, with the owner-run passes of CV-7.
 
 ### 3.2 VR (CI only)
 
@@ -147,6 +155,7 @@ fresh code review; the reviewers' own checklist runs on every PR:
 | CV-14 | #2289 (P1): the Penpot `semantic-dark` token set resolves to light values; in or out of E05's scope (section 7)         | the owner (the question); the design lane | open question            |
 | CV-15 | E05-D03 (#162) open: needed Done or descoped for #30, not for #263                                                      | the E05 design lane                       | in progress              |
 | CV-16 | `vr/matrix.ts` :40-43 has no quarantine tag, so C-9.3's quarantine cannot apply to a VR cell (pack F, ruling BQ-8)      | the VR harness owner (E05-T04)            | gate change, not this PR |
+| CV-17 | The Q02 manual driver (leg (d), step 3) not re-run at 956 stories; its result is carried at `67fe8b526` (905 stories)   | the owner (with CV-7)                     | carried                  |
 
 ## 9. Proposed verdict
 
@@ -155,8 +164,8 @@ sign-off; the §16 checkbox, named reviewer and timestamp are the owner's or QA'
 `docs/qa/e08-signoff.md`:194). Every fixed E05 defect has named red evidence on its revert; the local legs (heuristic)
 are green; the VR lane at the base is green; no P0 or P1 defect is open in `packages/ui`. It is not a clean pass: no
 nightly VR (CV-1, a named deviation); #2289 (P1, CV-14) is an open in / out-of-scope question for the owner and, if in
-scope, blocks Done under `03` §16; the owner-run legs (CV-7) and the open rows CV-4 to CV-6, CV-9 to CV-12, CV-15 and
-CV-16 are carried with owners. This PR's own VR lane is added to section 3.2 when CI has run it.
+scope, blocks Done under `03` §16; the owner-run legs (CV-7) and the open rows CV-4 to CV-6, CV-9 to CV-12 and CV-15 to
+CV-17 are carried with owners. This PR's own VR lane is added to section 3.2 when CI has run it.
 
 `approved: pending (owner)`
 
@@ -166,10 +175,11 @@ CV-16 are carried with owners. This PR's own VR lane is added to section 3.2 whe
 > This is not the sign-off. Evidence: `docs/qa/e05-signoff.md` and the pack `qa/plans/e05-regression-pack.md`. Per
 > story group (heuristic): S01, S02, S03, S04 pass; foundations pass with carries. All six fixed defects (D1 to D3, F-1
 > to F-3) have named red evidence on their revert (F-3: the sweep driver's `heading-order`). Local legs (heuristic):
-> unit 4,139 tests; Storybook 956 stories; the full axe sweep 11,190 cells at 0 / 0 / 0 / 0 with the negative control tripped; coverage `packages/ui` 99.51 % lines (floor 80 %). VR (CI): 5,736 cells, 0 diffs at the base;
+> unit 4,139 tests; Storybook 956 stories; the full axe sweep 11,190 cells at 0 / 0 / 0 / 0 with the negative
+> control tripped; coverage `packages/ui` 99.51 % lines (floor 80 %). VR (CI): 5,736 cells, 0 diffs at the base;
 > this PR's lane when run. Deviations and carries with owners: section 8 (no nightly VR; OQ-5; D4; D5; the owner-run
 > OR-1..OR-8; AD-1; FU-5; the high-contrast danger pair; the font-face gap; the X02 expiry on 2026-11-20; #2289, a P1
 > in the Penpot token file, an open in / out-of-scope question for the owner; E05-D03, #162, still open for #30; the
-> VR quarantine-tag gap). P2 / P3 deferrals need the owner's acknowledgement (`03` §16).
+> VR quarantine-tag gap; the manual driver carried at 905 stories). P2 / P3 deferrals need the owner's acknowledgement (`03` §16).
 >
 > `approved: pending (owner)`

@@ -162,7 +162,7 @@ def self_test(pack: str, record: str, names: list[str]) -> int:
     first_row = next(ln for ln in pack.splitlines() if ln.startswith("| `"))
     d2 = next(ln for ln in pack.splitlines() if ln.startswith("| D2 "))
     section_h = pack.split("## H. ", 1)[1]
-    excluded_first = re.search(r"^- `[a-z0-9-]+--[a-z0-9-]+`.*$", section_h, re.M)
+    excluded_first = re.search(r"^- `[a-z0-9-]+--[a-z0-9-]+`.*$", section_h, re.MULTILINE)
     if excluded_first is None:
         print("SELF-TEST: section H names no story")
         return 1
@@ -170,7 +170,7 @@ def self_test(pack: str, record: str, names: list[str]) -> int:
         "G-MATRIX": (pack.replace(first_row + "\n", "", 1), record),
         "G-DEFECTS": (pack.replace(d2, d2.replace("max-height", "max-width", 1), 1), record),
         "G-EXCLUDED": (pack.replace(excluded_first.group(0) + "\n", "", 1), record),
-        "G-HYGIENE": (pack, record + "\nCloses #263\n"),
+        "G-HYGIENE": (pack, record + "\nCloses " + "#263\n"),
     }
     bad = 0
     for gate, (p, r) in mutations.items():

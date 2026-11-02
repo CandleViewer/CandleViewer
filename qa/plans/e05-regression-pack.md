@@ -88,7 +88,9 @@ Notes:
 1. D1: the #5135 `src` hunks no longer apply verbatim (later PRs edited five of the files). The revert is functional: in
    each of the eight atoms #5135 changed, `useGatedAnnounce()` was replaced by a no-op, so a refused activation announces
    nothing, as before the fix. The failing tests include the RbacGate abuse check (section D) and every atom's
-   gated-announce test.
+   gated-announce test. The neutralisation, per atom `<A>` of the eight:
+   `sed -i 's/const announceGated = useGatedAnnounce();/const announceGated = (_reason?: string): void => undefined;/'
+packages/ui/src/components/<A>.tsx`.
 2. F-3: the fix sits in the story itself, so the story's play function moves with it, and axe rates `heading-order`
    moderate, which neither the `storybook` job nor `merge --strict` fails on; a VR row cannot be reverted and run locally
    (README, Visual regression). The red evidence is therefore the E05-Q02 axe driver's own result (its per-cell rule ids):
@@ -98,6 +100,11 @@ Notes:
    2 motion states) and nothing else; on the fixed story the epic sweep (sign-off record, section 3) reports 0 at every
    impact. The new `Typography.test.tsx` assertion (no Typography story skips a heading level) is an **addition** by this
    PR, not the red evidence the ruling names: it was red on the same revert (1 of 35) and is green restored (35 of 35).
+3. The test files run per row, from `packages/ui` (`pnpm exec vitest run --project unit <files>`): D1
+   `test/RbacGate.test.tsx` and `test/<A>.test.tsx` for the eight atoms; D2 `test/dialog-css.test.ts`; D3
+   `test/Drawer.test.tsx test/InfoPanel.test.tsx`; F-1 `test/skiplink-css.test.ts`; F-2 `test/errorstate-css.test.ts`;
+   F-3 `test/Typography.test.tsx`. The F-1, F-2 and F-3 reverts are scoped to the named files:
+   `git show --format= b2126268d -- <the src file(s) in the Reverted column> | git apply -R`.
 
 Not "fixed" and so not in the map: D4 (Checkbox `Indeterminate` shows no visible word "Mixed") and D5 (the stacked Table at
 `high-contrast` · `compact`, row fills about 1.07 : 1) are open rows of the Q01 plan, not filed (coordinator ruling
