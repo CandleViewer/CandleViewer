@@ -26,6 +26,7 @@ from candleviewer.rules.executor.handlers import (
     HandlerSpec,
     HandlerTableError,
     Prepared,
+    bind_handlers,
     build_handlers,
     prepared,
 )
@@ -51,7 +52,8 @@ _OWNERS: dict[str, tuple[str, str | None]] = {
     "cancel_order": ("oms_cancel", "E35-T12"), "cancel_all_orders": ("oms_cancel", "E35-T12"),
     "modify_stop_loss": ("oms_amend", "E35-T12"), "modify_take_profit": ("oms_amend", "E35-T12"),
     "tighten_stop": ("oms_amend", "E35-T12"),
-    "move_to_breakeven": ("position_stop", "#915"), "reverse_position": ("position_stop", "#915"),
+    # E35-T13 (BQ-10 of #5005): #915 closed without them; each names what it waits for instead.
+    "move_to_breakeven": ("position_stop", None), "reverse_position": ("position_stop", None),
     "halt_new_orders": ("lockouts", "E39"), "resume_new_orders": ("lockouts", "E39"),
     "reduce_leverage": ("leverage", None),
     "arm_chase_limit": ("algos", "E33"), "start_iceberg_slice": ("algos", "E33"),
@@ -137,7 +139,7 @@ def test_the_handler_flags_come_from_the_catalogue() -> None:
         flags = (declared.places_orders, declared.idempotent, declared.guarded)
         assert (spec.places_orders, spec.idempotent, spec.guarded) == flags, action_type
     assert {f.name for f in fields(HandlerBinding)} == {
-        "capability", "bound_by", "guard", "refused_as",
+        "capability", "bound_by", "guard", "refused_as", "waits_for",
     }  # fmt: skip
     assert catalogue["send_notification"].guarded and catalogue["emit_signal"].guarded
     flipped = [replace(a, places_orders=not a.places_orders) for a in ACTIONS]
@@ -155,7 +157,8 @@ def test_unbound_handlers_block_as_unavailable() -> None:
 def test_no_order_placing_handler_is_bound_before_its_slice() -> None:
     """C-2.6: no order path is reached in E35-T09. An order-placing handler bound here would
     reach the OMS before its slice's native-SL suite (E35-T11's entry handlers, E33's algos,
-    #915's reversal), so each is unbound and names the slice that binds it."""
+    #915's reversal), so each is unbound and names the slice that binds it, or (E35-T13) what it
+    waits for."""
     placing = {t for t, spec in HANDLERS.items() if spec.places_orders}
     assert placing == {
         "place_order", "scale_in", "reverse_position", "arm_chase_limit", "start_iceberg_slice",
@@ -163,7 +166,7 @@ def test_no_order_placing_handler_is_bound_before_its_slice() -> None:
     }  # fmt: skip
     for action_type in placing:
         spec = HANDLERS[action_type]
-        assert spec.handler is None and spec.bound_by is not None, action_type
+        assert spec.handler is None and (spec.bound_by or spec.waits_for), action_type
         assert spec.guard == "fire_key_anchor", action_type
 
 
@@ -200,3 +203,20 @@ def test_prepared_keeps_a_frozen_copy_no_later_change_reaches() -> None:
     assert request_sha256(prep.request) == prep.request_sha256
     with pytest.raises(TypeError):  # read-only at every depth
         prep.request["stop"]["trigger"] = Decimal("2")
+
+
+class _Capable(_Bound):
+    """A bindable handler of the `signals` capability (E35-T13, BQ-2 of #5005)."""
+
+    capability: Capability = "signals"
+
+
+def test_a_handler_binds_only_to_a_type_of_its_capability() -> None:
+    """BQ-2 of #5005: binding checks each handler against its type's declared capability, and
+    refuses a type outside the table or one refused for good; the static table stays unbound."""
+    bound = bind_handlers(HANDLERS, {"emit_signal": _Capable()})
+    assert isinstance(bound["emit_signal"].handler, _Capable)
+    assert HANDLERS["emit_signal"].handler is None  # a new table; the static one is unchanged
+    for action_type in ("set_variable", "place_order", "widen_stop", "teleport"):
+        with pytest.raises(HandlerTableError, match=action_type):
+            bind_handlers(HANDLERS, {action_type: _Capable()})

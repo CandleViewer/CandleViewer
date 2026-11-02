@@ -410,7 +410,9 @@ from candleviewer.rules_oms_wiring import (
     RuleAlerts,
     rule_action_records,
     rule_metrics,
+    rule_notification_handler,
     rule_order_budget,
+    rule_signal_depth,
     rule_switches,
 )
 from candleviewer.rules_store_pg import PostgresRuleStore
@@ -3404,6 +3406,18 @@ def create_app(
                 SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "rule_budget")
             ),
         )
+    )
+    # E35-T13: the signal chain's depth limit from its boot setting; above its hard cap the app
+    # refuses to start here, whatever the evaluator flag says.
+    ctx.rules.bind(signal_max_depth=rule_signal_depth(resolved.rules_signal_max_depth))
+    # E35-T13: `send_notification` writes one `rule.notify` outbox row per action, awaiting no
+    # delivery (no consumer claims the topic until E40); the engine binds its other own handlers.
+    ctx.rules.bind(
+        handlers={
+            "send_notification": rule_notification_handler(
+                SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "rule_notify")
+            )
+        }
     )
     rules_actor = (
         SessionRulesActorResolver(

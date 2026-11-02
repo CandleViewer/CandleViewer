@@ -26,6 +26,7 @@ from candleviewer.observability import spawn
 from candleviewer.rules.arming import ArmingFacts, check_arming
 from candleviewer.rules.compiler.common import ConditionNodeBoundError, check_bounds
 from candleviewer.rules.evaluator.engine import EvaluationResult
+from candleviewer.rules.executor.control import ControlRequest, ControlSkip
 from candleviewer.rules.ir import Rule, ir_hash
 from candleviewer.rules.ir.accounts import (
     collect_account_ids,
@@ -65,6 +66,16 @@ STOP_TIMEOUT_S: Final = 2.0
 KillScope = Literal["global"] | frozenset[UUID]
 #: Why a rule left `armed` through this module, as the service's `rule_stopped` hook hears it.
 StopReason = Literal["kill_switch", "scope_denied"]
+#: A rule-control action's one B9 move (24 §11.5; RE-E7, E35-T13): its event, the B9 states that
+#: take it, the mode it moves the target to, and its record. `enable_rule` reaches `draft` alone,
+#: toward `simulate`, so no rule is ever moved to `armed` by another.
+_CONTROL_MOVES: Final[Mapping[str, tuple[str, frozenset[str], str, str]]] = {
+    "pause_rule": (
+        "DISARM", frozenset({"armed", "cooling_down", "paused_degraded"}), "disabled",
+        "rule.disarmed",
+    ),
+    "enable_rule": ("SAVE", frozenset({"draft"}), "simulate", "rule.simulated"),
+}  # fmt: skip
 _ORDER_ACTIONS = frozenset(
     {
         "place_order",
@@ -447,6 +458,24 @@ def _can_act_on(row: RuleRow, engaged: frozenset[UUID]) -> bool:
     )
 
 
+def _owned_by(row: RuleRow, owner: UUID) -> bool:
+    try:
+        return UUID(row.owner) == owner
+    except ValueError:
+        return False
+
+
+def _rule_actor(request: ControlRequest) -> dict[str, Any]:
+    """A rule-control record's actor (24 §11.5, §15.5; 04 SR-062): the acting rule, with no user
+    id, and its version, run and node and both users' ids for `after_state`."""
+    return {
+        "rule_actor": f"rule:{request.rule_id}@v{request.version}", "actor_type": "rule",
+        "source_rule_id": request.rule_id, "source_version": request.version,
+        "run_id": str(request.run_id), "node_id": request.node_id,
+        "owner_user_id": str(request.owner), "armed_by_user_id": request.armed_by,
+    }  # fmt: skip
+
+
 class RulesManager:
     def __init__(
         self,
@@ -471,8 +500,9 @@ class RulesManager:
         self._sim_window: dict[str, tuple[str, int]] = {}
         #: rule_id -> its disarm in flight above a hard cap (#3232): one per rule, `stop()` cancels.
         self._tick_disarms: dict[str, asyncio.Task[None]] = {}
-        #: The `rules` broadcasts of the forced stops (E35-T10), each run beside the move, never
-        #: inside its caller's bound, so a slow broadcast never reads as a failed move.
+        #: The `rules` broadcasts of the forced stops (E35-T10) and of the rule-control moves
+        #: (E35-T13), each run beside the move, never inside its caller's bound, so a slow
+        #: broadcast never reads as a failed move.
         self._stop_broadcasts: set[asyncio.Task[None]] = set()
         #: Forced disarms run one at a time, so their re-read of the row and chart holds (#3232).
         self._disarming = asyncio.Lock()
@@ -503,8 +533,8 @@ class RulesManager:
             self._left_armed = left_armed
 
     async def stop(self) -> None:
-        """Cancel the tick disarms in flight (their rules stay armed, skipped) and the forced
-        stops' broadcasts still running, then the charts."""
+        """Cancel the tick disarms in flight (their rules stay armed, skipped) and the broadcasts
+        of the forced stops and the control moves still running, then the charts."""
         tasks = [*self._tick_disarms.values(), *self._stop_broadcasts]
         for task in tasks:
             task.cancel()
@@ -1180,16 +1210,56 @@ class RulesManager:
         task.add_done_callback(self._stop_broadcasts.discard)
         return "moved"
 
-    async def _broadcast_stop(self, rule_id: str, payload: dict[str, Any]) -> None:
+    async def _broadcast_stop(
+        self, rule_id: str, payload: dict[str, Any], failed: str = "rules.stop_broadcast_failed"
+    ) -> None:
         """The moved rule's `rules` broadcast, under its own bound: one that fails or runs late is
-        logged by the error's class, and the move stands."""
+        logged by the error's class, under `failed` (a forced stop's, or a control move's), and the
+        move stands."""
         try:
             async with asyncio.timeout(STOP_TIMEOUT_S):
                 await self._bc({"topic": "rules", **payload})
         except Exception as lost:  # the hook names no error type
-            _log().warning(
-                "rules.stop_broadcast_failed", rule_id=rule_id, error=type(lost).__name__
+            _log().warning(failed, rule_id=rule_id, error=type(lost).__name__)
+
+    async def control_rule(self, request: ControlRequest) -> ControlSkip | None:
+        """The system path of `pause_rule` and `enable_rule` (24 §11.5; E35-T13, BQ-7): no session
+        and no idempotency key. The target is a rule of the acting rule's owner, never a protected
+        system rule (§11.8), and in a B9 state that takes the move; else the reason it was not
+        moved. The move is recorded (`rule.disarmed` with the reason `pause_rule`, or
+        `rule.simulated` with `enable_rule`) under the acting rule as its actor, before the row is
+        written. Forced moves run one at a time, on the row read again; its caller bounds the move,
+        and its `rules` broadcast then runs beside the caller under a bound of its own
+        (`_broadcast_stop`, as a forced stop's), so a slow or failed one never reads as a failed
+        move."""
+        event, takes, mode, action = _CONTROL_MOVES[request.move]
+        async with self._disarming:
+            row = await self._s.get(request.target)
+            if row is None or row.deleted or not _owned_by(row, request.owner):
+                return "control_not_found"  # missing, deleted or another owner's, alike
+            if row.name in PROTECTED_SYSTEM_RULES:
+                return "control_protected"
+            if request.move == "enable_rule":
+                active = next((v for v in row.versions if v.id == row.active_version_id), None)
+                if active is None or quarantine_path(active.ir):
+                    return "control_unreadable"
+            leaf = await self._leaf(row)
+            handled = await self.lifecycle.handled_event(
+                row.id, row.mode, row.disabled_reason, mode
             )
+            if leaf not in takes or handled != event:
+                return "control_state"
+            moved = {"rule_id": row.id, "mode": mode, "from": row.mode, "b9_from": leaf}
+            moved |= {"b9_event": event, "reason": request.move}
+            if not await self._record_b9(
+                row, event, action, moved | _rule_actor(request), reason=request.move
+            ):
+                return "control_state"
+        failed = "rules.control_broadcast_failed"
+        task = spawn(self._broadcast_stop(row.id, moved, failed), name="rule-control-broadcast")
+        self._stop_broadcasts.add(task)
+        task.add_done_callback(self._stop_broadcasts.discard)
+        return None
 
     async def _disarm_on_tick(self, row: RuleRow) -> None:
         """One attempt, bounded by `TICK_DISARM_TIMEOUT_S`. A failed or timed-out one is logged,

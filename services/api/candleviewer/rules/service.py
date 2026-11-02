@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from time import monotonic
 from typing import TYPE_CHECKING, Any, Final
@@ -23,9 +23,16 @@ from candleviewer.observability.health import HealthReport, HealthStatus
 from candleviewer.rules.evaluator import Evaluator, SnapshotBuilder
 from candleviewer.rules.evaluator.engine import EvaluationResult
 from candleviewer.rules.executor.budget import CircuitBreaker, OrderBudget
+from candleviewer.rules.executor.control import JournalTagHandler, RuleControlHandler
 from candleviewer.rules.executor.dispatch import AuditDispatch, Fire, FireDispatch, JobKind
 from candleviewer.rules.executor.engine import ActionExecutor, RowVerdict
 from candleviewer.rules.executor.gates import Gates, Halts
+from candleviewer.rules.executor.handlers import (
+    HANDLERS,
+    BoundHandler,
+    HandlerTableError,
+    bind_handlers,
+)
 from candleviewer.rules.executor.metrics import ExecutorMetrics
 from candleviewer.rules.executor.metrics import RereadFailure as RereadFailure
 from candleviewer.rules.executor.ports import (
@@ -38,8 +45,10 @@ from candleviewer.rules.executor.ports import (
     StopCheck,
 )
 from candleviewer.rules.executor.results import BlockedBy
+from candleviewer.rules.executor.signals import EmitSignalHandler, Signal, SignalBus
+from candleviewer.rules.executor.variables import SetVariableHandler, VariableStore
 from candleviewer.rules.ir.models import Rule
-from candleviewer.rules.limits import SCOPE_DENIALS_BEFORE_DISARM
+from candleviewer.rules.limits import SCOPE_DENIALS_BEFORE_DISARM, SIGNAL_MAX_DEPTH_DEFAULT
 from candleviewer.rules.manager import (
     Audit,
     Broadcast,
@@ -54,6 +63,7 @@ from candleviewer.rules.runner import (
     PushedMetricSource,
     RuleEvaluationRunner,
     default_clocks,
+    rule_owner,
 )
 from candleviewer.rules.scope import ActionRequest, EvaluableMode, ScopeInstanceRef
 from candleviewer.rules.vocabulary import MetricRegistry, default_registry
@@ -63,18 +73,16 @@ from candleviewer.rules.vocabulary import MetricRegistry, default_registry
 #: (`rule_dispatch_reread_failed_total{reason}`): `timeout`, no answer within it (or the store's
 #: own `TimeoutError`), or `store_error`, the read raised anything else.
 REREAD_TIMEOUT_S: Final = 2.0
+#: The types whose handlers the engine binds itself as the evaluator starts (24 §11.5; E35-T13):
+#: the composition root binds every other type through `bind(handlers=...)`, never one of these.
+OWN_TYPES: Final = frozenset(
+    {"emit_signal", "set_variable", "pause_rule", "enable_rule", "log_journal_tag"}
+)
 
 
 def _log() -> Any:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)
-
-
-def _owner_uuid(rule: Rule) -> UUID | None:
-    try:
-        return UUID(str(rule.created_by)) if rule.created_by else None
-    except ValueError:
-        return None
 
 
 async def _discard_actions(_req: ActionRequest) -> None:
@@ -136,6 +144,13 @@ class RulesService:
         #: action that names none) (BQ-10): a rule's counts go in one pop, off the tick's cost.
         self._strikes: dict[str, dict[UUID | None, int]] = {}
         self._executor: ActionExecutor | None = None  # while the evaluator runs
+        #: E35-T13: the signal chain's depth limit, from its boot setting (`create_app`); the
+        #: signal bus while the evaluator runs; and the rules' variables, on the service's clock.
+        self._signal_depth = SIGNAL_MAX_DEPTH_DEFAULT
+        self._signals: SignalBus | None = None
+        self._variables = VariableStore(clock)
+        #: E35-T13 (BQ-2 of #5005): the handlers the composition root binds, by type.
+        self._handlers: dict[str, BoundHandler] = {}
         self._dispatch: FireDispatch | None = None  # the fire queue, while the evaluator runs
         self._audits: AuditDispatch | None = None  # the record-only jobs' queue, beside it
 
@@ -155,6 +170,8 @@ class RulesService:
         notional: NotionalRebuild | None = None,
         stop_check: StopCheck | None = None,
         budget: OrderBudget | None = None,
+        signal_max_depth: int | None = None,
+        handlers: Mapping[str, BoundHandler] | None = None,
     ) -> None:
         """Composition-root wiring (store / audit / WS fan-out / action executor); before `start`.
         Each option is set only when given, so a later call (E35-S05's simulation sink, the
@@ -170,7 +187,11 @@ class RulesService:
         the rollout port its checks 2 and 3 read, and `principal` the owner's and the armer's
         snapshots check 5 reads (E35-T10; E35-T11 binds them, and unbound, check 5 refuses);
         `notional` the day's allowance rebuild (E35-T11's) and `stop_check` check 8's comparison
-        (E35-T12's), each refusing while unbound; `budget` the SR-104 order budget of check 7."""
+        (E35-T12's), each refusing while unbound; `budget` the SR-104 order budget of check 7;
+        `signal_max_depth` the signal chain's depth limit (E35-T13), held to its hard cap by the
+        composition root; `handlers` the handlers of the types that reach past the engine, each
+        checked here against its type's capability (`HandlerTableError`), never one of the
+        engine's own (`OWN_TYPES`), and each call adding to an earlier one's (BQ-2 of #5005)."""
         if action_sink is not None:
             self._action_sink = action_sink
         if simulation_sink is not None:
@@ -191,6 +212,13 @@ class RulesService:
             self._stop_check = stop_check
         if budget is not None:
             self._budget = budget
+        if signal_max_depth is not None:
+            self._signal_depth = signal_max_depth
+        if handlers is not None:
+            if own := sorted(OWN_TYPES & set(handlers)):
+                raise HandlerTableError(f"the engine binds {own} itself")
+            bind_handlers(HANDLERS, handlers)  # refused at the composition root, before start
+            self._handlers |= handlers
         if store is not None:
             self._store = store
         if audit is not None:
@@ -240,7 +268,7 @@ class RulesService:
         """Re-read grants/freeze for each rule owner; a failed refresh fails closed."""
         if self.scope_state is None:
             return
-        for owner in {o for o in (_owner_uuid(r) for r in rules) if o is not None}:
+        for owner in {o for o in (rule_owner(r) for r in rules) if o is not None}:
             try:
                 await self.scope_state.refresh(owner)
             except Exception:
@@ -432,6 +460,8 @@ class RulesService:
         env = self._scope_env
         run_records, action_audit = self._records or (None, None)
         stand_in = None if self._action_sink is _discard_actions else self._action_sink
+        signals = self._signals = SignalBus(max_depth=self._signal_depth, metrics=self._metrics)
+        variables = self._variables
         executor = self._executor = ActionExecutor(
             check_one=self._check_one, scope_check=self._scope_check,
             gates=Gates(
@@ -445,20 +475,24 @@ class RulesService:
                 metrics=self._metrics, clock=self._clock,
             ),
             on_scope=self._scope_outcome,
+            handlers=bind_handlers(HANDLERS, self._handlers | self._own(signals, manager)),
         )  # fmt: skip
         dispatch = self._dispatch = FireDispatch(self._refused, executor.execute)
         audits = self._audits = AuditDispatch(self._shed, executor.execute)
         dispatch.start()
         audits.start()
 
-        def _on_fire(item: EvaluableRule, result: EvaluationResult) -> None:
+        def _on_fire(
+            item: EvaluableRule, result: EvaluationResult, signal: Signal | None = None
+        ) -> None:
             """Offer one evaluation's actions, never awaited (C-2.20), each stamped with the stored
             row's mode as read with this tick's work list. Only a fired result's actions reach the
             routing emitter (`_route`), on the fire queue, with the run row's facts; a
             scope-skipped result's go through the audit-only one, on the audit queue: audited per
             action, never dispatched, whatever the emitter's re-check finds, and never in a fire's
             slot or lane. The tick's scope gate refused them, so each counts under `scope` as it
-            is offered, written or shed (BQ-5)."""
+            is offered, written or shed (BQ-5). A fire a signal caused carries its depth
+            (E35-T13), so its own `emit_signal` emits one level deeper."""
             if emitter is None or audit_only is None or env is None:
                 return
             if item.mode != "armed":  # only an armed rule's refusals count toward its disarm
@@ -471,7 +505,7 @@ class RulesService:
             else:
                 return
             rule = item.rule
-            owner = _owner_uuid(rule)
+            owner = rule_owner(rule)
             if owner is None:
                 return  # fail closed: no owner => no scope to resolve => no action
             sym, _, acct = result.scope_instance.partition("@")
@@ -486,6 +520,7 @@ class RulesService:
                     action_type=action.type, payload=action, mode=item.mode,
                     rule_id=str(rule.rule_id), version=rule.version, ir_hash=item.ir_hash,
                     run_id=run_id, armed_by=item.armed_by,
+                    signal_depth=0 if signal is None else signal.depth,
                 )
                 for action in rule.actions
             )  # fmt: skip
@@ -507,7 +542,7 @@ class RulesService:
                 # No scope wiring: fail closed. Bare evaluator, simulate-only (see below);
                 # it records results but no action is ever emitted.
                 return Evaluator(rule, snaps, wall, mono, on_result=self.evaluation_sink())
-            owner = _owner_uuid(rule)
+            owner = rule_owner(rule)
             return self.build_evaluator(
                 rule, snaps, wall, mono, owner=owner or UUID(int=0),
                 environment=env, on_result=self.evaluation_sink(),
@@ -518,6 +553,8 @@ class RulesService:
                 ("simulate", "armed") if emitter is not None else ("simulate",)
             )
             items = await manager.evaluable_rules(modes)
+            # E35-T13: a rule no longer armed keeps no variable past its first evaluation after.
+            variables.retain({str(i.rule.rule_id) for i in items if i.mode == "armed"})
             # Revocation/freeze reach every tick (AC1/AC5).
             await self._refresh_scope_for([item.rule for item in items])
             return items
@@ -527,9 +564,21 @@ class RulesService:
 
         self.runner = RuleEvaluationRunner(
             _evaluable, SnapshotBuilder(self.metric_source), _factory,
-            self.evaluation_sink(), _on_error, on_fire=_on_fire,
+            self.evaluation_sink(), _on_error, on_fire=_on_fire, signals=signals,
         )  # fmt: skip
         self.runner.start()
+
+    def _own(self, signals: SignalBus, manager: RulesManager) -> dict[str, BoundHandler]:
+        """The handlers of the engine's own capabilities, bound as the evaluator starts (24
+        §11.5; E35-T13): `emit_signal` over the signal bus, `set_variable` over the store, the two
+        rule-control actions over the manager's system path, and `log_journal_tag`."""
+        return {
+            "emit_signal": EmitSignalHandler(signals),
+            "set_variable": SetVariableHandler(self._variables),
+            "pause_rule": RuleControlHandler("pause_rule", manager),
+            "enable_rule": RuleControlHandler("enable_rule", manager),
+            "log_journal_tag": JournalTagHandler(),
+        }
 
     def submit_tick(self, trigger_type: str, symbol: str | None = None) -> bool:
         """Producer entry point (market/bar/snapshot adapters): queue an evaluation tick.
@@ -545,7 +594,8 @@ class RulesService:
         one grace, drain them while the manager still answers the re-reads; then the manager
         cancels its tick disarms in flight and stops the live B9 rule charts. A cancel during the
         runner's stop or the fire queue's drain goes on to the caller, and ends both queues'
-        workers at once too (#5231's carry RC-02): no queue outlives the module."""
+        workers at once too (#5231's carry RC-02): no queue outlives the module. Either way the
+        waiting signals are dropped and the variable store cleared (E35-T13), memory only."""
         self._started = False
         deadline, drained = monotonic() + grace_s, False
         try:
@@ -561,6 +611,10 @@ class RulesService:
             if self._audits is not None:
                 await self._audits.stop(max(0.0, deadline - monotonic()) if drained else 0.0)
             self._dispatch = self._audits = self._executor = None
+            if self._signals is not None and (dropped := self._signals.clear()):
+                _log().warning("rules.signals_dropped_at_stop", dropped=dropped)
+            self._signals = None
+            self._variables.clear()
         if self._manager is not None:
             await self._manager.stop()
         self._registry = None
