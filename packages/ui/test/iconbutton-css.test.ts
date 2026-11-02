@@ -103,3 +103,11 @@ describe("iconbutton.css contract", () => {
     expect(find(forced, ".cv-icon-button__badge", "color")?.body).toContain("ButtonText");
   });
 });
+
+describe("iconbutton.css: busy (E42-S02; E42-D03 U-7)", () => {
+  it("a busy button keeps its fill and shows progress; nothing dims it", () => {
+    const busy = find(normal, '.cv-icon-button[aria-busy="true"]', "cursor");
+    expect(busy?.body).toContain("cursor: progress");
+    expect(busy?.body).not.toMatch(/opacity|--color-text-disabled/);
+  });
+});
