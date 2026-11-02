@@ -22,17 +22,26 @@ Gates (each FAIL led by its name):
   G-SCRIPT   every S row's quoted template stands on its cited line at its ref (`${x}` read as
              `{x}`).
   G-MOTION   the MOT anchors equal E37-D03 §7's motion rows and the rows with a reduce cell.
-  G-AROW     every A-row's Old text or anchor stands exactly once across the parents it names.
+  G-AROW     every A-row's Old text or anchor ("after" / "before" a quoted text, or "after the
+             paragraph ending" one) stands exactly once across the parents it names.
   G-CITE     every cite in range and on a non-blank line at its ref, its content equal to the
              pins file's hash; the SHA anchors are the pinned refs.
   G-HYGIENE  no closing keyword, local path, URL or host, agent name, double-brace slot or
              public-text deny word in the review, this tool or the pins file; no unknown anchor.
   G-SCOPE    the diff against `git merge-base HEAD origin/main` touches only the review, this
              tool and the pins file.
-  G-XREF     every F id the review names is a §11 row; no K binding names a chrome-reserved
-             chord, and `Ctrl+0` only in a PROPOSED cell naming its C-row (BQ-12); every §8 target that passes under 24 x 24 passes by an equivalent, and the
-             required targets are present; §6's L rows are L-1 ... L-n and cover the regions of
-             D02's focus order; no V row is Blocking unless §11 counts as many Blocking rows.
+  G-XREF     every F id the review names is a §11 row; every §13 row has three cells; no K
+             binding names a chrome-reserved chord, and `Ctrl+0` only in a PROPOSED cell naming
+             its C-row (BQ-12); every §8 target that passes under 24 x 24 passes by an
+             equivalent, and the required targets are present; §6's L rows are L-1 ... L-n and
+             cover the regions of D02's focus order; no V row is Blocking unless §11 counts as
+             many Blocking rows.
+  G-RULED    the ruled content holds: A-3, Q-1 and L-3 carry PROPOSED and the `grid` swap, and
+             A-3 and Q-1 the three escapes, none DECIDED (BQ-10's narrow override); C-5 ... C-10
+             exist; F-26, F-29, F-01 and F-11 route by C-5, C-6, C-7 and C-8; F-08 names C-9
+             and K-02 names C-10; D5 records the re-ruling ask on #949.
+
+The self-test runs 27 mutations, one or more per gate, each failing only its own gate.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e37_d04_a11y_review_audit.py --check       (exit 1 on any FAIL)
@@ -135,6 +144,22 @@ TARGETS = ("node card", "port", "connection (keyboard)", "connection (pointer)",
 REGIONS = ("header", "palette", "canvas:", "foot row", "outline", "inspector", "CMP-234",
            "action bar")  # fmt: skip
 DIMS = re.compile(r"(\d+) × (\d+)")
+# BQ-10 (overridden, narrow): the phrases the role rows keep, and the escape the ruling names
+ESCAPES = (
+    "`Tab` leaves the one roving stop (2.1.2)",
+    "`Alt+L` opens the outline `tree`",
+    "the Form toggle (CMP-235)",
+)
+RULED_PHRASES: dict[str, tuple[str, ...]] = {
+    "A-3": ("The role is PROPOSED until E37-Q05", "`grid`", *ESCAPES),
+    "Q-1": ("PROPOSED until E37-Q05", "`grid`", *ESCAPES),
+    "L-3": ("PROPOSED", "`grid`"),
+}
+# the C-rows the rulings and the lens fold made, and the row that must name each; a finding
+# listed here routes by its C-row
+RULED_ROUTES = {"F-26": "C-5", "F-29": "C-6", "F-01": "C-7", "F-11": "C-8"}
+RULED_NAMES = {"F-08": "C-9", "K-02": "C-10"}
+D5_ASK = "re-ruling requested on #949"
 # assembled with an explicit +, so the formatter keeps the split and the tool never spells a word
 DENY = (
     "le" + "ak",
@@ -430,7 +455,9 @@ def g_arow(t: Texts, vals: dict[str, str]) -> list[str]:
         body = ln[m.end() :]
         anchors = re.findall(r'Old: "(.+?)"\. New:', body)
         anchors += re.findall(
-            r'(?:[Aa]fter|[Bb]efore) "(.+?)"(?: \(its (?:row|line)\))? add', body
+            r'(?:[Aa]fter|[Bb]efore)(?: the paragraph ending)? "(.+?)"'
+            r"(?: \(its (?:row|line)\))? add",
+            body,
         )
         if not anchors:
             bad.append(f"{aid}: names neither an Old text nor an anchor")
@@ -506,6 +533,10 @@ def g_xref(t: Texts, vals: dict[str, str]) -> list[str]:
     for fid in sorted(set(re.findall(r"\bF-\d\d\b", t.spec))):
         if fid not in fs:
             bad.append(f"{fid} is named but §11 has no such row")
+    thirteen = section(t.spec, "## 13.")
+    for r in rows(thirteen, "C") + rows(thirteen, "G") + rows(thirteen, "Q"):
+        if len(r) != 3:
+            bad.append(f"§13 {r[0]}: {len(r)} cells, not 3")
     for r in rows(section(t.spec, "## 4."), "K"):
         chords = re.findall(r"`([^`]+)`", r[2]) if len(r) > 2 else []
         for c in chords:
@@ -547,6 +578,42 @@ def g_xref(t: Texts, vals: dict[str, str]) -> list[str]:
     return bad
 
 
+def ruled_line(t: Texts, rid: str) -> str:
+    """The table row or the A-row list item carrying `rid`, or "" when there is none."""
+    for ln in t.spec.split("\n"):
+        if ln.startswith((f"| {rid} ", f"- **{rid} ")):
+            return ln
+    return ""
+
+
+def g_ruled(t: Texts, vals: dict[str, str]) -> list[str]:
+    bad = []
+    for rid, phrases in RULED_PHRASES.items():
+        ln = ruled_line(t, rid)
+        if not ln:
+            bad.append(f"{rid} is missing (BQ-10)")
+            continue
+        bad += [f"{rid} drops {p!r} (BQ-10)" for p in phrases if p not in ln]
+        if "DECIDED" in ln:
+            bad.append(f"{rid} reads DECIDED; BQ-10 keeps the role PROPOSED")
+    crows = {r[0]: r for r in rows(section(t.spec, "## 13."), "C")}
+    for cid in sorted({*RULED_ROUTES.values(), *RULED_NAMES.values()}):
+        if cid not in crows:
+            bad.append(f"§13 has no {cid}, a ruled row")
+    fs = {r[0]: r for r in rows(section(t.spec, "## 11."), "F")}
+    for fid, cid in RULED_ROUTES.items():
+        closing = fs[fid][4] if fid in fs and len(fs[fid]) > 4 else ""
+        if not closing.startswith("routed: ") or not re.search(rf"\b{cid}\b", closing):
+            bad.append(f"{fid} no longer routes by {cid}")
+    for rid, cid in RULED_NAMES.items():
+        if not re.search(rf"\b{cid}\b", ruled_line(t, rid)):
+            bad.append(f"{rid} no longer names {cid}")
+    d5 = next((ln for ln in t.spec.split("\n") if ln.strip().startswith("- D5:")), "")
+    if D5_ASK not in d5:
+        bad.append(f"D5 drops the open ask ({D5_ASK!r})")
+    return bad
+
+
 GATES: dict[str, Callable[[Texts, dict[str, str]], list[str]]] = {
     "G-FINDING": g_finding,
     "G-MAP": g_map,
@@ -558,6 +625,7 @@ GATES: dict[str, Callable[[Texts, dict[str, str]], list[str]]] = {
     "G-HYGIENE": g_hygiene,
     "G-SCOPE": g_scope,
     "G-XREF": g_xref,
+    "G-RULED": g_ruled,
 }
 
 
@@ -616,6 +684,16 @@ def set_cell(row: str, col: int, value: str) -> Callable[[Texts], Texts]:
     return f
 
 
+def add_cell(row: str, value: str) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        ls = t.spec.split("\n")
+        i = next(k for k, ln in enumerate(ls) if ln.startswith(f"| {row} "))
+        ls[i] = ls[i] + f" {value} |"
+        return replace(t, spec="\n".join(ls))
+
+    return f
+
+
 def drop_row(row: str) -> Callable[[Texts], Texts]:
     def f(t: Texts) -> Texts:
         return replace(
@@ -642,7 +720,9 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     (
         "G-FINDING",
         "F-01 routed through a C-row §13 does not carry",
-        set_cell("F-01", 4, "routed: E37-S05 brings the core to D02's cycle (C-9)"),
+        set_cell(
+            "F-01", 4, "routed: E37-S05 brings the core to D02's cycle (C-7, C-99)"
+        ),
     ),
     ("G-MAP", "the zoom row dropped", drop_row("K-11")),
     ("G-MAP", "K-15's announcement cell emptied", set_cell("K-15", 4, "")),
@@ -730,6 +810,30 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "G-XREF",
         "a V row Blocking with §11's counts unchanged",
         set_cell("V-7", 3, "Blocking"),
+    ),
+    ("G-XREF", "a fourth cell in §13's G-1 row", add_cell("G-1", "E37-S05")),
+    (
+        "G-RULED",
+        "U-1: A-3's role made DECIDED (BQ-10's narrow override undone)",
+        sub("The role is PROPOSED until E37-Q05", "The role is DECIDED until E37-Q05"),
+    ),
+    (
+        "G-RULED",
+        "U-2: C-6 dropped and F-29 re-closed as accepted (BQ-06's C-row gone)",
+        lambda t: set_cell("F-29", 4, "accepted: the global chord wins")(
+            drop_row("C-6")(t)
+        ),
+    ),
+    ("G-RULED", "C-10, K-02's confirm row, dropped", drop_row("C-10")),
+    (
+        "G-RULED",
+        "F-08 no longer names C-9",
+        sub("falls short too (C-9)", "falls short too"),
+    ),
+    (
+        "G-RULED",
+        "D5's re-ruling ask dropped",
+        sub("**Open ask: re-ruling requested on #949**, ", ""),
     ),
 )
 
