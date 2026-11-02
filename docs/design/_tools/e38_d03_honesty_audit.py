@@ -30,6 +30,8 @@ Gates (each FAIL led by its name):
               base (its `{slot}` filled) unless the cell marks it PROPOSED. Every gated control
               names its rendering (2a, 2b or the sentence form; G-T2.1c), §1 item 4 names the
               CMP-019 `lock` (G-T2.1d), and the acknowledgement wait names its rendering.
+              §1 item 4 quotes G-T2.1b, G-T2.2 and G-T2.3 verbatim from `DS` at the base
+              (`T2_QUOTES`), and §8.1 carries the G-T2.2 label pair (tertiary on raised).
   G-RULED     the account's own name is the typed token (never a fixed word; BQ-07), the
               protective writes stay enabled (BQ-13, C-2.6), and the S77-01 and OQ-2 rows exist.
   G-MERGED    only merged owners are cited: E38-D02 or #1003 appears only on a request row or
@@ -86,10 +88,11 @@ PATHS: dict[str, str] = {
     "E05D03": "docs/design/E05/E05-D03.md",
     "E09D09": "docs/design/E09/E09-D09.md",
     "D01": "docs/design/research/E38-paper-parity.md",
+    "DS": ".claude/rules/32-design-specs.md",
 }
 REF_OF = {"D01": D01_REF}
 CITE = re.compile(
-    r"`(\d\d|E42D0[23]|E09D09|E30D04|E27D0[23]|E10D03|E05D03|D01)`:(\d+(?:–\d+)?(?:, :\d+(?:–\d+)?)*)"
+    r"`(\d\d|E42D0[23]|E09D09|E30D04|E27D0[23]|E10D03|E05D03|D01|DS)`:(\d+(?:–\d+)?(?:, :\d+(?:–\d+)?)*)"
 )
 TOKEN_NAME = re.compile(
     r"`((?:color|font|border|radius|type|space|size|motion|opacity)\.[a-z0-9.-]*[a-z0-9])`"
@@ -466,6 +469,50 @@ def e09_templates(t: Texts) -> list[re.Pattern[str]]:
 
 
 RENDERING = re.compile(r"rendering (2a|2b|the sentence form)")
+# G-T2.1b, G-T2.2 and G-T2.3 as `DS` words them (its `**` emphasis dropped); §1 item 4 quotes each
+T2_QUOTES = (
+    (
+        "G-T2.1b",
+        (
+            '`aria-disabled="true"`, never the `disabled` attribute — it stays in the Tab'
+            " order and a menu item stays arrow-reachable"
+        ),
+    ),
+    (
+        "G-T2.2",
+        (
+            "hi-fi label `color.text.tertiary`, reason `color.text.secondary`; for primary /"
+            " buy / sell actions the fill becomes `color.surface.raised` with a"
+            " `color.border.default` hairline; never `color.text.disabled`, never"
+            " `opacity.disabled` on the label, glyph or reason"
+        ),
+    ),
+    (
+        "G-T2.3",
+        (
+            "`Enter`, `Space` or a bound hotkey on a T2 control changes nothing and re-shows"
+            " the reason inline with one polite announcement"
+        ),
+    ),
+)
+
+
+def t2_quotes(t: Texts) -> list[str]:
+    """G-T2.1b / 2 / 3: quoted from the owner, not paraphrased; the label pair measured."""
+    bad = []
+    owner = norm(at(t, "DS").replace("**", ""))
+    item4 = norm(section(t.spec, "## 1."))
+    for gid, q in T2_QUOTES:
+        if norm(q) not in owner:
+            bad.append(f"{gid}: the quote is no longer `DS`'s text at the base")
+        elif f"{gid}, verbatim" not in item4 or norm(q) not in item4:
+            bad.append(f"§1 item 4 does not quote {gid} verbatim from `DS`")
+    pairs = {(r[1], r[2]) for r in contrast_rows(t) if len(r) > 2}
+    if ("`color.text.tertiary`", "`color.surface.raised`") not in pairs:
+        bad.append(
+            "§8.1 has no `color.text.tertiary` on `color.surface.raised` pair (G-T2.2)"
+        )
+    return bad
 
 
 def g_t2(t: Texts) -> list[str]:
@@ -493,6 +540,7 @@ def g_t2(t: Texts) -> list[str]:
         t.spec,
     ):
         bad.append("§4.2: the acknowledgement wait's T2 names no rendering")
+    bad += t2_quotes(t)
     for r in rows:
         if len(r) < 4 or "T2" not in r[3]:
             continue
@@ -690,6 +738,10 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-T2", "retype a key's text", set_cell("S137-09", 3, 'T2 "Read only while viewing someone."')),
     ("G-T2", "drop a control's rendering", set_cell("S122-02", 3, 'T2 "This is a demo account." (a PROPOSED key, E42-D03\'s)')),
     ("G-T2", "drop the lock from §1 item 4", sub("led by the CMP-019 `lock` glyph", "led by its glyph")),
+    ("G-T2", "let a T2 control leave the Tab order (G-T2.1b)", sub("never the `disabled` attribute — it stays in the Tab order", "or the `disabled` attribute")),
+    ("G-T2", "dim a T2 label with the disabled tokens (G-T2.2)", sub("never `color.text.disabled`, never `opacity.disabled` on", "dimmed with `opacity.disabled` on")),
+    ("G-T2", "make a T2 press act (G-T2.3)", sub("changes nothing and re-shows the reason inline with one polite announcement", "acts")),
+    ("G-T2", "drop the tertiary label pair from §8.1 (G-T2.2)", drop_row("| P-09 ")),
     ("G-RULED", "type a fixed word as the token", set_cell("S79-03", 2, 'CMP-044 typed (rung 3): the counts line, the history line, "Type RESET to confirm"')),
     ("G-RULED", "gate the protective writes", sub("**Close, cancel, reduce-only and stops stay enabled** (C-2.6): a protective write is never gated.", "**Close, cancel, reduce-only and stops are T2** (C-2.6).")),
     ("G-RULED", "drop the S77-01 row", drop_row("| S77-01 ")),
