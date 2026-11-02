@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, ClassVar
 
 import pytest
@@ -24,21 +25,21 @@ from candleviewer.api._generated.openapi_models import KlineResponse, Problem
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.market import MarketDataPrincipal
 from candleviewer.api.market_bars import (
-    FormingBarSource,
+    LiveSeriesSource,
     TradeTotalsSource,
     make_market_bars_router,
 )
 from candleviewer.api.market_response import iso_us
-from candleviewer.app import _forming_bar
 from candleviewer.bars.activity_builders import TickBarBuilder, VolumeBarBuilder
 from candleviewer.bars.emit import BarEmission
 from candleviewer.bars.metrics import bars_endpoint_422_no_data_recorded_total
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
 from candleviewer.bars.reader import BarReader, row_key
 from candleviewer.bars.rows import BUILD_VERSIONS, bar_param_for, bar_row, row_checksum
-from candleviewer.bars.series_store import SeriesStore
+from candleviewer.bars.series_store import LiveTail, SeriesStore
 from candleviewer.bars.threshold_builders import DeltaBarBuilder, RangeBarBuilder
 from candleviewer.bars.time_builder import TimeBarBuilder
+from candleviewer.bars.write_holes import HoleKey, WriteHoleLedger
 from candleviewer.domain.sql_names import ts_us_from_row
 from candleviewer.storage.models import TimeRange
 from candleviewer.storage.repositories.rows import TradeTotals
@@ -161,7 +162,7 @@ def _client(
     recording_us: int | None = _T0, fetch: _Fetch | None = None, wired: bool = True,
     recording_wired: bool = True, totals: TradeTotalsSource | None = _tape_totals,
     qty_step: Callable[[str], Decimal | None] | None = _step,
-    forming: FormingBarSource | None = None,
+    live: LiveSeriesSource | None = None, holes: WriteHoleLedger | None = None,
 ) -> TestClient:  # fmt: skip
     reader = BarReader(fetch or _Fetch(), _noop)
 
@@ -174,7 +175,7 @@ def _client(
             lambda: reader if wired else None,
             recording_started_at_us=started if recording_wired else None, trade_totals=totals,
             principal_resolver=_Resolver(perms), symbol_listed=lambda s: s == "BTCUSDT",
-            qty_step=qty_step, forming_bar=forming, now_us=lambda: _NOW,
+            qty_step=qty_step, live_series=live, now_us=lambda: _NOW, write_holes=holes,
         )
     )  # fmt: skip
     return TestClient(app, client=("127.0.0.1", 50000))
@@ -687,7 +688,7 @@ class TestIncludeOpenFromTheLiveSeries:
 
     def _get(self, **extra: Any) -> dict[str, Any]:
         store, rows, _ = self._live()
-        client = _client(fetch=_Fetch(rows), forming=lambda s, sp: _forming_bar(store, s, sp))
+        client = _client(fetch=_Fetch(rows), live=store.live_tail)
         body: dict[str, Any] = client.get("/market/bars", params={**self._Q, **extra}).json()
         return body
 
@@ -715,7 +716,7 @@ class TestIncludeOpenFromTheLiveSeries:
     def test_paging_serves_the_forming_bar_once_on_the_last_page(self, limit: int) -> None:
         store, rows, closed = self._live()
         limit = limit or len(closed)
-        client = _client(fetch=_Fetch(rows), forming=lambda s, sp: _forming_bar(store, s, sp))
+        client = _client(fetch=_Fetch(rows), live=store.live_tail)
         q = {**self._Q, "include_open": "true", "limit": limit}
         cursor, seen = None, []
         for _ in range(300):
@@ -741,7 +742,7 @@ class TestIncludeOpenFromTheLiveSeries:
         key = bar_param_for(self._SPEC)
         client = _client(
             fetch=_Fetch({key: [*rows[key], twin]}),
-            forming=lambda s, sp: _forming_bar(store, s, sp),
+            live=store.live_tail,
         )
         bars = client.get("/market/bars", params={**self._Q, "include_open": "true"}).json()["bars"]
         opens = [b["t"] for b in bars]
@@ -759,8 +760,9 @@ _PARAM = bar_param_for(_SERIES[("time", "1")])
 class TestOneTimeBarPerOpenTime:
     """D13: the stored key is `(ts, generation, index)`, so two rows can share one open time (a
     kline row that landed before the tape close; a rebuild under a new generation). A time bar is
-    served once per open time: tape over kline, then the highest generation, then the highest
-    index, and the `ts` cursor neither repeats nor skips across that open time."""
+    served once per open time: tape over kline, then the series' current generation (here the
+    newest tape row's: no live series), then the highest index, and the `ts` cursor neither
+    repeats nor skips across that open time."""
 
     _SPEC = _SERIES[("time", "1")]
     _Q: ClassVar[dict[str, Any]] = {**_P, "bar_type": "time", "param": "1"}
@@ -773,9 +775,8 @@ class TestOneTimeBarPerOpenTime:
         loser: dict[str, object] = {**base, "close": 1.5}
         if twin == "kline":
             loser |= {"source": "kline", "generation": 0, "index": None}
-        elif twin == "older_generation":
-            loser |= {"generation": 0, "index": 77}
-            base["generation"] = 1
+        elif twin == "other_generation":  # a rebuild's higher generation is not the current one
+            loser |= {"generation": 1, "index": 77}
         else:  # "lower_index": same generation, a lower index
             loser |= {"index": int(str(base["index"])) - 1}
         for row in (base, loser):
@@ -796,7 +797,7 @@ class TestOneTimeBarPerOpenTime:
                 return seen
         raise AssertionError("paging did not terminate")
 
-    @pytest.mark.parametrize("twin", ["kline", "older_generation", "lower_index"])
+    @pytest.mark.parametrize("twin", ["kline", "other_generation", "lower_index"])
     def test_equal_open_time_rows_serve_one_bar_the_preferred_one(self, twin: str) -> None:
         rows, ts, winner_close = self._rows(twin)
         bars = _client(fetch=_Fetch({_PARAM: rows})).get("/market/bars", params=self._Q).json()
@@ -807,7 +808,7 @@ class TestOneTimeBarPerOpenTime:
         assert bars["meta"]["count"] == len(rows) - 1
 
     @pytest.mark.parametrize("limit", [1, 2, 3, 9, 10, 11])
-    @pytest.mark.parametrize("twin", ["kline", "older_generation"])
+    @pytest.mark.parametrize("twin", ["kline", "other_generation"])
     def test_paging_across_the_shared_open_time_neither_repeats_nor_skips(
         self, twin: str, limit: int
     ) -> None:
@@ -817,3 +818,180 @@ class TestOneTimeBarPerOpenTime:
             iso_us(int(str(r["ts"]))) for r in rows if r is not rows[10]
         ]
         assert next(b for b in seen if b["t"] == iso_us(ts))["c"] == winner_close
+
+
+class TestFoldRegressions:
+    """#5497 review: M1 (a close the live series holds that storage does not hold yet), m1
+    (generations are opaque: the current one is served, not the highest), m2 (one open time
+    filling a read is re-read whole), m3/n1 (live bars never fill a recorded hole; a moved
+    forming bar moves the page span), m4 (non-time key paging), m5 (ordering guard)."""
+
+    _SPEC = _SERIES[("time", "1")]
+    _Q: ClassVar[dict[str, Any]] = {**_P, "bar_type": "time", "param": "1"}
+
+    def _walk(self, client: TestClient, q: dict[str, Any]) -> list[dict[str, Any]]:
+        cursor, seen = None, []
+        for _ in range(500):
+            body = client.get(
+                "/market/bars", params=q if cursor is None else {**q, "cursor": cursor}
+            ).json()
+            assert len(body["bars"]) <= q["limit"]
+            seen += body["bars"]
+            if (cursor := body["meta"]["next_cursor"]) is None:
+                return seen
+        raise AssertionError("paging did not terminate")
+
+    def test_include_open_serves_a_close_storage_does_not_hold_yet(self) -> None:
+        store, rows, closed = TestIncludeOpenFromTheLiveSeries()._live()
+        client = _client(fetch=_Fetch({_PARAM: rows[_PARAM][:-1]}), live=store.live_tail)
+        body = client.get("/market/bars", params={**self._Q, "include_open": "true"}).json()
+        assert [b["t"] for b in body["bars"][:-1]] == [iso_us(b.open_time) for b in closed]
+        assert [b["confirm"] for b in body["bars"][-2:]] == [True, False]
+        assert body["meta"]["next_cursor"] is None
+
+    @pytest.mark.parametrize("limit", [1, 2, 3, 4, 0])  # 0: exactly the stored count
+    def test_paging_serves_every_close_not_yet_stored_once(self, limit: int) -> None:
+        store, rows, closed = TestIncludeOpenFromTheLiveSeries()._live()
+        stored = rows[_PARAM][:-3]  # three closes still in the writer
+        client = _client(fetch=_Fetch({_PARAM: stored}), live=store.live_tail)
+        q = {**self._Q, "include_open": "true", "limit": limit or len(stored)}
+        seen = self._walk(client, q)
+        assert [b["t"] for b in seen[:-1]] == [iso_us(b.open_time) for b in closed]
+        assert [b["confirm"] for b in seen] == [True] * len(closed) + [False]
+
+    def test_a_close_not_yet_stored_counts_in_provenance_at_its_own_build(self) -> None:
+        _, rows, closed = TestIncludeOpenFromTheLiveSeries()._live()
+
+        def live(symbol: str, spec: BarSpec, since: int | None) -> LiveTail:
+            after = [] if since is None else [b for b in closed if b.open_time >= since]
+            return LiveTail(0, [(b, None) for b in after], None)  # unknown provenance
+
+        client = _client(fetch=_Fetch({_PARAM: rows[_PARAM][:-1]}), live=live)
+        body = client.get("/market/bars", params={**self._Q, "include_open": "true"}).json()
+        assert body["bars"][-1]["t"] == iso_us(closed[-1].open_time)
+        assert body["meta"]["stale_build"] is True
+
+    def test_a_live_bar_not_after_the_last_served_row_is_never_appended(self) -> None:
+        _, rows, closed = TestIncludeOpenFromTheLiveSeries()._live()
+        older = closed[-3].model_copy(update={"closed": False})  # m5: behind the stored rows
+
+        def live(symbol: str, spec: BarSpec, since: int | None) -> LiveTail:
+            return LiveTail(0, [(closed[-2], 1)], older)
+
+        client = _client(fetch=_Fetch(rows), live=live)
+        bars = client.get("/market/bars", params={**self._Q, "include_open": "true"}).json()["bars"]
+        assert [b["t"] for b in bars] == [iso_us(b.open_time) for b in closed]
+
+    def _generations(self) -> tuple[list[dict[str, object]], int]:
+        """12 tape rows of generation 3 plus a generation-5 twin at the 6th open time."""
+        tape = [dict(r) for r in _STORE[_PARAM] if int(str(r["ts"])) >= _T0][:12]
+        for r in tape:
+            r["generation"] = 3
+        hi = {**tape[5], "generation": 5, "close": 1.5}  # a rebuild row, not the current one
+        rows = [*tape[:6], hi, *tape[6:]]
+        for r in rows:
+            r["row_checksum"] = row_checksum(r)
+        return rows, int(str(tape[5]["ts"]))
+
+    def test_shared_open_time_serves_the_newest_tape_rows_generation(self) -> None:
+        rows, ts = self._generations()
+        body = _client(fetch=_Fetch({_PARAM: rows})).get("/market/bars", params=self._Q).json()
+        served = next(b for b in body["bars"] if b["t"] == iso_us(ts))
+        assert served["generation"] == 3 and served["c"] != "1.5"
+
+    def test_shared_open_time_serves_the_live_generation_though_it_is_lower(self) -> None:
+        rows, ts = self._generations()
+        for r in rows:  # every other row is generation 5: only the live store says 3
+            if int(str(r["ts"])) != ts:
+                r["generation"] = 5
+                r["row_checksum"] = row_checksum(r)
+
+        def live(symbol: str, spec: BarSpec, since: int | None) -> LiveTail:
+            return LiveTail(3, [], None)
+
+        body = (
+            _client(fetch=_Fetch({_PARAM: rows}), live=live)
+            .get("/market/bars", params=self._Q)
+            .json()
+        )
+        served = next(b for b in body["bars"] if b["t"] == iso_us(ts))
+        assert served["generation"] == 3 and served["c"] != "1.5"
+
+    def test_an_open_time_filling_the_read_is_re_read_whole(self) -> None:
+        tape = [r for r in _STORE[_PARAM] if int(str(r["ts"])) >= _T0]
+        ts = int(str(tape[0]["ts"]))
+        twins = [{**tape[0], "generation": g, "close": float(g)} for g in range(12)]
+        for r in twins:
+            r["row_checksum"] = row_checksum(r)
+        client = _client(fetch=_Fetch({_PARAM: [*twins, *tape[1:4]]}))
+        seen = self._walk(client, {**self._Q, "limit": 1})  # reads 10 rows: all at `ts`
+        assert [b["t"] for b in seen] == [iso_us(int(str(r["ts"]))) for r in tape[:4]]
+        first = seen[0]  # the 11th and 12th rows were past the first read: re-read
+        assert first["t"] == iso_us(ts) and first["generation"] == 11
+
+    def test_a_recorded_hole_at_the_forming_bar_stays_listed(self, tmp_path: Path) -> None:
+        store, rows, closed = TestIncludeOpenFromTheLiveSeries()._live()
+        tail = store.live_tail("BTCUSDT", self._SPEC, None)
+        assert tail is not None and tail.forming is not None
+        bar = tail.forming
+        sum_ = int(str(bar_row(bar, self._SPEC, generation=tail.generation)["row_checksum"]))
+        ledger = WriteHoleLedger(tmp_path)
+        ledger.lost([HoleKey("BTCUSDT", self._SPEC.spec_hash, "time", "1m", tail.generation,
+                             bar.index, bar.open_time, bar.open_time + 60_000_000, sum_)],
+                    "refused")  # fmt: skip
+        span = {"start_us": bar.open_time, "end_us": bar.open_time + 60_000_000}
+        client = _client(fetch=_Fetch(rows), live=store.live_tail, holes=ledger)
+        q = {**self._Q, "include_open": "true"}
+        body = client.get("/market/bars", params=q).json()
+        assert body["bars"][-1]["confirm"] is False and body["meta"]["coverage_holes"] == [span]
+        # n1: a full page moves the forming bar, and the hole, to the next page's span
+        full = client.get("/market/bars", params={**q, "limit": len(closed)}).json()
+        assert "coverage_holes" not in full["meta"] and full["meta"]["next_cursor"]
+        cursor = full["meta"]["next_cursor"]
+        last = client.get("/market/bars", params={**q, "limit": len(closed), "cursor": cursor})
+        last = last.json()
+        assert last["meta"]["coverage_holes"] == [span] and last["bars"][0]["confirm"] is False
+
+    def _tick(self) -> tuple[SeriesStore, list[Bar], Bar]:
+        spec = _SERIES[("tick", "100")]
+        builder, store = TickBarBuilder(spec, "BTCUSDT"), SeriesStore()
+        ups: list[BarUpdate] = []
+        for t in _TAPE:
+            ups += builder.on_trade(t)
+        hold = asyncio.run(store.ensure("BTCUSDT", spec))
+        asyncio.run(store.emit(BarEmission(spec, 7, ups)))
+        hold.release()
+        tail = store.live_tail("BTCUSDT", spec, None)
+        assert tail is not None and tail.forming is not None
+        return store, [b for b in final_bars(ups) if b.closed], tail.forming
+
+    _TICK_Q: ClassVar[dict[str, Any]] = {**_P, "bar_type": "tick", "param": "100",
+                                         "include_open": "true"}  # fmt: skip
+
+    @pytest.mark.parametrize("limit", [1, 3, 0])  # 0: exactly the stored count
+    def test_include_open_on_tick_bars_pages_by_the_full_key(self, limit: int) -> None:
+        spec = _SERIES[("tick", "100")]
+        store, closed, forming = self._tick()
+        stored = [bar_row(b, spec, generation=7) for b in closed[:-2]]  # two still in the writer
+        client = _client(fetch=_Fetch({bar_param_for(spec): stored}), live=store.live_tail)
+        seen = self._walk(client, {**self._TICK_Q, "limit": limit or len(stored)})
+        assert [(b["generation"], b["index"]) for b in seen] == [
+            (7, b.index) for b in [*closed, forming]
+        ]
+        assert [b["confirm"] for b in seen] == [True] * len(closed) + [False]
+
+    def test_a_stored_row_of_another_generation_at_the_forming_key_does_not_hide_it(
+        self,
+    ) -> None:
+        spec = _SERIES[("tick", "100")]
+        store, closed, forming = self._tick()
+        stored = [bar_row(b, spec, generation=7) for b in closed]
+        # an older generation's row with the forming bar's ts and index: another key (m4)
+        ghost = bar_row(forming.model_copy(update={"closed": True}), spec, generation=6)
+        client = _client(fetch=_Fetch({bar_param_for(spec): [*stored, ghost]}),
+                         live=store.live_tail)  # fmt: skip
+        bars = client.get("/market/bars", params=self._TICK_Q).json()["bars"]
+        assert [(b["generation"], b["index"], b["confirm"]) for b in bars[-2:]] == [
+            (6, forming.index, True),
+            (7, forming.index, False),
+        ]

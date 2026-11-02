@@ -270,7 +270,7 @@ from candleviewer.backups_wiring import (
 )
 from candleviewer.bars.limits import QUERY_TIMEOUT_S
 from candleviewer.bars.metrics import export_bars_metrics
-from candleviewer.bars.models import Bar, BarSpec
+from candleviewer.bars.models import BarSpec
 from candleviewer.bars.reader import BarReader, tape_time_bar_reader
 from candleviewer.bars.series_store import RepairHook, SeriesStore
 from candleviewer.bars.service import BarsService
@@ -3300,7 +3300,7 @@ def create_app(
             principal_resolver=audit_resolver,
             symbol_listed=lambda sym: _catalogue_listed(ctx, sym),
             qty_step=lambda sym: _catalogue_qty_step(ctx, sym),  # SR-E12-03 volume/delta floor
-            forming_bar=lambda sym, spec: _forming_bar(bars_series, sym, spec),  # include_open
+            live_series=bars_series.live_tail,  # include_open; a time bar's generation
             now_us=lambda: time.time_ns() // 1000,
             write_holes=write_holes,
         )
@@ -3921,16 +3921,6 @@ def _catalogue_tick_size(ctx: AppContext, symbol: str) -> Decimal | None:
     snap = scheduler.snapshot() if scheduler is not None else None
     inst = snap.get(symbol) if snap is not None else None
     return None if inst is None else inst.tick_size
-
-
-def _forming_bar(store: SeriesStore, symbol: str, spec: BarSpec) -> tuple[Bar, int] | None:
-    """`/market/bars?include_open=true`: the newest in-progress bar the live series store holds
-    for `symbol`/`spec` and its generation; None when the store does not keep the series (a
-    REST read never starts a hold) or none is open."""
-    latest = store.latest(symbol, spec.spec_hash, 1)
-    if latest is None or latest.forming is None:
-        return None
-    return latest.forming, latest.generation or 0
 
 
 def _catalogue_qty_step(ctx: AppContext, symbol: str) -> Decimal | None:
