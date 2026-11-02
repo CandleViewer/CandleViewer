@@ -24,14 +24,21 @@ test("SCR-063 in the shell: rows from REST, the grid reached by keyboard, axe cl
     grid.getByRole("row", { name: "BTCUSDT · Long · 0.25 BTC · Main", exact: true }),
   ).toBeVisible();
   await expect(grid.getByRole("rowheader", { name: /^LIVE total/ })).toContainText("5 open");
-  // keyboard: from the Positions tab, through the toolbar, to the grid's one stop
+  // keyboard: from the Positions tab, the toolbar in order, then the grid's one stop, as the web
+  // spec has it (`apps/web/e2e/specs/e29-positions/positions.spec.ts`): one Tab and one assertion
+  // per stop, so a tab-order drift fails here too
   await win.getByRole("tab", { name: "Positions" }).focus();
-  await expect(async () => {
+  for (const control of [
+    win.getByRole("combobox", { name: "Group by" }),
+    win.getByRole("button", { name: "Filter" }),
+    win.getByRole("button", { name: "Columns" }),
+    win.getByRole("button", { name: "Export CSV" }),
+  ]) {
     await win.keyboard.press("Tab");
-    await expect(grid.getByRole("rowheader", { name: /^Main · LIVE/ })).toBeFocused({
-      timeout: 250,
-    });
-  }).toPass();
+    await expect(control).toBeFocused();
+  }
+  await win.keyboard.press("Tab");
+  await expect(grid.getByRole("rowheader", { name: /^Main · LIVE/ })).toBeFocused();
   await win.keyboard.press("ArrowDown");
   await expect(
     grid
