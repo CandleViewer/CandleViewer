@@ -1,6 +1,6 @@
 """The generated REST models set against the contract they came from (#906 slice G2a): the models a
-request body reaches, each paired with its contract schema, and what each side answers to one
-value. A support module (no `test_` prefix): pytest collects nothing from it."""
+request body or a response reaches (#4237), each paired with its contract schema, and what each
+side answers to one value. A support module (no `test_` prefix): pytest collects nothing from it."""
 
 from __future__ import annotations
 
@@ -70,20 +70,25 @@ def _models_in(annotation: object) -> Iterator[type[BaseModel]]:
         yield from _models_in(arg)
 
 
-def _request_roots() -> set[str]:
-    """The components a request body names, directly or from inside an inline body."""
+def _roots(key: str) -> set[str]:
+    """The components an operation's `requestBody` or `responses` (`key`) names, directly, through
+    a shared `requestBodies` or `responses` entry, or from inside an inline schema."""
     found: set[str] = set()
     for item in SPEC["paths"].values():
         for operation in item.values():
-            body = operation.get("requestBody") if isinstance(operation, dict) else None
-            body = _at(body["$ref"].removeprefix("#")) if body and "$ref" in body else body
-            found |= set(re.findall(r'"\$ref": "#/components/schemas/([^"]+)"', json.dumps(body)))
+            text = json.dumps(operation.get(key) if isinstance(operation, dict) else None)
+            for shared in re.findall(r'"#(/components/(?:requestBodies|responses)/[^"]+)"', text):
+                text += json.dumps(_at(shared))
+            found |= set(re.findall(r'"\$ref": "#/components/schemas/([^"]+)"', text))
     return found
 
 
-def _walk() -> tuple[dict[type[BaseModel], dict[str, str]], set[type[BaseModel]]]:
-    """Walks every request body's models, member by member, beside the contract's schemas. A model
-    pairs with the object schema its parent's member holds that has exactly its member names."""
+REQUEST_ROOTS, RESPONSE_ROOTS = _roots("requestBody"), _roots("responses")
+
+
+def _walk(roots: set[str]) -> tuple[dict[type[BaseModel], dict[str, str]], set[type[BaseModel]]]:
+    """Walks the models of `roots`, member by member, beside the contract's schemas. A model pairs
+    with the object schema its parent's member holds that has exactly its member names."""
     paired: dict[type[BaseModel], dict[str, str]] = {}
     seen: set[type[BaseModel]] = set()
 
@@ -103,7 +108,7 @@ def _walk() -> tuple[dict[type[BaseModel], dict[str, str]], set[type[BaseModel]]
                         visit(field.annotation, paired[model][name])
                     break
 
-    for name in sorted(_request_roots()):
+    for name in sorted(roots):
         if isinstance(root := getattr(api, name, None), type) and issubclass(root, BaseModel):
             visit(root, _SCHEMAS + name)
     return paired, {m for m in seen if not issubclass(m, RootModel)} - set(paired)
@@ -111,7 +116,11 @@ def _walk() -> tuple[dict[type[BaseModel], dict[str, str]], set[type[BaseModel]]
 
 #: Every generated model a request body reaches, with the contract pointer of each member's schema;
 #: and those reached that no schema of the contract fits.
-REQUEST_MODELS, UNPAIRED = _walk()
+REQUEST_MODELS, UNPAIRED = _walk(REQUEST_ROOTS)
+#: The same for every model a request body or a response reaches (#4237); and those a response
+#: reaches, by name.
+MODELS, UNPAIRED_ANY = _walk(REQUEST_ROOTS | RESPONSE_ROOTS)
+RESPONSE_MODELS = {model.__name__ for model in _walk(RESPONSE_ROOTS)[0]}
 
 
 def scalar_members(model: type[BaseModel]) -> dict[str, str]:
