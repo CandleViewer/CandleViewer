@@ -1,0 +1,37 @@
+/*
+ * SCR-147's own rules (E08-S12). Tokens only. Every state is carried by its word and glyph, so a hue is never the
+ * only channel; nothing here moves; the meter steps with each sample (E08-D09 §19).
+ */
+.cv-connectivity__sub {
+  color: var(--color-text-secondary);
+  font-size: var(--type-ui-caption-font-size);
+}
+
+.cv-connectivity__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-inset-sm);
+}
+
+.cv-connectivity__marker {
+  color: var(--color-text-secondary);
+  font-size: var(--type-ui-caption-font-size);
+}
+
+/* The reserve is a separate band, never inside a meter's fill (D09 §7). */
+.cv-connectivity__reserve {
+  border: 1px solid var(--color-neutral-default);
+  padding: var(--space-inset-sm);
+}
+
+/* R2 forced colours (D09 §17.6): system colours for the band's edge and the active row's outline. */
+@media (forced-colors: active) {
+  .cv-connectivity__reserve {
+    border-color: CanvasText;
+  }
+
+  .cv-connectivity__grid [aria-current="true"],
+  .cv-connectivity__grid tr:focus-within {
+    outline: 2px solid Highlight;
+  }
+}

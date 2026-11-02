@@ -1,8 +1,5 @@
 import type { CapacityReport } from "./rateBudget";
-interface UsagePoint {
-  readonly at: string;
-  readonly used: number;
-}
+import type { UsagePoint } from "./components";
 
 // Illustrative values, not a market capture (W-01). No credential, hostname, address or identifier appears here: the wire
 // id is optional in the contract and left out, and the text-scan test keeps it that way (C-13.5).
