@@ -2,7 +2,9 @@
 
 Returns plain tuples (account_id, can_view, frozen): storage may not import `rules` (M10).
 `load_trade_grants` (E29-T04, #913) adds `can_trade`, for the order route's principal;
-`load_account_environments` (E35-T10, BQ-3) each live account's `exchange_accounts.env`.
+`load_account_environments` (E35-T10, BQ-3) each live account's `exchange_accounts.env`;
+`load_environment_accounts` (E35-T11) every live account of one environment, which an Owner's rule
+principal admits (24 Sec.11.5 "The principal").
 """
 
 from __future__ import annotations
@@ -32,6 +34,11 @@ _TRADE_GRANTS = sa.text(
 _ENVIRONMENTS = sa.text(
     "SELECT id, env::text FROM exchange_accounts WHERE id = ANY(CAST(:ids AS uuid[])) "
     "AND deleted_at IS NULL"
+)
+# E35-T11 (24 Sec.11.5 "The principal"): every live account of the process's environment, which
+# the order route's decision admits for an Owner; a deleted account is not read.
+_ENVIRONMENT_ACCOUNTS = sa.text(
+    "SELECT id FROM exchange_accounts WHERE env::text = :env AND deleted_at IS NULL"
 )
 _PERMS = sa.text(
     "SELECT DISTINCT p.code FROM users u "
@@ -66,6 +73,12 @@ class SqlAlchemyScopeSource:
         async with self._relational.unit_of_work() as uow:
             rows = (await uow.session.execute(_ENVIRONMENTS, {"ids": ids})).all()
         return {UUID(str(r[0])): str(r[1]) for r in rows}
+
+    async def load_environment_accounts(self, environment: str) -> frozenset[UUID]:
+        """Every live account of `environment`; a deleted one is left out."""
+        async with self._relational.unit_of_work() as uow:
+            rows = (await uow.session.execute(_ENVIRONMENT_ACCOUNTS, {"env": environment})).all()
+        return frozenset(UUID(str(r[0])) for r in rows)
 
     async def load_permissions(self, owner: UUID) -> frozenset[str]:
         async with self._relational.unit_of_work() as uow:

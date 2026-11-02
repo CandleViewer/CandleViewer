@@ -8,6 +8,7 @@ the action, never an id, a figure or exchange text (C-12.6).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from decimal import Decimal
 from types import MappingProxyType
@@ -65,6 +66,27 @@ BLOCKED_DETAIL: Final[Mapping[str, str]] = MappingProxyType(
         BUDGET_UNREAD: "Not done — the rule's recent order count was not confirmed.",
     }
 )
+
+#: E35-T11 (24 §11.9 `kill_switch`): the OMS's `403 trading_disabled` from the read-only gate is
+#: `kill_switch` with a detail of its own, so a read-only system is never reported as an engaged
+#: kill switch. PROPOSED for the owner, as `BLOCKED_DETAIL` is, under the same register.
+READ_ONLY: Final = "read_only"
+OMS_DETAIL: Final[Mapping[str, str]] = MappingProxyType(
+    {READ_ONLY: "Not done — the terminal is read-only, so nothing was sent."}
+)
+#: A cap name `oms_cap_detail` may quote: an identifier with no digit (the register's), short
+#: enough that the sentence stays within 80 characters.
+_CAP_NAME: Final = re.compile(r"[a-z][a-z_]{0,38}")
+
+
+def oms_cap_detail(cap: str | None) -> str:
+    """The detail of the OMS's `403 risk_limit_breached` (24 §11.9 `cap`, E35-T11): the sentence
+    names the cap the refusal carries (`RiskRefused.cap`, the OMS's own identifier, never a figure),
+    else, with none it can quote, it is `cap`'s own. PROPOSED, as `BLOCKED_DETAIL` is."""
+    if cap is None or _CAP_NAME.fullmatch(cap) is None:
+        return BLOCKED_DETAIL["cap"]
+    return f"Not done — the account's cap {cap} refused it."
+
 
 _FROZEN = ConfigDict(frozen=True, extra="forbid")
 
@@ -130,14 +152,16 @@ def blocked_result(
     reason: BlockedBy,
     duration_us: int = 0,
     limit: str | None = None,
+    detail: str | None = None,
 ) -> ActionResult:
     """A check's refusal: nothing was sent (24 §11.9 `blocked`). `limit`, when given, keys the
     detail in place of the reason: a `BLOCKED_DETAIL` key of its own, such as the rule limit a
-    `cap` names (`RULE_LIMITS`)."""
+    `cap` names (`RULE_LIMITS`). `detail` (E35-T11) is the OMS's mapped refusal's own sentence, from
+    `OMS_DETAIL` or `oms_cap_detail`, in place of both."""
     return ActionResult(
         node_id=node_id, action_type=action_type, account_id=account_id,
         resolved_accounts=resolved_accounts, outcome="blocked", blocked_by=reason,
-        blocked_detail=BLOCKED_DETAIL[limit or reason], dedupe_key=dedupe_key,
+        blocked_detail=detail or BLOCKED_DETAIL[limit or reason], dedupe_key=dedupe_key,
         duration_us=duration_us,
     )  # fmt: skip
 
