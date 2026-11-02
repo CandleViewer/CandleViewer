@@ -32,6 +32,7 @@ from candleviewer.bars.rows import BUILD_VERSIONS, bar_row
 from candleviewer.bars.series_store import Hold
 from candleviewer.bars.spec import from_wire
 from candleviewer.bars.time_builder import TimeBarBuilder
+from candleviewer.bars.write_holes import HoleKey, WriteHoleLedger
 from candleviewer.ws import bars_publish, bars_source, bars_wire
 from candleviewer.ws.bars_wire import bar_item
 from tests.contract._market_world import QTY_STEP, bar_type_params, stored_rows
@@ -69,7 +70,6 @@ _DEAD_ALLOWED: Final = {
             "BarsBatch.bars[].gap_before",
             "BarsBatch.bars[].partial",
             "BarsBatch.bars[].tape_gap",
-            "snapMeta.coverage_holes",
         )
     },
 }
@@ -305,7 +305,29 @@ def _sent(payload: dict[str, Any]) -> set[str]:
     return {f"BarsBatch.{member}" for member in payload} | items
 
 
-def _member_run() -> Run:
+def _holed_snapshot(root: Path) -> dict[str, Any]:
+    """The snapshot of the tick-100 series' two stored bars when its third closed bar was not
+    stored (#5396): `meta.coverage_holes` names it (23 §13)."""
+    lost = _closed("tick", "100")[2]
+    ledger = WriteHoleLedger(root)
+    key = HoleKey("BTCUSDT", _TICK.spec_hash, "tick", "tick:100", 0, lost.index, lost.open_time,
+                  lost.close_time + 1)  # fmt: skip
+    ledger.lost([key], "refused")
+    rig = _Rig({"tick:100": [bar_row(b, _TICK, generation=0) for b in _closed("tick", "100")[:2]]},
+               holes=ledger)  # fmt: skip
+    with h.connect(rig.w) as c:
+        hold = _hydrate(rig, _TICK)
+        try:
+            c.sub({"ch": "bars.BTCUSDT.tick.100", "opts": {"encoding": "structured"}})
+            snap = c.next_of("snap")
+        finally:
+            hold.release()
+    holes = [{"start_us": key.open_us, "end_us": key.end_us}]
+    assert snap["meta"]["coverage_holes"] == holes
+    return snap
+
+
+def _member_run(root: Path) -> Run:
     """The structured payloads of a run that sends every member a `bars` frame can carry: time and
     non-time, `include_delta` on and off, a binary subscription (whose structured frames alone
     count: kind 4 has no member names), an amended close and a merged window; and the `meta` of
@@ -323,6 +345,7 @@ def _member_run() -> Run:
         rig = _encoding_rig()
         with h.connect(rig.w) as c:
             binary += _encoded(rig, c, mode)
+    frames.append(_holed_snapshot(root))
     rig, mine = _Rig({}), _Series(binary=False)
     script = _script("forty_updates")
     with h.connect(rig.w) as c:
@@ -337,11 +360,11 @@ def _member_run() -> Run:
 
 
 @pytest.fixture(scope="module")
-def member_run() -> Run:
+def member_run(tmp_path_factory: pytest.TempPathFactory) -> Run:
     """`_member_run` on `cv.v1.json`, the wire set only while it runs."""
     token = h.use_wire("json")
     try:
-        return _member_run()
+        return _member_run(tmp_path_factory.mktemp("holes"))
     finally:
         h.reset_wire(token)
 

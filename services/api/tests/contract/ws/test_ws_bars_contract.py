@@ -35,6 +35,7 @@ from candleviewer.bars.rows import bar_param_for, bar_row
 from candleviewer.bars.series_store import SeriesStore
 from candleviewer.bars.spec import from_wire
 from candleviewer.bars.time_builder import TimeBarBuilder
+from candleviewer.bars.write_holes import WriteHoleLedger
 from candleviewer.domain.sql_names import ts_us_from_row
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.bars_publish import BarsPublisher
@@ -124,6 +125,7 @@ class _Rig:
         rows: dict[str, list[dict[str, object]]],
         *,
         backpressure: BackpressureConfig = _ON,
+        holes: WriteHoleLedger | None = None,
     ) -> None:
         self.w = h.World(backpressure=backpressure)
         self.scales: tuple[int, int] | None = (1, 3)
@@ -143,6 +145,7 @@ class _Rig:
             lambda _s: self.scales,
             seed=publisher.note_generation,
             stale=lambda symbol, spec_hash: (symbol, spec_hash) in self.quarantined,
+            holes=holes,
         )
         services = self.w.registry.services
         services.bars, services.series = self.leases, self.store

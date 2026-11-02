@@ -1713,7 +1713,7 @@ def create_app(
     # #5396: closed bars not stored (a real sink only) reach REST and WS reads as coverage holes.
     write_holes = app.state.bars_runtime.holes
     snapshot_adapters["bars"] = BarsSnapshotSource(
-        bars_series, scales, seed=publisher.note_generation, stale=stale
+        bars_series, scales, seed=publisher.note_generation, stale=stale, holes=write_holes
     )
     snapshot_adapters["indicators"] = IndicatorsSnapshotSource(indicators, stale=stale)
     if bars_reader is not None and ctx.ingestion.klines is not None:
