@@ -149,12 +149,92 @@
   color: var(--color-sell-default);
 }
 
-/* The selection bar (D02 §8.3): "2 selected · Cancel selected · Clear selection". */
+/* The selection bar (D02 §8.3): "2 selected · Cancel selected · Clear selection", its dots drawn. */
 .cv-orders__selection {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-inset-sm);
+}
+
+.cv-orders__dot {
+  color: var(--color-text-secondary);
+}
+
+/* A busy Cancel (D02:345, Mo-12): "Cancelling…" stays in color.text.primary, led by a static ⟳ (its
+   refresh glyph), as CMP-057 draws its busy primary: CMP-001's loading look would hide the label
+   under a turning spinner. Nothing turns. */
+.cv-orders
+  .cv-button[aria-busy="true"]:not([data-side])
+  > :is(.cv-button__label, .cv-button__icon) {
+  opacity: 1;
+}
+
+.cv-orders .cv-button[aria-busy="true"] > .cv-spinner {
+  display: none;
+}
+
+/* D02 §12's grid tokens, as CMP-114 dresses its own treegrid (positionsgrid.css), until CMP-115:
+   data rows on surface.raised (no zebra), hover on surface.hover, selected on surface.selected (the
+   box checked too); section and account rows on surface.canvas; a border.subtle hairline under each
+   data row, drawn inside its cells; the numerals type.num.base with tabular figures; the whole select
+   cell the box's hit area. */
+.cv-orders .cv-orders__row,
+.cv-orders .cv-orders__row:nth-child(even) {
+  background: var(--color-surface-raised);
+}
+
+.cv-orders .cv-orders__row:hover {
+  background: var(--color-surface-hover);
+}
+
+.cv-orders .cv-orders__row[aria-selected="true"],
+.cv-orders .cv-orders__row[aria-selected="true"]:hover {
+  background: var(--color-surface-selected);
+}
+
+.cv-orders .cv-orders__section,
+.cv-orders .cv-orders__section:nth-child(even),
+.cv-orders .cv-orders__group,
+.cv-orders .cv-orders__group:nth-child(even) {
+  background: var(--color-surface-canvas);
+}
+
+.cv-orders .cv-orders__row > .cv-table__cell {
+  box-shadow: inset 0 calc(var(--border-hairline) * -1 * 1px) 0 0 var(--color-border-subtle);
+}
+
+.cv-orders .cv-orders__row > [data-numeric] {
+  font-family: var(--type-num-base-font-family);
+  font-size: var(--type-num-base-font-size);
+  font-weight: var(--type-num-base-font-weight);
+  line-height: var(--type-num-base-line-height);
+  font-variant-numeric: tabular-nums;
+}
+
+.cv-orders__select .cv-choice {
+  min-block-size: var(--size-row-height);
+  align-items: center;
+  vertical-align: middle;
+}
+
+/* Forced colours drop the fills and the hairline; a selected row takes the system's (CMP-114's). */
+@media (forced-colors: active) {
+  .cv-orders .cv-orders__row[aria-selected="true"] {
+    background: Highlight;
+    color: HighlightText;
+  }
+}
+
+/*
+ * The tab's toast stack ("Order notifications"), until CMP-212's one counted stack: the bottom start
+ * corner, so it never covers the shell's stack at the bottom end. Both stay until dismissed (WCAG
+ * 2.2.1). The selector names the region by its PROPOSED label (`blotter.ui.toasts`); a test holds
+ * the two together.
+ */
+.cv-toast-region[aria-label="Order notifications"] {
+  inset-inline-start: var(--space-inset-lg);
+  inset-inline-end: auto;
 }
 
 /* The bulk dialog's lists, which scroll with its body at 200 % (D02 §11.5's text-resize line). */

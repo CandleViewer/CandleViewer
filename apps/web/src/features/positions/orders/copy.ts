@@ -15,7 +15,7 @@
  * there, carries the exchange's text: no `ret_msg`, `retCode` or server `detail`, and no "already
  * filled" (BQ-2, BQ-3).
  */
-import { bindEntry, type DeckEntry } from "../copy";
+import { bindEntry, type BoundText, type DeckEntry } from "../copy";
 
 /** A merged design string and the line it is drawn at ("D01:177", "D02:269"). */
 export interface CitedText {
@@ -79,11 +79,6 @@ export const ORDER_TEXT = {
   /** The account group row's environment (D02:238 "Main · LIVE"; D02:207 "Main · DEMO", §5.2). */
   live: { string: "LIVE", source: "D02:238" },
   demo: { string: "DEMO", source: "D02:207" },
-  /**
-   * Offline with REST unreachable: every write T2 behind one notice of E17-D01 §6's words (D02:397;
-   * a feed state E09-D09 §3.1 registers, E29-D04:459 "no key"), drawn at E17-D01:197.
-   */
-  cannotReachServer: { string: "Cannot reach server", source: "E17-D01:197" },
   /** D02 §6.1's column headers (D02:262–274), and §8.2's Cancel with its busy label (N-06). */
   colAccount: { string: "Account", source: "D02:262" },
   colSymbol: { string: "Symbol", source: "D02:262" },
@@ -102,6 +97,18 @@ export const ORDER_TEXT = {
   cancel: { string: "Cancel", source: "D02:345" },
   cancelling: { string: "Cancelling…", source: "D02:345" },
 } as const satisfies Readonly<Record<string, CitedText>>;
+
+/**
+ * E29-D02 §8.2's protective take-profit confirm (D01 D7), its title as D02:345 draws it, each span
+ * bound by the caller: the take-profit's price, its account and its symbol.
+ */
+export const CONFIRM_TEXT = {
+  takeProfit: {
+    string: "Cancel the take-profit at 64,800.0 for Main BTCUSDT?",
+    source: "D02:345",
+    params: { "64,800.0": "figure", Main: "account label", BTCUSDT: "symbol" },
+  },
+} as const satisfies Readonly<Record<string, BoundText & CitedText>>;
 
 /** The Age column's units, as D02:272 writes "38 s", "4 m" and "1 h 12 m". */
 export const AGE_UNITS = {
@@ -205,6 +212,35 @@ export const PROPOSED = {
       "64,800.0": "figure",
       Main: "account label",
     },
+  ),
+  "blotter.ui.cancel.toast.no_price": proposed(
+    "Cancel sent: BTCUSDT Sell 0.250 on Main.",
+    '`blotter.ui.cancel.toast` for a market order or one with no price: no "at Market", no "at —" (as `orderName` drops "at").',
+    { BTCUSDT: "symbol", Sell: "side", "0.250": "quantity", Main: "account label" },
+  ),
+  "blotter.ui.cancel.view_as": proposed(
+    "Read-only while viewing as another user.",
+    "A cancel refused `403 view_as_read_only` (S-22): E09-D09's `rbac.view_as` without its {user}, which no client source names yet; owner E29-D03 with E09-D09.",
+  ),
+  "blotter.ui.tp_confirm.confirm": proposed(
+    "Cancel take-profit",
+    'The protective take-profit confirm\'s confirming button (D02 §8.2 gives its title only): it names the effect, never "Confirm" (CMP-044).',
+  ),
+  "blotter.ui.tp_confirm.keep": proposed(
+    "Keep take-profit",
+    'The same confirm\'s dismissing button: never a second "Cancel" in a dialog that cancels (as `blotter.ui.bulk.cancel_keep`).',
+  ),
+  "blotter.ui.toasts": proposed(
+    "Order notifications",
+    "The Working-orders tab's toast region's name, apart from the shell's \"Notifications\" until CMP-212's one stack.",
+  ),
+  "blotter.ui.chip.side_buy": proposed(
+    "Side: Buy",
+    'The Side chip on the Working-orders tab, in the order\'s side (D02:263 draws "▲ Buy"; D02:375 draws the positions\' "Side: Long"): one word seen and spoken (the orchestrator\'s ruling).',
+  ),
+  "blotter.ui.chip.side_sell": proposed(
+    "Side: Sell",
+    'The same chip for sell orders (D02:263 draws "▼ Sell").',
   ),
   "blotter.ui.bulk.count_orders": proposed(
     "2 orders on Sub-1 · LIVE",

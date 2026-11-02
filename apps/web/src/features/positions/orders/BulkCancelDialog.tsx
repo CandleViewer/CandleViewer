@@ -3,7 +3,8 @@
  * view…" open it; it never opens for one row's own Cancel, which asks nothing (D02 §8.2).
  *
  * - **Confirm** (CMP-044, `alertdialog`): the target rows (symbol, side, size, account, environment),
- *   or past ten rows in view the active chips restated; the count per account; and the rows left
+ *   or past ten rows in view the active chips restated (the list when no chip is set); the count
+ *   per account; and the rows left
  *   out, the native-stop line first (D02 §8.5). LIVE adds the typed word (D01 D7); nothing is sent
  *   before Confirm, and "Keep orders" sends nothing.
  * - **Result** (CMP-043): one line per account, a failure in its reason's words and the rows it left
@@ -62,7 +63,10 @@ function Restatement({
 }: Pick<BulkCancelDialogProps, "chipsLine" | "wordsOf" | "environment"> & {
   readonly plan: BulkPlan;
 }): JSX.Element {
-  const listed = plan.scope === "selected" || plan.targets.length <= LIST_AT_MOST;
+  // D02 §8.3: past ten rows in view (the targets and the rows left out) the chips, when there are any
+  const { native_stop, recorded_take_profit, other } = plan.excluded;
+  const inView = plan.targets.length + native_stop + recorded_take_profit + other;
+  const listed = plan.scope === "selected" || inView <= LIST_AT_MOST || chipsLine === "";
   return (
     <div className="cv-orders-bulk" data-part="BulkRestatement">
       {listed ? (

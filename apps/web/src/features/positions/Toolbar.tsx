@@ -11,9 +11,10 @@
  * bar and "Close all in view…" (E29-S03, BQ-3), the Updates-paused chip (D01 D13 b's hold), and
  * "Always shown" for the mandatory columns, which stay out of the picker meanwhile (BQ-6).
  *
- * The Working-orders tab (E29-S02) passes `end`: the FilterBar keeps its place, and the tab's own
- * controls (the selection bar, "Cancel all in view…") take the end's (D02 §4, §9.1). Group by, Columns
- * and Export CSV are the Positions tab's until their orders forms are built.
+ * The Working-orders tab (E29-S02) is `variant="orders"`: the FilterBar keeps its place, with its
+ * chips in the tab's words (`chipWords`: "Side: Buy", the order's side), and the tab's own controls
+ * (`end`: the selection bar, "Cancel all in view…") take the end's (D02 §4, §9.1). Group by, Columns
+ * and Export CSV are the Positions tab's until their orders forms are built (a D02 delta request).
  */
 import { useId, type JSX, type ReactNode } from "react";
 import {
@@ -65,7 +66,11 @@ export interface ToolbarProps {
   readonly density?: Density | undefined;
   /** The "+ Filter" trigger's id: where focus goes when a state's own Clear filters leaves. */
   readonly addFilterId?: string | undefined;
-  /** The Working-orders tab's end controls, in place of Group by, Columns and Export CSV. */
+  /** Which tab's toolbar: `orders` drops Group by, Columns and Export CSV for `end`. Default `positions`. */
+  readonly variant?: "positions" | "orders" | undefined;
+  /** A chip's words; default the panel's (`chipLabel`). */
+  readonly chipWords?: ((chip: FilterChip) => string) | undefined;
+  /** The Working-orders tab's end controls, in place of Columns and Export CSV. */
   readonly end?: ReactNode;
 }
 
@@ -80,17 +85,20 @@ export function Toolbar({
   onExport,
   density,
   addFilterId,
+  variant = "positions",
+  chipWords,
   end,
 }: ToolbarProps): JSX.Element {
   const groupById = useId();
   const directory = new Map(accounts.map((a) => [a.id, a]));
+  const orders = variant === "orders";
   const chosen = new Set(chips.filter((c) => c.kind === "account").map((c) => c.value));
   const accountChip = (id: string): FilterChip => ({ kind: "account", value: id });
   const shown = new Set(columns);
   return (
     <div className="cv-positions-toolbar" data-part="Toolbar">
       <div className="cv-positions-toolbar__start">
-        {end === undefined ? (
+        {orders ? null : (
           <>
             <span id={groupById} className="cv-positions-toolbar__label">
               {D02_TEXT.groupBy.string}
@@ -106,11 +114,11 @@ export function Toolbar({
               {...(density === undefined ? {} : { density })}
             />
           </>
-        ) : null}
+        )}
         <FilterBar
           filters={chips.map((chip) => ({
             id: `${chip.kind}:${chip.value}`,
-            label: chipLabel(chip, directory),
+            label: chipWords?.(chip) ?? chipLabel(chip, directory),
             onRemove: () => onChips({ type: "remove", chip }),
           }))}
           onClearAll={() => onChips({ type: "clear" })}
@@ -146,7 +154,9 @@ export function Toolbar({
         />
       </div>
       <div className="cv-positions-toolbar__end">
-        {end ?? (
+        {orders ? (
+          end
+        ) : (
           <>
             <ColumnPicker
               variant="menu"
