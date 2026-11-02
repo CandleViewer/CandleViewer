@@ -7,3 +7,49 @@ import { Meta } from "@storybook/addon-docs/blocks";
 `CMP-100..139` in `docs/plan/15-component-catalogue.md`: trading-specific molecules and organisms:
 the order ticket, DOM row, footprint cell and positions grid. A component's stories live under
 `Trading/<Component>` and ship with the component (E05-S01..S04).
+
+## Keyboard
+
+Each component's keyboard table lives here, with its accessible name and role table.
+
+### PnLBadge (CMP-116, no widget pattern: text)
+
+Not interactive: no Tab stop, no keys. One visually hidden sentence is what assistive technology reads, the sign in
+words with the magnitude and its unit: "profit 8.00 USDT", "loss 121.50 USDT", "profit 0.32 R"; a null R reads
+"R unavailable: no stop price". The visible digits and the accent bar are `aria-hidden`, and nothing carries an
+`aria-label` (E29-D04 §2.3). The value is the server's decimal string, rounded half away from zero for display and
+never parsed into a JavaScript number.
+
+Text resize (`05` §5 item 7: 200 % zoom and the in-app text scale): the digits grow and the badge widens on one line,
+never truncating or wrapping a value (E29-D02 D-8); its column widens with it (E29-D02 §11.5).
+
+### PositionModeToggle (CMP-129, `display`: text)
+
+The mode as the word "One-way" or "Hedge": no Tab stop, no control role, no reason and no live region. The `toggle`
+variant ships with the ticket that hosts it.
+
+### AccountMultiSelect (CMP-105, the account filter use: an APG Listbox, multi-select, in a CMP-017 popover)
+
+| Keys                  | Action                                                                                 |
+| --------------------- | -------------------------------------------------------------------------------------- |
+| Enter / Space / Alt+↓ | On the trigger: opens the popover, focus on the list, the first chosen account active. |
+| ↑ / ↓, Home / End     | Move the active option (`aria-activedescendant`); no wrap.                             |
+| Space                 | Includes or drops the active account.                                                  |
+| Enter                 | Closes; the choices are already applied. Focus returns to the trigger.                 |
+| Tab / Shift+Tab       | "Select all", then out of the popover (it closes); Shift+Tab back to the trigger.      |
+| Esc                   | Closes and returns focus to the trigger.                                               |
+
+| Element      | Role    | Name                                     | ARIA                                                        |
+| ------------ | ------- | ---------------------------------------- | ----------------------------------------------------------- |
+| trigger      | button  | its label: "Filter"                      | `aria-haspopup="dialog"`, `aria-expanded`, `aria-controls`. |
+| panel        | dialog  | the trigger                              | CMP-017, non-modal.                                         |
+| list         | listbox | the host's `listLabel`, else the trigger | `aria-multiselectable="true"`, `aria-activedescendant`.     |
+| account      | option  | its label: "Sub-1"                       | `aria-selected`; the drawn check box is `aria-hidden`.      |
+| "Select all" | button  | "Select all"                             | A distinct labelled control (`15` CMP-105 A11y).            |
+
+The list is the server's scope: a Manager's assigned accounts only. A filter is a view choice, never T2. `listLabel`
+names the list when the trigger's words don't name the choice, as when a "+ Filter" menu's Account item opens the
+picker; its words are the copy owner's (E29-D03).
+
+Text resize (`05` §5 item 7: 200 % zoom and the in-app text scale): the panel is CMP-017's capped surface, so at 200 %
+the list scrolls under the pinned "Select all" footer, and a long account label wraps rather than truncate.

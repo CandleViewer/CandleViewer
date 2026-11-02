@@ -1,0 +1,163 @@
+{
+  "items": [
+    {
+      "id": "0d000000-0000-4000-8000-000000000001",
+      "exchange_account_id": "a1000000-0000-4000-8000-000000000001",
+      "symbol": "BTCUSDT",
+      "side": "long",
+      "position_idx": 0,
+      "size": "0.250",
+      "avg_price": "63980.0",
+      "mark_price": "64012.0",
+      "leverage": "10",
+      "unrealised_pnl": "8.00",
+      "liq_price": "57901.9",
+      "bust_price": null,
+      "take_profit": null,
+      "stop_loss": "63880.0",
+      "trailing_stop": "0",
+      "native_stop_present": true,
+      "updated_at": "2026-10-31T14:02:06.000000Z",
+      "is_paper": false
+    },
+    {
+      "id": "0d000000-0000-4000-8000-000000000002",
+      "exchange_account_id": "a1000000-0000-4000-8000-000000000002",
+      "symbol": "BTCUSDT",
+      "side": "long",
+      "position_idx": 0,
+      "size": "0.100",
+      "avg_price": "63985.0",
+      "mark_price": "64012.0",
+      "leverage": "5",
+      "unrealised_pnl": "2.70",
+      "liq_price": "51507.9",
+      "bust_price": null,
+      "take_profit": null,
+      "stop_loss": "63900.0",
+      "trailing_stop": "0",
+      "native_stop_present": true,
+      "updated_at": "2026-10-31T14:02:06.000000Z",
+      "is_paper": false
+    },
+    {
+      "id": "0d000000-0000-4000-8000-000000000003",
+      "exchange_account_id": "a1000000-0000-4000-8000-000000000002",
+      "symbol": "ETHUSDT",
+      "side": "short",
+      "position_idx": 0,
+      "size": "1.50",
+      "avg_price": "2480.00",
+      "mark_price": "2561.00",
+      "leverage": "20",
+      "unrealised_pnl": "-121.50",
+      "liq_price": "2591.60",
+      "bust_price": null,
+      "take_profit": null,
+      "stop_loss": "2575.00",
+      "trailing_stop": "0",
+      "native_stop_present": true,
+      "updated_at": "2026-10-31T14:02:06.000000Z",
+      "is_paper": false
+    },
+    {
+      "id": "0d000000-0000-4000-8000-000000000004",
+      "exchange_account_id": "a1000000-0000-4000-8000-000000000003",
+      "symbol": "SOLUSDT",
+      "side": "long",
+      "position_idx": 1,
+      "size": "20.0",
+      "avg_price": "152.40",
+      "mark_price": "147.80",
+      "leverage": "25",
+      "unrealised_pnl": "-92.00",
+      "liq_price": "147.07",
+      "bust_price": null,
+      "take_profit": null,
+      "stop_loss": "147.50",
+      "trailing_stop": "0",
+      "native_stop_present": true,
+      "updated_at": "2026-10-31T14:02:06.000000Z",
+      "is_paper": false
+    },
+    {
+      "id": "0d000000-0000-4000-8000-000000000005",
+      "exchange_account_id": "a1000000-0000-4000-8000-000000000003",
+      "symbol": "BTCUSDT",
+      "side": "long",
+      "position_idx": 1,
+      "size": "0.080",
+      "avg_price": "64050.0",
+      "mark_price": "64012.0",
+      "leverage": "10",
+      "unrealised_pnl": "-3.04",
+      "liq_price": "57965.3",
+      "bust_price": null,
+      "take_profit": null,
+      "stop_loss": "63950.0",
+      "trailing_stop": "0",
+      "native_stop_present": true,
+      "updated_at": "2026-10-31T14:02:06.000000Z",
+      "is_paper": false
+    }
+  ],
+  "aggregates": [
+    {
+      "symbol": "BTCUSDT",
+      "net_size": "0.430",
+      "gross_size": "0.430",
+      "weighted_avg_price": "63994.18604651162790697674419",
+      "unrealised_pnl": "7.66",
+      "accounts": [
+        {
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000001",
+          "size": "0.250",
+          "side": "long",
+          "unrealised_pnl": "8.00"
+        },
+        {
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000002",
+          "size": "0.100",
+          "side": "long",
+          "unrealised_pnl": "2.70"
+        },
+        {
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000003",
+          "size": "0.080",
+          "side": "long",
+          "unrealised_pnl": "-3.04"
+        }
+      ]
+    },
+    {
+      "symbol": "ETHUSDT",
+      "net_size": "-1.50",
+      "gross_size": "1.50",
+      "weighted_avg_price": "2480.00",
+      "unrealised_pnl": "-121.50",
+      "accounts": [
+        {
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000002",
+          "size": "1.50",
+          "side": "short",
+          "unrealised_pnl": "-121.50"
+        }
+      ]
+    },
+    {
+      "symbol": "SOLUSDT",
+      "net_size": "20.0",
+      "gross_size": "20.0",
+      "weighted_avg_price": "152.40",
+      "unrealised_pnl": "-92.00",
+      "accounts": [
+        {
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000003",
+          "size": "20.0",
+          "side": "long",
+          "unrealised_pnl": "-92.00"
+        }
+      ]
+    }
+  ]
+}

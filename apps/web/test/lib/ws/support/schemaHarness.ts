@@ -26,6 +26,9 @@ function errorsOf(name: string, data: unknown): string[] {
   return validate(data) ? [] : (validate.errors ?? []).map((e) => `${e.instancePath} ${e.message}`);
 }
 
+/** Ajv errors for a server payload against `cv://ws/v1/<name>.schema.json` (E29-S01: `positions`, `wallet`, `system`, `machines`); `[]` means valid. */
+export const validatePayload = (name: string, data: unknown): string[] => errorsOf(name, data);
+
 /** Ajv errors for a client frame against `envelope` and its payload schema; `[]` means valid. */
 export function validateClientFrame(
   frame: { readonly t: string } & Readonly<Record<string, unknown>>,

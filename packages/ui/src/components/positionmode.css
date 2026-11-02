@@ -1,0 +1,8 @@
+/* CMP-129 PositionModeToggle, `display` (D04H §C.4): type.ui.body in color.text.primary on its host's surface (the
+   group header's color.surface.canvas). Plain text: no ring, no state, no motion. */
+.cv-position-mode {
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
