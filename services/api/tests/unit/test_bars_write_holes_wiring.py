@@ -55,3 +55,18 @@ def test_a_dropped_series_degrades_the_bars_writer(tmp_path: Path) -> None:
     assert runtime.holes is not None and runtime.writer_state() == (False, "")
     runtime.holes.dropped = True
     assert runtime.writer_state() == (True, "bars_write_holes_dropped")
+
+
+@pytest.mark.asyncio
+async def test_a_discarded_journal_degrades_the_bars_writer(tmp_path: Path) -> None:
+    """A journal `load` discards loses the holes it held: `bars_writer` reports DEGRADED."""
+    root = tmp_path / "bars"
+    root.mkdir()
+    (root / "write_holes.json").write_bytes(b"{not json")
+    ctx = build_app_context(_settings(tmp_path))
+    runtime = wire_bars(ctx, now_us=lambda: T0, inner_sink=_Refusing())
+    await runtime.start()
+    try:
+        assert runtime.writer_state() == (True, "bars_write_holes_dropped")
+    finally:
+        await runtime.stop()

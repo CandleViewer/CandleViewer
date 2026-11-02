@@ -22,11 +22,11 @@ counted as `superseded` and logged, and not recorded (`MAX_RECENT_KEYS` keys are
 series with the most merges first). Past either, the oldest records merge into one span: a merged
 span over-reports (a key stored inside it does not split it), never under-reports. A key new to a
 merged span is still counted. Past `MAX_SERIES_SOFT` series the stalest series collapse to one
-merged span each. A series with records is never dropped below `MAX_SERIES`; a record expires only
-once its span ends before its table's retention (`bars.rows.RETENTION`, cold included), when the
-store no longer serves that range either. Past `MAX_SERIES` (the server builds far fewer) the
-stalest series is dropped: counted by `bars_write_holes_dropped_total`, logged, and `dropped`
-degrades `bars_writer` (the ruled exception of 24 §19.81).
+merged span each. A record never expires with age (a pinned symbol or a raised retention policy
+keeps serving old rows), and a series with records is never dropped below `MAX_SERIES`. Past
+`MAX_SERIES` (the server builds far fewer) the stalest series is dropped: counted by
+`bars_write_holes_dropped_total`, logged, and `dropped` degrades `bars_writer` (the ruled
+exception of 24 §19.81).
 
 **Reads.** `holes_for` is synchronous and in memory (the WS snapshot build is synchronous): the
 spans inside the page's span, minus the bars the page serves.
@@ -37,7 +37,8 @@ before the writer starts. The loop copies the records; serialising and writing r
 thread, which keeps the file within `MAX_JOURNAL_BYTES` by merging the oldest records. A change is
 written even when a write fails or its waiter is cancelled (the next change or `flush` writes it).
 A file that cannot be read back is discarded, logged and counted
-(`bars_blob_discarded_total{reason="write_holes"}`); it never stops the start.
+(`bars_blob_discarded_total{reason="write_holes"}`), and sets `dropped` (its records are no
+longer listed); it never stops the start.
 """
 
 from __future__ import annotations
@@ -64,7 +65,6 @@ from candleviewer.bars.metrics import (
     bars_write_holes_total,
 )
 from candleviewer.bars.models import BarKind
-from candleviewer.bars.rows import RETENTION
 from candleviewer.bars.state_store import SPEC_HASH_PATTERN, SYMBOL_PATTERN
 from candleviewer.observability.context import run_in_thread, spawn, thread_future
 
@@ -88,7 +88,6 @@ LOG_EVERY_US: Final = 60_000_000
 #: The closed `reason` values of a record (and of `bars_write_holes_total`, with `superseded`).
 HOLE_REASONS: Final = WRITE_HOLE_REASONS
 _KINDS: Final = frozenset(get_args(BarKind))
-_DAY_US: Final = 86_400_000_000
 
 
 def _log() -> Any:
@@ -238,7 +237,8 @@ class WriteHoleLedger:
         self._dirty = False
         self._task: asyncio.Task[None] | None = None
         self._writing: asyncio.Future[None] | None = None
-        #: Sticky: a series with records was dropped past `MAX_SERIES` (an under-report).
+        #: Sticky: records are no longer listed (a series dropped past `MAX_SERIES`, or a journal
+        #: discarded on `load`): an under-report, so `bars_writer` reports DEGRADED.
         self.dropped = False
 
     # -- the write path ---------------------------------------------------------------------
@@ -293,10 +293,8 @@ class WriteHoleLedger:
                 self._changed(series_key, spans=True)
 
     def _add_series(self, series_key: tuple[str, str], key: HoleKey) -> _Series:
-        """A new series. At `MAX_SERIES`, expired records go first; only if that frees none is
-        the stalest series dropped (counted, logged, `dropped` set)."""
-        if len(self._series) >= MAX_SERIES:
-            self._expire()
+        """A new series. At `MAX_SERIES` the stalest series is dropped (counted, logged, `dropped`
+        set): the ruled exception of 24 §19.81."""
         while len(self._series) >= MAX_SERIES:
             old_key = min(self._series, key=lambda k: self._series[k].touched_us)
             lost = self._series.pop(old_key)
@@ -358,11 +356,8 @@ class WriteHoleLedger:
             self._changed(series_key, spans=True)
 
     def _collapse_stale(self) -> None:
-        """Past `MAX_SERIES_SOFT` series: expired records go, then every series but the
-        `MAX_SERIES_SOFT` changed most recently collapses to one merged span."""
-        if len(self._series) <= MAX_SERIES_SOFT:
-            return
-        self._expire()
+        """Past `MAX_SERIES_SOFT` series every series but the `MAX_SERIES_SOFT` changed most
+        recently collapses to one merged span."""
         excess = len(self._series) - MAX_SERIES_SOFT
         if excess <= 0:
             return
@@ -371,24 +366,6 @@ class WriteHoleLedger:
             if len(series.ranges) > 1:
                 while len(series.ranges) > 1:
                     _merge_oldest(series)
-                self._changed(series_key, spans=True)
-
-    def _expire(self) -> None:
-        """Drop records whose span ends before their table's whole retention (hot and cold): the
-        store no longer serves that range. A table kept forever never expires one."""
-        now = self._now()
-        for series_key in list(self._series):
-            series = self._series[series_key]
-            days = RETENTION.get(f"bars_{series.kind}", (0, None))[1]
-            if days is None:
-                continue
-            cutoff = now - days * _DAY_US
-            kept = [r for r in series.ranges if r.to_us > cutoff]
-            if len(kept) != len(series.ranges):
-                if kept:
-                    series.ranges = kept
-                else:
-                    del self._series[series_key]
                 self._changed(series_key, spans=True)
 
     def _changed(self, series_key: tuple[str, str], *, spans: bool) -> None:
@@ -510,17 +487,18 @@ class WriteHoleLedger:
 
     async def load(self) -> str:
         """Read the journal before the writer starts: `"ok"`, `"missing"` or the reason the file
-        was discarded (counted, logged; the ledger then starts empty). Never raises."""
+        was discarded (counted, logged, `dropped` set; the ledger then starts empty). Never
+        raises."""
         loaded, reason = await run_in_thread(_read_journal, self._path)
         if loaded is None:
-            if reason != "missing":
+            if reason != "missing":  # the holes it held are no longer listed: an under-report
+                self.dropped = True
                 bars_blob_discarded_total.labels(reason="write_holes").inc()
                 _log().error("bars_write_holes_journal_discarded", reason=reason)
             return reason
         for series_key, series in loaded.items():
             self._series[series_key] = series
             self._revisions[series_key] = self._revisions.get(series_key, 0) + 1
-        self._expire()
         self._collapse_stale()
         self._enforce_total()
         return reason

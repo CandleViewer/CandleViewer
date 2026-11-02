@@ -128,6 +128,7 @@ async def test_write_holes_missing_journal_starts_empty_without_a_count(tmp_path
     before = bars_blob_discarded_total.labels(reason="write_holes")._value.get()
     ledger = WriteHoleLedger(tmp_path)
     assert await ledger.load() == "missing" and ledger.pending() == []
+    assert not ledger.dropped
     assert bars_blob_discarded_total.labels(reason="write_holes")._value.get() == before
 
 
@@ -163,6 +164,7 @@ async def test_write_holes_unreadable_journal_is_discarded_and_counted(
     assert await ledger.load() == reason
     assert ledger.pending() == []
     assert bars_blob_discarded_total.labels(reason="write_holes")._value.get() == before + 1
+    assert ledger.dropped  # its holes are no longer listed: `bars_writer` degrades
 
 
 @pytest.mark.asyncio
@@ -173,7 +175,8 @@ async def test_write_holes_oversized_journal_is_discarded(
 
     (tmp_path / JOURNAL_NAME).write_bytes(_doc([[7, 1, 1, 5, 9, "refused", 0, 1, False]]))
     monkeypatch.setattr(write_holes, "MAX_JOURNAL_BYTES", 16)
-    assert await WriteHoleLedger(tmp_path).load() == "too_large"
+    ledger = WriteHoleLedger(tmp_path)
+    assert await ledger.load() == "too_large" and ledger.dropped
 
 
 @pytest.mark.asyncio
@@ -387,21 +390,17 @@ def test_write_holes_past_the_hard_series_cap_the_drop_is_counted_and_flagged(
 
 
 @pytest.mark.asyncio
-async def test_write_holes_records_expire_only_past_their_tables_whole_retention(
-    tmp_path: Path,
-) -> None:
-    """A tick record ending before the 730-day retention (hot and cold) goes on reload; one inside
-    it stays, and a time record (kept forever) never expires."""
+async def test_write_holes_a_record_never_expires_with_age(tmp_path: Path) -> None:
+    """A pinned symbol or a raised retention policy keeps serving old rows, so a record far older
+    than the default 730-day retention still survives a reload and is still listed."""
     day = 86_400_000_000
     earlier = WriteHoleLedger(tmp_path)
     old_tick = _key(1, kind="tick", open_us=T0)
-    young_tick = _key(5, kind="tick", open_us=T0 + 400 * day)
-    earlier.lost([old_tick, young_tick, replace(_key(9), spec_hash="b" * 64)], "refused")
+    earlier.lost([old_tick], "refused")
     await earlier.flush()
-    ledger = WriteHoleLedger(tmp_path, now_us=lambda: T0 + 731 * day)
+    ledger = WriteHoleLedger(tmp_path, now_us=lambda: T0 + 3_650 * day)
     assert await ledger.load() == "ok"
-    kept = {(r.kind, r.from_us) for r in ledger.pending()}
-    assert kept == {("tick", young_tick.open_us), ("time", T0 + 9 * W)}
+    assert _all(ledger) == [(old_tick.open_us, old_tick.end_us)]
     assert not ledger.dropped
 
 
