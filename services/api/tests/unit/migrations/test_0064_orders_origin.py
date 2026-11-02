@@ -185,13 +185,13 @@ def test_the_upgrade_is_additive_and_the_downgrade_drops_the_checks_then_the_col
 
 def test_the_revision_sits_on_the_single_head() -> None:
     """One revision per PR (C-5.3): it follows the newest revision below its own number, the
-    parent it names, and `alembic heads` is it alone."""
+    parent it names, and `alembic heads` is one revision: it, or a later one on top of it."""
     assert _FILE.stem == _REV and re.fullmatch(r"\d{4}_orders_origin", _REV)
     below = sorted(p.stem for p in _VERSIONS.glob("[0-9][0-9][0-9][0-9]_*.py") if p.stem < _REV)
     assert _PREV == below[-1]
     assert f"{_PREV} -> {_REV}" in _alembic("history", "-r", f"{_PREV}:{_REV}")
     heads = [line for line in _alembic("heads").splitlines() if line.strip()]
-    assert heads == [f"{_REV} (head)"]
+    assert len(heads) == 1, heads
 
 
 def test_the_lockfile_names_the_revision() -> None:
