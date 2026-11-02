@@ -19,8 +19,9 @@ metric. Each record keeps, per key, the row checksum of the version lost. A key 
 reported for two different versions, or for an unknown one, is unknown for good: a served copy of
 either version could otherwise hide the other's loss. At most `MAX_VERSIONS` slots a record and
 `MAX_TOTAL_VERSIONS` in all; past either, and on a merged span, a key's version is unknown. An
-unknown key is never suppressed by a served bar and is not cleared by a store: only a heal (#535)
-clears it (an over-report).
+unknown key is never suppressed by a tape-built bar (an exchange kline on `/market/klines` and the
+time-edge trim still apply) and is not cleared by a store: only a heal (#535) clears it (an
+over-report).
 
 **Versions.** A key leaves its record only when the version lost is stored (`written` with the
 same checksum). A store of another version keeps the record (`stale_served`): the store serves a
@@ -98,8 +99,8 @@ MAX_SERIES: Final = 16_384
 #: Keys remembered as stored lately (a later loss is `superseded`) and as counted lately (a repeat
 #: inside a merged span is not counted again).
 MAX_RECENT_KEYS: Final = 4096
-#: Lost versions kept per record and in all; past either a key's version is unknown: a served
-#: bar never suppresses it and only a heal (#535) clears it (an over-report).
+#: Lost versions kept per record and in all; past either a key's version is unknown: a tape-built
+#: bar never suppresses it (a kline and the edge trim still apply); only a heal (#535) clears it.
 MAX_VERSIONS: Final = 64
 MAX_TOTAL_VERSIONS: Final = 16_384
 #: Recorded and superseded losses are logged at most once per series per minute.

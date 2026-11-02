@@ -140,6 +140,19 @@ async def test_a_hydrated_earlier_version_never_hides_a_lost_amend(tmp_path: Pat
     assert _build(_src(store, ledger), _sub()).meta["coverage_holes"] == [_hole(1)]
 
 
+async def test_a_hydrated_row_that_is_exactly_the_lost_version_hides_its_hole(
+    tmp_path: Path,
+) -> None:
+    """The store hydrates bar 1 as the very version whose write was lost (the same values): the
+    snapshot sends that version, so no hole is listed for it."""
+    ledger = await _reloaded(tmp_path, 1, amended=True)
+    store = SeriesStore(_Tail([_bar(0), _bar(1, px=AMENDED), _bar(2)]))
+    await store.ensure(SYM, SPEC)
+    latest = store.latest(SYM, H, 10)
+    assert latest is not None and [b.index for b in latest.closed] == [0, 1, 2]
+    assert "coverage_holes" not in _build(_src(store, ledger), _sub()).meta
+
+
 async def test_only_holes_from_the_oldest_bar_sent_on_are_named(tmp_path: Path) -> None:
     ledger = await _reloaded(tmp_path, 1, 5)
     src = _src(await _store(0, 2, 3, 4, 6, forming=7), ledger)
