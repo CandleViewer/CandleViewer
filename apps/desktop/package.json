@@ -22,6 +22,7 @@
     "perf": "playwright test -c e2e/perf/playwright.perf.config.ts"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
     "@candleviewer/config": "workspace:*",
     "@candleviewer/fixtures": "workspace:*",
     "@candleviewer/web": "workspace:*",
