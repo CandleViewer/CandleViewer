@@ -12674,7 +12674,8 @@ paths:
         `started_at` descending with `id` descending as the tie-break, behind an opaque keyset
         cursor bound to the `kind` and `status` filters it was issued for and valid for one hour.
         `location` is the artefact's path on the backup volume and `error` a stable code; the
-        encryption key alias is never returned. A backup whose artefact was deleted is listed with
+        encryption key alias is never returned (for an age artefact, that alias is the
+        recipient's fingerprint; ADR-0041). A backup whose artefact was deleted is listed with
         `deleted_at` set. Until a backup engine records runs in the catalogue the operation
         answers `501 not_implemented`, never an empty page that would read as "no backups"; a
         catalogue that cannot be read within its budget is `503 store_unavailable`.
@@ -12753,7 +12754,9 @@ paths:
         restore on a host without the KEK cannot trade. `verify: true` (the default) schedules an
         automatic verification at `checksum` depth after the run's `stage: finished` record is
         written (`verifyBackup`): it needs no key and proves the artefact's bytes are the ones the
-        run bound, not that they restore; the restore drill (`verify_method: restore_smoke`,
+        run bound and that the file is a well-formed age file with one X25519 recipient stanza (a
+        stanza names no recipient, so it cannot show which key the file is for), not that they
+        restore; the restore drill (`verify_method: restore_smoke`,
         `21-database-schema.md` section 8.4) is the restorability proof. The chained verification
         runs as the system actor through the same admission lock and job kind as `verifyBackup`,
         and does not count against the caller's verification limit. A chained verification that
@@ -12870,8 +12873,9 @@ paths:
         `action_class` set to `backups`. Audited as `backup.deleted` (actor, backup id,
         `before_state.status`) ahead of the `204`; an attempt refused after RBAC and step-up is
         audited with `outcome: failure`.
-        Effect (E42-T05): the artefact is removed from the backup volume and the catalogue row is
-        kept, since the catalogue is kept forever (`21-database-schema.md` section 7): the row
+        Effect (E42-T05): the artefact is removed from the backup volume (the engine renames it
+        to a quarantine name at once and purges it after its grace period, ADR-0041; the
+        catalogue counts it removed at the rename) and the catalogue row is kept, since the catalogue is kept forever (`21-database-schema.md` section 7): the row
         gains `deleted_at` and records who deleted it (not exposed), its `status` is unchanged,
         and a later verify, link or restore of it is `409 conflict` with rule
         `backup_not_usable`. An unknown backup is `404` before any challenge, and a catalogue that
@@ -12931,9 +12935,11 @@ paths:
       description: >
         Depth (ADR-0041): a verification runs at `verify_method: checksum` and needs no key. It
         compares the artefact's SHA-256 with the catalogue and with the digest bound in
-        `backup.run`, then checks that the file is a well-formed age file for the configured
-        recipient. That proves the bytes are the ones the run produced; it does not prove they
-        restore. The restorability proof is the restore drill (`verify_method: restore_smoke`,
+        `backup.run`, then checks that the file is a well-formed age v1 file with exactly one
+        X25519 recipient stanza. A stanza names no recipient, so this check cannot show which key
+        the file is for; the sidecar fixes the recipient when it writes the file. That proves the
+        bytes are the ones the run produced; it does not prove they restore. The restorability
+        proof is the restore drill (`verify_method: restore_smoke`,
         `21-database-schema.md` section 8.4), which decrypts into a scratch database with the
         Owner's offline key; this operation never receives that key. Never touches live data.
         Outcome (E42-T05): the `backup_verify` job (`GET /admin/jobs/{jobId}`) ends `succeeded` and
@@ -12956,8 +12962,8 @@ paths:
         missing or whose `location` does not resolve, without following a symbolic link, to a
         regular file inside the backup root is `artefact_missing`. A directory or repository
         artefact (such as a QuestDB snapshot or a restic repository) is checked by the backup
-        engine's own verifier instead. A file that is not a well-formed age file for the configured
-        recipient is `verify_failed`. An
+        engine's own verifier instead. A file that is not a well-formed age v1 file with exactly
+        one X25519 recipient stanza is `verify_failed`. An
         artefact that exists but cannot be read (for instance an I/O error on the backup volume) is
         `store_unavailable`: the job ends `failed` and `backup.verified` (`stage: finished`,
         `outcome: failure`, `error: store_unavailable`) is still written, but the row keeps its

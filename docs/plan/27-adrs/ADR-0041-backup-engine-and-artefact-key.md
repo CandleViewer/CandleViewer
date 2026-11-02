@@ -89,11 +89,26 @@ which alone carry the Postgres client tools and the age implementation. The API 
   fields refused); the vocabulary is `plan`, `run`, `verify`, `remove` and `restore`, keyed by the backup or job id.
   No request or answer carries a credential, a DSN or key material. Its schema is specified in
   `24-internal-schemas.md` by B1, which ships both ends.
+- **The sidecar's own floor.** A well-formed request is not proof that it is wanted, so the sidecar keeps its own
+  record of the runs it finished (id, kind, digest, `covers_to`, and the outcome of its own header check at each
+  verification) on the backup volume and holds three rules no request can lift. A `remove` never takes the newest
+  finished artefact of a kind in that record; the sidecar judges "newest" from its own record, never from the request
+  or the catalogue. A removal is a delayed
+  purge: the file is renamed to a quarantine name at once and deleted only after a grace period, during which the
+  Owner can bring it back from the host. Runs are capped per window, so requests cannot fill the volume. B1 sets the
+  grace period and the cap in the sidecar's configuration, not in the API, and tests each rule against a stream of
+  well-formed requests.
 - **Volumes.** The sidecar mounts the backup volume read-write; the API mounts it read-only (verify's digest pass and,
   once SEC-FU-L1 holds, downloads read it). The sidecar mounts no Postgres or QuestDB data volume.
 - **Database roles.** A read-only **`cv_backup`** role (CONNECT, USAGE on the schema, SELECT on every table and
   sequence; no INSERT, UPDATE, DELETE, TRUNCATE or DDL) runs dumps. A separate **`cv_restore`** role, with the rights
-  of the objects' owner, is used only by restore jobs. Both credentials exist only in the sidecar, as password files
+  of the objects' owner, is used only by restore jobs. `cv_restore` is created `NOLOGIN`: the Owner's host-side step
+  that delivers the identity for a restore job also enables its login with `VALID UNTIL` the job's deadline, which the
+  sidecar caps at a configured maximum and shows at the intake with the job's id, digest and `covers_to`, and the
+  runbook's closing step sets it back to `NOLOGIN` and ends any open session of the role; the expiry is the backstop
+  if that step is missed, so the sidecar's stored password opens nothing between jobs. This relies on `pg_hba.conf`
+  requiring `scram-sha-256` for `cv_restore`, since `VALID UNTIL` applies to password authentication only and an
+  expiry closes no open session. Both credentials exist only in the sidecar, as password files
   on secret mounts readable by its user alone. The API process never holds an owner, restore or dump DSN and never
   uses `cv_app` for this (`21` §1.1). The roles' grants land in B1's single revision (C-5.3); passwords never appear
   in a migration.
@@ -108,9 +123,18 @@ which alone carry the Postgres client tools and the age implementation. The API 
 - **The key pair.** The **offline backup key pair** is distinct from the exchange-key KEK (SR-091, SR-092) and from
   every other key. The sidecar holds only the public recipient, which is configuration, not a secret, so a run, a
   scheduled run and the automatic verification need no secret. The identity (private half) is held offline by the
-  Owner and reaches the sidecar only for a restore or a restore drill (section 4). `encryption_ref` on the catalogue
-  row is the recipient's alias as the sidecar's plan reports it; a plan without one stays refused as
-  `503 backup_engine_invalid` (E42-T05 BK-8).
+  Owner and reaches the sidecar only for a restore or a restore drill (section 4). The recipient's fingerprint (the
+  SHA-256 of its encoded public key) is pinned in the sidecar's configuration; the sidecar refuses to run while the
+  recipient it would encrypt to does not match it. `encryption_ref` on the catalogue row is that fingerprint as the
+  sidecar's plan reports it, a public value that keeps the column's class (`21` §12); a plan without one stays refused
+  as `503 backup_engine_invalid` (E42-T05 BK-8).
+- **Custody of the identity.** There is one recipient, so losing the identity loses every backup encrypted to it.
+  The Owner holds the identity offline, never on the host that runs CandleViewer, and keeps an escrow copy sealed in a
+  second place under their sole control; both are recorded in `21` §8.1's secrets row. Rotation: a new key pair is
+  made offline, its fingerprint replaces the pinned one, and runs from then on are encrypted to it; the old identity
+  is kept, with its escrow copy, while any artefact encrypted to it is kept (every artefact, since v1 prunes nothing).
+  A suspected exposure of the identity rotates at once and is an incident. The restore drill of `21` §8.4 (monthly, a PRR
+  gate item) opens a current artefact with the held identity, so a lost or wrong identity shows up there, not at a restore.
 - **The implementation** of the format keeps the identity in process memory: a library binding of age, or the
   reference tool given the identity through an anonymous pipe, never a path on disk. The choice and its dependency
   review (licence, pin, maintainer) land in B1 under `security-review`.
@@ -143,9 +167,10 @@ which alone carry the Postgres client tools and the age implementation. The API 
   `pre_release` and `pre_restore` runs are out of v1.
 - **Verification depth.** The automatic verification (`createBackup` with `verify: true`, BK-9d) and `verifyBackup` run
   at **`checksum`** depth and need no key: the file's SHA-256 against the catalogue and the digest bound in
-  `backup.run`, then a well-formed age header for the configured recipient. The API computes the digest over its
-  read-only mount; the sidecar checks the age header. It proves the bytes are the ones the run produced; it does not
-  prove they restore. The **`restore_smoke`** depth decrypts with the Owner's identity into a scratch database: it is
+  `backup.run`, then a well-formed age v1 header with exactly one X25519 stanza. An X25519 stanza names no recipient,
+  so this check cannot show which key a file is for; the recipient is fixed when the file is written, by the pinned
+  fingerprint (section 2). The API computes the digest over its read-only mount; the sidecar checks the header. It
+  proves the bytes are the ones the run produced; it does not prove they restore. The **`restore_smoke`** depth decrypts with the Owner's identity into a scratch database: it is
   the per-release restore drill (SR-093, `21` §8.4), the restorability proof.
 - **The chained verification** runs as the system actor after the run's `finished` record, through
   `BackupVerifications`. A chain refused (a restore running, the lock wait spent) is recorded as `backup.verified`
@@ -167,7 +192,10 @@ which alone carry the Postgres client tools and the age implementation. The API 
   sidecar for one named job, through a host-side intake that is not the API, not a network listener and not a shared
   volume. The identity never travels in an API body, an environment variable or `.env` file, an argument list, a log,
   an audit record, a catalogue row, a support bundle or the backup volume. The sidecar refuses an identity for a job
-  it is not waiting for, a second identity for a job, and one that arrives after the job's deadline.
+  it is not waiting for, a second identity for a job, and one that arrives after the job's deadline. Before it
+  accepts the identity, the intake shows the Owner the job's backup id, the artefact's digest and its `covers_to`,
+  read from the sidecar's own run record, not from the API's request; the Owner confirms them, and the identity is
+  bound to that job and that digest.
 - **Zeroisation.** The identity is held in a mutable buffer bound to its job and overwritten when the job ends,
   fails, is cancelled or passes its deadline; core dumps are disabled for the sidecar. Copies a library or runtime
   makes internally cannot be proven overwritten; that residual is stated in B1's security review. Tests generate
@@ -180,7 +208,8 @@ which alone carry the Postgres client tools and the age implementation. The API 
   wiring constructs it only when #3084 lands its contract and riders. At start it refuses unless the restore halt
   latch is engaged and the pre-restore chain head is written outside the target (`e42-admin.md` §6 steps 6 and 7).
   The sidecar refuses a `restore` unless it reads the latch engaged for that job, holds the identity for that job,
-  and the artefact's digest on the opened handle equals the one the request carries from `backup.run`.
+  and the artefact's digest on the opened handle equals the one the request carries from `backup.run`, the one the
+  sidecar recorded when it finished the run, and the one the Owner confirmed at the intake.
 - **What a restore does (BQ-08).** The whole database is restored, never a table on its own for audit or key tables
   (C-5.7; threat AD3). Key tables restore as opaque ciphertext: the engine streams bytes, parses no row and decrypts
   or re-wraps nothing; M2's KEK check and the withdrawal self-check (C-2.8) still gate trading after it. The chain is
@@ -211,7 +240,9 @@ which alone carry the Postgres client tools and the age implementation. The API 
 Positive:
 
 - SR-091 and SR-092 hold as written: neither the host keychain nor the API can open a backup.
-- The internet-facing process gains no database-wide privilege and no write access to the backup volume.
+- The internet-facing process gains no database-wide privilege and mounts the backup volume read-only. It can still
+  ask the sidecar to run or remove a backup; the sidecar's floor (section 1) bounds what such requests can do, and a
+  restore needs the Owner's confirmation at the intake.
 - The monolith's module graph is unchanged; the engine's dependencies (Postgres client, age) stay out of the API
   image.
 - A restore cannot silently re-enable trading against restored flags.
@@ -221,9 +252,15 @@ Negative and risks:
 - A new trust boundary (the socket) and a second image to build, scan and pin (C-9.1 container and licence checks).
 - Automatic verification proves integrity, not restorability; the drill carries that proof, so a drill missed is a
   gap the PRR gate must catch.
-- `cv_restore` holds the owner's rights; its credential's confinement to the sidecar is a control to review in B1.
+- `cv_restore` holds the owner's rights; it is `NOLOGIN` outside a restore job, and its credential's confinement to
+  the sidecar is a control to review in B1.
 - v1 leaves SR-090's other kinds, the 5-minute RPO and pruning unmet (plan gaps on #2701).
 - Python cannot prove an identity zeroised everywhere (stated residual).
+- Within the floor, the API can still request runs up to the cap and removals that the grace period delays but does
+  not refuse; for any removal the newest-artefact rule allows, the grace period is the control (stated residual; B1's
+  security review owns the figures, and B2 alerts on every quarantine).
+- One recipient: losing the identity and its escrow copy loses every backup (section 2's custody rule and the
+  per-release drill are the controls).
 
 ## Rollout
 

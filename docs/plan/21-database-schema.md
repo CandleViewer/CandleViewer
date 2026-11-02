@@ -103,7 +103,9 @@ REVOKE UPDATE, DELETE ON audit_log FROM cv_app, cv_ro;
 **Backup roles (ADR-0041, #3319; not yet created).** Two roles are used only by the backup sidecar and never by the
 API process. `cv_backup` runs dumps: LOGIN, CONNECT, USAGE on `public`, SELECT on every table and sequence, and no
 INSERT, UPDATE, DELETE, TRUNCATE or DDL. `cv_restore` runs restore jobs only, with the rights of the objects' owner,
-which a whole-database restore needs. Their credentials exist only in the sidecar, as password files on secret mounts;
+which a whole-database restore needs. It is created `NOLOGIN`; the Owner's host-side step for a restore job enables
+login with `VALID UNTIL` the job's deadline and the runbook's closing step sets `NOLOGIN` again (ADR-0041 section 1).
+Their credentials exist only in the sidecar, as password files on secret mounts;
 the API never holds an owner, restore or dump DSN and never uses `cv_app` for a backup or a restore. Their grants land
 in one revision with the engine's first code PR, and that PR adds both roles to the block above and to the role
 privilege matrix; passwords never appear in a migration.
@@ -4119,7 +4121,7 @@ CREATE INDEX ix_incidents_status_seen ON incidents (status, last_seen_at DESC);
 
 #### 3.10.3 `backups`
 
-> Shipped as Alembic `0028_incidents_backups` (E42-T05 #966, on top of `0027_feature_flags`), with `incidents` (§3.10.2a) and the `backup_kind` and `backup_status` types (§1.2): DDL below verbatim. Two changes were made to the original §3.10.3 before this revision merged (E42-T05 review): `retention_until` was added, because the `Backup` contract returns it and the tiers of §8.1 (daily, weekly, monthly for `pg_basebackup`) make it underivable from `kind` and `started_at`, so the backup engine sets it when a run finishes (NULL means no horizon assigned yet, never "keep forever"; the row itself is kept forever, §7), and the `verify_method` and `triggered_by` comments now list every value their CHECKs allow. Contract mapping: `target_path` is `Backup.location`, `error_message` is `Backup.error`, and `encryption_ref` is not in the contract. `encryption_ref` is class S (§12): an opaque keyring alias only, key material (restic password, age identity) never enters the database (§8.1), and the column carries a `SECRET:` comment. The writer passes `error_message` through the C-12.6 redaction filter before insert, and `target_path` is a filesystem path, never a URL with userinfo. No seed, trigger or grant. Downgrade refuses while either table holds rows, and the refusal advises fixing forward or, failing that, exporting both tables first: `backups` is the artefact catalogue and is kept forever (§7), so deleting its rows orphans the metadata of real backup artefacts.
+> Shipped as Alembic `0028_incidents_backups` (E42-T05 #966, on top of `0027_feature_flags`), with `incidents` (§3.10.2a) and the `backup_kind` and `backup_status` types (§1.2): DDL below verbatim. Two changes were made to the original §3.10.3 before this revision merged (E42-T05 review): `retention_until` was added, because the `Backup` contract returns it and the tiers of §8.1 (daily, weekly, monthly for `pg_basebackup`) make it underivable from `kind` and `started_at`, so the backup engine sets it when a run finishes (NULL means no horizon assigned yet, never "keep forever"; the row itself is kept forever, §7), and the `verify_method` and `triggered_by` comments now list every value their CHECKs allow. Contract mapping: `target_path` is `Backup.location`, `error_message` is `Backup.error`, and `encryption_ref` is not in the contract. `encryption_ref` is class S (§12): an opaque keyring alias only (for an age artefact, the recipient's public fingerprint; ADR-0041), key material (restic password, age identity) never enters the database (§8.1), and the column carries a `SECRET:` comment. The writer passes `error_message` through the C-12.6 redaction filter before insert, and `target_path` is a filesystem path, never a URL with userinfo. No seed, trigger or grant. Downgrade refuses while either table holds rows, and the refusal advises fixing forward or, failing that, exporting both tables first: `backups` is the artefact catalogue and is kept forever (§7), so deleting its rows orphans the metadata of real backup artefacts.
 
 ```sql
 CREATE TABLE backups (
@@ -4156,8 +4158,9 @@ CREATE INDEX ix_backups_failed    ON backups (started_at DESC) WHERE status = 'f
 
 **Privileges.** No UPDATE trigger fires on DELETE or INSERT, so the same revision revokes DELETE on `backups` from `cv_app` where the role exists, as `0024` does for `api_keys` and `0030` for `auth_keys`. The runtime role keeps SELECT, INSERT and UPDATE; without DELETE it cannot swap a row's location or digest by deleting the row and inserting it again under the same id. No runtime path deletes a catalogue row: the row is kept forever (§7), and a deleted artefact is marked. The owner role and superusers can still bypass both. The downgrade grants DELETE back, the `pg_bootstrap.sql` default. Verify and restore still check the digest bound in the append-only `backup.run` record.
 
-**What the engine writes (ADR-0041, #3319).** `encryption_ref` is the alias of the age recipient the sidecar's plan
-reports; the identity behind it is held offline by the Owner (§8.1). The run reports `covers_from` and `covers_to`,
+**What the engine writes (ADR-0041, #3319).** `encryption_ref` is the fingerprint (SHA-256 of the encoded public key)
+of the age recipient pinned in the sidecar's configuration, as its plan reports it; the identity behind it and its
+sealed escrow copy are held offline by the Owner (§8.1, ADR-0041 section 2). The run reports `covers_from` and `covers_to`,
 and the `stage: finished` `backup.run` record binds them before the row is `ok`. For `pg_dump`, `covers_to` is the
 server's time read before the dump's snapshot is taken, never after. `retention_until` is set from §8.1 when the run
 finishes; v1 prunes nothing.
@@ -5013,9 +5016,12 @@ Changing any retention value is a dangerous action under the `recorder` step-up:
 | Postgres (logical)                                                           | `pg_dump -Fc` per schema                                                   | Daily 01:30 UTC                      | 14 days                              | 24 h          | ≤ 15 min (single table restore) |
 | QuestDB                                                                      | `SNAPSHOT PREPARE` → filesystem/ZFS snapshot → rsync → `SNAPSHOT COMPLETE` | Daily 02:00 UTC                      | 7 days                               | 24 h          | ≤ 60 min                        |
 | Parquet lake                                                                 | rsync/restic to the backup volume, incremental, content-addressed          | Daily 03:30 UTC after compaction     | 30 days of restic snapshots          | 24 h          | hours (large)                   |
-| Secrets (KEK, the audit checkpoint signing key of #1238)                     | Manual, offline, encrypted, **never** in the repo or DB                    | On change                            | 3 generations                        | n/a           | manual                          |
+| Secrets (KEK, #1238's audit signing key, ADR-0041 backup identity + escrow)  | Manual, offline, encrypted, **never** in the repo or DB                    | On change                            | 3 generations                        | n/a           | manual                          |
 | Audit export signing key: `audit_signing_keys.sealed_seed` (§3.1.5b)         | In the Postgres backups above, sealed only; the KEK is kept outside them   | With Postgres                        | As Postgres                          | As Postgres   | As Postgres (needs the KEK)     |
 | Config bundle (compose files, postgresql.conf, questdb.conf, launch scripts) | git + tarball into backups                                                 | On change + weekly                   | 12 weeks                             | n/a           | minutes                         |
+
+The ADR-0041 backup identities are the exception to the secrets row's "3 generations": each is kept, with its escrow
+copy, while any artefact encrypted to it exists.
 
 All backup artefacts are encrypted at rest (restic repository password / age recipient), and every run writes a `backups` row (§3.10.3). A failed or missing daily backup raises a `critical` system event and blocks the next release per the PRR gate in `07-release-and-prr.md`.
 
@@ -5033,8 +5039,9 @@ system actor, at the cadence and retention of the table above.
   restore or a restore drill, out of band and for one job, then is overwritten. It never enters the API, Postgres, an
   environment variable, an argument list, a log, a record or the backup volume.
 - **Verification.** The automatic verification after a run, and `verifyBackup`, are `verify_method: checksum`: the
-  file's SHA-256 against the catalogue and the digest bound in `backup.run`, and a well-formed age header for the
-  recipient. That proves the bytes are the ones the run produced, not that they restore; the restore drill of §8.4
+  file's SHA-256 against the catalogue and the digest bound in `backup.run`, and a well-formed age v1 header with
+  exactly one X25519 stanza. A stanza names no recipient, so the check cannot show which key a file is for; the
+  sidecar's pinned recipient fingerprint fixes that when the file is written. That proves the bytes are the ones the run produced, not that they restore; the restore drill of §8.4
   (`restore_smoke`) is the restorability proof.
 - **Config bundle.** Backed up and verified, never restored by the engine (a manual runbook step). Its allow-list
   excludes `.env` files, DSNs, secret mounts and any KEK or age identity.
@@ -5099,7 +5106,7 @@ The three stores are backed up at different instants, so a restore can leave the
 
 ### 8.4 Restore drills
 
-A restore drill into a scratch namespace runs **monthly** and is a PRR gate item: restore yesterday's Postgres base + WAL to a target time, restore QuestDB snapshot, run `post_restore`, assert (a) audit chain valid, (b) `orders`/`executions` counts match the source within the expected window, (c) a replay session over a known range produces byte-identical bars to the pre-restore run (golden fixture). Result recorded as a `backups` row with `status='verified'` and `verify_method='restore_smoke'`.
+A restore drill into a scratch namespace runs **monthly** and is a PRR gate item: restore yesterday's Postgres base + WAL to a target time, restore QuestDB snapshot, run `post_restore`, assert (a) audit chain valid, (b) `orders`/`executions` counts match the source within the expected window, (c) a replay session over a known range produces byte-identical bars to the pre-restore run (golden fixture). Result recorded as a `backups` row with `status='verified'` and `verify_method='restore_smoke'`. With the engine of ADR-0041 the drill also restores the newest `pg_dump` artefact: the Owner delivers the identity through the sidecar's intake as for a restore, the artefact is decrypted into the scratch namespace, and a drill that cannot open it with the held identity fails and is an incident (ADR-0041 section 2).
 
 ---
 
@@ -5571,7 +5578,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `system_events` (`profile_relaxed` rows)               | `details`                               | P0         | jsonb                                           | Ids, profile column names and one flag only (#906 D2, §3.10.2); any other value is refused, so these rows need no redaction serializer          |
 | `system_events` (addressed rows)                       | `recipient_user_id`                     | P0         | uuid                                            | An internal user id, the row's one reader besides the Owner (#3085); the row's `message` names the viewer and the window, never the reason      |
 | `system_events` (addressed rows)                       | `message`                               | P1         | plaintext                                       | Names the viewer by username (22 `startViewAs`); kept with its row: no purge rewrites it (residual UL4-I1, `e42-user-lifecycle.md`)             |
-| `backups`                                              | `encryption_ref`                        | S          | keyring handle                                  | opaque keyring alias only; key material (restic password, age identity) never enters the DB (§8.1); not in the `Backup` contract; never logged  |
+| `backups`                                              | `encryption_ref`                        | S          | keyring handle                                  | alias or age recipient fingerprint; keys (restic password, age identity) never in the DB (§8.1); not in the `Backup` contract; never logged     |
 | `backups`                                              | `deleted_by`                            | P0         | plaintext                                       | A user id (0032), never a name, email or IP; `ON DELETE SET NULL` detaches it, and the delete's audit record keeps the actor                    |
 | `settings`                                             | `value` where `is_secret`               | S          | AES-256-GCM                                     | `is_secret=true` rows are returned masked by the API                                                                                            |
 | `settings` (user scope)                                | `value` at `notifications.webhook_url`  | P2         | plaintext; `is_secret` false (#5181 Q3)         | In full to its owner only, never logged, masked in audit diffs (below); kept on purge (residual): the O6 anonymiser does not touch `settings`   |
