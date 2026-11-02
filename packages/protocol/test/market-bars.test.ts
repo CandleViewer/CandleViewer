@@ -41,6 +41,24 @@ describe("klines and bars pages (consumer side, 22-api-openapi /market/klines, /
     expectTypeOf<WsBar["confirm"]>().toEqualTypeOf<boolean>();
   });
 
+  it("reads the bar flags as booleans, false by default, on REST and WS (#5396)", () => {
+    // REST types a member with a `default` as present; the WS item keeps it optional.
+    expectTypeOf<Bar["gap_before"]>().toEqualTypeOf<boolean>();
+    expectTypeOf<Bar["partial"]>().toEqualTypeOf<boolean>();
+    expectTypeOf<WsBar["gap_before"]>().toEqualTypeOf<boolean | undefined>();
+    expectTypeOf<WsBar["partial"]>().toEqualTypeOf<boolean | undefined>();
+  });
+
+  it("reads build provenance from the page meta, named as the WS snapshot's (#5396)", () => {
+    expectTypeOf<Page["meta"]>().toEqualTypeOf<Schemas["BarsMeta"]>();
+    expectTypeOf<Page["meta"]["spec_hash"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<Page["meta"]["build_version"]>().toEqualTypeOf<number | undefined>();
+    expectTypeOf<Page["meta"]["stale"]>().toEqualTypeOf<boolean>();
+    expectTypeOf<Page["meta"]["coverage_holes"]>().toEqualTypeOf<
+      Schemas["DataMeta"]["coverage_holes"]
+    >();
+  });
+
   it("reads when recording began from a no_data_recorded refusal", () => {
     expectTypeOf<Schemas["Problem"]["recording_started_at"]>().toEqualTypeOf<
       string | null | undefined

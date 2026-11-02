@@ -711,8 +711,9 @@ class Bar(BaseModel):
     turnover: Notional
     vwap: Px
     closed: bool
-    partial: bool                 # True when the bar began before recording started
-    gap_before: bool              # True when a data gap precedes this bar
+    partial: bool                 # True when not built from a complete tape window (began
+                                  # before recording or the builder's first print)
+    gap_before: bool              # True when a data gap precedes this bar (§3.3)
     synthetic: bool = False       # densify() filler (§3.3) — never persisted
 ```
 
@@ -728,6 +729,8 @@ view-only (never persisted or sent on the wire), and consumers key densified vie
 outside densified views, a bar's persistence and wire identity for every bar kind is `(spec_hash/bar_param, generation, index)` (21 §4.8, 22 `/market/bars`, 23 §8.2; `generation` is ADR-0033's generation/epoch, an opaque u64: a cold start begins a new one (the cold-start time in ms, above any epoch this process or the discarded blob recorded), and `index` restarts at 0 only inside a fresh generation, so no two bars of a series share the identity, barring the clock-regression residual and a restore whose tape lost trades after the watermark (24 §3.5)) because `open_time` is not unique for tick/volume/range/renko/delta bars (#2014, #2662);
 golden vectors in `packages/fixtures/golden/bars/`; TS mirror generated into
 `packages/protocol/src/generated/bars/`.
+
+**Stored and served flags (#5396).** `partial` and `gap_before` are part of a bar's stored row and of both wires, not only of the in-memory `Bar`: the `bars_*` columns `partial` and `gap_before` (21 §4.8, QuestDB 0008), 22 `Bar.partial` / `Bar.gap_before` on `/market/bars` and `/market/klines`, and the 23 §14.3 item's `partial` / `gap_before` (CVWB kind 4 flags bit2 / bit1, 23 §3.4). Each surface carries the value the builder set, and a bar read back from the store, a series' tail included, carries the stored value. An absent or pre-0008 value reads `false`, and a bar not built from the tape (`kline` source) is `false` in both. REST `meta` carries the series' `spec_hash` and the lowest `build_version` among the bars served, with `stale` true when that is below the running version (22 `BarsMeta`; the WS snapshot rule, 23 §6.1).
 
 `min_delta`/`max_delta` require tracking the running intrabar delta path, not just the endpoint (research 08 §2) — they are the input to exhaustion and absorption reads.
 
@@ -6746,3 +6749,11 @@ The orchestrator assigned this number on 2026-11-01 (the preamble above); it is 
 - 22 `getWorkspace` states the same bound and the `suppressed_before` count in its description; its `404` is unchanged.
 - 22 `exportWorkspace` is refused in a live view-as context: `403 view_as_read_only` with its `admin.view_as_refused` record, as a write is, though it is a read, because a bundle is a copy of the target's workspace that leaves the view. The "View-as session" text of `info.description` gains a "Refused reads" bullet that names it, and the `Forbidden` response text names it beside the state-changing operations. A held context refuses every read already.
 - No new `x-error-codes` entry, schema member or operation, so the `openapi_pending` baselines do not move; no WS, table, column, chart or `machine_hash` change, and no migration.
+
+### 19.81 2026-11-01 — §3.1, 21 §4.8, 22 `Bar` / `BarsMeta`, 23 §3.4 / §14.3: bar flags and build provenance end to end, contract first (E12, #5396)
+
+The orchestrator assigned this number on #5396 (2026-11-01, 23:30Z).
+
+- The orchestrator's ruling on #5396, contract first (C-6.1), additive (C-6.3): a bar's `gap_before` and `partial` (§3.1) reach the store and both wires. 22 `Bar` gains both, optional with default `false`; 23 §14.3's bar item gains both, optional with default `false`, and CVWB kind 4 carries them as `flags` bit1 (`gap_before`) and bit2 (`partial`), bits 3–7 reserved, with no `format_version` change: the record stride is unchanged and a decoder that reads bit0 alone stays correct.
+- 22 `KlineResponse.meta` becomes `BarsMeta`, `DataMeta` plus `spec_hash`, `build_version` (the lowest among the bars served, the WS snapshot rule of 23 §6.1) and `stale` (true when a bar served was built below the running version), all optional, so `/market/bars` and `/market/klines` state build provenance as the WS `bars` snapshot does. `DataMeta.coverage_holes` notes that a range the server cannot serve from its store is listed there.
+- 21 §4.8: the six `bars_*` tables gain `gap_before BOOLEAN` and `partial BOOLEAN` (QuestDB `backend/db/questdb/0008_bars_gap_partial_columns.sql`, C-5.8); a row stored before them reads `false`. No Postgres table, so no Alembic revision. No DEDUP key, chart or `machine_hash` change. The server persists and serves the flags in the follow-up of #5396.
