@@ -32,9 +32,9 @@ From the repository root:
 
 ```sh
 cd docs/design/_tools/sheets/e26-d02
-python3 -I -B e26d02kit.py selftest                   # "OK: 0 failures"
-for n in 01 02 03 04 05 06 07 08 09 10; do python3 -I -B gen/gen_$n.py; done
-python3 -I -B check_all.py                            # "OK: 0 findings"
+python3 -X utf8 -I -B e26d02kit.py selftest           # "OK: 0 failures"
+for n in 01 02 03 04 05 06 07 08 09 10; do python3 -X utf8 -I -B gen/gen_$n.py; done
+python3 -X utf8 -I -B check_all.py                    # "OK: 0 findings"
 ```
 
 Each generator writes `build/NN-<slug>.json` (validator exit 0 or it raises), `NN-<slug>.md` here and in `build/`,
@@ -44,10 +44,13 @@ sheets against the raw ones:
 
 ```sh
 for f in v4/*.json; do
-  python3 -I -c 'import hashlib, json, sys; p = json.load(open(sys.argv[1]))["compactOf"]
+  python3 -X utf8 -I -c 'import hashlib, json, sys; p = json.load(open(sys.argv[1]))["compactOf"]
 print(sys.argv[1], hashlib.sha256(open("build/" + p["file"], "rb").read()).hexdigest() == p["sha256"])' "$f"
 done
 ```
+
+`-X utf8` makes the kit read and write UTF-8 on every platform: without it, Python on Windows decodes the
+sources with the locale code page and the generators fail.
 
 ## Render and export
 
