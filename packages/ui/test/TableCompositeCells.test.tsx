@@ -99,6 +99,22 @@ describe("Table (CMP-049): a column's fixed order (E42-D04 D6)", () => {
   });
 });
 
+describe("Table (CMP-049): a visually hidden header", () => {
+  it("names its column for assistive technology without drawing a cut label", async () => {
+    await mount(
+      <Table<Row>
+        caption="Entries"
+        columns={[{ id: "open", header: "Details", cell: () => "", headerHidden: true }]}
+        rows={ROWS}
+        rowKey={(r) => r.id}
+      />,
+    );
+    const header = page.getByRole("columnheader", { name: "Details" });
+    expect(header.querySelector(".cv-visually-hidden")).toHaveTextContent("Details");
+    expect(header.querySelector(".cv-table__label")).toBeNull();
+  });
+});
+
 describe("Table (CMP-049): a custom row's widget cell", () => {
   it("lends its tab stop to its one control; the arrows land on the control", async () => {
     await mount(<Host />);

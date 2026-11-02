@@ -108,8 +108,11 @@ describe("auditrow.css, the grid row (E42-D04 §4 Columns, D2, D14, §15)", () =
   });
 
   it("the expander: a bare button the 24 px column's full height, its glyphs size.icon.sm in text.secondary", () => {
-    const cell = find(normal, ".cv-audit-row__expander", "padding-inline");
+    // The row's own selector outranks CMP-049's `.cv-table__cell` padding, which loads after this sheet: the button
+    // gets the whole 24 px column, a 24 x 24 target (WCAG 2.5.8; A-5520-01).
+    const cell = find(normal, `${ROW} > .cv-audit-row__expander`, "padding-inline");
     expect(cell).toContain("padding-inline: 0");
+    expect(find(normal, ".cv-audit-row__expander", "padding-inline")).toBe("");
     const toggle = find(normal, ".cv-audit-row__toggle", "background");
     expect(toggle).toContain("background: transparent");
     expect(toggle).toContain("border: 0");
@@ -124,12 +127,28 @@ describe("auditrow.css, the grid row (E42-D04 §4 Columns, D2, D14, §15)", () =
     );
   });
 
-  it("high severity: a border.thick danger.strong rule on the row's first cell (D2)", () => {
-    const rule = find(normal, `${ROW_HIGH} > .cv-audit-row__expander`, "border-inline-start");
+  it("high severity: a border.thick danger.strong rule on the row's first cell (D2), drawn over the column", () => {
+    // A pseudo-element drawn over the cell's inline start: the rule takes no width from the expander (A-5520-01),
+    // and lets a press through to it.
+    const rule = find(
+      normal,
+      `${ROW_HIGH} > .cv-audit-row__expander::before`,
+      "border-inline-start",
+    );
     expect(rule).toContain(
       "border-inline-start: calc(var(--border-thick) * 1px) solid var(--color-status-danger-strong)",
     );
-    expect(find(normal, `${ROW_HIGH} .cv-audit-row__severity`, "font-weight")).toContain(
+    expect(rule).toContain('content: ""');
+    expect(rule).toContain("position: absolute");
+    expect(rule).toContain("inset-block: 0");
+    expect(rule).toContain("inset-inline-start: 0");
+    expect(rule).toContain("pointer-events: none");
+    expect(find(normal, `${ROW} > .cv-audit-row__expander`, "position")).toContain(
+      "position: relative",
+    );
+    expect(find(normal, `${ROW_HIGH} > .cv-audit-row__expander`, "border-inline-start")).toBe("");
+    // The compact row's rule: it holds for the grid row's severity word too.
+    expect(find(normal, `${HIGH} .cv-audit-row__severity`, "font-weight")).toContain(
       "font-weight: var(--font-weight-semibold)",
     );
   });
@@ -160,9 +179,25 @@ describe("auditrow.css, the grid row (E42-D04 §4 Columns, D2, D14, §15)", () =
       "border: calc(var(--border-hairline) * 1px) solid var(--color-border-default)",
     );
     expect(chip).toContain("border-radius: var(--radius-badge)");
-    expect(find(normal, '.cv-audit-row__env[data-env="live"]', "border-color")).toContain(
+    expect(find(normal, '.cv-audit-row__env[data-audit-env="live"]', "border-color")).toContain(
       "border-color: var(--color-env-live)",
     );
+  });
+
+  // CI-5520-01: the shell's env-badge guard (apps/web top-bar.test.tsx) reads any selector naming the badge's
+  // attribute or ids as a way to hide CMP-075; the chip is the audit row's own, so it keys on its own attribute.
+  it("no selector reads as a hide path for the shell's env badge (CMP-074 / CMP-075, `data-env`)", () => {
+    const selectors = css.all.match(/[^{}]+(?=\{)/g) ?? [];
+    expect(selectors.length).toBeGreaterThan(0);
+    expect(selectors.filter((sel) => /CMP-07[45]|data-env|EnvBadge/.test(sel))).toEqual([]);
+  });
+
+  it("stacked (200 %, 400 %): Role and Action take the card line's room, never zero width (AL-28)", () => {
+    // In CMP-049's stacked layout each cell is a flex line: an inline-size container there has no width of its own.
+    const fit = find(normal, '.cv-table[data-layout="stacked"] .cv-audit-row__fit', "flex");
+    expect(fit).toContain("flex: 1 1 0");
+    expect(fit).toContain("min-inline-size: 0");
+    expect(fit).toContain("text-align: end");
   });
 
   it("Role and Action show their long words only in a wide column (E42-D04 §4: 2560), by container query", () => {
@@ -174,29 +209,50 @@ describe("auditrow.css, the grid row (E42-D04 §4 Columns, D2, D14, §15)", () =
     expect(normal).toMatch(
       /@container \(min-width: 10rem\) \{\s*\.cv-audit-row__fit\[data-fit="action"\] \.cv-audit-row__long\.cv-visually-hidden \{/,
     );
-    const long = find(normal, ".cv-audit-row__long.cv-visually-hidden", "clip-path");
-    expect(long).toContain("position: static");
-    expect(long).toContain("clip-path: none");
+    // Two classes outrank controls.css's utility and undo its clip pattern, inside each container query.
+    for (const fit of ["role", "action"]) {
+      const long = find(
+        normal,
+        `.cv-audit-row__fit[data-fit="${fit}"] .cv-audit-row__long.cv-visually-hidden`,
+        "clip-path",
+      );
+      expect(long).toContain("position: static");
+      expect(long).toContain("clip-path: none");
+      expect(long).toContain("width: auto");
+    }
   });
 
   it("forced colours: the rule a CanvasText border (HighlightText when selected), the selected row Highlight", () => {
     expect(
-      find(forced, `${ROW_HIGH} > .cv-audit-row__expander`, "border-inline-start-color"),
+      find(forced, `${ROW_HIGH} > .cv-audit-row__expander::before`, "border-inline-start-color"),
     ).toContain("border-inline-start-color: CanvasText");
+    // The selected cell owns its colours (A-5520-06): no system plate behind its text, which forced colours would
+    // otherwise repaint CanvasText on the Highlight fill.
     const selected = find(
       forced,
       `${ROW}[aria-selected="true"] > .cv-audit-row__cell`,
       "background",
     );
+    expect(selected).toContain("forced-color-adjust: none");
     expect(selected).toContain("background: Highlight");
     expect(selected).toContain("color: HighlightText");
+    // Its time, IP, meta words and the expander, which carry colours of their own, follow it.
+    for (const part of [".cv-audit-row__mono", ".cv-audit-row__meta", ".cv-audit-row__toggle"]) {
+      expect(find(forced, `${ROW}[aria-selected="true"] ${part}`, "color")).toContain(
+        "color: HighlightText",
+      );
+    }
     expect(
-      find(
-        forced,
-        `${ROW_HIGH}[aria-selected="true"] > .cv-audit-row__expander`,
-        "border-inline-start-color",
-      ),
-    ).toContain("border-inline-start-color: HighlightText");
+      find(forced, `${ROW}[aria-selected="true"] .cv-audit-row__env`, "border-color"),
+    ).toContain("border-color: HighlightText");
+    // A focused cell or expander on the Highlight fill keeps a ring it can be seen by.
+    expect(
+      find(forced, `${ROW}[aria-selected="true"] .cv-focus-ring:focus-visible`, "outline-color"),
+    ).toContain("outline-color: HighlightText");
+    // Prettier wraps this selector inside its `:is()`, which `find` reads exactly: match it across the wrap.
+    expect(forced).toMatch(
+      /:is\(\s*\[data-severity="error"\],\s*\[data-severity="critical"\]\s*\)\[aria-selected="true"\]\s*>\s*\.cv-audit-row__expander::before\s*\{\s*border-inline-start-color: HighlightText;/,
+    );
     expect(find(forced, ".cv-audit-row__toggle-glyph", "color")).toContain("color: currentcolor");
     expect(find(forced, ".cv-audit-row__env", "border-color")).toContain(
       "border-color: CanvasText",
@@ -255,6 +311,10 @@ describe("auditrow.css, the diff part (E42-D04 §6, AD-5)", () => {
     expect(find(normal, ".cv-audit-diff__break-glyph", "color")).toContain(
       "color: var(--color-status-danger-strong)",
     );
+  });
+
+  it("a collapsed list is hidden whatever its own display (the unchanged fields, A-5520-15)", () => {
+    expect(find(normal, ".cv-audit-diff__fields[hidden]", "display")).toContain("display: none");
   });
 
   it("the inline form is a plain list", () => {

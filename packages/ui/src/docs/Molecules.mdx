@@ -156,6 +156,28 @@ Focus after a page loads is the host's: the new page's first row, or the pressed
 | link         | link                 | its words: time (UTC), actor, action label and code, subject, outcome, severity | The fields are " · " apart in plain text, read as written. No hash, IP or `detail` is shown.    |
 | glyph        | none (`aria-hidden`) | —                                                                               | The octagon (error, critical) or the triangle (warning); the severity word carries the meaning. |
 
+### AuditRow (CMP-173, row: a CMP-049 grid row and its diff row)
+
+| Keys                           | Action                                                                                                                       |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab                | The grid is one stop (CMP-049's roving `tabindex`); on a row it lands on the expander.                                       |
+| ↑ / ↓, ← / →, Home / End       | CMP-049's grid keys, across entry rows and diff rows alike; arrows may repeat.                                               |
+| Space                          | Expands or collapses the row, from any of its cells, once per press; on the diff row it collapses it, focus to its expander. |
+| Enter                          | Opens SCR-136 for the row's record, once per press (on the expander too).                                                    |
+| → / ← in a diff row            | From the row's one cell into its Copy and disclosure buttons and between them; ← from the first back to the cell.            |
+| ↑ / ↓ from a diff row's button | Leave the row, as from its cell; Esc returns to the cell; Enter and Space act on the button.                                 |
+| Tab in a diff row              | Never a stop of its own: a button the row mounts later (an opened disclosure's Copy) leaves the Tab order too.               |
+
+| Element      | Role                                   | Name             | Notes                                                                                                                     |
+| ------------ | -------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| row          | row (in CMP-049's `grid`)              | its cells' words | `aria-rowindex`; the selected record `aria-selected="true"` with a `check` glyph, never colour alone.                     |
+| expander     | button                                 | "Record {id}"    | `aria-expanded`; `aria-controls` the diff row while expanded.                                                             |
+| Role, Action | gridcell                               | —                | "not recorded" and the action's code stay in the tree when the column is too narrow to show them.                         |
+| absent value | gridcell                               | —                | Actor, Target, Environment or IP not recorded: the "—" is `aria-hidden`, "not recorded" read beside it.                   |
+| severity     | text                                   | its word         | The octagon or triangle `aria-hidden`; error and critical add the weight and the rule.                                    |
+| diff row     | row with one gridcell over all columns | —                | A `dl` per field, its path the term, a nested `dl` with Before / After (Requested); a redacted kind shows its words only. |
+| diff buttons | button                                 | see notes        | "Show full value of {path} ({side})" and "Copy {path} ({side})", the visible words first; a fact's buttons have no side.  |
+
 ### CopyableCodeBlock (CMP-068, a focusable scroll region)
 
 | Keys            | Action                                                                                    |

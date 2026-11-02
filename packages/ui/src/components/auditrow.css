@@ -83,8 +83,281 @@
 }
 
 /*
+ * The grid row (E42-D04 §4 Columns, D2, D14, §15; CMP-049's row contract supplies the cell box, padding and the
+ * focus ring). Cells start at the top and wrap inside a long value. The expander cell gives its padding to its one
+ * control, which fills the 24 px column at least `size.target.min` tall (a 24 x 24 target, WCAG 2.5.8); the row's own
+ * selector outranks `.cv-table__cell`, whose padding loads after this sheet. Its glyphs are `size.icon.sm`, the `check`
+ * of the selected row (D14) in `color.text.primary`. High severity draws the `border.thick` rule in
+ * `color.status.danger.strong` over the first cell's inline start, a pseudo-element that takes no width from the
+ * expander and lets a press through. The selected row keeps `color.surface.selected`, which carries nothing (1.41:1,
+ * D14): `aria-selected` and the `check` do. Meta (times, codes, IPs, "—", "not recorded") is `color.text.secondary`,
+ * never tertiary, which fails on the selected fill (3.98:1 dark, §15).
+ */
+.cv-audit-row[data-variant="row"] > .cv-audit-row__cell {
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.cv-audit-row[data-variant="row"] > .cv-audit-row__expander {
+  position: relative;
+  padding-inline: 0;
+}
+
+.cv-audit-row__toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-block-size: var(--size-target-min);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.cv-audit-row__toggle-glyph {
+  display: inline-flex;
+  flex: none;
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+}
+
+.cv-audit-row__toggle-glyph[data-glyph="check"] {
+  color: var(--color-text-primary);
+}
+
+.cv-audit-row[data-variant="row"]:is([data-severity="error"], [data-severity="critical"])
+  > .cv-audit-row__expander::before {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  border-inline-start: calc(var(--border-thick) * 1px) solid var(--color-status-danger-strong);
+  content: "";
+  pointer-events: none;
+}
+
+.cv-audit-row[data-variant="row"][aria-selected="true"] > .cv-audit-row__cell {
+  background: var(--color-surface-selected);
+}
+
+.cv-audit-row__mono {
+  color: var(--color-text-secondary);
+  font: var(--type-num-sm-font-weight) var(--type-num-sm-font-size) / var(--type-num-sm-line-height)
+    var(--type-num-sm-font-family);
+  font-variant-numeric: tabular-nums;
+}
+
+.cv-audit-row__meta {
+  color: var(--color-text-secondary);
+}
+
+/*
+ * The environment as a chip: a hairline border, LIVE's in `color.env.live` (§15: 4.94:1 on app, 3.13 selected). It
+ * keys on `data-audit-env`, never the shell badge's `data-env`, which the badge's no-hide guard reads in any selector.
+ */
+.cv-audit-row__env {
+  display: inline-flex;
+  padding-inline: var(--space-inset-xs);
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+  border-radius: var(--radius-badge);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+.cv-audit-row__env[data-audit-env="live"] {
+  border-color: var(--color-env-live);
+}
+
+/*
+ * Role and Action are column-sized (E42-D04 §4: "—" at 1280, "not recorded" at 2560; the action's code under its
+ * label at 2560): each cell's content is a size container, and its long words show only where the column is wide
+ * enough (no layout token exists; the thresholds sit between the 1280 and the 2560 column widths, in rem so text scale
+ * moves them with the columns). Narrow, the long words stay in the tree, visually hidden (controls.css's utility, which
+ * two classes outrank and undo part by part), so a reader always hears "not recorded" and the code.
+ */
+.cv-audit-row__fit {
+  container-type: inline-size;
+}
+
+/*
+ * Stacked (CMP-049's 200 % / 400 % cards, AL-28): each cell is a flex line, where an inline-size container has no width
+ * of its own, so the fit takes the line's room after the cell's label and ends its words at the line's end.
+ */
+.cv-table[data-layout="stacked"] .cv-audit-row__fit {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  text-align: end;
+}
+
+@container (min-width: 4.5rem) {
+  .cv-audit-row__fit[data-fit="role"] .cv-audit-row__short {
+    display: none;
+  }
+
+  .cv-audit-row__fit[data-fit="role"] .cv-audit-row__long.cv-visually-hidden {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+  }
+}
+
+@container (min-width: 10rem) {
+  .cv-audit-row__fit[data-fit="action"] .cv-audit-row__long.cv-visually-hidden {
+    position: static;
+    display: block;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+  }
+}
+
+/*
+ * CMP-173's diff part (E42-D04 §6, AL-3, AD-5). One `dl` per field: its term the status word (Added, Removed,
+ * Changed; a word, never a colour or a strike-through) in a column of its own, then the path in `type.num.sm`; the
+ * description a nested `dl` of visible Before / After (or Requested) terms in `color.text.secondary` beside their
+ * values. Numbers and ids in `type.num.sm`, "none" in `color.text.tertiary`, a redacted kind after a decorative lock in
+ * `color.text.secondary`. AD-5's line is the danger treatment: the octagon in `color.status.danger.strong` and its
+ * words in `color.text.primary` on `color.status.danger.subtle`. Static: expansion and disclosures are a cut (M4).
+ */
+.cv-audit-diff {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+}
+
+.cv-audit-diff__head,
+.cv-audit-diff__line {
+  margin: 0 0 var(--space-stack-xs);
+}
+
+.cv-audit-diff__head {
+  font-weight: var(--font-weight-semibold);
+}
+
+.cv-audit-diff__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-sm);
+  margin: 0;
+}
+
+/* A collapsed list (the unchanged fields) is hidden: its own display must not undo `hidden`. */
+.cv-audit-diff__fields[hidden] {
+  display: none;
+}
+
+.cv-audit-diff__term {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-inset-sm);
+  margin: 0;
+}
+
+.cv-audit-diff__status {
+  flex: none;
+  min-inline-size: 6rem;
+}
+
+.cv-audit-diff__path {
+  font: var(--type-num-sm-font-weight) var(--type-num-sm-font-size) / var(--type-num-sm-line-height)
+    var(--type-num-sm-font-family);
+}
+
+.cv-audit-diff__desc {
+  margin: var(--space-stack-xs) 0 0;
+}
+
+.cv-audit-diff__field[data-status] > .cv-audit-diff__desc {
+  margin-inline-start: calc(6rem + var(--space-inset-sm));
+}
+
+.cv-audit-diff__values {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--space-inset-lg);
+  row-gap: var(--space-stack-xs);
+  margin: 0;
+}
+
+.cv-audit-diff__pair {
+  display: contents;
+}
+
+.cv-audit-diff__values dt {
+  color: var(--color-text-secondary);
+}
+
+.cv-audit-diff__values dd {
+  margin: 0;
+}
+
+.cv-audit-diff__value[data-mono] {
+  font: var(--type-num-sm-font-weight) var(--type-num-sm-font-size) / var(--type-num-sm-line-height)
+    var(--type-num-sm-font-family);
+  font-variant-numeric: tabular-nums;
+}
+
+.cv-audit-diff__value[data-kind="none"] {
+  color: var(--color-text-tertiary);
+}
+
+.cv-audit-diff__lock {
+  display: inline-flex;
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+  margin-inline-end: var(--space-inset-xs);
+  vertical-align: middle;
+  color: var(--color-text-secondary);
+}
+
+.cv-audit-diff__note {
+  color: var(--color-text-secondary);
+}
+
+.cv-audit-diff__break {
+  display: flex;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  margin: 0 0 var(--space-stack-sm);
+  padding: var(--space-inset-xs) var(--space-inset-sm);
+  border-radius: var(--radius-control);
+  background: var(--color-status-danger-subtle);
+  color: var(--color-text-primary);
+}
+
+.cv-audit-diff__break-glyph {
+  display: inline-flex;
+  flex: none;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  color: var(--color-status-danger-strong);
+}
+
+.cv-audit-diff[data-form="inline"] {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/*
  * Forced colours: the row reads as a link (LinkText), the glyph follows the text, and the high rule stays a
- * CanvasText border, so the octagon, the semibold word and the rule all carry without a colour.
+ * CanvasText border, so the octagon, the semibold word and the rule all carry without a colour. The grid's selected
+ * row owns its colours (`forced-color-adjust: none`): HighlightText on Highlight for every word, glyph, chip edge and
+ * focus ring in it, with no system plate behind the text (A-5520-06).
  */
 @media (forced-colors: active) {
   .cv-audit-row__link,
@@ -102,5 +375,56 @@
 
   .cv-audit-row:is([data-severity="error"], [data-severity="critical"]) > .cv-audit-row__link {
     border-inline-start-color: CanvasText;
+  }
+  .cv-audit-row[data-variant="row"]:is([data-severity="error"], [data-severity="critical"])
+    > .cv-audit-row__expander::before {
+    border-inline-start-color: CanvasText;
+  }
+
+  .cv-audit-row[data-variant="row"][aria-selected="true"] > .cv-audit-row__cell {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .cv-audit-row[data-variant="row"][aria-selected="true"] .cv-audit-row__mono,
+  .cv-audit-row[data-variant="row"][aria-selected="true"] .cv-audit-row__meta,
+  .cv-audit-row[data-variant="row"][aria-selected="true"] .cv-audit-row__toggle {
+    color: HighlightText;
+  }
+
+  .cv-audit-row[data-variant="row"][aria-selected="true"] .cv-audit-row__env {
+    border-color: HighlightText;
+  }
+
+  .cv-audit-row[data-variant="row"][aria-selected="true"] .cv-focus-ring:focus-visible {
+    outline-color: HighlightText;
+  }
+
+  .cv-audit-row[data-variant="row"]:is(
+      [data-severity="error"],
+      [data-severity="critical"]
+    )[aria-selected="true"]
+    > .cv-audit-row__expander::before {
+    border-inline-start-color: HighlightText;
+  }
+
+  .cv-audit-row__toggle-glyph,
+  .cv-audit-row__toggle-glyph[data-glyph="check"] {
+    color: currentcolor;
+  }
+
+  .cv-audit-row__env,
+  .cv-audit-row__env[data-audit-env="live"] {
+    border-color: CanvasText;
+  }
+
+  .cv-audit-diff__break {
+    border: 1px solid CanvasText;
+  }
+
+  .cv-audit-diff__break-glyph,
+  .cv-audit-diff__lock {
+    color: currentcolor;
   }
 }
