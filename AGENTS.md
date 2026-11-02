@@ -563,7 +563,7 @@ requesting review, confirm:
 
 - [ ] One issue, one branch, one PR by default (a bundle under an owner delivery-speed directive closes each of its tickets with its own acceptance table and its own QA record); description contains `Closes #N`, or a slice's `Refs #N` + `Partial: <reason>` with no closing keyword (C-4.6/C-4.7).
 - [ ] Branch name matches `<type>/<epic-key>-<slug>`; commits are conventional with an allowed scope.
-- [ ] Diff ≤400 LOC (or a justified `large-pr-approved` label); no unrelated changes.
+- [ ] Diff ≤400 LOC (or a justified `large-pr-approved` label), and never past the ≈ 1,500 counted-line review ceiling: split before ready (a review rule; CI stays 400 / 800; C-4.8); no unrelated changes.
 - [ ] Contract changed first and protocol types regenerated (if applicable); contract tests updated.
 - [ ] Tests added at the right level; local `pnpm verify` / `pytest` green; coverage floors held.
 - [ ] Migration: additive, reversible, single, never edits an applied revision; up/down output attached.

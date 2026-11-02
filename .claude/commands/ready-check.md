@@ -9,7 +9,9 @@ Evaluate the current branch against DoD (C-11.2, `docs/plan/02-definition-of-rea
 report. Output a table: item | PASS/FAIL/N/A | evidence.
 
 1. **Branch & scope:** name matches C-4.4; derive issue # from branch/commits; `git diff --stat origin/main...HEAD`
-   ≤400 changed LOC excl. lockfiles/generated (C-4.8); every changed file is in the ticket write set (C-4.9).
+   ≤400 changed LOC excl. lockfiles/generated, or justified with `large-pr-approved`, and never past the ≈ 1,500
+   counted-line review ceiling (split before ready; a review rule, CI stays 400 / 800) (C-4.8); every changed file
+   is in the ticket write set (C-4.9).
 2. **Commits:** conventional commits (C-4.10); breaking changes have `!` + footer (C-4.11); no merge commits.
 3. **Acceptance criteria:** for each AC in the issue, name the test that proves it. Missing ⇒ FAIL.
 4. **Checks (run only those affected by changed paths; commands and flags are defined only in `AGENTS.md` §4 — read
