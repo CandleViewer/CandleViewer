@@ -27,7 +27,11 @@ Gates (each FAIL led by its name):
               alternative (S79-09, B07) is marked "not adopted".
   G-T2        every state row (S77-, S79-, S122-, S137-) whose Presentation is T2 carries its
               reason as a quoted sentence, and that sentence is an E09-D09 key's text at the
-              base (its `{slot}` filled) unless the cell marks it PROPOSED.
+              base (its `{slot}` filled) unless the cell marks it PROPOSED. Every gated control
+              names its rendering (2a, 2b or the sentence form; G-T2.1c), §1 item 4 names the
+              CMP-019 `lock` (G-T2.1d), and the acknowledgement wait names its rendering.
+  G-RULED     the account's own name is the typed token (never a fixed word; BQ-07), the
+              protective writes stay enabled (BQ-13, C-2.6), and the S77-01 and OQ-2 rows exist.
   G-MERGED    only merged owners are cited: E38-D02 or #1003 appears only on a request row or
               the sentence saying so, and the unmerged #1075 is never named.
   G-CITE      every cite in range and on a non-blank line at its base, and equal to the pins.
@@ -461,6 +465,9 @@ def e09_templates(t: Texts) -> list[re.Pattern[str]]:
     return out
 
 
+RENDERING = re.compile(r"rendering (2a|2b|the sentence form)")
+
+
 def g_t2(t: Texts) -> list[str]:
     bad = []
     leads = ("S77-", "S79-", "S122-", "S137-")
@@ -468,6 +475,24 @@ def g_t2(t: Texts) -> list[str]:
     if not rows:
         return ["the spec has no state rows"]
     keys = e09_templates(t)
+    for r in rows:  # G-T2.1c: every gated control names its rendering
+        if (
+            len(r) >= 4
+            and ("T2" in r[2] or "T2" in r[3])
+            and not RENDERING.search(r[3])
+        ):
+            bad.append(
+                f"{r[0]}: a T2 control with no rendering (2a, 2b or the sentence form)"
+            )
+    if "CMP-019 `lock`" not in section(t.spec, "## 1."):
+        bad.append(
+            "§1 item 4 does not state the CMP-019 `lock` glyph that leads a T2 label"
+        )
+    if not re.search(
+        r"Until it is acknowledged, live order entry stays T2 `rbac.env` \(G-3\), rendering",
+        t.spec,
+    ):
+        bad.append("§4.2: the acknowledgement wait's T2 names no rendering")
     for r in rows:
         if len(r) < 4 or "T2" not in r[3]:
             continue
@@ -478,6 +503,32 @@ def g_t2(t: Texts) -> list[str]:
             bad.append(
                 f"{r[0]}: {quote[1]!r} is no E09-D09 key's text and is not PROPOSED"
             )
+    return bad
+
+
+def g_ruled(t: Texts) -> list[str]:
+    """The overrides the lens found ungated: BQ-07's token, BQ-13's protective writes, BQ-18's entry, BQ-05's ids."""
+    bad = []
+    typed = re.search(r'"Type ([^"]+) to confirm"', row(t, "S79-03")[2])
+    if not typed or typed[1] != "Paper 1":
+        bad.append(
+            "S79-03: the typed token is not the account's own name (BQ-07; never a fixed word)"
+        )
+    if (
+        "**Close, cancel, reduce-only and stops stay enabled** (C-2.6): a protective write is never gated."
+        not in t.spec
+    ):
+        bad.append(
+            "§4.2: the protective writes are not stated as enabled (BQ-13, C-2.6)"
+        )
+    if "close, cancel, reduce-only and stops enabled" not in row(t, "S122-06")[2]:
+        bad.append(
+            "S122-06: the reduce-only frame does not keep the protective writes enabled"
+        )
+    row(
+        t, "S77-01"
+    )  # BQ-18's primary entry: the row must exist (LookupError otherwise)
+    row(t, "OQ-2")  # BQ-05: the section ids asked of the `14` owner
     return bad
 
 
@@ -536,7 +587,7 @@ def g_scope(t: Texts) -> list[str]:
 
 GATES: dict[str, Callable[[Texts], list[str]]] = {
     "G-STATE": g_state, "G-TOKEN": g_token, "G-CONTRAST": g_contrast, "G-CVD": g_cvd,
-    "G-HIDDEN": g_hidden, "G-T2": g_t2, "G-MERGED": g_merged, "G-CITE": g_cite, "G-HYGIENE": g_hygiene,
+    "G-HIDDEN": g_hidden, "G-T2": g_t2, "G-RULED": g_ruled, "G-MERGED": g_merged, "G-CITE": g_cite, "G-HYGIENE": g_hygiene,
     "G-SCOPE": g_scope,
 }  # fmt: skip
 
@@ -633,10 +684,16 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-CONTRAST", "type a contrast figure off", set_cell("P-01", 4, "1.00")),
     ("G-CONTRAST", "report a ui pair as structure", set_cell("P-08", 3, "structure")),
     ("G-CVD", "type a ΔE figure off", set_cell("V-01", 4, "1.00 / 1.00 / 1.00 / 1.00")),
-    ("G-HIDDEN", "draw the LIVE reset disabled", set_cell("S79-07", 3, "T2 \"Paper reset isn't available in a LIVE session.\" (PROPOSED)")),
+    ("G-HIDDEN", "draw the LIVE reset disabled", set_cell("S79-07", 3, "T2 \"Paper reset isn't available in a LIVE session.\" (PROPOSED); rendering 2a")),
     ("G-HIDDEN", "adopt the T2 alternative silently", sub("**not adopted**", "**the default**")),
     ("G-T2", "drop the reduce-only reason", set_cell("S122-06", 3, "T2")),
     ("G-T2", "retype a key's text", set_cell("S137-09", 3, 'T2 "Read only while viewing someone."')),
+    ("G-T2", "drop a control's rendering", set_cell("S122-02", 3, 'T2 "This is a demo account." (a PROPOSED key, E42-D03\'s)')),
+    ("G-T2", "drop the lock from §1 item 4", sub("led by the CMP-019 `lock` glyph", "led by its glyph")),
+    ("G-RULED", "type a fixed word as the token", set_cell("S79-03", 2, 'CMP-044 typed (rung 3): the counts line, the history line, "Type RESET to confirm"')),
+    ("G-RULED", "gate the protective writes", sub("**Close, cancel, reduce-only and stops stay enabled** (C-2.6): a protective write is never gated.", "**Close, cancel, reduce-only and stops are T2** (C-2.6).")),
+    ("G-RULED", "drop the S77-01 row", drop_row("| S77-01 ")),
+    ("G-RULED", "drop the OQ-2 row", drop_row("| OQ-2 ")),
     ("G-MERGED", "cite the unmerged E38-D02", sub("It is a request row to E38-D02 (R-1), not drawn here.", "It is drawn by E38-D02 §3.4.")),
     ("G-MERGED", "name #1075's offer", sub("The values are illustrative, and the defect ids are fixtures.", "The values are illustrative (#1075).")),
     ("G-CITE", "re-point a `14` cite to an unpinned line", sub("(`14`:43)", "(`14`:44)")),
