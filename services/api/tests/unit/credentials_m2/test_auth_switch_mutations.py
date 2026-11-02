@@ -1,11 +1,14 @@
 """Seeded mutants for the switch-over (#2152 S5b; repo convention, see `test_mutations.py` and
 `test_auth_custody_mutations.py`): the boot the real-backend wiring turns on, the first boot's
-import, the dual-read window and its exit test (BQ-3). Each case injects one plausible defect via
+import, the dual-read window and its exit test (BQ-3), and a verify's custody cost (#5469: no KEK
+read, key-row read or thread hop per call). Each case injects one plausible defect via
 monkeypatch, runs the real oracle under it and asserts the oracle fails (mutant killed); every
 oracle passes unmutated, with the same seams."""
 
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 import functools
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -21,6 +24,7 @@ from candleviewer.secrets import _auth_keyring as ak
 from candleviewer.secrets.service import SecretsService
 from candleviewer.storage.repositories import auth_keys_sqlalchemy as store_module
 from tests.unit.credentials_m2 import test_auth_keyring_switch as switch
+from tests.unit.credentials_m2._service_fakes import _settings
 from tests.unit.storage import test_auth_keys_sqlalchemy as store_oracle
 
 #: An oracle fails by assertion, or with the refusal the defect causes: the old unused code no
@@ -59,12 +63,52 @@ _UNBOUNDED = sa.text(
 )
 
 
+_RESOLVE = SecretsService._auth_ring_or_refuse
+_OPEN = wiring._MfaKeyring.open_totp_seed
+_BUILD = wiring.build_secrets_service
+
+
+def _kek_read_per_call(self: SecretsService) -> ak.LoadedAuthKeyring:
+    """The resolver reads the KEK from its source again on every call (a per-call KEK read)."""
+    self._sources(_settings(environment=self._env)).current.load()
+    return _RESOLVE(self)
+
+
+async def _opened_on_a_thread(self: Any, blob: bytes, key_ref: str, user_id: UUID) -> bytearray:
+    """Each seed opened on a worker thread: a thread hop per seed."""
+    opened: bytearray = await asyncio.to_thread(asyncio.run, _OPEN(self, blob, key_ref, user_id))
+    return opened
+
+
+class _RowsEachCheck:
+    """MFA's keyring as the wiring would adapt it if each availability check read the key rows
+    again (a per-call database read); everything else is the real adapter's."""
+
+    def __init__(self, inner: Any, keys: Any) -> None:
+        self._inner, self._keys = inner, keys
+
+    async def available(self, *key_refs: str) -> bool:
+        await self._keys.rows_for(self._keys.env)
+        return bool(await self._inner.available(*key_refs))
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def _rows_read_per_check(*args: Any, **kwargs: Any) -> wiring.SecretsBundle:
+    bundle = _BUILD(*args, **kwargs)
+    reread = _RowsEachCheck(bundle.mfa_keyring, kwargs["auth_keys"])
+    return dataclasses.replace(bundle, mfa_keyring=reread)
+
+
 def _static(oracle: Callable[[], None]) -> Oracle:
     def run(_monkeypatch: pytest.MonkeyPatch) -> None:
         oracle()
 
     return run
 
+
+_PER_CALL = switch.test_a_verify_loads_no_kek_reads_no_key_row_and_hops_to_no_thread
 
 MUTANTS: dict[str, tuple[object, str, object, Oracle]] = {
     "seam_unwired": (
@@ -92,6 +136,16 @@ MUTANTS: dict[str, tuple[object, str, object, Oracle]] = {
     "exit_test_unbounded": (
         store_module, "_LEGACY_MATERIAL", _UNBOUNDED,
         _static(store_oracle.test_the_exit_test_counts_only_what_the_old_formats_still_serve),
+    ),
+    # #5469: a verify's custody cost stays the cipher's.
+    "kek_read_per_verify": (
+        SecretsService, "_auth_ring_or_refuse", _kek_read_per_call, _PER_CALL,
+    ),
+    "seed_opened_on_a_thread": (
+        wiring._MfaKeyring, "open_totp_seed", _opened_on_a_thread, _PER_CALL,
+    ),
+    "key_rows_read_per_check": (
+        switch, "build_secrets_service", _rows_read_per_check, _PER_CALL,
     ),
 }  # fmt: skip
 

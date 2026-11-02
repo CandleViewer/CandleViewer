@@ -3,14 +3,16 @@ wiring passes the keyring's store through the composition seam, so the first boo
 or generates the environment's keyring and `SecretsBundle.mfa_keyring` serves MFA; the fake
 backend's wiring leaves it refusing. Through that keyring and `MfaService`, an imported keyring
 keeps a demo database's enrolments and unused codes working (AC3: the dual-read window), a
-generated one reads no old format, and each boot of an imported keyring logs the window's exit
-test. In-memory stores, fixed test KEKs and integer-built keys only (C-13.5)."""
+generated one reads no old format, each boot of an imported keyring logs the window's exit test,
+and a verify loads no KEK, reads no key row and hops to no thread (#5469). In-memory stores, fixed
+test KEKs and integer-built keys only (C-13.5)."""
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import hmac
+import inspect
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -142,6 +144,59 @@ async def test_the_first_switch_over_boot_keeps_a_demo_database_s_enrolments(
     stored = {r["code_hash"] for r in repo.recovery_codes.values() if r["used_at"] is None}
     bound = (await bundle.mfa_keyring.recovery_code_digests(fresh, USER))[0]
     assert bound in stored and _legacy_digest(fresh) not in stored
+
+
+def _counted(monkeypatch: pytest.MonkeyPatch, target: object, name: str) -> list[object]:
+    """From now on, each call of `target.name` is recorded (and still made)."""
+    calls: list[object] = []
+    real = getattr(target, name)
+    if inspect.iscoroutinefunction(real):
+
+        async def counted_async(*args: Any, **kwargs: Any) -> Any:
+            calls.append(args)
+            return await real(*args, **kwargs)
+
+        monkeypatch.setattr(target, name, counted_async)
+    else:
+
+        def counted(*args: Any, **kwargs: Any) -> Any:
+            calls.append(args)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(target, name, counted)
+    return calls
+
+
+async def test_a_verify_loads_no_kek_reads_no_key_row_and_hops_to_no_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#5469 (the k6 `mfa_verify` profile): the keyring is opened once, at boot, and each verify
+    resolves it in memory. Five verifies through `SecretsBundle.mfa_keyring` (an imported
+    keyring, legacy seals: the CI shape) load no KEK, read no `auth_keys` row and hop to no worker
+    thread, so a verify's custody cost is the cipher's alone (a few microseconds)."""
+    loads = _counted(monkeypatch, _Src, "load")
+    repo, _ = await _demo_database()
+    keyring = InMemoryAuthKeyStore("demo", mfa_material=2)
+    reads = _counted(monkeypatch, keyring, "rows_for")
+    bundle = await _switched(monkeypatch, keyring, **_ENV_KEYS)
+    booted = (len(loads), len(reads))
+    assert min(booted) >= 1  # the counters see the boot's KEK load and its read of the rows
+    hops = _counted(monkeypatch, asyncio, "to_thread")
+    now = [NOW]
+    mfa = MfaService(repo, bundle.mfa_keyring, clock=lambda: now[0], sleep=no_wait)
+    for _ in range(5):
+        now[0] += timedelta(seconds=30)  # a fresh step each time, so no code is a replay
+        token = uuid.uuid4().hex
+        expires = now[0] + timedelta(minutes=5)
+        await repo.create_challenge(
+            str(USER), purpose="login", mfa_token_hash=_hash_token(token), expires_at=expires
+        )
+        code = generate_code(SEED, time_step_for(now[0].timestamp()))
+        verified = await mfa.verify(
+            MfaVerifyRequest(mfa_token=token, method=MfaMethodKind.TOTP, code=code)
+        )
+        assert verified.user_id == USER
+    assert (len(loads), len(reads), len(hops)) == (*booted, 0)
 
 
 async def test_a_generated_keyring_reads_no_old_format(monkeypatch: pytest.MonkeyPatch) -> None:
