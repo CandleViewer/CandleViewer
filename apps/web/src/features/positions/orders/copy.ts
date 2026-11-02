@@ -79,6 +79,11 @@ export const ORDER_TEXT = {
   /** The account group row's environment (D02:238 "Main · LIVE"; D02:207 "Main · DEMO", §5.2). */
   live: { string: "LIVE", source: "D02:238" },
   demo: { string: "DEMO", source: "D02:207" },
+  /**
+   * Offline with REST unreachable: every write T2 behind one notice of E17-D01 §6's words (D02:397;
+   * a feed state E09-D09 §3.1 registers, E29-D04:459 "no key"), drawn at E17-D01:197.
+   */
+  cannotReachServer: { string: "Cannot reach server", source: "E17-D01:197" },
 } as const satisfies Readonly<Record<string, CitedText>>;
 
 /** The Age column's units, as D02:272 writes "38 s", "4 m" and "1 h 12 m". */
@@ -234,6 +239,73 @@ export const PROPOSED = {
     "Amend not sent — your order is unchanged",
     "An amend refused before any send (a 403, 409 or 422 answer).",
   ),
+  // E29-S02 PR2: the cancel and the bulk cancel (S-36's orders half).
+  "blotter.recorded_tp": proposed(
+    "Paired with its stop; it can't be cancelled on its own.",
+    "A recorded take-profit's Cancel (T2): it goes through `setPositionTpSl`, not mounted (BQ-5); owner E29-D03 with E32-D01.",
+  ),
+  "blotter.ui.cancel.failed": proposed(
+    "Not cancelled: BTCUSDT Sell 0.250 on Main.",
+    "A single cancel the server refused; the row keeps its state (D01 D7 gives the sent toast only).",
+    { BTCUSDT: "symbol", Sell: "side", "0.250": "quantity", Main: "account label" },
+  ),
+  "blotter.ui.cancel.unconfirmed": proposed(
+    "Cancel not confirmed: BTCUSDT Sell 0.250 on Main.",
+    'A single cancel with no answer: it may have reached Bybit, so never "not cancelled".',
+    { BTCUSDT: "symbol", Sell: "side", "0.250": "quantity", Main: "account label" },
+  ),
+  "blotter.ui.sel.count": proposed(
+    "2 selected",
+    "The first part of the deck's `blotter.ui.sel.bar`, keyed alone so no deck string is sliced (D02:349).",
+    { "2": "count" },
+  ),
+  "blotter.ui.sel.clear": proposed(
+    "Clear selection",
+    "The last part of the deck's `blotter.ui.sel.bar`, keyed alone for the same reason.",
+  ),
+  "blotter.ui.bulk.count_orders.one": proposed(
+    "1 order on Sub-1 · LIVE",
+    "`blotter.ui.bulk.count_orders` for one order.",
+    { "Sub-1": "account label", LIVE: "environment" },
+  ),
+  "blotter.ui.bulk.cancel_title.one": proposed(
+    "Cancel 1 order?",
+    "`blotter.ui.bulk.cancel_title` for one order.",
+  ),
+  "blotter.ui.bulk.cancel_confirm.one": proposed(
+    "Cancel 1 order",
+    "`blotter.ui.bulk.cancel_confirm` for one order.",
+  ),
+  "blotter.ui.bulk.excluded#2": proposed(
+    "2 native-stop orders are not included: every position keeps a native stop.",
+    'The deck\'s `blotter.ui.bulk.excluded` reads "2 native-stop order is not included" for two.',
+    { "2": "count" },
+  ),
+  "blotter.ui.bulk.recorded_tp_excluded": proposed(
+    "1 take-profit is not included: it is cleared with its stop.",
+    "A recorded take-profit left out of a bulk cancel while `setPositionTpSl` is not mounted (BQ-5): `blotter.ui.bulk.tp_excluded`'s reason would be false.",
+    { "1": "count" },
+  ),
+  "blotter.ui.bulk.recorded_tp_excluded#2": proposed(
+    "2 take-profits are not included: each is cleared with its stop.",
+    "The same line for two or more.",
+    { "2": "count" },
+  ),
+  "blotter.ui.bulk.other_excluded": proposed(
+    "1 order is not included: it can't be cancelled now.",
+    "A row whose Cancel is T2 for its own state (Untracked, Held, Quarantined, Unknown), cancelling already, or ended.",
+    { "1": "count" },
+  ),
+  "blotter.ui.bulk.other_excluded#2": proposed(
+    "2 orders are not included: they can't be cancelled now.",
+    "The same line for two or more.",
+    { "2": "count" },
+  ),
+  "blotter.ui.result.title": proposed(
+    "Cancel results",
+    "The bulk dialog's title once it becomes the result (D02 §8.3).",
+  ),
+  "blotter.ui.result.close": proposed("Close", "The result dialog's closing button."),
 } as const satisfies Readonly<Record<string, ProposedEntry>>;
 
 export type ProposedKey = keyof typeof PROPOSED;

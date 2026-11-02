@@ -21,6 +21,7 @@ const docs = {
   D01: repoFile("docs/design/E29/E29-D01.md").split("\n"),
   D02: repoFile("docs/design/E29/E29-D02.md").split("\n"),
   "E30-D02": repoFile("docs/design/E30/E30-D02.md").split("\n"),
+  "E17-D01": repoFile("docs/design/E17/E17-D01.md").split("\n"),
 } as const;
 const e30Deck = JSON.parse(repoFile("docs/design/E30/E30-D06-copy.json")) as {
   strings: Record<string, { string: string; owner: string; status?: string }>;
@@ -115,7 +116,11 @@ describe("PROPOSED keys (BQ-9), routed to E29-D03's copy owner", () => {
   });
 
   it("a T2 reason is one sentence of at most 60 characters with a full stop (G-T2.4)", () => {
-    for (const key of ["blotter.quarantined", "blotter.not_amendable"] as const) {
+    for (const key of [
+      "blotter.quarantined",
+      "blotter.not_amendable",
+      "blotter.recorded_tp",
+    ] as const) {
       const reason = PROPOSED[key].string;
       expect(reason.length).toBeLessThanOrEqual(60);
       expect(reason).toMatch(/^[^.]+\.$/);

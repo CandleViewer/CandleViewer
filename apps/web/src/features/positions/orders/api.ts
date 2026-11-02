@@ -1,8 +1,8 @@
 /**
- * The Working-orders tab's REST reads (E29-S02 #912): `GET /orders?open_only=true` (`22`
- * `listOrders`), through `apiFetch` and typed from the generated `packages/protocol` types
- * (C-4.16), and the account directory the Positions tab reads (`listExchangeAccounts`). Reads only:
- * the amend, cancel and cancel-all writes are this story's later PRs.
+ * The Working-orders tab's REST calls (E29-S02 #912), through `apiFetch` and typed from the
+ * generated `packages/protocol` types (C-4.16): the reads, `GET /orders?open_only=true` (`22`
+ * `listOrders`) and the account directory the Positions tab reads (`listExchangeAccounts`); and the
+ * cancel writes (`cancelOrder`, `cancelAllOrders`; `ordersWrites` below). The amend is PR3's.
  *
  * `open_only` is "every state but `filled`, `cancelled`, `rejected`, `expired` and `killed`, so
  * `held` and `untracked` too" (`22`), which the WS snapshot never carries (BQ-6). Outcomes are
@@ -103,3 +103,247 @@ export const ordersApi: OrdersApi = {
   listOrders,
   listExchangeAccounts: (signal) => positionsApi.listExchangeAccounts(signal),
 };
+
+/*
+ * The cancel writes (E29-S02 PR2; `22` `cancelOrder`, `cancelAllOrders`).
+ *
+ * - **One `Idempotency-Key` per request body** (BQ-8): each call holds its request (method, path,
+ *   key, body) and every send of it is that held request, byte for byte. The same key goes out
+ *   again only for a re-send of the identical request: after a transport failure (no answer, so it
+ *   may have arrived) and after `409 idempotency_in_flight` or a `429`, each with its `Retry-After`;
+ *   at most `MAX_RESENDS` times. Any other answer ends the call, and a later call ("Retry failed")
+ *   is a new request with a new key: `22` stores only a `2xx` under a key, and a cancel-all's
+ *   stored `200` would answer the same key again for 24 h.
+ * - **No arm token** (`32-design-specs.md` R5; `22` `ArmToken`): a cancel never meets the arm,
+ *   so no `X-Arm-Token` header is ever sent here, whatever the session holds (C-2.6).
+ * - **Fixed kinds:** an answer is read for its status and `code` only; no `detail`, `message` or
+ *   `exchange_ret_code` reaches the caller (BQ-2, SR-E29-09). `403 risk_limit_breached` on a
+ *   cancel is the command port's `NATIVE_STOP_REQUIRED` (a recorded stop's row while its position
+ *   is open): the server's enforcement of C-2.6 behind the client's own skip (`model/bulk.ts`).
+ */
+
+type CancelAllRequest = generated.rest.components["schemas"]["CancelAllRequest"];
+export type { CancelAllRequest };
+
+/** A write that ended without the server taking it, as the caller shows it. */
+export type WriteFailure =
+  /** `403 risk_limit_breached`: a native stop's row while its position is open (C-2.6). */
+  | "native_stop"
+  /** Any other `403`: scope, a view-only grant, a read-only or view-as session, CSRF. */
+  | "forbidden"
+  /** `409` but in flight: `conflict`, `account_unavailable`, `idempotency_key_reuse`; nothing sent. */
+  | "conflict"
+  /** `409 idempotency_in_flight` or a `429`, still so after the re-sends. */
+  | "busy"
+  /** `502 exchange_error`: Bybit refused it and the order stays live. */
+  | "exchange_refused"
+  /** `503 store_unavailable`: a read before the send failed, nothing was sent. */
+  | "store_unavailable"
+  | "not_found"
+  | "invalid"
+  /** No answer after the re-sends, or one this client cannot read: the outcome is not known. */
+  | "unavailable";
+
+export type CancelOutcome =
+  | {
+      readonly kind: "accepted";
+      /** The order's B1 state in the `202`, when it carries one (`unknown` after a `110001`). */
+      readonly lifecycle: string | null;
+    }
+  | { readonly kind: WriteFailure };
+
+/** One account of a cancel-all's `BulkAccountResult`: its `LegError` read for `code` and `retryable` only. */
+export interface AccountCancelResult {
+  readonly accountId: string;
+  readonly ok: boolean;
+  /** The orders cancelled on it. */
+  readonly affected: number;
+  readonly code: string | null;
+  readonly retryable: boolean;
+}
+
+export type CancelAllOutcome =
+  | { readonly kind: "ok"; readonly results: readonly AccountCancelResult[] }
+  | { readonly kind: WriteFailure };
+
+export interface OrdersWrites {
+  /** `DELETE /orders/{orderId}`: one request, its own key. */
+  cancelOrder(orderId: string, signal?: AbortSignal): Promise<CancelOutcome>;
+  /** `POST /orders/cancel-all`: one request, its own key. */
+  cancelAllOrders(body: CancelAllRequest, signal?: AbortSignal): Promise<CancelAllOutcome>;
+}
+
+/** A request as first sent: every re-send is this, its key included (BQ-8). */
+export interface HeldWrite {
+  readonly method: "DELETE" | "POST";
+  readonly path: string;
+  readonly key: string;
+  readonly body: string | null;
+}
+
+/** Re-sends of one held request at most, after a transport failure, a `409 idempotency_in_flight` or a `429`. */
+export const MAX_RESENDS = 2;
+/** The wait before re-sending when no `Retry-After` is given (`22`: `Retry-After: 1`). */
+export const RESEND_WAIT_MS = 1_000;
+/** A `Retry-After` longer than this is cut to it, so a cancel never waits long unseen. */
+export const MAX_RESEND_WAIT_MS = 5_000;
+
+export interface WritesDeps {
+  readonly fetch?: (path: string, init: RequestInit) => Promise<Response>;
+  /** A fresh UUIDv4 per request (`22` Idempotency). */
+  readonly newKey?: () => string;
+  readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+}
+
+const UUID_PATH = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const platformSleep = (ms: number, signal?: AbortSignal): Promise<void> =>
+  new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+
+/**
+ * `Retry-After` as ms: its whole-seconds form (`22` sends `1`), within the cap; the default when it
+ * is absent, zero or another form. Read digit by digit: no positions module parses through
+ * `Number` (`decimal.test.ts`'s guard), though a wait is no money.
+ */
+function retryAfterMs(res: Response): number {
+  const text = res.headers.get("Retry-After")?.trim() ?? "";
+  if (!/^[0-9]{1,4}$/.test(text)) return RESEND_WAIT_MS;
+  let seconds = 0;
+  for (const digit of text) seconds = seconds * 10 + (digit.charCodeAt(0) - 48);
+  return seconds === 0 ? RESEND_WAIT_MS : Math.min(seconds * 1_000, MAX_RESEND_WAIT_MS);
+}
+
+async function codeOf(res: Response): Promise<string | null> {
+  try {
+    const body = (await res.clone().json()) as { code?: unknown };
+    return typeof body.code === "string" ? body.code : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A refused answer's fixed kind, by status and `code` alone. */
+async function failureOf(res: Response): Promise<WriteFailure> {
+  const code = await codeOf(res);
+  switch (res.status) {
+    case 400:
+      return "invalid";
+    case 403:
+      return code === "risk_limit_breached" ? "native_stop" : "forbidden";
+    case 404:
+      return "not_found";
+    case 409:
+      return code === "idempotency_in_flight" ? "busy" : "conflict";
+    case 429:
+      return "busy";
+    case 502:
+      return "exchange_refused";
+    case 503:
+      return code === "store_unavailable" ? "store_unavailable" : "unavailable";
+    default:
+      return "unavailable";
+  }
+}
+
+/** The answer of a held request, re-sent with its own key while the rule above allows. */
+async function sendHeldWrite(
+  held: HeldWrite,
+  deps: Required<WritesDeps>,
+  signal: AbortSignal | undefined,
+): Promise<Response | null> {
+  for (let attempt = 0; ; attempt += 1) {
+    const headers: Record<string, string> = { "Idempotency-Key": held.key };
+    if (held.body !== null) headers["Content-Type"] = "application/json";
+    const init: RequestInit = { method: held.method, headers };
+    if (held.body !== null) init.body = held.body;
+    if (signal !== undefined) init.signal = signal;
+    let res: Response | null;
+    try {
+      res = await deps.fetch(held.path, init);
+    } catch {
+      res = null; // no answer: it may have arrived, so only the same key may follow it
+    }
+    if (signal?.aborted === true) return res;
+    const again =
+      res === null ||
+      res.status === 429 ||
+      (res.status === 409 && (await codeOf(res)) === "idempotency_in_flight");
+    if (!again || attempt >= MAX_RESENDS) return res;
+    await deps.sleep(res === null ? RESEND_WAIT_MS : retryAfterMs(res), signal);
+  }
+}
+
+const isRecord = (v: unknown): v is Readonly<Record<string, unknown>> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** A `BulkAccountResult` entry as the caller reads it, or `null` for one that names no account. */
+function accountResult(entry: unknown): AccountCancelResult | null {
+  if (!isRecord(entry) || typeof entry["exchange_account_id"] !== "string") return null;
+  const error = isRecord(entry["error"]) ? entry["error"] : null;
+  const affected = entry["affected"];
+  return {
+    accountId: entry["exchange_account_id"].toLowerCase(),
+    ok: entry["ok"] === true,
+    affected: typeof affected === "number" && Number.isSafeInteger(affected) ? affected : 0,
+    code: typeof error?.["code"] === "string" ? error["code"] : null,
+    retryable: error?.["retryable"] === true,
+  };
+}
+
+export function createOrdersWrites(options: WritesDeps = {}): OrdersWrites {
+  const deps: Required<WritesDeps> = {
+    fetch: options.fetch ?? ((path, init) => apiFetch(path, init)),
+    newKey: options.newKey ?? (() => crypto.randomUUID()),
+    sleep: options.sleep ?? platformSleep,
+  };
+  return {
+    async cancelOrder(orderId, signal) {
+      if (!UUID_PATH.test(orderId)) return { kind: "invalid" };
+      const held: HeldWrite = Object.freeze({
+        method: "DELETE",
+        path: `/api/v1/orders/${orderId.toLowerCase()}`,
+        key: deps.newKey(),
+        body: null,
+      });
+      const res = await sendHeldWrite(held, deps, signal);
+      if (res === null) return { kind: "unavailable" };
+      if (res.status !== 202) return { kind: await failureOf(res) };
+      try {
+        const order = (await res.json()) as { lifecycle_state?: unknown };
+        const lifecycle = typeof order.lifecycle_state === "string" ? order.lifecycle_state : null;
+        return { kind: "accepted", lifecycle };
+      } catch {
+        return { kind: "accepted", lifecycle: null };
+      }
+    },
+    async cancelAllOrders(body, signal) {
+      const held: HeldWrite = Object.freeze({
+        method: "POST",
+        path: "/api/v1/orders/cancel-all",
+        key: deps.newKey(),
+        body: JSON.stringify(body),
+      });
+      const res = await sendHeldWrite(held, deps, signal);
+      if (res === null) return { kind: "unavailable" };
+      if (res.status !== 200) return { kind: await failureOf(res) };
+      try {
+        const answer = (await res.json()) as { results?: unknown };
+        if (!Array.isArray(answer.results)) return { kind: "unavailable" };
+        const results = answer.results
+          .map(accountResult)
+          .filter((r): r is AccountCancelResult => r !== null);
+        return { kind: "ok", results };
+      } catch {
+        return { kind: "unavailable" };
+      }
+    },
+  };
+}
+
+export const ordersWrites: OrdersWrites = createOrdersWrites();
