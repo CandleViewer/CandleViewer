@@ -9,15 +9,22 @@ Default-deny: a gate that cannot read its input FAILs.
 
 Gates (each FAIL led by its name):
   G-CONTRAST  every CR anchor re-derived from `packages/ui/tokens` at the base (dark / light /
-              high contrast; WCAG 2.x, 2 decimals); every gated pair at or above its bar.
+              high contrast; WCAG 2.x, 2 decimals); every gated pair at or above its bar; every
+              contrast figure in the prose (§2.2, §5.2) carries its CR anchor, so no copy of a
+              figure stands ungated.
   G-PLACE     §3 has a P row for every surface the ticket names, each with a heading carrier,
-              a row carrier and an accessible name that says "simulated".
+              a row carrier and an accessible name that says "simulated"; each row's screen id
+              is the surface's own, and its `14` heading at the base names the surface.
+  G-T2        §10.1 (BQ-13 RULED): the analytics view switch is a read, never T2, not even in a
+              view-as session, and §6 says so; Export is T2 with `rbac.permission` and
+              `journal:read`.
   G-DISCLOSE  every `FillModelConfig` field §5's B rows name is a field of the class at `24`
               §12.1 at the base; the six rows the ticket asks for are present.
   G-WORDS     every N row's accessible name begins with "Simulated"; CA-5 and CA-6 stand verbatim
               on their memo lines; the badge's token cells never use `color.env.*` or
               `color.status.info.*`.
-  G-AROW      every A-row's Old text or anchor stands exactly once in its target at the base.
+  G-AROW      every A-row's Old text or anchor stands exactly once in its target at the base;
+              an "After" anchor names its line at the base, and that line starts with the quote.
   G-CITE      every cite in range and on a non-blank line at its ref, its content equal to the
               pins file's hash; the SHA anchors are the pinned refs.
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
@@ -91,6 +98,17 @@ SURFACES = (
     "analytics",
     "SCR-099",
 )
+# each surface's screen id and a word its `14` heading carries (G-PLACE)
+SURFACE_HEADINGS = {
+    "orders blotter": ("SCR-063", "orders"),
+    "positions grid": ("SCR-063", "positions"),
+    "fills": ("SCR-078", "fills"),
+    "journal list": ("SCR-093", "journal"),
+    "journal trade detail": ("SCR-094", "trade detail"),
+    "analytics": ("SCR-095", "analytics"),
+    "SCR-099": ("SCR-099", "replay"),
+}
+FIGURE = re.compile(r"\b\d{1,2}\.\d{2}\b(?!<!--=CR:)")
 # the block's six rows (T AC 3 and Scope bullet 2), each a B row's label
 BLOCK_ROWS = ("Fill model", "Queue position", "Latency", "Slippage", "Fees", "Funding")
 FORBIDDEN_BADGE_TOKENS = ("color.env.", "color.status.info.")
@@ -98,8 +116,12 @@ DASH = "\u2013"  # the en dash of a cited range
 KEYS = r"\d\d|MEMO|E26D02|E09D09|DS"
 CITE = re.compile(rf"`({KEYS})`:(\d+(?:{DASH}\d+)?(?:, :\d+(?:{DASH}\d+)?)*)")
 ANCHOR = re.compile(r"`?([^\s<|(`]+)`?<!--=([A-Z]+:[A-Za-z0-9.]+)-->")
-CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE)
-LOCAL_PATH = re.compile("/" + "home/|/Users/|[A-Za-z]:\\\\|\\bwt-" + "notes\\b")  # assembled
+CLOSING = re.compile(
+    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE
+)
+LOCAL_PATH = re.compile(
+    "/" + "home/|/Users/|[A-Za-z]:\\\\|\\bwt-" + "notes\\b"
+)  # assembled
 AGENT_NAME = re.compile(r"\b[a-z]{2,4}-worker-\d\b")
 URL_OR_HOST = re.compile(r"https?://|penpot\.[a-z]|team-id=|file-id=", re.IGNORECASE)
 # assembled with an explicit +, so the formatter keeps the split and the tool never spells a word
@@ -133,8 +155,8 @@ class Texts:
 def git(*args: str) -> str | None:
     try:
         # git with fixed arguments and no shell; the only external program the audit runs
-        r = subprocess.run(  # noqa: S603
-            ["git", "-C", str(ROOT), *args],  # noqa: S607
+        r = subprocess.run(
+            ["git", "-C", str(ROOT), *args],
             capture_output=True,
             check=False,
         )
@@ -154,7 +176,9 @@ def at(t: Texts, key: str) -> str:
     ref = REF_OF.get(key, BASE)
     text = show(t, ref, PATHS[key])
     if text is None:
-        raise SystemExit(f"{PATHS[key]} does not resolve at {ref[:10]}; fetch #5451's head first")
+        raise SystemExit(
+            f"{PATHS[key]} does not resolve at {ref[:10]}; fetch #5451's head first"
+        )
     return text
 
 
@@ -186,7 +210,9 @@ def theme(t: Texts, th: str) -> dict[str, object]:
     for name in LAYERS[th]:
         raw = show(t, BASE, f"{TOKENS}/{name}.tokens.json")
         if raw is None:
-            raise SystemExit(f"{TOKENS}/{name}.tokens.json does not resolve at the base")
+            raise SystemExit(
+                f"{TOKENS}/{name}.tokens.json does not resolve at the base"
+            )
         out.update(
             {
                 k: v["$value"]
@@ -287,6 +313,9 @@ def anchor_problems(t: Texts, vals: dict[str, str], prefix: str) -> list[str]:
 
 def g_contrast(t: Texts, vals: dict[str, str]) -> list[str]:
     bad = anchor_problems(t, vals, "CR:")
+    for i, ln in enumerate(t.spec.split("\n"), 1):
+        for m in FIGURE.finditer(ln):
+            bad.append(f"spec:{i}: the figure {m[0]} carries no CR anchor")
     for key, (_, _, bar) in PAIRS.items():
         for th in LAYERS:
             name = f"CR:{key}.{th}"
@@ -297,9 +326,29 @@ def g_contrast(t: Texts, vals: dict[str, str]) -> list[str]:
     return bad
 
 
+def heading_14(t: Texts, scr: str) -> str:
+    for ln in at(t, "14").split("\n"):
+        if ln.startswith(f"### {scr} "):
+            return ln
+    return ""
+
+
 def g_place(t: Texts, vals: dict[str, str]) -> list[str]:
     ps = rows(section(t.spec, "## 3."), "P")
     bad = []
+    for r in ps:
+        if len(r) < 2:
+            continue
+        surface = next((s for s in SURFACES if r[1].startswith(s)), None)
+        if surface is None:
+            continue
+        scr, word = SURFACE_HEADINGS[surface]
+        ids = re.findall(r"SCR-\d{3}", r[1])
+        if ids != [scr]:
+            bad.append(f"{r[0]}: names {ids or 'no screen'}, the {surface} is {scr}")
+        head = heading_14(t, scr)
+        if word not in head.lower():
+            bad.append(f"{r[0]}: `14`'s {scr} heading does not name the {surface}")
     for s in SURFACES:
         if not any(len(r) > 1 and r[1].startswith(s) for r in ps):
             bad.append(f"no P row for the surface {s!r}")
@@ -320,7 +369,7 @@ def config_fields(t: Texts) -> set[str]:
     j = text.find("```", i)
     if i < 0 or j < 0:
         return set()
-    return set(re.findall(r"^    ([a-z_]+):", text[i:j], re.M))
+    return set(re.findall(r"^    ([a-z_]+):", text[i:j], re.MULTILINE))
 
 
 def g_disclose(t: Texts, vals: dict[str, str]) -> list[str]:
@@ -359,6 +408,27 @@ def g_words(t: Texts, vals: dict[str, str]) -> list[str]:
     return bad
 
 
+def g_t2(t: Texts, vals: dict[str, str]) -> list[str]:
+    ten = section(t.spec, "### 10.1")
+    switch = next(
+        (
+            ln
+            for ln in ten.split("\n")
+            if ln.startswith("- **The analytics view switch**")
+        ),
+        "",
+    )
+    export = next((ln for ln in ten.split("\n") if ln.startswith("- **Export**")), "")
+    bad = []
+    if "never T2" not in switch or "view-as" not in switch or "T2 rendering" in switch:
+        bad.append("§10.1: the view switch must read never T2, not even under view-as")
+    if "The view switch is a read, never T2" not in section(t.spec, "## 6."):
+        bad.append("§6 does not say the view switch is never T2")
+    if "`rbac.permission`" not in export or "`journal:read`" not in export:
+        bad.append("§10.1: Export must be T2 with `rbac.permission` and `journal:read`")
+    return bad
+
+
 def g_arow(t: Texts, vals: dict[str, str]) -> list[str]:
     bad = []
     for ln in section(t.spec, "## 13.").split("\n"):
@@ -368,7 +438,19 @@ def g_arow(t: Texts, vals: dict[str, str]) -> list[str]:
         aid, key = m[1], m[2]
         body = ln[m.end() :]
         anchors = re.findall(r'Old: "(.+?)"\. New:', body)
-        anchors += re.findall(r'(?:[Aa]fter|[Bb]efore) "(.+?)"(?: \(its (?:row|line)\))? add', body)
+        after = re.findall(
+            r'(?:[Aa]fter|[Bb]efore) "(.+?)" \(line `(\d\d)`:(\d+) at the base[^)]*\) add',
+            body,
+        )
+        anchors += [a for a, _, _ in after]
+        if re.search(r'(?:[Aa]fter|[Bb]efore) "', body) and not after:
+            bad.append(f"{aid}: an After anchor with no line at the base")
+        for a, k, n in after:
+            ls = at(t, k).split("\n")
+            if not (0 < int(n) <= len(ls) and ls[int(n) - 1].startswith(a)):
+                bad.append(
+                    f"{aid}: line `{k}`:{n} at the base does not start with {a[:40]!r}"
+                )
         if not anchors:
             bad.append(f"{aid}: names neither an Old text nor an anchor")
         for a in anchors:
@@ -383,7 +465,9 @@ def g_cite(t: Texts, vals: dict[str, str]) -> list[str]:
     pinned = parse_pins(t.pins)
     for label, h in hashes.items():
         if label not in pinned:
-            bad.append(f"cite {label} is unpinned: verify it by content, then --repin-ruled")
+            bad.append(
+                f"cite {label} is unpinned: verify it by content, then --repin-ruled"
+            )
         elif pinned[label] != h:
             bad.append(f"cite {label}: the line at its ref is not the pinned content")
     return bad + anchor_problems(t, vals, "SHA:")
@@ -426,6 +510,7 @@ def g_scope(t: Texts, vals: dict[str, str]) -> list[str]:
 GATES: dict[str, Callable[[Texts, dict[str, str]], list[str]]] = {
     "G-CONTRAST": g_contrast,
     "G-PLACE": g_place,
+    "G-T2": g_t2,
     "G-DISCLOSE": g_disclose,
     "G-WORDS": g_words,
     "G-AROW": g_arow,
@@ -458,7 +543,11 @@ def changed_paths() -> list[str] | None:
 
 def load() -> Texts:
     spec = (ROOT / SPEC_REL).read_text(encoding="utf-8")
-    pins = (ROOT / PINS_REL).read_text(encoding="utf-8") if (ROOT / PINS_REL).exists() else ""
+    pins = (
+        (ROOT / PINS_REL).read_text(encoding="utf-8")
+        if (ROOT / PINS_REL).exists()
+        else ""
+    )
     tool = (ROOT / TOOL_REL).read_text(encoding="utf-8")
     return Texts(spec, pins, tool, changed_paths(), {})
 
@@ -466,7 +555,9 @@ def load() -> Texts:
 def sub(old: str, new: str) -> Callable[[Texts], Texts]:
     def f(t: Texts) -> Texts:
         if t.spec.count(old) != 1:
-            raise SystemExit(f"self-test: the spec carries {old[:50]!r} {t.spec.count(old)} times")
+            raise SystemExit(
+                f"self-test: the spec carries {old[:50]!r} {t.spec.count(old)} times"
+            )
         return replace(t, spec=t.spec.replace(old, new))
 
     return f
@@ -487,7 +578,10 @@ def set_cell(row: str, col: int, value: str) -> Callable[[Texts], Texts]:
 def drop_row(row: str) -> Callable[[Texts], Texts]:
     def f(t: Texts) -> Texts:
         return replace(
-            t, spec="\n".join(x for x in t.spec.split("\n") if not x.startswith(f"| {row} "))
+            t,
+            spec="\n".join(
+                x for x in t.spec.split("\n") if not x.startswith(f"| {row} ")
+            ),
         )
 
     return f
@@ -500,12 +594,57 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         lambda t: replace(
             t,
             spec=re.sub(
-                r"[\d.]+(<!--=CR:badge\.word\.dark-->)", lambda m: "9.99" + m[1], t.spec, count=1
+                r"[\d.]+(<!--=CR:badge\.word\.dark-->)",
+                lambda m: "9.99" + m[1],
+                t.spec,
+                count=1,
             ),
         ),
     ),
     ("G-PLACE", "the fills row dropped", drop_row("P-3")),
-    ("G-PLACE", "a row's name without simulated", set_cell("P-1", 4, '"Orders, 3 rows"')),
+    (
+        "G-PLACE",
+        "a row's name without simulated",
+        set_cell("P-1", 4, '"Orders, 3 rows"'),
+    ),
+    (
+        "G-PLACE",
+        "the fills row pointed at SCR-079",
+        set_cell("P-3", 1, "fills (SCR-079)"),
+    ),
+    (
+        "G-T2",
+        "the view switch made T2 under view-as",
+        sub(
+            "so it is never T2, not even in a view-as session",
+            "so it is T2 rendering 2a in a view-as session",
+        ),
+    ),
+    (
+        "G-T2",
+        "Export without its permission",
+        sub(
+            "A session without `journal:read` sees", "A session without the grant sees"
+        ),
+    ),
+    (
+        "G-CONTRAST",
+        "a §5.2 prose figure typed by hand",
+        sub("5.62<!--=CR:block.note.dark-->", "5.26<!--=CR:block.note.dark-->"),
+    ),
+    (
+        "G-CONTRAST",
+        "an unanchored copy of a figure in the prose",
+        sub(
+            "every gated pair is at or above 4.5.",
+            "every gated pair is at or above 4.5; the word reads 12.22 on its fill.",
+        ),
+    ),
+    (
+        "G-AROW",
+        "A-4's quote moved off its cited line",
+        sub("[ ] per-fill", "[ ] positions,"),
+    ),
     ("G-DISCLOSE", "the Funding row dropped", drop_row("B-6")),
     (
         "G-DISCLOSE",
@@ -517,13 +656,21 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "a region name without Simulated",
         set_cell("N-2", 2, '"Results \u2014 Session 3"'),
     ),
-    ("G-WORDS", "the badge on an environment token", set_cell("T-1", 2, "`color.env.demo`")),
+    (
+        "G-WORDS",
+        "the badge on an environment token",
+        set_cell("T-1", 2, "`color.env.demo`"),
+    ),
     (
         "G-AROW",
         "A-1's Old text off by one character",
         sub('Old: "`formats: ("csv"|"pdf")[]`"', 'Old: "`formats: ("csv"|"pdf")[] `"'),
     ),
-    ("G-CITE", "a `24` cite one line off its pinned content", sub("`24`:3999", "`24`:3998")),
+    (
+        "G-CITE",
+        "a `24` cite one line off its pinned content",
+        sub("`24`:3999", "`24`:3998"),
+    ),
     (
         "G-HYGIENE",
         "a closing keyword against #1075",
@@ -546,7 +693,9 @@ def selftest() -> tuple[bool, list[str]]:
     base = replace(load(), changed=list(OWN_PATHS))
     before = base.spec
     found = audit(base)
-    out = [f"self-test: baseline {len(found)} FAIL"] + [f"  baseline {g}: {m}" for g, m in found]
+    out = [f"self-test: baseline {len(found)} FAIL"] + [
+        f"  baseline {g}: {m}" for g, m in found
+    ]
     ok = not found
     for i, (gate, what, fn) in enumerate(MUTATIONS, 1):
         gates = sorted({g for g, _ in audit(fn(base))})
