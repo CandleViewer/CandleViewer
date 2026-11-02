@@ -269,7 +269,7 @@ class RenkoBarBuilder:
             w = Decimal(width)
             a = None if anchor is None else Decimal(anchor)
             d = None if cur is None else _Draft.load(cur)
-            restore_tape_gaps(doc, [d])
+            restore_tape_gaps(doc, [d], legacy_gap_is_tape=True)
         except (KeyError, TypeError, ValueError, ArithmeticError) as e:  # JSON/Decimal errors
             raise BarsError("The renko builder state is incomplete or corrupt.") from e
         if w != self._w:  # ADR-0033: a tick-size change starts a new epoch
