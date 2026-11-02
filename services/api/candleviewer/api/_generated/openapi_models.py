@@ -1728,7 +1728,7 @@ class BarsMeta(DataMeta):
     build_version: Annotated[
         JsonInt | None,
         Field(
-            description="The lowest bar builder version among the bars served, by the WS `bars` snapshot rule (23 §6.1): a served bar is never traced to newer code than the code that built it. A page with no bar carries the running version.",
+            description="The lowest bar builder version among the bars served, by the WS `bars` snapshot rule (23 §6.1): a served bar is never traced to newer code than the code that built it. Rows with a NULL `build_version` do not count toward the minimum; if every bar served has none, `build_version` is absent (and `stale_build` is true). A page with no bar carries the running version.",
             ge=1,
         ),
     ] = None

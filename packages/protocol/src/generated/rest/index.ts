@@ -7858,7 +7858,7 @@ export interface components {
     };
     /** @description `DataMeta` extended with the build provenance of the bars served (SR-E12-14). `spec_hash` and `build_version` are named and bounded as the WS `bars` snapshot `meta` names them (23 §6.1, §13 `snapMeta`); `stale_build` is REST's own and is unrelated to the WS snapshot's `meta.stale` (a feed behind the live market), which REST does not carry. Every member added here is optional and additive (C-6.3): an answer without them is read as `stale_build: false` with its build provenance unknown. */
     BarsMeta: components["schemas"]["DataMeta"] & {
-      /** @description The lowest bar builder version among the bars served, by the WS `bars` snapshot rule (23 §6.1): a served bar is never traced to newer code than the code that built it. A page with no bar carries the running version. */
+      /** @description The lowest bar builder version among the bars served, by the WS `bars` snapshot rule (23 §6.1): a served bar is never traced to newer code than the code that built it. Rows with a NULL `build_version` do not count toward the minimum; if every bar served has none, `build_version` is absent (and `stale_build` is true). A page with no bar carries the running version. */
       build_version?: number;
       /** @description The served series' bar spec hash (24 §3.1), the WS `bars` snapshot's `meta.spec_hash` for the same series. */
       spec_hash?: string;
