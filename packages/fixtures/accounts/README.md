@@ -405,6 +405,12 @@ above. Two of its guards keep real money out of reach and come before anything i
 - **Demo hosts only (C-2.11).** It serves the demo hosts alone and refuses and logs any live or
   testnet request.
 
+**The stack that loads them** (#2893's closure): `infra/scripts/account_fixture_stack.py` brings up
+the real backend on this transport (sign-in with TOTP, the key vault, the boot guard first), with
+its users and keys made per run and gone at teardown, so a scenario's key goes through the shipped
+key pipeline and its answer is read back from the request log. Runbook:
+`docs/ops/runbooks/account-fixture-stack.md`.
+
 ### Switching a key, seeding overlays and the fixture clock (#2893 S10)
 
 Both are files in `CV_ACCOUNT_FIXTURE_DIR`, beside the request log, so they survive a restart

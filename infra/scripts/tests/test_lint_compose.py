@@ -763,9 +763,11 @@ def test_main_without_arguments_also_lints_the_demo_host_overlay(
 def test_main_lints_a_named_overlay_by_its_own_rule(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """N1: `lint_compose.py <file>` applies rule 4 or rule 6 when the name is an overlay's."""
+    """N1: `lint_compose.py <file>` applies rule 4 or rule 6 when the name is an overlay's (and
+    rule 8 to the fixture stack's real-backend overlay)."""
     assert lint_compose.main([str(DEMO_HOST_PATH)]) == 0
     assert lint_compose.main([str(DEPLOY_OVERLAY_PATH)]) == 0
+    assert lint_compose.main([str(lint_compose.ACCOUNT_FIXTURE_REAL_OVERLAY)]) == 0
     broken = tmp_path / "docker-compose.demo-host.yml"
     broken.write_text("services:\n  api:\n    privileged: true\n", encoding="utf-8")
     assert lint_compose.main([str(broken)]) == 1
