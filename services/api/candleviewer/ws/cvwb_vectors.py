@@ -136,6 +136,12 @@ def vector_frames() -> list[tuple[str, Frame]]:
                 prefix=(100, 6_499_000, 5),
             ),
         ),
+        # #5396 (section 3.4): kind-4 `flags` bit1 `gap_before`, bit2 `partial` and bit3 `tape_gap`,
+        # set on a forming bar; a decoder reads `confirm` from bit0 alone (exposing bits 1-3 is
+        # #5396's follow-up).
+        ("bars_flags_gap_partial", Frame(BARS, ((*bar[:11], 0b0000_1110),), 0, 2, 3, 0)),
+        # Reserved bits 4-7 set beside bit0: ignored on receive, the bar reads as closed.
+        ("bars_flags_reserved_bits", Frame(BARS, ((*bar[:11], 0xF0 | 0b1),), 0, 2, 3, 0)),
     ]
 
 

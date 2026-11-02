@@ -225,6 +225,11 @@
               "delta": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
               },
+              "gap_before": {
+                "default": false,
+                "description": "Optional. True when a discontinuity in the series precedes this bar (24 §3.3): for a time bar, intervals with no print before it; for a range bar, a price jump of at least two range widths. Not data loss: that is tape_gap. Kind 4 carries it as flags bit1 (§3.4). Absent means false (22 `Bar.gap_before`).",
+                "type": "boolean"
+              },
               "generation": {
                 "description": "ADR-0033 series generation (= epoch): an opaque id that a builder cold start or a rebuild replaces, normally with a higher one; index restarts inside it. Compare for equality only: a change in either direction is a new epoch. Never read it as a time. Part of the coalescing key (§8.2).",
                 "minimum": 0,
@@ -250,9 +255,19 @@
               "o": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
               },
+              "partial": {
+                "default": false,
+                "description": "Optional. True when the bar is not built from a complete tape window (24 §3.1), such as the first bar a builder forms after it starts inside the bar's window. Kind 4 carries it as flags bit2 (§3.4). Absent means false (22 `Bar.partial`).",
+                "type": "boolean"
+              },
               "t_ms": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs",
                 "description": "Bar open time."
+              },
+              "tape_gap": {
+                "default": false,
+                "description": "Optional. True when the recorded trade tape had a gap affecting this bar (24 §3.1), so prints may be missing from it: the per-bar data-loss marker the E12 integrity statement binds to (#538). Kind 4 carries it as flags bit3 (§3.4). Absent means false: no marker recorded (22 `Bar.tape_gap`).",
+                "type": "boolean"
               },
               "trades": {
                 "minimum": 0,
@@ -591,6 +606,27 @@
               "description": "bars snapshots: the lowest bar builder version among the bars sent (SR-E12-14, §6.1).",
               "minimum": 1,
               "type": "integer"
+            },
+            "coverage_holes": {
+              "description": "bars snapshots: the ranges within the snapshot's span that the server could not serve, listed so a client never reads that span as complete (§6.1, #5396). The same key and item shape as REST `DataMeta.coverage_holes` (22). Repeated on every chunk of a chunked set (§3.6). Absent means none recorded. Never on a d.",
+              "items": {
+                "properties": {
+                  "end_us": {
+                    "description": "Gap end, exchange epoch microseconds (exclusive).",
+                    "type": "integer"
+                  },
+                  "start_us": {
+                    "description": "Gap start, exchange epoch microseconds (inclusive).",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "start_us",
+                  "end_us"
+                ],
+                "type": "object"
+              },
+              "type": "array"
             },
             "history_bars": {
               "minimum": 0,

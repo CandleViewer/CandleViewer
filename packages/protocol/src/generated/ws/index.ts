@@ -126,6 +126,18 @@ export interface BarsSymbolBarTypeParam {
      */
     amended?: boolean;
     /**
+     * Optional. True when a discontinuity in the series precedes this bar (24 §3.3): for a time bar, intervals with no print before it; for a range bar, a price jump of at least two range widths. Not data loss: that is tape_gap. Kind 4 carries it as flags bit1 (§3.4). Absent means false (22 `Bar.gap_before`).
+     */
+    gap_before?: boolean;
+    /**
+     * Optional. True when the bar is not built from a complete tape window (24 §3.1), such as the first bar a builder forms after it starts inside the bar's window. Kind 4 carries it as flags bit2 (§3.4). Absent means false (22 `Bar.partial`).
+     */
+    partial?: boolean;
+    /**
+     * Optional. True when the recorded trade tape had a gap affecting this bar (24 §3.1), so prints may be missing from it: the per-bar data-loss marker the E12 integrity statement binds to (#538). Kind 4 carries it as flags bit3 (§3.4). Absent means false: no marker recorded (22 `Bar.tape_gap`).
+     */
+    tape_gap?: boolean;
+    /**
      * Arbitrary-precision decimal as a string; never a JSON number.
      */
     delta?: string;
@@ -379,6 +391,19 @@ export interface SnapMeta {
    * snapshots: true when the topic's state may be behind the live market (§7.2). Absent means false. Never on a d.
    */
   stale?: boolean;
+  /**
+   * bars snapshots: the ranges within the snapshot's span that the server could not serve, listed so a client never reads that span as complete (§6.1, #5396). The same key and item shape as REST `DataMeta.coverage_holes` (22). Repeated on every chunk of a chunked set (§3.6). Absent means none recorded. Never on a d.
+   */
+  coverage_holes?: {
+    /**
+     * Gap start, exchange epoch microseconds (inclusive).
+     */
+    start_us: number;
+    /**
+     * Gap end, exchange epoch microseconds (exclusive).
+     */
+    end_us: number;
+  }[];
 }
 
 // Source: cv://ws/v1/ctl.schema.json
@@ -593,6 +618,19 @@ export interface SnapMeta {
    * snapshots: true when the topic's state may be behind the live market (§7.2). Absent means false. Never on a d.
    */
   stale?: boolean;
+  /**
+   * bars snapshots: the ranges within the snapshot's span that the server could not serve, listed so a client never reads that span as complete (§6.1, #5396). The same key and item shape as REST `DataMeta.coverage_holes` (22). Repeated on every chunk of a chunked set (§3.6). Absent means none recorded. Never on a d.
+   */
+  coverage_holes?: {
+    /**
+     * Gap start, exchange epoch microseconds (inclusive).
+     */
+    start_us: number;
+    /**
+     * Gap end, exchange epoch microseconds (exclusive).
+     */
+    end_us: number;
+  }[];
 }
 
 // Source: cv://ws/v1/executions.schema.json

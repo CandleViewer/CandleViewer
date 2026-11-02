@@ -282,6 +282,17 @@ describe("decodeBars", () => {
     const frame = concatBuffers(barsHeader(1), new Uint8Array(69));
     expect(() => decodeBars(frame)).toThrow(BinaryFrameError);
   });
+
+  it("reads confirmed from bit0 alone with bit1 gap_before and bit2 partial set (#5396)", () => {
+    const frame = concatBuffers(
+      barsHeader(4),
+      barRecord(0n, 0n, 1n, 0b000),
+      barRecord(0n, 1n, 1n, 0b001),
+      barRecord(0n, 2n, 1n, 0b110),
+      barRecord(0n, 3n, 1n, 0b111),
+    );
+    expect(decodeBars(frame).bars.map((b) => b.confirmed)).toEqual([false, true, false, true]);
+  });
 });
 
 /** The `BinaryFrameError` code `fn` throws, `"untyped"` for any other throw, `undefined` if none. */
