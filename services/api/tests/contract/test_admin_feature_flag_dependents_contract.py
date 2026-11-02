@@ -175,8 +175,8 @@ _READ_ROWS = (
     "The items are ordered by `rule_id` and are not paged, since the write needs the whole set at "
     "once. There are at most 200, the cap of armed rules (`24-internal-schemas.md` 16.1); while "
     "E35 does not hold that cap at arming, a set above it answers its first 200 with "
-    "`truncated: true`, and `setFeatureFlag` refuses the write (`dependents_over_bound`), a write "
-    "in a flag's stop direction apart.",
+    "`truncated: true`, and `setFeatureFlag` refuses the write (`dependents_over_bound`), an "
+    "interim stop-direction write apart (`setFeatureFlag` defines it).",
     "The read changes nothing and spends nothing: no rule is disarmed and nothing is queued.",
     "It holds `flags:write`, the permission of the write it precedes, which the Owner alone "
     "holds: a Manager, a Viewer and a caller holding `flags:read` only get `403` and learn no "
@@ -233,11 +233,11 @@ _SECTION_ROWS = (
     "An armed rule whose active version's actions cannot be read counts as reading every flag "
     "the table names (fail closed, as `PostgresArmedRules` counts an unreadable scope as "
     "covering every account), and is listed with `unreadable: true`.",
-    "is E35's open stack (#5367, #5406, #5423 and #5472) and is not on `main`. The table "
+    "is E35's open stack (#5406, #5423 and #5472) and is not on `main`. The table "
     "therefore holds no row: every list is `[]` and no write needs an acknowledgement until a "
     "row lands with its reading code. Until #5479's third PR, the served `setFeatureFlag` admits "
-    "`acknowledged_dependents` (its generated request model carries the member) and neither "
-    "compares nor records it.",
+    "`acknowledged_dependents`, a repeated id included (its generated request model carries the "
+    "member), and neither compares nor records it.",
     "and nothing else does: there is no table of dependents and no migration, nothing on the "
     "arm path, the evaluator, the runner or the executor, no call from a tick or a fire, and no "
     "interpreter is queried (C-2.21).",
@@ -252,37 +252,45 @@ _SECTION_ROWS = (
     "The check covers every write, of every flag and in either direction (a rollout flag turned "
     "on lets an armed rule reach the OMS, a risk-increasing capability, §16.2), a "
     "kill-switch-class flag's engaged value included, for every role: no role, flag or setting "
-    "turns it off (C-4.14), and it reads no flag or setting. While the code-free `POST "
-    "/trading/kill-switch` is not served (its row in the RBAC route matrix, "
-    "`services/api/tests/contract/rbac/matrix.yaml`, is not `executed`), the check never "
-    "refuses a write in a flag's stop direction, the engaged value of a kill-switch-class flag "
-    "(`killswitch.order_entry`, `maintenance.mode`) or the off value of a flag that admits order "
-    "entry or rule actions (`trading.oms_enabled`, `rules.enabled`, `rules.oms_actions`): the "
-    "write proceeds, and its records carry the live ids. A test of #5479's third PR reads that "
-    "row, so the interim ends when E39-S03 mounts the route.",
-    "and the record of a refusal or of a write in a flag's stop direction also holds the live "
-    "ids: ids only, never a rule's name (user text, C-12.6).",
+    "turns it off (C-4.14), and it reads no flag or setting. While the row of the code-free "
+    "`POST /trading/kill-switch` in the RBAC route matrix, "
+    "`services/api/tests/contract/rbac/matrix.yaml`, is not `executed` (`not_mounted` today), "
+    "the check never refuses a write in a flag's stop direction, the engaged value of a "
+    "kill-switch-class flag (`killswitch.order_entry`, `maintenance.mode`) or the off value of a "
+    "flag that admits order entry or rule actions (`trading.oms_enabled`, `rules.enabled`, "
+    "`rules.oms_actions`): such an interim stop-direction write proceeds, and its records carry "
+    "the live ids. A test of #5479's third PR reads that row's `state`, so the interim ends only "
+    "when the row reads `executed` (E39-S03 mounts the route; `not_mounted` and "
+    "`not_executable` both keep the interim).",
+    "and the record of a refusal or of an interim stop-direction write also holds the live ids: "
+    "ids only, never a rule's name (user text, C-12.6). An interim stop-direction write whose "
+    "read of the rules store failed or exceeded its bound records that the live set was not "
+    "read, and one whose live set is above 200 records its first 200 ids by `rule_id` and marks "
+    "the cut, as `truncated` does; #5479's third PR pins both with a test.",
     "What refuses a rule's action is the executor's synchronous check at the moment of the "
     "action (§11.5 checks 2 and 3, C-2.21), which reads the flag whatever any list said, so a "
     "stale acknowledgement weakens no safety.",
     "an arm or a disarm that commits between the check's read and the flag's commit, inside the "
     "store write's bound (`write_bound_s`, 5 s at most), is a named residual, and each event "
     "keeps its own record (`rules.arm` or `rules.disarm`, and `flags.change`).",
-    "once the code-free emergency engage is served, a console engage of a kill-switch-class "
-    "flag can be answered `422` (a stale list) or `503` (the rules store does not answer) by "
-    "the check, while `POST /trading/kill-switch`, with its `disarm_rules` option (§11.7), is "
-    "never answered `422` or `503` by the check (C-4.14).",
-    "A config write of `max_armed_rules` above 200 is refused, so the bound stays tied to the "
-    "editable cap (§16.3); #5479's third PR pins it with a test. While E35 does not hold that "
-    "cap at arming, a live set above it answers the read's first 200 by `rule_id` with "
-    "`truncated: true` and refuses the write (`422`, rule `dependents_over_bound`; a write in a "
-    "flag's stop direction apart): no list is cut without saying so.",
+    "once the interim ends (the matrix row of the code-free emergency engage reads "
+    "`executed`), a console engage of a kill-switch-class flag can be answered `422` (a stale "
+    "list) or `503` (the rules store does not answer) by the check, while `POST "
+    "/trading/kill-switch`, with its `disarm_rules` option (§11.7), is never answered `422` or "
+    "`503` by the check (C-4.14).",
+    "A value of `max_armed_rules` above 200 is refused, at boot (§16.1 fails fast) and on a "
+    "config write (§16.3), so the bound stays tied to the editable cap. #5479's third PR pins "
+    "this sentence, and the code pin is carried by the ticket that defines `RuleEngineConfig`. "
+    "While E35 does not hold that cap at arming, a live set above it answers the read's first "
+    "200 by `rule_id` with `truncated: true` and refuses the write (`422`, rule "
+    "`dependents_over_bound`; an interim stop-direction write apart): no list is cut without "
+    "saying so.",
     "`acknowledged_dependents` holds at most 200 ids (`422`, rule `too_long`, above them), and "
     "the write route's body cap rises from 16 KiB to 32 KiB, for 200 ids beside 200 overrides. "
     "The 200 ids and the 32 KiB are proposed, interim until the Owner ratifies them (#2701). A "
     "read of the rules store that fails or exceeds its bound is `503 store_unavailable`, "
     "nothing is written, and its `flags.change` refusal record holds the key, the row's "
-    "`before` and the acknowledged ids (a write in a flag's stop direction apart).",
+    "`before` and the acknowledged ids (an interim stop-direction write apart).",
 )
 
 
@@ -324,12 +332,11 @@ _STOP_DIRECTION: tuple[str, ...] = (
 )
 
 
-def test_the_interim_rule_names_the_stop_direction_in_both_documents_and_the_unserved_route() -> (
-    None
-):
-    """While the code-free engage is not served, the check never refuses a write in a flag's stop
-    direction: both documents name the five flags, each a flag of `21` 10.7, and the route and its
-    matrix row, which #5479's third PR reads so that the interim ends when it is mounted."""
+def test_the_interim_rule_names_the_stop_direction_in_both_documents_and_the_route_row() -> None:
+    """While the code-free engage's matrix row is not `executed`, the check never refuses a write in
+    a flag's stop direction: both documents name the five flags, each a flag of `21` 10.7, and the
+    route and its matrix row, whose `state` #5479's third PR reads (the orchestrator's ruling of
+    2026-11-03 01:11Z: the interim ends only when it reads `executed`)."""
     put = text(SPEC["paths"]["/admin/feature-flags/{flagKey}"]["put"]["description"])
     lead = "the check never refuses a write in a flag's stop direction"
     for doc in (put, _SECTION):
@@ -341,6 +348,76 @@ def test_the_interim_rule_names_the_stop_direction_in_both_documents_and_the_uns
     assert matrix["POST /trading/kill-switch"]["permissions"] == ["killswitch:write"]
 
 
+def _ad_d02() -> str:
+    model = text((ROOT / "docs/security/threat-models/e42-admin.md").read_text(encoding="utf-8"))
+    return model.split("| AD-D02 | SUB: P6 |", 1)[1].split(" | AD-D03 |", 1)[0]
+
+
+def test_the_interim_holds_while_the_matrix_row_is_not_executed() -> None:
+    """The orchestrator's ruling of 2026-11-03 01:11Z (R1S-01 (a), which amends BQ-3 (a)'s proviso):
+    the interim holds while the code-free engage's matrix row is not `executed`, so a row that reads
+    `not_mounted` (today) or `not_executable` keeps it and only `executed` ends it. Each document
+    states that condition, and none ends the interim at the route's mounting."""
+    put = text(SPEC["paths"]["/admin/feature-flags/{flagKey}"]["put"]["description"])
+    ad_d02 = _ad_d02()
+    condition = (
+        "is not `executed` (`not_mounted` today), the check never refuses a write in a flag's "
+        "stop direction"
+    )
+    assert (put.count(condition), ad_d02.count(condition), _SECTION.count(condition)) == (1, 1, 1)
+    for doc in (put, _SECTION, ad_d02):
+        assert "is unmounted" not in doc and "is not served" not in doc  # the readings it replaces
+    assert "so the interim ends only when the row reads `executed` (E39-S03 mounts the route;" in (
+        _SECTION
+    )
+    assert "`not_mounted` and `not_executable` both keep the interim)" in _SECTION
+    assert "so the interim ends only when it reads `executed` (E39-S03 mounts the route)" in ad_d02
+    states = {
+        row["state"]
+        for row in yaml.safe_load(MATRIX_PATH.read_text("utf-8"))["operations"].values()
+    }
+    assert states <= {"executed", "not_mounted", "not_executable"}  # the vocabulary the rule reads
+
+
+def test_an_interim_write_records_that_its_live_set_was_not_read_or_was_cut() -> None:
+    """R2DS-02 (C-2.9): an interim stop-direction write proceeds even when the check's read failed
+    or the live set is above 200, so `22`, `24` and the E42 model say what its record holds then;
+    #5479's third PR pins both records."""
+    put = text(SPEC["paths"]["/admin/feature-flags/{flagKey}"]["put"]["description"])
+    not_read = "whose read of the rules store failed or exceeded its bound"
+    for doc in (put, _SECTION):
+        assert doc.count("interim stop-direction write " + not_read) == 1
+        assert doc.count("the live set was not read") == 1
+        assert doc.count("first 200 ids by `rule_id` and marks the cut, as `truncated` does") == 1
+    assert "#5479's third PR pins both with a test" in _SECTION
+    assert "or say that the live set was not read or was cut" in _ad_d02()
+
+
+def test_the_truncated_member_names_the_cut_and_the_interim_exception() -> None:
+    assert text(_DEPENDENTS["properties"]["truncated"]["description"]) == (
+        "`true` when more than 200 armed rules read the flag: `items` then holds the first 200 by "
+        "`rule_id`, no `acknowledged_dependents` can match the live set, and `setFeatureFlag` "
+        "refuses the write (`dependents_over_bound`), an interim stop-direction write apart "
+        "(`setFeatureFlag` defines it), until fewer are armed. Always sent."
+    )
+
+
+def test_the_armed_rule_cap_is_bounded_as_a_value_at_boot_and_on_a_config_write() -> None:
+    """R2DS-03: the 200-id bound follows `RuleEngineConfig.max_armed_rules`, so a value above 200 is
+    refused where the field is set: at boot (`24` 16.1 fails fast) and on a runtime config write
+    (16.3's row, runtime-editable). No code defines the model yet, so the code pin is carried by
+    the ticket that does (the sentence is pinned in `_SECTION_ROWS`)."""
+    config = _INTERNAL.split("### 16.1 Configuration schema", 1)[1].split("### 16.2 ", 1)[0]
+    assert "validated at startup, and **fails fast**" in text(config)
+    [knob] = [
+        line for line in _INTERNAL.splitlines() if "`RuleEngineConfig.max_armed_rules`," in line
+    ]
+    assert [cell.strip() for cell in knob.split("|")][4:6] == ["✔", "`RULES_EDIT`"]  # editable
+    assert (
+        "A value of `max_armed_rules` above 200 is refused, at boot (§16.1 fails fast)" in _SECTION
+    )
+
+
 def test_the_security_program_names_the_read_beside_its_write_in_row_46() -> None:
     cells = capability_rows()["46"]
     assert grants(cells[1]) == ({"flags:write"}, {"setFeatureFlag", "listFeatureFlagDependents"})
@@ -350,17 +427,22 @@ def test_the_security_program_names_the_read_beside_its_write_in_row_46() -> Non
 
 def test_the_e42_model_names_the_console_refusals_the_interim_rule_and_the_route_state() -> None:
     model = text((ROOT / "docs/security/threat-models/e42-admin.md").read_text(encoding="utf-8"))
-    row = model.split("| AD-D02 | SUB: P6 |", 1)[1].split(" | AD-D03 |", 1)[0]
+    row = _ad_d02()
     for part in (
         "the armed-rule check can answer a console write `422` (a stale or over-bound list) or "
         "`503` (the rules store does not answer)",
-        "while the code-free `POST /trading/kill-switch` is not served (its RBAC route matrix "
-        "row is not `executed`), the check never refuses a write in a flag's stop direction",
-        "a test of #5479's third PR reads that row so the interim ends when E39-S03 mounts the "
-        "route, and the served route is never answered `422` or `503` by the check",
+        "while the RBAC route matrix row of the code-free `POST /trading/kill-switch` is not "
+        "`executed` (`not_mounted` today), the check never refuses a write in a flag's stop "
+        "direction",
+        "a test of #5479's third PR reads that row's `state` so the interim ends only when it "
+        "reads `executed` (E39-S03 mounts the route), and the code-free route is never answered "
+        "`422` or `503` by the check",
     ):
         assert part in row
-    assert "its refusals are `422` and `503` (never for a flag's stop direction" in model
+    assert (
+        "its refusals are `422` and `503` (never for a flag's stop direction while the "
+        "code-free engage's matrix row is not `executed`, AD-D02)"
+    ) in model
 
 
 def test_section_19_92_logs_the_contract_first_change_without_a_new_code_or_table() -> None:
@@ -375,6 +457,13 @@ def test_section_19_92_logs_the_contract_first_change_without_a_new_code_or_tabl
         "This is the number the orchestrator assigned on 2026-11-02 (13:45Z); it keeps it" in entry
     )
     assert "contract first (C-6.1), in the first of the ticket's three PRs" in entry
+    assert (
+        "the rule that it never refuses a write in a flag's stop direction while the matrix row "
+        "of the code-free `POST /trading/kill-switch` is not `executed`, the residual" in entry
+    )
+    assert (
+        'which changes no behaviour apart from the request member §16.4 "As built" names.' in entry
+    )  # R2DS-04: the one served change, a repeated id included (`_SECTION_ROWS`' "As built")
     assert (
         "No new `x-error-codes` entry, audit action, WS frame, table, migration, chart or" in entry
     )

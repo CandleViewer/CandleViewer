@@ -8130,7 +8130,7 @@ class FeatureFlagDependents(BaseModel):
     truncated: Annotated[
         StrictBool,
         Field(
-            description="`true` when more than 200 armed rules read the flag: `items` then holds the first 200 by `rule_id`, no `acknowledged_dependents` can match the live set, and `setFeatureFlag` refuses the write (`dependents_over_bound`), a write in a flag's stop direction apart, until fewer are armed. Always sent.\n"
+            description="`true` when more than 200 armed rules read the flag: `items` then holds the first 200 by `rule_id`, no `acknowledged_dependents` can match the live set, and `setFeatureFlag` refuses the write (`dependents_over_bound`), an interim stop-direction write apart (`setFeatureFlag` defines it), until fewer are armed. Always sent.\n"
         ),
     ]
 
