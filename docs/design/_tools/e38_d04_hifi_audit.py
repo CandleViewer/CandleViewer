@@ -31,7 +31,8 @@ Gates (each FAIL led by its name):
               row's New stands once, on its Old's base line, and its Old not at all; an After
               row's line stands once, right after its anchor; each inside its CMP / SCR entry.
               All but A-2 are applied; A-2 is held (tail the held mark, no "applied" in its row)
-              until `15` holds #5482's `### CMP-254`, which means the rebase is done.
+              until `15` holds an id of #5482's band (a `### CMP-NNN` with NNN ≥ 254), which
+              means the rebase is done.
   G-CITE      every cite in range and on a non-blank line at its ref, its content equal to the
               pins file's hash; the SHA anchors are the pinned refs.
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
@@ -76,7 +77,8 @@ TARGETS = {
 OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL, *TARGETS.values())
 APPLIED = " **Applied (PR 2).**"
 HELD_MARK = " **Held for PR 2's rebase.**"
-REBASED = "\n### CMP-254 "  # #5482's first entry: on the base, A-2 is due
+REBASED = re.compile(r"^### CMP-(\d+) ", re.MULTILINE)
+BAND = 254  # #5482's band starts here (E28-D03); an id at or above it on the base: A-2 is due
 HELD = {"A-2"}  # applied at PR 2's rebase, when its catalogue ids are assigned
 BASE = "c327ed438c01c5bab9247890dd00f5dce3717f97"  # origin/main when written
 MEMO_REF = "4774b2f8cd7b67a1ee934fe88546568f7aa3e34c"  # #5451's head (E38-D01 memo)
@@ -519,8 +521,9 @@ def inside(ls: list[str], i: int, own: str) -> bool:
 def applied_problems(t: Texts, aid: str, key: str, own: str, body: str) -> list[str]:
     if aid in HELD:
         bad = [] if body.endswith(HELD_MARK) else [f"{aid}: no held mark"]
-        if REBASED in t.work.get(key, ""):
-            bad.append(f"{aid}: still held, but `{key}` holds #5482's CMP-254")
+        ids = [int(n) for n in REBASED.findall(t.work.get(key, ""))]
+        if any(n >= BAND for n in ids):
+            bad.append(f"{aid}: still held, but `{key}` holds an id of #5482's band")
         if re.search(r"\bapplied\b", body, re.IGNORECASE):
             bad.append(f"{aid}: marked applied, but it is held for PR 2's rebase")
         return bad
@@ -753,18 +756,6 @@ def drop_row(row: str) -> Callable[[Texts], Texts]:
     return f
 
 
-A1_T2 = ", wrapped by CMP-079 RbacGate and led by the CMP-019 `lock`"
-
-
-def a1_without(name: str) -> Callable[[Texts], Texts]:
-    """A-1 loses one of its two T2 components."""
-    kept = {
-        "CMP-079": ", led by the CMP-019 `lock`",
-        "CMP-019": ", wrapped by CMP-079 RbacGate",
-    }[name]
-    return sub(A1_T2, kept)
-
-
 def work_sub(key: str, old: str, new: str) -> Callable[[Texts], Texts]:
     def f(t: Texts) -> Texts:
         text = t.work[key]
@@ -787,7 +778,12 @@ def with_file(name: str, data: bytes | None) -> Callable[[Texts], Texts]:
     return f
 
 
-A1_NEW = '`formats: ("csv"|"pdf"|"parquet")[]` (E38-D04: Parquet for the journal and simulated exports, matching E41)'
+A1_T2 = ", wrapped by CMP-079 RbacGate and led by the CMP-019 `lock`"
+A1_NEW = (
+    '`formats: ("csv"|"pdf"|"parquet")[]` (E38-D04: Parquet for the journal and simulated'
+    " exports, matching E41; without `journal:read` each format button is T2"
+    f"{A1_T2}, E38-D04 §10.1)"
+)
 CMP100 = "\n### CMP-100 PriceInput\n"
 
 
@@ -796,7 +792,21 @@ def a2_says_applied(t: Texts) -> Texts:
 
 
 def rebased_onto_5482(t: Texts) -> Texts:
-    return replace(t, work={**t.work, "15": t.work["15"] + "\n### CMP-254 X\n"})
+    """#5482's first id moved: its band starts at CMP-255, not CMP-254."""
+    return replace(t, work={**t.work, "15": t.work["15"] + "\n### CMP-255 X\n"})
+
+
+def a1_without(name: str) -> Callable[[Texts], Texts]:
+    """A-1 loses one T2 component in the spec and in `15` together, so only G-T2 sees it."""
+    kept = {
+        "CMP-079": ", led by the CMP-019 `lock`",
+        "CMP-019": ", wrapped by CMP-079 RbacGate",
+    }[name]
+
+    def f(t: Texts) -> Texts:
+        return work_sub("15", A1_T2, kept)(sub(A1_T2, kept)(t))
+
+    return f
 
 
 def a1_new_under_cmp100(t: Texts) -> Texts:
@@ -1033,7 +1043,11 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-AROW", "A-1's New under CMP-100, CMP-099 csv only", a1_new_under_cmp100),
     ("G-AROW", "A-1's whole line moved under CMP-100", a1_line_under_cmp100),
     ("G-AROW", "A-8's anchor and line moved above SCR-099", a8_above_scr099),
-    ("G-AROW", "rebased onto #5482's CMP-254 with A-2 still held", rebased_onto_5482),
+    (
+        "G-AROW",
+        "rebased onto #5482's band (CMP-255) with A-2 still held",
+        rebased_onto_5482,
+    ),
     (
         "G-T2",
         "§10.1 without CMP-079",
@@ -1060,8 +1074,8 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "a G-T2.3 quote off its DS text",
         sub("one polite announcement (", "an announcement ("),
     ),
-    ("G-T2", "A-1 without CMP-079", a1_without("CMP-079")),
-    ("G-T2", "A-1 without CMP-019", a1_without("CMP-019")),
+    ("G-T2", "A-1 without CMP-079 (spec and `15`)", a1_without("CMP-079")),
+    ("G-T2", "A-1 without CMP-019 (spec and `15`)", a1_without("CMP-019")),
 )
 
 
