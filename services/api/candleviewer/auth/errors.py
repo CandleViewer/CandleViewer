@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from uuid import UUID
 
 
 class AuthError(Exception):
@@ -76,20 +77,38 @@ class MfaSealInvalid(AuthError):
     tampered with): it verifies like a wrong code (#2152 AC9)."""
 
 
-class MfaChallengeInvalid(AuthError):
+class SecondFactorRefused(AuthError):
+    """#2695: a refused second factor or recovery code at sign-in. `locked_user_id` names the
+    account this refusal locked (SR-016), so the router writes its `auth.account_locked`
+    (reason `second_factor`); `None` when it locked none."""
+
+    locked_user_id: UUID | None = None
+
+
+class MfaChallengeInvalid(SecondFactorRefused):
     """The `mfa_token` does not correspond to an open, unexpired challenge —
     unknown token, already-satisfied challenge, or an expired one (ticket
     "expired-challenge (returns to SCR-001)"). Deliberately uniform: the
     router must never reveal *which* of these applied."""
 
 
-class MfaChallengeLocked(AuthError):
+class MfaChallengeLocked(SecondFactorRefused):
     """Five failed attempts against one challenge (ticket "locked after 5
     tries" / `mfa_challenges.attempts CHECK BETWEEN 0 AND 10` with this
     module enforcing the tighter 5-try business rule)."""
 
 
-class MfaCodeInvalid(AuthError):
+class MfaAccountLocked(MfaChallengeLocked):
+    """#2695: the account of the challenge is locked (`users.locked_until` is in the future), so
+    the attempt is refused uncounted, the answer being a locked challenge's (SR-014). Carries the
+    account for the router's `auth.account_locked` (reason `second_factor_while_locked`)."""
+
+    def __init__(self, user_id: UUID) -> None:
+        super().__init__("too many failed attempts")
+        self.user_id = user_id
+
+
+class MfaCodeInvalid(SecondFactorRefused):
     """A syntactically valid TOTP/recovery code that did not verify.
 
     Raised only when the surrounding challenge is still open (an already
@@ -98,7 +117,7 @@ class MfaCodeInvalid(AuthError):
     `reason=invalid`."""
 
 
-class MfaCodeReused(AuthError):
+class MfaCodeReused(SecondFactorRefused):
     """A TOTP code whose `time_step` was already accepted for this method
     (ticket "Reused code is rejected" — replay protection)."""
 
@@ -120,11 +139,11 @@ class MfaReauthRequired(AuthError):
     `X-Reauth-Password` header (ticket "Security notes")."""
 
 
-class RecoveryCodeInvalid(AuthError):
+class RecoveryCodeInvalid(SecondFactorRefused):
     """An unknown or already-used recovery code."""
 
 
-class RecoveryCodesExhausted(AuthError):
+class RecoveryCodesExhausted(SecondFactorRefused):
     """All recovery codes for this user are consumed (ticket "Recovery
     codes exhausted": "no session is created")."""
 

@@ -105,6 +105,7 @@ from candleviewer.auth.errors import (
     AccountLocked,
     AuthError,
     InvalidCredentials,
+    MfaAccountLocked,
     MfaChallengeInvalid,
     MfaChallengeLocked,
     MfaCodeInvalid,
@@ -113,6 +114,7 @@ from candleviewer.auth.errors import (
     MfaNotRequired,
     RecoveryCodeInvalid,
     RecoveryCodesExhausted,
+    SecondFactorRefused,
     SignInBusy,
     UserDisabled,
 )
@@ -161,6 +163,8 @@ _UNAUTHENTICATED = "Missing, malformed or expired access token"
 _CONFLICT = "Concurrent modification or state conflict"
 _INVALID = "Request body or parameters failed schema validation"
 _FAILED = AuditOutcome.FAILURE
+#: #2695: `auth.account_locked`'s reasons at the second factor (`_audit_second_factor_lock`).
+_LOCK_SET, _WHILE_LOCKED = "second_factor", "second_factor_while_locked"
 #: The `detail` of a confirm whose enrolment committed but whose session rotation failed (#2295).
 _UNROTATED = "the new TOTP method is active but the session was not rotated; sign in again"
 #: The `title` of every refusal of `/auth/mfa/recovery`: its contract declares 401, never 503.
@@ -510,6 +514,29 @@ def make_auth_router(
             after_state=after_state,
         )
 
+    async def _audit_second_factor_lock(
+        request: Request, user_id: uuid.UUID, *, reason: str, **row: Any
+    ) -> None:
+        """#2695 (C-2.9, SR-016): the account's `auth.account_locked` row at the second factor,
+        an outcome row through the lane (`_audit_outcome`) after the refusal is decided: reason
+        `second_factor` for the refusal that set the lock (after its own refusal row), or
+        `second_factor_while_locked` for an attempt refused because the account is locked, which
+        is its only row and moves no `auth_login_failures_total`, as at the password step."""
+        await _audit_outcome(
+            "auth.account_locked",
+            actor_label=str(user_id),
+            actor_user_id=user_id,
+            actor_ip=_client_ip(request),
+            outcome=AuditOutcome.DENIED,
+            severity=Severity.WARNING,
+            reason=reason,
+            **row,
+        )
+
+    async def _audit_lock_set(request: Request, exc: SecondFactorRefused) -> None:
+        if exc.locked_user_id is not None:
+            await _audit_second_factor_lock(request, exc.locked_user_id, reason=_LOCK_SET)
+
     def _enrolment_ready(
         *, mfa: bool, status: int = 503, title: str = "Service unavailable"
     ) -> tuple[AuditWriterLike, IdentityProvider] | JSONResponse:
@@ -729,7 +756,11 @@ def make_auth_router(
             return over
         try:
             result = await auth_service.mfa.verify(body)
-        except (MfaChallengeInvalid, MfaChallengeLocked, MfaCodeInvalid, MfaCodeReused):
+        except MfaAccountLocked as exc:  # #2695: the same answer as a wrong code (SR-014)
+            _mfa_refused(request)
+            await _audit_second_factor_lock(request, exc.user_id, reason=_WHILE_LOCKED)
+            return _problem(401, "MFA verification failed", "invalid or expired code")
+        except (MfaChallengeInvalid, MfaChallengeLocked, MfaCodeInvalid, MfaCodeReused) as exc:
             _mfa_refused(request)
             auth_login_failures_total.labels(method=body.method.value).inc()
             await _audit_outcome(
@@ -738,6 +769,7 @@ def make_auth_router(
                 actor_ip=_client_ip(request),
                 outcome=AuditOutcome.FAILURE,
             )
+            await _audit_lock_set(request, exc)
             # PR #1618 review finding 4 (low): `str(exc)` used to leak which
             # of "locked" / "expired" / "reused" / "wrong code" applied,
             # which is a free oracle for an unauthenticated caller (e.g.
@@ -889,14 +921,25 @@ def make_auth_router(
             await _audit_outcome(action, actor_ip=ip, outcome=outcome, **row)
             return refused
 
+        async def locked(user_id: uuid.UUID, **row: Any) -> JSONResponse:
+            """#2695: refused because the account is locked: one row, uncounted (SR-125)."""
+            _mfa_refused(request)
+            await _audit_second_factor_lock(request, user_id, reason=_WHILE_LOCKED, **row)
+            return refused
+
         try:
             check = await mfa.check_recovery(body.mfa_token, body.recovery_code)
         except RecoveryCodesExhausted as exc:
             exhausted = {"actor_label": "(mfa_token)", "severity": Severity.ERROR}
             await failed("auth.recovery_codes_exhausted", AuditOutcome.DENIED, **exhausted)
+            await _audit_lock_set(request, exc)
             return _problem(401, "Recovery codes exhausted", str(exc))
-        except (MfaChallengeInvalid, MfaChallengeLocked, RecoveryCodeInvalid):
-            return await failed("auth.mfa_failed", _FAILED, actor_label="(mfa_token)")
+        except MfaAccountLocked as exc:
+            return await locked(exc.user_id)
+        except (MfaChallengeInvalid, MfaChallengeLocked, RecoveryCodeInvalid) as exc:
+            answer = await failed("auth.mfa_failed", _FAILED, actor_label="(mfa_token)")
+            await _audit_lock_set(request, exc)
+            return answer
         uid = check.user_id
         mine: dict[str, Any] = {"actor_label": str(uid), "actor_user_id": uid}
         user = await auth_service.find_user(str(uid))
@@ -967,6 +1010,8 @@ def make_auth_router(
             await mfa.complete_recovery(check)
         except UserDisabled:  # #2911: disabled since the read, under the user-row lock
             return await failed("auth.login_failed", AuditOutcome.DENIED, **_DISABLED, **void)
+        except MfaAccountLocked:  # #2695: locked since the check; nothing spent
+            return await locked(uid, session_id=new_id, after_state=voided)
         except RecoveryCodeInvalid:  # a concurrent request spent the code or the challenge
             return await failed("auth.mfa_failed", _FAILED, reason="lost_race", **void)
         except Exception as exc:  # a store failure (a timeout, a deadlock) rolls it back

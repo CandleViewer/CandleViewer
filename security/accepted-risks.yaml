@@ -102,9 +102,9 @@ entries:
     ticket: "https://github.com/CandleViewer/CandleViewer/issues/3540"
   # #4664 re-keyed it from line 72 to 91 (the minimum-time hold's imports and refusal lists above
   # it), then to 93 (the module docstring above it); #2152 S5a to 99 (the keyring port's note in
-  # the module docstring and its imports above it); the hashed value and its token source are
-  # unchanged, so the triage stands.
-  - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/mfa_service.py:99"
+  # the module docstring and its imports above it); #2695 to 114 (the account lockout's note and
+  # imports above it); the hashed value and its token source are unchanged, so the triage stands.
+  - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/mfa_service.py:114"
     tool: codeql
     severity: HIGH
     reason: "Random 256-bit bearer mfa_token hashed with SHA-256 as a storage lookup key (high-entropy input, not a password; slow KDFs are inappropriate); CodeQL's password-hashing heuristic keys on the token name. Standing owner-delegated acceptance (run log 2026-09-25, #1778)"

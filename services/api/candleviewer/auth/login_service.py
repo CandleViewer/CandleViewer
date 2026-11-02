@@ -254,13 +254,15 @@ class LoginService:
                 str(user.id), password_hash=new_hash, algo_params=DEFAULT_ARGON2_PARAMS
             )
 
-        await self._repository.record_login_success(str(user.id))
-
         if user.mfa_required and not user.mfa_methods:
             # #2295 (Q6): TOTP is mandatory (C-12.2), so the password alone opens
             # only an enrolment-only session (never enrolled, or after an owner
             # reset or a recovery sign-in). The router mints it; no challenge row.
+            # No second factor follows, so this sign-in is complete: reset the count.
+            await self._repository.record_login_success(str(user.id))
             return EnrolmentOnlyLogin(user_id=user.id)
+        # #2695: with a second factor still to pass, the account count is kept; `MfaService`
+        # resets it once the sign-in completes, and counts each refused code on it.
         mfa_token = self._mfa_token_factory()
         if self._mfa_repository is not None:
             # E09-S02: persist the challenge so `MfaService.verify()` /

@@ -14,10 +14,14 @@ from candleviewer.auth.errors import (
     MfaCodeReused,
     RecoveryCodeInvalid,
 )
-from candleviewer.auth.mfa_service import CHALLENGE_ATTEMPT_CAP
+from candleviewer.auth.login_service import LOCKOUT_DURATION
+from candleviewer.auth.mfa_service import CHALLENGE_ATTEMPT_CAP, MfaService
 from candleviewer.auth.models import MfaMethodKind, MfaVerifyRequest
+from tests.unit.auth.auth_fakes import FakeUserRepository, make_user, no_wait
 
 from ._kit import MfaKit
+
+_INERT_DIGEST = "unused"  # stored-hash placeholder: no password is verified in these cases
 
 
 def _req(token: str, code: str) -> MfaVerifyRequest:
@@ -65,6 +69,30 @@ async def test_ac_mfa_02_six_digit_bruteforce_locked_at_cap() -> None:  # SR-015
     # Even the correct code is now refused: the lock is on the challenge.
     with pytest.raises(MfaChallengeLocked):
         await kit.svc.verify(_req(token, kit.code(seed)))
+
+
+async def test_ac_mfa_02b_cap_per_challenge_also_counts_on_account() -> None:  # SR-016 (#2695)
+    kit, users = MfaKit(), FakeUserRepository()
+    user = make_user(password_hash=_INERT_DIGEST)
+    users.add(user)
+    svc = MfaService(kit.repo, kit.enc, clock=kit.clock, sleep=no_wait, users=users)
+    seed = await kit.enrol(user.id)
+    token = await kit.challenge(user.id, "brute")
+    valid = {kit.code(seed, o) for o in (-1, 0, 1)}
+    guesses = iter([f"{i:06d}" for i in range(1000) if f"{i:06d}" not in valid])
+    with pytest.raises(MfaChallengeLocked):
+        for g in guesses:
+            try:
+                await svc.verify(_req(token, g))
+            except MfaCodeInvalid:
+                continue
+    row = users.users[str(user.id)]
+    assert row.failed_login_count == CHALLENGE_ATTEMPT_CAP
+    assert row.locked_until == kit.clock.now + LOCKOUT_DURATION
+    # A fresh challenge of the locked account refuses even the correct code, uncounted.
+    with pytest.raises(MfaChallengeLocked):
+        await svc.verify(_req(await kit.challenge(user.id, "fresh"), kit.code(seed)))
+    assert users.users[str(user.id)].failed_login_count == CHALLENGE_ATTEMPT_CAP
 
 
 async def test_ac_mfa_03_recovery_code_single_use() -> None:  # SR-022 / U9

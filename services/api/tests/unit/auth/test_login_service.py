@@ -271,7 +271,9 @@ async def test_per_ip_throttle_blocks_independent_of_username() -> None:
 
 
 @pytest.mark.asyncio
-async def test_successful_login_resets_failed_count_and_lockout() -> None:
+async def test_password_match_before_second_factor_keeps_failed_count() -> None:
+    """#2695: the second factor still follows, so the count is reset only once it is passed
+    (`MfaService`); the enrolment-only sign-in below is complete and resets it."""
     repo = FakeUserRepository()
     hasher = Hasher(pepper="test-pepper")
     user = make_user(password_hash=await hasher.hash(PASSWORD), failed_login_count=3)
@@ -286,7 +288,7 @@ async def test_successful_login_resets_failed_count_and_lockout() -> None:
     await service.login(LoginRequest(identifier="basiltt", password=PASSWORD), source_ip="10.0.0.1")
 
     stored = repo.users[str(user.id)]
-    assert stored.failed_login_count == 0
+    assert stored.failed_login_count == 3
     assert stored.locked_until is None
 
 

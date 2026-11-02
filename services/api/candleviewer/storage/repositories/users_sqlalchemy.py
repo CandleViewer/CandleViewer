@@ -81,6 +81,12 @@ _SUCCESS_SQL = sa.text(
     "UPDATE users SET failed_login_count = 0, locked_until = NULL, last_login_at = :now "
     "WHERE id = CAST(:id AS uuid)"
 )
+#: #2695: the second factor's reset, refused in the same statement while the row is locked, so it
+#: never clears a lock a concurrent `_FAILURE_SQL` set (Postgres re-reads the row it waited on).
+_SIGN_IN_UNLESS_LOCKED_SQL = sa.text(
+    "UPDATE users SET failed_login_count = 0, locked_until = NULL, last_login_at = :now "
+    "WHERE id = CAST(:id AS uuid) AND (locked_until IS NULL OR locked_until <= :now) RETURNING id"
+)
 _FAILURE_SQL = sa.text("""
     UPDATE users SET
       failed_login_count = failed_login_count + 1,
@@ -167,6 +173,14 @@ class SqlAlchemyUserRepository:
         async with self._relational.unit_of_work() as uow:
             await uow.session.execute(_SUCCESS_SQL, {"id": user_id, "now": self._clock()})
             await uow.commit()
+
+    async def record_sign_in_unless_locked(self, user_id: str, *, now: datetime) -> bool:
+        async with self._relational.unit_of_work() as uow:
+            row = (
+                await uow.session.execute(_SIGN_IN_UNLESS_LOCKED_SQL, {"id": user_id, "now": now})
+            ).first()
+            await uow.commit()
+        return row is not None
 
     async def record_login_failure(
         self, user_id: str, *, lockout_threshold: int, lock_duration: timedelta, now: datetime
