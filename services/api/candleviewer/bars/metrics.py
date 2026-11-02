@@ -69,7 +69,7 @@ bar_builder_quarantined_total = Counter(
 bars_gap_detected_total = Counter(
     "bars_gap_detected_total",
     "Tape gap windows the bars lane saw, by `reason` (`recovered` or `unrecovered`). An unrecovered"
-    " one marks the next bar of every builder `gap_before` (#529).",
+    " one marks the next bar of every builder `tape_gap` (#529, #5396).",
     labelnames=("reason",),
 )
 for _gap_reason in ("recovered", "unrecovered"):  # bound now: each series exists at 0 from import

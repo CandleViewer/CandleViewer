@@ -9,8 +9,9 @@ Shared rules (tick and volume bars are activity bars, not time-aligned):
 - Trades are folded in arrival order. A closed bar is final: a late or out-of-order trade
   goes into the open bar, never back into a closed one (re-splitting closed volume bars
   would renumber the series). Duplicate suppression is upstream (`TradeStream`).
-- `gap_before` is `False` unless `mark_gap()` was called (an unrecovered tape gap, #529): then
-  the bar that takes the next trade carries it on every later emission (trade, snapshot).
+- `gap_before` is `False` (range bars: a price jump, `threshold_builders`). `tape_gap` is `False`
+  unless `mark_gap()` was called (an unrecovered tape gap, #529, #5396): then the bar that takes
+  the next trade carries it on every later emission (trade, snapshot).
 - The first bar of a fresh builder has `partial=True`; its `open_time` is the timestamp
   where the available tape begins. Only trades are consumed, never REST klines.
 - `on_clock` is a no-op: activity bars never close on the clock.
@@ -49,7 +50,13 @@ from candleviewer.bars.errors import BarsError, BarSpecError
 from candleviewer.bars.limits import MAX_BRICKS_PER_TRADE
 from candleviewer.bars.metrics import bars_print_rejected_total
 from candleviewer.bars.models import BarSpec, BarUpdate, BuilderState
-from candleviewer.bars.time_builder import _NONE, _Draft, bars_built_total
+from candleviewer.bars.time_builder import (
+    _NONE,
+    _Draft,
+    bars_built_total,
+    restore_tape_gaps,
+    with_tape_gaps,
+)
 from candleviewer.domain.primitives import TsUs
 from candleviewer.exchange.base.models import TradeEvent
 from candleviewer.observability.metrics import Counter
@@ -136,12 +143,12 @@ class _ActivityBuilder:
         if (
             self._gap_pending and t.ts_event > self._gap_floor
         ):  # first post-hole trade, not a straggler
-            cur.gap_before, self._gap_pending = True, False
+            cur.tape_gap, self._gap_pending = True, False
         return cur
 
     def mark_gap(self, floor_us: int) -> None:
         """An unrecovered tape gap (#529): the bar taking the first print with `ts_event >
-        floor_us` carries `gap_before`. See `TimeBarBuilder.mark_gap`."""
+        floor_us` carries `tape_gap`. See `TimeBarBuilder.mark_gap`."""
         self._gap_floor, self._gap_pending = floor_us, True
 
     def _emit(self, d: _Draft, closed: bool, split: str | None = None) -> ActivityBarUpdate:
@@ -159,6 +166,7 @@ class _ActivityBuilder:
     def snapshot(self) -> BuilderState:
         """Versioned orjson draft, same envelope as `TimeBarBuilder.snapshot` (#1987)."""
         doc = {"cur": None if self._cur is None else self._cur.dump(), "next": self._next_index}
+        doc = with_tape_gaps(doc, [self._cur])
         return BuilderState(
             spec_hash=self._hash,
             symbol=self.symbol,
@@ -174,6 +182,7 @@ class _ActivityBuilder:
             raise BarsError(f"Builder state version {state.state_version} is not supported.")
         doc = orjson.loads(state.blob)
         self._cur = None if doc["cur"] is None else _Draft.load(doc["cur"])
+        restore_tape_gaps(doc, [self._cur])
         self._next_index = doc["next"]
         self._last_seq = state.last_trade_seq
 

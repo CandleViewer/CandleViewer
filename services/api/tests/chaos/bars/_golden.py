@@ -108,5 +108,6 @@ def assert_gap_marked(bars: Sequence[Bar], gap: GapEvent, what: str) -> None:
         # Not a GapNotMarkedError, so the strict xfail cannot pass for this reason.
         raise LookupError(f"{what}: no bar closes after the gap")
     first = after[0]
-    if not (first.gap_before or first.partial):
+    # `tape_gap` is the data-loss marker (#5396 ruling 2); `gap_before` (a quiet interval) is not
+    if not (first.tape_gap or first.partial):
         raise GapNotMarkedError(f"{what}: bar {first.index} hides the gap")

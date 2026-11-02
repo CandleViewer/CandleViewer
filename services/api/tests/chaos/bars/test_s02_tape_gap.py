@@ -8,7 +8,8 @@ it is visible. Two halves, because the bars have no input of their own for a hol
 * **Unrecovered** (REST down): the hole is reported by ingestion (`GapEvent(recovered=False)`,
   `trade_gaps_total{recovered="false"}`, health `trade_gap_unrecovered`) and the bars visibly
   lack the lost prints. `BarBuilderSet` consumes the `GapEvent` and flags the first bar each
-  builder emits after the hole (`gap_before`), which the last test below asserts.
+  builder emits after the hole (`tape_gap`, the data-loss marker; #5396 ruling 2 keeps
+  `gap_before` for a discontinuity), which the last test below asserts.
 
 Negative control: the unrecovered run is what a pipeline without backfill produces, and it
 fails the same golden comparison the recovered run passes.
@@ -124,13 +125,20 @@ async def test_s02_gap_marker_helper_demands_a_flag_on_the_first_bar_after_the_h
     await bars.finish()
     gap = rig.observe().gaps[0]
     unflagged = [
-        b.model_copy(update={"gap_before": False, "partial": False}) for b in bars.bars("vol:1")
+        b.model_copy(update={"tape_gap": False, "partial": False}) for b in bars.bars("vol:1")
     ]
     with pytest.raises(golden.GapNotMarkedError, match="hides the gap"):
         golden.assert_gap_marked(unflagged, gap, "vol:1")
     first = next(i for i, b in enumerate(unflagged) if b.close_time >= gap.end_us)
     flagged = [*unflagged]
-    flagged[first] = unflagged[first].model_copy(update={"gap_before": True})
+    with pytest.raises(golden.GapNotMarkedError, match="hides the gap"):  # a discontinuity only
+        golden.assert_gap_marked(
+            [*unflagged[:first], unflagged[first].model_copy(update={"gap_before": True})],
+            gap,
+            "vol:1",
+        )
+    flagged = [*unflagged]
+    flagged[first] = unflagged[first].model_copy(update={"tape_gap": True})
     golden.assert_gap_marked(flagged, gap, "vol:1")
 
 

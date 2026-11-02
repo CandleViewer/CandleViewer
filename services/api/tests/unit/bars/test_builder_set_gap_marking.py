@@ -1,15 +1,17 @@
-"""An unrecovered tape gap marks the next bar of every builder `gap_before` (#529, E12-Q06).
+"""An unrecovered tape gap marks the next bar of every builder `tape_gap` (#529, E12-Q06).
 
 `TradeStream` publishes a `GapEvent` on `{env}.md.{sym}.gap` before the window's merged prints.
 Recovered: the backfill is merged in order, so the tape is complete and nothing is flagged.
-Unrecovered: the one bar that follows the hole carries `gap_before=True` on every update, once.
+Unrecovered: the one bar that follows the hole carries `tape_gap=True` on every update, once.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -121,19 +123,19 @@ async def test_unrecovered_gap_flags_the_first_bar_after_the_hole_once(
     updates = _by_spec(sink)[spec.spec_hash]
     n_before = before.get(spec.spec_hash, 0)
     first_after = updates[n_before][1].index
-    flagged = [b.index for _, b in updates if b.gap_before]
-    assert flagged, f"{name}: no bar carries gap_before"
+    flagged = [b.index for _, b in updates if b.tape_gap]
+    assert flagged, f"{name}: no bar carries tape_gap"
     assert set(flagged) == {first_after}  # exactly one bar...
     assert {b.index for _, b in updates} - {first_after}  # ...among several
     # every update of it after the hole (a bar open across the hole was emitted unflagged before)
-    assert all(b.gap_before for _, b in updates[n_before:] if b.index == first_after)
-    assert all(not b.gap_before for _, b in updates[:n_before])  # none before the hole
+    assert all(b.tape_gap for _, b in updates[n_before:] if b.index == first_after)
+    assert all(not b.tape_gap for _, b in updates[:n_before])  # none before the hole
 
 
 @pytest.mark.parametrize("name", list(SPECS))
 async def test_no_gap_flags_nothing(name: str, tmp_path: Path) -> None:
     sink, _ = await _run(tmp_path, None, specs=[SPECS[name]])
-    assert sink.bars and not any(b.gap_before for _, _, b in sink.bars)
+    assert sink.bars and not any(b.tape_gap for _, _, b in sink.bars)
 
 
 async def test_unrecovered_gap_flags_every_builder_type_in_one_set(tmp_path: Path) -> None:
@@ -141,13 +143,13 @@ async def test_unrecovered_gap_flags_every_builder_type_in_one_set(tmp_path: Pat
     per_spec = _by_spec(sink)
     assert set(per_spec) == {s.spec_hash for s in SPECS.values()}
     for spec_hash, updates in per_spec.items():
-        assert len({b.index for _, b in updates if b.gap_before}) == 1, spec_hash
+        assert len({b.index for _, b in updates if b.tape_gap}) == 1, spec_hash
 
 
 async def test_recovered_gap_flags_nothing_and_is_counted(tmp_path: Path) -> None:
     n = _count(True)
     sink, _ = await _run(tmp_path, _gap(True))
-    assert sink.bars and not any(b.gap_before for _, _, b in sink.bars)
+    assert sink.bars and not any(b.tape_gap for _, _, b in sink.bars)
     assert _count(True) == n + 1
 
 
@@ -165,7 +167,7 @@ async def test_another_symbols_gap_flags_nothing(tmp_path: Path) -> None:
         await bus.publish(TOPIC, t)
     await settle(bus, s)
     await s.stop()
-    assert sink.bars and not any(b.gap_before for _, _, b in sink.bars)
+    assert sink.bars and not any(b.tape_gap for _, _, b in sink.bars)
     assert _count(False) == n
 
 
@@ -195,7 +197,7 @@ async def test_a_gap_queued_before_a_trade_flags_that_trade_even_if_the_gap_task
     await bus.publish(GAP_TOPIC, _gap(False, start_us=tape[0].ts_event))
     await bus.publish(TOPIC, tape[1])
     await settle(bus, s)
-    assert [b.gap_before for _, _, b in sink.bars] == [False, True]
+    assert [b.tape_gap for _, _, b in sink.bars] == [False, True]
     await s.stop()
 
 
@@ -209,7 +211,7 @@ async def test_restart_and_restore_do_not_reflag(tmp_path: Path) -> None:
     await bus1.publish(GAP_TOPIC, _gap(False))
     await bus1.publish(TOPIC, tape[PRE])
     await settle(bus1, s1)
-    assert any(b.gap_before for _, _, b in sink1.bars)  # flagged once, before the stop
+    assert any(b.tape_gap for _, _, b in sink1.bars)  # flagged once, before the stop
     await s1.stop()
     bus2, sink2 = Bus(), RecordingSink()
     s2 = BarBuilderSet(
@@ -226,8 +228,8 @@ async def test_restart_and_restore_do_not_reflag(tmp_path: Path) -> None:
     await settle(bus2, s2)
     await s2.stop()
     # only the bar that was flagged before the stop (still open, restored with its flag) may be
-    flagged_before = {b.index for _, _, b in sink1.bars if b.gap_before}
-    assert sink2.bars and {b.index for _, _, b in sink2.bars if b.gap_before} <= flagged_before
+    flagged_before = {b.index for _, _, b in sink1.bars if b.tape_gap}
+    assert sink2.bars and {b.index for _, _, b in sink2.bars if b.tape_gap} <= flagged_before
 
 
 async def test_unsubscribing_a_lane_drops_both_of_its_subscriptions(
@@ -255,7 +257,7 @@ async def test_the_clock_close_of_the_flagged_time_bar_keeps_the_flag(tmp_path: 
     clock.t = T0 + 61_000_000
     await s.tick()  # the sparse tape: the clock closes the bar
     closes = [b for _, k, b in sink.bars if k == "close"]
-    assert [(b.index, b.gap_before) for b in closes] == [(0, True)]
+    assert [(b.index, b.tape_gap) for b in closes] == [(0, True)]
     await s.stop()
 
 
@@ -273,7 +275,7 @@ async def test_a_clock_close_before_any_post_hole_trade_leaves_the_next_bar_flag
     await s.tick()  # closes the pre-hole bar: it holds no post-hole trade
     await bus.publish(TOPIC, trade(T0 + 62_000_000, seq=2))
     await settle(bus, s)
-    assert [(b.index, k, b.gap_before) for _, k, b in sink.bars] == [
+    assert [(b.index, k, b.tape_gap) for _, k, b in sink.bars] == [
         (0, "open", False),
         (0, "close", False),
         (1, "open", True),
@@ -317,7 +319,7 @@ async def test_a_post_hole_print_amending_a_clock_closed_bar_flags_that_bar(tmp_
     await bus.publish(GAP_TOPIC, _gap(False))
     await bus.publish(TOPIC, trade(T0 + 50_000_000, seq=2))  # in bar 0, arrives late
     await settle(bus, s)
-    assert [(b.index, k, b.gap_before) for _, k, b in sink.bars] == [
+    assert [(b.index, k, b.tape_gap) for _, k, b in sink.bars] == [
         (0, "open", False),
         (0, "close", False),
         (0, "close", True),  # the amended close
@@ -339,7 +341,7 @@ async def test_a_pre_hole_straggler_does_not_take_the_flag_the_post_hole_bar_doe
     await bus.publish(TOPIC, trade(T0 + 10_000_000, seq=2))  # at or before start_us: amends bar 0
     await bus.publish(TOPIC, trade(T0 + 130_000_000, seq=3))  # the first post-hole print: bar 1
     await settle(bus, s)
-    flags = [(b.index, k, b.gap_before) for _, k, b in sink.bars]
+    flags = [(b.index, k, b.tape_gap) for _, k, b in sink.bars]
     assert flags == [
         (0, "open", False),
         (0, "close", False),
@@ -359,3 +361,52 @@ async def test_a_gap_whose_start_us_is_not_an_int_is_ignored(tmp_path: Path) -> 
     s._on_gap(s._lanes[SYM], Odd())
     assert _count(False) == n
     await s.stop()
+
+
+#: `SPECS` with a delta threshold the two prints below do not reach, so its marked bar stays open.
+OPEN_SPECS = {**SPECS, "delta": BarSpec(kind="delta", delta_threshold=Decimal(100))}
+
+
+def _builder(name: str) -> Any:
+    """Each builder type of `OPEN_SPECS`, as the production factory builds it (renko on)."""
+    factory = production_factory(lambda _s: Decimal("0.01"), renko_enabled=True)
+    return factory(OPEN_SPECS[name], SYM)
+
+
+def _marked_open(name: str) -> tuple[Any, Bar]:
+    """`name`'s builder after one pre-hole print, `mark_gap`, and the next print 8 s later: the
+    newest bar emitted (the one that takes the post-hole print)."""
+    b = _builder(name)
+    first, nxt = _tape()[:2]
+    b.on_trade(first)
+    b.mark_gap(first.ts_event)
+    return b, b.on_trade(nxt)[-1].bar
+
+
+@pytest.mark.parametrize("name", list(SPECS))
+def test_a_tape_gap_sets_tape_gap_never_gap_before(name: str) -> None:
+    """#5396 ruling 2: an unrecovered tape gap is data loss (`tape_gap`). The post-hole print
+    falls in the same minute and one tick on, so no builder sees a discontinuity: `gap_before`
+    stays false."""
+    _, bar = _marked_open(name)
+    assert (bar.tape_gap, bar.gap_before) == (True, False)
+
+
+@pytest.mark.parametrize("name", list(SPECS))
+def test_tape_gap_survives_a_snapshot_and_an_older_blob_restores_unflagged(name: str) -> None:
+    """The open bar's `tape_gap` rides in the blob under its own key, so a restored builder's next
+    emission keeps it; a blob without the key (written before #5396) restores with no flag. The
+    draft row layout and `state_version` are unchanged."""
+    b, _ = _marked_open(name)
+    state = b.snapshot()
+    doc = json.loads(state.blob)
+    assert doc["tape_gap"]
+    later = _tape()[2]
+    for blob, want in ((state.blob, True), (json.dumps(doc | {"tape_gap": []}).encode(), False)):
+        restored = _builder(name)
+        restored.restore(state.model_copy(update={"blob": blob}))
+        bars = [u.bar for u in restored.on_trade(later)]
+        assert bars[0].tape_gap is want, (name, want)
+    plain = _builder(name)
+    plain.on_trade(_tape()[0])
+    assert "tape_gap" not in json.loads(plain.snapshot().blob)  # no mark: the older bytes
