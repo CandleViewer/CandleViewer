@@ -12,6 +12,7 @@ import {
 import type { WsState } from "../../lib/ws/state/types";
 import type { ShellState } from "../../shell/bootstrap/store.js";
 import { useShellSelector } from "../../shell/useShellSelector.js";
+import { useChipAnnouncements } from "./chipAnnouncer";
 import { ConnectionStatus, type ConnectionStatusProps } from "./ConnectionStatus";
 
 const NO_TOPICS: readonly TopicReading[] = Object.freeze([]);
@@ -26,14 +27,19 @@ function multiplierOf(s: ShellState): number | undefined {
   return typeof n === "number" && Number.isFinite(n) && n > 1 ? n : undefined;
 }
 
-/** What `selectChip` reads, at the time of the call: the topics and the clock are read, never pushed. */
+/**
+ * What `selectChip` reads, at the time of the call: the topics and the clock are read, never pushed.
+ * The clock is the one the client stamps the topics on (`clockMs()`, its monotonic `timers.now`),
+ * read after them, so a step of the wall clock neither resets nor stretches an age.
+ */
 function chipInput(ws: WsState, upstreamDown: boolean, multiplier: number | undefined): ChipInput {
+  const client = getActiveClient();
   return {
     ws,
     upstreamDown,
     throttleMultiplier: ws.quality === "saturated" ? multiplier : undefined,
-    topics: getActiveClient()?.topics() ?? NO_TOPICS,
-    nowMs: Date.now(),
+    topics: client?.topics() ?? NO_TOPICS,
+    clockMs: client?.clockMs() ?? performance.now(),
   };
 }
 
@@ -80,7 +86,9 @@ function propsOf(view: ChipView): ChipProps {
  * (rows 10–12, 16). The topics are read, never pushed: no frame renders it. Its clock runs at 1 Hz
  * while the link is up (a silent topic crosses T1 with no event) or an age is drawn; a store
  * change re-renders it at once, so the exchange's feed down reads within the frame of its message.
- * It announces nothing: E17-D02 §11 rows 1 and 14 are CMP-077's (`ConnectionRegionSlot`).
+ * The chip owns no live region (§5): this container writes §11 rows 4 and 5 for the chip's states
+ * through the shell announcer (`useChipAnnouncements`); the feed down's entry is CMP-092's row to
+ * say (its exit is this container's), and rows 1 and 14 are CMP-077's (`ConnectionRegionSlot`).
  */
 export function ConnectionStatusSlot(): JSX.Element {
   const ws = useWsState();
@@ -96,6 +104,10 @@ export function ConnectionStatusSlot(): JSX.Element {
   useEffect(() => {
     setMemory((m) => stepChipMemory(m, chipInput(ws, upstreamDown, multiplier)));
   }, [ws, upstreamDown, multiplier, ticks]);
+  // The announcer's timers read the chip again as they fall due: the topics and the clock are read
+  // anew; the link, the feed fact, the multiplier and the holds are this render's (a change of any
+  // of them renders again at once).
+  useChipAnnouncements(view, () => selectChip(chipInput(ws, upstreamDown, multiplier), memory));
 
   const aged = view.status !== "live" && view.status !== "delayed" && view.lastGoodTs !== null;
   const clocked = ws.link.kind === "up" || aged;
@@ -105,5 +117,5 @@ export function ConnectionStatusSlot(): JSX.Element {
     return () => clearInterval(id);
   }, [clocked]);
 
-  return <ConnectionStatus {...propsOf(view)} latencyMs={latencyMs} nowMs={input.nowMs} />;
+  return <ConnectionStatus {...propsOf(view)} latencyMs={latencyMs} nowMs={Date.now()} />;
 }
