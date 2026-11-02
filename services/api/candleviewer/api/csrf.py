@@ -647,7 +647,13 @@ class CsrfMiddleware:
 
 
 async def _bad_path(scope: Scope, receive: Receive, send: Send) -> None:
-    await JSONResponse(
+    await bad_path_problem()(scope, receive, send)
+
+
+def bad_path_problem() -> JSONResponse:
+    """Step 0's refusal: `400 validation_failed` for a path containing a control character
+    (`_CONTROL`). The view-as guard answers it for every method (`api/view_as_guard.py`)."""
+    return JSONResponse(
         status_code=400,
         content={
             "type": "https://candleviewer.local/errors/validation_failed",
@@ -657,4 +663,4 @@ async def _bad_path(scope: Scope, receive: Receive, send: Send) -> None:
             "detail": "Request path contains a control character.",
         },
         media_type="application/problem+json",
-    )(scope, receive, send)
+    )

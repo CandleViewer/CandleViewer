@@ -15,8 +15,18 @@ For a request whose bearer names a session holding a context (`ViewAsPhase` not 
 | the viewer's own (`OWN_OPERATIONS`)  | passes, as the viewer         | passes, as the viewer    |
 | protective, its handler registered   | passes to it, as the viewer,  | passes to it, as the     |
 |                                      | once the target may make it   | viewer, no target read   |
-| GET, HEAD or OPTIONS                 | passes, as the target         | `view_as_expired`        |
+| a refused read (`REFUSED_READS`),    | `view_as_read_only`           | `view_as_expired`        |
+| or a HEAD of one                     |                               |                          |
+| any other GET, HEAD or OPTIONS       | passes, as the target         | `view_as_expired`        |
 | any other                            | `view_as_read_only`           | `view_as_expired`        |
+
+OPTIONS is never a refused read: it passes as the target while live. Ahead of the table, a path
+containing a control character is refused, for every method, with the CSRF layer's step 0
+refusal (`400 validation_failed`, `csrf.bad_path_problem`), unrecorded: the router matches with
+Starlette's `^...$`, whose `$` tolerates a trailing newline, so no such path is decided here. A
+refused read is matched as the router matches it (`starlette.routing.compile_path`, `.match`),
+so the guard and the router agree on it by construction; a refused `HEAD` is recorded under the
+`GET` template it reads.
 
 A protective write whose handler is not registered is refused as any write (the tripwire,
 `ProtectiveWrites`). A live one is admitted only when both the viewer's own RBAC and the target's
@@ -54,6 +64,7 @@ backend), the request passes untouched.
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from datetime import datetime
 from typing import Any, Final, Protocol
@@ -62,9 +73,17 @@ import structlog
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 from starlette._utils import get_route_path
+from starlette.routing import compile_path
 
 from candleviewer.api.audit_principal import _Identity, identity_snapshot
-from candleviewer.api.csrf import _compile_operations, bounded_method, match_operation, source_ip
+from candleviewer.api.csrf import (
+    _CONTROL,
+    _compile_operations,
+    bad_path_problem,
+    bounded_method,
+    match_operation,
+    source_ip,
+)
 from candleviewer.api.step_up import (
     _SAFE_METHODS,
     StepUpAuth,
@@ -72,7 +91,12 @@ from candleviewer.api.step_up import (
     readonly_problem,
     write_exempt,
 )
-from candleviewer.api.view_as_policy import OWN_OPERATIONS, PROTECTIVE_WRITES, ProtectiveWrites
+from candleviewer.api.view_as_policy import (
+    OWN_OPERATIONS,
+    PROTECTIVE_WRITES,
+    REFUSED_READ_OPERATIONS,
+    ProtectiveWrites,
+)
 from candleviewer.api.view_as_refusals import (
     OperationReason,
     ViewAsRefusalRecorder,
@@ -191,6 +215,9 @@ def make_view_as_guard(
     declared = frozenset(operations)
     if not OWN_OPERATIONS <= declared:
         raise ValueError(f"undeclared own operations: {sorted(OWN_OPERATIONS - declared)}")
+    if not REFUSED_READ_OPERATIONS <= declared:
+        undeclared = sorted(REFUSED_READ_OPERATIONS - declared)
+        raise ValueError(f"undeclared refused reads: {undeclared}")
     if permissions is not None and denials is None:
         raise ValueError("a guard that checks targets records their denials")
     required = dict(permissions or {})
@@ -199,6 +226,7 @@ def make_view_as_guard(
     ):
         raise ValueError(f"protective writes without an x-rbac permission: {bare}")
     templates = _compile_operations(declared)
+    refused_reads = _compile_refused_reads(REFUSED_READ_OPERATIONS)
 
     async def view_as_guard(request: Request, call_next: CallNext) -> Response:
         service, token = views(), _bearer(request)
@@ -215,6 +243,8 @@ def make_view_as_guard(
         now = clock()
         if view_as_phase(record.view_as, now=now) is ViewAsPhase.NONE:
             return await call_next(request)
+        if _CONTROL.search(path):  # the router's `$` tolerates a trailing newline: never decided
+            return bad_path_problem()
         own = operation in OWN_OPERATIONS
         as_viewer = own or protective.is_registered(operation)
         try:
@@ -233,7 +263,10 @@ def make_view_as_guard(
             return _unavailable("view_as", exc)
         if binding is None:  # only a revoked row reads `None` here: never "no context" (S4-SEC-02)
             return _unavailable("view_as", LookupError("unbound"))
-        reads = binding.phase is ViewAsPhase.LIVE and method in _SAFE_METHODS
+        refused_read = _refused_read(method, path, refused_reads)
+        reads = (
+            binding.phase is ViewAsPhase.LIVE and method in _SAFE_METHODS and refused_read is None
+        )
         context = ViewAsRequestContext(
             viewer_user_id=record.user_id,
             viewer_session_id=record.id,
@@ -261,9 +294,26 @@ def make_view_as_guard(
         reason: OperationReason = (
             "view_as_read_only" if binding.phase is ViewAsPhase.LIVE else "view_as_expired"
         )
+        if refused_read is not None:  # a HEAD's record names the GET template it reads
+            operation = (method, refused_read)
         return await _refuse(refusals(), context, reason, operation, source_ip(request.scope))
 
     return view_as_guard
+
+
+_RefusedRead = tuple[str, re.Pattern[str], str]
+
+
+def _compile_refused_reads(operations: Iterable[tuple[str, str]]) -> tuple[_RefusedRead, ...]:
+    """Each refused read's pattern as the router compiles its route (`compile_path`)."""
+    return tuple((m, compile_path(t)[0], t) for m, t in sorted(operations))
+
+
+def _refused_read(method: str, path: str, reads: tuple[_RefusedRead, ...]) -> str | None:
+    """The template of the refused read (`REFUSED_READS`) *path* routes to, as the router matches
+    it (`.match`), by its `GET`, so a `HEAD` of it is refused too; else `None`."""
+    read = "GET" if method == "HEAD" else method
+    return next((t for m, rx, t in reads if m == read and rx.match(path)), None)
 
 
 async def _target_refusal(

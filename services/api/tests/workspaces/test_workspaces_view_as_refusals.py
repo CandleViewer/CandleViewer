@@ -1,4 +1,5 @@
-"""#5435: every `/workspaces*` write route is refused in a live view-as context, one test per route.
+"""#5435: every `/workspaces*` write route, and `exportWorkspace` (SR-E15-19), is refused in a live
+view-as context, one test per route.
 
 The real workspaces router behind the real view-as guard (`make_view_as_guard`), over the guard
 tests' rig (`tests.unit.api.test_view_as_gate`): a write made while viewing answers
@@ -10,17 +11,25 @@ clocks are fake.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, cast
 
+import pytest
 from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
+from starlette.routing import Match, Route
 
 from candleviewer.api.deny_by_default import rbac_permissions
+from candleviewer.api.view_as_guard import (
+    _compile_refused_reads,
+    _refused_read,
+    make_view_as_guard,
+)
+from candleviewer.api.view_as_policy import REFUSED_READ_OPERATIONS, REFUSED_READS
 from candleviewer.api.view_as_refusals import VIEW_AS_REFUSED
 from candleviewer.api.workspaces import make_workspaces_router
 from candleviewer.auth.models import SessionRecord
 from tests.unit.admin.test_view_as_service import _VIEWER
-from tests.unit.api.test_view_as_gate import _code, _Gate, _guard, _spec
+from tests.unit.api.test_view_as_gate import _code, _declared, _Gate, _guard, _spec
 from tests.workspaces._workspaces_api_env import LAYOUT, Audit, Env, wire
 
 #: The router's write operations: (method, contract template) -> the body a client sends.
@@ -33,6 +42,8 @@ _WRITES: dict[tuple[str, str], dict[str, Any] | None] = {
     ("DELETE", "/workspaces/{workspaceId}/layouts/{layoutId}"): None,
 }
 _SAFE = frozenset({"GET", "HEAD", "OPTIONS"})
+#: The `/workspaces*` reads refused while viewing: `exportWorkspace`, not mounted until E15-S07.
+_EXPORT = ("GET", "/workspaces/{workspaceId}/export")
 
 
 class _Viewing:
@@ -67,7 +78,7 @@ class _Viewing:
 
     async def write(self, method: str, template: str, record: SessionRecord) -> Any:
         path = template.replace("{workspaceId}", self.wid).replace("{layoutId}", self.lid)
-        body = _WRITES[(method, template)]
+        body = _WRITES.get((method, template))
         model = "LayoutInput" if "layouts" in template else "WorkspaceInput"
         return await self.client.request(
             method,
@@ -132,3 +143,104 @@ def test_workspaces_write_routes_each_have_a_view_as_refusal_test() -> None:
         if method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
     }
     assert mounted == declared == set(_WRITES)
+    reads = {op for op in REFUSED_READ_OPERATIONS if re.match(r"/workspaces(/|$)", op[1])}
+    assert reads == {_EXPORT}  # a new refused `/workspaces*` read needs its own test here too
+
+
+def test_export_workspace_is_a_refused_read_of_the_contract() -> None:
+    """SR-E15-19 (#5435): the policy names `exportWorkspace` by its operationId and its
+    (METHOD, template), which the contract declares, and E15-S07 as the ticket that mounts it;
+    22 says it is refused in a live view-as context."""
+    assert REFUSED_READS["exportWorkspace"] == (_EXPORT, "E15-S07")
+    operation = _spec()["paths"][_EXPORT[1]]["get"]
+    assert operation["operationId"] == "exportWorkspace"
+    assert "view_as_read_only" in " ".join(operation["description"].split())
+
+
+async def test_export_workspace_live_view_as_refused_one_record() -> None:
+    """Refused before routing, so the refusal holds before E15-S07 mounts the route."""
+    await _assert_refused_once(*_EXPORT)
+
+
+async def test_export_workspace_head_live_view_as_refused() -> None:
+    """A refused HEAD's record names the `GET` template it reads, with its own method."""
+    viewing = _Viewing()
+    await viewing.seed()
+    record = await viewing.gate.rig.viewing()
+    response = await viewing.write("HEAD", _EXPORT[1], record)
+    assert response.status_code == 403 and viewing.env.repo.calls == []
+    (only,) = viewing.gate.writer.records
+    assert only[1]["reason"] == "view_as_read_only"
+    assert only[1]["after_state"] == {"method": "HEAD", "path": _EXPORT[1]}
+
+
+#: Percent-encoded control characters; the server unquotes them into the routed path.
+_CONTROLS = ("%0A", "%0a", "%0D", "%00")
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+@pytest.mark.parametrize("suffix", _CONTROLS)
+async def test_export_path_with_a_control_character_live_view_as_refused(
+    method: str, suffix: str
+) -> None:
+    """#5435: a path with a control character is refused while viewing, for every method, with
+    the CSRF layer's step 0 problem (`400 validation_failed`), before any routing or record."""
+    viewing = _Viewing()
+    await viewing.seed()
+    record = await viewing.gate.rig.viewing()
+    path = _EXPORT[1].replace("{workspaceId}", viewing.wid) + suffix
+    response = await viewing.client.request(
+        method, path, headers={"Authorization": f"Bearer {record.id}"}
+    )
+    assert response.status_code == 400
+    assert response.headers["content-type"] == "application/problem+json"
+    if method == "GET":
+        assert _code(response) == (400, "validation_failed")
+    assert viewing.env.repo.calls == [] and viewing.env.audit.calls == []
+    assert viewing.gate.writer.records == []
+
+
+@pytest.mark.parametrize("suffix", _CONTROLS)
+async def test_path_with_a_control_character_without_view_as_unchanged(suffix: str) -> None:
+    """The control-character refusal applies to a session holding a context only: a GET with no
+    view-as session gets the router's answer, as before (the export route is not mounted yet)."""
+    viewing = _Viewing()
+    await viewing.seed()
+    path = _EXPORT[1].replace("{workspaceId}", viewing.wid) + suffix
+    response = await viewing.client.get(path)
+    assert response.status_code == 404
+    assert viewing.gate.writer.records == []
+
+
+@pytest.mark.parametrize("suffix", ["", "\n", "\r", "\x00", "/", "/x", "\n\n"])
+def test_refused_read_match_agrees_with_routing(suffix: str) -> None:
+    """The guard's refused-read match and the router's route match agree on every path."""
+    reads = _compile_refused_reads(REFUSED_READ_OPERATIONS)
+    route = Route(_EXPORT[1], lambda _: None, methods=["GET"])
+    path = "/workspaces/w1/export" + suffix
+    for method in ("GET", "HEAD"):
+        scope = {"type": "http", "method": method, "path": path, "root_path": ""}
+        routed = route.matches(scope)[0] is Match.FULL
+        assert (_refused_read(method, path, reads) == _EXPORT[1]) is routed
+
+
+async def test_workspace_read_live_view_as_still_passes_as_target() -> None:
+    """The refused set is that one read: the workspace itself still reads as the target."""
+    viewing = _Viewing()
+    await viewing.seed()
+    record = await viewing.gate.rig.viewing()
+    response = await viewing.write("GET", "/workspaces/{workspaceId}", record)
+    assert response.status_code != 403 and viewing.gate.writer.records == []
+
+
+def test_guard_build_refuses_an_undeclared_refused_read() -> None:
+    with pytest.raises(ValueError, match="undeclared refused reads"):
+        _guard_without(_EXPORT)
+
+
+def _guard_without(operation: tuple[str, str]) -> Any:
+    gate = _Gate()
+    return make_view_as_guard(
+        cast(Any, gate.auth), views=lambda: gate.service, refusals=lambda: gate.refusals,
+        protective=gate.protective, operations=_declared() - {operation}, clock=gate.rig.clock,
+    )  # fmt: skip
