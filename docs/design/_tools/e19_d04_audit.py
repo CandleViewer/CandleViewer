@@ -98,7 +98,6 @@ CAPABILITIES = (
     "Anchor a profile",
     "Convert to anchored",
     "Remove an anchor",
-    "Restore the previous range",
     "Attach to a drawing",
     "Detach from a drawing",
     "Apply a preset",
