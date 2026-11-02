@@ -5,7 +5,14 @@
  */
 import * as copy from "./copy";
 import { formatRule } from "./format";
-import { statusOf, type InstrumentDetail, type RuleField, type RuleKey } from "./rules";
+import {
+  fundingMinutes,
+  isZero,
+  statusOf,
+  type InstrumentDetail,
+  type RuleField,
+  type RuleKey,
+} from "./rules";
 
 export interface RuleChange {
   readonly field: RuleField;
@@ -56,7 +63,7 @@ const SHAPES: readonly Shape[] = [
   {
     field: "min_notional_value",
     key: "min_notional_value",
-    read: rule((d) => (d.min_notional_value === "0" ? undefined : d.min_notional_value)),
+    read: rule((d) => (isZero(d.min_notional_value) ? undefined : d.min_notional_value)),
     unit: quote,
   },
   {
@@ -69,10 +76,10 @@ const SHAPES: readonly Shape[] = [
   {
     field: "funding_interval_minutes",
     key: "funding_interval",
-    read: (d) =>
-      d.funding_interval_minutes === undefined
-        ? copy.DASH
-        : copy.fundingInterval(d.funding_interval_minutes),
+    read: (d) => {
+      const minutes = fundingMinutes(d.funding_interval_minutes);
+      return minutes === null ? copy.DASH : copy.fundingInterval(minutes);
+    },
     unit: none,
   },
 ];

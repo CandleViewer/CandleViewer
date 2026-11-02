@@ -26,8 +26,10 @@ export interface CoverageView {
   readonly latestGap: string | null;
   /** Gap dates in full, with seconds, for the row's accessible description (F10). */
   readonly latestGapExact: string | null;
-  /** "No recorded data in the last 90 days": no stream has an interval. */
+  /** "No recorded data in the last 90 days": the body was read and no stream has an interval. */
   readonly empty: string | null;
+  /** The intervals could not be read (no interval has a readable `from`): never "no data". */
+  readonly unreadable: boolean;
 }
 
 const utcDay = (ms: number): string => {
@@ -68,11 +70,15 @@ const streamWord = (stream: string | undefined): string | null =>
 export function coverageView(coverage: DataCoverage): CoverageView {
   const earliest = new Map<string, number>();
   let hasData = false;
+  let unreadable = false;
   const gaps: { from: number; to: number; reason: string | undefined }[] = [];
   for (const stream of coverage.streams ?? []) {
     for (const interval of stream.intervals ?? []) {
       const from = time(interval.from);
-      if (from === null) continue;
+      if (from === null) {
+        unreadable = true;
+        continue;
+      }
       hasData = true;
       const word = streamWord(stream.stream);
       if (word !== null) earliest.set(word, Math.min(earliest.get(word) ?? from, from));
@@ -89,6 +95,17 @@ export function coverageView(coverage: DataCoverage): CoverageView {
       ? null
       : `${copy.coverageAsOf(utcTime(generated, true))} · ${copy.IMPORTED_DAYS}`;
   const streams = [...earliest].map(([word, from]) => copy.streamFrom(word, utcDay(from)));
+  if (!hasData && unreadable) {
+    return {
+      asOf: null,
+      streams: [],
+      gapCount: null,
+      latestGap: null,
+      latestGapExact: null,
+      empty: null,
+      unreadable: true,
+    };
+  }
   if (!hasData) {
     return {
       asOf,
@@ -97,6 +114,7 @@ export function coverageView(coverage: DataCoverage): CoverageView {
       latestGap: null,
       latestGapExact: null,
       empty: copy.NO_RECORDED_DATA,
+      unreadable: false,
     };
   }
   const latest = gaps.reduce<(typeof gaps)[number] | null>(
@@ -113,6 +131,7 @@ export function coverageView(coverage: DataCoverage): CoverageView {
         ? null
         : `${new Date(latest.from).toISOString().slice(0, 19)}Z–${new Date(latest.to).toISOString().slice(0, 19)}Z`,
     empty: null,
+    unreadable: false,
   };
 }
 
@@ -141,9 +160,10 @@ export async function fetchCoverage(
   if (signal.aborted) return null;
   if (answer === null) return { kind: "failed", status: null };
   if (answer.ok) {
-    return isCoverage(answer.body)
-      ? { kind: "ok", view: coverageView(answer.body) }
-      : { kind: "failed", status: answer.status };
+    if (!isCoverage(answer.body)) return { kind: "failed", status: answer.status };
+    const view = coverageView(answer.body);
+    // An unreadable body is the band's failure ("Couldn't load recorded coverage."), never "no data".
+    return view.unreadable ? { kind: "failed", status: answer.status } : { kind: "ok", view };
   }
   if (answer.status === 422) return { kind: "refused_422" };
   if (answer.status === 403) return { kind: "forbidden" };

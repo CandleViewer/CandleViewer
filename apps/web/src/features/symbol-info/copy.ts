@@ -1,6 +1,7 @@
 /**
  * The words of SCR-103 that the data layer composes: E08-D13's deck (`E08-D13-copy.json`, keys `d06.*`) and the
- * D06 sections it cites, verbatim. A string neither has is marked PROPOSED and carried as a G-row in the PR.
+ * D06 sections it cites, verbatim where they give words. A string neither gives is marked PROPOSED at its
+ * definition (owner named) and carried as a G-row in the PR; an unmarked string is one of the two sources'.
  */
 
 export const DASH = "—";
@@ -49,6 +50,10 @@ export const EXAMPLES = {
   down: (from: string, to: string): string => `${from} → ${to} (always down)`,
   refused: (price: string, qty: string, value: string): string =>
     `${price} × ${qty} = ${value} → refused`,
+  /** PROPOSED (D06 §5 case 2 gives the sum, not the words; owner: E08-D13): "150 → refused". */
+  refusedQty: (qty: string): string => `${qty} → refused`,
+  /** PROPOSED (D06 §5 case 4 gives the sum, not the words; owner: E08-D13): "0.001 → 0.000 (always down), refused". */
+  belowMin: (from: string, to: string): string => `${from} → ${to} (always down), refused`,
 } as const;
 
 /** D06 §4.1: "8 h" for whole hours, else "30 min"; the tag beside it. */
@@ -166,5 +171,6 @@ export const clockAlarmAt = (at: string, about: string): string =>
   `at ${at} UTC (in about ${about})`;
 export const clockSkew = (ms: number): string =>
   `Clock skew ${String(ms)} ms — the countdown may be off`;
+/** PROPOSED (the deck gives the plural; the singular "1 minute" is this layer's; owner: E08-D13). */
 export const fundingSpoken = (symbol: string, minutes: number): string =>
   `${symbol} funding settles in ${String(minutes)} ${minutes === 1 ? "minute" : "minutes"}.`;

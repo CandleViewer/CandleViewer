@@ -137,6 +137,16 @@ describe("buildRules", () => {
     );
   });
 
+  it("gives the maximum a refused example (D06 §5 case 2) and the minimum one only when refused", () => {
+    expect(row(BTC, "max_order_qty").value).toMatchObject({ example: "150.000 → refused" });
+    // case 4: 0.001 on a 0.003 step floors to 0.000 and is refused
+    const awkward = { ...BTC, qty_step: "0.003", min_order_qty: "0.001" };
+    expect(row(awkward, "min_order_qty").value).toMatchObject({
+      example: "0.001 → 0.000 (always down), refused",
+    });
+    expect(row(BTC, "min_order_qty").value).toMatchObject({ kind: "value", example: null });
+  });
+
   it("gives no refused example when the minimum order would pass", () => {
     const value = row({ ...BTC, min_notional_value: "0.0001" }, "min_notional_value").value;
     expect(value).toMatchObject({ kind: "value", example: null });

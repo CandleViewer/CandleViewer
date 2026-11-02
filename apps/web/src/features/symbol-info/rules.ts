@@ -122,6 +122,13 @@ function positional(input: string | undefined): string | null {
   return parsed.ok ? toPositional(minimal(parsed.dec)) : null;
 }
 
+/** The one zero rule: "0", "0.0" and "0.00" are the same zero, and a zero minimum value reads "—" (CR-1). */
+export const isZero = (input: string | undefined): boolean => positional(input) === "0";
+
+/** The funding interval the band shows, or `null` ("—") for an absent, zero, negative or fractional one. */
+export const fundingMinutes = (minutes: number | undefined): number | null =>
+  typeof minutes === "number" && Number.isInteger(minutes) && minutes > 0 ? minutes : null;
+
 /** A rule value row: its minimal text, unit and sentence; "—" when absent or unreadable. */
 function rule(
   input: string | undefined,
@@ -132,7 +139,7 @@ function rule(
 ): RuleValue {
   const shown = formatRule(input);
   if (shown.text === null) return { kind: "dash", malformed: shown.malformed };
-  if (zeroIsDash && positional(input) === "0") return DASH_ABSENT;
+  if (zeroIsDash && isZero(input)) return DASH_ABSENT;
   return {
     kind: "value",
     text: shown.text,
@@ -171,6 +178,54 @@ function qtyExample(stepInput: string | undefined): string | null {
   );
 }
 
+/** The instrument as the shared rule source reads it, or `null` when a rule it needs cannot be read. */
+function policyInstrument(detail: InstrumentDetail): policy.PolicyInstrument | null {
+  const tick = positional(detail.tick_size);
+  const step = positional(detail.qty_step);
+  const minQty = positional(detail.min_order_qty);
+  const maxQty = positional(detail.max_order_qty);
+  if (tick === null || step === null || minQty === null || maxQty === null) return null;
+  return {
+    symbol: detail.symbol,
+    status: "trading",
+    tickSize: tick,
+    qtyStep: step,
+    minOrderQty: minQty,
+    maxOrderQty: maxQty,
+    minNotional: positional(detail.min_notional_value) ?? "0",
+  };
+}
+
+/** D06 §5, case 4: the minimum itself, floored to the step, is checked: only shown when it is refused. */
+function minQtyExample(detail: InstrumentDetail): string | null {
+  const rules = policyInstrument(detail);
+  if (rules === null || parseDecimal(rules.minOrderQty).ok === false) return null;
+  const floored = policy.roundQty(rules.minOrderQty, rules.qtyStep);
+  const refused = policy
+    .validate(rules.tickSize, rules.minOrderQty, rules)
+    .some((violation) => violation.code === "QTY_BELOW_MIN");
+  return refused
+    ? copy.EXAMPLES.belowMin(
+        formatAtStep(rules.minOrderQty, rules.qtyStep).text ?? rules.minOrderQty,
+        formatAtStep(floored, rules.qtyStep).text ?? floored,
+      )
+    : null;
+}
+
+/** D06 §5, case 2: one and a half times the maximum is refused (150 on a 100 maximum). */
+function maxQtyExample(detail: InstrumentDetail): string | null {
+  const rules = policyInstrument(detail);
+  const max = rules === null ? null : parseDecimal(rules.maxOrderQty);
+  if (rules === null || max === null || !max.ok || max.dec.unscaled <= 0n) return null;
+  const over = toPositional(
+    minimal({ unscaled: max.dec.unscaled * 15n, scale: max.dec.scale + 1 }),
+  );
+  const refused = policy
+    .validate(rules.tickSize, over, rules)
+    .some((violation) => violation.code === "QTY_ABOVE_MAX");
+  return refused ? copy.EXAMPLES.refusedQty(formatAtStep(over, rules.qtyStep).text ?? over) : null;
+}
+
 /** "1.0 × 0.001 = 0.001 → refused", only when the shared rule source does refuse that order. */
 function valueExample(detail: InstrumentDetail): string | null {
   const tick = positional(detail.tick_size);
@@ -195,10 +250,11 @@ function valueExample(detail: InstrumentDetail): string | null {
 }
 
 function funding(minutes: number | undefined): RuleValue {
-  if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes <= 0) return DASH_ABSENT;
+  const shown = fundingMinutes(minutes);
+  if (shown === null) return DASH_ABSENT;
   return {
     kind: "value",
-    text: copy.fundingInterval(minutes),
+    text: copy.fundingInterval(shown),
     unit: null,
     sentence: null,
     example: null,
@@ -285,14 +341,14 @@ export function buildRules(detail: InstrumentDetail, nowMs: number): RulesView {
       label: copy.LABELS.min_order_qty,
       field: "min_order_qty",
       tag: null,
-      value: rule(detail.min_order_qty, base, copy.SENTENCES.minQty),
+      value: rule(detail.min_order_qty, base, copy.SENTENCES.minQty, minQtyExample(detail)),
     },
     {
       key: "max_order_qty",
       label: copy.LABELS.max_order_qty,
       field: "max_order_qty",
       tag: null,
-      value: rule(detail.max_order_qty, base, copy.SENTENCES.maxQty),
+      value: rule(detail.max_order_qty, base, copy.SENTENCES.maxQty, maxQtyExample(detail)),
     },
     {
       key: "max_mkt_order_qty",

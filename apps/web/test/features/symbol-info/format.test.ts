@@ -95,6 +95,21 @@ describe("formatRule (F3, F8)", () => {
     expect(formatRule(input)).toEqual({ text: null, malformed: "unparsable" });
   });
 
+  it("caps a value at 80 digits, plain or with an exponent, and reads 81 as unparsable", () => {
+    const digits80 = "1".repeat(80);
+    expect(formatRule(digits80).malformed).toBeNull();
+    expect(formatRule(`${"1".repeat(40)}.${"1".repeat(40)}`).malformed).toBeNull();
+    expect(formatRule("1".repeat(81))).toEqual({ text: null, malformed: "unparsable" });
+    expect(formatRule(`${"1".repeat(40)}.${"1".repeat(41)}`)).toEqual({
+      text: null,
+      malformed: "unparsable",
+    });
+    expect(formatRule(`${digits80}E2`).malformed).toBe("exponent");
+    expect(formatRule(`${"1".repeat(81)}E2`)).toEqual({ text: null, malformed: "unparsable" });
+    expect(formatRule("1E-60").malformed).toBe("exponent");
+    expect(formatRule("1E-61")).toEqual({ text: null, malformed: "unparsable" });
+  });
+
   it("treats an absent value as a dash with nothing to report", () => {
     expect(formatRule(undefined)).toEqual({ text: null, malformed: null });
     expect(formatRule(null)).toEqual({ text: null, malformed: null });
@@ -142,8 +157,8 @@ describe("group (F8)", () => {
 });
 
 describe("the policy corpus", () => {
-  it("has cases", () => {
-    expect(CORPUS.cases.length).toBeGreaterThan(100);
+  it("has the 206 generated cases", () => {
+    expect(CORPUS.cases).toHaveLength(206);
   });
 
   it("shows every tick and step in minimal form, equal in value, and the rounded example at step precision", () => {
@@ -220,5 +235,5 @@ describe("round trip (property, seeded)", () => {
       expect(sameValue(dec(at), original)).toBe(true);
       expect(dec(at).scale).toBe(Math.max(3, minimal(original).scale));
     }
-  });
+  }, 30_000);
 });

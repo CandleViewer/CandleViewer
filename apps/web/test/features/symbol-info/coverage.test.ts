@@ -79,6 +79,7 @@ describe("coverageView", () => {
       latestGap: "4 Sep 02:11–02:15 UTC, connection lost",
       latestGapExact: "2026-09-04T02:11:00Z–2026-09-04T02:14:20Z",
       empty: null,
+      unreadable: false,
     });
   });
 
@@ -120,13 +121,31 @@ describe("coverageView", () => {
     expect(view.streams).toEqual(["trades from 1 Sep", "order book from 5 Sep"]);
   });
 
-  it("skips a malformed time instead of guessing", () => {
+  it("reads an interval it cannot parse as unreadable, never as no data", () => {
     const view = coverageView({
       streams: [
         { stream: "trades", intervals: [{ from: "nope" }], gaps: [{ from: "x", to: "y" }] },
       ],
     });
-    expect(view.empty).not.toBeNull();
+    expect(view.unreadable).toBe(true);
+    expect(view.empty).toBeNull();
+  });
+
+  it("says no recorded data only for a body that was read and holds no interval", () => {
+    const view = coverageView({ streams: [{ stream: "trades", intervals: [], gaps: [] }] });
+    expect(view).toMatchObject({
+      unreadable: false,
+      empty: "No recorded data in the last 90 days",
+    });
+  });
+
+  it("keeps the readable intervals when only some are unreadable", () => {
+    const view = coverageView({
+      streams: [
+        { stream: "trades", intervals: [{ from: "nope" }, { from: "2026-09-01T00:00:00Z" }] },
+      ],
+    });
+    expect(view).toMatchObject({ unreadable: false, empty: null, streams: ["trades from 1 Sep"] });
   });
 });
 
@@ -142,6 +161,13 @@ describe("fetchCoverage", () => {
     const out = await fetchCoverage("BTCUSDT", signal());
     expect(out?.kind).toBe("ok");
     expect(apiFetch.mock.calls[0]?.[0]).toBe("/api/v1/market/data-coverage?symbol=BTCUSDT");
+  });
+
+  it("maps a 200 whose intervals cannot be read to the band's failure", async () => {
+    apiFetch.mockResolvedValueOnce(
+      json(200, { streams: [{ stream: "trades", intervals: [{ from: "nope" }] }] }),
+    );
+    expect(await fetchCoverage("BTCUSDT", signal())).toEqual({ kind: "failed", status: 200 });
   });
 
   it("maps 422, 403, other statuses and a network error, each on its own", async () => {

@@ -95,6 +95,28 @@ describe("diffRules", () => {
     expect(diff.changes[0]).toMatchObject({ field: "min_notional_value", was: "—", now: "5" });
   });
 
+  it("reads a zero minimum value and a zero interval as one thing, however they are spelled", () => {
+    for (const zero of ["0", "0.0", "0.00"]) {
+      expect(
+        diffRules({ ...SOL, min_notional_value: "0" }, { ...SOL, min_notional_value: zero }),
+      ).toEqual({ changes: [], revisionFrom: 7, revisionTo: 7 });
+    }
+    const diff = diffRules(
+      { ...SOL, min_notional_value: "0" },
+      { ...SOL, min_notional_value: "0.00" },
+    );
+    expect(announcementFor(diff)).toBeNull();
+    expect(wasFor(diff, "min_notional_value")).toBeNull();
+    for (const interval of [0, -5, 1.5]) {
+      expect(
+        diffRules(without(SOL, "funding_interval_minutes"), {
+          ...SOL,
+          funding_interval_minutes: interval,
+        }).changes,
+      ).toEqual([]);
+    }
+  });
+
   it("gives no note without both revisions", () => {
     const diff = diffRules(without(SOL, "revision"), { ...SOL, tick_size: "1" });
     expect(changedNote(diff, 0)).toBeNull();
