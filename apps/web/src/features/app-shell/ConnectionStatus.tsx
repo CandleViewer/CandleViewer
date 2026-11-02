@@ -16,6 +16,10 @@ export interface ConnectionStatusProps {
   /** `connecting` before the session's first `auth_ok` (§5, Q1): "Connecting…", no counter. */
   readonly firstConnect?: boolean;
   readonly staleAgeMs?: number;
+  /** §2 row 12: `meta.stale` on a ticker or book: "Stale (server)". */
+  readonly serverStale?: boolean;
+  /** §2 row 13: the exchange's public feed is down: "Stale — exchange feed down". */
+  readonly upstreamDown?: boolean;
   readonly strong?: boolean;
   readonly throttleMultiplier?: number;
   /** The clock for the age; the container ticks it at 1 Hz while disconnected. */
@@ -37,7 +41,11 @@ const LOOK: Record<ConnectionChipStatus | "strong", readonly [Glyph, string, str
   offline: [{ icon: "close" }, "status-danger-subtle", "status-danger-strong"],
 };
 
-/** The chip word (E17-D02 §10 A). Words without a number are PROPOSED where §10 A has none. */
+/**
+ * The chip word (E17-D02 §10 A). Words without a number are PROPOSED where §10 A has none. The age
+ * reads "Stale 7 s" (#5345, as §10 C and §11 space it): §10 A's "Stale 7s" is not part of its own
+ * name "Stale 7 seconds", which SC 2.5.3 (Label in Name) needs; "7 s" is.
+ */
 export function chipWord(p: ConnectionStatusProps): string {
   switch (p.status) {
     case "live":
@@ -47,13 +55,27 @@ export function chipWord(p: ConnectionStatusProps): string {
         ? "Reduced rate"
         : `Reduced rate ×${p.throttleMultiplier}`;
     case "stale":
-      return p.staleAgeMs === undefined ? "Stale" : `Stale ${Math.floor(p.staleAgeMs / 1000)}s`;
+      if (p.upstreamDown === true) return "Stale — exchange feed down";
+      if (p.serverStale === true) return "Stale (server)";
+      return p.staleAgeMs === undefined ? "Stale" : `Stale ${Math.floor(p.staleAgeMs / 1000)} s`;
     case "reconnecting":
       if (p.firstConnect === true) return "Connecting…";
       return p.attempt === undefined ? "Reconnecting" : `Reconnecting (${p.attempt})`;
     case "offline":
       return "Offline — retry stopped";
   }
+}
+
+/**
+ * The word as the name says it (DF-24, CP-7; E17-D02 §10 A "Connection: Stale 7 seconds, …"): a
+ * stale age spelled out, whose visible "Stale 7 s" stays part of it (SC 2.5.3); every other word
+ * is its own name.
+ */
+function spokenWord(p: ConnectionStatusProps): string {
+  const plain = p.upstreamDown !== true && p.serverStale !== true;
+  if (p.status !== "stale" || !plain || p.staleAgeMs === undefined) return chipWord(p);
+  const s = Math.floor(p.staleAgeMs / 1000);
+  return `Stale ${s} ${s === 1 ? "second" : "seconds"}`;
 }
 
 /** "13:42:05", UTC. */
@@ -109,19 +131,18 @@ function useCrossFade(status: ConnectionChipStatus): CSSProperties {
  * CMP-076 ConnectionStatus (#304 S3; E17-D02 §5): props only; glyph + word + fill, never colour
  * alone; **owns no live region** (§11: the shell announcer does).
  *
- * Deferred: the details popover (a later #304 slice, once the `connection_quality` numbers reach
- * the client) and the tooltip (CMP-016 Tooltip, E05-S02 #265); until then the UTC time is in the
- * name and a `title`, and there is no `aria-haspopup`. It stays the merged spec's native `<button>`
- * with no action yet: a Tab stop keeps the name and time reachable from the keyboard, and the
- * popover slice adds the action without changing the Tab order.
+ * Deferred (the rest of E08-D14 DF-24, carried by #5345): the details popover (the
+ * `connection_quality` numbers now reach the shell store) and the tooltip (CMP-016 Tooltip); until
+ * then the UTC time is in the name and a `title`, and there is no `aria-haspopup`. It stays the
+ * merged spec's native `<button>` with no action yet: a Tab stop keeps the name and time reachable
+ * from the keyboard, and the popover adds the action without changing the Tab order.
  *
  * Focus is the CMP-039 ring (`useFocusRing()`, #304 S10, BQ-05). The hairline border is decoration:
  * the word and the glyph identify the control (SC 1.4.11 needs no 3:1 boundary; BQ-04, pending the
  * E47-T01 re-audit). The content cross-fades on a status change (BQ-10).
  *
  * PROPOSED / deferred visuals: `density` (one compact pill for now); hover styling; the `type.ui.caption` /
- * `.label` token (inherited font); the 20 px pill inside a 24 px target (the pill is the target);
- * the `serverStale` and `upstreamDown` detail states (no source in the shell store).
+ * `.label` token (inherited font); the 20 px pill inside a 24 px target (the pill is the target).
  */
 export function ConnectionStatus(props: ConnectionStatusProps): JSX.Element {
   const { status, lastGoodTs, nowMs } = props;
@@ -133,7 +154,7 @@ export function ConnectionStatus(props: ConnectionStatusProps): JSX.Element {
   const at = lastGoodTs === null ? null : utc(lastGoodTs);
   // SC 2.5.3: the visible words lead; "last data" is said once ("…, last data 00:12 ago, 13:42:05 UTC").
   const time = at === null ? null : age === null ? `last data ${at} UTC` : `${at} UTC`;
-  const name = [`Connection: ${word}`, age, time];
+  const name = [`Connection: ${spokenWord(props)}`, age, time];
   const [glyph, fill, ink] = LOOK[status === "stale" && props.strong === true ? "strong" : status];
   const ring = useFocusRing();
   const fade = useCrossFade(status);

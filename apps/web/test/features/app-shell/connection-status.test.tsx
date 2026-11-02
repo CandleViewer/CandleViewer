@@ -48,10 +48,16 @@ const STATES: readonly [ConnectionStatusProps, string][] = [
     { status: "delayed", lastGoodTs: T0, throttleMultiplier: 4, nowMs: T0 },
     `Reduced rate ×4, ${UTC}`,
   ],
-  [{ status: "stale", lastGoodTs: T0, staleAgeMs: 7_400, nowMs: T0 }, `Stale 7s, ${UTC}`],
+  [{ status: "stale", lastGoodTs: T0, staleAgeMs: 7_400, nowMs: T0 }, `Stale 7 seconds, ${UTC}`],
   [
     { status: "stale", lastGoodTs: T0, staleAgeMs: 15e3, strong: true, nowMs: T0 },
-    `Stale 15s, ${UTC}`,
+    `Stale 15 seconds, ${UTC}`,
+  ],
+  // #5345: the two detail states E17-D02 §5 draws on the stale value (rows 12 and 13)
+  [{ status: "stale", lastGoodTs: null, serverStale: true, nowMs: T0 }, "Stale (server)"],
+  [
+    { status: "stale", lastGoodTs: T0, upstreamDown: true, nowMs: T0 },
+    `Stale — exchange feed down, ${UTC}`,
   ],
   [
     { status: "reconnecting", lastGoodTs: T0, attempt: 3, nowMs: T0 + 12e3 },
@@ -71,8 +77,9 @@ describe("CMP-076 ConnectionStatus chip", () => {
       const { container } = render(<ConnectionStatus {...props} />);
       const chip = screen.getByRole("button", { name: `Connection: ${name}` });
       // Every visible part of the name is text on the chip (SC 2.5.3); the UTC time is the title.
+      // DF-24 (CP-7): the name spells the age out, "Stale 7 seconds" for the chip's "Stale 7 s".
       for (const part of name.split(", ").filter((p) => !p.endsWith("UTC"))) {
-        expect(chip).toHaveTextContent(part);
+        expect(chip).toHaveTextContent(part.replace(/ (\d+) seconds?$/u, " $1 s"));
       }
       expect(chip.querySelector("[data-glyph] :is(svg, [aria-hidden='true'])")).not.toBeNull();
       expect(chip.getAttribute("title")).toBe(
@@ -83,6 +90,27 @@ describe("CMP-076 ConnectionStatus chip", () => {
       expect(await seriousAxe(container)).toEqual([]);
     },
   );
+});
+
+describe("DF-24 (CP-7): the accessible name spells the stale age out", () => {
+  it.each([
+    [7_400, "Stale 7 s", "Connection: Stale 7 seconds, last data 13:42:05 UTC"],
+    [15_000, "Stale 15 s", "Connection: Stale 15 seconds, last data 13:42:05 UTC"],
+    [1_999, "Stale 1 s", "Connection: Stale 1 second, last data 13:42:05 UTC"],
+  ])("%i ms: the chip reads %s and is named %s", async (staleAgeMs, word, name) => {
+    const { container } = render(
+      <ConnectionStatus status="stale" lastGoodTs={T0} staleAgeMs={staleAgeMs} nowMs={T0} />,
+    );
+    const chip = screen.getByRole("button", { name });
+    expect(chip).toHaveTextContent(word);
+    // axe's label-content-name-mismatch (SC 2.5.3) runs here: "Stale 7 s" is part of the name.
+    expect(await seriousAxe(container)).toEqual([]);
+  });
+
+  it("the other words are their own names", () => {
+    render(<ConnectionStatus status="stale" lastGoodTs={null} serverStale nowMs={T0} />);
+    expect(screen.getByRole("button", { name: "Connection: Stale (server)" })).toBeVisible();
+  });
 });
 
 describe("the shell announcer", () => {

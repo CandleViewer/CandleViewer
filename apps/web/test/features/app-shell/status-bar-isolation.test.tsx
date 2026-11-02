@@ -8,8 +8,16 @@ import type * as StatusBarModule from "../../../src/features/app-shell/StatusBar
 import { clearAnnouncements } from "../../../src/features/app-shell/announcer";
 import { ShellLayout } from "../../../src/features/app-shell/ShellLayout";
 import { resetMeClaims, setMeClaims } from "../../../src/lib/auth/meCache";
-import { resetShellState, setShellState } from "../../../src/shell/bootstrap/store.js";
+import {
+  applySystemUpdate,
+  resetShellState,
+  setShellState,
+} from "../../../src/shell/bootstrap/store.js";
 import { toLatencyIndicator } from "../../../src/lib/telemetry/latencyIndicator.js";
+import type { TopicReading } from "../../../src/lib/ws/state/chipState";
+import { reduce } from "../../../src/lib/ws/state/reducer";
+import { OFF, authOk, connecting, quality, stream } from "../../lib/ws/support/engineEvents";
+import { fakeActiveClient, runEvents } from "../../lib/ws/support/fakeActiveClient";
 
 const renders = { shell: 0, statusBar: 0, statusSubtree: 0, outlet: 0 };
 
@@ -92,5 +100,65 @@ describe("E10-S01 S4: the 1 Hz status bar never re-renders the shell or the work
     // The leaves did re-render inside the status bar: the clock and latency chip, once per second.
     expect(renders.statusSubtree - base.statusSubtree).toBeGreaterThanOrEqual(60);
     router.dispose();
+  });
+
+  it("#5345: the chip's new sources (topics, the exchange's feed, the link quality) re-render no shell, status bar or workspace", () => {
+    const up = runEvents(connecting, authOk(OFF), stream("live"));
+    const ws = fakeActiveClient(up);
+    const ticker = (freshAtMs: number): TopicReading => ({
+      ch: "ticker.BTCUSDT",
+      rs: undefined,
+      source: "live",
+      status: "live",
+      freshAtMs,
+      serverStale: false,
+      awaitingReconnect: false,
+    });
+    ws.setTopics([ticker(T0)]);
+    act(() => setShellState({ connection: { kind: "live" }, latency: toLatencyIndicator(38) }));
+    const router = createMemoryRouter(
+      [{ element: <ShellLayout />, children: [{ path: "/", element: <Screen /> }] }],
+      { initialEntries: ["/"] },
+    );
+    render(<RouterProvider router={router} />);
+    const header = screen.getByRole("banner");
+    const base = { ...renders };
+
+    for (let s = 1; s <= 60; s += 1) {
+      act(() => {
+        setShellState({ latency: toLatencyIndicator(38 + (s % 5)) });
+        // 0-9 s: the ticker goes stale; 10 s: fresh; 20-29 s: the exchange's feed down; 30-39 s: saturated
+        if (s === 10) ws.setTopics([ticker(Date.now())]);
+        if (s === 20) applySystemUpdate({ kind: "exchange_state", public_ws: "disconnected" });
+        if (s > 20 && s < 30)
+          applySystemUpdate({ kind: "health", exchange: { public_ws: "disconnected" } });
+        if (s === 30) {
+          applySystemUpdate({ kind: "exchange_state", public_ws: "connected" });
+          ws.setTopics([ticker(Date.now())]);
+        }
+        vi.advanceTimersByTime(1000);
+      });
+      if (s === 7) {
+        expect(within(header).getByRole("button", { name: /^Connection: Stale 7/ })).toBeVisible();
+      }
+      if (s === 25) {
+        expect(within(header).getByRole("button", { name: /exchange feed down/ })).toBeVisible();
+      }
+      if (s === 31) {
+        ws.go(reduce(up, quality("saturated")));
+        act(() => applySystemUpdate({ kind: "connection_quality", class: "saturated" }));
+      }
+      if (s === 33) {
+        expect(
+          within(header).getByRole("button", { name: /^Connection: Reduced rate/ }),
+        ).toBeVisible();
+      }
+    }
+
+    expect(renders.outlet - base.outlet).toBe(0);
+    expect(renders.shell - base.shell).toBe(0);
+    expect(renders.statusBar - base.statusBar).toBe(0);
+    router.dispose();
+    ws.detach();
   });
 });

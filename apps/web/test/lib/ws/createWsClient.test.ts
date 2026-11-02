@@ -837,3 +837,120 @@ describe("the page it lives in", () => {
     client.stop(); // it listened to the real document and window
   });
 });
+
+describe("topics(): what the CMP-076 chip reads of each consumer (E17-D02 §3; #5345)", () => {
+  const T = Date.UTC(2026, 10, 1, 13, 42, 5);
+  const staleSnap = (seq: number): TopicFrame => ({
+    kind: "snap",
+    seq,
+    ts: 1_000,
+    ...base,
+    meta: { stale: true },
+    bodies: [{ e: "j", p: {} }],
+  });
+  const at = (ms: number): void => void vi.setSystemTime(T + ms);
+  const reading = (client: ReturnType<typeof rig>["client"], i = 0) => client.topics()[i];
+
+  it("lists each consumer with its consume time until its first frame; a release drops it", () => {
+    const { client } = rig();
+    at(0);
+    const live = client.consume(SPEC);
+    at(500);
+    client.consume({ ...SPEC, ch: "ticker.BTCUSDT" }, RS);
+    expect(client.topics()).toEqual([
+      {
+        ch: SPEC.ch,
+        rs: undefined,
+        source: "live",
+        status: "pending",
+        freshAtMs: T,
+        serverStale: false,
+        awaitingReconnect: false,
+      },
+      {
+        ch: "ticker.BTCUSDT",
+        rs: RS,
+        source: "replay",
+        status: "pending",
+        freshAtMs: T + 500,
+        serverStale: false,
+        awaitingReconnect: false,
+      },
+    ]);
+    live.release();
+    expect(client.topics().map((t) => t.ch)).toEqual(["ticker.BTCUSDT"]);
+  });
+
+  it("a snapshot and a delta are fresh at their arrival; a message without frames is not", () => {
+    const { client, port, display } = rig();
+    at(0);
+    client.consume(SPEC);
+    at(1_000);
+    port.say(data("c1", [snap(1)]));
+    expect(reading(client)).toMatchObject({ freshAtMs: T + 1_000, status: "pending" });
+    at(3_000);
+    port.say(data("c1", [delta(2)]));
+    at(9_000);
+    port.say(data("c1", [], { status: "live" }));
+    expect(reading(client)?.freshAtMs).toBe(T + 3_000);
+    display.frame(); // the status follows the display, as the handle's does
+    expect(reading(client)?.status).toBe("live");
+  });
+
+  it("meta.stale (or a structured body's own stale) holds from its snapshot to the next one, and is no fresh frame", () => {
+    const { client, port } = rig();
+    at(0);
+    client.consume(SPEC);
+    at(1_000);
+    port.say(data("c1", [snap(1)]));
+    at(2_000);
+    port.say(data("c1", [staleSnap(2)]));
+    expect(reading(client)).toMatchObject({ serverStale: true, freshAtMs: T + 1_000 });
+    at(3_000);
+    port.say(data("c1", [delta(3), reset("gap")]));
+    expect(reading(client)).toMatchObject({ serverStale: true, freshAtMs: T + 3_000 });
+    port.say(data("c1", [snap(4)]));
+    expect(reading(client)?.serverStale).toBe(false);
+    const bodyStale: TopicFrame = {
+      kind: "snap",
+      seq: 5,
+      ts: 1_000,
+      ...base,
+      bodies: [{ e: "j", p: { stale: true } }],
+    };
+    port.say(data("c1", [bodyStale]));
+    expect(reading(client)?.serverStale).toBe(true);
+  });
+
+  it("a reconnect's reset marks it waiting for its snapshot; any snapshot ends the wait", () => {
+    const { client, port } = rig();
+    client.consume(SPEC);
+    port.say(data("c1", [snap(1)]));
+    port.say(data("c1", [reset("gap")]));
+    expect(reading(client)?.awaitingReconnect).toBe(false);
+    port.say(data("c1", [{ kind: "reset", reason: "reconnect" }]));
+    expect(reading(client)?.awaitingReconnect).toBe(true);
+    port.say(data("c1", [staleSnap(1)]));
+    expect(reading(client)?.awaitingReconnect).toBe(false);
+  });
+
+  it("a delta dropped while the consumer waits for a snapshot after an overflow is not fresh", () => {
+    const { client, port } = rig({ queueLimits: { maxFrames: 3, maxBytes: 1e9 } });
+    at(0);
+    client.consume(SPEC);
+    port.say(data("c1", [snap(1), delta(2), delta(3), delta(4)])); // voided: it waits for a snapshot
+    const voidedAt = reading(client)?.freshAtMs;
+    at(4_000);
+    port.say(data("c1", [delta(5)])); // it extends a baseline that is gone
+    expect(reading(client)?.freshAtMs).toBe(voidedAt);
+    port.say(data("c1", [snap(9)]));
+    expect(reading(client)?.freshAtMs).toBe(T + 4_000);
+  });
+
+  it("a stopped client reads no topic", () => {
+    const { client } = rig();
+    client.consume(SPEC);
+    client.stop();
+    expect(client.topics()).toEqual([]);
+  });
+});
