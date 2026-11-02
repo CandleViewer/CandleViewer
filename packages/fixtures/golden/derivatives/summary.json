@@ -1,0 +1,29 @@
+{
+  "cases": {
+    "btc_4h_paired": {
+      "bars": 150,
+      "sha256": "b988d3c50933b9ef82c67feb7ee53967962c79e4ced34de74dba97974a83bc3b"
+    },
+    "btc_8h_15m": {
+      "bars": 30,
+      "sha256": "cc627dfa45355a8a409eb245bdbda5efe88d76ef3ae26e9d6fc622516eefe52e"
+    },
+    "btc_8h_15m_stale_open": {
+      "bars": 30,
+      "sha256": "02d32db8449f4542179ef79bac252b83babe6b868759ead9c16ebea059101a6f"
+    },
+    "btc_8h_no_oi": {
+      "bars": 150,
+      "sha256": "32a2cb543cddf51229be48f7214928b168a920ea94835dba291741e12307501b"
+    },
+    "btc_8h_recorder_gap": {
+      "bars": 150,
+      "sha256": "76d8f4da3a0e5665ac0a7ad1b9737864b97c1af5b4dbf900a1be189076fa3c7b"
+    },
+    "btc_8h_slice": {
+      "bars": 150,
+      "sha256": "2f290bbd604837d869688a55783ad5d7ad74e9702faeb7f279646903a3cafaca"
+    }
+  },
+  "version": 1
+}

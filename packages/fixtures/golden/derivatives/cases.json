@@ -1,0 +1,180 @@
+{
+  "version": 1,
+  "fixture_dir": "2026-10-05",
+  "inputs": {
+    "klines": [
+      "rest/kline_BTCUSDT_1_page0.json",
+      "rest/kline_BTCUSDT_1_page1.json",
+      "rest/kline_BTCUSDT_1_page2.json"
+    ],
+    "oi": [
+      "rest/open_interest_BTCUSDT_5min_page0.json",
+      "rest/open_interest_BTCUSDT_5min_page1.json"
+    ],
+    "tickers": "ws/burst_tickers_BTCUSDT.jsonl",
+    "funding": {
+      "btc_8h": "rest/funding_history_BTCUSDT_8h.json",
+      "eth_4h": "rest/funding_history_ETHUSDT_4h.json"
+    }
+  },
+  "oi_value_price": "60000",
+  "oi_value_note": "the REST OI history carries no USD value; the harness derives open_interest_value = openInterest * oi_value_price (a declared constant, applied by the loader to the engine and to the Parquet the reference reads)",
+  "grid_start_ms": 1699999980000,
+  "cases": [
+    {
+      "id": "btc_8h_slice",
+      "lane": "pr",
+      "interval_min": 480,
+      "funding": "btc_8h",
+      "bars": {
+        "from_ms": 1699999980000,
+        "count": 150
+      },
+      "drops": [],
+      "covers": "UTC day boundary and the 8 h settlement at 1700006400000 (2023-11-15T00:00Z) inside the window; ticker bars 22:13 and 22:14"
+    },
+    {
+      "id": "btc_8h_no_oi",
+      "lane": "pr",
+      "interval_min": 480,
+      "funding": "btc_8h",
+      "bars": {
+        "from_ms": 1699999980000,
+        "count": 150
+      },
+      "drops": [
+        {
+          "stream": "oi",
+          "from_ms": 1700004000000,
+          "to_ms": 1700005800000,
+          "reason": "no_oi_samples: six 5-min samples 23:20..23:45 removed"
+        }
+      ],
+      "covers": "1 m bars with no OI sample in the bar and an open carried within the bound; the hole is 30 min wide, so open_interest itself turns None past the bound"
+    },
+    {
+      "id": "btc_8h_recorder_gap",
+      "lane": "pr",
+      "interval_min": 480,
+      "funding": "btc_8h",
+      "bars": {
+        "from_ms": 1699999980000,
+        "count": 150
+      },
+      "drops": [
+        {
+          "stream": "oi",
+          "from_ms": 1699999800000,
+          "to_ms": 1700000700000,
+          "reason": "recording_gaps span"
+        },
+        {
+          "stream": "tickers",
+          "from_ms": 1699999800000,
+          "to_ms": 1700000700000,
+          "reason": "recording_gaps span"
+        }
+      ],
+      "covers": "a span with no OI and no ticker at the head of the grid: funding from the settled row, basis and premium None"
+    },
+    {
+      "id": "btc_4h_paired",
+      "lane": "pr",
+      "interval_min": 240,
+      "funding": "eth_4h",
+      "paired": true,
+      "bars": {
+        "from_ms": 1699999980000,
+        "count": 150
+      },
+      "drops": [],
+      "covers": "a 4 h funding symbol: BTCUSDT grid, OI and tickers with the ETHUSDT 4 h settled rows (corpus has no ETH grid); annualisation factor 2190"
+    },
+    {
+      "id": "btc_8h_15m",
+      "lane": "pr",
+      "interval_min": 480,
+      "funding": "btc_8h",
+      "bars": {
+        "from_ms": 1699999980000,
+        "count": 30,
+        "minutes": 15
+      },
+      "drops": [],
+      "covers": "15 min bars (the 1 m klines folded: first open, last close): the OI samples (5 min, aligned to the minute) fall inside a bar, so the delta is non-zero and the quadrant classifies"
+    },
+    {
+      "id": "btc_8h_15m_stale_open",
+      "lane": "pr",
+      "interval_min": 480,
+      "funding": "btc_8h",
+      "bars": {
+        "from_ms": 1699999980000,
+        "count": 30,
+        "minutes": 15
+      },
+      "drops": [
+        {
+          "stream": "oi",
+          "from_ms": 1700004900000,
+          "to_ms": 1700005560000,
+          "reason": "no_oi_samples: three 5-min samples 23:35, 23:40, 23:45 removed"
+        }
+      ],
+      "covers": "the 15 min bar starting 23:43 holds samples but its last at-or-before sample (23:30) is 13 min old, past the 10 min bound: delta and quadrant None, never 0 (the 1 m grid cannot show this, every OI sample sits on a bar start there)"
+    },
+    {
+      "id": "btc_8h_full",
+      "lane": "harness",
+      "interval_min": 480,
+      "funding": "btc_8h",
+      "bars": {
+        "from_ms": 1699999980000,
+        "count": 450
+      },
+      "drops": [],
+      "covers": "the whole 450-bar kline window"
+    },
+    {
+      "id": "btc_4h_paired_full",
+      "lane": "harness",
+      "interval_min": 240,
+      "funding": "eth_4h",
+      "paired": true,
+      "bars": {
+        "from_ms": 1699999980000,
+        "count": 450
+      },
+      "drops": [],
+      "covers": "the 4 h paired case over the whole window"
+    },
+    {
+      "id": "btc_8h_5m_full",
+      "lane": "harness",
+      "interval_min": 480,
+      "funding": "btc_8h",
+      "bars": {
+        "from_ms": 1699999980000,
+        "count": 90,
+        "minutes": 5
+      },
+      "drops": [],
+      "covers": "5 min bars over the window (offset 3 min from the OI samples, so each bar holds one)"
+    }
+  ],
+  "follow_up_cases": [
+    {
+      "id": "btc_8h_cascade",
+      "status": "follow-up PR once #5273 lands",
+      "needs": "ws/allLiquidation_BTCUSDT_burst.jsonl (9 pushes 22:23:20..22:23:29)",
+      "covers": "liquidation cascade across bars, per-side buckets, the bucket split at 00:00"
+    },
+    {
+      "id": "btc_8h_liquidation_dedup",
+      "status": "follow-up PR once #5273 lands",
+      "needs": "the twin prints in push 2 and the replayed push 2",
+      "covers": "an identical print counted once; reference/liquidations.sql; mutation 4 (dedup removed)"
+    }
+  ],
+  "real_capture": "a recorded symbol-day drops in as new entries under `cases` plus a new `fixture_dir`; no harness code change"
+}
