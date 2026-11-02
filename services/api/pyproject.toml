@@ -82,9 +82,10 @@ default-groups = ["dev", "test"]
 packages = ["candleviewer"]
 
 # #2893 (ADR-0036): the dev-only `cvdev` package ships in no artefact. The wheel above names only
-# `candleviewer`; the sdist leaves `cvdev` out as well, so no distribution carries it.
+# `candleviewer`; the sdist leaves `cvdev` out as well, so no distribution carries it. #3319
+# (ADR-0041): the backup sidecar `cvbackup` ships only in its own image, never in a distribution.
 [tool.hatch.build.targets.sdist]
-exclude = ["/cvdev"]
+exclude = ["/cvdev", "/cvbackup"]
 
 [tool.ruff]
 line-length = 100
@@ -185,7 +186,7 @@ markers = [
 ]
 # `not flaky`: a test quarantined per C-9.3 runs in no lane; a workflow pytest call that sets its
 # own -m repeats it (scripts/tests/test_workflow_pytest_markers.py, #3091).
-addopts = "-m \"not fuzz and not perf and not harness and not flaky\" --strict-markers --cov=candleviewer --cov=cvdev --cov-branch --cov-fail-under=85"
+addopts = "-m \"not fuzz and not perf and not harness and not flaky\" --strict-markers --cov=candleviewer --cov=cvdev --cov=cvbackup --cov-branch --cov-fail-under=85"
 testpaths = ["tests"]
 # #4777: the suite-level bound, the only time bound a test may rely on (03 §14). A test still
 # running after 120 s fails with a traceback and the lane goes on: `signal` (SIGALRM, POSIX)
@@ -198,8 +199,9 @@ timeout_method = "signal"
 [tool.coverage.run]
 branch = true
 # #2893 (ADR-0036): the dev-only `cvdev` package is measured too; it never ships, but its guards
-# keep fixture traffic away from real keys and hosts, so they are held to the same floor.
-source = ["candleviewer", "cvdev"]
+# keep fixture traffic away from real keys and hosts, so they are held to the same floor. #3319
+# (ADR-0041): so is the backup sidecar `cvbackup`, which ships in its own image.
+source = ["candleviewer", "cvdev", "cvbackup"]
 # #2424: the `py` CI job combines the data of parallel test lanes; relative paths keep that
 # combine independent of where each lane's job checked the repository out.
 relative_files = true

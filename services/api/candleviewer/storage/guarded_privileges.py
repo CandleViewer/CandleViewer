@@ -8,18 +8,26 @@ what the revisions' upgrades revoke from `cv_app`. The tripwire
 the two differ: a REVOKE with no entry, an entry with no REVOKE, or one that a later upgrade
 grants back. A column grant (`GRANT UPDATE (replayed_at)`, 0033) gives no table privilege back.
 
+The login must also be a member of none of `PRIVILEGED_ROLES` (ADR-0041 section 1): `cv_backup`
+and `cv_restore`, the backup sidecar's dump and restore roles, and `cv_owner`, the objects' owner.
+A membership would hand the API a database-wide read or the owner's rights, the audit tables'
+included (C-5.7). The same read reports each membership (`pg_has_role(..., 'MEMBER')`, direct or
+inherited) and the check judges it as it judges a held pair.
+
 `check_guarded_privileges` runs once at start-up, from `StorageService.start()` on the real
 backend once the tiers answer, on the storage tier's own connection, so it reads the role the app
 runs as. One statement asks `has_table_privilege(current_user, ...)` for every pinned pair, each
 table looked up in schema `public` whatever the login's `search_path`
 (`repositories.guarded_privileges_sqlalchemy`). In `live`, a held pair, a pinned table missing
-from `public` (its pairs cannot be checked) or a check that cannot run refuses the start
-(`GuardedPrivilegesHeld`: fail closed). Elsewhere each is logged at ERROR and counted in
-`cv_db_guarded_privileges_held`, where a pair that could not be checked counts as held, the
+from `public` (its pairs cannot be checked), a membership of a privileged role or a check that
+cannot run refuses the start (`GuardedPrivilegesHeld`: fail closed). Elsewhere each is logged at
+ERROR and counted in `cv_db_guarded_privileges_held`, where a pair that could not be checked
+counts as held, and each membership as one more, the
 counts go to `StorageService.tier_health()` (`/readyz` is degraded while either is above 0) and
 the start goes on. A superuser, or the owner of a table (the dev compose `cv` login, a test
-container's superuser, `cv_owner`), holds every privilege there: outside `live` that is logged
-once with `exempt=True` and is not a violation. The log lines and the error name tables and
+container's superuser, `cv_owner`), holds every privilege there, and a superuser is a member
+of every role: outside `live` that is logged once with `exempt=True`, and neither its pairs nor its
+memberships are a violation. The log lines and the error name tables and
 privileges, never the role, the DSN or a driver's message (C-12.6); `login_kind` says only
 whether the login is a superuser, an owner or the runtime role. No driver import: the tripwire
 and the check read this module without a database.
@@ -72,6 +80,9 @@ GUARDED_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
 )
 #: Every pinned (table, privilege) pair, sorted: the order the check asks for them.
 GUARDED_PAIRS: Final = tuple(sorted((t, p) for t, ps in GUARDED_PRIVILEGES.items() for p in ps))
+#: The roles the API's login must not be a member of (ADR-0041 section 1), sorted: the backup
+#: sidecar's dump and restore roles, and the objects' owner.
+PRIVILEGED_ROLES: Final = ("cv_backup", "cv_owner", "cv_restore")
 
 
 def _log() -> Any:
@@ -91,12 +102,14 @@ class HeldPrivilege:
 
 @dataclass(frozen=True, slots=True)
 class PrivilegeReport:
-    """What one read found: whether the role is a superuser, the pinned pairs it holds, and the
-    pinned tables missing from schema `public`, whose pairs it could not check."""
+    """What one read found: whether the role is a superuser, the pinned pairs it holds, the
+    pinned tables missing from schema `public`, whose pairs it could not check, and the
+    `PRIVILEGED_ROLES` it is a member of, sorted."""
 
     superuser: bool
     held: tuple[HeldPrivilege, ...]
     missing: tuple[str, ...]
+    member_of: tuple[str, ...] = ()
 
     @property
     def tables_present(self) -> int:
@@ -132,6 +145,7 @@ async def check_guarded_privileges(
             tables_present=present,
         )
     found = report.held if live else tuple(h for h in report.held if not h.via_owner)
+    members = () if exempt else report.member_of
     problems: list[str] = []
     if found:
         names = [f"{h.table}.{h.privilege}" for h in found]
@@ -139,6 +153,14 @@ async def check_guarded_privileges(
             "storage_guarded_privileges_held", held=names, login_kind=login_kind, refused=live
         )
         problems.append("the runtime role holds guarded privileges: " + ", ".join(names))
+    if members:
+        _log().error(
+            "storage_guarded_privileges_member",
+            memberships=list(members),
+            login_kind=login_kind,
+            refused=live,
+        )
+        problems.append("the runtime role is a member of: " + ", ".join(members))
     if report.missing:
         missing = list(report.missing)
         _log().error(
@@ -153,7 +175,7 @@ async def check_guarded_privileges(
             "storage_guarded_privileges_checked", pairs=len(GUARDED_PAIRS), tables_present=present
         )
     unchecked_pairs = sum(len(GUARDED_PRIVILEGES.get(t, frozenset())) for t in report.missing)
-    held = len(found) + unchecked_pairs
+    held = len(found) + unchecked_pairs + len(members)
     return _judged(gauge, held, len(report.missing), live=live, problem="; ".join(problems))
 
 

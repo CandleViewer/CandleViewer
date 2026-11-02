@@ -9,10 +9,17 @@
 # `cvdev` (#2893, ADR-0036) is the dev-only sibling package, never packaged
 # and not an M-module, so it has no manifest entry. It is a root only so that
 # the protected-secrets and protected-audit contracts below see its imports.
+#
+# `cvbackup` (#3319, ADR-0041 section 1) is the backup sidecar: a separate
+# process in its own image, not an M-module and not in the API wheel or image,
+# so it has no manifest entry. It is a root so that the independence contract
+# below holds both directions between it and `candleviewer`, and the forbidden
+# contract keeps the API's third-party packages out of the sidecar image.
 
 [importlinter]
 root_packages =
     candleviewer
+    cvbackup
     cvdev
 include_external_packages = True
 exclude_type_checking_imports = True
@@ -1245,4 +1252,43 @@ source_modules =
     candleviewer.oms
 forbidden_modules =
     candleviewer.exchange.bybit
+
+[importlinter:contract:independence-backup-sidecar]
+name = ADR-0041 the backup sidecar and candleviewer import nothing of each other
+type = independence
+modules =
+    candleviewer
+    cvbackup
+
+[importlinter:contract:forbidden-cvbackup-thirdparty]
+name = ADR-0041 the backup sidecar imports none of the API's third-party packages
+type = forbidden
+source_modules =
+    cvbackup
+forbidden_modules =
+    alembic
+    argon2
+    asyncpg
+    cryptography
+    duckdb
+    fastapi
+    httpx
+    jsonschema
+    msgpack
+    numpy
+    opentelemetry
+    orjson
+    prometheus_client
+    psutil
+    pyarrow
+    pydantic
+    pydantic_core
+    pydantic_settings
+    sqlalchemy
+    starlette
+    structlog
+    uvicorn
+    websockets
+    xstate_statemachine
+    yaml
 

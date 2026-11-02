@@ -2,7 +2,7 @@
 --
 -- Idempotent cluster/role bootstrap for the Postgres relational tier
 -- (`docs/plan/21-database-schema.md` Sec.1.1). Creates the three roles the
--- rest of the schema assumes exist — `cv_owner` (DDL, runs migrations),
+-- rest of the schema assumes exist (and the backup sidecar's two, below) — `cv_owner` (DDL, runs migrations),
 -- `cv_app` (DML only, no DDL — the runtime role every request handler
 -- connects as), `cv_ro` (read-only, the only role the DuckDB `postgres`
 -- attachment in Sec.5.5 may use) — plus the default-privilege grants that
@@ -11,7 +11,8 @@
 --
 -- Run as a Postgres superuser (`psql -v ON_ERROR_STOP=1 -f
 -- infra/scripts/pg_bootstrap.sql`), with passwords supplied as `-v`
--- overrides: `-v owner_pw='...' -v app_pw='...' -v ro_pw='...'`
+-- overrides: `-v owner_pw='...' -v app_pw='...' -v ro_pw='...'`, and
+-- optionally `-v backup_pw='...' -v restore_pw='...'` for the backup roles
 -- (C-12.2/SR-120..124 — never a value committed to this file). The `\if
 -- :{?owner_pw}` guards below are pure psql variable-existence checks (no
 -- backticks, no shell command substitution), so this parses and runs the
@@ -67,6 +68,43 @@ WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'cv_app')
 SELECT format('CREATE ROLE cv_ro LOGIN PASSWORD %L', :'ro_pw')
 WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'cv_ro')
 \gexec
+
+-- The backup sidecar's two roles (ADR-0041 section 1, `21-database-schema.md`
+-- Sec.1.1 "Backup roles"); the API never logs in as either. Their grants are
+-- revision `0066_backup_role_grants`'s, which needs both to exist: a
+-- migration runs as `cv_owner`, which can neither create a role nor make
+-- one a member of itself.
+--   * `cv_backup` runs `pg_dump`, read-only. It is created `LOGIN` with the
+--     password `-v backup_pw=...` supplies; without one it is created
+--     `NOLOGIN` with no password, so it exists for the grants and nothing can
+--     log in as it (fail closed, C-12.2: no default password).
+--   * `cv_restore` runs restore jobs only, with the owner's rights through
+--     its membership in `cv_owner`. It is always created `NOLOGIN`, with the
+--     password `-v restore_pw=...` supplies, if any; the Owner's host-side
+--     step for one restore job enables its login `VALID UNTIL` the job's
+--     deadline, and the runbook's closing step sets it `NOLOGIN` again.
+-- An existing role is left as it is, password and login included.
+\if :{?backup_pw}
+SELECT format('CREATE ROLE cv_backup LOGIN PASSWORD %L', :'backup_pw')
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'cv_backup')
+\gexec
+\else
+SELECT 'CREATE ROLE cv_backup NOLOGIN'
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'cv_backup')
+\gexec
+\endif
+
+\if :{?restore_pw}
+SELECT format('CREATE ROLE cv_restore NOLOGIN PASSWORD %L', :'restore_pw')
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'cv_restore')
+\gexec
+\else
+SELECT 'CREATE ROLE cv_restore NOLOGIN'
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'cv_restore')
+\gexec
+\endif
+
+GRANT cv_owner TO cv_restore;
 
 SELECT 'CREATE DATABASE candleviewer OWNER cv_owner'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'candleviewer')

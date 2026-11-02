@@ -6,7 +6,10 @@ arrays and come back one row each. Each table is looked up by name in schema `pu
 path hides is still checked and one missing from `public` is `present = false`, its pair not
 checked. `has_table_privilege(current_user, ...)` says whether the role the app logs in as holds a
 pair; `via_owner` is `pg_has_role(current_user, <the table's owner>, 'USAGE')`: the role owns the
-table or has its owner's privileges, as a superuser has every role's.
+table or has its owner's privileges, as a superuser has every role's. `member_of`, the same on
+every row, lists the `PRIVILEGED_ROLES` that exist and that the role is a member of, directly or
+through another role (`pg_has_role(..., 'MEMBER')`; a superuser is a member of every role), bound
+as a third text array; a role that does not exist is no membership.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ import sqlalchemy as sa
 from candleviewer.storage.guarded_privileges import (
     GUARDED_PAIRS,
     GUARDED_PRIVILEGES,
+    PRIVILEGED_ROLES,
     HeldPrivilege,
     PrivilegeReport,
 )
@@ -29,7 +33,10 @@ _HELD: Final = sa.text(
     "SELECT g.tbl AS table_name, g.priv AS privilege, c.oid IS NOT NULL AS present, "
     "c.oid IS NOT NULL AND has_table_privilege(current_user, c.oid, g.priv) AS held, "
     "c.oid IS NOT NULL AND pg_has_role(current_user, c.relowner, 'USAGE') AS via_owner, "
-    "(SELECT r.rolsuper FROM pg_roles r WHERE r.rolname = current_user) AS superuser "
+    "(SELECT r.rolsuper FROM pg_roles r WHERE r.rolname = current_user) AS superuser, "
+    "ARRAY(SELECT m.rolname::text FROM pg_roles m "
+    "WHERE m.rolname = ANY(CAST(:roles AS text[])) "
+    "AND pg_has_role(current_user, m.oid, 'MEMBER') ORDER BY 1) AS member_of "
     "FROM unnest(CAST(:tables AS text[]), CAST(:privileges AS text[])) AS g(tbl, priv) "
     "LEFT JOIN pg_namespace n ON n.nspname = 'public' "
     "LEFT JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = CAST(g.tbl AS name) "
@@ -44,11 +51,13 @@ class SqlAlchemyGuardedPrivileges:
         self._relational = relational
 
     async def held(self) -> PrivilegeReport:
-        """The pinned pairs the role holds, ordered by table and privilege for the log line, and
-        the pinned tables not in `public`: one with no row counts as missing (fail closed)."""
+        """The pinned pairs the role holds, ordered by table and privilege for the log line, the
+        pinned tables not in `public`: one with no row counts as missing (fail closed), and the
+        privileged roles it is a member of."""
         params = {
             "tables": [table for table, _ in GUARDED_PAIRS],
             "privileges": [privilege for _, privilege in GUARDED_PAIRS],
+            "roles": list(PRIVILEGED_ROLES),
         }
         async with self._relational.unit_of_work() as uow:  # a read: nothing to commit
             rows = (await uow.session.execute(_HELD, params)).mappings().all()
@@ -61,4 +70,5 @@ class SqlAlchemyGuardedPrivileges:
                 if row["held"]
             ),
             missing=tuple(sorted(GUARDED_PRIVILEGES.keys() - present)),
+            member_of=tuple(sorted({str(r) for row in rows for r in row["member_of"] or ()})),
         )

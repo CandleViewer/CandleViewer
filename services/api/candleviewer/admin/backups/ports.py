@@ -79,20 +79,32 @@ class BackupRunner(Protocol):
 
 class ScratchVerifier(Protocol):
     async def verify(
-        self, backup_id: UUID, location: str, artefact: OpenArtefact | None, progress: Progress
+        self,
+        backup_id: UUID,
+        location: str,
+        artefact: OpenArtefact | None,
+        progress: Progress,
+        *,
+        digest: str | None = None,
     ) -> VerifyMethod:
-        """Restore into scratch and assert, once the digest matched. `artefact` is the file the
-        job hashed, still open: read it through `stream()` only, never by reopening `location`,
-        so no file swapped in after the hash is decrypted (Q7); `None` for a directory or a
+        """Check the backup at the depth the returned `verify_method` names, once the service's
+        own digest pass matched (ADR-0041 section 3). `artefact` is the file that pass hashed,
+        still open, which the service closes, and `digest` the SHA-256 it computed, 64 lowercase
+        hex. An engine that reads the bytes here reads them through `stream()` only; one that
+        checks the file on its own descriptor (the backup sidecar's header check) compares
+        `digest`, in constant time, with the digest of the bytes it checked (the sidecar's
+        client compares the one the sidecar answers), so a file swapped in after the service's
+        hash fails as `verify_failed`. `artefact` and `digest` are `None` for a directory or a
         repository, which this checks at `location` itself (Q8), so it is that backup's only
         integrity gate: it first resolves `location`, without following a symbolic link, to a
         directory inside the backup root (`CV_BACKUP_ROOT`) before reading anything, else fails
         conclusively (SR-BK9-02). Returns the `verify_method`. Any content failure (a failed
-        assertion, content corrupt or unexpected) raises `BackupJobError("verify_failed")`,
-        conclusive (SR-CD2-02); only the environment's faults are inconclusive: an unreadable
-        volume or store (`ArtefactUnreadable`, `StorageTierUnavailable`,
-        `BackupJobError("store_unavailable")`) or a timeout. The job takes anything else it raises
-        as `verify_failed` too. It bounds the wait and, cancelled, closes the artefact."""
+        assertion, content corrupt or unexpected, a digest that differs) raises
+        `BackupJobError("verify_failed")`, conclusive (SR-CD2-02); only the environment's faults
+        are inconclusive: an unreadable volume or store (`ArtefactUnreadable`,
+        `StorageTierUnavailable`, `BackupJobError("store_unavailable")`) or a timeout. The job
+        takes anything else it raises as `verify_failed` too. It bounds the wait and, cancelled,
+        stops its work."""
 
 
 class ArtefactRemover(Protocol):

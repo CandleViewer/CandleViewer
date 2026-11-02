@@ -180,7 +180,8 @@ def test_cvdev_is_an_import_linter_root_under_the_protected_contracts() -> None:
     imports are in the graph that the C-3.2 and C-3.3 `protected` contracts check."""
     config = configparser.ConfigParser(interpolation=None)
     config.read(PACKAGE.parent / ".importlinter", encoding="utf-8")
-    assert config["importlinter"]["root_packages"].split() == ["candleviewer", "cvdev"]
+    roots = config["importlinter"]["root_packages"].split()
+    assert roots == ["candleviewer", "cvbackup", "cvdev"]  # cvbackup: ADR-0041, #3319
     for name in ("protected-secrets", "protected-audit"):
         contract = config[f"importlinter:contract:{name}"]
         assert contract["type"] == "protected"
