@@ -31,6 +31,11 @@ export interface FetchJsonOptions {
   readonly signal?: AbortSignal | undefined;
   /** Test seam; defaults to the global `fetch`. */
   readonly fetchImpl?: typeof fetch | undefined;
+  /**
+   * #5405: a lost session answers this call's `401` without the token holder routing to sign-in (its
+   * `SendOptions.quiet`); the caller routes. Only the route loaders' `/me` re-read sets it.
+   */
+  readonly quiet?: boolean | undefined;
 }
 
 /**
@@ -41,7 +46,7 @@ export interface FetchJsonOptions {
  * can show a "slow boot" state rather than a generic failure).
  */
 export async function fetchJson<T>(path: string, options: FetchJsonOptions): Promise<T> {
-  const { timeoutMs, signal, fetchImpl = fetch } = options;
+  const { timeoutMs, signal, fetchImpl = fetch, quiet = false } = options;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const onExternalAbort = (): void => controller.abort();
@@ -49,16 +54,16 @@ export async function fetchJson<T>(path: string, options: FetchJsonOptions): Pro
 
   try {
     // #2712: the tab's bearer, and one refresh then one more try on a 401
-    const response = await accessToken.send(
-      path,
-      {
-        method: "GET",
-        credentials: "include",
-        signal: controller.signal,
-        headers: { accept: "application/json" },
-      },
-      (init) => fetchImpl(path, init),
-    );
+    const init: RequestInit = {
+      method: "GET",
+      credentials: "include",
+      signal: controller.signal,
+      headers: { accept: "application/json" },
+    };
+    const transport = (sent: RequestInit): Promise<Response> => fetchImpl(path, sent);
+    const response = quiet
+      ? await accessToken.send(path, init, transport, { quiet: true })
+      : await accessToken.send(path, init, transport);
     if (!response.ok) {
       const problem: unknown = await response.json().catch(() => null);
       const code = (problem as { code?: unknown } | null)?.code;

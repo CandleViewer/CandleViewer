@@ -31,6 +31,17 @@ export type RefreshOutcome = "ok" | "locked" | "lost" | "failed";
 /** Why a session ended, for SCR-001's reason line: a fixed key, never text from a response or the user. */
 export type SignOutReason = "unlock_attempts";
 type Transport = (init: RequestInit) => Promise<Response>;
+/**
+ * `quiet` (#5405): a refresh this call starts that finds the session lost forgets the token, here and in
+ * the siblings, but does not route to sign-in; the caller gets the `401` and, if `isSignedOut()` says
+ * the session is gone (not a failed or locked refresh), routes itself. Only the
+ * route loaders' `/me` re-read uses it: it runs before the navigation commits, so the holder's route,
+ * built from `window.location`, would carry the page being left instead of the destination. A refresh a
+ * loud caller (any other call, the timer, `getToken`, `refresh`) also waits on routes as before.
+ */
+export interface SendOptions {
+  readonly quiet?: boolean;
+}
 
 export const REFRESH_PATH = "/api/v1/auth/refresh";
 export const REFRESH_LOCK = "cv.auth.refresh";
@@ -136,6 +147,11 @@ export interface AccessTokenHolder extends TokenSource {
   /** Logout or a lost session: forgets the token and routes to sign-in, with `reason` if given. */
   endSession(reason?: SignOutReason): void;
   /**
+   * Whether the session is known to be gone here: a refresh found it lost, or it was cleared or ended,
+   * here or in a sibling tab, and no bundle has come since. Reads state only: starts no refresh (#5405).
+   */
+  isSignedOut(): boolean;
+  /**
    * Calls `listener` each time the session is found idle-locked: a refresh answered `locked`, or a call got
    * `401 session_idle_locked`. Returns the unsubscribe.
    */
@@ -146,7 +162,12 @@ export interface AccessTokenHolder extends TokenSource {
    * Sends with the bearer to a same-origin API URL. A refusal a new token cures (a 401, or a CSRF refusal
    * of the bearer sent) renews it and repeats the call once; a returned bundle is held.
    */
-  send(input: RequestInfo | URL, init: RequestInit, transport: Transport): Promise<Response>;
+  send(
+    input: RequestInfo | URL,
+    init: RequestInit,
+    transport: Transport,
+    options?: SendOptions,
+  ): Promise<Response>;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -311,6 +332,8 @@ export function createAccessTokenHolder(
   let bearerRefused = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let inFlight: Promise<RefreshOutcome> | null = null;
+  /** A caller other than a `quiet` one waits on the refresh in flight: a lost session routes to sign-in. */
+  let loud = false;
   /** Refreshes that wait for a sibling's bundle. */
   const waiting = new Set<() => void>();
   const lockListeners = new Set<() => void>();
@@ -415,7 +438,8 @@ export function createAccessTokenHolder(
    * and each tab that held it routes to sign-in. A page load, holding none, leaves that to the route guard.
    */
   function lose(): RefreshOutcome {
-    if (token === null) clear();
+    // only `quiet` callers waited (#5405): each routes itself, to where it is going
+    if (token === null || !loud) clear();
     else endSession();
     return "lost";
   }
@@ -505,8 +529,9 @@ export function createAccessTokenHolder(
   }
 
   /** The tab's one refresh, shared by every caller while it runs, under the cross-tab lock; never rejects. */
-  function begin(): Promise<RefreshOutcome> {
+  function begin(quiet = false): Promise<RefreshOutcome> {
     if (Date.now() < lockedUntil) return Promise.resolve("locked");
+    loud = inFlight === null ? !quiet : loud || !quiet;
     if (inFlight === null) {
       const askedWith = readCsrfCookie();
       inFlight = exclusive(() => post(askedWith))
@@ -522,11 +547,12 @@ export function createAccessTokenHolder(
   async function renewAfter(
     rejected: string | undefined,
     signal: AbortSignal | null | undefined,
+    quiet: boolean,
   ): Promise<string | null> {
     if (token !== null && token.value !== rejected) return token.value; // renewed here or by a sibling
     if (signedOut) return null; // the session ended: nothing to renew
     stale = true;
-    return (await waitFor(begin(), signal)) === "ok" ? (token?.value ?? null) : null;
+    return (await waitFor(begin(quiet), signal)) === "ok" ? (token?.value ?? null) : null;
   }
 
   /** Whether a new token may cure `res`: a 401 but an idle lock's, or a CSRF refusal of the bearer sent. */
@@ -557,6 +583,7 @@ export function createAccessTokenHolder(
     set,
     clear,
     endSession,
+    isSignedOut: () => signedOut,
     refresh: () => waitFor(begin()),
     onLocked(listener) {
       lockListeners.add(listener);
@@ -573,7 +600,7 @@ export function createAccessTokenHolder(
     invalidate(): void {
       stale = true;
     },
-    async send(input, init, transport) {
+    async send(input, init, transport, options) {
       const path = apiPath(input);
       if (path === null) return transport(init);
       const attempt = (value: string | undefined): Promise<Response> =>
@@ -594,7 +621,7 @@ export function createAccessTokenHolder(
       // one renewal, then the call once more
       const repeatable = !path.startsWith(AUTH_PREFIX) || AUTH_REPEATABLE.has(path);
       if (!cookieOnly && repeatable && (await renewable(res, sent !== undefined))) {
-        const next = await renewAfter(sent, init.signal);
+        const next = await renewAfter(sent, init.signal, options?.quiet === true);
         init.signal?.throwIfAborted(); // the caller stopped waiting: as `fetch` would, it is told so
         if (next !== null) res = await attempt(next);
         renewed = next !== null;
