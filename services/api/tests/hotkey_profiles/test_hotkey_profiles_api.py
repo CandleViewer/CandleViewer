@@ -130,7 +130,8 @@ def test_scenario_the_clients_own_default_profile_is_accepted(env: Env) -> None:
     """Scenario: the client's own default profile is accepted. Every command at its default, the
     non-chord shapes and the three locked commands included, is 201 and nothing is rewritten."""
     default = _client_default()
-    assert len(default) == len(VOCABULARY.commands) == 76
+    # 85 commands since main's keymap gained the rule builder's nine `rules.*` commands (E47-S03).
+    assert len(default) == len(VOCABULARY.commands) == 85
     r = env.c.post("/settings/hotkeys", json={"name": "Default", "bindings": default})
     assert r.status_code == 201, r.text
     assert _REWRITTEN not in r.headers
