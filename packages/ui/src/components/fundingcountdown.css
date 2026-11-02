@@ -1,0 +1,68 @@
+/*
+ * CMP-126 FundingCountdown (E08-D06 §7). Static: the digits swap once a second with no fade and no colour step.
+ * The rate takes buy / sell only on its own text, whose sign is a character, so colour is never the signal; the
+ * under-5-minutes state is a glyph plus the words "settles in", in color.status.warning.strong.
+ */
+.cv-funding {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-inset-xs);
+  min-width: 0;
+}
+
+/* Wraps at the "·" for 200 % zoom (R1): each part stays whole, the two may stack. */
+.cv-funding__count {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-inset-xs);
+}
+
+.cv-funding .cv-funding__digits {
+  color: inherit;
+}
+
+.cv-funding__part {
+  white-space: nowrap;
+}
+
+.cv-funding__warn {
+  display: inline-flex;
+  align-self: center;
+  color: var(--color-status-warning-strong);
+}
+
+.cv-funding .cv-funding__rate[data-sign="positive"] {
+  color: var(--color-buy-default);
+}
+
+.cv-funding .cv-funding__rate[data-sign="negative"] {
+  color: var(--color-sell-default);
+}
+
+.cv-funding .cv-funding__rate[data-sign="zero"] {
+  color: var(--color-neutral-default);
+}
+
+/* A sentence, not a number: it wraps at 200 % zoom rather than clipping. */
+.cv-funding__note,
+.cv-funding__absolute {
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.cv-funding__absolute {
+  display: inline-flex;
+  flex-direction: column;
+  color: inherit;
+}
+
+@media (forced-colors: active) {
+  .cv-funding .cv-funding__rate,
+  .cv-funding .cv-funding__digits,
+  .cv-funding__warn,
+  .cv-funding__note {
+    color: CanvasText;
+  }
+}

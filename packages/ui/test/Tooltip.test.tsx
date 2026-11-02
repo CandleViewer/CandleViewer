@@ -447,6 +447,97 @@ describe("Tooltip (CMP-016)", () => {
     expect(onHostKey).toHaveBeenCalledWith("Escape");
   });
 
+  it("a press on a gated trigger keeps its reason echo up (G-T2.3: a press re-shows why)", async () => {
+    const host = await saveAs();
+    const button = trigger(host);
+    await focus(button);
+    expect(shown()).toBe(true);
+    await act(async () => {
+      fireEvent.pointerDown(button);
+    });
+    await advance(1000);
+    expect(shown()).toBe(true);
+  });
+
+  it("never shows while its trigger's popup is open, however the pointer or focus returns", async () => {
+    const host = await saveAs();
+    const button = trigger(host);
+    button.setAttribute("aria-haspopup", "dialog");
+    button.setAttribute("aria-expanded", "true");
+    await hover(button);
+    await advance(1000);
+    expect(shown()).toBe(false);
+    await unhover(button);
+    await hover(button);
+    await advance(1000);
+    expect(shown()).toBe(false);
+    await focus(button);
+    expect(shown()).toBe(false);
+    button.setAttribute("aria-expanded", "false");
+    await unhover(button);
+    await hover(button);
+    await advance(300);
+    expect(shown()).toBe(true);
+  });
+
+  it("an Esc while its trigger's popup is open hides the echo and passes on to the popup", async () => {
+    const host = await saveAs();
+    const button = trigger(host);
+    await hover(button);
+    await advance(300);
+    expect(shown()).toBe(true);
+    button.setAttribute("aria-haspopup", "dialog");
+    button.setAttribute("aria-expanded", "true");
+    const reached = vi.fn((event: KeyboardEvent) => event.defaultPrevented);
+    document.addEventListener("keydown", reached);
+    try {
+      await press(document.body, "Escape");
+    } finally {
+      document.removeEventListener("keydown", reached);
+    }
+    expect(shown()).toBe(false);
+    expect(reached).toHaveBeenCalledTimes(1);
+    expect(reached).toHaveReturnedWith(false);
+  });
+
+  it("an expanded disclosure (no aria-haspopup) keeps its echo, and an Esc stops at the echo", async () => {
+    const host = await saveAs();
+    const button = trigger(host);
+    button.setAttribute("aria-expanded", "true");
+    await hover(button);
+    await advance(300);
+    expect(shown()).toBe(true);
+    const reached = vi.fn();
+    document.addEventListener("keydown", reached);
+    try {
+      await press(document.body, "Escape");
+    } finally {
+      document.removeEventListener("keydown", reached);
+    }
+    expect(shown()).toBe(false);
+    expect(reached).not.toHaveBeenCalled();
+  });
+
+  it("content that arrives while the trigger's popup is open does not show the echo", async () => {
+    let setContent: (next: string) => void = () => undefined;
+    function Host(): JSX.Element {
+      const [content, set] = useState("");
+      setContent = set;
+      return (
+        <Tooltip content={content} mode="echo">
+          <Button aria-haspopup="dialog" aria-expanded={true}>
+            Save as
+          </Button>
+        </Tooltip>
+      );
+    }
+    const host = await mount(<Host />);
+    const button = trigger(host);
+    await hover(button);
+    await act(async () => setContent(TEXT));
+    expect(shown()).toBe(false);
+  });
+
   it("Esc also hides a hover-opened tooltip; it stays hidden until the pointer leaves and returns", async () => {
     const host = await saveAs();
     const button = trigger(host);
