@@ -26,7 +26,8 @@ mutations).
    verbatim on `05`:152), G-T2 (the T2 paragraph once in §5.4 with every standing-gate element;
    every §0 / §8 / §10 / §11 line naming T2 cites §5.4; the hand-off's component line names CMP-079
    and CMP-019), G-PUBLIC (no URL, host, local path, worker name or secret-shaped string), G-PENDING
-   (the heading names the comment; BQ-0 … BQ-13 once each, "default built", none ruled), G-BOARDS
+   (the heading names the ruling; BQ-0 … BQ-13 once each, "default built"; BQ-0 … BQ-10 open with
+   "RULED (<ruling>)", BQ-11 … BQ-13 never say RULED), G-BOARDS
    (at most ten, every board pending, twins at most a third, the not-drawn paragraph, the hand-off's
    board plan the same boards), G-HEUR, G-WALK (at most ten), G-OWNER (G-ledger owners are tickets
    or owners, never an agent), G-UNTOUCHED (only this ticket's files differ from the merge base with
@@ -113,8 +114,10 @@ CITE_FILES = {
 FILE_BASE = {p.rel: p.sha for p in PINS}
 
 BQ_COMMENT = "6566520929"  # the BQ list on #1304
-BQ_HEAD = f"defaults built; ruling pending (comment {BQ_COMMENT})"
+RULING = "6566806435"  # the orchestrator's rulings of record on BQ-0 … BQ-10
+BQ_HEAD = f"RULED (comment {RULING}, on the BQ list {BQ_COMMENT})"
 BQ_IDS = tuple(f"BQ-{n}" for n in range(14))
+BQ_RULED = frozenset(f"BQ-{n}" for n in range(11))  # the ruling names BQ-0 … BQ-10 only
 BQ_DEFAULT = "default built"
 PENDING_CELL = "pending: drawn later in this PR"
 THEMES = ("dark", "light", "hc", "mixed")
@@ -522,12 +525,12 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     _m(
         "M-13",
-        "mark BQ-4 as ruled",
+        "unmark BQ-4's ruling",
         "G-PENDING",
         "spec",
         "## The questions",
-        "default built → §11",
-        "default built, RULED → §11",
+        f"- **BQ-4** RULED ({RULING}): ",
+        "- **BQ-4** ",
     ),
     _m(
         "M-14",
@@ -915,13 +918,17 @@ def g_pending(t: Texts) -> list[Finding]:
     lines = t.spec.split("\n")[s:e]
     bad: list[str] = []
     if BQ_HEAD not in head:
-        bad.append("the heading does not say the defaults are built and the ruling pending")
+        bad.append("the heading does not name the ruling and the BQ list")
     for bq in BQ_IDS:
         rows = [ln for ln in lines if ln.startswith(f"- **{bq}**")]
         if len(rows) != 1:
             bad.append(f"{bq} appears {len(rows)} times")
-        elif BQ_DEFAULT not in rows[0] or re.search(r"\bRULED\b|ruled as", rows[0]):
-            bad.append(f"{bq} is not marked '{BQ_DEFAULT}' alone")
+        elif BQ_DEFAULT not in rows[0]:
+            bad.append(f"{bq} is not marked '{BQ_DEFAULT}'")
+        elif bq in BQ_RULED and not rows[0].startswith(f"- **{bq}** RULED ({RULING}): “"):
+            bad.append(f"{bq} does not open with its ruling, quoted")
+        elif bq not in BQ_RULED and re.search(r"\bRULED\b|ruled as", rows[0]):
+            bad.append(f"{bq} is outside the ruling but marked ruled")
     return [("G-PENDING", b, "spec", region) for b in bad]
 
 
