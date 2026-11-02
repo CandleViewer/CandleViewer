@@ -65,7 +65,7 @@ async def test_chart_refuses_draft_to_armed_and_row_is_unchanged() -> None:
     await m.record_simulation(rid, await _active_hash(m, rid), 5, 0.0)
     with pytest.raises(RuleError) as e:
         await m.set_mode(rid, "armed", OWNER, "x")
-    assert e.value.code == "illegal_transition" and "simulate first" in e.value.message
+    assert e.value.rule == "illegal_transition" and "simulate first" in e.value.message
     assert m.lifecycle.leaf(rid) == "draft"
 
 

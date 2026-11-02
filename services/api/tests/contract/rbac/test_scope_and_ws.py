@@ -635,9 +635,9 @@ _BEFORE_THE_GATE = {
     # or their target before the step-up; `test_invites_router.py` and the deployed composition
     # (`test_owner_routes_composition.py`) reach the gate. The account create reads its store
     # first, which the fake backend lacks; `test_exchange_accounts_provider.py` reaches its gate.
-    ("POST", "/users"): (422, None),
-    ("POST", "/users/{uid}/invite"): (404, None),
-    ("DELETE", "/users/{uid}/invite"): (404, None),
+    ("POST", "/users"): (422, "validation_failed"),
+    ("POST", "/users/{uid}/invite"): (404, "not_found"),
+    ("DELETE", "/users/{uid}/invite"): (404, "not_found"),
     ("POST", "/exchange-accounts"): (503, "store_unavailable"),
     # E27-S04 B3b2 (#898): the patch reads the account (the `404`) before the step-up, from the
     # store the fake backend lacks; `test_update_exchange_account_provider.py` reaches its gate.

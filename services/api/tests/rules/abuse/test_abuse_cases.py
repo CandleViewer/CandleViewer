@@ -51,7 +51,10 @@ def test_ac_b_arm_without_simulation_on_current_hash_is_refused() -> None:
     rid = e.create()
     assert e.mode(rid, "simulate", "s").status_code == 200
     r = e.mode(rid, "armed", "a")
-    assert r.status_code == 422 and r.json()["code"] == "simulation_required"
+    assert r.status_code == 422 and (r.json()["code"], r.json()["errors"][0]["rule"]) == (
+        "validation_failed",
+        "simulation_required",
+    )
     assert e.c.get(f"/rules/{rid}").json()["mode"] == "simulate"
     assert "rule.mode_refused" in _audit_actions(e) and "rule.armed" not in _audit_actions(e)
     # a simulation on an OLD hash does not count after a new version is saved
@@ -77,7 +80,10 @@ def test_ac_c_arm_with_open_safety_warning_is_refused() -> None:
     rid = e.create(trigger={"type": "on_price_update"}, limits={"cooldown_ms": 0})
     e.ready(rid)
     r = e.mode(rid, "armed", "a")
-    assert r.status_code == 422 and r.json()["code"] == "safety_warning_open"
+    assert r.status_code == 422 and (r.json()["code"], r.json()["errors"][0]["rule"]) == (
+        "validation_failed",
+        "safety_warning_open",
+    )
     assert e.c.get(f"/rules/{rid}").json()["mode"] == "simulate"
     assert "rule.armed" not in _audit_actions(e)
 
@@ -87,7 +93,10 @@ def test_ac_d_live_needs_arm_live_permission_and_fresh_step_up() -> None:
     rid = low.create(scope=LIVE_SCOPE)
     low.ready(rid)
     r = low.mode(rid, "armed", "k")
-    assert r.status_code == 403 and r.json()["code"] == "permission_required"
+    assert r.status_code == 403 and (r.json()["code"], r.json()["errors"][0]["rule"]) == (
+        "forbidden",
+        "permission_required",
+    )
     assert low.c.get(f"/rules/{rid}").json()["mode"] == "simulate"
     assert "rule.mode_refused" in _audit_actions(low)
 
@@ -201,14 +210,17 @@ async def test_ac_i_system_builtins_cannot_be_disabled(name: str) -> None:
         e.c.delete(f"/rules/{rid}"),
         e.c.put(f"/rules/{rid}", json={"ir": _ir(name=name)}, headers={"If-Match": "1"}),
     ):
-        assert r.status_code == 403 and r.json()["code"] == "system_rule_protected"
+        assert r.status_code == 403 and (r.json()["code"], r.json()["errors"][0]["rule"]) == (
+            "forbidden",
+            "system_rule_protected",
+        )
     assert e.mgr._s._rows[rid].mode == "armed"  # type: ignore[attr-defined]
     assert _audit_actions(e).count("rule.system_rule_refused") == 4
     # repository layer (manager) path
     actor = Actor("u1", "s1", frozenset({"rules:read", "rules:write"}), is_owner=True)
     with pytest.raises(RuleError) as ei:
         await e.mgr.set_mode(rid, "disabled", actor, "k3")
-    assert ei.value.code == "system_rule_protected"
+    assert ei.value.rule == "system_rule_protected"
     # a user cannot squat the reserved namespace
     assert e.c.post("/rules", json={"ir": _ir(name="sys.mine")}).status_code == 403
     # direct database update bypasses the API: detectable in the audit trail

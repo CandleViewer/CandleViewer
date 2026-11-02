@@ -242,7 +242,8 @@ def test_ws_e2e_self_demotion_is_refused_and_audited(env: tuple[TestClient, _Wor
     client, w = env
     _elevate(client)
     r = client.put(f"/users/{ADMIN}/roles", json={"roles": ["viewer"]})
-    assert r.status_code == 403 and r.json()["reason"] == "self_target"
+    assert r.status_code == 403 and r.json()["errors"][0]["rule"] == "self_target"
+    assert "reason" not in r.json()
     assert [(a["action"], a["reason"]) for a in w.audit] == [("rbac.denied", "self_target")]
     assert w.roles[ADMIN] == frozenset({"owner"})
 

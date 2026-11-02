@@ -166,7 +166,7 @@ async def test_require_bound_elevation_maps_read_only_revoked_and_audit_refusal(
 
 @pytest.mark.parametrize(
     ("session", "wired", "status", "code"),
-    [(False, True, 401, "unauthenticated"), (True, False, 503, "service_unavailable")],
+    [(False, True, 401, "unauthenticated"), (True, False, 503, "step_up_unavailable")],
     ids=["no-session", "step-up-not-wired"],
 )
 async def test_require_bound_elevation_is_401_without_a_session_and_503_unwired(

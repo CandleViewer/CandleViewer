@@ -347,6 +347,6 @@ async def test_a_user_removed_after_the_unlock_committed_is_401_never_a_500(
 
     monkeypatch.setattr(_Identity, "user", gone)
     r = await _unlock(w, _bearer(minted))
-    assert (r.status_code, r.json()["title"]) == (401, "Unauthorized")
+    assert (r.status_code, r.json()["code"]) == (401, "unauthenticated")
     assert w.audit.writer.actions() == ["auth.session_unlocked"]
     assert not (await w.row(minted)).is_idle_locked(now=w.clock.now)

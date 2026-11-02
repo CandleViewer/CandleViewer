@@ -159,7 +159,7 @@ def test_put_roles_without_auth_wired_fails_closed() -> None:
     )
     r = TestClient(app).put(f"/users/{TARGET}/roles", json={"roles": ["manager"]})
     assert r.status_code == 503
-    assert r.json()["code"] == "service_unavailable"
+    assert r.json()["code"] == "step_up_unavailable"
 
 
 def _admin() -> PrincipalSnapshot:
@@ -443,7 +443,8 @@ def test_role_change_rejects_self_target() -> None:
     """SR-055 / threat U4: even with another owner present, no one changes their own roles."""
     store, em, n = _Store({"owner"}, 2), _Emitter(), _Notifier()
     r = _client(store, _admin(), em, n).put(f"/users/{OWNER}/roles", json={"roles": ["viewer"]})
-    assert r.status_code == 403 and r.json()["reason"] == "self_target"
+    assert r.status_code == 403 and r.json()["errors"][0]["rule"] == "self_target"
+    assert "reason" not in r.json()
     assert store.roles == {"owner"} and n.users == []
     assert [(c["action"], c["reason"]) for c in em.calls] == [("rbac.denied", "self_target")]
 

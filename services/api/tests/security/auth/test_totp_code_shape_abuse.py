@@ -32,7 +32,7 @@ def test_invite_confirm_refuses_a_non_ascii_digit_code_like_any_wrong_code(stack
     )
     odd = stack.client.post(url, json={"method_id": method_id, "code": ARABIC_INDIC_CODE})
 
-    assert (wrong.status_code, wrong.json()["code"]) == (422, "invalid_code"), wrong.text
+    assert (wrong.status_code, wrong.json()["code"]) == (422, "mfa_invalid"), wrong.text
     assert (odd.status_code, odd.json()) == (wrong.status_code, wrong.json())  # no oracle
     rejected = stack.audit.of("users.invite_rejected")
     assert [r["reason"] for r in rejected] == ["enrollment_invalid"] * 2

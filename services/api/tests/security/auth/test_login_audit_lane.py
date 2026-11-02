@@ -382,7 +382,7 @@ def test_a_recovery_that_mints_nothing_names_every_session_it_ended(
     with structlog.testing.capture_logs() as logs:
         reply = _unplanned(stack, monkeypatch)
 
-    assert (reply.status_code, reply.json()["title"]) == (401, "Recovery failed")
+    assert (reply.status_code, reply.json()["code"]) == (401, "unauthenticated")
     (planned,) = [r["session_id"] for r in stack.audit.of("auth.session_revoked")]  # the writer's
     (late,) = [r["session_id"] for r in lane.rows if r["action"] == "auth.session_revoked"]
     (event,) = [e for e in logs if e["event"] == "auth.recovery.completed_unminted"]

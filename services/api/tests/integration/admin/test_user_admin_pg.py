@@ -55,6 +55,7 @@ from candleviewer.storage.repositories.user_roles_sqlalchemy import (
     SqlAlchemyUserRoleStore,
 )
 from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserAdminStore
+from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 from tests.integration.admin.test_user_disable_route_pg import _M as _ROUTE_M
 from tests.integration.admin.test_user_disable_route_pg import _OWNER as _ROUTE_OWNER
 from tests.integration.admin.test_user_disable_route_pg import _kept, _Parked, _seed
@@ -217,11 +218,11 @@ async def test_ten_parallel_demotions_one_wins(db: Any) -> None:
                     won, lost = await asyncio.gather(first, second)
             assert (won.status_code, lost.status_code) == (200, 403), (i, won.text, lost.text)
             assert lost.json() == {
-                "type": "about:blank",
-                "title": "Forbidden",
+                "type": "https://candleviewer.local/errors/forbidden",
+                "title": ERROR_META[ErrorCode.FORBIDDEN].title,
                 "status": 403,
                 "code": "forbidden",
-                "reason": "missing_permission",
+                "errors": [{"rule": "missing_permission"}],
             }, i
             assert audit.of(b) == [("rbac.denied", "actor_role_revoked")], i  # one denial
             assert sorted(act for act, _ in audit.of(a)) == ["roles.grant", "roles.revoke"], i

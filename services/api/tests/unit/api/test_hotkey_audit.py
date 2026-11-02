@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from candleviewer.api.hotkey_audit import make_hotkey_audit_router
 from candleviewer.audit.errors import AuditError
+from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 UID = uuid.uuid4()
 BODY = {
@@ -101,9 +102,10 @@ def test_record_refuses_nul_in_a_binding_with_the_same_422_unaudited(field: str)
     r = _client(em).post("/settings/hotkey-audit", json={**BODY, field: "Ctrl+\x00"}, headers=H)
     assert r.status_code == 422
     assert r.json() == {
-        "type": "about:blank",
-        "title": "Unprocessable",
+        "type": "https://candleviewer.local/errors/validation_failed",
+        "title": ERROR_META[ErrorCode.VALIDATION_FAILED].title,
         "status": 422,
+        "code": "validation_failed",
         "detail": "invalid hotkey audit payload",
     }
     assert em.calls == []

@@ -185,4 +185,8 @@ async def test_arm_with_a_stored_scope_that_is_not_a_mapping_is_a_422(shape: Any
     rid = e.create()
     (await e.mgr._row(rid)).versions[0].ir["scope"] = shape
     resp = e.mode(rid, "armed", "k")
-    assert (resp.status_code, resp.json()["code"]) == (422, "rule_invalid")
+    assert (resp.status_code, resp.json()["code"], resp.json()["errors"][0]["rule"]) == (
+        422,
+        "validation_failed",
+        "rule_invalid",
+    )

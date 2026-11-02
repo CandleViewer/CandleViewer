@@ -131,6 +131,7 @@ class _Rig:
         grant: bool = True,
         breaks: tuple[BreakIdentity, ...] = (_BREAK,),
         wired: bool = True,
+        step_up_wired: bool = True,
     ) -> None:
         self.audit, self.principal = _Audit(), principal
         self.halt = AuditBreakHalt(unread=False)
@@ -149,7 +150,7 @@ class _Rig:
             make_audit_router(
                 cast(Any, self.audit),
                 _Resolver(principal),
-                step_up=cast(Any, self.step_up),
+                step_up=cast(Any, self.step_up) if step_up_wired else None,
                 break_ack=self.service if wired else None,
             )
         )
@@ -329,7 +330,15 @@ def test_unwired_acknowledgement_is_503_and_lifts_nothing() -> None:
     rig = _Rig(_principal(), wired=False)
     response = rig.post()
     assert response.status_code == 503 and rig.halt.engaged
+    assert response.json()["code"] == "store_unavailable"
     assert rig.step_up.consumed == []
+
+
+def test_unwired_step_up_is_503_step_up_unavailable_and_lifts_nothing() -> None:
+    rig = _Rig(_principal(), step_up_wired=False)
+    response = rig.post()
+    assert (response.status_code, response.json()["code"]) == (503, "step_up_unavailable")
+    assert rig.halt.engaged
 
 
 def test_the_route_is_registered_as_handler_gated_with_the_killswitch_class() -> None:

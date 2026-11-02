@@ -121,7 +121,10 @@ def test_put_mode_armed_without_simulation_is_422_and_stays() -> None:
     rid = e.create()
     assert e.mode(rid, "simulate", "a").status_code == 200
     r = e.mode(rid, "armed", "b")
-    assert r.status_code == 422 and r.json()["code"] == "simulation_required"
+    assert r.status_code == 422 and (r.json()["code"], r.json()["errors"][0]["rule"]) == (
+        "validation_failed",
+        "simulation_required",
+    )
     assert e.c.get(f"/rules/{rid}").json()["mode"] == "simulate"
 
 
@@ -140,7 +143,10 @@ def test_live_arm_needs_permission_then_step_up_then_audits_and_publishes() -> N
     rid = e.create(scope=LIVE)
     e.ready(rid)
     r = e.mode(rid, "armed", "k1")
-    assert r.status_code == 403 and r.json()["code"] == "permission_required"
+    assert r.status_code == 403 and (r.json()["code"], r.json()["errors"][0]["rule"]) == (
+        "forbidden",
+        "permission_required",
+    )
     e.perms = frozenset(BASE)
     e.grants = 0
     r = e.mode(rid, "armed", "k2")
@@ -155,7 +161,10 @@ def test_live_arm_needs_permission_then_step_up_then_audits_and_publishes() -> N
     assert e.mode(rid, "disabled", "k4").status_code == 200
     # B9 has no `disarmed -> simulating` arm: the chart (not a matrix) refuses it.
     r = e.mode(rid, "simulate", "k5")
-    assert r.status_code == 422 and r.json()["code"] == "illegal_transition"
+    assert r.status_code == 422 and (r.json()["code"], r.json()["errors"][0]["rule"]) == (
+        "validation_failed",
+        "illegal_transition",
+    )
     r = e.mode(rid, "armed", "k6")  # B9 `disarmed --ARM_REQUESTED--> armed`
     assert r.status_code == 403 and r.json()["code"] == "step_up_required"  # no free re-arm
 

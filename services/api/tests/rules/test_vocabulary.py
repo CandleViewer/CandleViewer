@@ -305,7 +305,7 @@ def test_endpoint_rbac_fail_closed() -> None:
 
 def test_engine_offline_is_503() -> None:
     r = _client(_P("rules:read"), registry=MetricRegistry()).get("/rules/vocabulary")
-    assert r.status_code == 503 and r.json()["title"] == "Service unavailable"
+    assert r.status_code == 503 and r.json()["code"] == "store_unavailable"
     app = FastAPI()
     app.include_router(make_rules_router(lambda: None, principal_resolver=_Resolver(_P("*"))))
     assert TestClient(app).get("/rules/vocabulary").status_code == 503

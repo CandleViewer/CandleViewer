@@ -348,7 +348,7 @@ def test_a_route_wired_without_its_step_up_fails_closed_and_rotates_nothing() ->
                                                  budget=AuditRecordBudget()))  # fmt: skip
     sent = {"Idempotency-Key": str(uuid.uuid4())}
     r = TestClient(app).post(PATH, headers=sent, json={"reason": "scheduled"})
-    assert (r.status_code, r.json()["code"], _unstored(r)) == (503, "service_unavailable", True)
+    assert (r.status_code, r.json()["code"], _unstored(r)) == (503, "step_up_unavailable", True)
 
 
 @pytest.mark.parametrize("store", ["down", "hung"])

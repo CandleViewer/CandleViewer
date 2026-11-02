@@ -238,7 +238,8 @@ def test_bad_requests(tmp_path: Path) -> None:
     assert c.post("/admin/support-bundle", json={"x": 1}).status_code == 400
     wide = {"from": (T1 - timedelta(hours=30)).isoformat(), "to": T1.isoformat()}
     r = c.post("/admin/support-bundle", json=wide)
-    assert r.status_code == 400 and r.json()["code"] == "BUNDLE_WINDOW_TOO_LARGE"
+    assert r.status_code == 400 and r.json()["code"] == "invalid_time_range"
+    assert r.json()["errors"] == [{"rule": "bundle_window_too_large"}]
     assert c.get(f"/admin/support-bundle/{uuid.uuid4()}").status_code == 404
 
 
@@ -257,7 +258,8 @@ async def test_owner_flow_audited_and_second_request_409(tmp_path: Path) -> None
     first = await c.post("/admin/support-bundle", json=BODY)
     assert first.status_code == 202
     second = await c.post("/admin/support-bundle", json=BODY)
-    assert second.status_code == 409 and second.json()["code"] == "BUNDLE_ALREADY_RUNNING"
+    assert second.status_code == 409 and second.json()["code"] == "job_running"
+    assert second.json()["errors"] == [{"rule": "bundle_already_running"}]
     gate.set()
     job = svc.get(first.json()["job_id"])
     assert job is not None and job._task is not None

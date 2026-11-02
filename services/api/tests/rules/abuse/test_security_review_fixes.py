@@ -49,7 +49,7 @@ async def test_set_active_version_on_system_rule_is_refused_and_audited() -> Non
     before = row.active_version_id
     with pytest.raises(RuleError) as ei:
         await e.mgr.set_active_version(rid, row.versions[0].id, "switch", OWNER)
-    assert ei.value.code == "system_rule_protected"
+    assert ei.value.rule == "system_rule_protected"
     assert row.active_version_id == before and row.mode == "armed"
     refused = [p for a, p in e.audits if a == "rule.system_rule_refused"]
     assert refused and refused[-1]["op"] == "set_active_version"
@@ -75,7 +75,10 @@ def test_update_cannot_rename_into_reserved_prefix(name: str) -> None:
     e = _Env()
     rid = e.create(name="mine")
     r = e.c.put(f"/rules/{rid}", json={"ir": _ir(name=name)}, headers={"If-Match": "1"})
-    assert r.status_code == 403 and r.json()["code"] == "system_rule_reserved"
+    assert r.status_code == 403 and (r.json()["code"], r.json()["errors"][0]["rule"]) == (
+        "forbidden",
+        "system_rule_reserved",
+    )
     got = e.c.get(f"/rules/{rid}").json()
     assert got["name"] == "mine" and got["latest_version"] == 1
     assert "rule.system_rule_refused" in _audit_actions(e)
@@ -85,14 +88,20 @@ def test_update_cannot_rename_into_reserved_prefix(name: str) -> None:
 def test_create_refuses_reserved_prefix_variants(name: str) -> None:
     e = _Env()
     r = e.c.post("/rules", json={"ir": _ir(name=name)})
-    assert r.status_code == 403 and r.json()["code"] == "system_rule_reserved"
+    assert r.status_code == 403 and (r.json()["code"], r.json()["errors"][0]["rule"]) == (
+        "forbidden",
+        "system_rule_reserved",
+    )
 
 
 async def test_update_cannot_rename_a_system_rule_even_if_unprotected() -> None:
     e = _Env()
     rid = await _seed_system_rule(e, "sys.other_builtin")  # sys.* but not in PROTECTED set
     r = e.c.put(f"/rules/{rid}", json={"ir": _ir(name="plain")}, headers={"If-Match": "1"})
-    assert r.status_code == 403 and r.json()["code"] == "system_rule_reserved"
+    assert r.status_code == 403 and (r.json()["code"], r.json()["errors"][0]["rule"]) == (
+        "forbidden",
+        "system_rule_reserved",
+    )
     assert e.mgr._s._rows[rid].name == "sys.other_builtin"  # type: ignore[attr-defined]
     assert "rule.system_rule_refused" in _audit_actions(e)
 
@@ -102,7 +111,10 @@ def test_update_rename_onto_existing_name_is_conflict() -> None:
     e.create(name="taken")
     rid = e.create(name="mine")
     r = e.c.put(f"/rules/{rid}", json={"ir": _ir(name="taken")}, headers={"If-Match": "1"})
-    assert r.status_code == 409 and r.json()["code"] == "name_taken"
+    assert r.status_code == 409 and (r.json()["code"], r.json()["errors"][0]["rule"]) == (
+        "conflict",
+        "name_taken",
+    )
 
 
 # ----- 3. export: no account id anywhere ----------------------------------------------------

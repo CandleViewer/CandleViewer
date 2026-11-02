@@ -146,9 +146,10 @@ async def real_audit(tmp_path: Path) -> AsyncIterator[tuple[AuditWriter, _AuditT
 
 
 _REFUSAL = {
-    "type": "about:blank",
-    "title": "Forbidden",
+    "type": "https://candleviewer.local/errors/forbidden",
+    "title": "Authenticated but lacking the required permission",
     "status": 403,
+    "code": "forbidden",
     "detail": "the checklist accepts no client-supplied state",
 }
 

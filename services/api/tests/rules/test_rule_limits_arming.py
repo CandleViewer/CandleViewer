@@ -570,7 +570,11 @@ def test_put_mode_armed_above_the_cap_is_a_422_rule_invalid_problem() -> None:
     row.versions[0].ir_hash = ir_hash(Rule.model_validate(row.versions[0].ir))
     row.simulated_hashes.add(row.versions[0].ir_hash)
     r = e.mode(rid, "armed", "arm")
-    assert (r.status_code, r.json()["code"]) == (422, "rule_invalid")
+    assert (r.status_code, r.json()["code"], r.json()["errors"][0]["rule"]) == (
+        422,
+        "validation_failed",
+        "rule_invalid",
+    )
     assert e.c.get(f"/rules/{rid}").json()["mode"] == "simulate"
 
 
@@ -585,6 +589,10 @@ async def test_put_mode_armed_on_a_rule_armed_above_the_cap_disarms_it_and_is_a_
     row.versions[0].ir["limits"][DAY] = LIMIT_CAPS[DAY] + 1  # stored before the caps existed
     row.versions[0].ir_hash = ir_hash(Rule.model_validate(row.versions[0].ir))
     r = e.mode(rid, "armed", "rearm")
-    assert (r.status_code, r.json()["code"]) == (422, "rule_invalid")
+    assert (r.status_code, r.json()["code"], r.json()["errors"][0]["rule"]) == (
+        422,
+        "validation_failed",
+        "rule_invalid",
+    )
     assert [p["reason"] for a, p in e.audits if a == "rule.disarmed"] == ["limits_above_cap"]
     assert e.c.get(f"/rules/{rid}").json()["mode"] == "disabled"

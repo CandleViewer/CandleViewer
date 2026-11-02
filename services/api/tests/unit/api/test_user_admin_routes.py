@@ -743,7 +743,8 @@ def test_self_target_403(b16_audit: RecordingAuditSink, spec: Any, body: Any) ->
     env = _Env(b16_audit, _principal("owner", spec), _user(CALLER, ("owner",)), elevated=False)
     r = env.patch(CALLER, body)
     _conforms(spec, "/users/{userId}", "patch", r)
-    assert (r.status_code, r.json()["reason"]) == (403, "self_target")
+    assert (r.status_code, r.json()["errors"][0]["rule"]) == (403, "self_target")
+    assert "reason" not in r.json()
     (denied,) = env.emitter.calls
     assert (denied["action"], denied["reason"], denied["object_id"]) == (
         "rbac.denied",

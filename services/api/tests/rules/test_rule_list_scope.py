@@ -378,7 +378,7 @@ async def test_the_name_check_counts_own_rules_readable_or_not_and_never_another
     caller = _actor(MGR, A)
     with pytest.raises(RuleError) as taken:
         await m.create(_ir(name="alpha", scope={"level": "account", "account_ids": [A]}), caller)
-    assert (taken.value.status, taken.value.code) == (409, "name_taken")
+    assert (taken.value.status, taken.value.rule) == (409, "name_taken")
     made = await m.create(_ir(name="beta", scope={"level": "account", "account_ids": [A]}), caller)
     assert made["name"] == "beta"
     asked = [scope for method, scope, _ in store.reads if method == "name_taken"]
@@ -394,13 +394,13 @@ async def test_the_name_check_for_the_owner_role_counts_every_live_rule() -> Non
     boss = _actor(BOSS, owner=True)
     with pytest.raises(RuleError) as taken:
         await m.create(_ir(name="gamma"), boss)
-    assert taken.value.code == "name_taken"
+    assert taken.value.rule == "name_taken"
     assert (await m.create(_ir(name="delta"), boss))["name"] == "delta"
     assert (await m.create(_ir(name="Gamma"), boss))["name"] == "Gamma"  # the exact name, as before
     rid = (await m.create(_ir(name="epsilon"), boss))["id"]
     with pytest.raises(RuleError) as renamed:
         await m.update(rid, _ir(name="gamma"), 1, boss)
-    assert renamed.value.code == "name_taken"
+    assert renamed.value.rule == "name_taken"
     assert await m._s.name_taken(OwnerRead(BOSS), "epsilon", rid) is False  # the rule itself
 
 

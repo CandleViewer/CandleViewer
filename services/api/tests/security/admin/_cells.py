@@ -49,9 +49,8 @@ day it is fixed and a harness error never passes as one (D11):
 - `#2836` (SR-E42-09): own guards that count no denial or carry no `code`, and
   `GET /admin/support-bundle/{job_id}`, which refuses with no record at all.
 - AD-F24 (e42-admin.md §13.1): a 401 whose `code` is not the registry's `unauthenticated`. The
-  halves the model owns are met (`api/users.py` by #2649, the step-up router by #2304); the
-  invites router's 401, which carries no `code` at all, has no issue (finding X03-F6 in the
-  catalogue).
+  halves the model owns are met (`api/users.py` by #2649, the step-up router by #2304, the
+  invites router by #2828).
 
 The abuse cases that wait on other tickets are listed in `test_admin_abuse_cases.py`.
 """
@@ -614,32 +613,11 @@ def counted_params(state: str) -> list[Any]:
     return out
 
 
-_NO_CODE = f"{_SR_E42_09}: its own guard refuses without the registry `code` (C-6.5)"
-#: (route, actor or "*") whose denial carries no `code`, found by the suite's own red run. Each
-#: own-guard `_problem` adds a `code` only when given one: the `create` and `status` handlers of
-#: `make_support_bundle_router`, the `import_archive` and `compact` handlers of
-#: `make_recorder_admin_router`, and the RBAC refusal of `make_recorder_purge_router`'s `denied`,
-#: which every non-Owner meets first since `recording:write` is the Owner's alone (G-04, #484):
-#: its owner-only refusal, which has `forbidden`, is reached by no matrix actor now.
-CODE_GAPS: dict[tuple[str, str], str] = {
-    ("POST /admin/support-bundle", "*"): _NO_CODE,
-    ("GET /admin/support-bundle/{job_id}", "*"): _NO_CODE,
-    ("POST /admin/recorder/import", "*"): _NO_CODE,
-    ("POST /admin/recorder/compact", "*"): _NO_CODE,
-    ("POST /admin/recorder/purge", "*"): _NO_CODE,
-}
-_AD_F24 = "AD-F24 (e42-admin.md §13.1, note 6): the 401 `code` is not the registry's"
-#: Routes whose 401 `code` is not the registry's `unauthenticated`, and why.
-UNAUTHENTICATED_CODE_GAPS: dict[str, str] = {
-    "GET /admin/support-bundle/{job_id}": (
-        f"{_SR_E42_09}: no `code` (`make_support_bundle_router`'s `status`)"
-    ),
-    "GET /users/invites": (
-        f"{_AD_F24}: no `code` (`make_invites_router`'s `_owner`); no issue tracks it: AD-F24's "
-        "owners name `api/users.py` (#2649, met) and `api/step_up.py` (#2304, met), so the "
-        "catalogue records it as X03-F6 under the filing freeze"
-    ),
-}
+#: (route, actor or "*") whose denial carries no `code`, found by the suite's own red run. Empty
+#: since #2828: every own guard (support bundle, recorder) answers the registry `code`.
+CODE_GAPS: dict[tuple[str, str], str] = {}
+#: Routes whose 401 `code` is not the registry's `unauthenticated`, and why. Empty since #2828.
+UNAUTHENTICATED_CODE_GAPS: dict[str, str] = {}
 
 
 def _code_gap(op: Op, actor: str) -> str | None:

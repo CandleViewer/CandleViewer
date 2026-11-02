@@ -639,6 +639,7 @@ def test_confirm_whose_rotation_fails_keeps_the_enrolment_and_answers_503(
     monkeypatch.setattr(stack.auth.sessions, step, real)
 
     assert resp.status_code == 503 and "sign in again" in resp.json()["detail"]
+    assert resp.json()["code"] == "store_unavailable"  # the session store failed (#2828)
     (event,) = [e for e in logs if e["event"] == "auth.enrolment.completed_unrotated"]
     assert (event["log_level"], event["user_id"], event["error"]) == ("error", str(uid), "OSError")
     listed = sorted([str(proved.session_id), str(sid)])
@@ -1053,7 +1054,9 @@ def test_an_exhausted_recovery_whose_row_cannot_be_written_still_says_contact_th
 
     resp = _recover(stack, token, "0000-0000-0000-0000")
 
-    assert (resp.status_code, resp.json()["title"]) == (401, "Recovery codes exhausted")
+    assert (resp.status_code, resp.json()["code"]) == (401, "mfa_invalid")
+    assert resp.json()["errors"][0]["rule"] == "recovery_codes_exhausted"
+    assert resp.json()["detail"] != _RECOVERY_REFUSED[1]
 
 
 def test_recovery_reads_the_user_before_anything_is_written_or_spent(

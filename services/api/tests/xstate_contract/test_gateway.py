@@ -28,6 +28,7 @@ from candleviewer.statechart.config import CV_INBOX_BOUND, Lane
 from candleviewer.statechart.factory import InboxFullError
 from candleviewer.statechart.gateway import (
     Gateway,
+    GatewayDegradedError,
     GatewayOverloadedError,
     LoopAffinityError,
     SystemEventRefusedError,
@@ -298,3 +299,29 @@ def test_overloaded_error_maps_to_http_503_problem_response() -> None:
     assert resp.headers["content-type"].startswith("application/problem+json")
     assert resp.json()["status"] == 503
     assert resp.headers["retry-after"] == "1"
+    body = resp.json()  # #2828: a catalogued code, never about:blank; the cause in errors[].rule
+    assert body["code"] == "lifecycle_unavailable"
+    assert body["type"] == "https://candleviewer.local/errors/lifecycle_unavailable"
+    assert body["errors"] == [{"rule": "gateway_overloaded"}]
+
+
+def test_degraded_error_maps_to_lifecycle_unavailable_with_its_rule() -> None:
+    """#2828: the degraded latch answers the same 503 code, told apart by `errors[].rule`."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from candleviewer.app import create_app, gateway_overloaded_handler
+
+    assert GatewayDegradedError in create_app().exception_handlers
+    app = FastAPI()
+    app.add_exception_handler(GatewayDegradedError, gateway_overloaded_handler)
+
+    @app.get("/boom")
+    async def boom() -> None:
+        raise GatewayDegradedError("m1", "order")
+
+    resp = TestClient(app).get("/boom")
+    body = resp.json()
+    assert (resp.status_code, resp.headers["retry-after"]) == (503, "1")
+    assert body["code"] == "lifecycle_unavailable"
+    assert body["errors"] == [{"rule": "gateway_degraded"}]

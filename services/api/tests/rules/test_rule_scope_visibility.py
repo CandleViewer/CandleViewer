@@ -271,7 +271,7 @@ async def test_a_name_a_rule_the_caller_may_read_or_owns_holds_is_still_a_confli
     for actor, name in ((OWNER, "Alpha"), (_manager(USER_B, C), "Delta")):
         with pytest.raises(RuleError) as taken:
             await m.create(_ir(name=name), actor)
-        assert (taken.value.status, taken.value.code) == (409, "name_taken")
+        assert (taken.value.status, taken.value.rule) == (409, "name_taken")
 
 
 # ----- the conflict response carries only the version and the time ---------------------------
