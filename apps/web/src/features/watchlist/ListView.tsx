@@ -639,14 +639,16 @@ export function ListView(props: ListViewProps): JSX.Element {
     event.preventDefault();
     props.onManage({ kind: "import", listId: list.id });
   };
+  // Under the page's h1 (R-111), so h2s, as the no-list states are.
   const empty =
     symbols.length === 0 ? (
       readOnly ? (
-        <EmptyState title={COPY.emptyTitle} description={COPY.writeReason} />
+        <EmptyState title={COPY.emptyTitle} headingLevel={2} description={COPY.writeReason} />
       ) : (
         <div onClickCapture={importFrom}>
           <EmptyState
             title={COPY.emptyTitle}
+            headingLevel={2}
             description={COPY.emptyBody(name)}
             actions={[{ label: COPY.emptyAction, onClick: openAdd }]}
             link={{ label: COPY.importList, href: props.managerHref }}
@@ -654,7 +656,11 @@ export function ListView(props: ListViewProps): JSX.Element {
         </div>
       )
     ) : (
-      <EmptyState variant="filtered-empty" title={COPY.noMatch(name, filter.trim())} />
+      <EmptyState
+        variant="filtered-empty"
+        title={COPY.noMatch(name, filter.trim())}
+        headingLevel={2}
+      />
     );
 
   return (

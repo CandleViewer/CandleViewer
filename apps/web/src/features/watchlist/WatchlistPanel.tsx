@@ -333,11 +333,16 @@ export function WatchlistPanel(props: WatchlistPanelProps): JSX.Element | null {
     return (
       <section aria-label={COPY.title} style={PANEL} data-keymap-context={WATCHLIST_CONTEXT}>
         {readOnly ? (
-          // The sentence form (E09-D09 §2.2): the reason alone, no button.
-          <EmptyState title={COPY.noListsReadOnly} description={COPY.writeReason} />
+          // The sentence form (E09-D09 §2.2): the reason alone, no button. Under the page's h1, so an h2.
+          <EmptyState
+            title={COPY.noListsReadOnly}
+            headingLevel={2}
+            description={COPY.writeReason}
+          />
         ) : (
           <EmptyState
             title={COPY.noListsTitle}
+            headingLevel={2}
             actions={[{ label: COPY.createList, onClick: manage({ kind: "create" }) }]}
           />
         )}
