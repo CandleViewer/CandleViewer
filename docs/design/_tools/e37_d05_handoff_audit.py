@@ -133,6 +133,8 @@ COMPONENTS = (
     "CMP-157", "CMP-158", "CMP-234", "CMP-235", "CMP-236", "CMP-237", "CMP-238", "CMP-254",
 )  # fmt: skip
 SHEET_FIELDS = ("Props", "States", "Tokens", "Name", "Owner story")
+# G-T2.6 (rule 32): FZ-5 is a T2 key, so every component list names both T2 parts
+T2_PARTS = (("CMP-079 RbacGate", r"CMP-079\b"), ("the CMP-019 `lock`", r"CMP-019\b[^\n]*`lock`"))
 FIELDS = (
     "key",
     "text",
@@ -711,6 +713,12 @@ def g_sheet(t: Texts, vals: dict[str, str]) -> list[str]:
             n = at(t, key).count(a)
             if n != 1:
                 bad.append(f"{aid}: {a[:40]!r} stands {n} times in `{key}` at the base")
+    lists = (("section 3", re.split(r"\n### 3\.\d+ ", three)[0]),
+             ("the hand-off's component line", t.hand.split("\n## ", 1)[0]),
+             (f"hand-off {SECT}B", section(t.hand, f"## {SECT}B")),
+             (f"hand-off {SECT}D", section(t.hand, f"## {SECT}D")))  # fmt: skip
+    bad += [f"{where} does not name {name} (G-T2.6)"
+            for where, text in lists for name, rx in T2_PARTS if not re.search(rx, text)]  # fmt: skip
     return bad + anchor_problems(t, vals, "SHEET:")
 
 
@@ -1335,6 +1343,8 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
      row_set("rules.graph.bar.save", 1, '"Sav"', "text", "Sav")),
     ("G-CHECKLIST", "DA-17 dropped", drop_row("DA-17")),
     ("G-CHECKLIST", "DA-17 cites SC-9's line", set_cell("DA-17", 3, "`D04`:320")),
+    ("G-SHEET", "CMP-079 dropped from the hand-off's Storybook list",
+     drop_hand("CMP-079", "twelve stories")),
 )
 
 # deck-only mode: the twin alone, so every mutation edits the JSON Lines rows or head

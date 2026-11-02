@@ -1,6 +1,6 @@
 # E37-D05 — Hand-off (§A–§F; the node-graph editor pack)
 
-Components: **CMP-146** … **CMP-153**, **CMP-236** … **CMP-238**, the SCR-082 variants of **CMP-158**, **CMP-234** and **CMP-235**, and **CMP-254 NodeListOutline** (PROPOSED id), with **CMP-157 MetricPickerCombobox** as a cited owner (BQ-05). The spec is `E37-D05.md`; this file places it, states the contract, carries the copy-ready A-rows, the Storybook list with fixtures and the test hooks. Status as the spec: Draft, owner approval pending (#2701).
+Components: **CMP-146** … **CMP-153**, **CMP-236** … **CMP-238**, the SCR-082 variants of **CMP-158**, **CMP-234** and **CMP-235**, and **CMP-254 NodeListOutline** (PROPOSED id), with **CMP-157 MetricPickerCombobox** as a cited owner (BQ-05); **CMP-079 RbacGate** and the **CMP-019 `lock`** are cited for every T2 control (spec §3, G-T2.6). The spec is `E37-D05.md`; this file places it, states the contract, carries the copy-ready A-rows, the Storybook list with fixtures and the test hooks. Status as the spec: Draft, owner approval pending (#2701).
 
 ## §A Placement
 
@@ -38,6 +38,8 @@ Where each consuming story reads which part (spec section numbers).
 | CMP-238   | `bounds` · `viewport` · `nodes` · `onNavigate` (`15`:3059; A-15)                                                                                                                  | `aria-hidden`                                          |
 | CMP-157   | `value` · `onChange` · `category?` (`15`:1917; no A-row)                                                                                                                          | cited owner: E36-D03's entry, built by E36-S01         |
 | CMP-254   | PROPOSED (A-16): `rule` · `selection` · `onSelect` · `onConnect` · `onDisconnect` · `onDelete` · `onRename` · `onInspect` · `onCollapse` · `onMove` · `diagnostics` · `readOnly?` | E37-S05 types them                                     |
+| CMP-079   | cited, no A-row: `allowed` · `reason` · `form?` · `noticeId?` · `children` (`15`:893)                                                                                             | wraps every T2 role leg (`D02`:131, :151)              |
+| CMP-019   | cited, no A-row: the `lock` glyph, `name` · `size` · `decorative` set to false with its `label` (`15`:241)                                                                        | leads every T2 control's full label (`D02`:131)        |
 
 ## §C Copy-ready rows (applied in this PR at its closing push, after #5448 and #5495 merge; a third PR only past about 1,500 lines, BQ-01)
 
@@ -123,6 +125,8 @@ Every story renders in dark and light at compact density, under the title `RuleE
 | CMP-237           | Matrix · Dangling · Focused                                                                     | the six types × the twelve cells; `orphan`; `s-form`                                 | the 36 cells; PT-13; PT-14                  |
 | CMP-238           | SmallGraph · LargeGraph · WithErrorNodes · Compact · Comfortable                                | `s-form`; `budget-200`; `budget-200` with three error nodes                          | M1, M2, M3                                  |
 | CMP-254           | Outline · Tab1280 · GraphOnlyGroup · ProblemsGroup · ConnectPicker · NotConnectedGroup          | `s-graph`; `s-graph` at 1280 × 800; `s-graph`; `orphan`; `invalid-connect`; `orphan` | §3.15's states                              |
+| CMP-079           | `15`'s twelve stories (`15`:897), none added                                                    | `s-form-mismatch` (state 3, FZ-5); `s-form` for a Viewer                             | T2: `Save` · `Arm…`; a Viewer (`D02`:151)   |
+| CMP-019 `lock`    | `15`'s FullSet and SizeScale (`15`:244), none added                                             | the `lock` glyph with its `label`                                                    | leads each T2 label (`D02`:131)             |
 
 ## §E Test hooks (PROPOSED)
 
