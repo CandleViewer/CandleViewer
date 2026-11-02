@@ -256,18 +256,24 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
     lose(rec, "malformed", "decode_error");
   }
 
-  /** The stream is gone: its state and the resync it waits for, and with the last stream of the `ch` the gateway's resync window, which is per subscription. */
-  function forget(rec: Rec): void {
+  /**
+   * The stream is gone: its state and the resync it waits for. With the last stream of the `ch` the
+   * resync window goes too when the server ended the subscription (`ended`); a release keeps it, because
+   * the unsub may not have gone out and a returning consumer finds the same gateway window.
+   */
+  function forget(rec: Rec, ended = false): void {
     seq.forget(rec.key);
     assembler.forget(rec.key);
-    if (named(rec.ch).length === 0) guard.forget(rec.ch);
-    else guard.cancel(rec.ch, rec.key); // the twins' requests stay
+    if (named(rec.ch).length === 0) {
+      if (ended) guard.end(rec.ch);
+      else guard.forget(rec.ch);
+    } else guard.cancel(rec.ch, rec.key); // the twins' requests stay
   }
 
   /** The server ended the subscription (or refused it): nothing more comes, and nothing is asked for. */
   function end(rec: Rec): void {
     rec.revoked = true;
-    forget(rec);
+    forget(rec, true);
     reset(rec, "revoked");
   }
 

@@ -127,10 +127,12 @@ describe("resync guard", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("forget and reset drop the budget too, and reset stops every timer", () => {
+  it("forget keeps the budget (the subscription may be the same one); end and reset drop it, and reset stops every timer", () => {
     const guard = createResyncGuard();
     fill(guard);
     guard.forget(BOOK);
+    expect(guard.request(BOOK, LIVE, vi.fn())).toBe("deferred"); // the gateway's window is not reset
+    guard.end(BOOK);
     fill(guard); // a new subscription has a new window
     const send = vi.fn();
     guard.request(BOOK, LIVE, send);
@@ -298,5 +300,26 @@ describe("resync guard: the streams of one ch", () => {
     expect(guard.waiting).toBe(1); // the one that threw is gone: it is not retried in a loop
     fire(REOPEN); // the timer set while unwinding
     expect([boom.mock.calls.length, behind.mock.calls.length, guard.waiting]).toEqual([1, 1, 0]);
+  });
+});
+
+describe("resync guard: eviction", () => {
+  it("evicts the stamps of a released ch after the window, on another ch's request or forget", () => {
+    const guard = createResyncGuard();
+    expect(guard.request(BOOK, LIVE, vi.fn())).toBe("sent");
+    guard.forget(BOOK);
+    expect(guard.size).toBe(1); // kept: the subscription may be the same one
+    advanceTo(REOPEN - 1);
+    guard.forget(TRADES);
+    expect(guard.size).toBe(1);
+    advanceTo(REOPEN);
+    guard.forget(TRADES);
+    expect(guard.size).toBe(0);
+
+    expect(guard.request(BOOK, LIVE, vi.fn())).toBe("sent");
+    expect(guard.size).toBe(1);
+    advanceTo(2 * REOPEN);
+    expect(guard.request(TRADES, topicKey(TRADES), vi.fn())).toBe("sent");
+    expect(guard.size).toBe(1); // only TRADES
   });
 });
