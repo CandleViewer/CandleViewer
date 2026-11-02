@@ -4216,6 +4216,91 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /exchange-accounts/{accountId}/reconciliation/latest:
+    parameters: [{ $ref: "#/components/parameters/AccountId" }]
+    get:
+      tags: [exchange-accounts]
+      operationId: getReconciliationDigest
+      summary: Read the account's latest reconciliation pass, as a digest
+      description: |
+        E29-S07 (#1028, BQ-9): what the account's last reported reconciliation pass
+        (`24-internal-schemas.md` §8.5, "The report" and "The digest") corrected, adopted or left
+        for the Owner, for the "while you were offline" summary (SCR-152) and the account's line,
+        so a client never infers a correction from its own cache. The server holds the latest
+        digest per account, keyed by the account's id (C-2.11), in memory: each pass's replaces
+        it once the pass's `oms.reconcile` record is written (§15.5), and none is held after a
+        restart until the next pass reports.
+
+        **Scope.** `orders:read` and `positions:read`, both required, on the account (a grant that
+        can view it): a caller without either is `403 forbidden`, audited `rbac.denied`, before
+        any account is read. An account outside the caller's grants, one that does not exist,
+        one this process's environment does not serve (C-2.11) and one with no pass reported
+        since the process started get the same `404 not_found`, byte for byte, so the answer is
+        no existence oracle (SR-E29-13); a Manager's or Viewer's request for an account outside its
+        grants, foreign or absent alike, is audited `rbac.denied` naming the account asked for. Under
+        a view-as context the read answers as the target, in the target's grants (the View-as
+        session section of `info.description`).
+
+        **Content.** Ids, symbols and `exec_id`s only, as the report lists them: never a
+        credential, an exchange message or a payload (C-12.6). Each list holds at most 256
+        entries, the first the pass listed, and `counts` gives each list's full length.
+        `confirmed_at`, the end of `gap_window`, is when the pass read the exchange: the server's
+        last exchange confirmation of the account's orders, positions and stops. A read writes
+        no audit record of its own and is answered with `Cache-Control: no-store`.
+      x-rbac: { permissions: [orders:read, positions:read], scope: granted_accounts }
+      responses:
+        "200":
+          description: The digest of the account's latest reported pass.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationDigest" }
+              examples:
+                corrected:
+                  value:
+                    exchange_account_id: "0a000000-0000-4000-8000-0000000000a1"
+                    pass_id: "a3000000-0000-4000-8000-000000000001"
+                    trigger: reconnect
+                    result: corrected
+                    gap_window: { from: "2026-11-02T09:58:00Z", to: "2026-11-02T10:00:00Z" }
+                    confirmed_at: "2026-11-02T10:00:00Z"
+                    corrected: ["cvl-0MduI3fiqJ6h0wkltsuR4T-Jel1-00en"]
+                    resolved_from_history: []
+                    abandoned: []
+                    newly_unknown: []
+                    untracked: []
+                    anomalies: []
+                    held: []
+                    foreign_stops: []
+                    unpaired: []
+                    position_drift: []
+                    sl_repaired: [BTCUSDT]
+                    sl_restored: []
+                    sl_restore_refused: []
+                    sl_tighter: []
+                    unprotected: []
+                    counts:
+                      corrected: 1
+                      resolved_from_history: 0
+                      abandoned: 0
+                      newly_unknown: 0
+                      untracked: 0
+                      anomalies: 0
+                      held: 0
+                      foreign_stops: 0
+                      unpaired: 0
+                      position_drift: 0
+                      sl_repaired: 1
+                      sl_restored: 0
+                      sl_restore_refused: 0
+                      sl_tighter: 0
+                      unprotected: 0
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   # ===========================================================================
   # INSTRUMENTS / SYMBOLS
   # ===========================================================================
@@ -18662,6 +18747,109 @@ components:
           enum: [stale_lockout, divergent]
           description: The reconciliation job's state the operator's decision left (B19).
         resolved_at: { type: string, format: date-time }
+    ReconciliationDigest:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          exchange_account_id,
+          pass_id,
+          trigger,
+          result,
+          gap_window,
+          confirmed_at,
+          corrected,
+          resolved_from_history,
+          abandoned,
+          newly_unknown,
+          untracked,
+          anomalies,
+          held,
+          foreign_stops,
+          unpaired,
+          position_drift,
+          sl_repaired,
+          sl_restored,
+          sl_restore_refused,
+          sl_tighter,
+          unprotected,
+          counts,
+        ]
+      description: >
+        `getReconciliationDigest`'s answer (E29-S07, #1028): the account's latest reported pass
+        (`24-internal-schemas.md` §8.5, "The digest"), its lists as the report holds them, each cut
+        to its first 256 entries. Order lists name the order's `order_link_id`, `unpaired` its
+        fills' `exec_id`, and the stop lists, `position_drift` and `unprotected` the position's
+        symbol. **Open-ended for readers:** a client tolerates a member it does not know (C-6.3).
+      properties:
+        exchange_account_id: { type: string, format: uuid }
+        pass_id: { type: string, format: uuid }
+        trigger:
+          type: string
+          enum: [startup, reconnect, periodic, manual, unknown]
+          description: What started the pass (24 §8.5's trigger table).
+        result:
+          type: string
+          enum: [clean, corrected, divergent, errored]
+          description: >
+            `corrected` when it applied a correction, `divergent` when it left an item for the
+            Owner, `errored` when it listed an error, else `clean`.
+        gap_window:
+          type: object
+          additionalProperties: false
+          required: [from, to]
+          description: The window the pass's execution read covered (24 §8.5 `gap_window`).
+          properties:
+            from: { type: string, format: date-time }
+            to: { type: string, format: date-time }
+        confirmed_at:
+          type: string
+          format: date-time
+          description: >
+            When the pass read the exchange (`gap_window.to`): the server's last exchange
+            confirmation of the account's orders, positions and stops.
+        corrected: { $ref: "#/components/schemas/ReconciliationDigestIds" }
+        resolved_from_history: { $ref: "#/components/schemas/ReconciliationDigestIds" }
+        abandoned: { $ref: "#/components/schemas/ReconciliationDigestIds" }
+        newly_unknown: { $ref: "#/components/schemas/ReconciliationDigestIds" }
+        untracked: { $ref: "#/components/schemas/ReconciliationDigestIds" }
+        anomalies: { $ref: "#/components/schemas/ReconciliationDigestIds" }
+        held: { $ref: "#/components/schemas/ReconciliationDigestIds" }
+        foreign_stops: { $ref: "#/components/schemas/ReconciliationDigestIds" }
+        unpaired: { $ref: "#/components/schemas/ReconciliationDigestIds" }
+        position_drift:
+          type: array
+          maxItems: 256
+          description: Step 4's corrections, each with the side and size held before and the exchange's.
+          items:
+            type: object
+            additionalProperties: false
+            required: [symbol, position_idx, side_before, qty_before, side_after, qty_after]
+            properties:
+              symbol: { $ref: "#/components/schemas/Symbol" }
+              position_idx: { type: integer, enum: [0, 1, 2] }
+              side_before: { type: [string, "null"], enum: [buy, sell, null] }
+              qty_before:
+                oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }]
+              side_after: { type: [string, "null"], enum: [buy, sell, null] }
+              qty_after: { $ref: "#/components/schemas/Decimal" }
+        sl_repaired: { $ref: "#/components/schemas/ReconciliationDigestIds" }
+        sl_restored: { $ref: "#/components/schemas/ReconciliationDigestIds" }
+        sl_restore_refused: { $ref: "#/components/schemas/ReconciliationDigestIds" }
+        sl_tighter: { $ref: "#/components/schemas/ReconciliationDigestIds" }
+        unprotected:
+          allOf: [{ $ref: "#/components/schemas/ReconciliationDigestIds" }]
+          description: >
+            Open positions the pass found with no exchange-side stop and no recorded stop in force
+            (its `errors` of kind `no_record_in_force`, step 5, BQ-9 of #914), by symbol.
+        counts:
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
+          description: Each list's full length, by its name, before the 256-entry cut.
+    ReconciliationDigestIds:
+      type: array
+      maxItems: 256
+      items: { type: string, minLength: 1, maxLength: 64 }
     Problem:
       type: object
       description: "RFC 9457 problem detail. `code` mirrors the `x-error-codes` catalogue."

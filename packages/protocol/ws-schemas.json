@@ -3483,6 +3483,9 @@
           },
           "type": "object"
         },
+        "changed_at_ms": {
+          "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
+        },
         "class": {
           "enum": [
             "healthy",

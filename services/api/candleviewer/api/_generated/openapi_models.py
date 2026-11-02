@@ -29,6 +29,7 @@ from pydantic import (
     StrictFloat,
     Strict,
 )
+from typing_extensions import TypeAliasType
 
 
 _C6_DECIMAL = re.compile("^-?[0-9]+(\\.[0-9]+)?$")
@@ -158,6 +159,49 @@ class ReconciliationResolved(BaseModel):
         Field(description="The reconciliation job's state the operator's decision left (B19)."),
     ]
     resolved_at: AwareDatetime
+
+
+class GapWindow(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    from_: Annotated[AwareDatetime, Field(alias="from")]
+    to: AwareDatetime
+
+
+class PositionDriftItem(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    symbol: Annotated[
+        str,
+        Field(
+            description="Bybit USDT linear perpetual symbol. v1 accepts USDT-quoted linear symbols only.",
+            examples=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+            pattern="^[A-Z0-9]{2,20}USDT$",
+        ),
+    ]
+    position_idx: Literal[0, 1, 2]
+    side_before: Literal["buy", "sell"] | None
+    qty_before: Decimal | None
+    side_after: Literal["buy", "sell"] | None
+    qty_after: Annotated[
+        str,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ]
+
+
+CountsAdditionalProperty = TypeAliasType(
+    "CountsAdditionalProperty", Annotated[JsonInt, Field(ge=0)]
+)
+
+
+class ReconciliationDigestId(RootModel[str]):
+    root: Annotated[str, Field(max_length=64, min_length=1)]
 
 
 class Error(BaseModel):
@@ -7104,6 +7148,65 @@ class TradingDisabledProblem(Problem):
         Field(
             description="Why the shared order-entry gate refused an order (#837 Q5; E42-T03 and E27-T04). The server's set is closed and listed in `24-internal-schemas.md` 8.10. `account_stale` (E29-T06, #914): reconciliation has failed for 2 minutes on the account and no operator has resolved it yet (`resolveReconciliation`). **Open-ended for readers:** clients must tolerate values they do not know, so adding a reason is an additive change (C-6.3).\n"
         ),
+    ]
+
+
+class ReconciliationDigest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    exchange_account_id: UUID
+    pass_id: UUID
+    trigger: Annotated[
+        Literal["startup", "reconnect", "periodic", "manual", "unknown"],
+        Field(description="What started the pass (24 §8.5's trigger table)."),
+    ]
+    result: Annotated[
+        Literal["clean", "corrected", "divergent", "errored"],
+        Field(
+            description="`corrected` when it applied a correction, `divergent` when it left an item for the Owner, `errored` when it listed an error, else `clean`.\n"
+        ),
+    ]
+    gap_window: Annotated[
+        GapWindow,
+        Field(description="The window the pass's execution read covered (24 §8.5 `gap_window`)."),
+    ]
+    confirmed_at: Annotated[
+        AwareDatetime,
+        Field(
+            description="When the pass read the exchange (`gap_window.to`): the server's last exchange confirmation of the account's orders, positions and stops.\n"
+        ),
+    ]
+    corrected: Annotated[list[ReconciliationDigestId], Field(max_length=256)]
+    resolved_from_history: Annotated[list[ReconciliationDigestId], Field(max_length=256)]
+    abandoned: Annotated[list[ReconciliationDigestId], Field(max_length=256)]
+    newly_unknown: Annotated[list[ReconciliationDigestId], Field(max_length=256)]
+    untracked: Annotated[list[ReconciliationDigestId], Field(max_length=256)]
+    anomalies: Annotated[list[ReconciliationDigestId], Field(max_length=256)]
+    held: Annotated[list[ReconciliationDigestId], Field(max_length=256)]
+    foreign_stops: Annotated[list[ReconciliationDigestId], Field(max_length=256)]
+    unpaired: Annotated[list[ReconciliationDigestId], Field(max_length=256)]
+    position_drift: Annotated[
+        list[PositionDriftItem],
+        Field(
+            description="Step 4's corrections, each with the side and size held before and the exchange's.",
+            max_length=256,
+        ),
+    ]
+    sl_repaired: Annotated[list[ReconciliationDigestId], Field(max_length=256)]
+    sl_restored: Annotated[list[ReconciliationDigestId], Field(max_length=256)]
+    sl_restore_refused: Annotated[list[ReconciliationDigestId], Field(max_length=256)]
+    sl_tighter: Annotated[list[ReconciliationDigestId], Field(max_length=256)]
+    unprotected: Annotated[
+        list[ReconciliationDigestId],
+        Field(
+            description="Open positions the pass found with no exchange-side stop and no recorded stop in force (its `errors` of kind `no_record_in_force`, step 5, BQ-9 of #914), by symbol.\n",
+            max_length=256,
+        ),
+    ]
+    counts: Annotated[
+        dict[str, CountsAdditionalProperty],
+        Field(description="Each list's full length, by its name, before the 256-entry cut."),
     ]
 
 

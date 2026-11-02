@@ -5371,6 +5371,17 @@
         }
       }
     },
+    "/exchange-accounts/{accountId}/reconciliation/latest": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "orders:read",
+            "positions:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
     "/executions": {
       "get": {
         "x-rbac": {
