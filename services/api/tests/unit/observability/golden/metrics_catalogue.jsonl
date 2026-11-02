@@ -415,6 +415,8 @@
 ["topic_staleness_seconds", "gauge", ["topic"], "live", "E04"]
 ["users_invites_rejected_total", "counter", ["reason"], "live", "E09"]
 ["watchlist_write_conflicts_total", "counter", [], "planned", "E08"]
+["write_behind_heal_ranges_total", "counter", ["table", "result"], "live", "E08"]
+["write_behind_heal_rows_total", "counter", ["table"], "live", "E08"]
 ["ws_bars_seq_gap_total", "counter", [], "live", "E12"]
 ["ws_clients", "gauge", [], "planned", "E17"]
 ["ws_connection_state", "gauge", ["socket"], "live", "E04"]
