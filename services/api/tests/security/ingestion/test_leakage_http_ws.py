@@ -4,13 +4,13 @@ private-WS `auth` path. Register E.
 #1901: `POST /exchange-accounts/{id}/keys/{id}/test` is mounted with the real exception handlers
 (`install_error_redaction`) and driven over `httpx.ASGITransport`. The app is the real router plus
 handlers, not the production factory (middleware headers are out of scope). Its signed REST calls
-run on the real `BybitRestClient` through a `MockTransport` that answers with the docs-transcribed
-error payloads of the `packages/fixtures/bybit` corpus (documented-shape, per the manifest
+run on the real `BybitRestClient` through a `MockTransport` that answers with the corpus error
+payloads of `packages/fixtures/bybit` (documented-shape, owner #1778 group A, per the manifest
 `source`; not captures). The status, headers and body of the actual response, the captured logs and
 the metric exposition are scanned with `test_leakage.scan` and its synthetic credentials.
 
 #1902: the private-WS `op:auth` probe (`KeyWsProbe`) is driven on a fake socket with a dropped
-dial, a dropped socket, a reply that never comes, the corpus's documented-shape grant
+dial, a dropped socket, a reply that never comes, the corpus's docs-transcribed grant
 (`private-auth-ok.jsonl`) and the documented-shape refusal
 (`tests/fixtures/key_verification/ws_auth_denied.json`, the same stand-in as
 `test_key_ws_probe.py`; no capture of a refusal exists, fixtures README, K01). Each case's result is
@@ -48,6 +48,8 @@ from candleviewer.api.exchange_keys import make_exchange_keys_router
 
 # nosemgrep: cv-adapter-isolation reason=X02 owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit import key_ws_probe
+
+# nosemgrep: cv-adapter-isolation reason=X02 owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 
 # nosemgrep: cv-adapter-isolation reason=X02 owner=@CandleViewer/security review=2026-12-31
@@ -73,18 +75,29 @@ from tests.unit.exchange.bybit.test_key_ws_probe import DENIED, NOW_MS, Clock, S
 captured = leak.captured
 
 
-async def _no_sleep(_s: float) -> None:
-    return None
-
-
 @pytest.fixture(autouse=True)
 def _virtual_time(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No real backoff or token wait: the clients' default `sleep` (bound when they were
-    defined) becomes a no-op, as `test_leakage._drive` injects one."""
-    for cls in (BybitRestClient, TokenBucketGovernor):
+    """No real backoff or token wait. As `test_leakage._drive` does, one virtual clock: a sleep
+    advances it and yields once, and the REST client and the governor read it. Their defaults
+    (bound when they were defined) are replaced for the test."""
+    now = [0.0]
+
+    async def sleep(seconds: float) -> None:
+        now[0] += seconds
+        await asyncio.sleep(0)
+
+    def clock() -> float:
+        return now[0]
+
+    for cls, names in (
+        (BybitRestClient, {"sleep": sleep, "monotonic": clock}),
+        (TokenBucketGovernor, {"sleep": sleep, "clock": clock}),
+    ):
         defaults = cls.__init__.__kwdefaults__
-        assert defaults is not None and "sleep" in defaults
-        monkeypatch.setitem(defaults, "sleep", _no_sleep)
+        assert defaults is not None
+        for key, value in names.items():
+            assert key in defaults, f"{cls.__name__} has no `{key}` default"
+            monkeypatch.setitem(defaults, key, value)
 
 
 _ERROR_FILES = {"drift": "error_10002", "rate": "error_10018", "503": "error_503"}
