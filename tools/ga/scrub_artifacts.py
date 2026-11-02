@@ -31,8 +31,9 @@ What is replaced by ``[REDACTED]``, by pattern (no literal secret, host or heade
   password-typed or OTP-named inputs, because a snapshot records every input's live value and
   the attributes that would tell a credential apart are not reliable), and likewise the plain
   ``value`` attribute of every INPUT/TEXTAREA snapshot node and a TEXTAREA's text child (React
-  copies a controlled field's value there), raw or JSON-escaped; in page HTML, every
-  ``<input value>`` and ``<textarea>`` body (SELECT/OPTION values are the page's own, left);
+  copies a controlled field's value there), raw or JSON-escaped, and the rest of such a node
+  once an attribute does not parse; in page HTML, every ``<input value>`` and ``<textarea>``
+  body (SELECT/OPTION values are the page's own, left);
 * the value of every ``textbox``/``searchbox``/``spinbutton`` line of an aria snapshot
   (``error-context.md``, and the ``\\n``-escaped form inside a trace's JSON): fail-safe for every
   label, because an accessible name ("Code", "Enter the 6 digits") does not reliably say whether
@@ -124,10 +125,14 @@ _OTP_SHAPED = re.compile(
     rf"{_Q}(?P<k>code|otp|pin)(?P=q)\s*:\s*(?:(?P=q)(?P<v>\d{{6,8}})(?P=q)|(?P<n>\d{{6,8}})\b)",
     re.I,
 )
-_KEY_ARRAY = re.compile(rf"{_Q}(?P<k>{_SENSITIVE_KEY})(?P=q)\s*:\s*\[[^\]]*\]", re.I)
+#: The opening of an array under a credential key (`"recovery_codes": [`); the array runs to the
+#: next `]` (found by `_scrub_key_arrays` in one forward scan, not by a regex per opener).
+_KEY_ARRAY = re.compile(rf"{_Q}(?P<k>{_SENSITIVE_KEY})(?P=q)\s*:\s*\[", re.I)
 _COOKIES = re.compile(rf"{_Q}(?:request_?|response_?)?cookies(?P=q)\s*:\s*\[", re.I)
 _COOKIE_VALUE = r"(?P<pre>{q}value{q}\s*:\s*{q})(?P<v>.*?)(?<!\\){q}"
-_HEADER_LINE = re.compile(rf"(?im)^(?P<h>\s*(?:{_SENSITIVE_HEADER})\s*:)[^\r\n]*")
+#: A raw header line. Blanks only (`[ \t]`), so a match never spans lines: `\s*` let each line
+#: start scan every following blank line (quadratic on a run of newlines).
+_HEADER_LINE = re.compile(rf"(?im)^(?P<h>[ \t]*(?:{_SENSITIVE_HEADER})[ \t]*:)[^\r\n]*")
 _SCHEME = re.compile(r"\b(?P<s>Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{4,}", re.I)
 _URL_PARAM = re.compile(
     rf"(?P<k>(?<![A-Za-z0-9_.-])(?:{_PARAM})=)(?!{re.escape(MASK)})[^&\s\"'#<>\\]+", re.I
@@ -143,10 +148,9 @@ TYPED_METHODS = {
     "keyboardType",
     "keyboardInsertText",
 }
-#: The call-log line of a typing action (`  fill("...")`), raw or at any escaping depth.
-_TYPED_LOG = re.compile(
-    rf"(?<![A-Za-z0-9_])(?:fill|type|pressSequentially|insertText)\({_Q}{_VALUE}\)"
-)
+#: The call-log line of a typing action (`  fill("...")`), raw or at any escaping depth: the
+#: opening, up to the quote; `_scrub_typed_log` finds the `")` that closes it on the same line.
+_TYPED_LOG = re.compile(rf"(?<![A-Za-z0-9_])(?:fill|type|pressSequentially|insertText)\({_Q}")
 #: The live value of every input in a DOM snapshot.
 _SNAPSHOT_VALUE = re.compile(rf"{_Q}__playwright_value_(?P=q)\s*:\s*(?P=q){_VALUE}")
 #: An INPUT or TEXTAREA node of a DOM snapshot, up to its attribute map: `["INPUT",{`. React
@@ -283,40 +287,151 @@ def _scrub_typed(text: str) -> str:
     return "\n".join(lines)
 
 
-def _attr_pattern(q: str) -> re.Pattern[str]:
-    """One `"name":"value"` pair of a snapshot attribute map at quote `q`, then `,` or `}`."""
-    qe = re.escape(q)
-    return re.compile(
-        rf"\s*{qe}(?P<k>[^\"\\]{{0,256}}){qe}\s*:\s*{qe}(?P<v>.*?)(?<!\\){qe}\s*(?P<e>,|\}})", re.S
-    )
+def _scrub_key_arrays(text: str) -> str:
+    """Every array under a credential key becomes one masked string. One forward scan: an
+    opener with no `]` after it means no later opener has one either, so the walk stops."""
+    out, pos = [], 0
+    for m in _KEY_ARRAY.finditer(text):
+        if m.start() < pos:
+            continue
+        end = text.find("]", m.end())
+        if end < 0:
+            break
+        q, k = m.group("q"), m.group("k")
+        out += [text[pos : m.start()], f"{q}{k}{q}: {q}{MASK}{q}"]
+        pos = end + 1
+    return "".join(out) + text[pos:] if out else text
+
+
+def _scrub_typed_log(text: str) -> str:
+    """The argument of each typing call-log line (`fill("...")`), closed by `")` at the same
+    quote depth on the same line. A quote depth already found unclosed on a line is not searched
+    again for a later opening on that line, so a line of openings is scanned once per depth."""
+    out, pos = [], 0
+    unclosed: dict[str, int] = {}  # quote -> end of the line on which it has no close
+    closers: dict[str, re.Pattern[str]] = {}
+    eol = -1  # end of the current opening's line, found once per line
+    for m in _TYPED_LOG.finditer(text):
+        if m.start() < pos:
+            continue
+        q = m.group("q")
+        if m.end() > eol:
+            eol = text.find("\n", m.end())
+            eol = len(text) if eol < 0 else eol
+        if unclosed.get(q) == eol:
+            continue
+        closer = closers.setdefault(q, re.compile(rf"(?<!\\){re.escape(q)}\)"))
+        c = closer.search(text, m.end(), eol)
+        if c is None:
+            unclosed[q] = eol
+            continue
+        out += [text[pos : m.end()], MASK]
+        pos = c.start()
+    return "".join(out) + text[pos:] if out else text
+
+
+def _string_end(text: str, start: int, q: str) -> int:
+    """Index just past the quote `q` closing a string whose content starts at `start`, or -1.
+    At `q`'s depth (n backslashes before the quote), a quote preceded by r backslashes closes
+    the string only when r - n is a multiple of 2(n + 1): fewer, or the rest, escape it (a
+    trailing escaped backslash, `"a\\"`, is content followed by a closing quote)."""
+    n = len(q) - 1
+    k = text.find('"', start)
+    while k >= 0:
+        r = 0
+        while k - r - 1 >= start and text[k - r - 1] == "\\":
+            r += 1
+        if r >= n and (r - n) % (2 * (n + 1)) == 0:
+            return k + 1
+        k = text.find('"', k + 1)
+    return -1
+
+
+_BLANK = " \t\r\n"
+
+
+def _skip_blanks(text: str, i: int) -> int:
+    while i < len(text) and text[i] in _BLANK:
+        i += 1
+    return i
+
+
+def _mask_rest_of_node(text: str, i: int, q: str, out: list[str]) -> int:
+    """Fail-safe for an attribute map that stopped parsing: every string and bare token up to the
+    map's `}` is masked (keys too, so nothing after the bad pair survives). Returns the index past
+    the `}`, or the end of the text, which is then masked to its end."""
+    while i < len(text):
+        c = text[i]
+        if c == "}":
+            out.append("}")
+            return i + 1
+        if c in _BLANK or c in ",:":
+            out.append(c)
+            i += 1
+        elif text.startswith(q, i):
+            end = _string_end(text, i + len(q), q)
+            if end < 0:
+                break
+            out.append(f"{q}{MASK}{q}")
+            i = end
+        else:
+            j = i + 1
+            while j < len(text) and text[j] not in _BLANK + ",:}" and not text.startswith(q, j):
+                j += 1
+            out.append(f"{q}{MASK}{q}")
+            i = j
+    if i < len(text):
+        out.append(f"{q}{MASK}")
+    return len(text)
+
+
+def _walk_attributes(text: str, i: int, q: str, out: list[str]) -> tuple[int, bool]:
+    """Copies one snapshot attribute map from just past its `{`, masking every `value`. Returns
+    the index past it and whether every pair parsed; on the first pair that does not, the rest
+    of the map is masked (`_mask_rest_of_node`)."""
+    j = _skip_blanks(text, i)
+    if text.startswith("}", j):
+        out.append(text[i : j + 1])
+        return j + 1, True
+    while True:
+        k0 = _skip_blanks(text, i)
+        k1 = _string_end(text, k0 + len(q), q) if text.startswith(q, k0) else -1
+        colon = _skip_blanks(text, k1) if k1 >= 0 else -1
+        v0 = _skip_blanks(text, colon + 1) if colon >= 0 and text.startswith(":", colon) else -1
+        v1 = _string_end(text, v0 + len(q), q) if v0 >= 0 and text.startswith(q, v0) else -1
+        e = _skip_blanks(text, v1) if v1 >= 0 else -1
+        if e < 0 or not text.startswith((",", "}"), e):
+            return _mask_rest_of_node(text, i, q, out), False
+        if text[k0 + len(q) : k1 - len(q)].lower() == "value":
+            out += [text[i : v0 + len(q)], MASK, text[v1 - len(q) : e + 1]]
+        else:
+            out.append(text[i : e + 1])
+        i = e + 1
+        if text[e] == "}":
+            return i, True
 
 
 def _scrub_field_nodes(text: str) -> str:
     """The `value` attribute of every INPUT/TEXTAREA snapshot node, and a TEXTAREA's text child,
-    raw or at any escaping depth. Attributes are walked pair by pair at the node's own depth."""
-    out, pos = [], 0
+    raw or at any escaping depth. Attributes are walked pair by pair at the node's own depth;
+    a pair that does not parse masks the rest of the node (fail-safe)."""
+    out: list[str] = []
+    pos = 0
     for m in _FIELD_NODE.finditer(text):
         if m.start() < pos:
             continue
         q = m.group("q")
-        attr = _attr_pattern(q)
         out.append(text[pos : m.end()])
-        i, closed = m.end(), text.startswith("}", m.end())
-        if closed:
-            out.append("}")
-            i += 1
-        while not closed and (a := attr.match(text, i)):
-            if a.group("k").lower() == "value":
-                out += [text[i : a.start("v")], MASK, text[a.end("v") : a.end()]]
-            else:
-                out.append(text[i : a.end()])
-            i, closed = a.end(), a.group("e") == "}"
-        if closed and m.group("tag").upper() == "TEXTAREA":
-            child = re.compile(rf"\s*,\s*{re.escape(q)}(?P<v>.*?)(?<!\\){re.escape(q)}", re.S)
-            c = child.match(text, i)
-            if c and c.group("v") not in ("", MASK):
-                out += [text[i : c.start("v")], MASK, text[c.end("v") : c.end()]]
-                i = c.end()
+        i, _ = _walk_attributes(text, m.end(), q, out)
+        if m.group("tag").upper() == "TEXTAREA":
+            comma = _skip_blanks(text, i)
+            v0 = _skip_blanks(text, comma + 1) if text.startswith(",", comma) else -1
+            if v0 >= 0 and text.startswith(q, v0):
+                v1 = _string_end(text, v0 + len(q), q)
+                v1 = len(text) + len(q) if v1 < 0 else v1
+                if text[v0 + len(q) : v1 - len(q)] not in ("", MASK):
+                    out += [text[i : v0 + len(q)], MASK, text[v1 - len(q) : v1]]
+                    i = min(v1, len(text))
         pos = i
     return "".join(out) + text[pos:] if out else text
 
@@ -332,7 +447,7 @@ def _mask_aria(m: re.Match[str]) -> str:
 
 def scrub_text(text: str) -> str:
     text = _scrub_typed(text)
-    text = _TYPED_LOG.sub(_mask_value, text)
+    text = _scrub_typed_log(text)
     text = _SNAPSHOT_VALUE.sub(_mask_value, text)
     text = _scrub_field_nodes(text)
     text = _HTML_INPUT.sub(lambda t: _HTML_VALUE.sub(_mask_html_value, t.group(0)), text)
@@ -346,10 +461,7 @@ def scrub_text(text: str) -> str:
     text = _OTP_SHAPED.sub(_mask_value, text)
     text = _BARE_KEY_STRING.sub(_mask_value, text)
     text = _BARE_KEY_NUMBER.sub(_mask_value, text)
-    text = _KEY_ARRAY.sub(
-        lambda m: f"{m.group('q')}{m.group('k')}{m.group('q')}: {m.group('q')}{MASK}{m.group('q')}",
-        text,
-    )
+    text = _scrub_key_arrays(text)
     text = _HEADER_LINE.sub(lambda m: f"{m.group('h')} {MASK}", text)
     text = _OTPAUTH.sub(f"otpauth://{MASK}", text)
     text = _URL_PARAM.sub(lambda m: m.group("k") + MASK, text)
