@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, packTest as test } from "./ga/fixtures";
 import AxeBuilder from "@axe-core/playwright";
 
 // E09-S05 (PR #1689 review): wizard -> done, expired and reused links, axe on SCR-017.
@@ -16,7 +17,9 @@ async function seriousViolations(page: Page): Promise<unknown[]> {
   return res.violations.filter((v) => v.impact === "serious" || v.impact === "critical");
 }
 
-test("SCR-017 four-step wizard completes; axe clean", async ({ page }) => {
+test("SCR-017 four-step wizard completes; axe clean @ga-regression @ga-area-primary @story-US-ONB-006", async ({
+  page,
+}) => {
   await page.route("**/api/v1/invites/tok-e2e-0123456789", (r) =>
     r.request().method() === "GET"
       ? r.fulfill(json({ display_name: "Ann", role: "viewer", expires_at: "x" }))
@@ -38,7 +41,9 @@ test("SCR-017 four-step wizard completes; axe clean", async ({ page }) => {
   expect(await seriousViolations(page)).toEqual([]);
 });
 
-test("expired and reused links show the same uniform message", async ({ page }) => {
+test("expired and reused links show the same uniform message @ga-regression @ga-area-primary @story-US-ONB-006", async ({
+  page,
+}) => {
   await page.route("**/api/v1/invites/**", (r) => r.fulfill(json({ detail: "x" }, 404)));
   for (const tok of ["tok-expired-0123456789", "tok-reused-0123456789"]) {
     await page.goto(`/invite/${tok}`);

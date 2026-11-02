@@ -1,5 +1,5 @@
 import { stubSession } from "../support/api";
-import { expect, test } from "./fixtures";
+import { expect, test } from "../ga/fixtures";
 
 // E10-Q02 hotkeys (plan step HK-1; BQ-04, re-read at #5214's merge): what this build ships. Ctrl+K
 // is reserved for the command palette, which is not in this build: the dispatcher takes the key
@@ -7,7 +7,7 @@ import { expect, test } from "./fixtures";
 // Opening and running the palette is the "SCR-012 command palette, #5236" row of the plan's §3.
 // Rebind -> conflict -> swap -> reload is hotkeys.spec.ts (E49-S07).
 
-test("@plan-HK-1 Ctrl+K is taken by the shell and opens nothing; Ctrl+/ opens the cheatsheet", async ({
+test("@plan-HK-1 Ctrl+K is taken by the shell and opens nothing; Ctrl+/ opens the cheatsheet @ga-regression @ga-area-shell @story-US-SET-002", async ({
   page,
 }) => {
   await stubSession(page, { role: "viewer" });

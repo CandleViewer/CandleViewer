@@ -1,4 +1,5 @@
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { type Locator, type Page } from "@playwright/test";
+import { expect, packTest as test } from "./ga/fixtures";
 
 // E47-S04 AC1 e2e (#1318): "Reduced motion is honoured everywhere". With the OS asking for reduced
 // motion and no saved preference, the real shell resolves `data-motion="reduce"` and the animated
@@ -65,14 +66,14 @@ const panel = (page: Page) => page.getByRole("group", { name: "Notifications" })
 test.describe("OS asks for reduced motion", () => {
   test.use({ reducedMotion: "reduce" });
 
-  test("the root resolves data-motion=reduce from the OS when no preference is saved", async ({
+  test("the root resolves data-motion=reduce from the OS when no preference is saved @ga-regression @ga-area-shell @story-US-SET-007", async ({
     page,
   }) => {
     await openTerminal(page);
     await expect(page.locator("html")).toHaveAttribute("data-motion", "reduce");
   });
 
-  test("collapsing the nav rail moves its labels with no transition and keeps their names", async ({
+  test("collapsing the nav rail moves its labels with no transition and keeps their names @ga-regression @ga-area-shell @story-US-SET-007", async ({
     page,
   }) => {
     await openTerminal(page);
@@ -93,7 +94,9 @@ test.describe("OS asks for reduced motion", () => {
     ).toBeVisible();
   });
 
-  test("opening the Notifications panel shows it with no transition", async ({ page }) => {
+  test("opening the Notifications panel shows it with no transition @ga-regression @ga-area-shell @story-US-SET-007", async ({
+    page,
+  }) => {
     await openTerminal(page);
     await page.getByRole("button", { name: "Notifications" }).click();
     await expect(page.getByRole("button", { name: "Notifications" })).toHaveAttribute(
@@ -106,7 +109,9 @@ test.describe("OS asks for reduced motion", () => {
     expect(Math.max(...motion.durations)).toBeLessThanOrEqual(INSTANT);
   });
 
-  test("a toast appears with its text and no animation", async ({ page }) => {
+  test("a toast appears with its text and no animation @ga-regression @ga-area-shell @story-US-SET-007", async ({
+    page,
+  }) => {
     await openTerminal(page);
     await expect(page.getByTestId("toast-host")).toBeAttached();
     await page.keyboard.press("Control+Shift+X"); // an inert chord: the shell explains it in a toast
@@ -122,7 +127,9 @@ test.describe("OS asks for reduced motion", () => {
 test.describe("no reduced-motion request (control)", () => {
   test.use({ reducedMotion: "no-preference" });
 
-  test("the root is not reduced and the same surfaces carry real transitions", async ({ page }) => {
+  test("the root is not reduced and the same surfaces carry real transitions @ga-regression @ga-area-shell", async ({
+    page,
+  }) => {
     await openTerminal(page);
     await expect(page.locator("html")).not.toHaveAttribute("data-motion", "reduce");
 
@@ -139,7 +146,9 @@ test.describe("no reduced-motion request (control)", () => {
     expect(Math.max(...drawer.durations)).toBeGreaterThan(INSTANT);
   });
 
-  test("the same toast carries its entry animation", async ({ page }) => {
+  test("the same toast carries its entry animation @ga-regression @ga-area-shell", async ({
+    page,
+  }) => {
     await openTerminal(page);
     await expect(page.getByTestId("toast-host")).toBeAttached();
     await page.keyboard.press("Control+Shift+X");

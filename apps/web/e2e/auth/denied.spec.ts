@@ -1,11 +1,12 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, packTest as test } from "../ga/fixtures";
 import { json, stubSession, watchForLeaks } from "../support/api";
 
 // E09-Q02 (#293) denied.spec. SCR-154 is the permission-denied state; the shipped renderers are
 // R-900 /403 (ForbiddenState) and /admin/** -> 404 for non-owners. Server-side denial (E09-TC-E06/E07)
 // is owned by E09-Q03 (contract-level).
 
-test("E09-TC-E06 viewer deep link to /admin/users shows not-found with no admin data", async ({
+test("E09-TC-E06 viewer deep link to /admin/users shows not-found with no admin data @ga-regression @ga-area-admin", async ({
   page,
 }) => {
   const adminCalls: string[] = [];
@@ -20,7 +21,7 @@ test("E09-TC-E06 viewer deep link to /admin/users shows not-found with no admin 
   expect(adminCalls).toEqual([]);
 });
 
-test("E09-TC-E06 owner-only risk route returns the forbidden state to a viewer", async ({
+test("E09-TC-E06 owner-only risk route returns the forbidden state to a viewer @ga-regression @ga-area-admin", async ({
   page,
 }) => {
   await stubSession(page, { role: "viewer" });
@@ -31,7 +32,7 @@ test("E09-TC-E06 owner-only risk route returns the forbidden state to a viewer",
   await expect(page.getByRole("link", { name: "Back to your workspace" })).toBeVisible();
 });
 
-test("E09-TC-E07 denied page is identical for any account id (no enumeration)", async ({
+test("E09-TC-E07 denied page is identical for any account id (no enumeration) @ga-regression @ga-area-admin", async ({
   page,
 }) => {
   await stubSession(page, { role: "viewer" });
@@ -72,7 +73,7 @@ const SHELL_READS = ["/api/v1/auth/session", "/api/v1/settings"];
 
 // Each deep link gets a page of its own: the shell's liveness probe (every 2 s) may start after a flush, and a
 // navigation of the same page would drop it before its body is read, or leave it unsettled, which the guard fails.
-test("E09-TC-E06 a viewer's deep link to a denied route fetches none of the data it guards, and no such body reaches the page", async ({
+test("E09-TC-E06 a viewer's deep link to a denied route fetches none of the data it guards, and no such body reaches the page @ga-regression @ga-area-admin", async ({
   context,
 }) => {
   for (const [path, heading] of DENIED) {
@@ -98,7 +99,7 @@ test("E09-TC-E06 a viewer's deep link to a denied route fetches none of the data
   }
 });
 
-test("E09-TC-E07 the denied page makes no call that names the account id it was asked for", async ({
+test("E09-TC-E07 the denied page makes no call that names the account id it was asked for @ga-regression @ga-area-admin", async ({
   page,
 }) => {
   await stubSession(page, { role: "viewer" });

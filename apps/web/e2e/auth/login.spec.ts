@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, packTest as test } from "../ga/fixtures";
 import { assertNoClientSecrets, json, watchForLeaks } from "../support/api";
 import { OTP_SEED, totp } from "../support/totp";
 
@@ -13,7 +13,7 @@ async function signIn(page: import("@playwright/test").Page): Promise<void> {
   await page.getByRole("button", { name: "Sign in" }).click();
 }
 
-test("E09-TC-A01 password step returns mfa_required and shows the second-factor step @electron", async ({
+test("E09-TC-A01 password step returns mfa_required and shows the second-factor step @electron @ga-regression @ga-area-primary @story-US-ONB-001 @story-US-ONB-002", async ({
   page,
 }) => {
   const guard = watchForLeaks(page, ["pw-a1"]);
@@ -48,7 +48,7 @@ async function toTwoFactor(page: import("@playwright/test").Page) {
   return page.getByRole("textbox", { name: "Two-factor code" });
 }
 
-test("E09-TC-A05 (UI half) an invalid code is cleared, marked and focused, and never echoed @electron", async ({
+test("E09-TC-A05 (UI half) an invalid code is cleared, marked and focused, and never echoed @electron @ga-regression @ga-area-primary @story-US-ONB-002", async ({
   page,
 }) => {
   const bodies: unknown[] = [];
@@ -67,7 +67,9 @@ test("E09-TC-A05 (UI half) an invalid code is cleared, marked and focused, and n
   await assertNoClientSecrets(page, ["pw-a1", HANDLE, CODE]);
 });
 
-test("E09-TC-A06 (UI half) a replayed code reads exactly as an invalid one", async ({ page }) => {
+test("E09-TC-A06 (UI half) a replayed code reads exactly as an invalid one @ga-regression @ga-area-primary @story-US-ONB-002", async ({
+  page,
+}) => {
   const answers = [MFA_REFUSED("Unauthorized"), MFA_REFUSED("Replayed")];
   await page.route(VERIFY, (r) => r.fulfill(answers.shift() ?? MFA_REFUSED()));
   const code = await toTwoFactor(page);
@@ -82,7 +84,7 @@ test("E09-TC-A06 (UI half) a replayed code reads exactly as an invalid one", asy
   expect(renders.join("")).not.toMatch(/replay|expired/iu);
 });
 
-test("E09-TC-A09 (UI half) five refusals end the challenge: expired, nothing more sent, back to SCR-001", async ({
+test("E09-TC-A09 (UI half) five refusals end the challenge: expired, nothing more sent, back to SCR-001 @ga-regression @ga-area-primary @story-US-ONB-002", async ({
   page,
 }) => {
   let hits = 0;
@@ -108,7 +110,7 @@ test("E09-TC-A09 (UI half) five refusals end the challenge: expired, nothing mor
   expect(hits).toBe(5);
 });
 
-test("E09-TC-A10 (UI half) past expires_in the step warns, then expires and returns to SCR-001", async ({
+test("E09-TC-A10 (UI half) past expires_in the step warns, then expires and returns to SCR-001 @ga-regression @ga-area-primary @story-US-ONB-002", async ({
   page,
 }) => {
   await page.clock.install({ time: Date.UTC(2026, 0, 1, 9, 0, 0) });
@@ -130,7 +132,7 @@ test("E09-TC-A10 (UI half) past expires_in the step warns, then expires and retu
   expect(hits).toBe(0);
 });
 
-test("E09-TC-A02 (UI half) the verify 200 hands over by a full page load; no handle, code or token is kept", async ({
+test("E09-TC-A02 (UI half) the verify 200 hands over by a full page load; no handle, code or token is kept @ga-regression @ga-area-primary @story-US-ONB-002", async ({
   page,
 }) => {
   const token = "mk-a1"; // a marker for the bundle's access value, not a credential
@@ -153,7 +155,9 @@ test("E09-TC-A02 (UI half) the verify 200 hands over by a full page load; no han
   await assertNoClientSecrets(page, ["pw-a1", HANDLE, CODE, token]);
 });
 
-test("E09-TC-A01 a direct load of /login/2fa starts at SCR-001 with no query", async ({ page }) => {
+test("E09-TC-A01 a direct load of /login/2fa starts at SCR-001 with no query @ga-regression @ga-area-primary @story-US-ONB-002", async ({
+  page,
+}) => {
   await page.goto("/login/2fa?mfa_token=planted");
   await expect(page.getByRole("heading", { name: "Sign in to CandleViewer" })).toBeVisible();
   await expect(page).toHaveURL(/\/login$/u);
@@ -162,7 +166,9 @@ test("E09-TC-A01 a direct load of /login/2fa starts at SCR-001 with no query", a
 // Every failed sign-in, whatever the account's state, is the contract's one 401 (SR-014, #4961).
 const REFUSED = json({ code: "unauthenticated" }, 401);
 
-test("E09-TC-A03 disabled account is refused with no session @electron", async ({ page }) => {
+test("E09-TC-A03 disabled account is refused with no session @electron @ga-regression @ga-area-primary @story-US-ONB-001", async ({
+  page,
+}) => {
   await page.route("**/api/v1/auth/login", (r) => r.fulfill(REFUSED));
   await page.goto("/login");
   await signIn(page);
@@ -172,7 +178,7 @@ test("E09-TC-A03 disabled account is refused with no session @electron", async (
   expect(await page.context().cookies()).toEqual([]);
 });
 
-test("E09-TC-A07 unknown user and wrong password are indistinguishable in the UI", async ({
+test("E09-TC-A07 unknown user and wrong password are indistinguishable in the UI @ga-regression @ga-area-primary @story-US-ONB-001", async ({
   page,
 }) => {
   await page.route("**/api/v1/auth/login", (r) => r.fulfill(json({ detail: "x" }, 401)));
@@ -191,7 +197,9 @@ test("E09-TC-A07 unknown user and wrong password are indistinguishable in the UI
   expect(messages).toHaveLength(2);
 });
 
-test("E09-TC-A08 (UI half) a locked account reads as the one failure string", async ({ page }) => {
+test("E09-TC-A08 (UI half) a locked account reads as the one failure string @ga-regression @ga-area-primary @story-US-ONB-001", async ({
+  page,
+}) => {
   await page.route("**/api/v1/auth/login", (r) => r.fulfill(REFUSED));
   await page.goto("/login");
   await signIn(page);
@@ -201,7 +209,7 @@ test("E09-TC-A08 (UI half) a locked account reads as the one failure string", as
   await expect(page.getByRole("button", { name: "Sign in" })).toBeEnabled();
 });
 
-test("E09-TC-A01 keyboard-only: tab order SCR-001 and Enter submits @electron", async ({
+test("E09-TC-A01 keyboard-only: tab order SCR-001 and Enter submits @electron @ga-regression @ga-area-primary @story-US-ONB-001", async ({
   page,
 }) => {
   let hit = 0;

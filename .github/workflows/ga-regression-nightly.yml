@@ -1,0 +1,392 @@
+name: ga-regression-nightly
+
+# E49-Q01 (#1335): the GA regression pack, every night and on demand before a wave closes
+# (workflow_dispatch). docs/plan/03-testing-strategy.md §7.1 describes the pack; tools/ga/ holds
+# its tooling. Not a required check, and it changes none (C-9.1 owns that list): pr.yml and
+# _job-e2e.yml are untouched, and the configs only add the `ga-regression` projects when
+# CV_E2E_GA=1, so the PR lane runs nothing twice.
+#
+# Jobs: `ga-health` (tags, quarantine owners and deadlines, egress imports, the coverage map and
+# the planned 45-minute budget; then the artefact-scrub self-test); `ga-history` (the only job that
+# reads the Actions API: the run's start time and the last nights' ga-report artefacts, for the
+# trend and flake rates); four `ga-web-chromium` shards and one `ga-electron` leg, each running the
+# spec files tools/ga/shard_plan.py balances from tools/ga/durations.json; `ga-report` (per-area
+# report, metrics file, flake table, wall-clock budget); and `ga-regression-issue`, which files a
+# red night on the signal's tracker issue through _nightly-issue.yml, naming the failing areas and
+# the scrubbed trace artefacts. Failure artefacts are scrubbed of credentials before upload
+# (tools/ga/scrub_artifacts.py) and kept 14 days. No secret is read; every server the specs reach
+# is on the loopback interface (vite preview on 127.0.0.1, page routes, the WS harness), and the
+# specs' egress guards fail a test on any other host (C-13.5). No workflow-level concurrency group
+# (#3449), as in the other nightlies.
+# Cost: health and history about 1 minute each, five pack legs of 6 to 15 minutes, report 1 minute.
+
+on:
+  schedule:
+    - cron: "41 3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  health:
+    name: ga-health
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # nothing here pushes or fetches
+
+      - name: Pack health (tags, quarantine, egress imports, coverage map, planned budget)
+        run: python3 tools/ga/health.py
+
+      - name: Artefact scrub self-test (seeded credentials must not survive)
+        run: python3 tools/ga/scrub_artifacts.py --self-test
+
+  history:
+    name: ga-history
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Reads runs and artefacts; writes nothing. No checkout and no repository code run here.
+    permissions:
+      actions: read
+    steps:
+      - name: The run's start time and the last nights' reports
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p history
+          gh api "repos/$GH_REPO/actions/runs/$RUN_ID" --jq .run_started_at > history/started_at
+          # main's nights only: a dispatch on a branch (an experiment) never enters the trend.
+          gh run list -R "$GH_REPO" --workflow ga-regression-nightly.yml --branch main \
+            --status completed --limit 7 --json databaseId --jq '.[].databaseId' \
+            > "$RUNNER_TEMP/runs"
+          while read -r id; do
+            [[ "$id" =~ ^[0-9]+$ ]] || continue
+            gh run download "$id" -R "$GH_REPO" -n ga-report -D "history/$id" || true
+          done < "$RUNNER_TEMP/runs"
+          find history -name ga-report.json | wc -l
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ga-history
+          path: history/
+          retention-days: 1
+
+  web:
+    name: ga-web-chromium
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # nothing here pushes or fetches
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm via corepack
+        run: corepack enable && corepack prepare pnpm@12.5.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the workspace packages apps/web depends on
+        run: pnpm --filter "@candleviewer/web^..." run build
+
+      - name: "Guard: the packages apps/web imports are built (fails fast, CI-BUILD-001)"
+        run: node tools/ci/check_built_exports.mjs packages/ui packages/chart-engine packages/protocol
+
+      - name: Build web app (Playwright's webServer runs the built `dist/` via vite preview)
+        working-directory: apps/web
+        run: pnpm run build
+
+      - name: Install Playwright browsers
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+
+      - name: Pack shard ${{ matrix.shard }}/4 (the files shard_plan.py assigns)
+        working-directory: apps/web
+        env:
+          CV_E2E_GA: "1"
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(python3 ../../tools/ga/shard_plan.py web-chromium "$SHARD" 4)
+          if [ "${#files[@]}" -eq 0 ]; then echo "shard $SHARD: no spec file planned"; exit 0; fi
+          printf 'shard %s: %s\n' "$SHARD" "${files[*]}"
+          npx playwright test -c e2e/playwright.config.ts --project=ga-regression --retries=0 \
+            "${files[@]}"
+
+      - name: Pass and fail counts to the job summary (zero retries, so a flake fails)
+        if: always()
+        working-directory: apps/web
+        env:
+          CV_LANE: ga-web-chromium shard ${{ matrix.shard }}
+        run: node ../../packages/fixtures/bin/flaky-summary.mjs
+
+      # Fail-closed (#1335 security lens): each upload runs only when the scrub of what it uploads
+      # succeeded. A file the scrubber cannot read (a truncated trace from a killed worker) is
+      # deleted and fails its scrub step, so nothing unscrubbed is ever published. Each scrub step
+      # is bounded: a scrub that overruns its timeout fails too, so the uploads are skipped.
+      - name: Scrub credentials from the JSON report
+        id: scrub-results
+        if: always()
+        timeout-minutes: 10
+        run: |
+          mkdir -p "ga-results-web-chromium-$SHARD"
+          cp apps/web/playwright-report/results.json "ga-results-web-chromium-$SHARD/" || true
+          python3 tools/ga/scrub_artifacts.py "ga-results-web-chromium-$SHARD"
+        env:
+          SHARD: ${{ matrix.shard }}
+
+      - name: Scrub credentials from the failure artefacts
+        id: scrub
+        if: always()
+        timeout-minutes: 10
+        run: python3 tools/ga/scrub_artifacts.py apps/web/test-results
+
+      - name: Upload the shard's JSON report (the ga-report input)
+        if: ${{ always() && steps.scrub-results.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ga-results-web-chromium-${{ matrix.shard }}
+          path: ga-results-web-chromium-${{ matrix.shard }}/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload failure artefacts (scrubbed traces, videos, screenshots; failure only)
+        if: ${{ failure() && steps.scrub.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ga-failure-web-chromium-${{ matrix.shard }}
+          path: apps/web/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  electron:
+    name: ga-electron
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # nothing here pushes or fetches
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm via corepack
+        run: corepack enable && corepack prepare pnpm@12.5.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Fetch the Electron binary (SR-138 allowlist runner)
+        run: node tools/ci/run-allowed-postinstall.mjs
+
+      - name: Build the workspace packages apps/web depends on
+        run: pnpm --filter "@candleviewer/web^..." run build
+
+      - name: "Guard: the packages apps/web imports are built (fails fast, CI-BUILD-001)"
+        run: node tools/ci/check_built_exports.mjs packages/ui packages/chart-engine packages/protocol
+
+      - name: Build web app (the shell loads `dist/`; Playwright's webServer serves it)
+        working-directory: apps/web
+        run: pnpm run build
+
+      - name: Build the Electron shell (the specs launch `dist/main/index.js`)
+        working-directory: apps/desktop
+        run: pnpm run build
+
+      - name: Install Playwright browsers
+        working-directory: apps/desktop
+        run: npx playwright install --with-deps chromium
+
+      # As _job-e2e.yml's e2e-electron: the shell as it ships, unpacked, from the binary above, so
+      # the shell-specific paths run on the packaged executable (ticket technical notes).
+      - name: Package the shell (electron-builder --dir)
+        working-directory: apps/desktop
+        run: |
+          pkg="$(node -p "require('path').dirname(require.resolve('electron/package.json'))")"
+          pnpm exec electron-builder --config electron-builder.yml --linux --dir \
+            -c.electronDist="$pkg/dist" -c.linux.executableName=candleviewer
+          echo "CV_PACKAGED_EXECUTABLE=$PWD/release/linux-unpacked/candleviewer" >> "$GITHUB_ENV"
+
+      - name: Make Electron's sandbox helpers setuid root
+        working-directory: apps/desktop
+        run: |
+          pkg="$(node -p "require('path').dirname(require.resolve('electron/package.json'))")"
+          for sandbox in "$pkg/dist/chrome-sandbox" release/linux-unpacked/chrome-sandbox; do
+            if ! { test -f "$sandbox" && ! test -L "$sandbox"; }; then
+              echo "::error::$sandbox is missing or a symlink"; exit 1
+            fi
+            sudo chown root:root "$sandbox"
+            sudo chmod 4755 "$sandbox"
+          done
+
+      - name: Pack, Electron lane (unpacked dist/ and the packaged executable)
+        working-directory: apps/desktop
+        env:
+          CV_E2E_GA: "1"
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(python3 ../../tools/ga/shard_plan.py electron 1 1)
+          if [ "${#files[@]}" -eq 0 ]; then echo "no Electron spec file planned"; exit 0; fi
+          xvfb-run -a npx playwright test -c e2e/playwright.config.ts --retries=0 "${files[@]}"
+
+      - name: Pass and fail counts to the job summary (zero retries, so a flake fails)
+        if: always()
+        working-directory: apps/desktop
+        env:
+          CV_LANE: ga-electron
+        run: node ../../packages/fixtures/bin/flaky-summary.mjs
+
+      - name: Scrub credentials from the JSON report
+        id: scrub-results
+        if: always()
+        timeout-minutes: 10
+        run: |
+          mkdir -p ga-results-electron-1
+          cp apps/desktop/playwright-report/results.json ga-results-electron-1/ || true
+          python3 tools/ga/scrub_artifacts.py ga-results-electron-1
+
+      - name: Scrub credentials from the failure artefacts
+        id: scrub
+        if: always()
+        timeout-minutes: 10
+        run: python3 tools/ga/scrub_artifacts.py apps/desktop/test-results
+
+      - name: Upload the lane's JSON report (the ga-report input)
+        if: ${{ always() && steps.scrub-results.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ga-results-electron-1
+          path: ga-results-electron-1/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload failure artefacts (scrubbed; failure only)
+        if: ${{ failure() && steps.scrub.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ga-failure-electron-1
+          path: apps/desktop/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  report:
+    name: ga-report
+    needs: [health, history, web, electron]
+    # always(): a cancelled (timed-out) or failed leg is reported too, as a red night.
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      report: ${{ steps.handoff.outputs.report }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # nothing here pushes or fetches
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: ga-results-*
+          path: results
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true # a failed history job leaves the trend and flake rates shorter
+        with:
+          name: ga-history
+          path: history
+
+      # Red: an area failed or the wall-clock budget was missed. The pack runs with zero retries
+      # (#1335 ruling), so a flaky test fails its night as RED. Amber (the C-9.3 flake gate): a
+      # test flipped between failed and passed across the last three nights; it fails this job
+      # too, so the tracker issue names it. The global web `retries: 1` vs 03 §14 is carried to
+      # the CI owner (#569 BQ-10).
+      - name: Per-area report, metrics, flake rates and the 45-minute wall-clock budget
+        id: report
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p results history
+          started=$(cat history/started_at 2>/dev/null || true)
+          args=()
+          if [ -n "$started" ]; then
+            args=(--started-at "$started" --finished-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
+          fi
+          python3 tools/ga/report.py results --history history --out ga-report \
+            --run-number "$RUN_NUMBER" --run-url "$RUN_URL" --sha "$SHA" "${args[@]}" \
+            --fail-on-red --fail-on-amber > /dev/null || status=$?
+          cat ga-report/ga-report.md >> "$GITHUB_STEP_SUMMARY"
+          exit "${status:-0}"
+
+      - name: Upload the report (ga-report.json, ga-report.md, ga-regression.prom, ga-durations.json)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ga-report
+          path: ga-report/
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: A failed or cancelled leg is a red night too
+        env:
+          HEALTH: ${{ needs.health.result }}
+          WEB: ${{ needs.web.result }}
+          ELECTRON: ${{ needs.electron.result }}
+        run: |
+          red=""
+          for leg in "ga-health=$HEALTH" "ga-web-chromium=$WEB" "ga-electron=$ELECTRON"; do
+            [ "${leg#*=}" = success ] || red+="${leg%%=*} ended ${leg#*=}. "
+          done
+          if [ -n "$red" ]; then
+            mkdir -p ga-report
+            printf '\n%s\n' "$red" >> ga-report/ga-report.md
+            echo "::error title=ga-regression::$red"
+            exit 1
+          fi
+
+      - name: Hand the report to the issue job
+        id: handoff
+        if: failure()
+        env:
+          REPORT: ga-report/ga-report.md
+        run: |
+          set -euo pipefail
+          eof=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+          { echo "report<<$eof"; head -c 60000 "$REPORT" 2>/dev/null || echo "(no report produced)"
+            echo; echo "$eof"; } >> "$GITHUB_OUTPUT"
+
+  ga-regression-issue:
+    needs: report
+    # main's runs are the signal; a dispatch on a branch (an experiment) files nothing.
+    if: ${{ always() && needs.report.result == 'failure' && github.ref == 'refs/heads/main' }}
+    permissions:
+      issues: write
+    uses: ./.github/workflows/_nightly-issue.yml
+    with:
+      signal: ga-regression
+      title-prefix: "qa: GA regression pack nightly failed"
+      labels: qa,area/frontend-platform,priority/p1
+      body: |
+        The GA regression pack (E49-Q01, #1335) went red or amber (a test flipped between failed and passed across the last three nights; the pack runs with zero retries, so a flake on the night itself is red). Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}; artefacts: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts. The failing areas, the flaky tests and the scrubbed trace artefacts (ga-failure-<lane>-<shard>) are named below; the ga-report artefact has the JSON. Triage per docs/plan/03-testing-strategy.md §7.1; quarantine a flaky test within 24 h per C-9.3 with @flaky, @ticket-<P1 issue>, @owner- and @until- tags.
+
+        ${{ needs.report.outputs.report }}

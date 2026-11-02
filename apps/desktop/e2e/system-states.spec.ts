@@ -7,7 +7,7 @@ import { closeShell, launchShell } from "./support/shell";
 // sends `cv:gpu:crashed` and SCR-159's GPU page takes the canvas. The GPU process is killed from main
 // through `app.evaluate`, so no test-only hook is added to the shell (BQ-08).
 
-test("@plan-SS-4 GPU process killed: the GPU page takes the canvas, the badge stays", async () => {
+test("@plan-SS-4 GPU process killed: the GPU page takes the canvas, the badge stays @ga-regression @ga-area-shell", async () => {
   const shell = await launchShell({ devServer: true });
   const { app, win } = shell;
   await stubSession(win, { role: "owner" });

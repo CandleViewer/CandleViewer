@@ -1,0 +1,1629 @@
+{
+  "schema": 1,
+  "note": "E49-Q01 (#1335): Must stories of docs/plan/11-user-stories.md that no runnable @ga-regression test covers yet. Each gap's `surface` is checked against the code by tools/ga/surfaces.py (story screens from 18-traceability-matrix.md, route stubs from apps/web/src/routes/tree.tsx, mounted files from the app entry points), and the coverage map renders the reason from it. tools/ga/coverage_map.py fails on a Must story that is neither covered nor listed here, on a listed story that the pack covers, and on a surface the code contradicts. `PROPOSED` risk acceptances await the owner.",
+  "gaps": [
+    {
+      "story": "US-ONB-008",
+      "owner_epic": "E09",
+      "surface": {
+        "kind": "below-e2e",
+        "verified_by": [
+          "services/api/tests/unit/net/test_binding_check.py",
+          "services/api/tests/unit/net/test_cidr.py"
+        ]
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ACCT-001",
+      "owner_epic": "E27",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-019": "the shipped setup checklist (SCR-019, covered under US-ONB) names this step; the step's own screens are not built"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ACCT-002",
+      "owner_epic": "E27",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-ACCT-003",
+      "owner_epic": "E27",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ACCT-006",
+      "owner_epic": "E27",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-ACCT-007",
+      "owner_epic": "E27",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ACCT-008",
+      "owner_epic": "E27",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ACCT-009",
+      "owner_epic": "E27",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ACCT-010",
+      "owner_epic": "E27",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-PROF-001",
+      "owner_epic": "E28",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-PROF-002",
+      "owner_epic": "E28",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-PROF-003",
+      "owner_epic": "E28",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-PROF-004",
+      "owner_epic": "E39",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-PROF-005",
+      "owner_epic": "E34",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-PROF-006",
+      "owner_epic": "E34",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-PROF-007",
+      "owner_epic": "E34",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-MKT-001",
+      "owner_epic": "E08",
+      "surface": {
+        "kind": "unmounted",
+        "module": "apps/web/src/features/symbol-search",
+        "entry": "setSymbolOpener",
+        "incidental": {
+          "SCR-102": "symbol-search is built but no workspace binds its opener"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-MKT-002",
+      "owner_epic": "E08",
+      "surface": {
+        "kind": "unmounted",
+        "module": "apps/web/src/features/symbol-search",
+        "entry": "setSymbolOpener",
+        "incidental": {
+          "SCR-102": "symbol-search is built but no workspace binds its opener"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-MKT-003",
+      "owner_epic": "E08",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-100": "useRouteFocus.ts names the watchlist panel's tabs in a comment; the panel is not built"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-MKT-004",
+      "owner_epic": "E08",
+      "surface": {
+        "kind": "unmounted",
+        "module": "apps/web/src/features/symbol-search",
+        "entry": "setSymbolOpener"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-MKT-005",
+      "owner_epic": "E08",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-100": "useRouteFocus.ts names the watchlist panel's tabs in a comment; the panel is not built"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-MKT-006",
+      "owner_epic": "E08",
+      "surface": {
+        "kind": "below-e2e",
+        "verified_by": ["services/api/tests/unit/ingestion/test_trade_stream.py"]
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-MKT-007",
+      "owner_epic": "E08",
+      "surface": {
+        "kind": "below-e2e",
+        "verified_by": [
+          "services/api/tests/unit/book/test_book_engine.py",
+          "services/api/tests/unit/ingestion/test_book_stream.py"
+        ]
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-MKT-008",
+      "owner_epic": "E12",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-MKT-009",
+      "owner_epic": "E08",
+      "surface": {
+        "kind": "below-e2e",
+        "verified_by": [
+          "services/api/tests/unit/ingestion/test_clock.py",
+          "services/api/tests/chaos/bars/test_s06_clock_skew.py"
+        ]
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-CHART-001",
+      "owner_epic": "E12",
+      "surface": {
+        "kind": "unmounted",
+        "module": "apps/web/src/chart"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-CHART-003",
+      "owner_epic": "E12",
+      "surface": {
+        "kind": "unmounted",
+        "module": "apps/web/src/chart"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-CHART-005",
+      "owner_epic": "E12",
+      "surface": {
+        "kind": "unmounted",
+        "module": "apps/web/src/features/symbol-search",
+        "entry": "setSymbolOpener"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-CHART-006",
+      "owner_epic": "E11",
+      "surface": {
+        "kind": "unmounted",
+        "module": "apps/web/src/chart"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-CHART-007",
+      "owner_epic": "E11",
+      "surface": {
+        "kind": "unmounted",
+        "module": "apps/web/src/features/chart-price-scale"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-CHART-008",
+      "owner_epic": "E11",
+      "surface": {
+        "kind": "unmounted",
+        "module": "apps/web/src/chart"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-CHART-009",
+      "owner_epic": "E12",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-CHART-010",
+      "owner_epic": "E12",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-CHART-012",
+      "owner_epic": "E12",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-031": "the chart's price-axis code exists in apps/web/src/chart but no route mounts it"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-CHART-013",
+      "owner_epic": "E12",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-030": "the <Chart> pane exists in apps/web/src/chart but no route mounts it"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-CHART-014",
+      "owner_epic": "E11",
+      "surface": {
+        "kind": "unmounted",
+        "module": "apps/web/src/chart",
+        "incidental": {
+          "SCR-117": "the accessibility settings (SCR-117, R-203) ship its preference; the table panel is unmounted"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DRAW-001",
+      "owner_epic": "E14",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DRAW-002",
+      "owner_epic": "E14",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DRAW-003",
+      "owner_epic": "E14",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DRAW-004",
+      "owner_epic": "E14",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DRAW-005",
+      "owner_epic": "E14",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DRAW-006",
+      "owner_epic": "E14",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DRAW-007",
+      "owner_epic": "E14",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DRAW-008",
+      "owner_epic": "E14",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-IND-001",
+      "owner_epic": "E13",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-IND-002",
+      "owner_epic": "E13",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-IND-003",
+      "owner_epic": "E13",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-IND-004",
+      "owner_epic": "E13",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-IND-005",
+      "owner_epic": "E13",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-IND-006",
+      "owner_epic": "E13",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-IND-007",
+      "owner_epic": "E13",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-IND-008",
+      "owner_epic": "E13",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-FP-001",
+      "owner_epic": "E18",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-030": "the <Chart> pane exists in apps/web/src/chart but no route mounts it"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-FP-002",
+      "owner_epic": "E18",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-030": "the <Chart> pane exists in apps/web/src/chart but no route mounts it"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-FP-003",
+      "owner_epic": "E18",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-FP-004",
+      "owner_epic": "E18",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-030": "the <Chart> pane exists in apps/web/src/chart but no route mounts it"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-FP-005",
+      "owner_epic": "E18",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-FP-006",
+      "owner_epic": "E18",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-FP-007",
+      "owner_epic": "E18",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-FP-008",
+      "owner_epic": "E18",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-FP-009",
+      "owner_epic": "E18",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-030": "the <Chart> pane exists in apps/web/src/chart but no route mounts it"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-FP-010",
+      "owner_epic": "E18",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-VP-001",
+      "owner_epic": "E19",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-VP-002",
+      "owner_epic": "E19",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-VP-004",
+      "owner_epic": "E19",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-VP-007",
+      "owner_epic": "E19",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-VP-009",
+      "owner_epic": "E19",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DS-001",
+      "owner_epic": "E20",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-030": "the <Chart> pane exists in apps/web/src/chart but no route mounts it"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DS-002",
+      "owner_epic": "E20",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DOM-001",
+      "owner_epic": "E21",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-DOM-002",
+      "owner_epic": "E21",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DOM-003",
+      "owner_epic": "E21",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DOM-005",
+      "owner_epic": "E21",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-153": "the shell's degraded-feed banner ships (shell system-state specs); depth tiers are not built"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DOM-006",
+      "owner_epic": "E31",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-BIG-001",
+      "owner_epic": "E22",
+      "surface": {
+        "kind": "unmounted",
+        "module": "apps/web/src/features/tape"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-BIG-002",
+      "owner_epic": "E22",
+      "surface": {
+        "kind": "unmounted",
+        "module": "apps/web/src/features/tape"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-BIG-003",
+      "owner_epic": "E22",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-053": "features/tape (the time-and-sales model) is built but no workspace mounts it"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-BIG-004",
+      "owner_epic": "E22",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-053": "features/tape (the time-and-sales model) is built but no workspace mounts it"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-CVD-001",
+      "owner_epic": "E23",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-CVD-002",
+      "owner_epic": "E23",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-CVD-003",
+      "owner_epic": "E23",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-CVD-005",
+      "owner_epic": "E23",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DERIV-001",
+      "owner_epic": "E24",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DERIV-003",
+      "owner_epic": "E24",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DERIV-005",
+      "owner_epic": "E24",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DERIV-006",
+      "owner_epic": "E24",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DET-001",
+      "owner_epic": "E25",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DET-004",
+      "owner_epic": "E25",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DET-005",
+      "owner_epic": "E25",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DET-007",
+      "owner_epic": "E25",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DET-008",
+      "owner_epic": "E25",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-DET-009",
+      "owner_epic": "E25",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-LAY-001",
+      "owner_epic": "E15",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-020": "lib/capability/frameProbe.ts sizes the grid's panel cap; the grid itself is not built"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-LAY-002",
+      "owner_epic": "E15",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-020": "lib/capability/frameProbe.ts sizes the grid's panel cap; the grid itself is not built",
+          "SCR-150": "the boot sequence ships; saved workspaces are not built"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-LAY-003",
+      "owner_epic": "E15",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-LAY-005",
+      "owner_epic": "E15",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-010": "the shell chrome ships (shell specs); this story's own controls are not built",
+          "SCR-020": "lib/capability/frameProbe.ts sizes the grid's panel cap; the grid itself is not built"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/desktop/e2e/ga-carried.spec.ts"
+    },
+    {
+      "story": "US-LAY-006",
+      "owner_epic": "E15",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-011": "the nav rail ships (shell specs); this story's own controls are not built"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ORD-001",
+      "owner_epic": "E30",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-ORD-002",
+      "owner_epic": "E30",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ORD-003",
+      "owner_epic": "E30",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ORD-004",
+      "owner_epic": "E30",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ORD-005",
+      "owner_epic": "E31",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ORD-006",
+      "owner_epic": "E30",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-113": "the hotkey editor ships (US-SET-002, covered); there is no order surface for trading actions to act on"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ORD-007",
+      "owner_epic": "E31",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-030": "the <Chart> pane exists in apps/web/src/chart but no route mounts it"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ORD-008",
+      "owner_epic": "E31",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-030": "the <Chart> pane exists in apps/web/src/chart but no route mounts it"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ORD-010",
+      "owner_epic": "E30",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-063": "ConnectionRegion.tsx names the positions panel in a comment; R-130 renders its stub"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-ORD-013",
+      "owner_epic": "E32",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-ALGO-001",
+      "owner_epic": "E32",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-ALGO-002",
+      "owner_epic": "E33",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ALGO-008",
+      "owner_epic": "E32",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ALGO-010",
+      "owner_epic": "E33",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-POS-001",
+      "owner_epic": "E29",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-063": "ConnectionRegion.tsx names the positions panel in a comment; R-130 renders its stub"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-POS-002",
+      "owner_epic": "E29",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-063": "ConnectionRegion.tsx names the positions panel in a comment; R-130 renders its stub"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-POS-003",
+      "owner_epic": "E29",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-063": "ConnectionRegion.tsx names the positions panel in a comment; R-130 renders its stub"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-POS-005",
+      "owner_epic": "E29",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-030": "the <Chart> pane exists in apps/web/src/chart but no route mounts it"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-POS-006",
+      "owner_epic": "E29",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-063": "ConnectionRegion.tsx names the positions panel in a comment; R-130 renders its stub"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-POS-007",
+      "owner_epic": "E29",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-063": "ConnectionRegion.tsx names the positions panel in a comment; R-130 renders its stub"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-POS-008",
+      "owner_epic": "E45",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-063": "ConnectionRegion.tsx names the positions panel in a comment; R-130 renders its stub",
+          "SCR-152": "the shell's connection region ships (shell system-state specs); this story's own surface is not built"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-POS-009",
+      "owner_epic": "E39",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-063": "ConnectionRegion.tsx names the positions panel in a comment; R-130 renders its stub"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-RULE-001",
+      "owner_epic": "E35",
+      "surface": {
+        "kind": "below-e2e",
+        "verified_by": [
+          "services/api/tests/unit/rules_ir/test_rule_ir.py",
+          "services/api/tests/rules/test_evaluator.py"
+        ]
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-RULE-002",
+      "owner_epic": "E36",
+      "surface": {
+        "kind": "below-e2e",
+        "verified_by": ["services/api/tests/unit/rules_ir/test_metric_param_values.py"]
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-RULE-003",
+      "owner_epic": "E35",
+      "surface": {
+        "kind": "below-e2e",
+        "verified_by": ["services/api/tests/rules/executor/test_dispatch.py"]
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-RULE-004",
+      "owner_epic": "E36",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-RULE-005",
+      "owner_epic": "E37",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-RULE-006",
+      "owner_epic": "E37",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-RULE-007",
+      "owner_epic": "E35",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-RULE-008",
+      "owner_epic": "E35",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-RULE-010",
+      "owner_epic": "E35",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-RULE-011",
+      "owner_epic": "E35",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-RULE-012",
+      "owner_epic": "E39",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-RULE-013",
+      "owner_epic": "E39",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-RULE-014",
+      "owner_epic": "E39",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-PAPER-001",
+      "owner_epic": "E38",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-PAPER-002",
+      "owner_epic": "E38",
+      "surface": {
+        "kind": "partial",
+        "shipped": ["apps/web/src/features/app-shell/TopBarSlot.tsx"],
+        "note": "the Demo/Live text badge ships in the top bar (the shell specs assert it); the switcher (SCR-074) and its confirmation are not built"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-PAPER-003",
+      "owner_epic": "E44",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-PAPER-005",
+      "owner_epic": "E38",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-REC-001",
+      "owner_epic": "E16",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-019": "the shipped setup checklist (SCR-019, covered under US-ONB) names this step; the step's own screens are not built"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-REC-002",
+      "owner_epic": "E16",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-041": "the quick-switcher is built in features/symbol-search but no workspace binds its opener",
+          "SCR-100": "useRouteFocus.ts names the watchlist panel's tabs in a comment; the panel is not built"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-REC-003",
+      "owner_epic": "E16",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-REC-004",
+      "owner_epic": "E16",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-118": "ChartErrorSurface.tsx names this screen as having no route yet"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-REC-005",
+      "owner_epic": "E16",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-REC-006",
+      "owner_epic": "E16",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-103": "symbol-search's deck shows symbol info but no workspace binds its opener"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-REC-008",
+      "owner_epic": "E16",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-RPL-001",
+      "owner_epic": "E26",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-RPL-004",
+      "owner_epic": "E26",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-RPL-006",
+      "owner_epic": "E26",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ALRT-001",
+      "owner_epic": "E40",
+      "surface": {
+        "kind": "unmounted",
+        "module": "apps/web/src/features/alerts"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-ALRT-002",
+      "owner_epic": "E40",
+      "surface": {
+        "kind": "unmounted",
+        "module": "apps/web/src/features/alerts"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ALRT-003",
+      "owner_epic": "E40",
+      "surface": {
+        "kind": "unmounted",
+        "module": "apps/web/src/features/alerts"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ALRT-004",
+      "owner_epic": "E40",
+      "surface": {
+        "kind": "unmounted",
+        "module": "apps/web/src/features/alerts",
+        "incidental": {
+          "SCR-014": "the right rail's notifications drawer ships empty; the alert centre is not built"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ALRT-005",
+      "owner_epic": "E40",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-015": "the toast host ships (keymap/KeymapHost.tsx); delivery channels and their settings are not built"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-JRN-001",
+      "owner_epic": "E41",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-JRN-002",
+      "owner_epic": "E41",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-JRN-006",
+      "owner_epic": "E41",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ADMIN-001",
+      "owner_epic": "E42",
+      "surface": {
+        "kind": "partial",
+        "shipped": ["R-303"],
+        "note": "the invite form ships (exercised by e2e/invites.spec.ts under US-ONB-*); the user list, disable and delete (R-301, R-302) render their stubs",
+        "incidental": {
+          "SCR-004": "the change-password screen ships (R-007, US-ONB); user administration is not built"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-ADMIN-002",
+      "owner_epic": "E42",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ADMIN-003",
+      "owner_epic": "E39",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ADMIN-004",
+      "owner_epic": "E42",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ADMIN-005",
+      "owner_epic": "E42",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ADMIN-006",
+      "owner_epic": "E42",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ADMIN-007",
+      "owner_epic": "E42",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-ADMIN-008",
+      "owner_epic": "E42",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-ADMIN-009",
+      "owner_epic": "E42",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-ADMIN-010",
+      "owner_epic": "E43",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-ADMIN-011",
+      "owner_epic": "E42",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-ADMIN-012",
+      "owner_epic": "E42",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-010": "the shell chrome ships (shell specs); this story's own controls are not built"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-SET-001",
+      "owner_epic": "E47",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-011": "the nav rail ships (shell specs); this story's own controls are not built"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-SET-003",
+      "owner_epic": "E47",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-015": "the toast host ships (keymap/KeymapHost.tsx); delivery channels and their settings are not built",
+          "SCR-076": "the keymap registry marks dangerous commands for the confirm flow; the confirm policy screen is not built"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-SET-004",
+      "owner_epic": "E47",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-116": "R-203 ships SCR-116's palette section only; its theme and density controls are not built"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-OBS-001",
+      "owner_epic": "E04",
+      "surface": {
+        "kind": "below-e2e",
+        "verified_by": [
+          "services/api/tests/unit/observability/test_metrics_catalogue.py",
+          "services/api/tests/unit/observability/test_metrics_server.py"
+        ]
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-OBS-002",
+      "owner_epic": "E46",
+      "surface": {
+        "kind": "below-e2e",
+        "verified_by": ["services/api/tests/unit/observability/test_latency.py"]
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-OBS-003",
+      "owner_epic": "E04",
+      "surface": {
+        "kind": "below-e2e",
+        "verified_by": [
+          "services/api/tests/unit/observability/test_logging_configure.py",
+          "services/api/tests/unit/observability/test_correlation.py"
+        ]
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-OBS-004",
+      "owner_epic": "E45",
+      "surface": {
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-014": "the right rail's notifications drawer ships empty; the alert centre is not built",
+          "SCR-152": "the shell's connection region ships (shell system-state specs); this story's own surface is not built",
+          "SCR-159": "the offline page ships (shell system-state specs); system alerting is not built"
+        }
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    },
+    {
+      "story": "US-OBS-005",
+      "owner_epic": "E34",
+      "surface": {
+        "kind": "unbuilt"
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
+      "stub": "apps/web/e2e/ga/carried.spec.ts"
+    },
+    {
+      "story": "US-OBS-006",
+      "owner_epic": "E45",
+      "surface": {
+        "kind": "below-e2e",
+        "verified_by": ["services/api/tests/chaos"]
+      },
+      "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
+    }
+  ]
+}

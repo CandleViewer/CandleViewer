@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, packTest as test } from "../ga/fixtures";
 import { json } from "../support/api";
 
 // E09-Q02 (#293) enrolment.spec. SCR-003 (QR + secret + recovery codes) has no standalone screen
@@ -13,7 +13,9 @@ async function fillChange(page: import("@playwright/test").Page, next: string, c
   await page.getByRole("button", { name: "Change password" }).click();
 }
 
-test("E09-TC-B06 forced password change succeeds and links back to sign-in", async ({ page }) => {
+test("E09-TC-B06 forced password change succeeds and links back to sign-in @ga-regression @ga-area-primary", async ({
+  page,
+}) => {
   let body = "";
   await page.route("**/api/v1/auth/password", (r) => {
     body = r.request().postData() ?? "";
@@ -29,7 +31,7 @@ test("E09-TC-B06 forced password change succeeds and links back to sign-in", asy
   );
 });
 
-test("E09-TC-B07 8-character password is refused client-side, no request sent", async ({
+test("E09-TC-B07 8-character password is refused client-side, no request sent @ga-regression @ga-area-primary", async ({
   page,
 }) => {
   let calls = 0;
@@ -43,7 +45,9 @@ test("E09-TC-B07 8-character password is refused client-side, no request sent", 
   expect(calls).toBe(0);
 });
 
-test("E09-TC-B08 breached password refused by the server is surfaced", async ({ page }) => {
+test("E09-TC-B08 breached password refused by the server is surfaced @ga-regression @ga-area-primary", async ({
+  page,
+}) => {
   await page.route("**/api/v1/auth/password", (r) =>
     r.fulfill(json({ code: "password_breached" }, 422)),
   );
@@ -52,7 +56,9 @@ test("E09-TC-B08 breached password refused by the server is surfaced", async ({ 
   await expect(page.getByRole("alert")).toHaveText("This password appears in a known breach list.");
 });
 
-test("E09-TC-B09 wrong current password is refused and the form stays put", async ({ page }) => {
+test("E09-TC-B09 wrong current password is refused and the form stays put @ga-regression @ga-area-primary", async ({
+  page,
+}) => {
   await page.route("**/api/v1/auth/password", (r) => r.fulfill(json({}, 403)));
   await page.goto("/login/change-password");
   await fillChange(page, NEW_PW);
@@ -60,7 +66,9 @@ test("E09-TC-B09 wrong current password is refused and the form stays put", asyn
   await expect(page.getByRole("heading", { name: "Choose a new password" })).toBeVisible();
 });
 
-test("E09-TC-B06 mismatched confirmation is caught; keyboard submit works", async ({ page }) => {
+test("E09-TC-B06 mismatched confirmation is caught; keyboard submit works @ga-regression @ga-area-primary", async ({
+  page,
+}) => {
   await page.goto("/login/change-password");
   await page.getByLabel("Current password").focus();
   await page.keyboard.type("pw-old");

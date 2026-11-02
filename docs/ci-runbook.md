@@ -211,6 +211,24 @@ has a 15-minute limit, so a hung suite fails the step and files the report; a jo
 limit (the locked install 5 minutes; checkout, setup and the upload 3 each), so a hang fails a step
 and files. No concurrency group (#3449). Cost: one job a night, capped by its 35-minute timeout.
 
+**GA regression pack (#1335, E49-Q01).** `ga-regression-nightly.yml` runs the `@ga-regression`
+pack (docs/plan/03-testing-strategy.md §7.1) on `main` daily at 03:41 UTC and on demand before a
+wave closes: `ga-health` (tags, quarantine owners and deadlines, egress imports, coverage map,
+planned budget, the artefact-scrub self-test), four `ga-web-chromium` shards and `ga-electron`, each
+running the files `tools/ga/shard_plan.py` assigns, then `ga-report`. It is not a required check
+(C-9.1 is unchanged; the PR projects ignore the pack's own specs). A red night (a failed area,
+the 45-minute wall-clock budget missed, or a failed or cancelled leg) or an amber one (a test
+flipped between failed and passed across three nights: the C-9.3 flake gate; the pack runs with
+zero retries, so a flake on the night itself is red) files through `_nightly-issue.yml` under the
+`ga-regression` signal (labels `qa`, `area/frontend-platform`, `priority/p1`) with the failing
+areas, the flaky tests and the scrubbed `ga-failure-<lane>-<shard>` artefact names. A scrub step
+that cannot read a file deletes it and fails, and the upload it guards is skipped (fail-closed). To triage, read the `ga-report` job summary, then the
+named artefact's trace; reproduce a web shard with `CV_E2E_GA=1 npx playwright test -c
+e2e/playwright.config.ts --project=ga-regression <files>` from `apps/web` after `pnpm build`. A
+flaky pack test is quarantined within 24 hours with `@flaky @ticket-<P1 issue> @owner-<handle>
+@until-YYYY-MM-DD` (at most 14 days; §9), or `ga-health` fails. Refresh `tools/ga/durations.json` weekly from the `ga-report` artefact's
+`ga-durations.json`. No concurrency group (#3449).
+
 **Nightly recorder chaos (#481).** `chaos-recorder-nightly.yml` runs the recorder chaos suite
 (`services/api/tests/chaos/recorder`, E16-Q04; catalogue in its `SCENARIOS.md`: the disk-pressure
 ladder, the QuestDB outage and the roll-off interruption) on `main` daily at 03:33 UTC and on
