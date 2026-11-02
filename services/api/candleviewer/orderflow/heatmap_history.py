@@ -12,7 +12,8 @@ a symbol and a time range.
   summed. A bucket's size is the sum over its native columns divided by their count, so a native
   column that was not stored counts 0; its `samples` sum theirs (NULL counts 1), and it is
   `estimated` if any is. A bucket with no row is `samples = 0` and empty, never interpolated.
-- **Reconstruction.** Only when the window holds no stored cell: each minute of it seeks the
+- **Reconstruction.** Only when the window holds no stored cell: each minute of it inside the
+  recorded range (the newest snapshot at or before the window's end bounds it, E21-X02) seeks the
   newest recorded snapshot at or before the minute (the recorder forces one every 60 s) and rolls
   the deltas after it forward, sampling the book at every native deadline, windowed to `ROWS`
   around its mid. A snapshot whose stored checksum does not match is skipped for the one before
@@ -476,10 +477,19 @@ async def _reconstruct(
     checkpoint: Callable[[], Awaitable[None]] | None,
 ) -> int:
     """Rebuild the grid's window from the recorded book a minute at a time; the number of
-    snapshots used with no stored checksum."""
+    snapshots used with no stored checksum. Only minutes inside the recorded range are looked up
+    (22 `getHeatmap` "Bounds", 24 §6.3): one read finds the newest snapshot at or before the
+    window's end, and a minute past its reach, which no snapshot can anchor, is not looked up and
+    is left `samples = 0`."""
     unverified = 0
     end = grid.c0_us + grid.columns * grid.bucket_ms * _US_PER_MS
-    for lo in range(grid.c0_us, end, ANCHOR_STEP_US):
+    newest = await reader.book_anchor(
+        q.symbol, q.depth, end - 1, not_before_us=grid.c0_us - ANCHOR_LOOKBACK_US
+    )
+    if newest is None:
+        return unverified  # no recorded snapshot for a minute of the window to anchor on
+    stop = min(end, newest.ts_us + ANCHOR_LOOKBACK_US + 1)
+    for lo in range(grid.c0_us, stop, ANCHOR_STEP_US):
         hi = min(lo + ANCHOR_STEP_US, end)
         await _checkpoint(checkpoint)
         anchor = await _anchor(reader, q, lo)

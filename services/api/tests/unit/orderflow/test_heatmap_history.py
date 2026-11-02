@@ -318,7 +318,7 @@ async def test_snapshot_checksum_mismatch_falls_back_to_prior_snapshot() -> None
     reader = FakeReader(first=older.ts_us, anchors=[older, bad], changes=changes)
     out = await read_heatmap_history(reader, _q(lo, hi, normalize="none"), now_us=hi)
     anchors = [c for c in reader.calls if c[0] == "anchor"]
-    assert [c[2] for c in anchors] == [lo, lo - 1]
+    assert [c[2] for c in anchors] == [hi - 1, lo, lo - 1]  # the window's newest, then the minute
     assert ("changes", older.ts_us, hi) in reader.calls
     dropped = anchor.bids[0][0]  # the level `bad` lacks, served from `older`
     assert out.bid_matrix[out.prices.index(dropped)][0] > 0

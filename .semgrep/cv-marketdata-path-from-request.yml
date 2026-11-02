@@ -1,0 +1,34 @@
+rules:
+  - id: cv-marketdata-path-from-request
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A filesystem path built from a request value in the market-data read path. Recorded data is
+      addressed by the storage tiers through the cold-layout registry (DatasetRegistry), never by a
+      path these modules build (E21-X02 G-06, SR-097).
+    metadata:
+      rule-id: cv-marketdata-path-from-request
+      ticket: E21-X02
+      sr: SR-097
+      cwe: "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+    patterns:
+      - pattern-either:
+          - pattern: os.path.join(..., <... $V ...>, ...)
+          - pattern: pathlib.Path(..., <... $V ...>, ...)
+          - pattern: pathlib.PurePath(..., <... $V ...>, ...)
+          - pattern: Path(..., <... $V ...>, ...)
+          - pattern: $P.joinpath(..., <... $V ...>, ...)
+          - pattern: $P / <... $V ...>
+          - pattern: open(<... $V ...>, ...)
+          - pattern: os.open(<... $V ...>, ...)
+      - metavariable-regex:
+          metavariable: $V
+          # The route's request values (`api/market_heatmap.py` parameters) and the names that
+          # carry them on (`HeatmapQuery`, `q`, a request object).
+          regex: "^(symbol|from_|to|cursor|depth|time_bucket_ms|price_grouping|normalize|request|req|query|params|q)$"
+    paths:
+      include:
+        - "services/api/candleviewer/api/market*.py"
+        - "services/api/candleviewer/orderflow/heatmap*.py"
+        - "services/api/candleviewer/heatmap_wiring.py"
+        - "**/cv-marketdata-path-from-request*"

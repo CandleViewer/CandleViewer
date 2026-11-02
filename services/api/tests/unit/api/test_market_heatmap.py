@@ -83,6 +83,7 @@ class Reader:
 class Principal:
     def __init__(self, ok: bool = True, user: uuid.UUID | None = None) -> None:
         self.ok, self.user_id = ok, user or uuid.uuid4()
+        self.actor_id = self.user_id  # no view-as session: the user acts
 
     def has(self, permission: str) -> bool:
         return self.ok and permission == "marketdata:read"
@@ -109,7 +110,7 @@ def _app(
             principal_resolver=Resolver(principal) if resolver else None,
             symbol_listed=lambda sym: sym == "BTCUSDT",
             tick_size=lambda sym: Decimal("0.1"),
-            now_us=lambda: T0 + 2 * HOUR,
+            now_us=lambda: T0 + 72 * HOUR,  # after every window a test asks for
         )
     )
     return app
