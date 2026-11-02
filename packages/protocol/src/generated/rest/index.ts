@@ -788,27 +788,35 @@ export interface paths {
      *       request lacked in `missing` and the ids it named in error in `unexpected`. An empty live
      *       set needs no acknowledgement: an omitted member and `[]` both pass. The member stays
      *       optional in the schema, as `reason` does (C-6.3), and the server requires it whenever
-     *       the live set is not empty. The check judges every write of every flag, in either
+     *       the live set is not empty. The check covers every write of every flag, in either
      *       direction, a kill-switch-class flag's engaged value included, for every role, the Owner
-     *       too: no role, flag or setting turns it off, and it reads no flag or setting (C-4.14). No
-     *       flag has a dependent until a row of the table in `24-internal-schemas.md` 16.4 lands
-     *       with the code that reads its flag, so until then every live set is empty and no write
-     *       needs an acknowledgement.
-     *     - A repeated id in `acknowledged_dependents` is `422 validation_failed` (rule
-     *       `duplicate_rule`), refused with the request validation, before the row lock. A live set
-     *       above 200 refuses the write, whatever the request names, as `422 validation_failed`
-     *       (rule `dependents_over_bound`, no `dependents`, `missing` or `unexpected` in the body),
-     *       until E35 holds the cap of armed rules at arming (`24-internal-schemas.md` 16.1). A read
-     *       of the rules store that fails or exceeds its bound is `503 store_unavailable` and
-     *       nothing is written, as an unreachable flag store is.
+     *       too: no role, flag or setting turns it off, and it reads no flag or setting (C-4.14).
+     *       While the code-free `POST /trading/kill-switch` is not served (its RBAC route matrix row
+     *       is not `executed`), the check never refuses a write in a flag's stop direction, the
+     *       engaged value of a kill-switch-class flag (`killswitch.order_entry`, `maintenance.mode`)
+     *       or the off value of a flag that admits order entry or rule actions
+     *       (`trading.oms_enabled`, `rules.enabled`, `rules.oms_actions`): the write proceeds, and
+     *       its records carry the live ids. No flag has a dependent until a row of the table in
+     *       `24-internal-schemas.md` 16.4 lands with the code that reads its flag, so until then
+     *       every live set is empty and no write needs an acknowledgement.
+     *     - A request that names more than 200 ids is `422 validation_failed` (rule `too_long`), and
+     *       a repeated id is `422 validation_failed` (rule `duplicate_rule`): both are refused with
+     *       the request validation, before the row lock. Outside a flag's stop direction (above), a
+     *       live set above 200 refuses the write, whatever the request names, as `422
+     *       validation_failed` (rule `dependents_over_bound`, no `dependents`, `missing` or
+     *       `unexpected` in the body), until E35 holds the cap of armed rules at arming
+     *       (`24-internal-schemas.md` 16.1), and a read of the rules store that fails or exceeds
+     *       its bound is `503 store_unavailable`, nothing is written, and its `flags.change`
+     *       refusal record holds the key, the row's `before` and the acknowledged ids.
      *     - The acknowledgement is a confirmation, never the enforcement: what refuses a rule's
      *       action is the executor's synchronous check at the moment of the action
      *       (`24-internal-schemas.md` 11.5, checks 2 and 3, C-2.21), which reads the flag whatever
      *       any list said. An arm or a disarm that commits between the check's read and the flag's
      *       commit, inside the store write's bound (5 s at most), is a named residual; each event
-     *       keeps its own record (`rules.arm` or `rules.disarm`, and `flags.change`). So this
-     *       console's engage of a kill-switch-class flag can be answered `422` or `503` by the
-     *       check, which the code-free emergency engage, `POST /trading/kill-switch`, never is.
+     *       keeps its own record (`rules.arm` or `rules.disarm`, and `flags.change`). So, once the
+     *       code-free emergency engage, `POST /trading/kill-switch`, is served, this console's
+     *       engage of a kill-switch-class flag can be answered `422` or `503` by the check, which
+     *       that route never is.
      *     - `flags:write` is a dangerous permission. Every write needs exactly one fresh step-up
      *       elevation, chosen by key and by the stored value read under the row lock that
      *       `expected_updated_at` is checked against, never the cached value. An unreadable row
@@ -877,8 +885,8 @@ export interface paths {
      *       never its raw value. Toggling `maintenance.mode` is also audited as
      *       `maintenance.enabled` or `maintenance.disabled`. Every `flags.change` record that carries
      *       the request also holds `acknowledged_dependents` as sent, sorted by id, and the record of
-     *       a `dependents_unacknowledged` refusal holds the live ids as well: ids only, at most 200
-     *       of each, never a rule's name (C-12.6).
+     *       a `dependents_unacknowledged` refusal, or of a write in a flag's stop direction, holds
+     *       the live ids as well: ids only, at most 200 of each, never a rule's name (C-12.6).
      *     - A successful write pushes a `SystemUpdate` of kind `feature_flags`, carrying only the
      *       changed key, to every session the flag's `visibility` admits (`23-ws-protocol.md` 15.9).
      *
@@ -938,7 +946,7 @@ export interface paths {
      *     not paged, since the write needs the whole set at once. There are at most 200, the cap of
      *     armed rules (`24-internal-schemas.md` 16.1); while E35 does not hold that cap at arming, a
      *     set above it answers its first 200 with `truncated: true`, and `setFeatureFlag` refuses
-     *     the write (`dependents_over_bound`).
+     *     the write (`dependents_over_bound`), a write in a flag's stop direction apart.
      *
      *     The read changes nothing and spends nothing: no rule is disarmed and nothing is queued.
      *     It holds `flags:write`, the permission of the write it precedes, which the Owner alone
@@ -9169,7 +9177,7 @@ export interface components {
     FeatureFlagDependents: {
       flag_key: string;
       items: components["schemas"]["FeatureFlagDependent"][];
-      /** @description `true` when more than 200 armed rules read the flag: `items` then holds the first 200 by `rule_id`, no `acknowledged_dependents` can match the live set, and `setFeatureFlag` refuses the write (`dependents_over_bound`) until fewer are armed. Always sent. */
+      /** @description `true` when more than 200 armed rules read the flag: `items` then holds the first 200 by `rule_id`, no `acknowledged_dependents` can match the live set, and `setFeatureFlag` refuses the write (`dependents_over_bound`), a write in a flag's stop direction apart, until fewer are armed. Always sent. */
       truncated: boolean;
     };
     /**

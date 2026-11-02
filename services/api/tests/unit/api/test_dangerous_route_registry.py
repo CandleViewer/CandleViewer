@@ -82,9 +82,9 @@ _NOT_DANGEROUS: dict[tuple[str, str], str] = {
         "getAccountConsequences: a read; no step-up (04 row 45a)"
     ),
     # #5479: `flags:write` is seeded dangerous; the read changes nothing, and the write it
-    # precedes, `setFeatureFlag`, is the gated one.
+    # precedes, `setFeatureFlag`, is the gated one (04 row 46 names them side by side).
     ("GET", "/admin/feature-flags/{flagKey}/dependents"): (
-        "listFeatureFlagDependents: a read; the write it precedes is gated"
+        "listFeatureFlagDependents: a read; no step-up (04 row 46); the write it precedes is gated"
     ),
     ("GET", "/users/invites"): "listPendingInvites: a read; the invite writes are gated (`users`)",
     ("GET", "/users/{userId}/mfa/reset-preview"): "previewMfaReset: a read; the reset is gated",

@@ -5,9 +5,11 @@ sentence)` table): D1 to D7a, D3b and D5b. Additive (C-6.3): the request still r
 from __future__ import annotations
 
 import re
+import uuid
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openapi_spec
@@ -133,27 +135,35 @@ _PINNED: dict[str, tuple[str, ...]] = {
         "lacked in `missing` and the ids it named in error in `unexpected`. An empty live set "
         "needs no acknowledgement: an omitted member and `[]` both pass. The member stays optional "
         "in the schema, as `reason` does (C-6.3), and the server requires it whenever the live set "
-        "is not empty. The check judges every write of every flag, in either direction, a "
+        "is not empty. The check covers every write of every flag, in either direction, a "
         "kill-switch-class flag's engaged value included, for every role, the Owner too: no role, "
-        "flag or setting turns it off, and it reads no flag or setting (C-4.14). No flag has a "
-        "dependent until a row of the table in `24-internal-schemas.md` 16.4 lands with the code "
-        "that reads its flag, so until then every live set is empty and no write needs an "
-        "acknowledgement.",
-        "A repeated id in `acknowledged_dependents` is `422 validation_failed` (rule "
-        "`duplicate_rule`), refused with the request validation, before the row lock. A live set "
-        "above 200 refuses the write, whatever the request names, as `422 validation_failed` (rule "
-        "`dependents_over_bound`, no `dependents`, `missing` or `unexpected` in the body), until "
-        "E35 holds the cap of armed rules at arming (`24-internal-schemas.md` 16.1). A read of the "
-        "rules store that fails or exceeds its bound is `503 store_unavailable` and nothing is "
-        "written, as an unreachable flag store is.",
+        "flag or setting turns it off, and it reads no flag or setting (C-4.14). While the "
+        "code-free `POST /trading/kill-switch` is not served (its RBAC route matrix row is not "
+        "`executed`), the check never refuses a write in a flag's stop direction, the engaged "
+        "value of a kill-switch-class flag (`killswitch.order_entry`, `maintenance.mode`) or the "
+        "off value of a flag that admits order entry or rule actions (`trading.oms_enabled`, "
+        "`rules.enabled`, `rules.oms_actions`): the write proceeds, and its records carry the live "
+        "ids. No flag has a dependent until a row of the table in `24-internal-schemas.md` 16.4 "
+        "lands with the code that reads its flag, so until then every live set is empty and no "
+        "write needs an acknowledgement.",
+        "A request that names more than 200 ids is `422 validation_failed` (rule `too_long`), and "
+        "a repeated id is `422 validation_failed` (rule `duplicate_rule`): both are refused with "
+        "the request validation, before the row lock. Outside a flag's stop direction (above), a "
+        "live set above 200 refuses the write, whatever the request names, as `422 "
+        "validation_failed` (rule `dependents_over_bound`, no `dependents`, `missing` or "
+        "`unexpected` in the body), until E35 holds the cap of armed rules at arming "
+        "(`24-internal-schemas.md` 16.1), and a read of the rules store that fails or exceeds its "
+        "bound is `503 store_unavailable`, nothing is written, and its `flags.change` refusal "
+        "record holds the key, the row's `before` and the acknowledged ids.",
         "The acknowledgement is a confirmation, never the enforcement: what refuses a rule's "
         "action is the executor's synchronous check at the moment of the action "
         "(`24-internal-schemas.md` 11.5, checks 2 and 3, C-2.21), which reads the flag whatever "
         "any list said. An arm or a disarm that commits between the check's read and the flag's "
         "commit, inside the store write's bound (5 s at most), is a named residual; each event "
-        "keeps its own record (`rules.arm` or `rules.disarm`, and `flags.change`). So this "
-        "console's engage of a kill-switch-class flag can be answered `422` or `503` by the check, "
-        "which the code-free emergency engage, `POST /trading/kill-switch`, never is.",
+        "keeps its own record (`rules.arm` or `rules.disarm`, and `flags.change`). So, once the "
+        "code-free emergency engage, `POST /trading/kill-switch`, is served, this console's engage "
+        "of a kill-switch-class flag can be answered `422` or `503` by the check, which that route "
+        "never is.",
         "`flags:write` is a dangerous permission. Every write needs exactly one fresh step-up "
         "elevation, chosen by key and by the stored value read under the row lock that "
         "`expected_updated_at` is checked against, never the cached value. An unreadable row "
@@ -197,8 +207,9 @@ _PINNED: dict[str, tuple[str, ...]] = {
         "never its raw value. Toggling `maintenance.mode` is also audited as "
         "`maintenance.enabled` or `maintenance.disabled`. Every `flags.change` record that "
         "carries the request also holds `acknowledged_dependents` as sent, sorted by id, and the "
-        "record of a `dependents_unacknowledged` refusal holds the live ids as well: ids only, at "
-        "most 200 of each, never a rule's name (C-12.6).",
+        "record of a `dependents_unacknowledged` refusal, or of a write in a flag's stop "
+        "direction, holds the live ids as well: ids only, at most 200 of each, never a rule's "
+        "name (C-12.6).",
         "A successful write pushes a `SystemUpdate` of kind `feature_flags`, carrying only the "
         "changed key, to every session the flag's `visibility` admits (`23-ws-protocol.md` 15.9).",
         "`maintenance.mode` is a kill-switch-class flag. While it is on, the shared order-entry "
@@ -455,12 +466,21 @@ def test_put_answers_step_up_classes_conflict_and_additive_request() -> None:
 
 
 def test_put_takes_the_acknowledgement_and_refuses_a_stale_one_with_the_live_list() -> None:
-    """#5479, contract first: the member is optional in the schema (C-6.3) and bounded at 200 ids,
-    and the `422` carries the live dependents and the difference, as `409` carries `current`."""
+    """#5479, contract first: the member is optional in the schema (C-6.3) and bounded at 200 ids
+    (a longer list is `422`, rule `too_long`), and the `422` carries the live dependents and the
+    difference, as `409` carries `current`."""
     ack = _REQUEST["properties"]["acknowledged_dependents"]
     assert (ack["type"], ack["maxItems"], ack["uniqueItems"]) == ("array", 200, True)
     assert ack["items"] == {"type": "string", "format": "uuid"}
     assert "acknowledged_dependents" not in _REQUEST["required"]
+    ids = [str(uuid.UUID(int=n)) for n in range(1, 202)]  # 201 distinct ids
+    fits = api.SetFeatureFlagRequest.model_validate(
+        {"value": True, "acknowledged_dependents": ids[:200]}
+    )
+    assert len(fits.acknowledged_dependents or []) == 200
+    with pytest.raises(ValidationError) as too_many:
+        api.SetFeatureFlagRequest.model_validate({"value": True, "acknowledged_dependents": ids})
+    assert [error["type"] for error in too_many.value.errors()] == ["too_long"]
     refused = _PUT["responses"]["422"]["content"]["application/problem+json"]
     assert refused["schema"] == _ref("FeatureFlagWriteRefused")
     problem, extra = _SCHEMAS["FeatureFlagWriteRefused"]["allOf"]

@@ -20,9 +20,12 @@ from tests.contract._admin_support import (
     OWNER_ONLY,
     ROOT,
     SPEC,
+    capability_rows,
     example_cases,
+    grants,
     text,
     validate_example,
+    x_rbac,
 )
 from tests.contract.rbac.rbac_harness import MATRIX_PATH
 
@@ -34,6 +37,8 @@ _DEPENDENT: dict[str, Any] = _SCHEMAS["FeatureFlagDependent"]
 _PROSE = text(_OP["description"])
 _INTERNAL = (ROOT / "docs/plan/24-internal-schemas.md").read_text(encoding="utf-8")
 _DATABASE = (ROOT / "docs/plan/21-database-schema.md").read_text(encoding="utf-8")
+_CATALOGUE = _DATABASE.split("### 10.7 Feature flags", 1)[1].split("###", 1)[0]
+_LISTED = set(re.findall(r"^\| `([a-z_.]+)`", _CATALOGUE, re.MULTILINE))  # 21 §10.7's flag keys
 _EXAMPLES: dict[str, Any] = _OP["responses"]["200"]["content"]["application/json"]["examples"]
 _REF = "#/components/schemas/"
 
@@ -170,7 +175,8 @@ _READ_ROWS = (
     "The items are ordered by `rule_id` and are not paged, since the write needs the whole set at "
     "once. There are at most 200, the cap of armed rules (`24-internal-schemas.md` 16.1); while "
     "E35 does not hold that cap at arming, a set above it answers its first 200 with "
-    "`truncated: true`, and `setFeatureFlag` refuses the write (`dependents_over_bound`).",
+    "`truncated: true`, and `setFeatureFlag` refuses the write (`dependents_over_bound`), a write "
+    "in a flag's stop direction apart.",
     "The read changes nothing and spends nothing: no rule is disarmed and nothing is queued.",
     "It holds `flags:write`, the permission of the write it precedes, which the Owner alone "
     "holds: a Manager, a Viewer and a caller holding `flags:read` only get `403` and learn no "
@@ -229,7 +235,9 @@ _SECTION_ROWS = (
     "covering every account), and is listed with `unreadable: true`.",
     "is E35's open stack (#5367, #5406, #5423 and #5472) and is not on `main`. The table "
     "therefore holds no row: every list is `[]` and no write needs an acknowledgement until a "
-    "row lands with its reading code.",
+    "row lands with its reading code. Until #5479's third PR, the served `setFeatureFlag` admits "
+    "`acknowledged_dependents` (its generated request model carries the member) and neither "
+    "compares nor records it.",
     "and nothing else does: there is no table of dependents and no migration, nothing on the "
     "arm path, the evaluator, the runner or the executor, no call from a tick or a fire, and no "
     "interpreter is queried (C-2.21).",
@@ -241,27 +249,40 @@ _SECTION_ROWS = (
     "missing or an unexpected id refuses the write (`422 validation_failed`, rule "
     "`dependents_unacknowledged`, with the live list and the difference in the body), and an "
     "empty live set needs none.",
-    "The check judges every write, of every flag and in either direction (a rollout flag turned "
+    "The check covers every write, of every flag and in either direction (a rollout flag turned "
     "on lets an armed rule reach the OMS, a risk-increasing capability, §16.2), a "
     "kill-switch-class flag's engaged value included, for every role: no role, flag or setting "
-    "turns it off (C-4.14), and it reads no flag or setting.",
-    "ids only, never a rule's name (user text, C-12.6).",
+    "turns it off (C-4.14), and it reads no flag or setting. While the code-free `POST "
+    "/trading/kill-switch` is not served (its row in the RBAC route matrix, "
+    "`services/api/tests/contract/rbac/matrix.yaml`, is not `executed`), the check never "
+    "refuses a write in a flag's stop direction, the engaged value of a kill-switch-class flag "
+    "(`killswitch.order_entry`, `maintenance.mode`) or the off value of a flag that admits order "
+    "entry or rule actions (`trading.oms_enabled`, `rules.enabled`, `rules.oms_actions`): the "
+    "write proceeds, and its records carry the live ids. A test of #5479's third PR reads that "
+    "row, so the interim ends when E39-S03 mounts the route.",
+    "and the record of a refusal or of a write in a flag's stop direction also holds the live "
+    "ids: ids only, never a rule's name (user text, C-12.6).",
     "What refuses a rule's action is the executor's synchronous check at the moment of the "
     "action (§11.5 checks 2 and 3, C-2.21), which reads the flag whatever any list said, so a "
     "stale acknowledgement weakens no safety.",
     "an arm or a disarm that commits between the check's read and the flag's commit, inside the "
     "store write's bound (`write_bound_s`, 5 s at most), is a named residual, and each event "
     "keeps its own record (`rules.arm` or `rules.disarm`, and `flags.change`).",
-    "a console engage can be answered `422` (a stale list) or `503` (the rules store does not "
-    "answer), while the code-free emergency engage, `POST /trading/kill-switch`, with its "
-    "`disarm_rules` option (§11.7), never waits on a list or on the rules store (C-4.14).",
-    "While E35 does not hold that cap at arming, a live set above it answers the read's first "
-    "200 by `rule_id` with `truncated: true` and refuses the write (`422`, rule "
-    "`dependents_over_bound`): no list is cut without saying so.",
+    "once the code-free emergency engage is served, a console engage of a kill-switch-class "
+    "flag can be answered `422` (a stale list) or `503` (the rules store does not answer) by "
+    "the check, while `POST /trading/kill-switch`, with its `disarm_rules` option (§11.7), is "
+    "never answered `422` or `503` by the check (C-4.14).",
+    "A config write of `max_armed_rules` above 200 is refused, so the bound stays tied to the "
+    "editable cap (§16.3); #5479's third PR pins it with a test. While E35 does not hold that "
+    "cap at arming, a live set above it answers the read's first 200 by `rule_id` with "
+    "`truncated: true` and refuses the write (`422`, rule `dependents_over_bound`; a write in a "
+    "flag's stop direction apart): no list is cut without saying so.",
+    "`acknowledged_dependents` holds at most 200 ids (`422`, rule `too_long`, above them), and "
     "the write route's body cap rises from 16 KiB to 32 KiB, for 200 ids beside 200 overrides. "
     "The 200 ids and the 32 KiB are proposed, interim until the Owner ratifies them (#2701). A "
-    "read of the rules store that fails or exceeds its bound is `503 store_unavailable`, with "
-    "nothing written.",
+    "read of the rules store that fails or exceeds its bound is `503 store_unavailable`, "
+    "nothing is written, and its `flags.change` refusal record holds the key, the row's "
+    "`before` and the acknowledged ids (a write in a flag's stop direction apart).",
 )
 
 
@@ -272,25 +293,74 @@ def test_every_decision_of_section_16_4_is_pinned(sentence: str) -> None:
 
 def test_the_table_holds_the_proposed_rows_and_names_only_flags_the_catalogue_lists() -> None:
     rows = {
-        cells[0]: cells[1]
+        cells[0]: (cells[1], cells[2])
         for line in _INTERNAL.split("### 16.4 ", 1)[1].split("\n---\n", 1)[0].splitlines()
         if line.startswith("| `")
         for cells in [[cell.strip() for cell in line.strip("|").split("|")]]
     }
     assert rows == {
-        "`rules.enabled`": "every type",
-        "`killswitch.order_entry`": "every type",
-        "`rules.oms_actions`": "every type whose handler reaches past the engine",
+        "`rules.enabled`": ("every type", "the executor's check 2 (§11.5)"),
+        "`killswitch.order_entry`": ("every type", "the executor's check 3 (§11.5)"),
+        "`rules.oms_actions`": (
+            "every type whose handler reaches past the engine",
+            "the executor's check 2, the rollout flag (§11.5, §16.2)",
+        ),
         "`trading.oms_enabled` and `maintenance.mode`": (
-            "the entries: the types that open or add to a position"
+            "the entries: the types that open or add to a position",
+            "`trading.oms_enabled`: the rule-order adapter's admission of an entry (#5472, "
+            "proposed); `maintenance.mode`: the order-entry gate behind `TradingSwitches` "
+            "(§8.4, §8.10)",
         ),
     }
-    catalogue = _DATABASE.split("### 10.7 Feature flags", 1)[1].split("###", 1)[0]
-    listed = set(re.findall(r"^\| `([a-z_.]+)`", catalogue, re.MULTILINE))
     named = set(re.findall(r"`([a-z]+\.[a-z_]+)`", " ".join(rows)))
-    assert named and named <= listed, sorted(named - listed)
+    assert named and named <= _LISTED, sorted(named - _LISTED)
     for absent in ("trading.live_enabled", "algo.twap"):  # no row: see `_SECTION_ROWS`
         assert absent not in " ".join(rows)
+
+
+_STOP_DIRECTION: tuple[str, ...] = (
+    *("killswitch.order_entry", "maintenance.mode"),  # the engaged value of a kill-switch class
+    *("trading.oms_enabled", "rules.enabled", "rules.oms_actions"),  # the off value of a gate
+)
+
+
+def test_the_interim_rule_names_the_stop_direction_in_both_documents_and_the_unserved_route() -> (
+    None
+):
+    """While the code-free engage is not served, the check never refuses a write in a flag's stop
+    direction: both documents name the five flags, each a flag of `21` 10.7, and the route and its
+    matrix row, which #5479's third PR reads so that the interim ends when it is mounted."""
+    put = text(SPEC["paths"]["/admin/feature-flags/{flagKey}"]["put"]["description"])
+    lead = "the check never refuses a write in a flag's stop direction"
+    for doc in (put, _SECTION):
+        assert doc.count(lead) == 1
+        assert all(f"`{key}`" in doc.split(lead, 1)[1][:420] for key in _STOP_DIRECTION)
+    assert _LISTED >= set(_STOP_DIRECTION)
+    assert SPEC["paths"]["/trading/kill-switch"]["post"]["operationId"] == "setKillSwitch"
+    matrix = yaml.safe_load(MATRIX_PATH.read_text(encoding="utf-8"))["operations"]
+    assert matrix["POST /trading/kill-switch"]["permissions"] == ["killswitch:write"]
+
+
+def test_the_security_program_names_the_read_beside_its_write_in_row_46() -> None:
+    cells = capability_rows()["46"]
+    assert grants(cells[1]) == ({"flags:write"}, {"setFeatureFlag", "listFeatureFlagDependents"})
+    assert (cells[2], cells[3:]) == ("✔(step-up; read: none)", ["✖", "✖"])  # as row 45a's
+    assert set(x_rbac("listFeatureFlagDependents")) == {"flags:write"}
+
+
+def test_the_e42_model_names_the_console_refusals_the_interim_rule_and_the_route_state() -> None:
+    model = text((ROOT / "docs/security/threat-models/e42-admin.md").read_text(encoding="utf-8"))
+    row = model.split("| AD-D02 | SUB: P6 |", 1)[1].split(" | AD-D03 |", 1)[0]
+    for part in (
+        "the armed-rule check can answer a console write `422` (a stale or over-bound list) or "
+        "`503` (the rules store does not answer)",
+        "while the code-free `POST /trading/kill-switch` is not served (its RBAC route matrix "
+        "row is not `executed`), the check never refuses a write in a flag's stop direction",
+        "a test of #5479's third PR reads that row so the interim ends when E39-S03 mounts the "
+        "route, and the served route is never answered `422` or `503` by the check",
+    ):
+        assert part in row
+    assert "its refusals are `422` and `503` (never for a flag's stop direction" in model
 
 
 def test_section_19_92_logs_the_contract_first_change_without_a_new_code_or_table() -> None:
