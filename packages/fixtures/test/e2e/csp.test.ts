@@ -1,21 +1,72 @@
+import golden from "@candleviewer/config/csp-policy.golden.json" with { type: "json" };
 import { describe, expect, it } from "vitest";
-import { classify, concretePath, isLocal, parseCsp, sr112Findings } from "../../src/e2e/index";
+import {
+  classify,
+  concretePath,
+  isLocal,
+  parseCsp,
+  sr112Findings,
+  sr112Fixed,
+} from "../../src/e2e/index";
 
-// The shell's policy as apps/desktop/src/main/csp.ts builds it for the default backend.
-const SHIPPED =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-  "connect-src 'self' http://127.0.0.1:8000 ws://127.0.0.1:8000; img-src 'self' data: blob:; " +
-  "worker-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; " +
-  "form-action 'none'";
+// The one SR-112 policy (E43-T01), as every surface ships it for the default backend.
+const SHIPPED = golden.header;
 
 describe("sr112Findings", () => {
-  it("passes the shipped policy as a header and as a meta fallback", () => {
-    expect(sr112Findings(SHIPPED, { delivery: "header" })).toEqual([]);
-    const meta = SHIPPED.replace("frame-ancestors 'none'; ", "");
-    expect(sr112Findings(meta, { delivery: "meta" })).toEqual([]);
-    expect(sr112Findings(meta, { delivery: "header" })).toEqual([
-      "SR-112 frame-ancestors: missing",
+  it("takes its expected directives from the golden policy, not from a list of its own", () => {
+    const header = new Map(parseCsp(golden.header));
+    header.delete("connect-src");
+    header.delete("report-uri");
+    expect(sr112Fixed("header")).toEqual(header);
+    const meta = new Map(parseCsp(golden.meta));
+    meta.delete("connect-src");
+    expect(sr112Fixed("meta")).toEqual(meta);
+    expect(sr112Fixed("header").get("style-src")).toEqual(["'self'"]);
+  });
+
+  it("passes every golden policy on its surface", () => {
+    expect(sr112Findings(golden.header, { delivery: "header" })).toEqual([]);
+    expect(sr112Findings(golden.meta, { delivery: "meta" })).toEqual([]);
+    expect(sr112Findings(golden.bind_8080, { delivery: "header" })).toEqual([]);
+    expect(sr112Findings(golden.https_loopback_origin, { delivery: "header" })).toEqual([]);
+    const tailnet = ["https://box.tail1234.ts.net", "wss://box.tail1234.ts.net"];
+    expect(sr112Findings(golden.tailnet, { delivery: "header", extraConnect: tailnet })).toEqual(
+      [],
+    );
+  });
+
+  it("fails the pre-E43 policy (style unsafe-inline, no reporting) and a meta used as a header", () => {
+    const old = SHIPPED.replace("style-src 'self'", "style-src 'self' 'unsafe-inline'").replace(
+      /; report-uri [^;]+; report-to \S+$/u,
+      "",
+    );
+    expect(sr112Findings(old, { delivery: "header" })).toEqual([
+      `SR-112 style-src: "'self' 'unsafe-inline'", expected "'self'"`,
+      "SR-112 report-to: missing",
+      "SR-112 report-uri: missing",
     ]);
+    expect(sr112Findings(golden.meta, { delivery: "header" })).toEqual([
+      "SR-112 frame-ancestors: missing",
+      "SR-112 report-to: missing",
+      "SR-112 report-uri: missing",
+    ]);
+    expect(sr112Findings(golden.header, { delivery: "meta" })).toEqual([
+      "SR-112 frame-ancestors: a directive SR-112 does not list",
+      "SR-112 report-uri: a directive SR-112 does not list",
+      "SR-112 report-to: a directive SR-112 does not list",
+    ]);
+  });
+
+  it("rejects a report-uri off the loopback, off the receiver path or with two sources", () => {
+    const at = (uri: string): string => SHIPPED.replace(/report-uri [^;]+/u, `report-uri ${uri}`);
+    for (const uri of [
+      "https://evil.invalid/api/v1/csp-report",
+      "http://127.0.0.1:8000/other",
+      "http://127.0.0.1:8000/api/v1/csp-report http://127.0.0.1:9/api/v1/csp-report",
+    ])
+      expect(sr112Findings(at(uri), { delivery: "header" })).toEqual([
+        `SR-112 report-uri: "${uri}" is not one allowed origin + /api/v1/csp-report`,
+      ]);
   });
 
   it("names unsafe-eval, a widened directive and an exchange host by SR id and directive", () => {

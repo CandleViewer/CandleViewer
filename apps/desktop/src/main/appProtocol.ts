@@ -124,8 +124,15 @@ export async function resolveAppRequest(
   read: DistReader,
   csp: string,
   method = "GET",
+  reportingEndpoints?: string,
 ): Promise<AppResponse> {
-  const baseHeaders = { "content-security-policy": csp, "x-content-type-options": "nosniff" };
+  const baseHeaders: Record<string, string> = {
+    "content-security-policy": csp,
+    "x-content-type-options": "nosniff",
+  };
+  if (reportingEndpoints !== undefined) {
+    baseHeaders["reporting-endpoints"] = reportingEndpoints; // what the policy's `report-to` names
+  }
   const textHeaders = { ...baseHeaders, "content-type": "text/plain; charset=utf-8" };
   const ok = (file: string, body: Uint8Array): AppResponse => ({
     status: 200,

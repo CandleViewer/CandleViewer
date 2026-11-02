@@ -27,6 +27,8 @@ rules:
       # (audited) and a foreign drawing id on a single PUT/DELETE is audited as rbac.denied;
       # batch target_unavailable/id_unavailable probes (R3, #433) and a foreign layout_id probe
       # are NOT audited. Workspaces: D18 audits foreign-id probes as rbac.denied.
+      # POST /csp-report (E43-T01): a credential-less browser CSP sink that only counts; its route
+      # lives in api/csp_report.py alone (the route-scope rule below flags it anywhere else).
       # REVISIT when E40 exposes drawings.alert_id and when the 3.8.5 hotkey routes land: this
       # rule cannot see new behaviour inside an approved handler.
       - pattern-not: |
@@ -39,6 +41,10 @@ rules:
               ...
       - pattern-not: |
           @$R.delete("=~/^/(drawings/[{]drawingId[}]|workspaces/[{]workspaceId[}]|workspaces/[{]workspaceId[}]/layouts/[{]layoutId[}])$/", ...)
+          async def $F(...):
+              ...
+      - pattern-not: |
+          @$R.post("/csp-report", ...)
           async def $F(...):
               ...
     paths:
@@ -76,9 +82,14 @@ rules:
               @$R.delete("=~/^/(drawings/[{]drawingId[}]|workspaces/[{]workspaceId[}]|workspaces/[{]workspaceId[}]/layouts/[{]layoutId[}])$/", ...)
               async def $F(...):
                   ...
+          - pattern: |
+              @$R.post("/csp-report", ...)
+              async def $F(...):
+                  ...
       - pattern-not-regex: "(_audit\\(|audit_\\w+\\(|\\.emit\\()"
     paths:
       exclude:
         - "**/tests/**"
         - "**/api/drawings.py"
         - "**/api/workspaces.py"
+        - "**/api/csp_report.py"

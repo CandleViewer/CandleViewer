@@ -451,6 +451,12 @@ class Settings(BaseSettings):
     otel_enabled: bool = False
     otel_endpoint: str | None = None
 
+    # E43-T01 (SR-112, C-12.10): `security.csp.tailnet_host`, the one extra `connect-src` origin
+    # (https/wss) of the CSP header. A DNS name, validated at startup (`api/csp.py`); unset means
+    # loopback only. `csp_report_enabled` turns the `/api/v1/csp-report` receiver on (default on).
+    csp_tailnet_host: str | None = None
+    csp_report_enabled: bool = True
+
     bind_host: str = "127.0.0.1"
     bind_port: int = 8080
 
