@@ -4,13 +4,15 @@
 Standalone, offline, stdlib only; it runs no repo code and is run with `python3 -I`. It reads the
 review and the pins file from the working tree, and every cited file AS TEXT with `git show`: the
 plan docs, E37-D02, the design-spec rules, the keymap and E47-S03's keyboard core at the pinned
-base (`BASE`); E37-D03 at #5448's head (`D03_REF`) until it merges (R6).
+base (`BASE`); E37-D03 at #5448's head (`D03_REF`) until it merges (R6), and E47-D06 at #5443's
+head (`E47D06_REF`) for its overlap rule only (BQ-18).
 Default-deny: a gate that cannot read its input FAILs.
 
 Gates (each FAIL led by its name):
   G-FINDING  §11's F rows in order; each severity from R-1's set; each closing "fix: A-n" with
-             §12 carrying A-n, "accepted: ..." or "routed: ..."; no Blocking or Major without a
-             fix; the counts in §11's heading equal the rows.
+             §12 carrying A-n, "accepted: ..." or "routed: ..."; every C-n a route names is a §13
+             row; no Blocking or Major without a fix or a C-row route (R-2, BQ-07); the counts
+             in §11's heading equal the rows.
   G-MAP      the ticket's seventeen operations are K-01 ... K-17 in the ticket's order; every K
              row has a binding, an outline twin and an announcement.
   G-KEYMAP   every `X` (`rules.id`) binding in §4 equals the keymap's defaultBinding for that id
@@ -28,7 +30,7 @@ Gates (each FAIL led by its name):
   G-SCOPE    the diff against `git merge-base HEAD origin/main` touches only the review, this
              tool and the pins file.
   G-XREF     every F id the review names is a §11 row; no K binding names a chrome-reserved
-             chord; every §8 target that passes under 24 x 24 passes by an equivalent, and the
+             chord, and `Ctrl+0` only in a PROPOSED cell naming its C-row (BQ-12); every §8 target that passes under 24 x 24 passes by an equivalent, and the
              required targets are present; §6's L rows are L-1 ... L-n and cover the regions of
              D02's focus order; no V row is Blocking unless §11 counts as many Blocking rows.
 
@@ -57,24 +59,28 @@ SPEC_REL = "docs/design/E37/E37-D04.md"
 TOOL_REL = "docs/design/_tools/e37_d04_a11y_review_audit.py"
 PINS_REL = "docs/design/_tools/e37_d04_ruled_pins.txt"
 OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
-BASE = "67fe8b5265810d9d7928bdf4b56e4911f16fce54"  # origin/main when written
+BASE = "2172b27d4eea8686f89b36dd7bf7af109e2e8312"  # origin/main, re-pinned (BQ-02)
 D03_REF = "fa8121d1b9601727a77d9c5013f4c5bbcfb87951"  # #5448's head (E37-D03 PR 2)
+E47D06_REF = "7a9002dbddc48ece278527b30ede48fa053e9e54"  # #5443's head (E47-D06)
 CORE = "apps/web/src/features/rule-builder-graph/a11y"
 PATHS: dict[str, str] = {
     "05": "docs/plan/05-accessibility-standard.md",
     "11": "docs/plan/11-user-stories.md",
     "14": "docs/plan/14-screens-catalogue.md",
     "15": "docs/plan/15-component-catalogue.md",
+    "17": "docs/plan/17-ux-diagrams.md",
     "D02": "docs/design/E37/E37-D02.md",
     "D03": "docs/design/E37/E37-D03.md",
     "DS": ".claude/rules/32-design-specs.md",
+    "E11D07": "docs/design/E11/E11-D07.md",
+    "E47D06": "docs/design/E47/E47-D06.md",
     "KEYMAP": "apps/web/src/keymap/keymap.json",
     "COPY": f"{CORE}/copy.ts",
     "PSEL": f"{CORE}/portSelection.ts",
     "TRAV": f"{CORE}/traversal.ts",
     "NUDGE": f"{CORE}/nudge.ts",
 }
-REF_OF = {"D03": D03_REF}
+REF_OF = {"D03": D03_REF, "E47D06": E47D06_REF}
 # the A-row headers name their parents in these words
 PARENT_WORDS = {
     "E37-D02": "D02",
@@ -105,7 +111,7 @@ T_OPS = (
     "simulate",
 )
 DASH = "\u2013"  # the en dash of a cited range
-KEYS = r"\d\d|D0[23]|DS|KEYMAP|COPY|PSEL|TRAV|NUDGE"
+KEYS = r"\d\d|D0[23]|DS|KEYMAP|COPY|PSEL|TRAV|NUDGE|E11D07|E47D06"
 CITE = re.compile(rf"`({KEYS})`:(\d+(?:{DASH}\d+)?(?:, :\d+(?:{DASH}\d+)?)*)")
 BINDING = re.compile(r"`([^`]+)` \(`(rules\.[a-z_]+)`\)")
 ANCHOR = re.compile(r"`?([^\s<|(`]+)`?<!--=([A-Z]+:[A-Za-z0-9.]+)-->")
@@ -118,9 +124,12 @@ LOCAL_PATH = re.compile(
 AGENT_NAME = re.compile(r"\b[a-z]{2,4}-worker-\d\b")
 URL_OR_HOST = re.compile(r"https?://|penpot\.[a-z]|team-id=|file-id=", re.IGNORECASE)
 ARM = re.compile(r"\brules\.arm|\bArm rule\b", re.IGNORECASE)
-# chords the browser, the desktop shell or `05` keep for the chrome (page zoom, text scale, the
-# command palette); no K row may bind one
-CHROME_CHORDS = ("Ctrl+0", "Ctrl+=", "Ctrl+-", "Ctrl+K")
+# chords the browser, the desktop shell or `05` keep for the chrome (text scale, the command
+# palette); no K row may bind one
+CHROME_CHORDS = ("Ctrl+=", "Ctrl+-", "Ctrl+K")
+# the page-zoom reset: a K row may name it only PROPOSED, beside the C-row that carries the check
+# (BQ-12 RULED)
+PROPOSED_ONLY = {"Ctrl+0": "C-4"}
 TARGETS = ("node card", "port", "connection (keyboard)", "connection (pointer)", "palette entry",
            "CMP-002", "minimap", "CMP-235")  # fmt: skip
 REGIONS = ("header", "palette", "canvas:", "foot row", "outline", "inspector", "CMP-234",
@@ -179,7 +188,7 @@ def at(t: Texts, key: str) -> str:
     text = show(t, ref, PATHS[key])
     if text is None:
         raise SystemExit(
-            f"{PATHS[key]} does not resolve at {ref[:10]}; fetch #5448's head first"
+            f"{PATHS[key]} does not resolve at {ref[:10]}; fetch #5448's and #5443's heads"
         )
     return text
 
@@ -229,7 +238,7 @@ def motion_counts(t: Texts) -> tuple[int, int]:
 
 
 def compute(t: Texts) -> dict[str, str]:
-    v = {"SHA:BASE": BASE[:10], "SHA:D03": D03_REF[:10]}
+    v = {"SHA:BASE": BASE[:10], "SHA:D03": D03_REF[:10], "SHA:E47D06": E47D06_REF[:10]}
     total, reduce = motion_counts(t)
     v["MOT:rows"], v["MOT:reduce"] = str(total), str(reduce)
     fs = rows(section(t.spec, "## 11."), "F")
@@ -295,6 +304,7 @@ def anchor_problems(t: Texts, vals: dict[str, str], prefix: str) -> list[str]:
 def g_finding(t: Texts, vals: dict[str, str]) -> list[str]:
     fs = rows(section(t.spec, "## 11."), "F")
     arows = set(re.findall(r"\*\*(A-\d+) \u2192", section(t.spec, "## 12.")))
+    crows = {r[0] for r in rows(section(t.spec, "## 13."), "C")}
     bad = []
     if [r[0] for r in fs] != [f"F-{i:02d}" for i in range(1, len(fs) + 1)]:
         bad.append("§11's F rows are not F-01 ... F-n in order")
@@ -312,8 +322,16 @@ def g_finding(t: Texts, vals: dict[str, str]) -> list[str]:
             bad.append(
                 f"{fid}: the closing {closing!r} is neither a fix, an acceptance nor a route"
             )
-        if sev in ("Blocking", "Major") and not fix:
-            bad.append(f"{fid}: a {sev} finding without a fix (R-2)")
+        route = (
+            re.findall(r"\bC-\d+\b", closing) if closing.startswith("routed: ") else []
+        )
+        bad += [
+            f"{fid}: routes by {c}, which §13 does not carry"
+            for c in route
+            if c not in crows
+        ]
+        if sev in ("Blocking", "Major") and not fix and not route:
+            bad.append(f"{fid}: a {sev} finding without a fix or a C-row route (R-2)")
         if not owner:
             bad.append(f"{fid}: no owner")
     return bad + anchor_problems(t, vals, "F:")
@@ -493,6 +511,12 @@ def g_xref(t: Texts, vals: dict[str, str]) -> list[str]:
         for c in chords:
             if c in CHROME_CHORDS:
                 bad.append(f"{r[0]}: binds `{c}`, which the chrome keeps")
+            elif c in PROPOSED_ONLY and not (
+                "PROPOSED" in r[2] and PROPOSED_ONLY[c] in r[2]
+            ):
+                bad.append(
+                    f"{r[0]}: names `{c}` without PROPOSED and {PROPOSED_ONLY[c]}"
+                )
     trs = target_rows(t)
     for name in TARGETS:
         if not any(r[0].startswith(name) for r in trs):
@@ -615,6 +639,11 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "a count typed by hand in §11's heading",
         sub("Major 9<!--=F:major-->", "Major 8<!--=F:major-->"),
     ),
+    (
+        "G-FINDING",
+        "F-01 routed through a C-row §13 does not carry",
+        set_cell("F-01", 4, "routed: E37-S05 brings the core to D02's cycle (C-9)"),
+    ),
     ("G-MAP", "the zoom row dropped", drop_row("K-11")),
     ("G-MAP", "K-15's announcement cell emptied", set_cell("K-15", 4, "")),
     (
@@ -674,8 +703,16 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "G-XREF",
         "K-11 binds the text-scale chord",
         sub(
-            "fit (F-04, PROPOSED); no zoom chord",
-            "fit (F-04, PROPOSED); `Ctrl+=` zooms",
+            "fit (F-04, PROPOSED); `Ctrl+0`",
+            "fit (F-04, PROPOSED); `Ctrl+=` zooms; `Ctrl+0`",
+        ),
+    ),
+    (
+        "G-XREF",
+        "K-11's `Ctrl+0` stated as decided",
+        sub(
+            "resets the canvas zoom, PROPOSED with KEYMAP binding none (D03 M-15; C-4, F-28)",
+            "resets the canvas zoom (D03 M-15; F-28)",
         ),
     ),
     (
