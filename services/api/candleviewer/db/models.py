@@ -2347,6 +2347,9 @@ OMS_EXCHANGE_TEXT_COMMENT = (
 _P1 = OMS_MONEY_COMMENT
 _P1_TEXT = OMS_EXCHANGE_TEXT_COMMENT
 _MONEY = Numeric(38, 18)
+#: The anchor's one format (`tg_ref_fmt`, `ia_ref_fmt`) and a rule order's `origin_ref`
+#: (`ord_origin_ref`): the canonical lower-case UUID text, any version.
+GROUP_REF_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 
 orders = Table(
     "orders",
@@ -2396,6 +2399,8 @@ orders = Table(
     Column("is_paper", Boolean, nullable=False, server_default=text("false")),
     Column("lifecycle_state", order_lifecycle_state),
     Column("provenance", Text, nullable=False, server_default=text("'placed'")),
+    Column("origin", Text),
+    Column("origin_ref", Text),
     CheckConstraint("side IN ('Buy','Sell')", name="ord_side"),
     CheckConstraint("order_type IN ('Market','Limit')", name="ord_type"),
     CheckConstraint("qty > 0", name="ord_qty"),
@@ -2434,6 +2439,15 @@ orders = Table(
     ),
     CheckConstraint(
         "provenance IN ('placed','reconciliation','recorded_stop')", name="ord_provenance"
+    ),
+    CheckConstraint(
+        "origin IS NULL OR origin IN ('ticket','chart','dom','hotkey','rule','algo_child','api')",
+        name="ord_origin",
+    ),
+    CheckConstraint(
+        "CASE WHEN origin IS NULL THEN origin_ref IS NULL WHEN origin = 'rule' THEN origin_ref "
+        f"IS NOT NULL AND origin_ref ~ '{GROUP_REF_PATTERN}' ELSE true END",
+        name="ord_origin_ref",
     ),
     Index("ux_orders_link", "order_link_id", unique=True),
     Index(
@@ -2664,9 +2678,6 @@ GROUP_ALGO_COMMENT = (
     "PII: algo parameters that can repeat order prices and quantities (21 Sec.12, class P1); "
     "never logged"
 )
-#: The anchor's one format (`tg_ref_fmt`): the canonical lower-case UUID text, any version.
-GROUP_REF_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-
 trade_group_definitions = Table(
     "trade_group_definitions",
     metadata,

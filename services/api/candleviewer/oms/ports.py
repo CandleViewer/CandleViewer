@@ -78,6 +78,7 @@ Verdicts are B1's gate values (`statechart/bindings/b01_order.py`).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -516,6 +517,41 @@ class SubmitActor:
     ip: str | None = field(default=None, repr=False)
 
 
+#: The rule origin's node id is bounded to a short identifier.
+_NODE_ID: Final = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RuleOrigin:
+    """The rule a request comes from (24 Sec.8.4 "Rule-originated orders"): ids only, built by the
+    composition root's rule adapter from the fire it serves, never from request data, so no route
+    and no body sets one (`SubmitContext.origin`, `ExitCaller.origin`). `rule_id` and `version`
+    name the rule, `run_id` its fire's `rule_runs` row, `node_id` the action's node in the IR,
+    bounded to a short identifier, and `armed_by` and `armed_by_role` the user who armed it, both
+    or neither, as its records name them beside the owner, the request's `SubmitActor` (24
+    Sec.15.5; the E35 threat model's RE-S1)."""
+
+    rule_id: UUID
+    version: int
+    run_id: UUID
+    node_id: str
+    armed_by: UUID | None
+    armed_by_role: str | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.version, int) or isinstance(self.version, bool) or self.version < 1:
+            raise ValueError("a rule's version is a whole number from 1")
+        if not isinstance(self.node_id, str) or _NODE_ID.fullmatch(self.node_id) is None:
+            raise ValueError("a rule origin's node id is not a short identifier")
+        if (self.armed_by is None) != (self.armed_by_role is None):
+            raise ValueError("an armer is named with its role, or not at all")
+
+    @property
+    def actor_label(self) -> str:
+        """The actor its records name (24 Sec.15.5): `rule:<rule_id>@v<n>`."""
+        return f"rule:{self.rule_id}@v{self.version}"
+
+
 @dataclass(frozen=True, slots=True)
 class RequestRecord:
     """One record an order request writes about itself (`submit.OrderSubmission`, C-2.9): its
@@ -523,7 +559,8 @@ class RequestRecord:
     code as `reason`) or its outcome, naming the requesting principal. `detail` holds ids, state
     names, codes and, on `trade_group.submit`, the sizing explanation with its figures
     (SR-E28-13), never a credential (C-12.6); `request_id` is the request's correlation id
-    (`X-Correlation-Id`, #3990), None for a job."""
+    (`X-Correlation-Id`, #3990), None for a job. `origin` marks a rule's request, whose record is
+    the rule's (`RuleOrigin`, 24 Sec.15.5), its `actor` the owner it acts for."""
 
     action: str
     account_id: UUID
@@ -535,6 +572,7 @@ class RequestRecord:
     actor: SubmitActor
     detail: Mapping[str, str | None]
     request_id: UUID | None = None
+    origin: RuleOrigin | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -546,7 +584,8 @@ class KeyedRecord:
     system (`system:oms`). `request_id` is the correlation id of the HTTP request the record is
     written for (`X-Correlation-Id`, #3990), None for a job, a restart's resume or a fill-driven
     attach (21 Sec.3.10.1). `actor` is the requesting principal of a record a request writes (an
-    entry's stop requests), whose `actor_user_id` it is; None for the system."""
+    entry's stop requests), whose `actor_user_id` it is; None for the system. `origin` marks a
+    rule's request, as on `RequestRecord`, and names the owner through `actor`."""
 
     action: str
     name: str
@@ -560,10 +599,13 @@ class KeyedRecord:
     detail: Mapping[str, str | None]
     request_id: UUID | None = None
     actor: SubmitActor | None = None
+    origin: RuleOrigin | None = None
 
     def __post_init__(self) -> None:
         if self.actor is not None and self.actor.user_id != self.actor_user_id:
             raise ValueError("a keyed record's actor_user_id is its actor's")
+        if self.origin is not None and self.actor is None:
+            raise ValueError("a rule's record names the owner it acts for")
 
 
 class SubmitAudit(Protocol):

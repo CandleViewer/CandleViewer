@@ -317,9 +317,23 @@ class AccountScopeDenied(OrderRefused):
 
 class RiskRefused(OrderRefused):
     """`risk_limit_breached`: the risk gate refused the sized order (SR-E29-04), or the effective
-    profile does not allow the symbol."""
+    profile does not allow the symbol. `cap` names the limit that refused it, for a rule action's
+    `blocked_by = cap` (24 Sec.8.4 "Rule-originated orders" item 5): the risk gate's
+    `RiskDecision.cap` when given, else the rule of the first field the size step judged
+    (`errors`), else None. It is read in process only; the route's problem body never carries
+    it."""
 
     default_detail = "The account's risk limits or profile do not allow this order."
+
+    def __init__(
+        self,
+        detail: str | None = None,
+        *,
+        errors: Iterable[FieldError] = (),
+        cap: str | None = None,
+    ) -> None:
+        super().__init__(detail, errors=errors)
+        self.cap: str | None = cap if cap is not None else next((e.rule for e in self.errors), None)
 
 
 class TradingDisabled(OrderRefused):

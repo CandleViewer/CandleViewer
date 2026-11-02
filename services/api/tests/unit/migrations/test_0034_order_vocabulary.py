@@ -170,13 +170,15 @@ def test_a_rerun_adds_in_the_block_only_the_pairs_the_types_lack(
 
 def test_the_ddl_is_the_plan_doc_verbatim_and_touches_nothing_else() -> None:
     """Sec.1.2 carries the seven `ADD VALUE`s and the new type; Sec.3.3.4's second block (of
-    three) is the column and the index, and its third, E29-T04's `provenance`, is not 0034's.
+    four) is the column and the index, and its third, E29-T04's `provenance`, and its fourth,
+    E35-T11's origin columns, are not 0034's.
     Nothing is granted, written, commented or built CONCURRENTLY."""
     enums = _sql_blocks("### 1.2 Enum types")[0]
     assert all(statement in enums for statement in [*_ADDS, _LIFECYCLE])
-    orders_0029, orders_0034, orders_t04 = _sql_blocks("#### 3.3.4 `orders`")
+    orders_0029, orders_0034, orders_t04, orders_t11 = _sql_blocks("#### 3.3.4 `orders`")
     assert orders_0034 in _up() and "lifecycle_state" not in orders_0029
     assert "provenance" in orders_t04 and "provenance" not in _up()
+    assert "origin_ref" in orders_t11 and "origin" not in _up()
     for absent in ("CONCURRENTLY", "INSERT INTO", "GRANT ", "REVOKE ", "COMMENT ON", "NOT EXISTS"):
         assert absent not in _up()
     assert set(re.findall(r"\b(?:TABLE|ON) (\w+)", _up())) == {"orders"}

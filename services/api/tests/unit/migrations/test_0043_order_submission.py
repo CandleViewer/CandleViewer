@@ -26,7 +26,7 @@ _ORDERS = "3.3.4 `orders`"
 _ANCHORS = "3.3.10 `idempotency_anchors`"
 _STOPS = "3.3.11 `recorded_stops`"
 #: (heading, n-th ```sql block, the number of blocks the section holds): the revision's blocks.
-_BLOCKS = ((_ORDERS, 2, 3), (_ANCHORS, 0, 3), (_ANCHORS, 1, 3), (_STOPS, 0, 2), (_STOPS, 1, 2))
+_BLOCKS = ((_ORDERS, 2, 4), (_ANCHORS, 0, 3), (_ANCHORS, 1, 3), (_STOPS, 0, 2), (_STOPS, 1, 2))
 _BLOCK_IDS = ["provenance", "anchors", "anchor-guard", "stops", "stop-guard"]
 _TABLES = {t.name: t for t in (models.idempotency_anchors, models.recorded_stops)}
 #: What a later revision changed in a table this one creates, pinned by that revision's own test:
@@ -105,7 +105,7 @@ def test_revision_chains_onto_its_parent() -> None:
     assert f"{_PREV} -> {_REV}" in _alembic("history", "-r", f"{_PREV}:{_REV}")
 
 
-@pytest.mark.parametrize(("heading", "count"), [(_ORDERS, 3), (_ANCHORS, 3), (_STOPS, 2)])
+@pytest.mark.parametrize(("heading", "count"), [(_ORDERS, 4), (_ANCHORS, 3), (_STOPS, 2)])
 def test_each_section_holds_the_fences_the_parity_test_walks(heading: str, count: int) -> None:
     """The verbatim test walks the fences by index: one more would go unchecked."""
     assert _section(heading).count("```sql") == count
@@ -362,9 +362,11 @@ def test_the_ref_format_is_the_group_ref_format() -> None:
     )
 
 
-def test_provenance_is_the_last_order_column_and_its_check_admits_three_values() -> None:
+def test_provenance_follows_lifecycle_state_and_its_check_admits_three_values() -> None:
+    """Appended after `lifecycle_state`, as its ALTER TABLE adds it; `0064_orders_origin`'s two
+    columns come after it (`test_0064_orders_origin.py`)."""
     columns = list(models.orders.c)
-    assert [c.name for c in columns[-3:]] == ["is_paper", "lifecycle_state", "provenance"]
+    assert [c.name for c in columns[-5:-2]] == ["is_paper", "lifecycle_state", "provenance"]
     provenance = models.orders.c.provenance
     assert not provenance.nullable and _default(provenance) == "'placed'"
     body = _checks(models.orders)["ord_provenance"]

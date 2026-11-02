@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from decimal import Decimal
-from typing import Final
+from typing import Any, Final
 from uuid import uuid4
 
 import pytest
@@ -30,6 +30,37 @@ from tests.unit.oms.write_ahead_contract import (
 
 def _lost() -> StorageTierUnavailable:
     return StorageTierUnavailable("postgres unreachable (OSError)")
+
+
+_RULE, _PARENT = "3f2b8c1e-5d4a-4e6f-9a0b-1c2d3e4f5a6b", "9c8b7a6d-5e4f-4d3c-8b2a-1f0e9d8c7b6a"
+#: The (origin, origin_ref) pairs `ord_origin` and `ord_origin_ref` admit (`0064_orders_origin`, 21
+#: Sec.3.3.4): no origin and no ref, a rule's with its id, any other origin with any ref or none.
+#: The same arms run on Postgres in `test_orders_origin_migration.py` and on `require_origin` in
+#: `test_0064_orders_origin.py`.
+_ORIGIN_ADMITTED: Final[list[tuple[str | None, str | None]]] = [
+    (None, None), ("rule", _RULE), ("hotkey", "F5"), ("ticket", None), ("api", "not-a-uuid"),
+    ("algo_child", _PARENT),
+]  # fmt: skip
+#: The pairs each CHECK refuses, with the constraint Postgres reports: an origin outside the seven
+#: of 24 Sec.8.1, a ref with no origin, and a rule's order with no ref or one that is not its
+#: canonical lower-case UUID. No pair breaks both, so no name order decides one.
+_ORIGIN_REFUSED: Final[list[tuple[str | None, str | None, str]]] = [
+    ("manual", None, "ord_origin"), ("Rule", _RULE, "ord_origin"), ("", _RULE, "ord_origin"),
+    ("rule ", _RULE, "ord_origin"),
+    (None, "x", "ord_origin_ref"), (None, _RULE, "ord_origin_ref"),
+    ("rule", None, "ord_origin_ref"), ("rule", "not-a-uuid", "ord_origin_ref"),
+    ("rule", _RULE.upper(), "ord_origin_ref"), ("rule", "{" + _RULE + "}", "ord_origin_ref"),
+    ("rule", _RULE.replace("-", ""), "ord_origin_ref"), ("rule", _RULE + "\n", "ord_origin_ref"),
+]  # fmt: skip
+
+
+def _past_the_types(order: port.NewOrder, **over: Any) -> port.NewOrder:
+    """`order` with `over` set after it was built. `NewOrder` holds an origin pair to the table's
+    CHECKs as it is built (`require_origin`), so a pair Postgres refuses is set past that, and the
+    fake's own CHECK is what meets it, as Postgres's meets a row it is handed some other way."""
+    for name, value in over.items():
+        object.__setattr__(order, name, value)
+    return order
 
 
 class TestInMemoryStore(WriteAheadContract):
@@ -117,6 +148,31 @@ class TestInMemoryStore(WriteAheadContract):
         with pytest.raises(port.OrderConstraintError, match="ux_orders_link"):
             await store.create(port.NewOrder(**twin | {"id": uuid4()}), event())
 
+    @pytest.mark.parametrize(("origin", "ref", "constraint"), _ORIGIN_REFUSED)
+    async def test_a_row_breaking_an_origin_check_is_refused_by_name(
+        self, store: Fake, h: Harness, origin: str | None, ref: str | None, constraint: str
+    ) -> None:
+        """`ord_origin` and `ord_origin_ref` (21 Sec.3.3.4): the fake refuses by name each pair
+        Postgres refuses, as the row is inserted, and stores nothing beside the account's order."""
+        row = await h.order()
+        fresh = h.new_order(exchange_account_id=row.exchange_account_id)
+        broken = _past_the_types(fresh, origin=origin, origin_ref=ref)
+        with pytest.raises(port.OrderConstraintError) as err:
+            await store.create(broken, created())
+        assert err.value.constraint == constraint
+        assert await h.orders.list_open(row.exchange_account_id) == (row,)
+
+    @pytest.mark.parametrize(("origin", "ref"), _ORIGIN_ADMITTED)
+    async def test_a_row_the_origin_checks_admit_is_stored_and_kept_through_a_step(
+        self, h: Harness, origin: str | None, ref: str | None
+    ) -> None:
+        """Each pair Postgres admits reads back as it was written, and a step on it, which meets
+        the CHECKs again on the changed row, keeps it."""
+        row = await h.order("pending_submit", origin=origin, origin_ref=ref)
+        assert (row.origin, row.origin_ref) == (origin, ref)
+        moved = (await h.orders.transition(step(row, "submitted"))).order
+        assert (moved.origin, moved.origin_ref) == (origin, ref)
+
     async def test_an_append_takes_the_next_seq(self, h: Harness) -> None:
         row = await h.order()
         account = row.exchange_account_id
@@ -197,3 +253,21 @@ def test_the_fake_meets_every_check_the_schema_declares() -> None:
     assert _checks("orders") == set(fakes._ORDER_CHECKS) | _LEFT_TO_TYPES["orders"]
     assert _checks("executions") == set(fakes._EXECUTION_CHECKS) | _LEFT_TO_TYPES["executions"]
     assert _checks("order_events") == {"oe_latency"} | _LEFT_TO_TYPES["order_events"]
+
+
+def test_the_origin_checks_the_fake_mirrors_are_the_schemas() -> None:
+    """The fake's `ord_origin` and `ord_origin_ref` follow these bodies (`0064_orders_origin`): a
+    revision that changes either fails here until the fake follows it."""
+    bodies = {
+        str(c.name).removeprefix("ck_orders_"): " ".join(str(c.sqltext).split())
+        for c in models.orders.constraints
+        if isinstance(c, CheckConstraint) and str(c.name).startswith("ck_orders_ord_origin")
+    }
+    assert bodies == {
+        "ord_origin": "origin IS NULL OR origin IN "
+        "('ticket','chart','dom','hotkey','rule','algo_child','api')",
+        "ord_origin_ref": "CASE WHEN origin IS NULL THEN origin_ref IS NULL WHEN origin = 'rule' "
+        "THEN origin_ref IS NOT NULL AND origin_ref ~ "
+        "'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' ELSE true END",
+    }
+    assert set(fakes._ORIGINS) == {"ticket", "chart", "dom", "hotkey", "rule", "algo_child", "api"}

@@ -29,11 +29,13 @@ _BLOCKS = ("3.3.4 `orders`", "3.3.5 `order_events`", "3.3.6 `executions`", "3.3.
 #: created both columns without their FK; 0039_trade_groups (E28-T01 #905) adds them.
 _LEG_FK = " REFERENCES trade_group_legs(id) ON DELETE SET NULL"
 #: Added by `0034_order_vocabulary`, whose own test pins them: the column, its CHECK, and
-#: `ix_orders_open` rebuilt with the new open states; and by `0043_order_submission`, the
-#: `provenance` column and its CHECK.
+#: `ix_orders_open` rebuilt with the new open states; by `0043_order_submission`, the
+#: `provenance` column and its CHECK; and by the origin columns' revision
+#: (`test_0064_orders_origin.py`), `origin`, `origin_ref` and their two CHECKs.
 _LATER = frozenset(
-    {"lifecycle_state", "ord_lifecycle", "ix_orders_open", "provenance", "ord_provenance"}
-)
+    {"lifecycle_state", "ord_lifecycle", "ix_orders_open", "provenance", "ord_provenance",
+     "origin", "origin_ref", "ord_origin", "ord_origin_ref"}
+)  # fmt: skip
 #: 0034 appends to these two (21 Sec.9.3 rule 7), so 0029 created the first n values.
 _CREATED = {"order_state": 12, "order_event_kind": 14}
 _TABLES = {

@@ -792,8 +792,8 @@ async def test_both_answer_a_cancel_naming_our_id_and_another_exchange_id_not_fo
 
 #: The lane of each call, written out (24 §14.2 rule 12, SR-E29-14): `None` is the request's.
 LANES: dict[str, str | None] = {
-    "place_order": None, "place_batch": None, "amend_order": None,
-    "cancel_order": "critical", "cancel_all": "critical", "set_trading_stop": "critical",
+    "place_order": None, "place_batch": None, "amend_order": None, "cancel_order": None,
+    "cancel_all": "critical", "set_trading_stop": "critical",
     "set_leverage": "entry",
     "open_orders": "poll", "order_history": "poll", "positions": "poll", "executions": "poll",
     "closed_pnl": "poll", "wallet": "poll", "fee_rate": "poll", "account_info": "poll",
