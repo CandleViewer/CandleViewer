@@ -52,6 +52,19 @@ def _described(spec: dict[str, Any], method: str, path: str) -> str:
         "Each revocation is audited as `auth.session_revoked` (reason `role_changed`), written "
         "ahead with the role change: when one cannot be written nothing changes "
         "(`503 audit_unavailable`).",
+        # The records run within the change's write-ahead bound; the operator's step; a change
+        # that rolls back leaves what it wrote, and the reader's rule for telling which committed.
+        "These records are written within the change's write-ahead bound, after the change's own "
+        "records: a user with many live sessions, or an audit writer slow to take each record, "
+        "can exceed it, and the change then answers `503 audit_unavailable` with nothing changed",
+        "Revoke the user's sessions first, one at a time with "
+        "`DELETE /users/{userId}/sessions/{sessionId}`, and send the change again",
+        "A change that rolls back once some of its records are written (a refused record, the "
+        "bound, or a failed commit) leaves them standing, `auth.session_revoked` included",
+        "Such an `auth.session_revoked` revoked nothing, and its session stays live.",
+        "The records of one change share its `request_id`, and the `before` of the user's next "
+        "`roles.grant` or `roles.revoke` (the role set that change found; the user's current "
+        "roles when there is none) shows whether it committed",
         "the answer is `503 store_unavailable`: the new roles stand, and each remaining session "
         "of the user is revoked with `DELETE /users/{userId}/sessions/{sessionId}`",
         "The `200` body is unchanged.",
