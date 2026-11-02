@@ -278,6 +278,25 @@ async function confirmTakeProfit(): Promise<void> {
 const moved = (id: string, patch: Record<string, unknown>, at: number): OrdersBody =>
   ({ orders: [{ ...wsItem(snapshotBody(), id), ...patch, updated_at_ms: at }] }) as OrdersBody;
 
+/**
+ * `n` placed entries, ENTRY's frame and REST row under ids `0e000000-…-000000000{series}{nn}`, each
+ * on `accounts` in turn (ENTRY's own Sub-1 by default): every long or many-account view (code n8).
+ */
+function placed(
+  n: number,
+  series: number,
+  accounts: readonly string[] = [SUB1],
+): Served & { body: OrdersBody } {
+  const entry = wsItem(snapshotBody(), ENTRY);
+  const rest = restOpen().find((r) => r.id === ENTRY);
+  const id = (i: number) =>
+    `0e000000-0000-4000-8000-000000000${series}${String(i).padStart(2, "0")}`;
+  const on = (i: number) => accounts[i % accounts.length] ?? SUB1;
+  const each = <T,>(row: T) =>
+    Array.from({ length: n }, (_, i) => ({ ...row, id: id(i), exchange_account_id: on(i) }));
+  return { body: { orders: each(entry) } as OrdersBody, orders: each(rest) };
+}
+
 beforeAll(async () => {
   // the panel's first render in a worker compiles its whole tree: paid once, under the screen bound
   vi.useFakeTimers();
@@ -697,21 +716,13 @@ describe("Cancel-all partial failure", () => {
   const five = (): Served & { body: OrdersBody } => {
     const base = exchangeAccounts()[0];
     if (base === undefined) throw new Error("no account golden");
-    const accounts = [
-      ...exchangeAccounts(),
+    const more = [
       { ...base, id: SUB3, label: "Sub-3" },
       { ...base, id: SUB4, label: "Sub-4" },
     ];
-    const ids = [MAIN, SUB1, SUB2, SUB3, SUB4];
-    const entry = wsItem(snapshotBody(), ENTRY);
-    const rest = restOpen().find((r) => r.id === ENTRY);
-    const id = (i: number) => `0e000000-0000-4000-8000-0000000002${String(i).padStart(2, "0")}`;
     return {
-      accounts,
-      body: {
-        orders: ids.map((a, i) => ({ ...entry, id: id(i), exchange_account_id: a })),
-      } as OrdersBody,
-      orders: ids.map((a, i) => ({ ...rest, id: id(i), exchange_account_id: a })),
+      accounts: [...exchangeAccounts(), ...more],
+      ...placed(5, 2, [MAIN, SUB1, SUB2, SUB3, SUB4]),
     };
   };
 
@@ -1052,7 +1063,7 @@ describe("T2 and the carve-out (D02 §10.3–§10.4)", () => {
   );
 
   it(
-    "a read-only grant: one header notice per section, and the bulk buttons' reason beside them (m1, m3)",
+    "a read-only grant: one header notice per section, the row menu pointing at it, and the bulk buttons' reason beside them (m1, m3, n4)",
     SCREEN,
     async () => {
       const modes = { [MAIN]: "read", [SUB1]: "read", [SUB2]: "read" } as const;
@@ -1066,6 +1077,18 @@ describe("T2 and the carve-out (D02 §10.3–§10.4)", () => {
         expect(notice).toHaveTextContent("You can view this account, not trade it.");
         expect(notice?.closest('[data-part="GroupRow"]')).not.toBeNull();
       }
+      // the row menu's Cancel points at the same header notice, no second line of its own (n4)
+      const cell = within(orderRow(ENTRY)).getByRole("rowheader", { hidden: true });
+      act(() => cell.focus());
+      fireEvent.keyDown(cell, { key: "F10", shiftKey: true });
+      await settle(TICK);
+      const item = within(screen.getByRole("menu")).getByRole("menuitem", { name: "Cancel" });
+      expect(item).toHaveAttribute("aria-disabled", "true");
+      expect(working).not.toBeNull();
+      expect(item.getAttribute("aria-describedby")).toBe(working);
+      expect(item.closest(".cv-menu__row")?.querySelector(".cv-menu__second")).toBeNull();
+      fireEvent.keyDown(item, { key: "Escape" });
+      await settle(TICK);
       // every account in view read-only: "Cancel all in view…" takes the reason, drawn beside it
       const all = screen.getByRole("button", { name: /Cancel all in view/ });
       expect(all).toHaveAttribute("aria-disabled", "true");
@@ -1091,17 +1114,7 @@ describe("T2 and the carve-out (D02 §10.3–§10.4)", () => {
 
 describe("the window past 50 rows (G-01; code M3)", () => {
   /** `n` placed entries on Sub-1, one account group: a section, a group, then the orders. */
-  const many = (n: number): Served & { body: OrdersBody } => {
-    const entry = wsItem(snapshotBody(), ENTRY);
-    const rest = restOpen().find((r) => r.id === ENTRY);
-    const id = (i: number) => `0e000000-0000-4000-8000-0000000003${String(i).padStart(2, "0")}`;
-    return {
-      body: {
-        orders: Array.from({ length: n }, (_, i) => ({ ...entry, id: id(i) })),
-      } as OrdersBody,
-      orders: Array.from({ length: n }, (_, i) => ({ ...rest, id: id(i) })),
-    };
-  };
+  const many = (n: number): Served & { body: OrdersBody } => placed(n, 3);
   /** Lays the region out: 24 px rows under a 24 px header, `view` px tall, scrolled to `top`. */
   function layout(view: number): (top: number) => void {
     const box = grid().closest<HTMLElement>(".cv-table__region");
@@ -1282,24 +1295,11 @@ describe("the toolbar, the tree and the toasts", () => {
 });
 
 describe("the bulk dialog's restatement, the busy look and the bar (design n1, m4, n6)", () => {
-  /** `n` placed entries on Sub-1, all of them cancel-all's to select. */
-  const entries = (n: number): Served & { body: OrdersBody } => {
-    const entry = wsItem(snapshotBody(), ENTRY);
-    const rest = restOpen().find((r) => r.id === ENTRY);
-    const id = (i: number) => `0e000000-0000-4000-8000-0000000004${String(i).padStart(2, "0")}`;
-    return {
-      body: {
-        orders: Array.from({ length: n }, (_, i) => ({ ...entry, id: id(i) })),
-      } as OrdersBody,
-      orders: Array.from({ length: n }, (_, i) => ({ ...rest, id: id(i) })),
-    };
-  };
-
   it(
     "past ten rows in view it restates the chips, and lists the rows while no chip is set (D02 §8.3)",
     SCREEN,
     async () => {
-      await openOrders(entries(12));
+      await openOrders(placed(12, 4)); // twelve on Sub-1, all of them cancel-all's to select
       fireEvent.click(screen.getByRole("button", { name: "Cancel all in view…" }));
       await settle(500);
       const listed = document.querySelector(".cv-orders-bulk__targets");
