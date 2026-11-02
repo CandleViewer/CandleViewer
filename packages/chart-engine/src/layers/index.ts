@@ -10,3 +10,7 @@ export * from "./candle/palette.js";
 export * from "./candle/series.js";
 export * from "./candle/bars.js";
 export * from "./candle/seams.js";
+export * from "./volume/volume-ring.js";
+export * from "./volume/geometry.js";
+export * from "./volume/extent.js";
+export * from "./volume/series.js";
