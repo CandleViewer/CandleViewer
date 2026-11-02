@@ -610,7 +610,7 @@ MUTATIONS: list[tuple[str, Callable[[Texts], Texts]]] = [
     ("F: one pointer line applied early (A-13, the last in `14`)", apply_last),
     (
         "H: the T2 statement loses G-T2.5",
-        sub("spec", "One notice, many pointers (G-T2.5)", "One notice, many pointers"),
+        lambda t: t._replace(spec=t.spec.replace("G-T2.5", "G-T2.x")),
     ),
     ("H: §9.1 loses its §6.1 cite", drop_cite_91),
     ("H: a §6.1 E09-D09 cite moves to another line", sub("spec", "(E09-D09 :95)", "(E09-D09 :93)")),
