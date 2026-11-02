@@ -226,14 +226,41 @@ def with_tape_gaps(doc: dict[str, Any], drafts: Sequence[_Draft | None]) -> dict
     return {**doc, "tape_gap": marks} if marks else doc
 
 
-def restore_tape_gaps(doc: dict[str, Any], drafts: Sequence[_Draft | None]) -> None:
-    """Set `tape_gap` on the drafts a blob's `tape_gap` key names; a blob without it has none."""
+def restore_tape_gaps(
+    doc: dict[str, Any], drafts: Sequence[_Draft | None], *, legacy_gap_is_tape: bool = False
+) -> None:
+    """Set `tape_gap` on the drafts a blob's `tape_gap` key names. A blob without the key either
+    has none or was written before #5396, when `mark_gap` set `gap_before`: where `gap_before` can
+    mean nothing else (`legacy_gap_is_tape`: tick, volume, delta, renko) every draft holding it
+    is a tape gap, moved to `tape_gap`; elsewhere it is left as stored."""
+    if legacy_gap_is_tape and "tape_gap" not in doc:
+        for d in drafts:
+            if d is not None and d.gap_before:
+                d.tape_gap, d.gap_before = True, False
+        return
     marks = doc.get("tape_gap", [])
     if not isinstance(marks, list) or not all(type(i) is int for i in marks):
         raise BarsError("The builder state's tape-gap marks are corrupt.")
     for d in drafts:
         if d is not None and d.index in marks:
             d.tape_gap = True
+
+
+def restore_legacy_time_gaps(doc: dict[str, Any], drafts: Sequence[_Draft | None]) -> None:
+    """A blob without a `tape_gap` key predates #5396, when `gap_before` also marked a tape gap.
+    An empty interval leaves the draft's `open_time` after the previous bar's `close_time`, and
+    the first bar has no previous one, so a `gap_before` draft that starts exactly at the previous
+    draft's `close_time` (or is the first) can only be a tape gap: it moves to `tape_gap`. One
+    whose predecessor was pruned, or that starts later, stays as stored (it may be both)."""
+    if "tape_gap" in doc:
+        return
+    by_index = {d.index: d for d in drafts if d is not None}
+    for d in by_index.values():
+        if not d.gap_before:
+            continue
+        prev = by_index.get(d.index - 1)
+        if (prev is None and d.index == 0) or (prev is not None and prev.close_time == d.open_time):
+            d.tape_gap, d.gap_before = True, False
 
 
 #: Slots stored as JSON ints/bools; every other slot is a Decimal rendered as a string.
@@ -407,5 +434,6 @@ class TimeBarBuilder:
         self._next_index = doc["next_index"]
         self._last_close = doc["last_close"]
         self._watermark = doc["watermark"]
+        restore_legacy_time_gaps(doc, [self._cur, *self._closed])
         restore_tape_gaps(doc, [self._cur, *self._closed])
         self._last_seq = state.last_trade_seq

@@ -108,6 +108,8 @@ class _ActivityBuilder:
     """Shared state, emit and snapshot for tick and volume bars."""
 
     _kind: str
+    #: Whether an old blob's `gap_before` can only be a tape gap (not so for range: a price jump).
+    _legacy_gap_is_tape = True
 
     def __init__(self, spec: BarSpec, symbol: str) -> None:
         _check(spec, self._kind)
@@ -182,7 +184,7 @@ class _ActivityBuilder:
             raise BarsError(f"Builder state version {state.state_version} is not supported.")
         doc = orjson.loads(state.blob)
         self._cur = None if doc["cur"] is None else _Draft.load(doc["cur"])
-        restore_tape_gaps(doc, [self._cur])
+        restore_tape_gaps(doc, [self._cur], legacy_gap_is_tape=self._legacy_gap_is_tape)
         self._next_index = doc["next"]
         self._last_seq = state.last_trade_seq
 
