@@ -9,8 +9,8 @@ Shared rules (tick and volume bars are activity bars, not time-aligned):
 - Trades are folded in arrival order. A closed bar is final: a late or out-of-order trade
   goes into the open bar, never back into a closed one (re-splitting closed volume bars
   would renumber the series). Duplicate suppression is upstream (`TradeStream`).
-- `gap_before` is always `False`: these builders see no data-gap signal; the recorder
-  marks gaps (E16).
+- `gap_before` is `False` unless `mark_gap()` was called (an unrecovered tape gap, #529): then
+  the bar that takes the next trade carries it on every later emission (trade, snapshot).
 - The first bar of a fresh builder has `partial=True`; its `open_time` is the timestamp
   where the available tape begins. Only trades are consumed, never REST klines.
 - `on_clock` is a no-op: activity bars never close on the clock.
@@ -110,6 +110,8 @@ class _ActivityBuilder:
         self._cur: _Draft | None = None
         self._next_index = 0
         self._last_seq: int | None = None
+        self._gap_pending = False  # #529: in memory only, never snapshotted
+        self._gap_floor = -(2**63)  # `mark_gap`'s hole lower bound: only later prints take it
         self._built = bars_built_total.labels(symbol=symbol, kind=self._kind)
 
     def _check_symbol(self, t: TradeEvent) -> None:
@@ -131,7 +133,16 @@ class _ActivityBuilder:
             if cur.partial:
                 bars_partial_series_total.labels(kind=self._kind).inc()
             self._next_index += 1
+        if (
+            self._gap_pending and t.ts_event > self._gap_floor
+        ):  # first post-hole trade, not a straggler
+            cur.gap_before, self._gap_pending = True, False
         return cur
+
+    def mark_gap(self, floor_us: int) -> None:
+        """An unrecovered tape gap (#529): the bar taking the first print with `ts_event >
+        floor_us` carries `gap_before`. See `TimeBarBuilder.mark_gap`."""
+        self._gap_floor, self._gap_pending = floor_us, True
 
     def _emit(self, d: _Draft, closed: bool, split: str | None = None) -> ActivityBarUpdate:
         d.open_time, d.close_time = d.first_ts, d.last_ts

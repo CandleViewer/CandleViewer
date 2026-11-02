@@ -7,9 +7,8 @@ it is visible. Two halves, because the bars have no input of their own for a hol
   any later one, so the bars equal the venue's golden, and the `GapEvent` says "Backfilled".
 * **Unrecovered** (REST down): the hole is reported by ingestion (`GapEvent(recovered=False)`,
   `trade_gaps_total{recovered="false"}`, health `trade_gap_unrecovered`) and the bars visibly
-  lack the lost prints. The bars themselves do not mark the hole: the strict xfail below is
-  the open defect (#529 follow-up row: gap marking), which goes green when `BarBuilderSet`
-  flags the first bar after a `GapEvent`.
+  lack the lost prints. `BarBuilderSet` consumes the `GapEvent` and flags the first bar each
+  builder emits after the hole (`gap_before`), which the last test below asserts.
 
 Negative control: the unrecovered run is what a pipeline without backfill produces, and it
 fails the same golden comparison the recovered run passes.
@@ -124,7 +123,9 @@ async def test_s02_gap_marker_helper_demands_a_flag_on_the_first_bar_after_the_h
     await _tape_with_hole(rig, bars, tail_s=BACKFILL_RETRY_BUDGET_S)
     await bars.finish()
     gap = rig.observe().gaps[0]
-    unflagged = bars.bars("vol:1")
+    unflagged = [
+        b.model_copy(update={"gap_before": False, "partial": False}) for b in bars.bars("vol:1")
+    ]
     with pytest.raises(golden.GapNotMarkedError, match="hides the gap"):
         golden.assert_gap_marked(unflagged, gap, "vol:1")
     first = next(i for i, b in enumerate(unflagged) if b.close_time >= gap.end_us)
@@ -133,11 +134,6 @@ async def test_s02_gap_marker_helper_demands_a_flag_on_the_first_bar_after_the_h
     golden.assert_gap_marked(flagged, gap, "vol:1")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=golden.GapNotMarkedError,
-    reason="bars never consume GapEvent: #529 follow-up row, fixed by the gap-marking PR-3 (AC1)",
-)
 async def test_s02_first_bar_after_an_unrecovered_hole_is_flagged(rig: Rig, bars: BarsRig) -> None:
     rig.ex.inject(Fault(FaultKind.HTTP_STATUS, status=503, count=50, path=BACKFILL_PATH))
     await _tape_with_hole(rig, bars, tail_s=BACKFILL_RETRY_BUDGET_S)

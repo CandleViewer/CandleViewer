@@ -28,7 +28,7 @@ fix lands, so the fix removes the marker.
 | # | Scenario | C-13.6 | PR | Observed | Negative control |
 |---|---|---|---|---|---|
 | 1 | Process or WS drop mid-bar: resume from store, or marked gapped | #1, #12 | PR-2 | - | - |
-| 2 | Tape gap (REST backfill ok / down) | #1, #3 | PR-1 | recovered: bars == golden ✅; unrecovered: `GapEvent`, `trade_gaps_total`, health ✅; bar marked: xfail | no-backfill run fails the golden |
+| 2 | Tape gap (REST backfill ok / down) | #1, #3 | PR-1 | recovered: bars == golden ✅; unrecovered: `GapEvent`, `trade_gaps_total`, health ✅; bar marked (`gap_before`) ✅ (#529 gap-marking fix) | no-backfill run fails the golden |
 | 3 | Out-of-order and duplicate prints | #3 | PR-1 | dup suppressed upstream ✅; reorder amends the closed bar ✅; > 60 s dropped, counted, logged ✅ | a duplicate leaking into a builder breaks conservation |
 | 4 | 5xx and 10018 during kline backfill | #5 | PR-2 | - | - |
 | 5 | Store restart / write failure | #10 | PR-2 | - | - |
@@ -40,7 +40,6 @@ fix lands, so the fix removes the marker.
 
 | Test | Why it fails today | Owner |
 |---|---|---|
-| `test_s02_first_bar_after_an_unrecovered_hole_is_flagged` | Bars never consume `GapEvent`: with REST down the hole is reported by ingestion only, and the bars across it are emitted closed with `gap_before` / `partial` unset (AC1) | #529 follow-up row: gap marking |
 | Replay after writer exhaustion (scenario 5, PR-2) | `BarWriter` drops rows after its 5 attempts; nothing re-emits them | #531 (writer replay) |
 
 ## Signals that do not exist (BQ-8)

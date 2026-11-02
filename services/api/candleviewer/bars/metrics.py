@@ -66,6 +66,14 @@ bar_builder_quarantined_total = Counter(
     "Series removed after their builder raised, or bars tasks that died.",
     labelnames=("reason",),
 )
+bars_gap_detected_total = Counter(
+    "bars_gap_detected_total",
+    "Tape gap windows the bars lane saw, by `reason` (`recovered` or `unrecovered`). An unrecovered"
+    " one marks the next bar of every builder `gap_before` (#529).",
+    labelnames=("reason",),
+)
+for _gap_reason in ("recovered", "unrecovered"):  # bound now: each series exists at 0 from import
+    bars_gap_detected_total.labels(reason=_gap_reason)
 bars_restore_gap_total = Counter(
     "bars_restore_gap_total",
     "Restores whose tape lag exceeded the lane's recent-trade ring (trades missed).",
@@ -281,6 +289,7 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "bars_series_repair_failed_total",
         "bars_heal_refresh_total",  # bars.heal_driver (#2787 P4b)
         "bar_builder_quarantined_total",
+        "bars_gap_detected_total",
         "bars_restore_gap_total",
         "bars_kline_refused_total",  # bars.kline_rows (#2053)
         "kline_hot_boundary_fallback_total",  # storage.retention.kline_boundary (#2060)
