@@ -58,7 +58,7 @@ TOOL_REL = "docs/design/_tools/e24_d04_motion_a11y_audit.py"
 PINS_REL = "docs/design/_tools/e24_d04_ruled_pins.txt"
 OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
 BASE = "e5b286ed50d3a320d80b24df5030fb09dd405a4a"  # origin/main when written (re-pinned by content)
-E47D08_REF = "307dffee24811c9fd7a99d7753c427573e858b13"  # #5444's head; re-pinned to main at its merge
+E47D08_REF = "e60fe7baa545758e729fd70e061f0869b636ab22"  # #5444's head; re-pinned to main at its merge
 TOK_REL = "packages/ui/tokens/primitives.tokens.json"
 PATHS: dict[str, str] = {
     "05": "docs/plan/05-accessibility-standard.md",
@@ -579,7 +579,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-CITE", "re-point a `D03` cite to an unpinned line", sub("`E11D06`:94; `D03`:459", "`E11D06`:94; `D03`:465")),
     ("G-HYGIENE", "write a closing keyword against #662", sub("carries the closing line.", "carries the closing line. Closes #662.")),
     ("G-SCOPE", "touch `16` in the diff", lambda t: replace(t, changed=[*OWN_PATHS, PATHS["16"]])),
-    ("G-TOKEN", "write a prose duration as a bare figure", sub("The emphasis lasts `motion.duration.fast`,", "The emphasis lasts 150 ms,")),
+    ("G-TOKEN", "write a prose duration as a bare figure", sub("The emphasis lasts `motion.duration.fast`, inside its", "The emphasis lasts 150 ms, inside its")),
     ("G-ANNOT", "drop the T2 paragraph", lambda t: replace(t, spec=re.sub(r"\n\*\*T2 rows \(BQ-20[^\n]*\n", "\n", t.spec))),
     ("G-ANNOT", "mark A-13 as T2-6", set_cell("A-13", 7, "T2-6")),
     ("G-BUDGET", "drop PROPOSED from the cascade threshold", sub("**The cascade threshold (PROPOSED to the owner, G-1).**", "**The cascade threshold (G-1).**")),
