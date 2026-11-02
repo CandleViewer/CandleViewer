@@ -10,9 +10,11 @@ loaded from the working tree as E10-D03's tool does. Default-deny: a gate that c
 input FAILs.
 
 Gates (each FAIL led by its name):
-  G-STATE     every SCR-074 / SCR-075 state the ticket and `14` name has a §0 frame row, and
-              every item of the two `14` sign-off checklists appears verbatim in §11's map
-              with a frame.
+  G-STATE     every SCR-074 / SCR-075 state the ticket and `14` name has a §0 frame row;
+              §4.3 holds the rows S74-01 ... S74-08 in order, each named as `STATES` names it
+              (`14`:1777's four plus the dialogs' and the gate's), each with a Presentation, a
+              Focus · announcement and an Audit cell; and every item of the two `14` sign-off
+              checklists appears verbatim in §11's map with a frame.
   G-TOKEN     every design token the spec names (`color.*`, `font.*`, `border.*`, `radius.*`,
               `type.*`, `space.*`, `size.*`, `motion.*`, `opacity.*`) resolves in the token JSON
               at the base.
@@ -114,6 +116,18 @@ DENY = (
 THEMES = ("dark", "light", "hc")
 FLOOR = {"text": 4.5, "ui": 3.0}
 DEFICIENCIES = ("protanopia", "deuteranopia", "tritanopia")
+# §4.3's state rows, in order: `14`:1777's switching, switched, failed and not permitted, plus
+# the idle pill, the two dialogs and the blocked gate
+STATES = (
+    "idle",
+    "confirm-live",
+    "confirm-demo",
+    "switching",
+    "switched",
+    "failed",
+    "not-permitted",
+    "blocked",
+)
 # the states the ticket's Scope and `14` SCR-074 / SCR-075 name; each needs a §0 frame row
 REQUIRED_FRAMES = (
     "SCR-074/idle",
@@ -342,6 +356,24 @@ def g_state(t: Texts) -> list[str]:
     for f in REQUIRED_FRAMES:
         if f not in frames:
             bad.append(f"no §0 frame row for `{f}`")
+    srows = table_rows(section(t.spec, "### 4.3"), "S74-")
+    if [r[0] for r in srows] != [f"S74-{i:02d}" for i in range(1, len(STATES) + 1)]:
+        bad.append(
+            f"§4.3's rows are {[r[0] for r in srows]}, not S74-01 ... S74-08 in order"
+        )
+    for r, name in zip(srows, STATES):
+        if len(r) != 6:
+            bad.append(f"{r[0]}: {len(r)} cells, not 6")
+            continue
+        if r[1] != name:
+            bad.append(f"{r[0]}: named {r[1]!r}, not {name!r}")
+        for col, what in (
+            (3, "Presentation"),
+            (4, "Focus · announcement"),
+            (5, "Audit"),
+        ):
+            if not r[col].strip():
+                bad.append(f"{r[0]}: an empty {what} cell")
     rows = table_rows(section(t.spec, "## 11."), "K")
     mapped = {norm(r[1].strip('"')): r[2] for r in rows if len(r) > 2}
     for scr in ("SCR-074", "SCR-075"):
@@ -561,6 +593,9 @@ def drop_row(lead: str) -> Callable[[Texts], Texts]:
 MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-STATE", "drop the blocked frame row", drop_row("| B08 ")),
     ("G-STATE", "drop a SCR-075 checklist mapping", drop_row("| K75-4 ")),
+    ("G-STATE", "delete the switched state row", drop_row("| S74-05 ")),
+    ("G-STATE", "rename the failed state", set_cell("S74-06", 1, "failure")),
+    ("G-STATE", "empty the not-permitted row's announcement", set_cell("S74-07", 4, "")),
     ("G-TOKEN", "misspell an env token", sub("`color.env.live` (border, dot)", "`color.env.lives` (border, dot)")),
     ("G-CONTRAST", "type a contrast figure one step off", set_cell("P-01", 4, "14.36")),
     ("G-CONTRAST", "gate a structure pair as text", set_cell("P-09", 3, "text")),
