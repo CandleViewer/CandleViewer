@@ -36,7 +36,7 @@ mutations).
    unit per region) in `e47_d05_ruled_pins.txt`. Anchored values are cut out (G-ANCHOR owns them).
    `--repin-ruled` is the only writer and refuses while a placeholder is unfilled. A pin finding in
    a region another gate already FAILs prints as NOTE.
-5. **--self-test** applies every mutation (M-n) and pin probe (P-n) in memory with the values
+5. **--self-test** applies every mutation (M-n, spec §17) and pin probe (P-n, PROBES here) in memory with the values
    frozen at the filled baseline; each must add exactly one FAIL, from the gate it names; the texts
    on disk are checked byte-identical afterwards (sha256). Output is ASCII.
 
