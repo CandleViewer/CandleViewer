@@ -776,6 +776,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `font.mono`, `color.surface.code`.
 - **Storybook**: JSON, YAML, LongScrollable.
 - **Tests**: unit, visual, axe.
+- **As built (E42-S04)**: adds `label` (required; names the region, "Raw record" on SCR-136, E42-D04 AD-2), `copyLabel?` (default "Copy {label}"), `id?` (for a host's `aria-controls`) and `onCopied?`. The `pre` is a focusable scroll region (`tabindex="0"`, `role="region"` named by `label`, WCAG 2.1.1), the code inside it as given: never parsed, highlighted or reformatted, markup staying text; `language` is written as `data-language`. CMP-033's Copy follows it and copies `code` exactly; the block speaks only through CMP-033's status. `maxHeight?` is a CSS length the host sizes, through `--cv-codeblock-max-height` (no size token exists); without it the block grows with the text, and only the region scrolls sideways. Stand-in tokens (E42-D04 §15): `color.surface.sunken` for the absent `color.surface.code`, and `type.num.sm` (`font.family.mono`) for `font.mono`. Storybook names the stories Json, Yaml and LongScrollable.
 
 ### CMP-069 InfoPanel ("i" expandable methodology note)
 
@@ -1048,6 +1049,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: n/a.
 - **Storybook**: Marker (the visible line); otherwise documented via integration test.
 - **Tests**: integration test asserting audit POST fired with correct shape for a representative sample of wrapped actions.
+- **As built (E42-S04)**: a marker, not a contract wrapper: `action`, `target` and `before?` / `after?` are not built, because the endpoint the control calls writes the audit record and the component makes no request (`14` §0.5 item 8, C-2.9; #1135's ruling on BQ-12); a unit test pins that a press fires no request, in place of the integration test. Props: `marker: {codes, label?, confirm?}` (the registered codes the endpoint writes, joined by " + "; `label` defaults to each code's `AUDIT_ACTION_LABELS` label, a code without one reading as itself; `confirm` gives a step-up action's lead, "Recorded · needs your confirmation — …"; with no code, the lead alone), `disabledReason?`, `disabledReasonId?`, `align?: "start"|"end"` and one child control that takes the T2 contract. Enabled, the marker joins the control's `aria-describedby` after the host's own ids. Gated (its `disabledReason`, one a CMP-079 RbacGate hands down, or the control's own), the reason shows under the control (2a) and alone describes it, the `lock` leading the label, and the marker stays visible; `disabledReasonId?`, or RbacGate's `notice` form, makes the host's one notice the reason node and draws no line (BQ-9; an explicit id wins over the gate's notice). `auditMarkerText` and `AUDIT_MARKER_COPY` are exported. Storybook ships Marker and MarkerOnDisabledControl.
 
 ### CMP-094 HotkeyOverlay ("? " cheatsheet)
 
