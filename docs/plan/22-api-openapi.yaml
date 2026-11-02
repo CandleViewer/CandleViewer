@@ -12747,10 +12747,19 @@ paths:
       operationId: createBackup
       summary: Trigger a backup run
       description: |
-        Backups are always encrypted at rest (age/AES-256) and never contain plaintext API
-        secrets — the key material is exported only as its wrapped form, so a restore on a host
-        without the KEK cannot trade. `verify: true` (the default) schedules an automatic
-        restore-into-scratch verification after the dump completes.
+        Backups are always encrypted at rest (age, to an X25519 recipient whose identity is a key
+        pair distinct from the KEK, held offline by the Owner; ADR-0041) and never contain
+        plaintext API secrets — the key material is exported only as its wrapped form, so a
+        restore on a host without the KEK cannot trade. `verify: true` (the default) schedules an
+        automatic verification at `checksum` depth after the run's `stage: finished` record is
+        written (`verifyBackup`): it needs no key and proves the artefact's bytes are the ones the
+        run bound, not that they restore; the restore drill (`verify_method: restore_smoke`,
+        `21-database-schema.md` section 8.4) is the restorability proof. The chained verification
+        runs as the system actor through the same admission lock and job kind as `verifyBackup`,
+        and does not count against the caller's verification limit. A chained verification that
+        is refused (a restore running, or the lock wait spent) writes one `backup.verified` record
+        with `stage: refused`, `outcome: failure` and the refusing rule as `reason`, and leaves the
+        run's outcome unchanged.
         A run is a `backup` job whose id is the `Backup.id` of the `202` body (E42-T05): poll
         `GET /admin/jobs/{Backup.id}`, which reports `kind: backup`. When the run's
         `stage: finished` record cannot be written, the row ends `failed` with
@@ -12769,15 +12778,20 @@ paths:
         or restore, `409 conflict`; the engine's plan, `503 backup_engine_invalid` when it is not
         encrypted under a key alias, whatever else it breaks, or `503 store_unavailable` when the
         engine cannot plan the run; then the `requested` record and the start.
+        A `kind` the wired backup engine does not run (v1 runs `pg_dump` and `config_bundle`;
+        ADR-0041) is `409 conflict` with rule `kind_not_supported`, answered after the `501` and
+        before the hourly limit, with no record and nothing started.
         Records (E42-T05): `backup.run` is written with `after_state.stage: requested` before the
         `202` (when it cannot be written the answer is `503 audit_unavailable` and nothing
         starts) and again with `stage: finished` when the run ends, carrying the outcome,
-        `size_bytes` and `checksum_sha256`; the catalogue row becomes `ok` only after that record
-        is written, so the digest of every single-file artefact is bound in the append-only log,
+        `size_bytes` and `checksum_sha256`, with `covers_from` and `covers_to` (for `pg_dump`,
+        the server's time read before the dump's snapshot is taken; ADR-0041); the catalogue row
+        becomes `ok` only after that record is written, so the digest of every single-file artefact is bound in the append-only log,
         and `verifyBackup` and `restoreBackup` check the artefact against it. `note` is kept in the
         `requested` record's `reason` and nowhere else; the row records `triggered_by: manual` and
-        the caller. A run whose backup engine plan (what the engine reports for the run: the
-        artefact's location, whether it is encrypted and under which key alias) is not encrypted
+        the caller. A scheduled run (no route; ADR-0041) takes the same path as the system actor,
+        with `triggered_by: schedule` and without the per-user limit. A run whose backup engine
+        plan (what the engine reports for the run: the artefact's location, whether it is encrypted and under which key alias) is not encrypted
         under a key alias (`encrypted: false`, or no alias named) breaks the rule that backups are
         always encrypted, so it is refused fail closed: its failure record (`backup.run`,
         `stage: refused`, `outcome: failure`) is written first, then the answer is
@@ -12913,10 +12927,15 @@ paths:
     post:
       tags: [admin]
       operationId: verifyBackup
-      summary: Verify a backup by restoring it into a scratch namespace
+      summary: Verify a backup artefact's integrity
       description: >
-        Restores into an isolated scratch database/namespace, runs integrity assertions (row counts,
-        hash-chain verification, migration version) and discards it. Never touches live data.
+        Depth (ADR-0041): a verification runs at `verify_method: checksum` and needs no key. It
+        compares the artefact's SHA-256 with the catalogue and with the digest bound in
+        `backup.run`, then checks that the file is a well-formed age file for the configured
+        recipient. That proves the bytes are the ones the run produced; it does not prove they
+        restore. The restorability proof is the restore drill (`verify_method: restore_smoke`,
+        `21-database-schema.md` section 8.4), which decrypts into a scratch database with the
+        Owner's offline key; this operation never receives that key. Never touches live data.
         Outcome (E42-T05): the `backup_verify` job (`GET /admin/jobs/{jobId}`) ends `succeeded` and
         sets `status: verified` and `verified_at` and clears `error`, whatever the status was
         before (`restored` included: the latest outcome wins; a `running` backup, or one whose
@@ -12937,7 +12956,8 @@ paths:
         missing or whose `location` does not resolve, without following a symbolic link, to a
         regular file inside the backup root is `artefact_missing`. A directory or repository
         artefact (such as a QuestDB snapshot or a restic repository) is checked by the backup
-        engine's own verifier instead. A failed scratch-restore assertion is `verify_failed`. An
+        engine's own verifier instead. A file that is not a well-formed age file for the configured
+        recipient is `verify_failed`. An
         artefact that exists but cannot be read (for instance an I/O error on the backup volume) is
         `store_unavailable`: the job ends `failed` and `backup.verified` (`stage: finished`,
         `outcome: failure`, `error: store_unavailable`) is still written, but the row keeps its

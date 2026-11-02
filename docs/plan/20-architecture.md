@@ -1037,7 +1037,7 @@ flowchart TB
         PROM["prometheus"]
         GRAF["grafana<br/>bind 127.0.0.1:3000"]
         AM["alertmanager"]
-        BK["backup sidecar (pg_dump + parquet rsync, nightly)"]
+        BK["backup sidecar (pg_dump + config bundle, age; ADR-0041)"]
     end
     ELEC --> WEBSVC
     ELEC --> API
@@ -1049,6 +1049,7 @@ flowchart TB
     PROM --> GRAF
     PROM --> AM
     PG --> BK
+    API -. local socket .-> BK
 ```
 
 Compose services, images and volumes are defined in `infra/compose/docker-compose.yml`; `docker-compose.dev.yml` adds hot reload and the synthetic feed; `docker-compose.vps.yml` swaps bind addresses, enables TLS termination and stricter resource limits.
@@ -1960,6 +1961,7 @@ All ADRs live in `docs/plan/27-adrs/` in MADR format. Status values: `decided` (
 | [ADR-0038](27-adrs/ADR-0038-desktop-backend-connection.md)            | Desktop shell to backend: address, origin, CORS and CSRF      | accepted; D2 re-opens #3949, D7 deferred  | #3519: the shell resolves `CV_BACKEND_ORIGIN` once (loopback, fail closed); the backend lists `app://candleviewer`, adds CORS inside the CSRF guard and a CSRF token header behind flag `desktop.backend_connection`; desktop-only `SameSite=None` amends C-12.9 (S0)     |
 | [ADR-0039](27-adrs/ADR-0039-audit-export-signing-key.md)              | Audit export signing key: custody and the injected signer     | accepted (by main-orchestrator, #2701)    | #889 D1: Ed25519 over `cv.audit.export.v1:` and the file's hex SHA-256; a key per environment, its seed DEK-wrapped under the KEK in M2; `audit` gets a signer minted in `admin.wiring`, no new edge; retired keys stay listed; Owner rotation, `keys` step-up            |
 | [ADR-0040][adr-0040]                                                  | Per-trade overrides and profile-change propagation            | accepted (by main-orchestrator, #2701)    | #968 E28-K01: the bound profile's caps and budget are the ceiling; 42 fields `never`/`narrow_only` under one comparator, refused not clamped; per-ticket overrides; `system` `account_notice` + REST re-fetch, no new topic; review state, stale submit refused           |
+| [ADR-0041](27-adrs/ADR-0041-backup-engine-and-artefact-key.md)        | Backup engine: sidecar, roles, age artefacts, restore latch   | proposed (ruled under delegation, #2701)  | #3319: the engine runs in the backup sidecar with a read-only `cv_backup` and a restore-only `cv_restore` role; the API holds no owner or restore DSN; age files to an offline X25519 key, delivered per job; v1 `pg_dump`, `config_bundle`; restore halt latch           |
 
 [adr-0040]: 27-adrs/ADR-0040-per-trade-overrides-and-profile-propagation.md
 

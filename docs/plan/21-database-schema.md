@@ -100,6 +100,14 @@ ALTER DEFAULT PRIVILEGES FOR ROLE cv_owner IN SCHEMA public
 REVOKE UPDATE, DELETE ON audit_log FROM cv_app, cv_ro;
 ```
 
+**Backup roles (ADR-0041, #3319; not yet created).** Two roles are used only by the backup sidecar and never by the
+API process. `cv_backup` runs dumps: LOGIN, CONNECT, USAGE on `public`, SELECT on every table and sequence, and no
+INSERT, UPDATE, DELETE, TRUNCATE or DDL. `cv_restore` runs restore jobs only, with the rights of the objects' owner,
+which a whole-database restore needs. Their credentials exist only in the sidecar, as password files on secret mounts;
+the API never holds an owner, restore or dump DSN and never uses `cv_app` for a backup or a restore. Their grants land
+in one revision with the engine's first code PR, and that PR adds both roles to the block above and to the role
+privilege matrix; passwords never appear in a migration.
+
 ### 1.2 Enum types
 
 ```sql
@@ -4148,6 +4156,12 @@ CREATE INDEX ix_backups_failed    ON backups (started_at DESC) WHERE status = 'f
 
 **Privileges.** No UPDATE trigger fires on DELETE or INSERT, so the same revision revokes DELETE on `backups` from `cv_app` where the role exists, as `0024` does for `api_keys` and `0030` for `auth_keys`. The runtime role keeps SELECT, INSERT and UPDATE; without DELETE it cannot swap a row's location or digest by deleting the row and inserting it again under the same id. No runtime path deletes a catalogue row: the row is kept forever (§7), and a deleted artefact is marked. The owner role and superusers can still bypass both. The downgrade grants DELETE back, the `pg_bootstrap.sql` default. Verify and restore still check the digest bound in the append-only `backup.run` record.
 
+**What the engine writes (ADR-0041, #3319).** `encryption_ref` is the alias of the age recipient the sidecar's plan
+reports; the identity behind it is held offline by the Owner (§8.1). The run reports `covers_from` and `covers_to`,
+and the `stage: finished` `backup.run` record binds them before the row is `ok`. For `pg_dump`, `covers_to` is the
+server's time read before the dump's snapshot is taken, never after. `retention_until` is set from §8.1 when the run
+finishes; v1 prunes nothing.
+
 ```sql
 ALTER TABLE backups
   ADD COLUMN deleted_at timestamptz,
@@ -5005,7 +5019,37 @@ Changing any retention value is a dangerous action under the `recorder` step-up:
 
 All backup artefacts are encrypted at rest (restic repository password / age recipient), and every run writes a `backups` row (§3.10.3). A failed or missing daily backup raises a `critical` system event and blocks the next release per the PRR gate in `07-release-and-prr.md`.
 
+**The backup engine, v1 (ADR-0041, #3319).** The engine runs in the backup sidecar with the roles of §1.1; the API
+records every run, verification, deletion and restore through the E42-T05 services and schedules runs itself, as the
+system actor, at the cadence and retention of the table above.
+
+- **Kinds.** v1 runs the `pg_dump` row (one `-Fc` file per run, restored as a whole database; the row's "per schema" and
+  single-table RTO are the plan, not v1) and the config bundle. `pg_basebackup` with WAL, the QuestDB snapshot and the
+  Parquet lake are refused (`22` `createBackup`, rule `kind_not_supported`), so the relational RPO of at most 5 minutes
+  is not met in v1. That gap, SR-090's other kinds and pruning are plan gaps on #2701; they gate the restore drill of
+  §8.4 and the release gate.
+- **Format and key.** Each artefact is one file in the age v1 format, encrypted to one X25519 recipient. The identity
+  is a key pair distinct from the KEK, held offline by the Owner (SR-091, SR-092), and reaches the sidecar only for a
+  restore or a restore drill, out of band and for one job, then is overwritten. It never enters the API, Postgres, an
+  environment variable, an argument list, a log, a record or the backup volume.
+- **Verification.** The automatic verification after a run, and `verifyBackup`, are `verify_method: checksum`: the
+  file's SHA-256 against the catalogue and the digest bound in `backup.run`, and a well-formed age header for the
+  recipient. That proves the bytes are the ones the run produced, not that they restore; the restore drill of §8.4
+  (`restore_smoke`) is the restorability proof.
+- **Config bundle.** Backed up and verified, never restored by the engine (a manual runbook step). Its allow-list
+  excludes `.env` files, DSNs, secret mounts and any KEK or age identity.
+- **Retention.** `retention_until` is recorded; nothing is pruned in v1, so the backup volume grows until a pruner
+  exists.
+
 ### 8.2 Restore procedures
+
+**Restores through the engine (ADR-0041, #3319).** The restore executor restores the whole database, never one
+table on its own for an audit or key table (C-5.7). Key tables come back as ciphertext: the engine decrypts and
+re-wraps nothing, and the KEK check and the withdrawal self-check gate trading afterwards. Before anything touches
+the target, a restore halt latch held outside Postgres is engaged; it refuses position-opening orders (protective
+writes pass), fails closed, and is released only by an Owner acknowledgement recorded after the post-restore steps
+(§8.3, #3084 D7). The executor is unwired until #3084's restore contract lands. The procedures below are the manual
+runbook.
 
 **Postgres PITR**
 
@@ -5066,7 +5110,7 @@ A restore drill into a scratch namespace runs **monthly** and is a PRR gate item
 - **Alembic 1.13+** over SQLAlchemy 2.0 Core metadata (`backend/db/models.py`), async engine, `asyncpg` driver.
 - Single linear history on `main` (no branching heads). `alembic heads` must return exactly one revision — enforced in CI.
 - Revision id format: `NNNN_<slug>` (`0001_initial`, `0002_add_trade_groups`) so file order matches apply order.
-- Migrations run as `cv_owner`; the app role `cv_app` has no DDL privileges.
+- Migrations run as `cv_owner`; the app role `cv_app` has no DDL privileges. The backup roles `cv_backup` and `cv_restore` are used only by the backup sidecar (§1.1, ADR-0041).
 - What the revisions revoke from `cv_app` (DELETE, TRUNCATE, UPDATE and, on `account_profile_revisions`, INSERT) is pinned per table in `candleviewer/storage/guarded_privileges.py`; a unit tripwire keeps it equal to the revisions' `upgrade()`s, and the API checks at start-up that its login holds none of it (`20-architecture.md`, "Guarded privileges at boot", #3998). A new REVOKE joins the pinned table in the same PR.
 - QuestDB DDL lives in `backend/db/questdb/NNNN_*.sql`, applied by a small idempotent runner keyed on a `_cv_migrations` table inside QuestDB. DuckDB views are recreated from source on every start (they hold no state).
   - `_cv_migrations` is a WAL table: an `INSERT` is acknowledged once it is committed to the sequencer, but a `SELECT` sees it only after QuestDB's apply job has run. So before it reads the record set the runner waits (async, bounded 30 s, backoff 20 ms doubling to 250 ms) until `wal_tables()` shows `writerTxn` has reached `sequencerTxn` (#3064). A stale read would re-run the newest file.
