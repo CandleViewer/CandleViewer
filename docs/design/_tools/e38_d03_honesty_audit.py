@@ -33,7 +33,10 @@ Gates (each FAIL led by its name):
               §1 item 4 quotes G-T2.1b, G-T2.2 and G-T2.3 verbatim from `DS` at the base
               (`T2_QUOTES`), and §8.1 carries the G-T2.2 label pair (tertiary on raised).
   G-RULED     the account's own name is the typed token (never a fixed word; BQ-07), the
-              protective writes stay enabled (BQ-13, C-2.6), and the S77-01 and OQ-2 rows exist.
+              protective writes stay enabled (BQ-13, C-2.6), and the S77-01 and OQ-2 rows exist;
+              the revoke is rung 2 with the `users` step-up in §4.2 and S122-05 (F-2), the
+              grant's Confirm is enabled at once (F-5, rung 1), and S137-09 stays PROPOSED with
+              C-4 while the C-4 row stands (F-3).
   G-MERGED    only merged owners are cited: E38-D02 or #1003 appears only on a request row or
               the sentence saying so, and the unmerged #1075 is never named.
   G-CITE      every cite in range and on a non-blank line at its base, and equal to the pins.
@@ -561,6 +564,15 @@ def g_ruled(t: Texts) -> list[str]:
         bad.append("§4.2: the protective writes are not stated as enabled (BQ-13, C-2.6)")
     if "close, cancel, reduce-only and stops enabled" not in row(t, "S122-06")[2]:
         bad.append("S122-06: the reduce-only frame does not keep the protective writes enabled")
+    if "rung 2 with the `users` step-up" not in section(t.spec, "### 4.2"):
+        bad.append("§4.2: the revoke is not rung 2 with the `users` step-up (F-2)")
+    if "the press opens the `users` step-up" not in row(t, "S122-05")[3]:
+        bad.append("S122-05: the revoke's press does not open the `users` step-up (F-2)")
+    if not row(t, "S122-03")[3].startswith("Confirm enabled; the press opens the `users` step-up"):
+        bad.append("S122-03: the grant's Confirm is not enabled at once (F-5, rung 1)")
+    if "PROPOSED — when a view-as session reaches SCR-137 (C-4)" not in row(t, "S137-09")[3]:
+        bad.append("S137-09: the view-as T2 is not stamped PROPOSED with C-4 (F-3)")
+    row(t, "C-4")  # F-3: the C-4 row must stand (LookupError otherwise)
     row(t, "S77-01")  # BQ-18's primary entry: the row must exist (LookupError otherwise)
     row(t, "OQ-2")  # BQ-05: the section ids asked of the `14` owner
     return bad
@@ -805,7 +817,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-HIDDEN", "draw the LIVE reset disabled", set_cell("S79-07", 3, "T2 \"Paper reset isn't available in a LIVE session.\" (PROPOSED); rendering 2a")),
     ("G-HIDDEN", "adopt the T2 alternative silently", sub("**not adopted**", "**the default**")),
     ("G-T2", "drop the reduce-only reason", set_cell("S122-06", 3, "T2")),
-    ("G-T2", "retype a key's text", set_cell("S137-09", 3, 'T2 "Read only while viewing someone."')),
+    ("G-T2", "retype a key's text", sub('"You can view this account, not trade it."', '"You may only view this account."')),
     ("G-T2", "drop a control's rendering", set_cell("S122-02", 3, 'T2 "This is a demo account." (a PROPOSED key, E42-D03\'s)')),
     ("G-T2", "drop the lock from §1 item 4", sub("led by the CMP-019 `lock` glyph", "led by its glyph")),
     ("G-T2", "let a T2 control leave the Tab order (G-T2.1b)", sub("never the `disabled` attribute — it stays in the Tab order", "or the `disabled` attribute")),
@@ -816,6 +828,11 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-RULED", "gate the protective writes", sub("**Close, cancel, reduce-only and stops stay enabled** (C-2.6): a protective write is never gated.", "**Close, cancel, reduce-only and stops are T2** (C-2.6).")),
     ("G-RULED", "drop the S77-01 row", drop_row("| S77-01 ")),
     ("G-RULED", "drop the OQ-2 row", drop_row("| OQ-2 ")),
+    ("G-RULED", "drop the C-4 row", drop_row("| C-4 ")),
+    ("G-RULED", "drop S137-09's PROPOSED stamp", sub("; PROPOSED — when a view-as session reaches SCR-137 (C-4)", "")),
+    ("G-RULED", "drop the revoke's step-up from §4.2", sub("rung 2 with the `users` step-up, `E42D03`:698", "rung 2, `E42D03`:698")),
+    ("G-RULED", "drop the step-up from S122-05", sub("the press opens the `users` step-up; focus Cancel", "focus Cancel")),
+    ("G-RULED", "make the grant wait for the step-up", sub("Confirm enabled; the press opens the `users` step-up", "Confirm enabled after step-up")),
     ("G-MERGED", "cite the unmerged E38-D02", sub("It is a request row to E38-D02 (R-1), not drawn here.", "It is drawn by E38-D02 §3.4.")),
     ("G-MERGED", "name #1075's offer", sub("The values are illustrative, and the defect ids are fixtures.", "The values are illustrative (#1075).")),
     ("G-CITE", "re-point a `14` cite to an unpinned line", sub("(`14`:43)", "(`14`:44)")),
