@@ -3474,19 +3474,22 @@ def create_app(
     # `unavailable`.
     if identity is not None:
         dsn = resolved.pg_dsn.get_secret_value()
+        # The lifespan disposes both pools once `stop_all` has stopped the rules module.
+        principals_pg = app.state.rule_principals_pg = SqlAlchemyRelationalRepository(
+            dsn, "rule_principals"
+        )
+        notional_pg = app.state.rule_notional_pg = SqlAlchemyRelationalRepository(
+            dsn, "rule_notional"
+        )
         rule_principals = RulePrincipals(
             IdentityPrincipalSource(
-                identity,
-                SqlAlchemyScopeSource(SqlAlchemyRelationalRepository(dsn, "rule_principals")),
-                resolved.environment.value,
+                identity, SqlAlchemyScopeSource(principals_pg), resolved.environment.value
             )
         )
         reads = app.state.oms_reads
         ctx.rules.bind(
             principal=rule_principals,
-            notional=RuleNotionalRebuild(
-                SqlAlchemyRulesRepository(SqlAlchemyRelationalRepository(dsn, "rule_notional"))
-            ),
+            notional=RuleNotionalRebuild(SqlAlchemyRulesRepository(notional_pg)),
             handlers=rule_order_handlers(
                 lambda: oms_runtime_of(app.state),
                 oms_enabled=feature_flags.oms_enabled,

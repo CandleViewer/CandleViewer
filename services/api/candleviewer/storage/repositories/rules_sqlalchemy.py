@@ -105,14 +105,15 @@ _ORDER_ACTION_AGES = sa.text(
 )
 #: E35-T11 (24 Sec.11.7, BQ-5 of #5003): no migration, `ix_rr_rule_time` serves the run filter. A
 #: fire's actions end within its run's first day, so a run started the day before still counts
-#: its events of this day.
+#: its events of this day. The figures are an accepted entry's notional on its `action_ok` row and
+#: an `unknown` entry's allowance on its `action_fail` row, the only rows that name one.
 _DAY_NOTIONAL = sa.text(
     "SELECT COALESCE(SUM(CAST(e.payload->>'notional_usd' AS numeric)), 0) AS total "
     "FROM rule_events e JOIN rule_runs r ON r.id = e.rule_run_id "
     "WHERE r.rule_id = CAST(:rule_id AS uuid) AND r.mode = 'armed' "
     "AND r.started_at >= CAST(:start AS timestamptz) - make_interval(days => 1) "
     "AND r.started_at < CAST(:end AS timestamptz) "
-    "AND e.kind = 'action_ok' AND e.payload->>'notional_usd' IS NOT NULL "
+    "AND e.kind IN ('action_ok', 'action_fail') AND e.payload->>'notional_usd' IS NOT NULL "
     "AND e.event_ts >= CAST(:start AS timestamptz) AND e.event_ts < CAST(:end AS timestamptz)"
 )
 _PRUNE = sa.text(
@@ -299,9 +300,10 @@ class SqlAlchemyRulesRepository:
         return [float(row[0]) for row in rows]
 
     async def day_notional(self, rule_id: str, start: datetime, end: datetime) -> Decimal:
-        """The sum of the notionals the rule's `action_ok` events of its armed runs name, written
-        in `[start, end)` (one UTC day for the allowance's rebuild, 24 Sec.11.7); 0 when none. Only
-        the sum leaves the store; no payload is returned or logged."""
+        """The sum of the figures the rule's result events of its armed runs name (an accepted
+        entry's notional, an `unknown` one's allowance), written in `[start, end)` (one UTC day for
+        the allowance's rebuild, 24 Sec.11.7); 0 when none. Only the sum leaves the store; no
+        payload is returned or logged."""
         params = {"rule_id": rule_id, "start": start, "end": end}
         async with self._relational.unit_of_work() as uow:
             total: object = (await uow.session.execute(_DAY_NOTIONAL, params)).scalar_one()

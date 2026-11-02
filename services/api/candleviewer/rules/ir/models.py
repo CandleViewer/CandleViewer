@@ -118,6 +118,11 @@ def _paired(v: Any) -> Any:
 
 #: Text the model refuses itself when it holds a lone surrogate (see ``_paired``).
 PairedStr = Annotated[str, AfterValidator(_paired)]
+#: A node's id (E35-T11): a short identifier, the bound the OMS's rule origin holds an action's node
+#: id to (``oms.ports.RuleOrigin``), so no saved rule names a node an order cannot carry; a lone
+#: surrogate is refused first, by name, as in any other text (see ``_paired``).
+NODE_ID_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
+NodeId = Annotated[str, Field(pattern=NODE_ID_PATTERN), BeforeValidator(_paired)]
 
 
 def storable_text(v: Any) -> Any:
@@ -153,7 +158,7 @@ class Literal_(BaseModel):
 
 class ArithmeticNode(BaseModel):
     model_config = _CFG
-    node_id: PairedStr
+    node_id: NodeId
     op: ArithmeticOp
     operands: Annotated[
         tuple[Operand, ...], Field(min_length=1, max_length=MAX_ARITHMETIC_OPERANDS)
@@ -188,7 +193,7 @@ Operand = Annotated[
 
 class Comparison(BaseModel):
     model_config = _CFG
-    node_id: PairedStr
+    node_id: NodeId
     op: ComparisonOp
     left: Operand
     right: Operand | None = None
@@ -199,7 +204,7 @@ class Comparison(BaseModel):
 
 class BooleanNode(BaseModel):
     model_config = _CFG
-    node_id: PairedStr
+    node_id: NodeId
     op: BooleanOp
     children: Annotated[
         tuple[ConditionNode, ...], Field(min_length=1, max_length=MAX_BOOLEAN_CHILDREN)
@@ -209,7 +214,7 @@ class BooleanNode(BaseModel):
 
 class TemporalNode(BaseModel):
     model_config = _CFG
-    node_id: PairedStr
+    node_id: NodeId
     op: TemporalOp
     child: ConditionNode
     window_ms: Annotated[int, Field(ge=MIN_WINDOW_MS, le=MAX_WINDOW_MS)]
@@ -245,7 +250,7 @@ ConditionNode = Annotated[
 
 class Action(BaseModel):
     model_config = _CFG
-    node_id: PairedStr
+    node_id: NodeId
     type: ActionType
     params: dict[str, Any]
     on_error: Literal["abort_remaining", "continue", "retry_once"] = "abort_remaining"

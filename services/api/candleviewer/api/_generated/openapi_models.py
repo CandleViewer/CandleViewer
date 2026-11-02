@@ -3941,7 +3941,7 @@ class RuleAction(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    node_id: str
+    node_id: Annotated[str, Field(pattern="^[A-Za-z0-9_-]{1,64}$")]
     type: Annotated[
         Literal[
             "place_order",
@@ -8060,7 +8060,7 @@ class RuleArithmeticNode(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    node_id: str
+    node_id: Annotated[str, Field(pattern="^[A-Za-z0-9_-]{1,64}$")]
     op: Literal["add", "sub", "mul", "div", "abs", "min", "max", "neg", "pct_of"]
     operands: Annotated[
         list[RuleMetricRef | RuleOperand1 | RuleArithmeticNode], Field(max_length=8, min_length=1)
@@ -8071,7 +8071,7 @@ class RuleComparisonNode(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    node_id: str
+    node_id: Annotated[str, Field(pattern="^[A-Za-z0-9_-]{1,64}$")]
     op: Literal[
         "gt",
         "gte",
@@ -8116,7 +8116,7 @@ class RuleBooleanNode(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    node_id: str
+    node_id: Annotated[str, Field(pattern="^[A-Za-z0-9_-]{1,64}$")]
     op: Literal["all_of", "any_of", "none_of", "n_of"]
     children: Annotated[
         list[RuleComparisonNode | RuleBooleanNode | RuleTemporalNode],
@@ -8129,7 +8129,7 @@ class RuleTemporalNode(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    node_id: str
+    node_id: Annotated[str, Field(pattern="^[A-Za-z0-9_-]{1,64}$")]
     op: Literal["sustained_for", "occurred_within", "count_within", "stable_for"]
     child: Annotated[
         RuleComparisonNode | RuleBooleanNode | RuleTemporalNode,

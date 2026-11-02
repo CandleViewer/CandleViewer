@@ -82,10 +82,11 @@ class HandlerAnswer:
     group_id: UUID | None = None
     #: An accepted entry's notional in USD (quantity times reference price), which feeds the
     #: rule's allowance ledger (E35-T10, BQ-11). E35-T11's handlers name it on an `accepted`
-    #: answer only, the one the ledger reads; an answer of unknown outcome (`no_answer`,
-    #: `in_flight`) names none, and E35-T11 (#5003) carries what the ledger does with one.
+    #: answer only; an answer of unknown outcome (`no_answer`, `in_flight`) names none, and the
+    #: engine counts that entry at the allowance it was sent under (24 §11.7, BQ-5 of #5003).
     notional_usd: Decimal | None = None
-    #: E35-T13: a `skipped` answer's `blocked_detail`, one plain sentence (24 §11.9).
+    #: The result's `blocked_detail`, one plain sentence (24 §11.9): a `skipped` answer's
+    #: (E35-T13), and a refusal's own (E35-T11: the OMS's mapped refusals, a refused origin).
     detail: str | None = None
     #: E35-T13: the payload of a `rule_events` `log` row, written with the action's `action_ok` row
     #: (`log_journal_tag`'s tag and note; 24 §11.5).

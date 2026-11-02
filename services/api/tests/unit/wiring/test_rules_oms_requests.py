@@ -51,6 +51,7 @@ from candleviewer.rules_oms_requests import (
     refusal_answer,
     rule_origin,
     submit_context,
+    system_role,
 )
 from tests.rules.executor.request_builders import action_request
 from tests.unit.oms import command_rig as cr
@@ -122,6 +123,16 @@ async def test_rule_order_audit_actor_is_rule_with_armer(tmp_path: Path) -> None
         assert (after["owner_user_id"], after["owner_role"]) == (str(sr.USER), "manager"), action
         assert (after["armed_by_user_id"], after["armed_by_role"]) == (str(ARMER), "owner")
         assert (after["run_id"], after["node_id"]) == (str(RUN), "n7")
+
+
+def test_the_armers_role_is_one_of_the_closed_role_set() -> None:
+    """The orchestrator's carry 3: the origin's `armed_by_role` is one of the closed role set
+    (`Role`, the `role_name` enum), never a free string: `system_role` reads a view's role into it
+    (a name outside it is none), and the origin refuses one outside it."""
+    names = ("owner", "manager", "viewer", "admin", "Owner", None)
+    assert [system_role(n) for n in names] == ["owner", "manager", "viewer", None, None, None]
+    with pytest.raises(ValueError):
+        rule_origin(rule_request(), "admin")  # type: ignore[arg-type]  # outside the closed set
 
 
 def test_the_origin_names_its_armer_with_the_armers_role_or_neither() -> None:
@@ -267,6 +278,20 @@ def test_a_mapped_refusal_names_its_cause_in_its_detail() -> None:
     read_only = refusal_answer(OrderPlacementRefused(reason_code=None, reason_text=None))
     assert read_only.detail == OMS_DETAIL[READ_ONLY] != BLOCKED_DETAIL["kill_switch"]
     assert refusal_answer(TradingDisabled()).detail is None  # the kill switch's own sentence
+
+
+def test_the_longest_cap_name_quoted_keeps_the_sentence_within_80_characters() -> None:
+    """The register's form (R1C1-04): the longest name the cap pattern admits, 39 characters,
+    makes an 80-character sentence; a 40-character name falls back to `cap`'s own; a computed
+    sentence holds no digit and is one sentence, as the register's are."""
+    longest = refusal_answer(RiskRefused(cap="a" * 39)).detail
+    assert longest is not None and len(longest) == 80
+    assert refusal_answer(RiskRefused(cap="a" * 40)).detail == BLOCKED_DETAIL["cap"]
+    named = refusal_answer(RiskRefused(cap="max_position_notional")).detail
+    for sentence in (longest, named):
+        assert sentence is not None and sentence.startswith("Not done — ")
+        assert sentence.endswith(".") and sentence.count(".") == 1
+        assert not any(ch.isdigit() for ch in sentence)
 
 
 @pytest.mark.parametrize(

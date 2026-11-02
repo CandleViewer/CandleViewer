@@ -985,16 +985,17 @@ async def test_the_allowance_is_the_smaller_remainder_of_the_fire_and_the_utc_da
     assert days.asked == [(RULE, "2027-01-01"), (RULE, "2027-01-02")]
 
 
-async def test_only_an_accepted_answer_feeds_the_allowance_ledger() -> None:
-    """24 §11.7 (R1C2-04): the ledger reads the notional of an `accepted` answer alone, the one
-    E35-T11's handlers name it on; an answer of unknown outcome lowers no remainder, what the
-    ledger takes from one being E35-T11's carry (#5003)."""
+async def test_an_unknown_outcome_counts_at_its_allowance_never_at_a_named_notional() -> None:
+    """24 §11.7 (R1C2-04; the ledger ruling of #5003, BQ-5's cautious side): the ledger reads an
+    `accepted` answer's notional, and counts an entry whose outcome is left `unknown` at the
+    allowance it was sent under, whatever notional its answer names, as the order may stand: the
+    fire's allowance is then spent, and its next entries are refused before any hand-over."""
     unknown = HandlerAnswer("no_answer", error_code="timeout", notional_usd=Decimal("60"))
     gated = Gated(limits=RuleLimits(max_notional_per_fire=Decimal("100")),
                   answers={"place_order": [unknown, _SENT_100]})  # fmt: skip
     await gated.run(*(action(f"a{n}", on_error="continue") for n in range(3)))
-    assert gated.ceilings() == [("a0", Decimal("100")), ("a1", Decimal("100"))]
-    assert [outcome for _, outcome, _ in gated.results()] == ["unknown", "ok", "blocked"]
+    assert gated.ceilings() == [("a0", Decimal("100"))]
+    assert [outcome for _, outcome, _ in gated.results()] == ["unknown", "blocked", "blocked"]
 
 
 async def test_a_reduce_only_order_never_meets_the_notional_allowance() -> None:

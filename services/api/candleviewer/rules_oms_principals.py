@@ -8,15 +8,18 @@ again every `PRINCIPAL_REFRESH_S` (250 ms: BQ-6 as ruled, well inside the execut
 age bound, `gates.PRINCIPAL_MAX_AGE_S`) for the users the service names: the owners and the
 armers of the rules it evaluates. A user is read by id, never from a session (E35-FR-01): the
 identity read (`identity_snapshot`: active, a system role, its permissions) and the trade grants
-(`load_trade_grants`), each user within `PRINCIPAL_READ_TIMEOUT_S`, the reads side by side. The
+(`load_trade_grants`), each user within `PRINCIPAL_READ_TIMEOUT_S`, the reads side by side, each
+user's view published as its own reads answer, stamped with the cycle's start. The
 accounts a view admits are the order route's own decision (`decide(orders:write,
 GRANTED_ACCOUNTS, requires_trade=True)`, 24 §8.4) over the process's environment: every account of
 it for an Owner, only the granted ones for anyone else, a view-only or frozen grant none.
 
 It fails closed. A user who cannot act (not active, deleted, a role outside the system set) is an
-inactive view at once. A read that fails or runs past its bound leaves the user's last view, which
-ages past the bound and is refused (`permission`); so does a cycle whose environment read fails,
-for every user. A task that ends other than by `stop()` is logged CRITICAL and paged once, and
+inactive view at once. A read that fails or runs past its bound leaves that user's last view, and
+that user's alone, which ages past the bound and is refused (`permission`); so does a cycle whose
+environment read fails, for every user. A trade grants' read that finds no such user is a failed
+read (logged), never a user who cannot act. A task that ends other than by `stop()` is logged
+CRITICAL and paged once, and
 every view then ages out. Nothing here logs a grant or an account: ids and error classes only.
 """
 
@@ -76,6 +79,10 @@ class PrincipalSource(Protocol):
     async def live_accounts(self) -> frozenset[UUID]: ...
 
 
+class GrantsUnread(Exception):
+    """The trade grants' read of a user the identity read holds did not answer as the store's."""
+
+
 class IdentityPrincipalSource:
     """`PrincipalSource` over the identity read and the scope source's grant reads, the order
     route's own (`order_principal.SessionTradingPrincipalResolver._granted`), by user id."""
@@ -87,7 +94,10 @@ class IdentityPrincipalSource:
         snapshot = await identity_snapshot(self._identity, user_id)
         if snapshot is None or snapshot.is_owner:
             return snapshot
-        rows = await self._grants.load_trade_grants(user_id)
+        try:
+            rows = await self._grants.load_trade_grants(user_id)
+        except LookupError as lost:  # the store's failure, as the order route reads it
+            raise GrantsUnread from lost
         return replace(snapshot, account_grants=tuple(AccountGrant(*row) for row in rows))
 
     async def live_accounts(self) -> frozenset[UUID]:
@@ -160,8 +170,9 @@ class RulePrincipals:
         self._views.clear()
 
     async def refresh(self, users: Collection[UUID]) -> None:
-        """One cycle: the environment's accounts, then every user's reads side by side, each view
-        stamped with the cycle's start; a user no longer named is forgotten."""
+        """One cycle: the environment's accounts, then every user's reads side by side, each
+        user's view published as its own reads answer, stamped with the cycle's start, so one slow
+        read ages that user's view alone; a user no longer named is forgotten."""
         named = frozenset(users)
         started = self._clock()
         try:
@@ -172,12 +183,16 @@ class RulePrincipals:
         else:
             self._unread.discard(None)
             order: Sequence[UUID] = sorted(named, key=str)
-            reads = await asyncio.gather(*(self._read(user) for user in order))
-            for user, (answered, snapshot) in zip(order, reads, strict=True):
-                if answered:  # else the last view stays, to age out
-                    self._views[user] = principal_view(user, snapshot, accounts, started)
+            await asyncio.gather(*(self._publish(user, accounts, started) for user in order))
         for gone in [user for user in self._views if user not in named]:
             del self._views[gone]
+
+    async def _publish(self, user: UUID, accounts: frozenset[UUID], started: float) -> None:
+        """The user's view from its own reads, as they answer; else the last view stays, to age
+        out."""
+        answered, snapshot = await self._read(user)
+        if answered:
+            self._views[user] = principal_view(user, snapshot, accounts, started)
 
     async def _read(self, user: UUID) -> tuple[bool, PrincipalSnapshot | None]:
         """Whether the user's reads answered, and its snapshot: `None` for one who cannot act or

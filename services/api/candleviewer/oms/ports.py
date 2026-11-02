@@ -90,7 +90,7 @@ from uuid import UUID
 
 import structlog
 
-from candleviewer.accounts.override_comparator import AccountFigures
+from candleviewer.accounts.override_comparator import AccountFigures, Role
 from candleviewer.accounts.profiles import AccountProfile
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.primitives import AccountId, Environment, Px, Qty, Side, Symbol
@@ -519,6 +519,8 @@ class SubmitActor:
 
 #: The rule origin's node id is bounded to a short identifier.
 _NODE_ID: Final = re.compile(r"[A-Za-z0-9_-]{1,64}")
+#: The roles an armer may hold: the closed role set (`Role`, the `role_name` enum).
+_ROLES: Final = frozenset(get_args(Role))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -527,16 +529,16 @@ class RuleOrigin:
     composition root's rule adapter from the fire it serves, never from request data, so no route
     and no body sets one (`SubmitContext.origin`, `ExitCaller.origin`). `rule_id` and `version`
     name the rule, `run_id` its fire's `rule_runs` row, `node_id` the action's node in the IR,
-    bounded to a short identifier, and `armed_by` and `armed_by_role` the user who armed it, both
-    or neither, as its records name them beside the owner, the request's `SubmitActor` (24
-    Sec.15.5; the E35 threat model's RE-S1)."""
+    bounded to a short identifier, and `armed_by` and `armed_by_role` the user who armed it and
+    that user's role, one of the closed role set, both or neither, as its records name them beside
+    the owner, the request's `SubmitActor` (24 Sec.15.5; the E35 threat model's RE-S1)."""
 
     rule_id: UUID
     version: int
     run_id: UUID
     node_id: str
     armed_by: UUID | None
-    armed_by_role: str | None
+    armed_by_role: Role | None
 
     def __post_init__(self) -> None:
         if not isinstance(self.version, int) or isinstance(self.version, bool) or self.version < 1:
@@ -545,6 +547,8 @@ class RuleOrigin:
             raise ValueError("a rule origin's node id is not a short identifier")
         if (self.armed_by is None) != (self.armed_by_role is None):
             raise ValueError("an armer is named with its role, or not at all")
+        if self.armed_by_role is not None and self.armed_by_role not in _ROLES:
+            raise ValueError("an armer's role is one of the system roles")
 
     @property
     def actor_label(self) -> str:

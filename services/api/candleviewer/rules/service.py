@@ -632,6 +632,8 @@ class RulesService:
         finally:
             if self._dispatch is not None and not drained:
                 await self._dispatch.stop(0.0)  # a no-op once its own stop has begun
+            if isinstance(self._principal, PrincipalRefresh):  # E35-T11: no fire left to read it
+                await self._principal.stop()  # before the audits' stop, which reads no principal
             if self._audits is not None:
                 await self._audits.stop(max(0.0, deadline - monotonic()) if drained else 0.0)
             self._dispatch = self._audits = self._executor = None
@@ -639,8 +641,6 @@ class RulesService:
                 _log().warning("rules.signals_dropped_at_stop", dropped=dropped)
             self._signals = None
             self._variables.clear()
-            if isinstance(self._principal, PrincipalRefresh):
-                await self._principal.stop()
         if self._manager is not None:
             await self._manager.stop()
         self._registry = None

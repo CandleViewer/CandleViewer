@@ -80,13 +80,13 @@ class FireRecords:
     ) -> None:
         """A result's event: `action_ok` for `ok` or `simulated`, else `action_fail`, with the
         `ActionResult` as its payload; for an `ok` result with a `journal`, the `log` row its tag
-        rides (E35-T13, `log_journal_tag`), in the same write; and for an `ok` entry whose answer
-        named its notional, that notional beside the result, as plain decimal text
-        (`notional_usd`), which the day's allowance is rebuilt from (24 §11.7, E35-T11): the run's
-        own record, never an audit record or a log line."""
+        rides (E35-T13, `log_journal_tag`), in the same write; and for an entry the ledger counted,
+        an `ok` one's notional or an `unknown` one's allowance, that figure beside the result, as
+        plain decimal text (`notional_usd`), which the day's allowance is rebuilt from (24 §11.7,
+        E35-T11): the run's own record, never an audit record or a log line."""
         kind: EventKind = "action_ok" if result.outcome in ("ok", "simulated") else "action_fail"
         dump = result.model_dump(mode="json")
-        if notional is not None and result.outcome == "ok":
+        if notional is not None and result.outcome in ("ok", "unknown"):
             dump["notional_usd"] = dec_str(notional)
         events = [(kind, result.node_id, dump, _SEVERITY[result.outcome])]
         if journal is not None and result.outcome == "ok":

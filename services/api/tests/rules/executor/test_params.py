@@ -58,8 +58,22 @@ def test_money_params_are_decimal_never_float(raw: object, text: str) -> None:
 
 @pytest.mark.parametrize(
     "raw",
-    [True, float("nan"), float("inf"), "NaN", "-Infinity", "abc", "", None, [1], {}, "1e70"],
-)  # "1e70": finite, but its plain form passes the content hash's 64 characters
+    [
+        True,
+        float("nan"),
+        float("inf"),
+        "NaN",
+        "-Infinity",
+        "abc",
+        "",
+        None,
+        [1],
+        {},
+        "1e70",
+        "1_0",
+        "\u0661\u0660",
+    ],
+)  # "1e70": past the content hash's 64 characters; "1_0" and Arabic-Indic digits: not ASCII text
 def test_a_value_with_no_canonical_decimal_is_refused(raw: object) -> None:
     assert entry_params("place_order", MARKET | {"qty_mode": "explicit", "qty": raw}) is None
     with pytest.raises((ValueError, TypeError)):

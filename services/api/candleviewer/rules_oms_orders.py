@@ -7,35 +7,40 @@ calls them per resolved account, after checks 1 to 8 and the records written ahe
 
 - `prepare` (pure, synchronous) reads the typed parameters (`invalid_params` when they do not
   parse, or when the scope instance names no symbol), the owner's and the armer's roles from the
-  same principal views check 5 read (`permission` when either has gone since), and builds the
-  request once, fingerprinted once (`request_sha256`), with the owner as the principal and the
-  rule as the origin (`rules_oms_requests`); an origin the OMS refuses, a node id that is not a
-  short identifier, is `blocked` (`unavailable`) with a detail that never holds the id, never a
-  raise (fail closed);
+  same principal views check 5 read, and builds the request once, fingerprinted once
+  (`request_sha256`), with the owner as the principal and the rule as the origin
+  (`rules_oms_requests`). Two refusals are decided here and answered by `send`, nothing sent, each
+  after the hand-over's records as the OMS's own refusals are (24 §11.5): a principal gone since
+  check 5 (`permission`), and an origin the OMS refuses, a node id that is not a short identifier
+  (`failed`, `invalid_params`, with a sentence that never names the id), never a raise;
 - `send` hands it over under the fire key's `client_ref`, the same request and fingerprint for a
   `retry_once` retry, and maps the answer (`answer_of`, `refusal_answer`). A `scale_in` adds to
   the open position on the instance's symbol, on its side, read from the account's stored
-  position (`StoredPositionSides`, bounded): none open is `refused` (`no_position`), nothing sent,
-  and a read that fails is `no_answer`, retried at most once as any call that got no answer.
+  position (`StoredPositionSides`, bounded) for a fresh key only, after the anchor's lookup: a
+  repeat is answered from its anchor whatever the position is now. None open is `failed`
+  (`no_position`), nothing sent, and a read that fails is `no_answer` (`position_unread`), retried
+  at most once as any call that got no answer.
 
 The order port (`RuleOrders`) admits a request as the `placeOrder` route does, and goes no further
 than the route: the OMS ready, the anchor's lookup by the owner's key (a decided anchor's answer
-replayed, one in flight or another body refused, nothing sent), and `trading.oms_enabled`, the OMS
-admissions' own rollout flag, for an entry. The pipeline then runs as a task the OMS runtime
-tracks and drains at its stop (`OmsRuntime.run`), on the order lane, its own synchronous checks
-last (the clock halt, sizing against the profile, the risk gate, the trading switches, the rate
-headroom); the action awaits it shielded, so its bound, above the pipeline's, never cancels it
-(BQ-7): a submit still running at that bound is `unknown`, never sent again, and one the
-runtime's stop cut short is in flight, never re-sent. Rule actions run on demo and testnet only:
-check 4 refuses a live account, and the OMS's own live gate stays the last fence (C-2.11).
+replayed, one in flight or another body refused, nothing sent), then, for a fresh key, the request
+(the `scale_in` side read), and `trading.oms_enabled`, the OMS admissions' own rollout flag, for an
+entry. The pipeline then runs as a task the OMS runtime tracks and drains at its stop
+(`OmsRuntime.run`), on the order lane, its own synchronous checks last (the clock halt, sizing
+against the profile, the risk gate, the trading switches, the rate headroom); the action awaits it
+shielded, so its bound, above the pipeline's, never cancels it (BQ-7): a submit still running at
+that bound is `unknown`, never sent again, and one the runtime's stop cut short is in flight
+(`submit_cut_short`), never re-sent. Rule actions run on demo and testnet only: check 4 refuses a
+live account, and the OMS's own live gate stays the last fence (C-2.11).
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
+from functools import partial
 from typing import Any, Final, Protocol
 from uuid import UUID
 
@@ -52,7 +57,7 @@ from candleviewer.rules.executor.handlers import (
 )
 from candleviewer.rules.executor.params import EntryParams, PlaceOrderParams, entry_params
 from candleviewer.rules.executor.ports import PrincipalReads, PrincipalView
-from candleviewer.rules.executor.results import NODE_ID, OMS_DETAIL, BlockedBy
+from candleviewer.rules.executor.results import NODE_ID, OMS_DETAIL
 from candleviewer.rules.scope import ActionRequest
 from candleviewer.rules_oms_requests import (
     answer_of,
@@ -61,6 +66,7 @@ from candleviewer.rules_oms_requests import (
     refusal_answer,
     rule_origin,
     submit_context,
+    system_role,
 )
 from candleviewer.storage.repositories.accounts import AccountScope, GrantScope, OwnerScope
 from candleviewer.storage.repositories.oms_reads import PositionQuery
@@ -70,6 +76,13 @@ ENTRY_TYPES: Final = ("place_order", "scale_in")
 #: The bound on a `scale_in`'s position read, a store read's.
 POSITION_READ_TIMEOUT_S: Final = 2.0
 _SIDES: Final[dict[str, Side]] = {"Buy": "buy", "Sell": "sell"}
+#: `prepare`'s two refusals, which `send` answers with nothing sent (module docstring).
+_PRINCIPAL_GONE: Final = HandlerAnswer("refused", blocked_by="permission")
+_ORIGIN_REFUSED: Final = HandlerAnswer(
+    "refused", error_code="invalid_params", detail=OMS_DETAIL[NODE_ID]
+)
+#: A fresh key's request, built only once the anchor's lookup has found none (`RuleOrders.submit`).
+RequestBuilder = Callable[[], Awaitable[OrderRequest]]
 
 
 class _Pipeline(Protocol):
@@ -101,6 +114,14 @@ class SubmitCutShort(Exception):
     """The OMS runtime's stop cancelled a submit it was draining: its outcome is not known."""
 
 
+class NoPosition(Exception):
+    """A `scale_in` found no open position to add to: nothing is sent (`no_position`)."""
+
+
+class PositionUnread(Exception):
+    """A `scale_in`'s position read failed or ran past its bound: no answer (`position_unread`)."""
+
+
 def _cancelling() -> bool:
     task = asyncio.current_task()
     return task is not None and task.cancelling() > 0
@@ -115,9 +136,13 @@ class RuleOrders:
     ) -> None:
         self._runtime, self._oms_enabled = runtime, oms_enabled
 
-    async def submit(self, request: OrderRequest, context: SubmitContext) -> SubmitOutcome:
-        """The request's answer, or the OMS's refusal raised as itself; `SubmitCutShort` when the
-        runtime's stop cancelled the submit."""
+    async def submit(
+        self, account_id: AccountId, context: SubmitContext, request: RequestBuilder
+    ) -> SubmitOutcome:
+        """The fire key's answer: a decided anchor's replay, whatever `request` would build now;
+        for a fresh key, `request()` and its submit. The OMS's refusal is raised as itself,
+        `SubmitCutShort` when the runtime's stop cancelled the submit, and what `request()` raises
+        (`NoPosition`, `PositionUnread`) with nothing sent."""
         oms = self._runtime()
         if oms is None or oms.readiness != "ok":
             raise OmsNotReady
@@ -125,12 +150,13 @@ class RuleOrders:
             context.actor.user_id, context.anchored_ref, context.request_sha256
         )
         if isinstance(found, Replay):
-            return await oms.submission.answer_replay(request.account_id, found)
+            return await oms.submission.answer_replay(account_id, found)
         if isinstance(found, InFlight | KeyReuse):
             raise found.refusal()
-        if not request.reduce_only and self._oms_enabled() is not True:
+        built = await request()  # a fresh key only: a repeat never reads the position again
+        if not built.reduce_only and self._oms_enabled() is not True:
             raise TradingDisabled
-        task = oms.run(oms.submission.submit(request, context))
+        task = oms.run(oms.submission.submit(built, context))
         try:
             return await asyncio.shield(task)  # the action's bound never cancels the submit
         except asyncio.CancelledError:
@@ -187,8 +213,8 @@ class PreparedEntry(Prepared):
     actor: SubmitActor | None = field(default=None, repr=False)
     owner: PrincipalView | None = field(default=None, repr=False)
     origin: RuleOrigin | None = field(default=None, repr=False)
-    refused_by: BlockedBy | None = None
-    refused_detail: str | None = None
+    #: `prepare`'s refusal, which `send` answers with nothing sent (module docstring).
+    refusal: HandlerAnswer | None = None
 
 
 class RuleEntryHandler:
@@ -226,13 +252,13 @@ class RuleEntryHandler:
         )  # fmt: skip
         owner = self._principals.principal(req.owner)
         armer = None if req.armed_by is None else self._read(req.armed_by)
-        owner_role, armer_role = _role(owner), _role(armer)
+        owner_role, armer_role = _role(owner), system_role(_role(armer))
         if owner is None or owner_role is None or (req.armed_by is not None and armer_role is None):
-            return replace(built, refused_by="permission")  # a view gone since check 5 read it
+            return replace(built, refusal=_PRINCIPAL_GONE)  # a view gone since check 5 read it
         try:
             origin = rule_origin(req, armer_role)
         except ValueError:  # its node id, the one part not minted by the engine (RuleOrigin)
-            return replace(built, refused_by="unavailable", refused_detail=OMS_DETAIL[NODE_ID])
+            return replace(built, refusal=_ORIGIN_REFUSED)
         actor = SubmitActor(user_id=req.owner, role=owner_role)
         return replace(built, actor=actor, owner=owner, origin=origin)
 
@@ -240,35 +266,53 @@ class RuleEntryHandler:
         entry = prepared
         if not isinstance(entry, PreparedEntry) or entry.params is None:
             return HandlerAnswer("refused", error_code="invalid_params")
-        if entry.refused_by is not None or entry.actor is None or entry.origin is None:
-            blocked_by = entry.refused_by or "permission"
-            return HandlerAnswer("refused", blocked_by=blocked_by, detail=entry.refused_detail)
+        if entry.refusal is not None:  # decided at `prepare`: nothing is sent
+            return entry.refusal
+        if entry.actor is None or entry.origin is None:  # each set unless `prepare` refused
+            return _PRINCIPAL_GONE
         if entry.account_id is None or entry.owner is None:  # each set with the actor
             return HandlerAnswer("refused", error_code="invalid_params")
-        params = entry.params
-        side: Side | None = params.side if isinstance(params, PlaceOrderParams) else None
-        if side is None:
-            try:
-                side = await self._position_side(entry.owner, entry.account_id, entry.symbol)
-            except Exception:  # never `CancelledError`, which is no `Exception`
-                return HandlerAnswer("no_answer", error_code="position_unread")
-            if side is None:
-                return HandlerAnswer("refused", error_code="no_position")
-        request = order_request(
-            params, account_id=entry.account_id, symbol=entry.symbol, side=side,
-            max_notional_usd=entry.ceiling,
-        )  # fmt: skip
         context = submit_context(
             owner=entry.actor.user_id, owner_role=entry.actor.role, origin=entry.origin,
             client_ref=client_ref, request_sha256=prepared.request_sha256,
         )  # fmt: skip
+        build = partial(
+            self._request, entry.params, entry.account_id, entry.owner, entry.symbol, entry.ceiling
+        )
         try:
-            outcome = await self._orders.submit(request, context)
+            outcome = await self._orders.submit(AccountId(entry.account_id), context, build)
+        except NoPosition:
+            return HandlerAnswer("refused", error_code="no_position")
+        except PositionUnread:
+            return HandlerAnswer("no_answer", error_code="position_unread")
         except SubmitCutShort:
             return HandlerAnswer("in_flight", error_code="submit_cut_short")
         except Exception as error:  # never `CancelledError`, which is no `Exception`
             return refusal_answer(error)
         return answer_of(outcome, ceiling=entry.ceiling)
+
+    async def _request(
+        self,
+        params: EntryParams,
+        account: UUID,
+        owner: PrincipalView,
+        symbol: str,
+        ceiling: Decimal | None,
+    ) -> OrderRequest:
+        """A fresh key's request: a `place_order` on its own side, a `scale_in` on the side of
+        the open position, read now, bounded (`NoPosition` with none open, `PositionUnread` when
+        the read fails)."""
+        side: Side | None = params.side if isinstance(params, PlaceOrderParams) else None
+        if side is None:
+            try:
+                side = await self._position_side(owner, account, symbol)
+            except Exception as lost:  # never `CancelledError`, which is no `Exception`
+                raise PositionUnread from lost
+            if side is None:
+                raise NoPosition
+        return order_request(
+            params, account_id=account, symbol=symbol, side=side, max_notional_usd=ceiling
+        )
 
     def _read(self, user: object) -> PrincipalView | None:
         try:

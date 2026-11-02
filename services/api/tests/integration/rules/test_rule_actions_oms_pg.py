@@ -400,7 +400,6 @@ async def test_fire_to_submit_on_postgres_reads_the_rule_with_two_queries(
         await reads.dispose()
     elapsed_ms = (submitted[0] - started) * 1000
     assert len(statements) == 2  # the rule, then all its versions: one read, two statements
-    assert elapsed_ms < 2_000  # within check 1's own bound; the figure is reported, not gated
     print(f"fire-to-submit on Postgres: {elapsed_ms:.2f} ms; check 1's read: 2 statements")
 
 

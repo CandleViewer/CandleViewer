@@ -35,6 +35,7 @@ from decimal import Decimal
 from typing import Any, Final
 from uuid import UUID
 
+from candleviewer.accounts.override_comparator import Role
 from candleviewer.domain.primitives import AccountId, Side, Symbol
 from candleviewer.oms.errors import (
     IdempotencyInFlight,
@@ -67,6 +68,13 @@ PRE_ANCHOR_CODES: Final = frozenset(
 #: OMS never re-sends, 24 §8.2 S1) and a repeat's `reconciling`. Each is `in_flight`, never
 #: `accepted`: no success is assumed (C-2.10).
 UNRESOLVED_STATES: Final = frozenset({"unknown", RECONCILING})
+#: The closed role set (`Role`, the `role_name` enum) by name: the armer's role the origin carries.
+_ROLES: Final[Mapping[str, Role]] = {"owner": "owner", "manager": "manager", "viewer": "viewer"}
+
+
+def system_role(name: str | None) -> Role | None:
+    """`name` as one of the closed role set, `None` for no role or a name outside it."""
+    return None if name is None else _ROLES.get(name)
 
 
 def _offset(offset: Offset | None) -> StopOffset | None:
@@ -129,10 +137,11 @@ def canonical_request(
     }  # fmt: skip
 
 
-def rule_origin(req: ActionRequest, armed_by_role: str | None) -> RuleOrigin:
+def rule_origin(req: ActionRequest, armed_by_role: Role | None) -> RuleOrigin:
     """The rule a request comes from (24 §8.4 "Rule-originated orders"): its id, version, fire,
     node, and its armer with the armer's role (`RuleOrigin` refuses one without the other).
-    `ValueError` for a rule id or an armer that is no UUID."""
+    `ValueError` for a rule id or an armer that is no UUID, and for a node id the origin refuses
+    (not a short identifier)."""
     armer = None if req.armed_by is None else UUID(str(req.armed_by))
     return RuleOrigin(
         rule_id=UUID(req.rule_id), version=req.version, run_id=req.run_id,

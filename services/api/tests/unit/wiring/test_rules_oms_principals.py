@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Callable, Collection
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -36,6 +36,7 @@ from candleviewer.rules_oms_requests import rule_origin, submit_context
 from tests.rules.executor.request_builders import action_request
 
 OWNER, ARMER = uuid.UUID(int=0xA1), uuid.UUID(int=0xA2)
+HUNG = uuid.UUID(int=0xA3)  # a third user, whose read hangs
 A, B, C, ELSEWHERE = (uuid.UUID(int=i) for i in (0xB1, 0xB2, 0xB3, 0xB9))
 ENVIRONMENT = frozenset({A, B, C})  # ELSEWHERE is another environment's account
 RULE = str(uuid.UUID(int=0x7))
@@ -72,10 +73,12 @@ class Source:
     failing: set[uuid.UUID | None] = field(default_factory=set)  # None: the environment's read
     hanging: set[uuid.UUID] = field(default_factory=set)
     asked: list[uuid.UUID] = field(default_factory=list)
+    waiting: asyncio.Event = field(default_factory=asyncio.Event)  # a hung read has begun
 
     async def snapshot(self, user_id: uuid.UUID) -> PrincipalSnapshot | None:
         self.asked.append(user_id)
         if user_id in self.hanging:
+            self.waiting.set()
             await asyncio.Event().wait()
         if user_id in self.failing:
             raise ConnectionError("the identity store refused the read")
@@ -259,8 +262,10 @@ async def test_all_accounts_resolves_through_the_real_principal_reads_and_needs_
 
 # fmt: off
 async def test_an_action_on_an_account_outside_the_owner_armer_intersection_never_reaches_the_oms() -> None:  # noqa: E501 -- the plan's test name (#5003)
-    """The cross-account case: each user may trade one account the other may not; an action on
-    either is refused at check 5, before anything is written ahead or sent."""
+    """The cross-account case: each user may trade one account the other may not, and check 5,
+    over the real reads, refuses an action on either (`permission`), as on any account outside
+    both. That a check-5 refusal is a block written before any hand-over, so nothing is written
+    ahead or sent, is the executor's (`tests/rules/executor/test_gates.py`)."""
     clock = Clock()
     source = Source({OWNER: manager(OWNER, trade(A)), ARMER: manager(ARMER, trade(B))})
     principals = await read(source, clock)
@@ -285,6 +290,86 @@ async def test_a_user_no_longer_named_is_forgotten() -> None:
     principals = await read(Source({OWNER: owner_role(OWNER), ARMER: owner_role(ARMER)}), clock)
     await principals.refresh((OWNER,))
     assert principals.principal(ARMER) is None and principals.principal(OWNER) is not None
+
+
+@dataclass
+class Slow(Source):
+    """A `Source` whose every user read takes `takes` seconds of the fake clock."""
+
+    clock: Clock = field(default_factory=Clock)
+    takes: float = 0.0
+
+    async def snapshot(self, user_id: uuid.UUID) -> PrincipalSnapshot | None:
+        self.clock.t += self.takes
+        return await super().snapshot(user_id)
+
+
+async def test_one_users_hung_read_ages_no_other_users_view() -> None:
+    """BQ-6 (R1C1-01): each user's view is published as its own reads answer, stamped with the
+    cycle's start, so a read that hangs ages that user's view alone: while it hangs and the clock
+    moves on, the users already read serve check 5."""
+    clock = Clock()
+    source = Source({OWNER: owner_role(OWNER), ARMER: owner_role(ARMER), HUNG: owner_role(HUNG)})
+    source.hanging.add(HUNG)
+    principals = RulePrincipals(source, clock=clock)  # the production bound: 2 s per read
+    started = clock()
+    cycle = asyncio.ensure_future(principals.refresh((OWNER, ARMER, HUNG)))
+    try:
+        async with asyncio.timeout(5):
+            await source.waiting.wait()  # the hung read waits; the others have answered
+        clock.t += 0.3
+        armer = principals.principal(ARMER)
+        assert armer is not None and armer.read_at == started and not cycle.done()
+        assert check_five(principals, clock) is None  # admitted at publication, mid-cycle
+        assert principals.principal(HUNG) is None
+    finally:
+        cycle.cancel()
+        await asyncio.wait({cycle})
+
+
+async def test_a_view_is_stamped_with_its_cycles_start_however_long_its_reads() -> None:
+    """24 §11.5's age bound (R1C1-02): a view is stamped with its cycle's start, never with the
+    clock after its reads, so reads that took 0.6 s publish views already 0.6 s old, which check
+    5 refuses once a second has passed since that start."""
+    clock = Clock()
+    source = Slow({OWNER: owner_role(OWNER), ARMER: owner_role(ARMER)}, clock=clock, takes=0.3)
+    principals = RulePrincipals(source, clock=clock)
+    started = clock()
+    await principals.refresh((OWNER, ARMER))
+    view = principals.principal(OWNER)
+    assert view is not None and view.read_at == started and clock() == pytest.approx(started + 0.6)
+    assert check_five(principals, clock) is None
+    clock.t = started + 1.001
+    assert check_five(principals, clock) == "permission"
+
+
+async def test_the_refresh_waits_what_its_reads_left_of_the_quarter_second() -> None:
+    """BQ-6's cadence (R1C1-03): a cycle starts 250 ms after the last one began, so the wait is
+    what the reads left of it, and none after a cycle longer than 250 ms."""
+    clock, steps = Clock(), Steps()
+    source = Slow({OWNER: owner_role(OWNER)}, clock=clock, takes=0.1)
+    principals = RulePrincipals(source, clock=clock, sleep=steps)
+
+    def named() -> Collection[uuid.UUID]:
+        return (OWNER,)
+
+    principals.start(named)
+    try:
+        async with asyncio.timeout(5):
+            await steps.slept.wait()
+        source.takes = 0.3
+        await steps.next()
+        assert steps.waits == [pytest.approx(0.15), 0.0]
+    finally:
+        await principals.stop()
+
+
+def test_a_user_holding_the_owner_role_beside_another_acts_as_the_owner() -> None:
+    """R1C1-05: the role a view names for a user holding two roles is `owner` when one is the
+    Owner role (the records' actor role, 24 §15.5), never the other by name order."""
+    both = PrincipalSnapshot(OWNER, frozenset({"manager", "owner"}), WRITE)
+    view = principal_view(OWNER, both, ENVIRONMENT, 0.0)
+    assert (view.role, view.is_owner) == ("owner", True)
 
 
 class Steps:
@@ -313,7 +398,10 @@ async def test_the_refresh_runs_every_quarter_second_inside_the_age_bound() -> N
     clock, steps = Clock(), Steps()
     source = Source({OWNER: owner_role(OWNER), ARMER: owner_role(ARMER)})
     principals = RulePrincipals(source, clock=clock, sleep=steps)
-    named: Callable[[], Collection[uuid.UUID]] = lambda: (OWNER, ARMER)  # noqa: E731
+
+    def named() -> Collection[uuid.UUID]:
+        return (OWNER, ARMER)
+
     principals.start(named)
     try:
         async with asyncio.timeout(5):
@@ -335,7 +423,10 @@ async def test_a_second_start_runs_no_second_refresh_task() -> None:
     clock, steps = Clock(), Steps()
     source = Source({OWNER: owner_role(OWNER), ARMER: owner_role(ARMER)})
     principals = RulePrincipals(source, clock=clock, sleep=steps)
-    named: Callable[[], Collection[uuid.UUID]] = lambda: (OWNER, ARMER)  # noqa: E731
+
+    def named() -> Collection[uuid.UUID]:
+        return (OWNER, ARMER)
+
     principals.start(named)
     principals.start(named)
     try:
@@ -437,3 +528,24 @@ async def test_the_identity_source_reads_by_user_id_and_never_an_owners_grants()
         await source.snapshot(C)
     assert await source.live_accounts() == ENVIRONMENT
     assert grants.asked == [ARMER, "demo"]
+
+
+async def test_a_grants_read_that_finds_no_user_is_a_failed_read_logged() -> None:
+    """R1C1-09: the identity read holds the user but the trade grants' read raises `LookupError`
+    (the store's, as the order route reads it): a failed read, logged by its class, the user's
+    last view left to age out, never an answered inactive view."""
+
+    class Unread(Grants):
+        async def load_trade_grants(
+            self, user_id: uuid.UUID
+        ) -> list[tuple[uuid.UUID, bool, bool, bool]]:
+            raise LookupError(user_id)
+
+    identity = Identity({str(ARMER): {"status": "active", "roles": ["manager"]}})
+    source = IdentityPrincipalSource(identity, Unread({}), "demo")
+    principals = RulePrincipals(source, clock=Clock())
+    with capture_logs() as logs:
+        await principals.refresh((ARMER,))
+    assert principals.principal(ARMER) is None
+    unread = [(e["user"], e["error"]) for e in logs if e["event"] == "rules.principal_unread"]
+    assert unread == [(str(ARMER), "GrantsUnread")]

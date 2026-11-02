@@ -26,6 +26,8 @@ from structlog.testing import capture_logs
 
 from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.models import PlaceOrderRequest
+from candleviewer.oms import submit as oms_submit
+from candleviewer.oms.errors import OmsNotReady
 from candleviewer.oms.idempotency import Fresh
 from candleviewer.oms.submit import OrderRequest, SubmitContext, SubmitOutcome
 from candleviewer.oms_wiring import InterimKillSwitch, TradingSwitchesBinding
@@ -77,8 +79,12 @@ class Runtime:
     readiness: str = "ok"
     tasks: list[asyncio.Task[SubmitOutcome]] = field(default_factory=list)
     requests: list[tuple[OrderRequest, SubmitContext]] = field(default_factory=list)
+    stopping: bool = False  # its stop has begun: `run` refuses, as `OmsRuntime.run` does
 
     def run(self, coro: Coroutine[Any, Any, SubmitOutcome]) -> asyncio.Task[SubmitOutcome]:
+        if self.stopping:
+            coro.close()
+            raise OmsNotReady
         task = asyncio.ensure_future(coro)
         self.tasks.append(task)
         return task
@@ -181,6 +187,7 @@ class Orders:
             await self.executor.execute(fire)
             if quiet:
                 await self.rig.quiet()
+                await self.assert_native_stops()  # C-2.6 on every entry a fire placed (R1C2-03)
 
     def results(self) -> list[dict[str, Any]]:
         return [
@@ -568,6 +575,13 @@ async def test_a_submit_running_at_the_action_bound_is_unknown_and_never_sent_ag
         await rig.quiet()
     assert (outcome.status, task.cancelled(), len(orders.creates())) == (202, False, 1)
     assert len(orders.runtime.tasks) == 1 and len(orders.lookups.asked) == 1
+    assert outcome.order_id is not None  # the late landing carries its native stop (C-2.6)
+    landed = await rig.port.orders.get(cr.ACCOUNT, outcome.order_id)
+    assert landed is not None
+    assert_entry_carries_native_stop(
+        landed, reference_price=rig.prices.price or sr.REFERENCE, stops=rig.store._stops.values(),
+        records=rig.records(), calls=rig.port.demo.calls,
+    )  # fmt: skip
 
 
 class FreshAnchors:
@@ -603,8 +617,8 @@ async def test_a_submit_the_runtimes_stop_cut_short_is_in_flight_and_never_sent_
 
 
 async def test_an_oms_not_ready_is_a_refusal_before_the_anchor(rig: SubmitRig) -> None:
-    """A runtime not composed, not ready, or refusing the submit (its stop begun) refuses before
-    the anchor: `pre_anchor`, which `retry_once` retries once, never more; nothing sent."""
+    """A runtime not ready refuses before the anchor's lookup: `pre_anchor`, which `retry_once`
+    retries once, never more; nothing sent (one not composed: the handler test below)."""
     orders = build(rig)
     orders.runtime.readiness = "starting"
     await orders.run(request(on_error="retry_once"))
@@ -612,6 +626,20 @@ async def test_an_oms_not_ready_is_a_refusal_before_the_anchor(rig: SubmitRig) -
     assert orders.lookups.asked == [] and orders.creates() == []
     fired = [verb for verb, _ in orders.records.audits]
     assert fired == ["rules.fired", "rules.fired"]  # the first call and its one retry
+
+
+async def test_a_runtime_whose_stop_has_begun_refuses_the_submit_before_its_anchor(
+    rig: SubmitRig,
+) -> None:
+    """R1C2-09: `OmsRuntime.run` refuses a submit once its stop has begun (`OmsNotReady`, the
+    coroutine closed), past the lookup and before any anchor is written: `pre_anchor`, which
+    `retry_once` retries once, never more; nothing sent."""
+    orders = build(rig)
+    orders.runtime.stopping = True
+    await orders.run(request(on_error="retry_once"))
+    assert orders.outcomes() == [("a1", str(cr.ACCOUNT), "failed", "oms_not_ready")]
+    assert len(orders.lookups.asked) == 2 and orders.runtime.tasks == []
+    assert orders.creates() == [] and rig.store._orders == {}
 
 
 async def test_the_oms_admission_flag_off_refuses_an_entry_after_its_replay_lookup(
@@ -708,6 +736,8 @@ def test_the_handlers_bind_through_the_seam_with_the_entry_capability() -> None:
 
 
 async def test_a_handler_with_no_runtime_composed_refuses_before_the_anchor() -> None:
+    """No OMS composed: each entry refuses before the anchor's lookup (`pre_anchor`), a
+    `scale_in` before any position read too, as the side is read for a fresh key only."""
     handlers = rule_order_handlers(
         lambda: None, oms_enabled=lambda: True,
         principals=Principals(frozenset({cr.ACCOUNT})), positions=None,
@@ -719,12 +749,18 @@ async def test_a_handler_with_no_runtime_composed_refuses_before_the_anchor() ->
         request(action_type="scale_in", params={}), cr.ACCOUNT, max_notional_usd=None
     )
     gone = await handlers["scale_in"].send(no_reads, client_ref=str(uuid.UUID(int=0xD4)))
-    assert (gone.answer, gone.error_code) == ("no_answer", "position_unread")
+    assert (gone.answer, gone.error_code) == ("pre_anchor", "oms_not_ready")
 
 
-#: Node ids a stored rule may hold (the IR stores any text without a lone surrogate) that the
-#: OMS's rule origin refuses, as it names its node by a short identifier (K4a's bound).
+#: Node ids the IR refuses at save (`NodeId`, E35-T11) that a rule stored before that bound may
+#: still hold, and which the OMS's rule origin refuses (K4a's bound): such a request is built here
+#: with its payload copied unvalidated, as a stored document is read.
 ODD_NODE_IDS: tuple[str, ...] = ("a.1", "a 1", "n" * 65)
+
+
+def odd(req: ActionRequest, node: str) -> ActionRequest:
+    """`req` naming `node`, an id outside the IR's bound (a document stored before it)."""
+    return replace(req, payload=req.payload.model_copy(update={"node_id": node}))
 
 
 def held_only_as_key(node: str, records: Records) -> bool:
@@ -740,28 +776,151 @@ def held_only_as_key(node: str, records: Records) -> bool:
 
 
 @pytest.mark.parametrize("node", ODD_NODE_IDS, ids=["dot", "space", "too-long"])
-async def test_a_rule_action_whose_node_id_is_not_a_short_identifier_is_blocked(
+async def test_a_rule_action_whose_node_id_is_not_a_short_identifier_fails_with_nothing_sent(
     rig: SubmitRig, node: str
 ) -> None:
-    """Fail closed (K4a's node-id bound): a stored rule's action whose node id the OMS's rule
-    origin refuses reaches the handler and is `blocked` (`unavailable`), its detail the register's
-    sentence. Nothing reaches the OMS and nothing raises. It is recorded and counted as any blocked
-    action is; the action's next account is `skipped` (`abort_on_first`), and so is the fire's
-    next action (`abort_remaining`). No log line holds the node id, and the rule's own records
-    hold it only as their node's key."""
+    """Fail closed (K4a's node-id bound; the orchestrator's carry 2): an action whose node id the
+    OMS's rule origin refuses reaches the handler and is `failed` (`invalid_params`), its detail
+    the register's generic sentence. Nothing reaches the OMS and nothing raises. It is recorded
+    and counted as a failed action is; the action's next account is `skipped` (`abort_on_first`),
+    and so is the fire's next action (`abort_remaining`). No log line holds the node id, and the
+    rule's own records hold it only as their node's key."""
     seed_other(rig)
     counted = Counted()
     orders = build(rig, metrics=counted.metrics)
     with capture_logs() as logs:
-        await orders.run(request(node, targets="all_accounts"), request("a2"))
+        await orders.run(odd(request(targets="all_accounts"), node), request("a2"))
     assert orders.outcomes() == [
-        (node, str(cr.ACCOUNT), "blocked", "unavailable"), (node, str(OTHER), "skipped", None),
+        (node, str(cr.ACCOUNT), "failed", "invalid_params"), (node, str(OTHER), "skipped", None),
         ("a2", str(cr.ACCOUNT), "skipped", None),
     ]  # fmt: skip
     assert orders.results()[0]["blocked_detail"] == OMS_DETAIL[NODE_ID]
-    assert ("rules.blocked", "unavailable") in [(v, f.blocked_by) for v, f in orders.records.audits]
-    assert counted.blocked() == {"unavailable": 1}
+    assert [verb for verb, _ in orders.records.audits] == ["rules.fired"]
+    assert counted.blocked() == {} and counted.of("rule_actions_total")
     assert orders.runtime.requests == [] and orders.creates() == [] and rig.records() == []
     assert not [e for e in logs if e["event"] == "rules.action_failed"]
     assert held_only_as_key(node, orders.records)
     assert not [e for e in logs if node in json.dumps(e, default=str)]
+
+
+@pytest.mark.parametrize("refusal", ["principal-gone", "origin-refused"])
+async def test_a_refusal_decided_at_prepare_records_the_hand_over_then_the_refusal(
+    rig: SubmitRig, refusal: str
+) -> None:
+    """24 §11.5 (the lenses' R1S-01 and R1C2-05): a refusal the handler decides as it builds the
+    request (a principal gone since check 5 read it, an origin the OMS refuses) writes as the OMS's
+    mapped refusals do: `action_start` and `rules.fired`, then the refusal's `action_fail` (with
+    `rules.blocked` for a `permission` block), in that order, and nothing reaches the OMS."""
+    orders = build(rig)
+    req = request()
+    if refusal == "principal-gone":  # check 5 read both views; the handler finds the armer's gone
+        gone = Principals(frozenset({cr.ACCOUNT, OTHER}), missing={ARMER})
+        orders.handlers["place_order"]._principals = gone
+        expected, verbs = ("blocked", "permission"), ["rules.fired", "rules.blocked"]
+    else:
+        req, expected, verbs = odd(req, "a.1"), ("failed", "invalid_params"), ["rules.fired"]
+    await orders.run(req)
+    [(_, _, outcome, code)] = orders.outcomes()
+    assert (outcome, code) == expected
+    assert [e.kind for _, e in orders.records.events] == ["action_start", "action_fail"]
+    assert [verb for verb, _ in orders.records.audits] == verbs
+    assert orders.lookups.asked == [] and orders.runtime.requests == [] and orders.creates() == []
+
+
+async def test_a_scale_in_retry_is_answered_from_its_anchor_though_the_position_closed(
+    rig: SubmitRig,
+) -> None:
+    """R1C2-01: the order port consults the anchor before the position. A `scale_in` whose first
+    answer was lost after the OMS decided its anchor is answered on its `retry_once` retry from
+    that anchor (`ok`), though the position closed in between: the position is read once, by the
+    first call, and one order exists."""
+    orders = build(rig)
+    orders.sides.held[cr.ACCOUNT] = "buy"
+    lost = LostAnswer(rig.pipeline, None)
+    orders.runtime.submission = lost
+    read_for: list[uuid.UUID] = []
+    held_side = orders.sides.side
+
+    async def closing(owner: PrincipalView, account_id: uuid.UUID, symbol: str) -> Any:
+        read_for.append(account_id)
+        side = await held_side(owner, account_id, symbol)
+        orders.sides.held.clear()  # the position closes once the first call has read it
+        return side
+
+    orders.sides.side = closing  # type: ignore[method-assign]  # the read closes the position
+    scale_in = request(action_type="scale_in", params={"qty": "0.01"}, on_error="retry_once")
+    await orders.run(scale_in, quiet=False)
+    assert lost.first is not None
+    async with asyncio.timeout(GUARD_S):
+        await lost.first
+        await rig.quiet()
+    assert orders.outcomes() == [("a1", str(cr.ACCOUNT), "ok", None)]
+    assert read_for == [cr.ACCOUNT] and lost.calls == 1 and len(orders.lookups.asked) == 2
+    assert len(orders.creates()) == 1 and len(rig.store._orders) == 1
+    assert await orders.assert_native_stops() == 1
+
+
+class NoAnswer:
+    """A pipeline whose every call gets no answer (a transport failure), nothing placed."""
+
+    async def submit(self, request: OrderRequest, context: SubmitContext) -> SubmitOutcome:
+        raise TimeoutError
+
+    async def answer_replay(self, account_id: Any, replay: Any) -> SubmitOutcome:
+        raise AssertionError("no anchor was decided")
+
+
+async def test_an_entry_left_unknown_counts_at_the_allowance_it_was_sent_under(
+    rig: SubmitRig,
+) -> None:
+    """The ledger ruling (BQ-5 of #5003, the cautious side): an entry whose outcome is left
+    `unknown` counts against the day at the allowance its request was sent under, as the order may
+    stand; its `action_fail` row names that figure for the day's rebuild, and the next entry finds
+    the allowance spent (`cap`) before the OMS."""
+    orders = build(rig, notional=DayNotional(prior=Decimal("100")))
+    orders.runtime.submission = NoAnswer()
+    limits = RuleLimits(max_daily_notional=Decimal("1300"))
+    await orders.run(request(), limits=limits)
+    [unknown] = orders.results()
+    assert (unknown["outcome"], unknown["error_code"]) == ("unknown", "timeout")
+    assert unknown["notional_usd"] == "1200"  # the allowance it was sent under: 1300 - 100
+    orders.records.events.clear()
+    orders.runtime.submission = Recorded(rig.pipeline, orders.runtime)
+    await orders.run(request(run=RUN_2), limits=limits)
+    assert orders.outcomes() == [("a1", str(cr.ACCOUNT), "blocked", "cap")]
+    assert orders.runtime.requests == [] and orders.creates() == []
+
+
+async def test_a_retry_answered_as_a_replay_counts_the_entry_once(rig: SubmitRig) -> None:
+    """The ledger ruling: an entry counts once, whatever its retry answers. A first call whose
+    answer is lost, retried once and answered as a replay (at the allowance it was sent under),
+    takes that allowance from the day once, never twice: the next fire's ceiling is what the day
+    leaves after one count."""
+    orders = build(rig, notional=DayNotional(prior=Decimal(0)))
+    lost = LostAnswer(rig.pipeline, None)
+    orders.runtime.submission = lost
+    limits = RuleLimits(max_notional_per_fire=Decimal("1000"), max_daily_notional=Decimal("2500"))
+    await orders.run(request(on_error="retry_once"), limits=limits, quiet=False)
+    assert lost.first is not None
+    async with asyncio.timeout(GUARD_S):
+        await lost.first
+        await rig.quiet()
+    [replayed] = orders.results()
+    assert (replayed["outcome"], replayed["notional_usd"]) == ("ok", "1000")
+    orders.records.events.clear()
+    orders.runtime.submission = Recorded(rig.pipeline, orders.runtime)
+    await orders.run(request(run=RUN_2), limits=limits)
+    [(sent, _)] = orders.runtime.requests
+    assert sent.sizing.max_notional_usd == Decimal("1000")  # 2500 - 1000 leaves the fire's 1000
+    assert orders.outcomes() == [("a1", str(cr.ACCOUNT), "ok", None)]
+
+
+def test_the_action_bound_stands_above_the_pipelines_bounds_after_its_anchor() -> None:
+    """BQ-7 (R1C2-02): the action's bound is above every bound the pipeline holds once its anchor
+    exists (`OrderSubmission`'s defaults), so the action never gives up first on a submit the
+    pipeline still runs on its own bounds."""
+    after_anchor = oms_submit._after_anchor_s(
+        store_timeout_s=oms_submit.STORE_TIMEOUT_S, place_wait_s=oms_submit.PLACE_WAIT_S,
+        result_wait_s=oms_submit.RESULT_WAIT_S,
+    )  # fmt: skip
+    assert dispatch.ACTION_TIMEOUT_S > after_anchor

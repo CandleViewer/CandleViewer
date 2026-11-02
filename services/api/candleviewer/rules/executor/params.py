@@ -19,6 +19,7 @@ carry what the rule asked for to the OMS, whose size step is the last word.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from decimal import Decimal
 from typing import Annotated, Any, Final, Literal
@@ -32,13 +33,16 @@ from candleviewer.rules.ir.canonical import IrValueError, dec_str
 #: yet (`stop_unit_unsupported`), never this module.
 OffsetUnit = Literal["price", "ticks", "percent", "atr", "r_multiple"]
 _STRICT: Final = ConfigDict(frozen=True, extra="forbid")
+#: A decimal's text as the IR writes one: ASCII digits with an optional sign, point and exponent,
+#: never the grouping underscores or other scripts' digits `Decimal()` would also read.
+_DECIMAL_TEXT: Final = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 
 
 def canonical_decimal(value: object) -> Decimal:
     """`value` as the `Decimal` of its canonical text: an `int` exactly, a `Decimal` and a decimal
     string as written, a float as its shortest repr (the IR hash's reading), each finite and in
-    plain form (`dec_str`). A bool, a non-finite or an over-wide number is a `ValueError` that
-    names no value."""
+    plain form (`dec_str`). A bool, a non-finite or an over-wide number, or a string that is not a
+    decimal's ASCII text, is a `ValueError` that names no value."""
     if isinstance(value, bool):
         raise ValueError("a number, not a boolean")
     if isinstance(value, float):
@@ -46,10 +50,10 @@ def canonical_decimal(value: object) -> Decimal:
     elif isinstance(value, int):
         value = Decimal(value)
     elif isinstance(value, str):
-        try:
-            value = Decimal(value.strip())
-        except ArithmeticError:
-            raise ValueError("a decimal number") from None
+        text = value.strip()
+        if _DECIMAL_TEXT.fullmatch(text) is None:
+            raise ValueError("a decimal number")
+        value = Decimal(text)
     if not isinstance(value, Decimal) or not value.is_finite():
         raise ValueError("a finite decimal number")
     try:
@@ -58,7 +62,6 @@ def canonical_decimal(value: object) -> Decimal:
         raise ValueError("a decimal number in range") from None
 
 
-Number = Annotated[Decimal, BeforeValidator(canonical_decimal)]
 Positive = Annotated[Decimal, BeforeValidator(canonical_decimal), Field(gt=0)]
 Percent = Annotated[Decimal, BeforeValidator(canonical_decimal), Field(gt=0, le=100)]
 

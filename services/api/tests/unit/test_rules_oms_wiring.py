@@ -527,13 +527,14 @@ async def test_the_notional_rebuild_adapter_reads_one_utc_day() -> None:
 
 
 def test_the_day_notional_read_sums_the_accepted_entries_of_the_rules_armed_runs() -> None:
-    """The read's one statement (a parts pin, as the write-ahead insert's): a rule's `action_ok`
-    events naming a notional, of its armed runs, within the day, summed in the store; no payload
-    leaves it."""
+    """The read's one statement (a parts pin, as the write-ahead insert's): a rule's result events
+    naming a figure (an accepted entry's `action_ok`, an `unknown` one's `action_fail`), of its
+    armed runs, within the day, summed in the store; no payload leaves it."""
     text = rules_sqlalchemy._DAY_NOTIONAL.text
     for part in (
         "SUM(CAST(e.payload->>'notional_usd' AS numeric))", "r.rule_id = CAST(:rule_id AS uuid)",
-        "r.mode = 'armed'", "e.kind = 'action_ok'", "e.payload->>'notional_usd' IS NOT NULL",
+        "r.mode = 'armed'", "e.kind IN ('action_ok', 'action_fail')",
+        "e.payload->>'notional_usd' IS NOT NULL",
         "e.event_ts >= CAST(:start AS timestamptz)", "e.event_ts < CAST(:end AS timestamptz)",
     ):  # fmt: skip
         assert part in text, part

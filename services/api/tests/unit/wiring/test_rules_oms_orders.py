@@ -1,5 +1,5 @@
 """E35-T11 slice 3c: the `scale_in` side read and the entry handler's own refusals, at unit level
-(24 §11.6 `scale_in`, §11.5, §11.9 `unavailable`; C-2.12).
+(24 §11.6 `scale_in`, §11.5, §11.9 `failed`; C-2.12).
 
 `StoredPositionSides` reads the account's stored position in the owner's own scope (every account
 for an Owner, the action's account alone for anyone else) and answers the side of the open one-way
@@ -19,31 +19,34 @@ from typing import Any, Literal
 
 import pytest
 
-from candleviewer.oms.idempotency import Fresh
+from candleviewer.oms.errors import IdempotencyKeyReuse
+from candleviewer.oms.idempotency import Fresh, KeyReuse
 from candleviewer.oms.submit import OrderRequest, SubmitContext, SubmitOutcome
 from candleviewer.rules.executor.handlers import HandlerAnswer
 from candleviewer.rules.executor.ports import PrincipalView
 from candleviewer.rules.executor.results import BLOCKED_DETAIL, NODE_ID, OMS_DETAIL
 from candleviewer.rules_oms_orders import (
+    POSITION_READ_TIMEOUT_S,
     PositionSides,
     PreparedEntry,
     RuleEntryHandler,
     RuleOrders,
     StoredPositionSides,
 )
+from candleviewer.rules_oms_requests import refusal_answer
 from candleviewer.storage.repositories.accounts import AccountScope, GrantScope, OwnerScope
 from candleviewer.storage.repositories.oms_reads import PositionQuery
 from candleviewer.storage.repositories.positions import PositionRow, PositionSide
 from tests.rules.executor.request_builders import Principals
-from tests.rules.executor.test_order_handlers import OWNER, request
+from tests.rules.executor.test_order_handlers import OWNER, odd, request
 from tests.unit.oms import command_rig as cr
 
 ACCOUNT, OTHER = cr.ACCOUNT, uuid.UUID(int=0xC2)
 MANAGER = uuid.UUID(int=0xC3)
 T0 = datetime(2026, 11, 2, tzinfo=UTC)
 QUERY = PositionQuery(accounts=(ACCOUNT,), symbol="BTCUSDT")
-#: Node ids a stored rule may hold (the IR stores any text without a lone surrogate) that
-#: the OMS's rule origin refuses, as it names its node by a short identifier.
+#: Node ids the IR refuses at save that a rule stored before that bound may still hold, and which
+#: the OMS's rule origin refuses (built unvalidated, `odd`).
 ODD_NODE_IDS: tuple[str, ...] = ("", "a.1", "n" * 65)
 ODD_NODE_IDS_NAMED: tuple[str, ...] = ("empty", "dot", "too-long")
 
@@ -183,15 +186,86 @@ async def test_an_armer_that_is_no_user_id_is_refused_on_permission() -> None:
 
 
 @pytest.mark.parametrize("node", ODD_NODE_IDS, ids=ODD_NODE_IDS_NAMED)
-async def test_an_origin_the_oms_refuses_is_blocked_with_a_detail_holding_no_id(node: str) -> None:
-    """A node id the OMS's rule origin refuses is `unavailable`, never a raise: the detail is the
-    register's sentence, the id nowhere in it, and nothing reaches the OMS."""
+async def test_an_origin_the_oms_refuses_fails_with_a_detail_holding_no_id(node: str) -> None:
+    """A node id the OMS's rule origin refuses is `invalid_params` (a `failed` action, the
+    orchestrator's carry 2), never a raise: the detail is the register's generic sentence, the id
+    nowhere in it, and nothing reaches the OMS."""
     runtime = Runtime()
     entry = handler(runtime)
-    built = entry.prepare(request(node), ACCOUNT, max_notional_usd=None)
+    built = entry.prepare(odd(request(), node), ACCOUNT, max_notional_usd=None)
     answer = await answer_to(entry, built)
-    assert (answer.answer, answer.blocked_by) == ("refused", "unavailable")
-    assert answer.detail == OMS_DETAIL[NODE_ID]
+    assert (answer.answer, answer.blocked_by, answer.error_code) == (
+        "refused", None, "invalid_params",
+    )  # fmt: skip
+    assert answer.detail == OMS_DETAIL[NODE_ID] and (node == "" or node not in answer.detail)
+    assert runtime.submission.requests == []
+
+
+def test_a_prepared_entrys_repr_shows_none_of_its_request() -> None:
+    """C-12.6 (R1C2-04): a built entry's repr names no parameter, account, symbol, ceiling,
+    owner or origin."""
+    entry = handler(Runtime())
+    built = entry.prepare(request(), ACCOUNT, max_notional_usd=Decimal("1234.5"))
+    assert isinstance(built, PreparedEntry) and built.origin is not None
+    text = repr(built)
+    for held in (
+        "PlaceOrderParams", "market", str(ACCOUNT), "BTCUSDT", "1234.5", str(OWNER),
+        str(built.origin.rule_id), "RuleOrigin", "PrincipalView",
+    ):  # fmt: skip
+        assert held not in text, held
+
+
+class KeyUsedElsewhere(Anchors):
+    async def lookup(self, created_by: uuid.UUID, client_ref: uuid.UUID, sha: str) -> Any:
+        return KeyReuse()
+
+
+async def test_a_key_first_used_for_another_request_is_refused_and_nothing_submitted() -> None:
+    """R1C2-04: the anchor's lookup finds the fire key used with another body: the OMS's
+    key-reuse refusal, as the `placeOrder` route answers it, and no submit."""
+    runtime = Runtime()
+    runtime.anchors = KeyUsedElsewhere()
+    entry = handler(runtime)
+    answer = await answer_to(entry, entry.prepare(request(), ACCOUNT, max_notional_usd=None))
+    assert answer == refusal_answer(IdempotencyKeyReuse())
+    assert runtime.submission.requests == []
+
+
+class Hung:
+    """A position read that never answers."""
+
+    async def side(self, owner: PrincipalView, account_id: uuid.UUID, symbol: str) -> Any:
+        await asyncio.Event().wait()
+
+
+async def test_a_position_read_that_never_answers_is_no_answer_within_its_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R1C2-04: a `scale_in`'s position read is bounded (`POSITION_READ_TIMEOUT_S`, a store
+    read's 2 s; 0 here): one that never answers is `no_answer` (`position_unread`), nothing sent."""
+    assert POSITION_READ_TIMEOUT_S == 2.0
+    monkeypatch.setattr("candleviewer.rules_oms_orders.POSITION_READ_TIMEOUT_S", 0.0)
+    runtime = Runtime()
+    entry = handler(runtime, "scale_in", Hung())
+    built = entry.prepare(
+        request("a1", "scale_in", {"qty": "0.01"}), ACCOUNT, max_notional_usd=None
+    )
+    async with asyncio.timeout(5):
+        answer = await answer_to(entry, built)
+    assert (answer.answer, answer.error_code) == ("no_answer", "position_unread")
+    assert runtime.submission.requests == []
+
+
+async def test_a_scale_in_with_no_position_read_bound_gets_no_answer() -> None:
+    """No position read bound at the composition root (the OMS reads not composed): a `scale_in`
+    for a fresh key is `no_answer` (`position_unread`), nothing sent."""
+    runtime = Runtime()
+    entry = handler(runtime, "scale_in", None)
+    built = entry.prepare(
+        request("a1", "scale_in", {"qty": "0.01"}), ACCOUNT, max_notional_usd=None
+    )
+    answer = await answer_to(entry, built)
+    assert (answer.answer, answer.error_code) == ("no_answer", "position_unread")
     assert runtime.submission.requests == []
 
 
