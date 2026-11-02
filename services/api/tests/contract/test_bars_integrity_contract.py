@@ -8,6 +8,7 @@ and additive (C-6.3) in `22-api-openapi.yaml` and `23-ws-protocol.md`.
   required. REST has no `stale`: one key, one meaning (WS `meta.stale` is a feed behind).
 - An answer without any of them (a server that predates them) still validates, and the generated
   models read it as unflagged and not stale_build.
+- 23 §13 `snapMeta` declares `coverage_holes` for bars snapshots, optional, with REST's shape.
 - CVWB kind 4 carries the flags in `flags` bits 1-3 with no stride change: the reference decoders
   read `confirm` from bit0 alone, so a frame with them set decodes as before.
 
@@ -133,6 +134,42 @@ def test_contract_bars_meta_stale_build_is_rest_only_and_rest_has_no_stale() -> 
     }
     assert "stale_build" not in _snap_meta()
     assert "stale" not in _members("/components/schemas/BarsMeta")
+
+
+def _shape(node: object) -> object:
+    """`node` without its `description`s, at every depth: the shape a client validates against."""
+    if isinstance(node, dict):
+        return {k: _shape(v) for k, v in node.items() if k != "description"}
+    if isinstance(node, list):
+        return [_shape(v) for v in node]
+    return node
+
+
+def test_contract_snap_meta_coverage_holes_is_optional_and_shaped_as_rest() -> None:
+    """One key, one meaning (#5396): 23 §13 `snapMeta.coverage_holes` is optional and has REST
+    `DataMeta.coverage_holes`'s exact shape (`{start_us, end_us}` items, both required)."""
+    common = _WS["cv://ws/v1/common.schema.json"]["$defs"]["snapMeta"]
+    assert "coverage_holes" not in common.get("required", [])
+    (_, data_meta) = _SCHEMAS["DataMeta"]["allOf"]
+    rest = data_meta["properties"]["coverage_holes"]
+    assert _shape(common["properties"]["coverage_holes"]) == _shape(rest)
+    assert _shape(rest) == {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "required": ["start_us", "end_us"],
+            "properties": {"start_us": {"type": "integer"}, "end_us": {"type": "integer"}},
+        },
+    }
+
+
+def test_contract_snap_meta_with_and_without_coverage_holes_validates() -> None:
+    meta_id = "cv://ws/v1/common.schema.json#/$defs/snapMeta"
+    validator = Draft202012Validator({"$ref": meta_id}, registry=_WS_REGISTRY)
+    holes = [{"start_us": 1_789_132_200_000_000, "end_us": 1_789_132_260_000_000}]
+    assert list(validator.iter_errors({"reason": "initial"})) == []
+    assert list(validator.iter_errors({"reason": "initial", "coverage_holes": holes})) == []
+    assert list(validator.iter_errors({"coverage_holes": [{"start_us": 1}]}))
 
 
 def test_contract_kline_response_without_the_new_members_still_validates() -> None:

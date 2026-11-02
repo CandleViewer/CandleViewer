@@ -607,6 +607,27 @@
               "minimum": 1,
               "type": "integer"
             },
+            "coverage_holes": {
+              "description": "bars snapshots: the ranges within the snapshot's span that the server could not serve, listed so a client never reads that span as complete (§6.1, #5396). The same key and item shape as REST `DataMeta.coverage_holes` (22). Repeated on every chunk of a chunked set (§3.6). Absent means none recorded. Never on a d.",
+              "items": {
+                "properties": {
+                  "end_us": {
+                    "description": "Gap end, exchange epoch microseconds (exclusive).",
+                    "type": "integer"
+                  },
+                  "start_us": {
+                    "description": "Gap start, exchange epoch microseconds (inclusive).",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "start_us",
+                  "end_us"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
             "history_bars": {
               "minimum": 0,
               "type": "integer"

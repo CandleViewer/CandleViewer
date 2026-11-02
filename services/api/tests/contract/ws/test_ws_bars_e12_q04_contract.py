@@ -69,6 +69,7 @@ _DEAD_ALLOWED: Final = {
             "BarsBatch.bars[].gap_before",
             "BarsBatch.bars[].partial",
             "BarsBatch.bars[].tape_gap",
+            "snapMeta.coverage_holes",
         )
     },
 }
@@ -284,38 +285,59 @@ def _declared() -> set[str]:
     return {f"{where}.{member}" for where, member in members}
 
 
+#: The `snapMeta` members a `bars` frame can carry (§13, §6.1), guarded with `BarsBatch`. `stale`
+#: is left out: it is sent only for a quarantined series, which `test_sequencing.py` drives (§7.2).
+_BARS_META: Final = ("spec_hash", "build_version", "include_delta", "coverage_holes")
+#: One run: the structured payloads it counts and the envelope `meta` of every frame it received.
+Run = tuple[list[dict[str, Any]], list[dict[str, Any]]]
+
+
+def _declared_meta() -> set[str]:
+    """`_BARS_META` as `snapMeta` members, each still declared by §13 `snapMeta`."""
+    common = json.loads(wc.BUNDLE.read_text(encoding="utf-8"))["schemas"]
+    snap_meta = common["cv://ws/v1/common.schema.json"]["$defs"]["snapMeta"]["properties"]
+    assert set(_BARS_META) <= set(snap_meta), "§13 snapMeta no longer declares a bars member"
+    return {f"snapMeta.{member}" for member in _BARS_META}
+
+
 def _sent(payload: dict[str, Any]) -> set[str]:
     items = {f"BarsBatch.bars[].{member}" for item in payload["bars"] for member in item}
     return {f"BarsBatch.{member}" for member in payload} | items
 
 
-def _member_run() -> list[dict[str, Any]]:
+def _member_run() -> Run:
     """The structured payloads of a run that sends every member a `bars` frame can carry: time and
     non-time, `include_delta` on and off, a binary subscription (whose structured frames alone
-    count: kind 4 has no member names), an amended close and a merged window."""
-    payloads: list[dict[str, Any]] = []
+    count: kind 4 has no member names), an amended close and a merged window; and the `meta` of
+    every frame received, either encoding (`snapMeta` travels in the envelope, §13)."""
+    frames: list[dict[str, Any]] = []
     rig = _Rig({})
     with h.connect(rig.w) as c:
         c.sub({"ch": CH, "opts": {"encoding": "structured", "include_delta": True}})
-        payloads.append(h.structured_of(c.next_of("snap")))
+        frames.append(c.next_of("snap"))
         for emission in _emissions(_MINUTE, 0, 5):
             rig.emit(_MINUTE, *emission)
-            payloads.append(h.structured_of(c.next_of("d")))
+            frames.append(c.next_of("d"))
+    binary: list[dict[str, Any]] = []
     for mode in h.MODES:
         rig = _encoding_rig()
         with h.connect(rig.w) as c:
-            payloads += [h.structured_of(f) for f in _encoded(rig, c, mode) if f["e"] == "j"]
+            binary += _encoded(rig, c, mode)
     rig, mine = _Rig({}), _Series(binary=False)
     script = _script("forty_updates")
     with h.connect(rig.w) as c:
         c.sub({"ch": script.ch, "opts": {"encoding": "structured"}})
-        mine.apply(c.next_of("snap"))
-        payloads += [h.structured_of(f) for f in rig.play(c, mine, script.spec, script.windows)]
-    return payloads
+        snap = c.next_of("snap")
+        mine.apply(snap)
+        played = rig.play(c, mine, script.spec, script.windows)
+    payloads = [h.structured_of(f) for f in [*frames, *(f for f in binary if f["e"] == "j")]]
+    payloads += [h.structured_of(f) for f in played]
+    metas = [f.get("meta") or {} for f in [*frames, *binary, snap, *played]]
+    return payloads, metas
 
 
 @pytest.fixture(scope="module")
-def member_run() -> list[dict[str, Any]]:
+def member_run() -> Run:
     """`_member_run` on `cv.v1.json`, the wire set only while it runs."""
     token = h.use_wire("json")
     try:
@@ -324,21 +346,25 @@ def member_run() -> list[dict[str, Any]]:
         h.reset_wire(token)
 
 
-def _dead(payloads: list[dict[str, Any]]) -> list[str]:
-    return sorted(_declared() - set[str]().union(*map(_sent, payloads)))
+def _dead(run: Run) -> list[str]:
+    payloads, metas = run
+    sent = set[str]().union(*map(_sent, payloads))
+    sent |= {f"snapMeta.{member}" for meta in metas for member in meta}
+    return sorted((_declared() | _declared_meta()) - sent)
 
 
-def test_contract_bars_batch_has_no_dead_member(member_run: list[dict[str, Any]]) -> None:
-    """Dead-contract detection (§14.3, §6.1): every member `BarsBatch` declares is sent by some
-    structured frame of the run, but for the justified `_DEAD_ALLOWED`. Emitted ⊆ declared is the
-    harness's: `additionalProperties: false` on every frame it receives."""
+def test_contract_bars_batch_has_no_dead_member(member_run: Run) -> None:
+    """Dead-contract detection (§14.3, §6.1, §13): every member `BarsBatch` declares, and every
+    `_BARS_META` member of `snapMeta`, is sent by some frame of the run, but for the justified
+    `_DEAD_ALLOWED`. Emitted ⊆ declared is the harness's: `additionalProperties: false` on every
+    frame it receives."""
     dead = [member for member in _dead(member_run) if member not in _DEAD_ALLOWED]
     assert not dead, f"§14.3 declares members no frame of the run sends: {dead}"
 
 
 @pytest.mark.parametrize("member", sorted(_DEAD_ALLOWED))
 def test_contract_bars_dead_member_allowlist_is_justified_and_current(
-    member_run: list[dict[str, Any]], member: str
+    member_run: Run, member: str
 ) -> None:
     """Each allowlisted member says why, is still declared and is still never sent."""
     assert _DEAD_ALLOWED[member].strip() and member in _dead(member_run)

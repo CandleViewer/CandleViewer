@@ -8200,9 +8200,9 @@ export interface components {
     DataMeta: components["schemas"]["PageMeta"] & {
       /** @description Requested-range gaps the local cache has no bars for yet (QA defect #1622 blocker 1 / E08-S06 "Cache hit" scenario — `GET /market/klines` is cache-only until a live `KlineFetcher` lands, so it reports holes here instead of silently pretending the exchange was consulted). On `/market/bars` and `/market/klines` a range of the window the server cannot serve from its store is listed here too, so a missing range is named, never silently absent (#5396). */
       coverage_holes?: {
-        /** @description Gap end, exchange epoch microseconds. */
+        /** @description Gap end, exchange epoch microseconds (exclusive). */
         end_us: number;
-        /** @description Gap start, exchange epoch microseconds. */
+        /** @description Gap start, exchange epoch microseconds (inclusive). */
         start_us: number;
       }[];
       /** Format: date-time */

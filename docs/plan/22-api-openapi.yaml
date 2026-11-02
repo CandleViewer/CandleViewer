@@ -18599,8 +18599,15 @@ components:
                 required: [start_us, end_us]
                 properties:
                   start_us:
-                    { type: integer, description: "Gap start, exchange epoch microseconds." }
-                  end_us: { type: integer, description: "Gap end, exchange epoch microseconds." }
+                    {
+                      type: integer,
+                      description: "Gap start, exchange epoch microseconds (inclusive).",
+                    }
+                  end_us:
+                    {
+                      type: integer,
+                      description: "Gap end, exchange epoch microseconds (exclusive).",
+                    }
 
     # === Enums (mirroring 21-database-schema.md) =============================
     UserStatus: { type: string, enum: [invited, active, disabled, locked], x-db-enum: user_status }
