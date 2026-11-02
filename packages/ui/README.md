@@ -325,8 +325,40 @@ Reviewing a diff:
    it), and the designer's sign-off is C-10.3's `design-approved` from `@CandleViewer/design`, which
    CODEOWNERS does not enforce. Snapshot review never replaces the manual screen-reader pass (E05-Q02).
 
+Routing (E05-Q03, the regression pack `qa/plans/e05-regression-pack.md`):
+
+- **What counts as intentional:** a change that a design ticket or the PR's `design-approved`
+  names, nothing else. Any other diff is a regression, however small or plausible it looks.
+- **A flaky cell** (passes and fails on the same head), a `SETTLE` cell or a failed play: no
+  re-run until green. File a P1 ticket the same day (C-9.3) and fix the story or the component;
+  never raise the tolerance, add an exclusion tag or move a baseline to get past it.
+- **A finding from the full sweep** (the pack's manual a11y run, or a diff seen outside a PR) is a
+  row in that run's record, routed to the component's owner; it never becomes a baseline update in
+  the PR that found it.
+
 Repository growth: a PR adds only the PNGs it changes; ADR-0019's Validation records the measured
 size of the full set.
+
+## Not breaking the design system (for consuming epics)
+
+A one-page note for the epics that build screens on this package, E10 first (E05-Q03).
+
+- **Consume the package entry only.** Import from `@candleviewer/ui` and the CSS files its
+  `exports` list, never from `src/` or another internal path (dependency-cruiser's
+  `no-deep-imports-ui` fails it).
+- **Tokens, never raw values.** Colour, space, size, radius, motion and type come from the tokens;
+  a hard-coded value skips both themes, density and the contrast gate. A missing token is a design
+  ticket, not a local constant.
+- **A story is a contract.** A new or changed story in this package needs its VR baselines through
+  the `vr_update` dispatch (Visual regression, "Reviewing a diff") and a designer's approval; the
+  PR's `vr` shards fail until they match.
+- **Your PR runs this lane too.** `pr.yml`'s `e2e` filter covers `apps/web/**`, so a screen PR
+  runs the Storybook gate and every VR shard, not only a PR in this package.
+- **When a cell fails:** read the job summary and the `vr-diffs-<shard>` artifact (expected,
+  actual, diff); a diff you did not mean is a bug in your change or in this package, routed as the
+  triage above says. A failed play or an axe finding in the `storybook` job names its story.
+- **The pack and the record:** `qa/plans/e05-regression-pack.md` lists what runs where and maps
+  every fixed E05 defect to its regression test; `docs/qa/e05-signoff.md` holds the epic run.
 
 ## Scripts
 
