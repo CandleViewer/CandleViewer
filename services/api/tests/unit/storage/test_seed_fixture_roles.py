@@ -11,9 +11,9 @@ from typing import Any
 
 import pytest
 
-from candleviewer.auth.envelope import LOCAL_KEY_REF, TotpEncryptor
 from candleviewer.auth.totp import base32_to_secret
 from scripts import seed_fixture_user as seeder
+from scripts.seed_fixture_user import LEGACY_KEY_REF, LegacyTotpSealer
 
 _KEY = "ab" * 32  # a test key, not a secret: 32 bytes in hex
 
@@ -75,7 +75,7 @@ def test_main_seeds_the_role_with_totp_under_the_apis_key(
     assert seeder.main(["--role", "viewer", "--totp-secret-out", str(out)]) == 0
     assert seen["role"] == "viewer" and seen["totp_out"] == out
     assert seen["allow_no_mfa"] is False
-    assert isinstance(seen["totp"], TotpEncryptor) and seen["totp"].key_ref == LOCAL_KEY_REF
+    assert isinstance(seen["totp"], LegacyTotpSealer) and seen["totp"].key_ref == LEGACY_KEY_REF
 
 
 def test_main_refuses_totp_without_the_key_and_seeds_nothing(
@@ -140,7 +140,7 @@ async def test_seed_enrols_a_confirmed_totp_whose_secret_only_the_file_holds(
 ) -> None:
     conn = _Conn()
     monkeypatch.setattr(seeder, "create_async_engine", lambda dsn: _Engine(conn))
-    encryptor, out = TotpEncryptor(bytes.fromhex(_KEY), key_ref=LOCAL_KEY_REF), tmp_path / "totp"
+    encryptor, out = LegacyTotpSealer(bytes.fromhex(_KEY)), tmp_path / "totp"
     user_id = await seeder.seed(
         "dsn", "zap-manager", "pw", role="manager", totp=encryptor, totp_out=out
     )
@@ -150,7 +150,7 @@ async def test_seed_enrols_a_confirmed_totp_whose_secret_only_the_file_holds(
     (method,) = [params for sql, params in conn.calls if "INSERT INTO mfa_methods" in sql]
     text = out.read_text(encoding="ascii")
     secret = base32_to_secret(text)
-    assert encryptor.decrypt(method["enc"]) == secret and method["ref"] == LOCAL_KEY_REF
+    assert encryptor.decrypt(method["enc"]) == secret and method["ref"] == LEGACY_KEY_REF
     actions = [params["action"] for sql, params in conn.calls if "INSERT INTO audit_log" in sql]
     assert actions == ["users.create", "roles.grant", "auth.mfa_enrolled"]
     values = [value for _, params in conn.calls for value in params.values()]
@@ -163,7 +163,7 @@ async def test_seed_leaves_an_existing_user_as_it_is_and_writes_no_secret(
 ) -> None:
     conn = _Conn(existing=True)
     monkeypatch.setattr(seeder, "create_async_engine", lambda dsn: _Engine(conn))
-    encryptor, out = TotpEncryptor(bytes.fromhex(_KEY), key_ref=LOCAL_KEY_REF), tmp_path / "totp"
+    encryptor, out = LegacyTotpSealer(bytes.fromhex(_KEY)), tmp_path / "totp"
     user_id = await seeder.seed(
         "dsn", "zap-viewer", "pw", role="viewer", totp=encryptor, totp_out=out
     )
