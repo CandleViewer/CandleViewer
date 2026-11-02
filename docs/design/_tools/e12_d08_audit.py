@@ -142,6 +142,9 @@ PAGE_ID = re.compile(
 CVD_BOARDS = ("01", "05", "07")  # RULED BQ-27: greyscale, deuteranopia, protanopia
 CVD_KINDS = ("greyscale", "deuteranopia", "protanopia")
 SHEETS_DIR = "docs/design/_tools/sheets/e12-d08/"  # a committed board script, the drawn mode only
+RENDER_SHA = re.compile(
+    r"`(E12-D08-\d\d-[a-z0-9-]+-(?:greyscale|deuteranopia|protanopia)\.png)` \(sha256 `([0-9a-f]{64})`\)"
+)  # §0 lists each render with its sha256
 DRAWN_CELL = re.compile(
     r"drawn \(r\d+[^)]*\): board id `[^`]+`, `[^`]+` \(\d+ × \d+, sha256 `[0-9a-f]{64}`\)"
 )  # a drawn Status cell (the self-test's PENDING probe)
@@ -1009,6 +1012,7 @@ def g_boards_drawn(spec: str) -> list[str]:
         ]
     if not PAGE_ID.search(visible(section(spec, "0. "))):
         bad.append("§0 does not name the page id")
+    listed = dict(RENDER_SHA.findall(visible(section(spec, "0. "))))
     ids: list[str] = []
     for r in rows:
         m = DRAWN.fullmatch(r[5]) if len(r) > 5 else None
@@ -1042,6 +1046,14 @@ def g_boards_drawn(spec: str) -> list[str]:
                 rr = rel[: -len(".png")] + f"-{k}.png"
                 if png_size(ROOT / rr) is None:
                     bad.append(f"board {r[0]}: the {k} render {rr} is missing")
+                    continue
+                want = listed.get(Path(rr).name)
+                if want is None:
+                    bad.append(
+                        f"board {r[0]}: §0 does not list the {k} render with its sha256"
+                    )
+                elif hashlib.sha256((ROOT / rr).read_bytes()).hexdigest() != want:
+                    bad.append(f"board {r[0]}: the {k} render's sha256 is not §0's")
     if len(set(ids)) != len(ids):
         bad.append("two boards share an id")
     return bad
@@ -2626,6 +2638,14 @@ def say_in(prefix: str, sentence: str) -> Callable[[str], str]:
     return f
 
 
+def swap_render_sha(spec: str) -> str:
+    """§0's first listed render sha256 replaced (the file on disk then differs)."""
+    m = RENDER_SHA.search(spec)
+    if not m:
+        raise LookupError("mutation: §0 lists no render sha256")
+    return spec.replace(m[2], "0" * 64, 1)
+
+
 def drift_14(env: Env) -> None:
     rel = plan_rel(env, "14") or ""
     lines = env.base(rel).split("\n")
@@ -2662,6 +2682,11 @@ MUTATIONS: tuple[Mutation, ...] = (
             + "0" * 64
             + "`)",
         ),
+    ),
+    Mutation(
+        "G-BOARDS",
+        "a render's bytes that are not the sha256 §0 lists for it",
+        swap_render_sha,
     ),
     Mutation(
         "G-UNTOUCHED",
