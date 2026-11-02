@@ -65,6 +65,7 @@
     { "raw": "Ctrl+Shift", "canonical": null },
     { "raw": "Ctrl+Banana", "canonical": null },
     { "raw": "Hyper+K", "canonical": null },
+    { "raw": "Esc Esc", "canonical": null },
     { "raw": "", "canonical": null },
     { "raw": "   ", "canonical": null },
     { "raw": "  Ctrl + K  ", "canonical": "Ctrl+K" },
@@ -319,6 +320,14 @@
       "id": "invalid-keys",
       "about": "Not a binding of the grammar.",
       "bindings": [{ "action": "chart.footprint_toggle", "keys": "Ctrl+Banana" }],
+      "expect": {
+        "invalid": [{ "field": "bindings[0].keys", "rule": "invalid_keys" }]
+      }
+    },
+    {
+      "id": "key-sequence",
+      "about": "A sequence of keys, Esc Esc, is no binding: 22's grammar dropped it.",
+      "bindings": [{ "action": "chart.footprint_toggle", "keys": "Esc Esc" }],
       "expect": {
         "invalid": [{ "field": "bindings[0].keys", "rule": "invalid_keys" }]
       }
