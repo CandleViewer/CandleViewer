@@ -3,7 +3,7 @@
 These tests pin its wiring (it fails the required `a11y` check as its neighbours do), its fourteen
 compare shards (`VR_SHARD`, ten until #5275), the `vr_update` dispatch that alone writes baselines,
 and its uploads; and they run its font, compare and budget steps under bash with stand-in `pnpm`,
-`apt-get`, `fuser`, `sleep`, `fc-match` and `date` (`sudo` runs its arguments), as
+`apt-get`, `fuser`, `systemctl`, `sleep`, `fc-match` and `date` (`sudo` runs its arguments), as
 test_storybook_job.py does for the storybook job."""
 
 from __future__ import annotations
@@ -44,6 +44,25 @@ n = int(open(count).read()) if os.path.exists(count) else 0
 open(count, "w").write(str(n + 1))
 sys.exit(0 if n < int(os.environ.get("FUSER_HELD", "0")) else 1)
 """
+
+
+#: `systemctl`: logs its arguments; `is-active --quiet <unit>` exits 0 only for the units named in
+#: SYSTEMCTL_ACTIVE (comma-separated), so by default nothing is running (#5530).
+SYSTEMCTL = """import json, os, sys
+with open(os.environ["CALLS"], "a", encoding="utf-8") as log:
+    log.write(json.dumps(["SYSTEMCTL", sys.argv[1:], None]) + "\\n")
+active = set(filter(None, os.environ.get("SYSTEMCTL_ACTIVE", "").split(",")))
+if sys.argv[1:2] == ["is-active"]:
+    sys.exit(0 if sys.argv[-1] in active else 3)
+sys.exit(int(os.environ.get("SYSTEMCTL_EXIT", "0")))
+"""
+APT_UNITS = [
+    "apt-daily.timer",
+    "apt-daily-upgrade.timer",
+    "apt-daily.service",
+    "apt-daily-upgrade.service",
+    "unattended-upgrades.service",
+]
 
 
 def _doc() -> dict[Any, Any]:
@@ -158,8 +177,11 @@ def _bash(
     (tmp_path / "bin" / "fuser").write_text(
         f"#!{sys.executable}\n{FUSER}", encoding="utf-8"
     )
+    (tmp_path / "bin" / "systemctl").write_text(
+        f"#!{sys.executable}\n{SYSTEMCTL}", encoding="utf-8"
+    )
     (tmp_path / "bin" / "sudo").write_text(SUDO, encoding="utf-8")
-    for fake in ("fuser", "sudo"):
+    for fake in ("fuser", "systemctl", "sudo"):
         (tmp_path / "bin" / fake).chmod(0o755)
     calls, summary = tmp_path / "calls", tmp_path / "summary"
     path = os.environ.get("PATH", "")
@@ -236,6 +258,18 @@ def test_fonts_step_installs_the_pinned_packages_before_the_compare_and_names_th
     ]
     fuser = [args for name, args, _ in calls if name == "FUSER"]
     assert len(fuser) == 2 and all(set(locks) <= set(args) for args in fuser)
+    # #5530: the apt background units are stopped (never masked) before the first lock check.
+    order = [
+        (name, args[:1]) for name, args, _ in calls if name in {"SYSTEMCTL", "FUSER"}
+    ]
+    stop = order.index(("SYSTEMCTL", ["stop"]))
+    assert stop < order.index(("FUSER", fuser[0][:1]))
+    assert [
+        args for name, args, _ in calls if name == "SYSTEMCTL" and args[0] == "stop"
+    ] == [["stop", *APT_UNITS]]
+    assert not [
+        args for name, args, _ in calls if name == "SYSTEMCTL" and "mask" in args
+    ]
     assert not [name for name, _, _ in calls if name == "SLEEP"]
     assert "::warning::" not in proc.stdout
     assert [args for name, args, _ in calls if name == "FC_LIST"] == [
@@ -301,10 +335,55 @@ def test_fonts_step_fails_with_its_code_when_the_apt_lock_is_never_released(
     step = _step(FONTS)
     proc, calls = _bash(tmp_path, step["run"], **step["env"], FUSER_HELD="1000")
     assert proc.returncode == 1, proc
-    assert "::error::CI-A11Y-008 the apt lock was still held after 120 s" in proc.stdout
-    # Bounded: 60 two-second polls, then the code; apt-get never ran against a held lock.
-    assert [args for name, args, _ in calls if name == "SLEEP"] == [["2"]] * 60
+    assert "::error::CI-A11Y-008 the apt lock was still held after 300 s" in proc.stdout
+    # Bounded: 150 two-second polls (#5530: 300 s), then the code; apt-get never ran against a held lock.
+    assert [args for name, args, _ in calls if name == "SLEEP"] == [["2"]] * 150
     assert not [name for name, _, _ in calls if name == "APT_GET"]
+
+
+def test_fonts_step_stops_a_running_unattended_upgrade_and_warns_once(
+    tmp_path: Path,
+) -> None:
+    # #5530: the image's post-boot unattended-upgrades held the lists lock past the wait budget.
+    step = _step(FONTS)
+    installed = "fonts-inter 4.0+ds-1\nfonts-jetbrains-mono 2.304+ds-4"
+    env = {
+        **step["env"],
+        "DPKG_QUERY_OUT": installed,
+        "SYSTEMCTL_ACTIVE": "apt-daily-upgrade.service,unattended-upgrades.service",
+    }
+    proc, calls = _bash(tmp_path, step["run"], **env)
+    assert proc.returncode == 0, proc
+    warning = (
+        "::warning::CI-A11Y-008 stopped the apt background units: "
+        "apt-daily-upgrade.service unattended-upgrades.service"
+    )
+    assert (
+        proc.stdout.count("::warning::CI-A11Y-008 stopped") == 1
+        and warning in proc.stdout
+    )
+    assert ["stop", *APT_UNITS] in [
+        args for name, args, _ in calls if name == "SYSTEMCTL"
+    ]
+    assert len([name for name, _, _ in calls if name == "APT_GET"]) == 2
+
+
+def test_fonts_step_falls_back_to_the_wait_when_a_unit_will_not_stop(
+    tmp_path: Path,
+) -> None:
+    # A failed stop is not fatal: the 300 s lock wait and the retries still guard the apt-get.
+    step = _step(FONTS)
+    installed = "fonts-inter 4.0+ds-1\nfonts-jetbrains-mono 2.304+ds-4"
+    env = {
+        **step["env"],
+        "DPKG_QUERY_OUT": installed,
+        "SYSTEMCTL_EXIT": "1",
+        "FUSER_HELD": "2",
+    }
+    proc, calls = _bash(tmp_path, step["run"], **env)
+    assert proc.returncode == 0, proc
+    assert "::warning::CI-A11Y-008 waited 4 s for the apt lock" in proc.stdout
+    assert len([name for name, _, _ in calls if name == "APT_GET"]) == 2
 
 
 def test_run_step_fails_with_its_code_when_a_cell_fails(tmp_path: Path) -> None:
