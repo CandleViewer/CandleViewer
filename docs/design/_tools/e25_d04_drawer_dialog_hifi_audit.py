@@ -22,7 +22,8 @@ its unknown-outcome leg re-reads before any value is shown, the three confirmati
 the fetch point on the Apply press, the T2 matrix with every write locked for a Manager, Viewer and
 view-as and the admin link omitted rather than locked, the motion pairs, the fixed sentences, the
 E25-D02 strings carried verbatim, the hygiene patterns, the rule ids) and the two `14` pointer
-lines; H every P-row's `pairs.mjs` registration claim cross-read from `tools/contrast/pairs.mjs`
+lines, and §12's A-1 as applied (the CMP-069 Tokens line in `15` equal to its proposed text); H
+every P-row's `pairs.mjs` registration claim cross-read from `tools/contrast/pairs.mjs`
 (read, never written) and the counts the spec types in words.
 
 Usage: python3 -I docs/design/_tools/e25_d04_drawer_dialog_hifi_audit.py [--json]
@@ -58,6 +59,7 @@ TOOLS = ROOT / "docs" / "design" / "_tools"
 SPEC = ROOT / "docs" / "design" / "E25" / "E25-D04.md"
 OPENAPI = ROOT / "docs" / "plan" / "22-api-openapi.yaml"
 SCREENS = ROOT / "docs" / "plan" / "14-screens-catalogue.md"
+CATALOGUE = ROOT / "docs" / "plan" / "15-component-catalogue.md"
 PAIRS_MJS = ROOT / "tools" / "contrast" / "pairs.mjs"
 CONSTITUTION = ROOT / "CONSTITUTION.md"
 IMG_REL = "docs/design/E25/img"
@@ -790,6 +792,23 @@ T2_OMITTED = (
 POINTER = "**Hi-fi (E25-D04):**"
 
 
+A1_FIELD = "- **Tokens**: "
+
+
+def a1_applied(spec: str, problems: list[str]) -> bool:
+    """§12's A-1 is applied verbatim: the Tokens line after CMP-069's heading in `15` is its text."""
+    row = next((ln for ln in spec.splitlines() if ln.startswith("| A-1 ")), None)
+    prop = cells(row)[4] if row and len(cells(row)) > 4 else ""
+    want = prop[1:-1] if len(prop) > 1 and prop[0] == prop[-1] == '"' else ""
+    cat = CATALOGUE.read_text(encoding="utf-8") if CATALOGUE.exists() else ""
+    blk = section(cat, "### CMP-069 ", "\n### ")
+    got = next((ln[len(A1_FIELD) :] for ln in blk.splitlines() if ln.startswith(A1_FIELD)), None)
+    if not want or got != want:
+        problems.append("15 CMP-069 Tokens is not §12's A-1 proposed text verbatim")
+        return False
+    return True
+
+
 def window(text: str, i: int, j: int, span: int = 60) -> str:
     return text[max(0, i - span) : j + span]
 
@@ -902,6 +921,8 @@ def table_gates(spec: str, fl: dict[str, Any], problems: list[str]) -> dict[str,
                 f"14 {scr}: no `Hi-fi (E25-D04)` pointer line after the Wireframes line"
             )
     out["pointer_lines"] = screens.count(POINTER)
+    # A-1 as applied: the CMP-069 Tokens line in `15` equals §12's A-1 proposed text verbatim
+    out["a1_applied"] = a1_applied(spec, problems)
     # hygiene and rule ids
     outside_s0 = spec.replace(s0_of(spec), "")  # §0 alone may pin the page id and board ids
     for name, rx in FORBIDDEN.items():
@@ -1088,6 +1109,11 @@ MUTATIONS: tuple[tuple[str, str, str], ...] = (
         "timeout → CF-2 — ",
     ),
     ("a registration claim is wrong", "unregistered (E05)", "registered"),
+    (
+        "the applied A-1 drifts from §12",
+        "the dialog it links to keeps `font.lineheight.normal`.",
+        "the dialog it opens keeps `font.lineheight.normal`.",
+    ),
 )
 
 
