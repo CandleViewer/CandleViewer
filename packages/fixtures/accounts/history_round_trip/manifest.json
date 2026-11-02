@@ -18,7 +18,20 @@
               "orderType": "Market",
               "qty": "0.001",
               "orderStatus": "Filled",
-              "reduceOnly": false
+              "reduceOnly": false,
+              "price": "0",
+              "positionIdx": 0,
+              "avgPrice": "63110.00",
+              "leavesQty": "0",
+              "cumExecQty": "0.001",
+              "timeInForce": "IOC",
+              "stopOrderType": "UNKNOWN",
+              "triggerPrice": "0",
+              "takeProfit": "0",
+              "stopLoss": "63080.00",
+              "tpslMode": "Full",
+              "createdTime": "1792139400000",
+              "updatedTime": "1792139400003"
             },
             {
               "orderId": "00000000-0000-4000-8000-0000000000f5",
@@ -28,7 +41,20 @@
               "orderType": "Market",
               "qty": "0.001",
               "orderStatus": "Filled",
-              "reduceOnly": true
+              "reduceOnly": true,
+              "price": "0",
+              "positionIdx": 0,
+              "avgPrice": "63120.00",
+              "leavesQty": "0",
+              "cumExecQty": "0.001",
+              "timeInForce": "IOC",
+              "stopOrderType": "UNKNOWN",
+              "triggerPrice": "0",
+              "takeProfit": "0",
+              "stopLoss": "0",
+              "tpslMode": "",
+              "createdTime": "1792140000000",
+              "updatedTime": "1792140000004"
             }
           ]
         }
@@ -54,7 +80,11 @@
               "execFee": "0.0347105",
               "feeCurrency": "USDT",
               "execPnl": "0",
-              "isMaker": false
+              "isMaker": false,
+              "execTime": "1792139400002",
+              "execType": "Trade",
+              "feeRate": "0.00055",
+              "seq": 1000001
             },
             {
               "symbol": "BTCUSDT",
@@ -71,7 +101,11 @@
               "execFee": "0.034716",
               "feeCurrency": "USDT",
               "execPnl": "0.01",
-              "isMaker": false
+              "isMaker": false,
+              "execTime": "1792140000003",
+              "execType": "Trade",
+              "feeRate": "0.00055",
+              "seq": 1000002
             }
           ]
         }

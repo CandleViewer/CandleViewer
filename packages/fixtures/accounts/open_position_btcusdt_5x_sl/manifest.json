@@ -25,7 +25,9 @@
               "takeProfit": "0",
               "stopLoss": "63080.00",
               "trailingStop": "0",
-              "unrealisedPnl": "0"
+              "unrealisedPnl": "0",
+              "cumRealisedPnl": "0",
+              "updatedTime": "1792141140000"
             }
           ]
         }
