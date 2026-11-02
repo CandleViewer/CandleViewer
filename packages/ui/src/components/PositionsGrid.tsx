@@ -855,7 +855,7 @@ function TotalsRow<R extends PositionsGridRow>({
       ? []
       : [{ label: "rPnL today", ...pnl(totals.realisedToday) }]),
   ];
-  const count = ` · ${String(totals.count)} open`;
+  const count = `· ${String(totals.count)} open`;
   // The label spans the columns before the first money column it carries.
   const sums = parts.columns
     .map((id, i) => ({ id, c: i + lead }))
@@ -896,7 +896,8 @@ function TotalsRow<R extends PositionsGridRow>({
           echo: aside.map((part) => `${part.label} ${part.shown}`).join(" · "),
         })}
       >
-        {totals.label}
+        {/* The space is the cell's own text: at the span's edge, a name that trims each element's words drops it. */}
+        {`${totals.label} `}
         <span className="cv-positions-grid__totals-span">
           {parts.narrow ? count : `${count} · Exposure ${plain(totals.exposure).shown}`}
         </span>
