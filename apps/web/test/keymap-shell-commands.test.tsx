@@ -65,6 +65,7 @@ describe("BQ-7, D9: Ctrl+K is reserved for the palette", () => {
       expect.stringMatching(/^Command palette ?Ctrl\+K/),
       expect.stringMatching(/^Cancel in-progress drawing ?Esc/),
       expect.stringMatching(/^Clear ticket ?Esc/),
+      expect.stringMatching(/^Resume the tape or release the selection ?Esc/),
     ]);
   });
 });

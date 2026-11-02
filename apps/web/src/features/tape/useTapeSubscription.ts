@@ -4,6 +4,7 @@
 // (BQ-217): off, it subscribes to nothing. The panel (PR-B) reads coarse state with
 // `useTapeSnapshot(feed?.store)` and rows from `feed.ring` in `feed.onFrame`.
 import { useEffect, useState, useSyncExternalStore } from "react";
+import type { WsClient } from "../../lib/ws/api";
 import { getActiveClient, subscribeActiveClient } from "../../lib/ws/client/activeClient";
 import { TAPE_ENABLED } from "./flag";
 import { startTapeFeed, TAPE_SYMBOL, type TapeClock, type TapeFeedHandle } from "./model/tapeFeed";
@@ -14,6 +15,8 @@ export interface TapeSubscriptionOptions {
   readonly enabled?: boolean | undefined;
   readonly capacity?: number | undefined;
   readonly clock?: TapeClock | undefined;
+  /** A client other than the app's active one (the Playwright harness, the stories, tests). */
+  readonly client?: Pick<WsClient, "consume" | "setPane"> | undefined;
 }
 
 /** The running feed, or `null` while off, without a client, or for a symbol that is not valid. */
@@ -23,7 +26,8 @@ export function useTapeSubscription(
 ): TapeFeedHandle | null {
   const { paneId, capacity, clock } = options;
   const enabled = options.enabled ?? TAPE_ENABLED;
-  const client = useSyncExternalStore(subscribeActiveClient, getActiveClient, getActiveClient);
+  const active = useSyncExternalStore(subscribeActiveClient, getActiveClient, getActiveClient);
+  const client = options.client ?? active;
   const [feed, setFeed] = useState<TapeFeedHandle | null>(null);
 
   useEffect(() => {

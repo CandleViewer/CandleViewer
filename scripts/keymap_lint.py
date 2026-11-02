@@ -37,6 +37,7 @@ CONTEXTS = (
     "Admin",
     "Settings",
     "Auth",
+    "Tape",
 )
 MOD_ORDER = ("Ctrl", "Alt", "Shift")
 MOD_ALIASES = {
@@ -68,8 +69,10 @@ KEY_ALIASES = {
     "right": "→",
     "up": "↑",
     "down": "↓",
+    "home": "Home",
+    "end": "End",
 }
-NAMED_KEYS = {"Esc", "Del", "Space", "Enter", "Tab", "←", "→", "↑", "↓"}
+NAMED_KEYS = {"Esc", "Del", "Space", "Enter", "Tab", "←", "→", "↑", "↓", "Home", "End"}
 POINTER_WORDS = {"click", "drag", "wheel"}
 SCREEN_CONTEXT = {
     "SCR-001": "Auth",
