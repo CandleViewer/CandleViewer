@@ -4,7 +4,8 @@
 Standalone, offline, stdlib only; it executes no repo code and runs under `python3 -I`. It reads,
 AS TEXT at the pinned base (`git show`): the plan texts, the shipped announcer, ambient writer and
 preferences model, the merged design texts the spec cites and the E47 audit catalogue; the in-flight
-siblings (E47-D04, E47-D05, E47-D09) at their pinned PR heads and E47-D03 at its merge commit; and,
+siblings (E47-D04, E47-D05, E47-D06, E47-D08, E47-D09) at their pinned PR heads and E47-D03 at its
+merge commit; and,
 from the working tree, the spec `docs/design/E47/E47-D07.md`, its hand-off, the transcripts JSON and
 the pins file. Its form follows the E47-D05 tool (the same modes, anchored values, default-deny pins
 and mutations).
@@ -18,9 +19,11 @@ and mutations).
    pin (G-CITE); every "verbatim" copy string occurs on its cited line (G-QUOTE); every Old
    fragment of the hand-off's A-rows occurs verbatim on its cited line (G-AROW).
 3. **Gates** (BQ-15 first, then the form): G-PIN (the start line names every pin with its PR; each
-   commit holds its file; a merge pin is on origin/main; an in-flight branch that moved past its
-   pin FAILs), G-CLASSES (one class per taxonomy row from the five of §3.1, ranks only on assertive
-   rows; §3.2 opens with `05`:152's six verbatim, each with an assertive T-row, the rest PROPOSED;
+   commit holds its file; a merge pin is on origin/main; an in-flight branch on origin that moved
+   past its pin FAILs, and so does an in-flight branch or origin/main that is not fetched),
+   G-CLASSES (one class per taxonomy row from the five of §3.1, ranks only on assertive rows; §3.2
+   opens with `05`:152's six verbatim, each with an assertive T-row, the rest PROPOSED;
+   every assertive T-row in exactly one §3.2 row;
    the fixed panel class is the safety group plus the auto-flatten (BQ-2); every announced row
    in exactly one panel class whose default matches its class), G-COPY (closed
    slots, no glyph sign, no secret slot, every Words id in the deck, the reason map covering `24`'s
@@ -28,7 +31,7 @@ and mutations).
    lines; per field at most one write per cadence, the latest value; every assertive input spoken
    once or collapsed into its own order's later state; ranks hold; assertive lines identical in
    every setting cell; §10's tables equal the transcripts), G-LABELS (every handed label once,
-   verbatim at its source, worded; an unpinned sibling's label names no source), G-FIND (§11 holds exactly CAT's E47-D07 rows, each at its CAT
+   verbatim at its pinned source, worded), G-FIND (§11 holds exactly CAT's E47-D07 rows, each at its CAT
    line, with a disposition; CAT:48's count equals the screen-mapped rows), G-T2 (the T2 paragraph
    once in §8.2 with every standing-gate element; every §0 / §4 / §8 line naming T2 cites §8.2; the
    hand-off's component line names CMP-079 and CMP-019), G-COMP, G-PUBLIC (no URL, host, local
@@ -123,7 +126,26 @@ PINS = (
         5418,
         False,
     ),
+    Pin(
+        "D06",
+        "E47-D06",
+        "ff8d3d610",
+        "docs/design/E47/E47-D06.md",
+        "design/e47-canvas-a11y",
+        5443,
+        False,
+    ),
+    Pin(
+        "D08",
+        "E47-D08",
+        "307dffee2",
+        "docs/design/E47/E47-D08.md",
+        "design/e47-motion-reduced-motion",
+        5444,
+        False,
+    ),
 )
+PIN = {p.key: p for p in PINS}
 
 PLAN = {
     "05": "docs/plan/05-accessibility-standard.md",
@@ -151,10 +173,7 @@ CITE_FILES = {
     "DS": ".claude/rules/32-design-specs.md",
     "CAT": "docs/plan/a11y/47-audit-catalogue.md",
     "README": "docs/design/README.md",
-    "D03": PINS[0].rel,
-    "D04": PINS[1].rel,
-    "D05": PINS[2].rel,
-    "D09": PINS[3].rel,
+    **{p.key: p.rel for p in PINS},
 }
 FILE_BASE = {p.rel: p.sha for p in PINS}
 
@@ -201,8 +220,6 @@ SLOTS = frozenset(
         "amount",
         "pnl_word",
         "cvd_word",
-        "trades",
-        "net",
         "label",
         "minutes",
         "seconds",
@@ -234,8 +251,12 @@ HANDED = (
     ("D09 W-15", "D09:320"),
     ("D09 W-21", "D09:326"),
     ("D09 W-22", "D09:327"),
-    ("D06 W-3", ""),  # E47-D06 has no PR yet: "—" until it is pinned at its PR head
+    ("D06 W-3", "D06:345"),  # E47-D06's range label, handed by its BQ-4
     ("D08 BQ-9", "D03E05:232–233"),  # the words E05-D03 ruled, handed by E47-D08's BQ-9
+    ("D08 W-4", "D08:324"),  # E47-D08's follow-live and tape-pause words ("words E47-D07")
+    ("D08 W-8", "D08:328"),
+    ("D08 W-9", "D08:329"),
+    ("D08 W-10", "D08:330"),
 )
 CAT_COUNT_LINE = 48  # CAT:48, "| E47-D07 | 34 |"
 T2_LEAD = "**The T2 paragraph"
@@ -795,12 +816,25 @@ def sim_values(t: Texts) -> Values:
         spans += [max(cad, POLITE_SHARE * said[-1])] if said else []
         out[f"SIM:{sid}.polite-share"] = str(round(100 * sum(said) / max(1, sum(spans))))
         if sid == "fast":
-            minutes = int(str(sc["duration_ms"])) / 60000
+            dur = int(str(sc["duration_ms"]))
+            minutes = dur / 60000
+            inside = [ln for ln in pol if ln.t < dur]
+            flush = [ln for ln in pol if ln.t >= dur]
+            # the steady state is the stream's own minute; the flush after the stream ends is apart
+            out["SIM:fast.composites"] = str(len(inside))
+            out["SIM:fast.flush"] = str(len(flush))
+            out["SIM:fast.flush-at"] = f"{flush[0].t / 1000:.3f}" if flush else "none"
             for cell, cs in CELLS.items():
                 c = {**settings, "reduce": False, **cs}
                 polite = [ln for ln in replay(t.spec, doc, sc, c).lines if ln.channel == "polite"]
-                n = sum(len(ln.rows.split()) for ln in polite)
+                n = sum(len(ln.rows.split()) for ln in polite if ln.t < dur)
                 out[f"SIM:cell.{cell}"] = str(round(n / minutes))
+            for cad_s in (1, 2, 5):
+                c = {**settings, "cadence_ms": cad_s * 1000}
+                ts = [ln.t for ln in replay(t.spec, doc, sc, c).lines if ln.channel == "polite"]
+                gaps = sorted(b - a for a, b in itertools.pairwise(ts))
+                med = gaps[len(gaps) // 2] if gaps else 0
+                out[f"SIM:fast.spacing-{cad_s}s"] = f"{med / 1000:.2f}"
     return out
 
 
@@ -1090,6 +1124,24 @@ MUTATIONS: tuple[Mutation, ...] = (
         "An announcement never moves focus",
         "An announcement rarely moves focus",
     ),
+    _m(
+        "M-32",
+        "unpin E47-D06 in the start line",
+        "G-PIN",
+        "spec",
+        "",
+        "`ff8d3d610` (E47-D06, PR #5443)",
+        "`ff8d3d610` (E47-D06, #1305)",
+    ),
+    _m(
+        "M-33",
+        "drop T-20 from §3.2's rows",
+        "G-CLASSES",
+        "spec",
+        "### 3.2",
+        "| T-20 ",
+        "| T-18 ",
+    ),
 )
 
 
@@ -1239,15 +1291,17 @@ def g_pin(t: Texts) -> list[Finding]:
         merged = git_ok("merge-base", "--is-ancestor", p.sha, "origin/main")
         if p.merged and not merged:
             bad.append(f"{p.key}'s merge pin {p.sha} is not on origin/main")
-        for ref in (f"refs/remotes/origin/{p.branch}", f"refs/heads/{p.branch}"):
-            if not p.branch:
-                break
-            tip = git("rev-parse", "--verify", "-q", ref, check=False).strip()
-            if tip and not tip.startswith(p.sha) and not merged:
-                bad.append(f"{p.key}'s branch moved past {p.sha}; re-pin (R6)")
-                break
-    if "E47-D06 (#1305) is in flight" not in line:
-        bad.append("the start line does not name E47-D06 as in flight")
+        if not p.branch or merged:
+            continue
+        # the pin is the PR head of record, so the remote-tracking branch is the one that counts
+        # (a local branch may hold unpushed work); absent, the check FAILs, never skips
+        tip = git("rev-parse", "--verify", "-q", f"refs/remotes/origin/{p.branch}", check=False)
+        if not tip.strip():
+            bad.append(f"{p.key}'s branch origin/{p.branch} is not fetched; fetch it (R6)")
+        elif not tip.strip().startswith(p.sha):
+            bad.append(f"{p.key}'s branch moved past {p.sha}; re-pin (R6)")
+    if not git("rev-parse", "--verify", "-q", "refs/remotes/origin/main", check=False).strip():
+        bad.append("origin/main is not fetched; the merge pins cannot be checked")
     return [("G-PIN", b, "spec", region) for b in bad]
 
 
@@ -1283,6 +1337,10 @@ def g_classes(t: Texts) -> list[Finding]:
             bad.append((f"{r[0]!r} has no assertive T-row", r32))
         if i >= len(SIX) and not r[3].startswith("PROPOSED"):
             bad.append((f"{r[0]!r} is an addition not marked PROPOSED", r32))
+    listed = [x for r in aset for x in re.findall(r"T-\d+", r[2])]
+    for tr in tax.values():
+        if tr.cls == CLASSES[0] and listed.count(tr.tid) != 1:
+            bad.append((f"{tr.tid} is assertive but in {listed.count(tr.tid)} §3.2 rows", r32))
     panel = {r[0]: r for r in rows(t.spec, "### 8.1", 4)}
     seen: dict[str, str] = {}
     for name, r in panel.items():
@@ -1463,13 +1521,9 @@ def g_labels(t: Texts) -> list[Finding]:
         r = got.get(label)
         if r is None:
             continue
-        if not cite:  # an unpinned sibling: no line to check until its PR opens
-            if r[2] != "—" or not quoted(r[1]):
-                bad.append(f"{label} is unpinned but names a source")
-        else:
-            src = " ".join(cited_text(cite).split("\n")).replace("\\|", "|")
-            if r[2] != cite or not quoted(r[1]) or any(q not in src for q in quoted(r[1])):
-                bad.append(f"{label} is not verbatim at {cite}")
+        src = " ".join(cited_text(cite).split("\n")).replace("\\|", "|")
+        if r[2] != cite or not quoted(r[1]) or any(q not in src for q in quoted(r[1])):
+            bad.append(f"{label} is not verbatim at {cite}")
         if not r[3] or r[4] not in CLASSES:
             bad.append(f"{label} is not worded with a class")
     return [("G-LABELS", b, "spec", region) for b in bad]
