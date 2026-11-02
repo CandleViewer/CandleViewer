@@ -3264,17 +3264,17 @@ This band was added during the cross-document traceability reconciliation (see `
 
 ## 8. Summary tallies
 
-| Band                                                               | Count                                                        |
-| ------------------------------------------------------------------ | ------------------------------------------------------------ |
-| Atoms (CMP-001..039)                                               | 39                                                           |
-| Molecules (CMP-040..069)                                           | 30                                                           |
-| Organisms — chrome & nav (CMP-070..099)                            | 30                                                           |
-| Trading-specific (CMP-100..139)                                    | 40                                                           |
-| Rule engine & node-graph (CMP-140..159)                            | 20                                                           |
-| Watchlist/alerts/journal/replay/audit (CMP-160..179)               | 20                                                           |
-| Chart-engine primitives (CMP-180..199)                             | 20                                                           |
-| Auth / shell-surface / chart-chrome / editor-chrome (CMP-200..253) | 48                                                           |
-| **Total catalogued components**                                    | **247 — the five addenda below, E08-D04 through to E15-D11** |
+| Band                                                               | Count                                                       |
+| ------------------------------------------------------------------ | ----------------------------------------------------------- |
+| Atoms (CMP-001..039)                                               | 39                                                          |
+| Molecules (CMP-040..069)                                           | 30                                                          |
+| Organisms — chrome & nav (CMP-070..099)                            | 30                                                          |
+| Trading-specific (CMP-100..139)                                    | 40                                                          |
+| Rule engine & node-graph (CMP-140..159)                            | 20                                                          |
+| Watchlist/alerts/journal/replay/audit (CMP-160..179)               | 20                                                          |
+| Chart-engine primitives (CMP-180..199)                             | 20                                                          |
+| Auth / shell-surface / chart-chrome / editor-chrome (CMP-200..256) | 51                                                          |
+| **Total catalogued components**                                    | **250 — the six addenda below, E08-D04 through to E28-D03** |
 
 **Addendum (E08-D04, 2026-09-27):** CMP-239 FreshnessMarker was added as the design-system contribution for the
 data-confidence vocabulary (`docs/design/E08/E08-D01.md`) — a genuinely new cross-cutting atom (per-value
@@ -3291,6 +3291,8 @@ IDs 241 and 242 stay unassigned (E13-D02's G-2 / G-3 propose them; not catalogue
 **Addendum (E15-D13, #367):** CMP-249 MoveModeBar, CMP-250 MinimisedPanelTray, CMP-251 DockTabGroup and CMP-252 WorkspaceTabStrip are catalogued for the dock band (#2701 ledger addendum A row A39): each exists in merged, ruled hi-fi (E15-D03 CR-6; E15-D04 D04-D-8, §7, P6) with no catalogue home, and each composes an existing primitive rather than duplicating one (CMP-251 and CMP-252 compose CMP-042's tablist; no second tablist exists), so band 7A is extended to CMP-252 and 241–242 and 244–247 stay unused. No badge id is added: the sync badge is CMP-011 `interactive`, the environment stays CMP-075 and the Restored and Reduced chips are CMP-011 `neutral`. Future changes still require the same rationale.
 
 **Addendum (E15-D11, #365):** CMP-253 MultiChartGrid is catalogued for SCR-049 (#2701 ledger addendum A row A46): the cell matrix, its dividers, the composed cell row, the active-cell marker, the one-cell switcher and maximise exist in ruled hi-fi (`docs/design/specs/e15-multichart-grid.md`) with no catalogue home. It composes CMP-080, CMP-082, CMP-083, CMP-042, CMP-011 and CMP-075 rather than duplicating one, and the maximised cell's CMP-229 takes its T2 form through CMP-079 with CMP-019's `lock` badge; CMP-081 in a cell mode and a CMP-221 `cell` variant are rejected in the entry. Band 7A is extended to CMP-253, and 241–242 and 244–247 stay unused. Future changes still require the same rationale.
+
+**Addendum (E28-D03, #839):** CMP-254 SymbolMatrixCell, CMP-255 ReadinessStrip and CMP-256 OverrideMarker are catalogued, PROPOSED, as E28-D03's design-system contributions for SCR-133, SCR-062 and the SCR-061 preview (`docs/design/E28/E28-D03.md` §9.1–§9.3); the ids are the next free ones after CMP-253.
 
 **Decision — final count was locked at 238, not 120–180 (supersedes the brief's range for this deliverable).** The count was 199 until the cross-document traceability reconciliation (`18-traceability-matrix.md`), which found 39 components composed by `14-screens-catalogue.md` that had no catalogue entry; rather than silently dropping those references or overloading existing IDs, band 7A was opened at CMP-200..238. 238 is the number backlog tickets are generated from. Rationale for not consolidating: the trading-specific, chart-engine and band-7A entries intentionally enumerate each node-graph node type, each chart primitive, each piece of chart/editor chrome and each heuristic-detector chip as its own first-class CMP-* entry (per `05-accessibility-standard.md` §11.3's requirement that trading-specific components get the same first-class a11y/test treatment as generic atoms — collapsing them would under-specify their individual contracts, e.g. CMP-147..151's distinct keyboard-connect and a11y-label behaviours per node type, or CMP-227 EstimatedBadge's catalogue-level enforcement test).
 
