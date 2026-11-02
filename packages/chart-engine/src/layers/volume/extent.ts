@@ -1,8 +1,8 @@
-// VolumeExtentSource (E12-S08 pre-stage, E12-D06 §12; plan BQ-6): the autoscale source of a
-// volume pane, in the `PriceExtentSource` shape the `AutoScaler` reads per pane. Linear only:
-// the range is [0, the visible maximum] in ticks (the minimum is forced to 0, so the columns
-// stand on the pane bottom); the pane's margins (top ~8 %, bottom 0) and lock / unlock are the
-// scaler's. Unavailable bars do not count. It reads the volume ring's int words, so what it
+// VolumeExtentSource (E12-S08, E12-D06 §12; BQ-6): the autoscale source of a volume pane, in the
+// `PriceExtentSource` shape the `AutoScaler` reads per pane. Linear only: the range is exactly
+// [0, the visible maximum] in ticks (the minimum is forced to 0, so the columns stand on the pane
+// bottom). NO top margin: the pane's `marginTop` / `marginBottom` are 0 (`VOLUME_PANE_MARGINS`,
+// PR 2 sets them); lock / unlock are the scaler's. Unavailable bars do not count. It reads the volume ring's int words, so what it
 // fits is what is drawn. `version` is bumped by `bump()` (the series calls it on every sync),
 // the key the scaler refits on. No allocation per call.
 import type { PriceExtentSource } from "../../viewport/autoscale.js";
@@ -30,7 +30,7 @@ export class VolumeExtentSource implements PriceExtentSource {
     for (let i = a; i < b; i += 1) {
       const w = ((r.head + i) & mask) * CANDLE_STRIDE;
       if (((ints[w + 4] as number) & VOLUME_UNAVAILABLE) !== 0) continue;
-      const v = ints[w + 3] as number;
+      const v = ints[w] as number;
       if (v > max) max = v;
     }
     if (max < 0) return false;

@@ -20,7 +20,7 @@ export class VolumeRingBench {
 
   constructor(size: number) {
     this.store = new BarStore({ maxBars: size });
-    this.series = new VolumeSeries({
+    this.series = new VolumeSeries(0.25, {
       patch: (_: string, r: MutationRange) => void (this.patches += r.to - r.from > 0 ? 1 : 0),
     });
     this.series.ring.nodes.push("series.volume.body");
