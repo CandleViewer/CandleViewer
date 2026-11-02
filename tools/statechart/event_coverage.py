@@ -15,12 +15,15 @@ Resolution rules (conservative, offline, deterministic):
 * wrappers: a function forwarding one of its parameters as the event of a send
   (``{"type": event, **p}``), directly or via another wrapper, is detected;
   its call sites with a literal event are checked against the machine the
-  wrapper sends to.
+  wrapper sends to. A wrapper is keyed by its qualified name and a call matches
+  it only through the caller's imports, the defining module, ``self`` on the
+  defining class or a subclass, or a reviewed ``PORT_WRAPPERS`` entry for an
+  injected port object; never by bare function name (#4730).
 * event name: a string literal, a ``{"type": "<lit>"}`` dict, or an
   ``Event("<lit>")`` / ``Event(type="<lit>")`` call. Non-literal events cannot
   be checked statically and are skipped.
 
-Exit 0 = clean, 1 = findings, 2 = usage error.
+Exit 0 = clean, 1 = findings, 2 = usage error or a stale ``PORT_WRAPPERS`` entry.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ import argparse
 import ast
 import json
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -102,11 +106,6 @@ def _event_name(node: ast.expr) -> str | None:
     return _str(inner) if inner is not None else None
 
 
-def _callee(call: ast.Call) -> str | None:
-    fn = call.func
-    return fn.id if isinstance(fn, ast.Name) else getattr(fn, "attr", None)
-
-
 def _is_gateway_send(call: ast.Call) -> bool:
     return (
         isinstance(call.func, ast.Attribute)
@@ -149,83 +148,297 @@ def _params(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
     return names[1:] if names and names[0] in ("self", "cls") else names
 
 
-def _wrappers(trees: dict[str, ast.AST]) -> dict[str, tuple[int, str | None]]:
+def module_name(path: Path, root: Path) -> str:
+    """Dotted module name of ``path`` with ``root``'s parent on ``sys.path``."""
+    parts = list(path.relative_to(root.parent).with_suffix("").parts)
+    return ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
+
+
+#: Reviewed calls on an injected port object that reach a wrapper method:
+#: ``{(caller module, receiver source, method): wrapper qualified name}``. A call on any
+#: other object (``obj.f(...)``) is never resolved, so an unrelated ``x.record(a, b, "LIT")``
+#: is no event site (#4730). An entry whose caller module is scanned must name a found
+#: wrapper and its call must still occur in that module, else the scan fails (exit 2), so
+#: the list cannot go stale silently.
+PORT_WRAPPERS: Mapping[tuple[str, str, str], str] = {
+    ("candleviewer.api.sessions", "chart", "record"): (
+        "candleviewer.auth.session_chart.SessionChart.record"
+    ),
+    ("candleviewer.auth.step_up", "self._chart", "record"): (
+        "candleviewer.auth.session_chart.SessionChart.record"
+    ),
+    ("candleviewer.oms.exits", "self._d.machines", "command"): (
+        "candleviewer.oms.order_machine.OrderMachines.command"
+    ),
+    ("candleviewer.oms.positions", "self._orders", "push_protection"): (
+        "candleviewer.oms.order_machine.OrderMachines.push_protection"
+    ),
+    ("candleviewer.oms.reconciler", "self._p.machines", "command"): (
+        "candleviewer.oms.order_machine.OrderMachines.command"
+    ),
+    ("candleviewer.oms.reconciler", "self._p.machines", "push"): (
+        "candleviewer.oms.order_machine.OrderMachines.push"
+    ),
+    ("candleviewer.oms.stream_push", "self._target", "push"): (
+        "candleviewer.oms.order_machine.OrderMachines.push"
+    ),
+    ("candleviewer.oms.submit", "self._machines", "command"): (
+        "candleviewer.oms.order_machine.OrderMachines.command"
+    ),
+}
+
+_Fn = ast.FunctionDef | ast.AsyncFunctionDef
+
+
+@dataclass
+class _Module:
+    """One parsed module, the names its imports bind (anywhere in the file,
+    ``TYPE_CHECKING`` blocks and function-local imports included), its classes and
+    its functions keyed by qualified name (``pkg.mod.func``, ``pkg.mod.Class.meth``)."""
+
+    name: str
+    path: str
+    tree: ast.AST
+    is_package: bool = False
+
+    def __post_init__(self) -> None:
+        self.regs = _registrations(self.tree)
+        #: local name -> dotted target it is bound to by an import
+        self.aliases: dict[str, str] = {}
+        pkg = self.name if self.is_package else self.name.rpartition(".")[0]
+        for n in ast.walk(self.tree):
+            if isinstance(n, ast.Import):
+                for a in n.names:
+                    if a.asname:
+                        self.aliases[a.asname] = a.name
+                    else:
+                        head = a.name.split(".", 1)[0]
+                        self.aliases[head] = head
+            elif isinstance(n, ast.ImportFrom):
+                base = n.module or ""
+                if n.level:
+                    parts = pkg.split(".") if pkg else []
+                    up = parts[: len(parts) - n.level + 1]
+                    base = ".".join([*up, *([n.module] if n.module else [])])
+                for a in n.names:
+                    self.aliases[a.asname or a.name] = (
+                        f"{base}.{a.name}" if base else a.name
+                    )
+        #: class qualified name -> its base-class expressions
+        self.class_bases: dict[str, list[ast.expr]] = {}
+        #: (function qualified name, node, enclosing class qualified name or None)
+        self.defs: list[tuple[str, _Fn, str | None]] = []
+        #: (call, enclosing class qualified name or None) for every call in the file
+        self.calls: list[tuple[ast.Call, str | None]] = []
+        self._index(self.tree, None, None)
+
+    def _index(self, node: ast.AST, cls: str | None, owner: str | None) -> None:
+        """``cls``: the class ``self`` refers to here; ``owner``: the class whose
+        body directly holds ``node`` (its functions are that class's methods)."""
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ClassDef):
+                qual = f"{cls or self.name}.{child.name}"
+                self.class_bases[qual] = list(child.bases)
+                self._index(child, qual, qual)
+                continue
+            if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
+                self.defs.append((f"{owner or self.name}.{child.name}", child, cls))
+            elif isinstance(child, ast.Call):
+                self.calls.append((child, cls))
+            self._index(child, cls, None)
+
+    def dotted(self, node: ast.expr) -> str | None:
+        if isinstance(node, ast.Name):
+            if node.id in self.aliases:
+                return self.aliases[node.id]
+            local = f"{self.name}.{node.id}"
+            return local if local in self.class_bases else None
+        if isinstance(node, ast.Attribute):
+            head = self.dotted(node.value)
+            return f"{head}.{node.attr}" if head is not None else None
+        return None
+
+
+@dataclass(frozen=True)
+class _Index:
+    """Package-wide class hierarchy plus the reviewed injected-port calls."""
+
+    bases: Mapping[str, tuple[str, ...]]
+    ports: Mapping[tuple[str, str, str], str]
+
+    @classmethod
+    def of(
+        cls, mods: list[_Module], ports: Mapping[tuple[str, str, str], str]
+    ) -> _Index:
+        bases: dict[str, tuple[str, ...]] = {}
+        for m in mods:
+            for qual, exprs in m.class_bases.items():
+                bases[qual] = tuple(b for b in map(m.dotted, exprs) if b is not None)
+        return cls(bases, ports)
+
+    def mro(self, qual: str) -> list[str]:
+        out: list[str] = []
+        todo = [qual]
+        while todo:
+            q = todo.pop(0)
+            if q not in out:
+                out.append(q)
+                todo.extend(self.bases.get(q, ()))
+        return out
+
+    def candidates(self, mod: _Module, call: ast.Call, cls: str | None) -> list[str]:
+        """Qualified names the callee resolves to; every rule is exact.
+
+        A bare ``f(...)`` is the import that binds ``f``, else this module's own
+        ``f``; ``mod.f(...)`` / ``Class.f(...)`` resolve through the imports and
+        local classes; ``self.f(...)`` is ``f`` on the enclosing class or a base
+        class. Any other ``obj.f(...)`` resolves only through ``PORT_WRAPPERS``.
+        """
+        fn = call.func
+        if isinstance(fn, ast.Name):
+            return [mod.aliases.get(fn.id, f"{mod.name}.{fn.id}")]
+        if not isinstance(fn, ast.Attribute):
+            return []
+        target = mod.dotted(fn.value)
+        if target is not None:
+            return [f"{target}.{fn.attr}"]
+        if isinstance(fn.value, ast.Name) and fn.value.id in ("self", "cls"):
+            return [f"{c}.{fn.attr}" for c in self.mro(cls)] if cls else []
+        port = self.ports.get((mod.name, ast.unparse(fn.value), fn.attr))
+        return [port] if port is not None else []
+
+
+_Found = dict[str, tuple[int, str | None]]
+
+
+def _lookup(
+    mod: _Module, call: ast.Call, cls: str | None, found: _Found, idx: _Index
+) -> tuple[int, str | None] | None:
+    for qual in idx.candidates(mod, call, cls):
+        hit = found.get(qual)
+        if hit is not None and len(call.args) > hit[0]:
+            return hit
+    return None
+
+
+def _wrappers(mods: list[_Module], idx: _Index) -> _Found:
     """Functions forwarding a *parameter* as the event of a gateway send (directly
-    or via another wrapper): ``{name: (call-arg index of the event, machine)}``."""
-    found: dict[str, tuple[int, str | None]] = {}
+    or via another wrapper), keyed by qualified name (``pkg.mod.func`` or
+    ``pkg.mod.Class.meth``): ``{qualified name: (call-arg index of the event,
+    machine)}``. A wrapper is only ever matched through its defining module or
+    class, so an unrelated function that shares its bare name (a private
+    ``_record`` elsewhere) is never one (#4730)."""
+    found: _Found = {}
     changed = True
     while changed:
         changed = False
-        for tree in trees.values():
-            regs = _registrations(tree)
-            for fn in ast.walk(tree):
-                if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+        for mod in mods:
+            for qual, fn, cls in mod.defs:
+                if qual in found:
                     continue
                 params = _params(fn)
                 for c in ast.walk(fn):
                     if not isinstance(c, ast.Call):
                         continue
-                    callee = _callee(c)
                     if _is_gateway_send(c):
-                        ev, machine = (
-                            _event_node(c.args[1]),
-                            _machine_for(c.args[0], regs),
-                        )
-                    elif callee in found and len(c.args) > found[callee][0]:
-                        idx, machine = found[callee]
-                        ev = c.args[idx]
+                        ev = _event_node(c.args[1])
+                        machine = _machine_for(c.args[0], mod.regs)
                     else:
-                        continue
-                    if (
-                        isinstance(ev, ast.Name)
-                        and ev.id in params
-                        and fn.name not in found
-                    ):
-                        found[fn.name] = (params.index(ev.id), machine)
+                        hit = _lookup(mod, c, cls, found, idx)
+                        if hit is None:
+                            continue
+                        ev, machine = c.args[hit[0]], hit[1]
+                    if isinstance(ev, ast.Name) and ev.id in params:
+                        found[qual] = (params.index(ev.id), machine)
                         changed = True
+                        break
     return found
 
 
-def _sites(
-    tree: ast.AST, path: str, wrappers: dict[str, tuple[int, str | None]]
-) -> list[Site]:
-    regs = _registrations(tree)
+def _sites(mod: _Module, wrappers: _Found, idx: _Index) -> list[Site]:
     sites: list[Site] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
+    for node, cls in mod.calls:
         if _is_gateway_send(node):
             event = _event_name(node.args[1])
             if event is not None:
                 sites.append(
-                    Site(path, node.lineno, _machine_for(node.args[0], regs), event)
+                    Site(
+                        mod.path,
+                        node.lineno,
+                        _machine_for(node.args[0], mod.regs),
+                        event,
+                    )
                 )
             continue
-        callee = _callee(node)
-        if callee in wrappers:
-            idx, machine = wrappers[callee]
-            if len(node.args) > idx and _str(node.args[idx]) is not None:
-                sites.append(
-                    Site(path, node.lineno, machine, str(_str(node.args[idx])))
-                )
+        hit = _lookup(mod, node, cls, wrappers, idx)
+        if hit is not None:
+            i, machine = hit
+            event = _str(node.args[i])
+            if event is not None:
+                sites.append(Site(mod.path, node.lineno, machine, event))
     return sites
 
 
-def scan_source(source: str, path: str) -> list[Site]:
-    tree = ast.parse(source, filename=path)
-    return _sites(tree, path, _wrappers({path: tree}))
+class StalePortError(ValueError):
+    """A ``PORT_WRAPPERS`` entry for a scanned module names no wrapper or matches no call."""
 
 
-def scan_tree(root: Path = DEFAULT_SCAN) -> list[Site]:
-    trees: dict[str, ast.AST] = {}
+def _scan(mods: list[_Module], ports: Mapping[tuple[str, str, str], str]) -> list[Site]:
+    idx = _Index.of(mods, ports)
+    wrappers = _wrappers(mods, idx)
+    scanned = {m.name for m in mods}
+    stale = sorted(
+        f"{k[0]}: {k[1]}.{k[2]} -> {v}"
+        for k, v in ports.items()
+        if k[0] in scanned and v not in wrappers
+    )
+    if stale:
+        raise StalePortError(f"PORT_WRAPPERS entries name no wrapper: {stale}")
+    seen = {
+        (m.name, ast.unparse(c.func.value), c.func.attr)
+        for m in mods
+        for c, _ in m.calls
+        if isinstance(c.func, ast.Attribute)
+    }
+    unmatched = sorted(
+        f"{k[0]}: {k[1]}.{k[2]} -> {v}"
+        for k, v in ports.items()
+        if k[0] in scanned and k not in seen
+    )
+    if unmatched:
+        raise StalePortError(f"PORT_WRAPPERS entries match no call: {unmatched}")
+    return [s for mod in mods for s in _sites(mod, wrappers, idx)]
+
+
+def scan_source(
+    source: str, path: str, *, ports: Mapping[tuple[str, str, str], str] = PORT_WRAPPERS
+) -> list[Site]:
+    mod = _Module(
+        Path(path).with_suffix("").as_posix().replace("/", "."),
+        path,
+        ast.parse(source, filename=path),
+    )
+    return _scan([mod], ports)
+
+
+def scan_tree(
+    root: Path = DEFAULT_SCAN,
+    *,
+    ports: Mapping[tuple[str, str, str], str] = PORT_WRAPPERS,
+) -> list[Site]:
+    mods: list[_Module] = []
     for p in sorted(root.rglob("*.py")):
         if p.name in EXCLUDE_NAMES or "__pycache__" in p.parts:
             continue
-        trees[p.as_posix()] = ast.parse(
-            p.read_text(encoding="utf-8"), filename=p.as_posix()
+        mods.append(
+            _Module(
+                module_name(p, root),
+                p.as_posix(),
+                ast.parse(p.read_text(encoding="utf-8"), filename=p.as_posix()),
+                is_package=p.name == "__init__.py",
+            )
         )
-    wrappers = _wrappers(trees)
-    return [s for path, t in trees.items() for s in _sites(t, path, wrappers)]
+    return _scan(mods, ports)
 
 
 def check(sites: list[Site], descriptors: dict[str, set[str]]) -> list[str]:
@@ -257,7 +470,11 @@ def main(argv: list[str] | None = None) -> int:
         print("event-coverage: machines/scan directory missing", file=sys.stderr)
         return 2
     descriptors = load_descriptors(args.machines)
-    sites = scan_tree(args.scan)
+    try:
+        sites = scan_tree(args.scan)
+    except StalePortError as exc:
+        print(f"event-coverage: {exc}", file=sys.stderr)
+        return 2
     findings = check(sites, descriptors)
     for f in findings:
         print(f"event-coverage: {f}")
