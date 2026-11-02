@@ -15,7 +15,8 @@
 //   --bars <n>           fixture bars (default 100000 = the M0 fixture; smaller = smoke only)
 //   --duration-ms <n>    per-repetition logical duration (default 20000)
 //   --soak-ms <n>        B10 duration (default 1800000 = 30 min)
-//   --flagset <name>     electron only: default | tuned (see electron/flagsets.cjs)
+//   --flagset <name>     electron: default | tuned (see electron/flagsets.cjs);
+//                        chromium: pinned-k01 (default, software GL) | hardware-gl (matrix-lib.mjs)
 //   --cotenancy          label the run as the co-tenancy variant (dev stack running)
 //   --out-dir <dir>      default <repo>/reports/matrix
 //   --dry-run            no browser: validate B5 composition + B7 logic, emit the manifest
@@ -35,7 +36,6 @@ import {
   assertDescriptorComplete,
   missingManifestFields,
 } from "../machine.mjs";
-import { PINNED_CHROMIUM_FLAGS } from "../report.mjs";
 import { generateM0Fixture, hashFixture } from "../fixtures/index.mjs";
 import { SceneB5, B5_GATES } from "./scenes/b5-combined.mjs";
 import { encodeMessage, StormStores, evaluateStorm, STORM } from "./scenes/b7-storm.mjs";
@@ -47,6 +47,7 @@ import {
   RUNTIMES,
   REPORT_SCHEMA,
   DONE_GRACE_MS,
+  chromiumFlagSet,
   cellsComplete,
   summariseCell,
 } from "./matrix-lib.mjs";
@@ -218,17 +219,16 @@ export async function dryRunChecks({ seed, bars }) {
   };
 }
 
-/** The pinned set, plus precise heap readings for the engine page (its memory metric, M3). */
-const chromiumFlags = (args) => [
-  ...PINNED_CHROMIUM_FLAGS,
-  ...(args.page === "engine" ? ENGINE_CHROMIUM_FLAGS : []),
-];
+/** The chosen flag set, plus precise heap readings for the engine page (its memory metric, M3). */
+const chromiumFlags = (args) =>
+  chromiumFlagSet(args.flagset, args.page === "engine" ? ENGINE_CHROMIUM_FLAGS : []);
 
 async function launchChromium(url, args) {
   const { chromium } = desktopRequire("playwright");
+  const flagSet = chromiumFlags(args);
   const browser = await chromium.launch({
     headless: args.headed !== "true",
-    args: chromiumFlags(args),
+    args: flagSet.flags,
   });
   const page = await browser.newPage({ viewport: { width: 1700, height: 1000 } });
   page.on("pageerror", (e) => console.error("[page]", e.message));
@@ -238,10 +238,7 @@ async function launchChromium(url, args) {
       chromium: browser.version(),
       playwright: desktopRequire("playwright/package.json").version,
     },
-    flagSet: {
-      name: "pinned-K01 (software GL; override with a real-GPU set on the reference machine, see README)",
-      flags: chromiumFlags(args),
-    },
+    flagSet,
     memNames: ["chrome", "headless_shell", "chrome-headless-shell"],
     close: () => browser.close(),
   };

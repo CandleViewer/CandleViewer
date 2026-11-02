@@ -2,6 +2,52 @@
 // compare-matrix.mjs and the unit tests.
 import { medianOfP95, MIN_ADMISSIBLE_REPETITIONS } from "../stats.mjs";
 import { assertDescriptorComplete, missingManifestFields } from "../machine.mjs";
+import { PINNED_CHROMIUM_FLAGS } from "../report.mjs";
+
+/**
+ * E11-T06 PR-2 (#449, ruling 6578234464 BQ-01): the headless-Chromium flag sets, chosen by
+ * `run-matrix.mjs --flagset` (the CI lane passes `hardware-gl` on the gpu route only).
+ *  - `pinned-k01`  the K01 software-GL set (ANGLE on SwiftShader): the hosted fallback, default.
+ *  - `hardware-gl` the same set with the SwiftShader backend swapped for ANGLE on the host's GL
+ *    driver (`--use-angle=gl`) plus `--enable-gpu-rasterization`, the one portable flag of
+ *    apps/desktop/GPU_FLAGS.md (its Windows-only occlusion switch does not apply on a Linux
+ *    runner). `--ignore-gpu-blocklist` is left out as GPU_FLAGS.md rules; vsync off, WebGL2 and
+ *    sRGB stay so the two classes differ only in the GL backend.
+ */
+export const CHROMIUM_FLAGSETS = Object.freeze({
+  "pinned-k01": Object.freeze({
+    name: "pinned-K01 (software GL; override with a real-GPU set on the reference machine, see README)",
+    flags: PINNED_CHROMIUM_FLAGS,
+  }),
+  "hardware-gl": Object.freeze({
+    name: "hardware-gl (ANGLE on the host GL driver, GPU rasterization; E11-T06)",
+    flags: Object.freeze([
+      "--use-gl=angle",
+      "--use-angle=gl",
+      "--enable-gpu-rasterization",
+      "--disable-gpu-vsync",
+      "--enable-webgl2",
+      "--force-color-profile=srgb",
+    ]),
+  }),
+});
+
+/**
+ * The Chromium flag set for `--flagset` (unset = the K01 software set), plus `extra` flags.
+ * @param {string | undefined} name
+ * @param {readonly string[]} [extra]
+ * @returns {{ name: string, flags: string[] }}
+ */
+export function chromiumFlagSet(name, extra = []) {
+  const key = name ?? "pinned-k01";
+  const def = Object.hasOwn(CHROMIUM_FLAGSETS, key) ? CHROMIUM_FLAGSETS[key] : undefined;
+  if (!def) {
+    throw new Error(
+      `unknown chromium --flagset ${key}; known: ${Object.keys(CHROMIUM_FLAGSETS).join(", ")}`,
+    );
+  }
+  return { name: def.name, flags: [...def.flags, ...extra] };
+}
 
 export const MATRIX_SCENARIOS = Object.freeze(["B1", "B2", "B3", "B4", "B5", "B7", "B9", "B10"]);
 export const RUNTIMES = Object.freeze(["chromium", "electron", "tauri"]);
