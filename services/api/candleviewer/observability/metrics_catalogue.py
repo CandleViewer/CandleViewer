@@ -1318,7 +1318,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "blobs",
         ("reason",),
-        "State blobs discarded on restore (corrupt, too_large, version, wrong_series, ...).",
+        "State blobs discarded on restore (corrupt, too_large, version, wrong_series, ...;"
+        " write_holes = the write-hole journal, #5396).",
         "any = cold start; investigate disk (replay_refused: see the log's error_type)",
         _L,
         "E12",
@@ -1770,6 +1771,20 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _L,
         "E12",
         max_series=2,
+        exported=True,
+    ),
+    _s(
+        "bars_write_holes_total",
+        "counter",
+        "bars",
+        ("reason",),
+        "Closed bars not stored, recorded once each as a coverage hole and served in"
+        " meta.coverage_holes until stored (reason: sink_timeout, refused, permanent,"
+        " transient_exhausted, shutdown; #5396).",
+        "any = served bar history has a recorded hole; heal is queued (bars.write_holes)",
+        _L,
+        "E12",
+        max_series=5,
         exported=True,
     ),
     _s(

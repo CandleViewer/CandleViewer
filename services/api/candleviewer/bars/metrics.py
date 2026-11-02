@@ -252,6 +252,19 @@ bars_subscribe_snapshot_total = Counter(
 )
 for _bucket in HISTORY_BUCKETS:
     bars_subscribe_snapshot_total.labels(history=_bucket)
+#: #5396: closed bars whose store write reached a terminal outcome without being stored, counted
+#: once per bar when the write-hole ledger (`bars.write_holes`) first records it, by reason.
+WRITE_HOLE_REASONS: Final = (
+    "sink_timeout", "refused", "permanent", "transient_exhausted", "shutdown",
+)  # fmt: skip
+bars_write_holes_total = Counter(
+    "bars_write_holes_total",
+    "Closed bars not stored, recorded once each as a coverage hole (reason: sink_timeout,"
+    " refused, permanent, transient_exhausted, shutdown).",
+    labelnames=("reason",),
+)
+for _reason in WRITE_HOLE_REASONS:
+    bars_write_holes_total.labels(reason=_reason)
 #: BR-13: a client `resync` with `sequence_gap` on a `bars` topic (`ws.sequencing`).
 ws_bars_seq_gap_total = Counter(
     "ws_bars_seq_gap_total",
@@ -338,6 +351,7 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "bars_write_queue_depth",
         "bars_write_saturation_total",
         "bars_write_failed_total",
+        "bars_write_holes_total",  # bars.write_holes (#5396)
         "bars_write_latency_seconds",
         "bars_symbol_cardinality",
         "bars_source_overwrite_refused_total",  # also counted by bars.kline_rows
