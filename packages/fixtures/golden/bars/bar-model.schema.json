@@ -69,6 +69,11 @@
           "title": "Synthetic",
           "type": "boolean"
         },
+        "tape_gap": {
+          "default": false,
+          "title": "Tape Gap",
+          "type": "boolean"
+        },
         "trade_count": {
           "minimum": 0,
           "title": "Trade Count",
