@@ -112,3 +112,13 @@ def test_architecture_fanout_sequence_has_no_early_validator_line() -> None:
     section = _section(text, "### 10.2", "### 10.3")
     assert "Validator:" not in section.split("fanout(")[0]
     assert section.index("ensure native SL") < section.index("validate the sized order")
+
+
+def test_architecture_order_flowchart_edges_into_validator_chain() -> None:
+    """E29 #4945: only SLG feeds VAL; algo child orders enter at FAN."""
+    text = (PLAN / "20-architecture.md").read_text(encoding="utf-8")
+    section = _section(text, "### 3.5 OMS", "**Order state machine.**")
+    edges = re.findall(r"(\w+)(?:\[[^\n]*?\])?\s*-->\s*(?:\|[^|]*\|\s*)?(\w+)", section)
+    into = {node: [a for a, b in edges if b == node] for node in ("VAL", "RISK", "GATES", "LINK")}
+    assert into == {"VAL": ["SLG"], "RISK": ["VAL"], "GATES": ["RISK"], "LINK": ["GATES"]}
+    assert ("ALGO", "FAN") in edges
