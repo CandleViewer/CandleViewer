@@ -2470,6 +2470,7 @@ Drag preview                Drop zones
 - **Performance:** Theme and density changes are CSS custom-property swaps applied within one frame; they never remount panels or drop GL contexts. Font-size changes trigger a single layout pass.
 - **Analytics/audit:** `appearance.theme_changed`, `appearance.density_changed`, `appearance.font_size_changed`, `appearance.chart_palette_changed` (analytics).
 - **Design sign-off acceptance checklist:** [ ] dark, light and high-contrast themes drawn [ ] compact / comfortable density drawn on a real grid [ ] font-size scale with the 125% and 200% zoom cases checked [ ] chart palette selection incl. colour-vision-safe presets, previewed on real footprint and heatmap samples [ ] 'follow system theme' option [ ] reset
+- **Hi-fi (E47-D03, #1302):** [E47-D03.md](../design/E47/E47-D03.md) — the three themes with the colour-blind-safe chart palette, the non-colour encodings, the measured accent presets and the failing-contrast warning; the token diff is for E47-D10 (owner approval pending).
 
 ### SCR-117 — Accessibility settings
 
