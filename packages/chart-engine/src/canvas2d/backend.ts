@@ -6,7 +6,9 @@
 // instance rings are read where they live at draw time. No allocation per frame once warm.
 import type { BackendFailure, RenderBackend } from "../gl/backend.js";
 import type { VertexSource } from "../gl/buffers.js";
-import type { PaneUniformSource } from "../gl/submit.js";
+import type { BatchUniforms, BatchUniformSource, PaneUniformSource } from "../gl/submit.js";
+import { CANDLE_DIR, CANDLE_STRIDE } from "../layers/candle/ring.js";
+import { PALETTE } from "../layers/candle/palette.js";
 import { DrawTrace } from "../gl/trace.js";
 import type { RetainedBatch } from "../scene/batch-builder.js";
 import { attributeOffset, INSTANCE_LAYOUTS, PROGRAM } from "../scene/instance-layout.js";
@@ -59,6 +61,7 @@ export class Canvas2DBackend implements RenderBackend {
   readonly loss = null;
   readonly gpuMemoryMbEstimate = 0;
   private panes: PaneUniformSource | null = null;
+  private own: BatchUniformSource | null = null;
   private background: string | undefined;
   private readonly slots = new Map<string, Slot>();
   private readonly buckets = new Map<number, Bucket>();
@@ -67,12 +70,15 @@ export class Canvas2DBackend implements RenderBackend {
   /** Per draw-list index, this frame: the batch's slot and pane block. */
   private readonly frameSlots: (Slot | undefined)[] = [];
   private readonly frameBlocks: (PaneUniforms | null)[] = [];
+  private readonly frameBatches: (BatchUniforms | null)[] = [];
   private run = 1;
   private readonly args: PaintArgs = {
     data: new Float32Array(0),
     ints: EMPTY,
     at: 0,
     block: null,
+    batch: null,
+    sub: 0,
     w: 0,
     h: 0,
   };
@@ -89,6 +95,10 @@ export class Canvas2DBackend implements RenderBackend {
 
   setPaneUniforms(source: PaneUniformSource | null): void {
     this.panes = source;
+  }
+
+  setBatchUniforms(source: BatchUniformSource | null): void {
+    this.own = source;
   }
 
   /** Mirrors `GlBuffers.attach`: the first ring a node is given is the one it keeps. */
@@ -150,6 +160,14 @@ export class Canvas2DBackend implements RenderBackend {
         slot.ints = new Int32Array(data.buffer, data.byteOffset, data.length);
         slot.of = data;
       }
+      if (b.program === PROGRAM.candle) {
+        const blk = this.own === null ? null : this.own(b);
+        this.frameBatches[i] = blk;
+        if (blk === null || block === null) trace.skipped += 1;
+        else this.candles(blk, slot.ints, i);
+        if (trace.enabled) trace.nodes.push(b.nodeId);
+        continue;
+      }
       const capacity = Math.floor(data.length / stride);
       const n = Math.min(b.count, capacity);
       for (let j = 0; j < n; j += 1) {
@@ -162,9 +180,39 @@ export class Canvas2DBackend implements RenderBackend {
     return null;
   }
 
+  /**
+   * E12-S06: a candle part's live bars, slot for slot through the batch's (head, mask, n), into
+   * the palette rows' buckets: the wick, or the body by direction; an up body's tint is a second
+   * ref (`sub` 1) in the tint bucket, after its outline's.
+   */
+  private candles(blk: BatchUniforms, ints: Int32Array, i: number): void {
+    const part = blk.ints[0] ?? 0; // scalar locals: no per-frame array
+    const head = blk.ints[1] ?? 0;
+    const mask = blk.ints[2] ?? 0;
+    const n = blk.ints[3] ?? 0;
+    const pal = blk.palette;
+    for (let j = 0; j < n; j += 1) {
+      const at = ((head + j) & mask) * CANDLE_STRIDE;
+      if (at < 0 || at + CANDLE_STRIDE > ints.length) break; // a ring shorter than its block
+      const dir = ((ints[at + 4] ?? 0) >> 4) & 3;
+      let row: number = PALETTE.wick;
+      if (part === 1 && dir === CANDLE_DIR.up) row = PALETTE.up;
+      else if (part === 1 && dir === CANDLE_DIR.down) row = PALETTE.down;
+      this.push(this.bucketOf(PROGRAM.candle, pal, row * 4, 0), i, at * 2);
+      if (part === 1 && dir === CANDLE_DIR.up) {
+        this.push(this.bucketOf(PROGRAM.candle, pal, PALETTE.upTint * 4, 0), i, at * 2 + 1);
+      }
+    }
+  }
+
   /** The instance's bucket, joined to this run on first use. */
-  private bucketOf(program: number, data: Float32Array, at: number): Bucket {
-    const c = at + (COLOR[program] ?? 0);
+  private bucketOf(
+    program: number,
+    data: Float32Array,
+    at: number,
+    colour = COLOR[program] ?? 0,
+  ): Bucket {
+    const c = at + colour;
     const rgba = byte(data[c]) * 0x1000000 + byte(data[c + 1]) * 0x10000;
     const packed = rgba + byte(data[c + 2]) * 0x100 + byte(data[c + 3]);
     const width = program === PROGRAM.line ? sixteenths(data[at + WIDTH]) : 0;
@@ -211,7 +259,11 @@ export class Canvas2DBackend implements RenderBackend {
         const slot = this.frameSlots[i] as Slot; // set when the ref was pushed
         a.data = slot.source.data;
         a.ints = slot.ints;
-        a.at = bucket.refs[r + 1] ?? 0;
+        const at = bucket.refs[r + 1] ?? 0;
+        const candle = bucket.program === PROGRAM.candle;
+        a.at = candle ? at >> 1 : at; // a candle ref carries its sub-rect in the low bit
+        a.sub = candle ? at & 1 : 0;
+        a.batch = candle ? (this.frameBatches[i] ?? null) : null;
         a.block = this.frameBlocks[i] ?? null;
         paint(ctx, a);
       }

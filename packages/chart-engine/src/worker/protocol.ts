@@ -11,6 +11,7 @@ import type {
 import type { LossDetails } from "../gl/context-loss.js";
 import type { AtlasDetails } from "../text/atlas.js";
 import type { ChartFont } from "../text/platform.js";
+import { INT32_TICKS } from "../viewport/transform.js";
 
 export type { CapabilityReport, DegradeReason, ReducedCapability, RenderProfile };
 
@@ -97,6 +98,10 @@ export interface BufferLayout {
 export type ScaleModeName = "linear" | "log" | "percent" | "indexed";
 const SCALE_MODES: ReadonlySet<unknown> = new Set(["linear", "log", "percent", "indexed"]);
 
+/** E12-S06: the series kinds a runtime-owned `BarStore` backs (candles and OHLC bars). */
+export type BarSeriesKind = "candles" | "bars";
+const BAR_SERIES: ReadonlySet<unknown> = new Set(["candles", "bars"]);
+
 /** The pointer a pick's tolerance comes from (E11-S08, BQ-130): 10 px, 16 px for touch. */
 export type PickPointer = "mouse" | "pen" | "touch";
 const PICK_POINTERS: ReadonlySet<unknown> = new Set(["mouse", "pen", "touch"]);
@@ -131,6 +136,14 @@ export type Command =
       readonly marginBottom?: number;
     }
   | { readonly k: "export"; readonly reqId: number }
+  /** E12-S06 (additive): a series the runtime backs with its own `BarStore`, on `pane` (0). */
+  | {
+      readonly k: "addSeries";
+      readonly series: number;
+      readonly kind: BarSeriesKind;
+      readonly pane?: number;
+    }
+  | { readonly k: "removeSeries"; readonly series: number }
   | { readonly k: "release" };
 
 export type ToWorker =
@@ -169,6 +182,8 @@ export type ToWorker =
       readonly op: DataOp;
       readonly layout: BufferLayout;
       readonly buffer: ArrayBuffer;
+      /** E12-S06 (additive): the `addSeries` id a `bars` batch is for; absent, nothing is stored. */
+      readonly series?: number;
     }
   | { readonly t: "command"; readonly id: ChartId; readonly cmd: Command }
   | {
@@ -256,7 +271,13 @@ export type FromWorker =
     }
   // README BQ-10: §6 has no acknowledgement, which the host's backpressure needs, and no reply to
   // the `export` command; both are added in their narrowest form.
-  | { readonly t: "ack"; readonly id: ChartId; readonly store: StoreId }
+  | {
+      readonly t: "ack";
+      readonly id: ChartId;
+      readonly store: StoreId;
+      /** E12-S06 (additive): the series a series batch was for, so the host frees its lane. */
+      readonly series?: number;
+    }
   | {
       readonly t: "exported";
       readonly id: ChartId;
@@ -357,6 +378,7 @@ export function layoutBytes(layout: unknown, byteLength: number): number {
 const optional = (v: unknown, ok: (v: unknown) => boolean): boolean => v === undefined || ok(v);
 const isBool = (v: unknown): boolean => typeof v === "boolean";
 const isMargin = (v: unknown): boolean => finite(v) && v >= 0 && v <= 0.45;
+const seriesId = (v: unknown): boolean => Number.isSafeInteger(v) && (v as number) >= 0;
 
 /** BQ-124: a pane index, a known mode, booleans and margins in [0, 0.45], nothing else. */
 function validScale(cmd: Record<string, unknown>): boolean {
@@ -401,6 +423,12 @@ function validCommand(cmd: unknown): boolean {
       return Number.isSafeInteger(cmd["reqId"]);
     case "setPriceScale":
       return validScale(cmd);
+    case "addSeries":
+      return (
+        seriesId(cmd["series"]) && BAR_SERIES.has(cmd["kind"]) && optional(cmd["pane"], seriesId)
+      );
+    case "removeSeries":
+      return seriesId(cmd["series"]);
     case "release":
       return true;
     default:
@@ -480,6 +508,8 @@ export function rejectReason(msg: unknown): string | null {
     case "data": {
       if (!STORES.has(msg["store"] as string)) return `unknown store ${String(msg["store"])}`;
       if (!OPS.has(msg["op"] as string)) return `unknown op ${String(msg["op"])}`;
+      if (!optional(msg["series"], seriesId)) return "bad series id";
+      if (msg["series"] !== undefined && msg["store"] !== "bars") return "a series batch is bars";
       const buf = msg["buffer"];
       if (!(buf instanceof ArrayBuffer)) return "data without an ArrayBuffer";
       const covered = layoutBytes(msg["layout"], buf.byteLength);
@@ -554,6 +584,59 @@ export function conflate(queue: PendingData[], next: PendingData): boolean {
   return true;
 }
 
+// ---- F-01: checked tick narrowing (E12-S06, threat model F-01 / CE-T04) ---------------------
+
+/** A batch refused at the data boundary; the runtime reports it as `ENGINE_DECODE_ERROR`. */
+export class DecodeError extends RangeError {
+  readonly code = ENGINE_DECODE_ERROR;
+  constructor(message: string) {
+    super(`chart-engine: ${message}`);
+    this.name = "DecodeError";
+  }
+}
+
+/** Ticks live in ±2^30 so the int32 uniform bases never wrap (`INT32_TICKS`, BQ-75). */
+export const TICK_WINDOW = INT32_TICKS;
+/** How far from a whole tick a decimal price may land after the division (float rounding). */
+const TICK_EPSILON = 1e-6;
+
+/** The frame's own origin and tick size: finite, tickSize > 0, the whole window representable. */
+export function checkTickFrame(priceOrigin: number, tickSize: number): void {
+  const edge = Math.abs(priceOrigin) + TICK_WINDOW * tickSize;
+  if (!Number.isFinite(priceOrigin) || !(tickSize > 0) || !Number.isFinite(edge)) {
+    throw new DecodeError("priceOrigin / tickSize must be finite, tickSize > 0");
+  }
+}
+
+/**
+ * F-01 (BQ-10): a decimal price as whole ticks from `priceOrigin`, checked, never truncated: a
+ * non-finite price, one that is not a whole tick, or one outside ±`TICK_WINDOW` throws a
+ * `DecodeError`. The app's binding narrows with it; `encodeCandles` and the worker re-check.
+ */
+export function toTicks(price: number, priceOrigin: number, tickSize: number): number {
+  checkTickFrame(priceOrigin, tickSize);
+  const t = (price - priceOrigin) / tickSize;
+  const r = Math.round(t);
+  if (!Number.isFinite(t) || Math.abs(t - r) > TICK_EPSILON) {
+    throw new DecodeError(`price ${price} is not a whole tick of ${tickSize} from ${priceOrigin}`);
+  }
+  if (r < -TICK_WINDOW || r > TICK_WINDOW) {
+    throw new DecodeError(`price ${price} is outside the int32 tick window`);
+  }
+  return r === 0 ? 0 : r; // no -0
+}
+
+/** Re-check (F-01): every tick of an int32 column inside ±`TICK_WINDOW`. O(n), allocates nothing. */
+function checkTickColumn(c: unknown, name: string): void {
+  if (!(c instanceof Int32Array)) throw new DecodeError(`${name} must be an Int32Array of ticks`);
+  for (let i = 0; i < c.length; i += 1) {
+    const v = c[i] as number;
+    if (v < -TICK_WINDOW || v > TICK_WINDOW) {
+      throw new DecodeError(`${name}[${i}] is outside the int32 tick window`);
+    }
+  }
+}
+
 // ---- encoding (host side, pure) ---------------------------------------------------------------
 
 /** The columnar arrays of a candle batch (the `CandleData` of §8, structurally). */
@@ -564,21 +647,34 @@ export interface CandleColumns {
   readonly low: Int32Array;
   readonly close: Int32Array;
   readonly volume: Float32Array;
+  /** E12-S06 (BQ-3): `BAR_FLAG` bits per bar, sent as a seventh, 1-byte column. */
+  readonly flags?: Uint8Array | undefined;
   readonly priceOrigin: number;
   readonly tickSize: number;
 }
 
+const OHLC = ["open", "high", "low", "close"] as const;
+/** The `bars` columns' widths: time, open, high, low, close, volume, then the optional flags. */
+const BAR_COLUMN_BYTES = [8, 4, 4, 4, 4, 4, 1] as const;
+
 /**
- * The `bars` buffer for a candle batch: `time, open, high, low, close, volume` columns and the
- * params `[priceOrigin, tickSize]`. When the six arrays are views that tile one ArrayBuffer (the
- * decoder's layout), that buffer is sent as is: zero-copy. Otherwise they are packed into a new
- * buffer, one copy (README BQ-13).
+ * The `bars` buffer for a candle batch: `time, open, high, low, close, volume` columns (plus
+ * `flags`, BQ-3) and the params `[priceOrigin, tickSize]`. The frame and every tick are
+ * re-checked first (F-01). When the arrays are views that tile one ArrayBuffer (the decoder's
+ * layout), that buffer is sent as is: zero-copy. Otherwise they are packed into a new buffer, one
+ * copy (README BQ-13).
  */
 export function encodeCandles(d: CandleColumns): { layout: BufferLayout; buffer: ArrayBuffer } {
-  const cols = [d.time, d.open, d.high, d.low, d.close, d.volume];
+  const cols: ArrayBufferView[] = [d.time, d.open, d.high, d.low, d.close, d.volume];
+  if (d.flags !== undefined) cols.push(d.flags);
   const count = d.time.length;
-  if (cols.some((c) => c.length !== count)) {
+  if (cols.some((c) => (c as Uint8Array).length !== count)) {
     throw new RangeError("chart-engine: candle columns must all have the same length");
+  }
+  checkTickFrame(d.priceOrigin, d.tickSize);
+  for (const name of OHLC) checkTickColumn(d[name], name);
+  if (d.flags !== undefined && !(d.flags instanceof Uint8Array)) {
+    throw new DecodeError("flags must be a Uint8Array");
   }
   const params = [d.priceOrigin, d.tickSize];
   const shared = d.time.buffer;
@@ -586,7 +682,7 @@ export function encodeCandles(d: CandleColumns): { layout: BufferLayout; buffer:
     count,
     columns: cols.map((c, i) => ({
       offset: offsets[i] as number,
-      bytes: c.BYTES_PER_ELEMENT as 4 | 8,
+      bytes: BAR_COLUMN_BYTES[i] as 1 | 4 | 8,
     })),
     params,
   });
@@ -605,4 +701,37 @@ export function encodeCandles(d: CandleColumns): { layout: BufferLayout; buffer:
   const out = new Uint8Array(at);
   cols.forEach((c, i) => out.set(new Uint8Array(c.buffer, c.byteOffset, c.byteLength), offsets[i]));
   return { layout: layout(offsets), buffer: out.buffer };
+}
+
+/**
+ * The worker's half (E12-S06): a `bars` buffer as typed views over it, the layout already
+ * validated by `rejectReason` (aligned, in bounds, tiling the buffer). The column widths must be
+ * `BAR_COLUMN_BYTES`, the params `[priceOrigin, tickSize]`, and F-01 is checked again; the bar
+ * relations (F-02) are the store's. Throws `DecodeError`; one set of views per message.
+ */
+export function decodeBars(layout: BufferLayout, buffer: ArrayBuffer): CandleColumns {
+  const { count, columns: c, params } = layout;
+  const n = c.length;
+  const widths = (n === 6 || n === 7) && c.every((col, i) => col.bytes === BAR_COLUMN_BYTES[i]);
+  if (!widths || params.length !== 2) {
+    throw new DecodeError(
+      "a bars batch is time f64, open/high/low/close i32, volume f32, flags u8",
+    );
+  }
+  const [origin, tick] = params as [number, number];
+  checkTickFrame(origin, tick);
+  const at = (i: number): number => (c[i] as ColumnLayout).offset;
+  const d: CandleColumns = {
+    time: new Float64Array(buffer, at(0), count),
+    open: new Int32Array(buffer, at(1), count),
+    high: new Int32Array(buffer, at(2), count),
+    low: new Int32Array(buffer, at(3), count),
+    close: new Int32Array(buffer, at(4), count),
+    volume: new Float32Array(buffer, at(5), count),
+    flags: n === 7 ? new Uint8Array(buffer, at(6), count) : undefined,
+    priceOrigin: origin,
+    tickSize: tick,
+  };
+  for (const name of OHLC) checkTickColumn(d[name], name);
+  return d;
 }

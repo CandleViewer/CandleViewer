@@ -48,7 +48,11 @@ export class BatchBuilder {
     private readonly uploader: UploadSink,
   ) {}
 
-  /** Records a store mutation for the node's batch, uploaded once at the next `build` (BQ-46). */
+  /**
+   * Records a store mutation for the node's batch, uploaded once at the next `build` (BQ-46). An
+   * empty range adds nothing to the pending range (E12-S06: its `to` used to stay behind as a
+   * stale bound, so [4, 4) then [0, 0) uploaded [0, 4)).
+   */
   patch(nodeId: string, r: MutationRange): void {
     const b = this.byNode.get(nodeId);
     if (b === undefined) return; // a new batch uploads in full on its first build
@@ -58,6 +62,7 @@ export class BatchBuilder {
       b.lo = Math.max(0, b.lo + shift);
       b.hi = Math.max(0, b.hi + shift);
     }
+    if (r.to <= r.from) return;
     b.lo = b.lo < b.hi ? Math.min(b.lo, r.from) : r.from;
     b.hi = Math.max(b.hi, r.to);
   }
