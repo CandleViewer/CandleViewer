@@ -17,7 +17,12 @@ two-axis tier table (three zoom bands, visibility only; no band hides the badge 
 the error outline, glyph and word the Security sentences keep); F the A-rows (today's text found
 on the cited `15` / `16` line at the base, the field headings, the `14` pointer line A-47 in its
 PR 2 form and `14` untouched in this PR); G the board plan (<= 10, light twins <= one third, the
-Theme column against §0's convention, PENDING in PR 1); H hygiene (no closing keyword, local path,
+Theme column against §0's convention) in the mode §0's Status cells name: every cell "to draw
+(PR 2)" (pending; no export committed) or every cell the drawn form (a board id, its export, W x H
+and sha256), a mix FAILs; drawn, the page id named, each export a PNG of that size and sha256, the
+greyscale and deuteranopia renders of 01-08 with the sha256 §0 lists, no two boards sharing an id,
+uuids only inside §0; and, in a git work tree, nothing outside the pack, its exports and the
+amended `15` / `16` / `14` lines differing from the merge base with origin/main; H hygiene (no closing keyword, local path,
 worker name, host or colour emoji); I the spec's own counts and the ruling stamp; J the rule ids;
 K drift (every matrix row and count the tool prints is carried by the spec's text); L the
 `pairs.mjs` column of §9.1 against `tools/contrast/pairs.mjs` and `exemptions.json`, read-only.
@@ -33,13 +38,17 @@ pass before and after. Stdout is UTF-8.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import io
 import json
 import re
+import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, NamedTuple
 
 ROOT = Path(__file__).resolve().parents[3]
 TOKENS = ROOT / "packages" / "ui" / "tokens"
@@ -190,9 +199,9 @@ PAIRS = rows_of(
     """P1|node body text, the ED-4 pill text, palette entries, the zoom readout (t1 on the card)|t1|raised|text|registered
 P2|type word, the action's second line, T2 reason (t2 on the card)|t2|raised|text|registered
 P3|T2 kept label on the card; the PT-1 ring on the card side (t3 on the card)|t3|raised|text|registered
-P4|body text on the hover fill (N-2)|t1|hover|text|PROPOSED
-P5|type word on the hover fill (N-2)|t2|hover|text|PROPOSED
-P6|tertiary text on the hover fill (N-2)|t3|hover|text|PROPOSED
+P4|body text on the hover fill (N-2)|t1|hover|text|registered
+P5|type word on the hover fill (N-2)|t2|hover|text|registered
+P6|tertiary text on the hover fill (N-2)|t3|hover|text|registered
 P7|node-list rows (t1 on the sunken pane)|t1|sunken|text|PROPOSED
 P8|the empty-canvas hint "Start from a trigger" (t1 on the canvas)|t1|canvas|text|registered
 P9|edge default ink ED-1 / ED-8 and the PT-1 ring on the canvas side (TP-1, TP-4)|t3|canvas|non-text|PROPOSED
@@ -222,11 +231,11 @@ P32|error outline inner side (N-7), the PT-3 mark on the card side|danger|raised
 P33|warning outline outer side (N-8), the PT-13 ring on the canvas side|warn|canvas|non-text|PROPOSED
 P34|warning outline inner side (N-8), the PT-13 ring on the card side — reported: the glyph and word carry|warn|raised|reported|never (D03 §3.2)
 P35|graph-only badge glyph on its fill|warn.strong|warn.subtle|non-text|registered
-P36|mismatch badge glyph on its fill|danger.strong|danger.subtle|non-text|PROPOSED
+P36|mismatch badge glyph on its fill|danger.strong|danger.subtle|non-text|registered
 P37|graph-only badge word|t1|warn.subtle|text|registered
 P38|mismatch badge word|t1|danger.subtle|text|registered
 P39|error glyph on the card (N-7)|danger.strong|raised|non-text|PROPOSED
-P40|warning glyph on the card (N-8, PT-13)|warn.strong|raised|non-text|PROPOSED
+P40|warning glyph on the card (N-8, PT-13)|warn.strong|raised|non-text|registered
 P41|hovered edge ED-6 (t2 on the canvas, graded at the text bar it is registered under)|t2|canvas|text|registered
 P42|node-list secondary text (t2 on the sunken pane)|t2|sunken|text|registered
 P43|dot grid on the canvas — decorative (16 §6 rule 7; exempted pair, E05-T01)|grid|canvas|decorative|registered, exempted
@@ -262,7 +271,7 @@ REPRO: dict[str, str] = {
     "P29": "4.33 / 5.60 / 4.33",
     "P30": "3.03 / 4.02 / 3.03",
     "P31": "3.63 / 9.62 / 4.30",
-    "P35": "7.56 / 4.11 / 7.56",
+    "P35": "7.56 / 4.90 / 7.56",  # re-pinned at PR 2's base: the light status inks moved (#5140; D03-C15)
 }
 
 
@@ -455,10 +464,34 @@ A47_HEAD = (
     "(E37-D03; owner approval pending;"
 )
 A47_TAIL = (
-    "; nine Penpot boards planned on page `E37-D03 Tokens and motion`, "
+    "; nine Penpot boards drawn (E37-D03 §0) on page `E37-D03 Tokens and motion`, "
     'exports in `docs/design/E37/img/`)"'
 )
 LINE_RX = re.compile(r"\((\d+)\)\s*$")
+
+
+class Texts(NamedTuple):
+    """`15`, `16` and `14` as in the working tree, and `15` / `16` at the merge base (None: no git)."""
+
+    cat15: str
+    brief16: str
+    screens14: str
+    base15: str | None
+    base16: str | None
+
+
+def read_texts() -> Texts:
+    def at_base(rel: str) -> str | None:
+        base = git("merge-base", "HEAD", "origin/main")
+        return git("show", f"{base.strip()}:{rel}") if base else None
+
+    return Texts(
+        CATALOGUE.read_text(encoding="utf-8"),
+        BRIEF.read_text(encoding="utf-8"),
+        SCREENS.read_text(encoding="utf-8"),
+        at_base("docs/plan/15-component-catalogue.md"),
+        at_base("docs/plan/16-design-system-brief.md"),
+    )
 
 
 def cited_line(today: str, lines: list[str]) -> tuple[str, str]:
@@ -470,13 +503,80 @@ def cited_line(today: str, lines: list[str]) -> tuple[str, str]:
     return m.group(1), lines[n - 1] if 0 < n <= len(lines) else ""
 
 
-def amendments(spec: str, problems: list[str], screens: str | None = None) -> dict[str, Any]:
+def unquote(cell: str) -> str | None:
+    """A Proposed cell's text: `keep; append: "…"` or `"…"` (`\n` a newline); None for a pointer."""
+    m = re.match(r'^keep; append: "(.*)"$', cell.strip()) or re.match(r'^"(.*)"$', cell.strip())
+    return m.group(1).replace("\\n", "\n") if m else None
+
+
+def field_line(cat_lines: list[str], cmp_: str, head: str) -> int | None:
+    """The index of a CMP entry's `- **<head>**` line (None if absent)."""
+    st = next((k for k, ln in enumerate(cat_lines) if ln.startswith(f"### {cmp_} ")), None)
+    if st is None:
+        return None
+    for k in range(st + 1, len(cat_lines)):
+        if cat_lines[k].startswith(("### ", "## ")):
+            return None
+        if cat_lines[k].startswith(head):
+            return k
+    return None
+
+
+def landed(r: list[str], cat_lines: list[str], brief: str, screens: str) -> bool | None:
+    """Is the A-row's New text in place (`15` field line, `16` subsection, `14` line)? None: a pointer."""
+    new = unquote(r[4])
+    if new is None:
+        return None
+    cmp_ = next((c for c in CMPS if c in r[1]), None)
+    if cmp_:
+        fname = next((f for f in FIELDS if r[2].startswith(f)), "")
+        if fname in ("Tokens", "Storybook"):
+            k = field_line(cat_lines, cmp_, f"- **{fname}**:")
+            return (
+                k is not None and cat_lines[k].endswith(" " + new) and cat_lines[k].count(new) == 1
+            )
+        return sum(1 for ln in cat_lines if ln == "- " + new) == 1
+    if "`16`" in r[1]:
+        return brief.count(new) == 1
+    return sum(1 for ln in screens.splitlines() if ln == new) == 1
+
+
+def mix_message(rows: list[list[str]], done: list[str], todo: list[str]) -> str:
+    """One FAIL for a mix, naming the rows that differ from the majority state."""
+    where = {
+        r[0]: (
+            "`16` subsection"
+            if "`16`" in r[1]
+            else "`14` line" if "`14`" in r[1] else f"`15` {r[1]} {r[2].split(' (')[0]} line"
+        )
+        for r in rows
+    }
+    if len(done) >= len(todo):  # applied: the odd rows are edited, not missing
+        return "A-rows: " + "; ".join(f"{k} New text differs from its {where[k]}" for k in todo)
+    return "A-rows: " + "; ".join(f"{k} applied while the others are pending" for k in done)
+
+
+def amendments(
+    spec: str, problems: list[str], screens: str | None = None, texts: Texts | None = None
+) -> dict[str, Any]:
     rows = table(spec, "A-")
-    cat = CATALOGUE.read_text(encoding="utf-8")
-    cat_lines = cat.splitlines()
-    brief = BRIEF.read_text(encoding="utf-8")
-    brief_lines = brief.splitlines()
-    screens = SCREENS.read_text(encoding="utf-8") if screens is None else screens
+    texts = read_texts() if texts is None else texts
+    cat, brief = texts.cat15, texts.brief16
+    screens = texts.screens14 if screens is None else screens
+    cat_lines, brief_lines = cat.splitlines(), brief.splitlines()
+    # the mode: every A-row with a New text pending, or every one landed (PR 2); a mix FAILs
+    states = {r[0]: landed(r, cat_lines, brief, screens) for r in rows if len(r) >= 5}
+    done = [k for k, v in states.items() if v is True]
+    todo = [k for k, v in states.items() if v is False]
+    mode = "landed" if done and not todo else "pending" if not done else "mix"
+    if mode == "mix":
+        problems.append(mix_message(rows, done, todo))
+    # the Old cells: at their cited line in the working tree (pending) or at the merge base (landed)
+    old15: list[str] | None = cat_lines if mode == "pending" else None  # a mix reports once
+    old16: list[str] | None = brief_lines if mode == "pending" else None
+    if mode == "landed":
+        old15 = texts.base15.splitlines() if texts.base15 else None
+        old16 = texts.base16.splitlines() if texts.base16 else None
     per_cmp: dict[str, set[str]] = {c: set() for c in CMPS}
     saw16 = saw14 = False
     for r in rows:
@@ -494,49 +594,67 @@ def amendments(spec: str, problems: list[str], screens: str | None = None) -> di
                 continue
             per_cmp[cmp_].add(fname)
             if fname in ("Tokens", "Storybook"):
-                block = section(cat, f"### {cmp_} ", "\n### ")
-                # a line check: the quoted text sits on the cited `15` line, which is that
-                # entry's field line — not merely somewhere in the entry's block
-                no, line = cited_line(today, cat_lines)
-                on_line = (
-                    bool(no)
-                    and line.startswith(f"- **{fname}**:")
-                    and line in block
-                    and all(q in line for q in quoted(today))
-                )
-                if not on_line:
-                    problems.append(
-                        f"A-row {r[0]}: today's text is not on 15 line {no or '?'} "
-                        f"({cmp_} {fname})"
-                    )
-                if f"- **{fname}**:" not in block:
+                if old15 is not None:  # found by content: the CMP entry's own field line
+                    head = f"- **{fname}**: "
+                    k = field_line(old15, cmp_, head)
+                    base_text = old15[k][len(head) :].removesuffix(".") if k is not None else None
+                    if base_text is None or [base_text] != quoted(today):
+                        problems.append(
+                            f"A-row {r[0]}: today's text is not {cmp_}'s {fname} field in 15"
+                            f"{' at the merge base' if mode == 'landed' else ''}"
+                        )
+                    elif mode == "landed" and k is not None:  # New appended to that field at HEAD
+                        h = field_line(cat_lines, cmp_, head)
+                        expect = old15[k] + " " + (unquote(proposed) or "")
+                        if h is None or cat_lines[h] != expect:
+                            problems.append(
+                                f"A-row {r[0]}: {cmp_}'s {fname} field in 15 is not the merge "
+                                "base's text plus the New text"
+                            )
+                if field_line(cat_lines, cmp_, f"- **{fname}**:") is None:
                     problems.append(f"A-row {r[0]}: 15 {cmp_} has no {fname} field")
                 if "**E37-D03 —**" not in proposed:
                     problems.append(f"A-row {r[0]}: proposed text lacks the E37-D03 lead-in")
             else:
                 if not proposed.lstrip('"').startswith(f"**{fname} (E37-D03)**:"):
                     problems.append(f"A-row {r[0]}: {fname} text lacks its heading string")
+                elif mode == "landed":  # the New bullets sit right after the Tokens bullet
+                    k = field_line(cat_lines, cmp_, "- **Tokens**:")
+                    want = 1 if fname == "Motion" else 2
+                    if k is None or cat_lines[k + want] != "- " + (unquote(proposed) or ""):
+                        problems.append(f"A-row {r[0]}: the {fname} bullet is not after Tokens")
         elif "`16`" in entry:
             saw16 = True
-            no, line = cited_line(today, brief_lines)
-            for q in quoted(today):
-                if q not in (line if no else brief):
-                    problems.append(f"A-row {r[0]}: today's text not on 16 line {no or '?'}: {q!r}")
-            if "184" in field:
+            if old16 is not None:
+                no, line = cited_line(today, old16)
+                for q in quoted(today):
+                    if q not in (line if no else "\n".join(old16)):
+                        problems.append(
+                            f"A-row {r[0]}: today's text not on 16 line {no or '?'}: {q!r}"
+                        )
+            if "§7 recipe" in field:  # A-46: E05-D03 A-7 owns the recipe (merged as #4990)
                 if "E05-D03 (#162)" not in proposed:
-                    problems.append(f"A-row {r[0]}: the 16:184 row does not point at #162")
-                if "does not touch `16`:184" not in proposed:
+                    problems.append(f"A-row {r[0]}: the §7 recipe row does not point at #162")
+                if "does not touch `16`" not in proposed:
                     problems.append(
-                        f"A-row {r[0]}: the 16:184 row must say PR 2 does not touch 16:184"
+                        f"A-row {r[0]}: the §7 recipe row must say PR 2 does not touch 16"
                     )
         elif "`14`" in entry:
             saw14 = True
             if not (proposed.startswith(A47_HEAD) and proposed.endswith(A47_TAIL)):
                 problems.append(f"A-row {r[0]}: the 14 pointer line is not in its PR 2 form")
+            elif mode == "landed":
+                ls = screens.splitlines()
+                k = next((i for i, ln in enumerate(ls) if ln.startswith(ANCHOR_14)), None)
+                n = sum(1 for ln in ls if POINTER_14 in ln)
+                if k is None or n != 1 or ls[k + 1] != unquote(proposed):
+                    problems.append(
+                        f"14: the A-47 line is not once, right after the D02 line ({n})"
+                    )
         else:
             problems.append(f"A-row {r[0]} names no known entry: {entry!r}")
-    if POINTER_14 in screens:
-        problems.append("14: the SCR-082 pointer line is applied in this PR (BQ-02: PR 2)")
+    if mode == "pending" and POINTER_14 in screens:
+        problems.append("14: the SCR-082 pointer line is applied before the A-rows (BQ-02: PR 2)")
     if ANCHOR_14 not in screens:
         problems.append("14: the SCR-082 D02 pointer line A-47 follows is missing")
     if not saw14:
@@ -547,15 +665,178 @@ def amendments(spec: str, problems: list[str], screens: str | None = None) -> di
             problems.append(f"A-rows: {c} lacks {lost}")
     if not saw16:
         problems.append("A-rows: no 16 row")
-    return {"rows": len(rows)}
+    return {"rows": len(rows), "mode": mode}
 
 
 # ------------------------------------------------------------------ G. the boards ---------------
 BOARD_RX = re.compile(r"^\| 0\d +\| `")
+STATUS_PENDING = "to draw (PR 2)"  # §0's Status cell before the draw
+IMG_REL = "docs/design/E37/img"
+CVD_BOARDS = ("01", "02", "03", "04", "05", "06", "07", "08")  # §0: board 09 is the swatch board
+CVD_KINDS = ("greyscale", "deuteranopia")
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+DRAWN = re.compile(
+    rf"drawn \((r\d+)(?:, (light))?\): board id `({UUID})`, "
+    r"`(docs/design/E37/img/E37-D03-(\d\d)-([a-z0-9-]+)\.png)` \((\d+) × (\d+), sha256 `([0-9a-f]{64})`\)"
+)
+PAGE_ID = re.compile(rf"page id `({UUID})`")
+RENDER_SHA = re.compile(
+    r"`(E37-D03-\d\d-[a-z0-9-]+-(?:greyscale|deuteranopia)\.png)` \(sha256 `([0-9a-f]{64})`\)"
+)
+Files = dict[str, bytes]
 
 
-def boards(spec: str, problems: list[str]) -> dict[str, Any]:
-    rows = [cells(ln) for ln in spec.splitlines() if BOARD_RX.match(ln)]
+class Repo(NamedTuple):
+    """The committed exports (path -> bytes) and the changed lines against the merge base."""
+
+    files: Files
+    texts: Texts
+    diff: (
+        dict[str, list[str]] | None
+    )  # None: not a git work tree (an archive), the scope gate skips
+
+
+def git(*args: str) -> str | None:
+    try:
+        run = subprocess.run(
+            ["git", "-C", str(ROOT), *args], check=False, capture_output=True, text=True, timeout=60
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return run.stdout if run.returncode == 0 else None
+
+
+SCOPE_PACK = {
+    "docs/design/E37/E37-D03.md",
+    "docs/design/_tools/e37_d03_tokens_motion_audit.py",
+}
+SCOPE_AMENDED = {
+    "docs/plan/15-component-catalogue.md",
+    "docs/plan/16-design-system-brief.md",
+    "docs/plan/14-screens-catalogue.md",
+}
+
+
+def read_repo() -> Repo:
+    img = ROOT / IMG_REL
+    files = (
+        {f"{IMG_REL}/{f.name}": f.read_bytes() for f in sorted(img.glob("E37-D03-*.png"))}
+        if img.is_dir()
+        else {}
+    )
+    if git("rev-parse", "--is-inside-work-tree") is None:
+        return Repo(files, read_texts(), None)
+    base = git("merge-base", "HEAD", "origin/main")
+    names = git("diff", "--name-only", base.strip()) if base else None
+    if base is None or names is None:
+        return Repo(files, read_texts(), {"?": ["no merge base with origin/main"]})
+    diff: dict[str, list[str]] = {}
+    for path in names.split():
+        diff[path] = []
+        if path in SCOPE_AMENDED:
+            body = git("diff", "-U0", base.strip(), "--", path) or ""
+            diff[path] = [
+                ln
+                for ln in body.splitlines()
+                if ln[:1] in "+-" and not ln.startswith(("+++", "---"))
+            ]
+    return Repo(files, read_texts(), diff)
+
+
+def png_size(data: bytes | None) -> tuple[int, int] | None:
+    if data is None or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        return None
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def board_rows(spec: str) -> list[list[str]]:
+    return [cells(ln) for ln in spec.splitlines() if BOARD_RX.match(ln)]
+
+
+def board_mode(spec: str) -> str:
+    rows = board_rows(spec)
+    return "pending" if all(len(r) > 4 and r[4] == STATUS_PENDING for r in rows) else "drawn"
+
+
+def board_exports(spec: str) -> list[str]:
+    out: list[str] = []
+    for r in board_rows(spec):
+        m = DRAWN.fullmatch(r[4]) if len(r) > 4 else None
+        if m:
+            out.append(m[4])
+            if r[0] in CVD_BOARDS:
+                out += [m[4][: -len(".png")] + f"-{k}.png" for k in CVD_KINDS]
+    return out
+
+
+def boards_drawn(spec: str, files: Files, problems: list[str]) -> int:
+    rows = board_rows(spec)
+    statuses = [r[4] if len(r) > 4 else "" for r in rows]
+    if STATUS_PENDING in statuses:
+        problems.append(
+            f"board plan: §0 mixes pending and drawn rows ({statuses.count(STATUS_PENDING)} pending)"
+        )
+        return 0
+    s0 = section(spec, "\n## 0.", "\n## 1.")
+    if not PAGE_ID.search(s0):
+        problems.append("board plan: §0 does not name the page id")
+    listed = dict(RENDER_SHA.findall(s0))
+    ids: list[str] = []
+    bad_sha: list[str] = []
+    bad_render: list[str] = []
+    for r in rows:
+        m = DRAWN.fullmatch(r[4]) if len(r) > 4 else None
+        if not m:
+            problems.append(f"board {r[0]}: the Status cell is not the drawn form")
+            continue
+        _, theme, bid, rel, nn, slug, w, h, sha = m.groups()
+        ids.append(bid)
+        if nn != r[0] or slug != r[1].strip("`"):
+            problems.append(
+                f"board {r[0]}: the export {rel} is not E37-D03-{r[0]}-{r[1].strip('`')}.png"
+            )
+        if (theme == "light") != r[3].lower().startswith("light"):
+            problems.append(f"board {r[0]}: the theme word {theme!r} is not the Theme cell's")
+        data = files.get(rel)
+        size = png_size(data)
+        if data is None or size is None:
+            problems.append(f"board {r[0]}: {rel} is missing or not a PNG")
+            continue
+        if size != (int(w), int(h)):
+            problems.append(
+                f"board {r[0]}: {rel} is {size[0]} × {size[1]}, the cell says {w} × {h}"
+            )
+        elif hashlib.sha256(data).hexdigest() != sha:
+            bad_sha.append(r[0])
+        if r[0] in CVD_BOARDS:
+            for k in CVD_KINDS:
+                rr = rel[: -len(".png")] + f"-{k}.png"
+                rd = files.get(rr)
+                want = listed.get(rr.rsplit("/", 1)[1])
+                if png_size(rd) is None or rd is None:
+                    problems.append(f"board {r[0]}: the {k} render is missing")
+                elif want is None:
+                    problems.append(
+                        f"board {r[0]}: §0 does not list the {k} render with its sha256"
+                    )
+                elif hashlib.sha256(rd).hexdigest() != want:
+                    bad_render.append(f"{r[0]} {k}")
+    if bad_sha:  # one finding: a byte swap between two same-size exports is one defect
+        problems.append(
+            f"board plan: the export sha256 of board(s) {', '.join(bad_sha)} is not the cell's"
+        )
+    if bad_render:  # one finding, as for the exports
+        problems.append(f"board plan: the render sha256 of {', '.join(bad_render)} is not §0's")
+    if len(set(ids)) != len(ids):
+        problems.append("board plan: two boards share an id")
+    stray = sorted(set(files) - set(board_exports(spec))) if len(ids) == len(rows) else []
+    if stray:
+        problems.append(f"board plan: exports committed but not in §0: {stray}")
+    return len(ids)
+
+
+def boards(spec: str, problems: list[str], files: Files | None = None) -> dict[str, Any]:
+    rows = board_rows(spec)
     slugs = [r[1] for r in rows]
     twins = sum(1 for r in rows if r[3].lower().startswith("light"))
     # the Theme column against §0's convention paragraph (light twins, the hc cells' board)
@@ -568,17 +849,66 @@ def boards(spec: str, problems: list[str]) -> dict[str, Any]:
         theme = r[3].lower() if len(r) > 3 else ""
         if theme.startswith("light") != (r[0] in light_ids) or ("hc" in theme) != (r[0] in hc_ids):
             problems.append(f"board plan: board {r[0]} theme {r[3]!r} disagrees with §0")
+    mode = board_mode(spec)
+    out: dict[str, Any] = {"boards": len(rows), "light_twins": twins, "slugs": slugs, "mode": mode}
     if len(rows) > MAX_BOARDS:
         problems.append(f"board plan: {len(rows)} boards, over {MAX_BOARDS}")
+        return out
     if twins > len(rows) // 3:
         problems.append(f"board plan: {twins} light twins of {len(rows)}, over one third")
     if len(set(slugs)) != len(slugs):
         problems.append("board plan: a slug repeats")
-    if any(len(r) < 6 or r[5] != "PENDING" for r in rows):
-        problems.append("board plan: a board row is not PENDING in PR 1")
+    if any(len(r) != 5 for r in rows):
+        problems.append("board plan: a register row is not # · Board · Shows · Theme · Status")
     if f"{len(rows)} boards" not in spec or f"{twins} light twins" not in spec:
         problems.append("board plan: the spec does not state its board and twin counts")
-    return {"boards": len(rows), "light_twins": twins, "slugs": slugs}
+        return out  # the register itself is wrong: the per-row gates would only echo it
+    files = {} if files is None else files
+    if mode == "drawn":
+        out["exports"] = boards_drawn(spec, files, problems)
+    else:
+        if re.search(UUID, sec0):
+            problems.append("board plan: a page id or uuid in a pending §0")
+        if files:
+            problems.append(
+                f"board plan: {len(files)} E37-D03 export(s) committed while §0 is pending"
+            )
+        out["exports"] = 0
+    return out
+
+
+def scope(repo: Repo, problems: list[str]) -> str:
+    """Only the pack, its exports and the amended `15` / `16` / `14` lines differ (C-4.9)."""
+    if repo.diff is None:
+        return "skipped (no git work tree)"
+    out = sorted(
+        p
+        for p in repo.diff
+        if p not in SCOPE_PACK
+        and p not in SCOPE_AMENDED
+        and not re.fullmatch(r"docs/design/E37/img/E37-D03-[a-z0-9-]+\.png", p)
+    )
+    if out:
+        problems.append(f"scope: outside E37-D03's set, differs from the merge base: {out}")
+    if any(
+        not ln[1:].startswith("- **Design-system tokens and motion (E37-D03):**")
+        for ln in repo.diff.get("docs/plan/14-screens-catalogue.md", [])
+    ):
+        problems.append("scope: `14` changes a line other than the A-47 pointer line")
+    heads = (
+        "- **Tokens**:",
+        "- **Storybook**:",
+        "- **Motion (E37-D03)**:",
+        "- **Usage (E37-D03)**:",
+    )
+    if any(
+        not ln[1:].startswith(heads)
+        for ln in repo.diff.get("docs/plan/15-component-catalogue.md", [])
+    ):
+        problems.append("scope: `15` changes a line other than a CMP field the A-rows name")
+    if any(ln[0] == "-" for ln in repo.diff.get("docs/plan/16-design-system-brief.md", [])):
+        problems.append("scope: `16` loses a line (A-45 only adds the §7.3 pointer subsection)")
+    return f"{len(repo.diff)} file(s) differ, all in E37-D03's set" if not out else "outside"
 
 
 # ------------------------------------------------------------------ H. hygiene ------------------
@@ -602,8 +932,9 @@ AUDIT_RX = re.compile(r"<!-- audit:([a-z_]+)=(\d+) -->")
 
 
 def hygiene(spec: str, problems: list[str]) -> dict[str, Any]:
+    outside_s0 = spec.replace(section(spec, "\n## 0.", "\n## 1."), "")  # §0 alone names ids
     for name, rx in FORBIDDEN.items():
-        if rx.search(spec):
+        if rx.search(outside_s0 if name == "page id or uuid" else spec):
             problems.append(f"hygiene: {name}")
     constitution = CONSTITUTION.read_text(encoding="utf-8")
     ids = sorted(set(RULE_RX.findall(spec)))
@@ -721,7 +1052,9 @@ def drift(spec: str, mx: dict[str, Any], reg: dict[str, Any]) -> list[str]:
     return lost + [n for n in need if n not in spec]
 
 
-def evaluate(spec: str, screens: str | None = None) -> tuple[list[str], dict[str, Any]]:
+def evaluate(
+    spec: str, screens: str | None = None, repo: Repo | None = None
+) -> tuple[list[str], dict[str, Any]]:
     problems: list[str] = []
     out: dict[str, Any] = {}
     out["tokens"] = tokens(spec, problems)
@@ -729,8 +1062,10 @@ def evaluate(spec: str, screens: str | None = None) -> tuple[list[str], dict[str
     out["proposals"] = proposals(spec, problems)
     out["motion"] = motion(spec, problems)
     out["tiers"] = tiers(spec, problems)
-    out["amendments"] = amendments(spec, problems, screens)
-    out["boards"] = boards(spec, problems)
+    repo = read_repo() if repo is None else repo
+    out["amendments"] = amendments(spec, problems, screens, repo.texts)
+    out["boards"] = boards(spec, problems, repo.files)
+    out["boards"]["scope"] = scope(repo, problems)
     out["hygiene"] = hygiene(spec, problems)
     out["counts"] = counts(spec, problems)
     out["registrations"] = registrations(spec, problems)
@@ -742,7 +1077,7 @@ def evaluate(spec: str, screens: str | None = None) -> tuple[list[str], dict[str
 
 # ------------------------------------------------------------------ self-test -------------------
 MUTATIONS: tuple[tuple[str, ...], ...] = (  # (name, old, new[, occurrences])
-    ("a contrast value drifts", "| 4.79 / 5.44 / 9.54 ", "| 4.79 / 5.45 / 9.54 "),
+    ("a contrast value drifts", "| 4.79 / 4.86 / 9.54 ", "| 4.79 / 4.87 / 9.54 "),
     ("a token name is invented", "`color.surface.hover` fill", "`color.surface.hovered` fill"),
     (
         "an alias target changes",
@@ -778,13 +1113,13 @@ MUTATIONS: tuple[tuple[str, ...], ...] = (  # (name, old, new[, occurrences])
     ("a zoom band is lost", "| Z-3  | < 50 %", "| Z-3x | < 50 %"),
     (
         "an A-row today-text is invented",
-        '"`color.edge.default/selected`" (1821)',
-        '"`color.edge.default/strong`" (1821)',
+        '"`color.edge.default/selected`" (1866)',
+        '"`color.edge.default/strong`" (1866)',
     ),
     (
         "the 16:184 row forgets #162",
-        "pointer: E05-D03 (#162) A-7",
-        "pointer: E05-D03 (issue one-six-two) A-7",
+        "none — E05-D03 (#162) A-7",
+        "none — E05-D03 (issue one-six-two) A-7",
     ),
     (
         "the 16:184 contingency returns",
@@ -793,15 +1128,9 @@ MUTATIONS: tuple[tuple[str, ...], ...] = (  # (name, old, new[, occurrences])
     ),
     (
         "A-46 stops saying PR 2 leaves 16:184 alone",
-        "PR 2 cites A-7 and does not touch `16`:184; until A-7",
-        "PR 2 cites A-7 and edits `16`:184; until A-7",
+        "PR 2 cites A-7 and does not touch `16` for it",
+        "PR 2 cites A-7 and edits `16` for it",
     ),
-    (
-        "a tenth board",
-        "| light             | —      | PENDING |\n| 09 ",
-        "| light             | —      | PENDING |\n| 00  | `extra` | x | dark | — | PENDING |\n| 09 ",
-    ),
-    ("a board id is not PENDING", "| —      | PENDING |\n| 02 ", "| —      | DRAWN   |\n| 02 "),
     ("a closing keyword leaks", "## 20. Summary", "## 20. Summary (Clo" + "ses #876)"),
     ("a local path leaks", "## 19. Deviations", "## 19. Deviations (/ho" + "me/someone/notes)"),
     ("a dangling rule cite", "C-2.13", "C-9.99"),
@@ -814,11 +1143,6 @@ MUTATIONS: tuple[tuple[str, ...], ...] = (  # (name, old, new[, occurrences])
         'exports in `docs/design/E37/img/`)" — applied in this PR',
     ),
     (
-        "a board theme drifts from §0",
-        "| dark              | —      | PENDING |\n| 07 ",
-        "| dark (+ hc cells) | —      | PENDING |\n| 07 ",
-    ),
-    (
         "a zoom band hides the badge word",
         "stripe, badge (glyph + word) and the error / warning outline, glyph and word kept; the card",
         "stripe, badge glyph only and the error / warning outline, glyph and word kept; the card",
@@ -828,26 +1152,264 @@ MUTATIONS: tuple[tuple[str, ...], ...] = (  # (name, old, new[, occurrences])
         "| non-text          | 5.96 / 6.36 / 11.87   | PASS                                | PROPOSED ",
         "| non-text          | 5.96 / 6.36 / 11.87   | PASS                                | registered ",
     ),
-    (
-        "an A-row cites the wrong 15 line",
-        '"`color.node.trigger`" (1779)',
-        '"`color.node.trigger`" (1780)',
-    ),
     ("a matrix row drifts", "| P1  | node body text", "| P1  | node body text (bold)"),
     (
         "the PROPOSED-row count drifts",
-        "the 22 PROPOSED rows of §9.1",
+        "the 17 PROPOSED rows of §9.1",
         "the 25 PROPOSED rows of §9.1",
     ),
 )
 # applied to `14` in memory: the pointer line lands in PR 2, never in this PR
 MUTATIONS_14: tuple[tuple[str, str, str], ...] = (
     (
-        "the 14 line is applied in PR 1",
+        "a second 14 pointer line",
         ANCHOR_14,
         f"- **{POINTER_14}:** [E37-D03.md](../design/E37/E37-D03.md) (…)\n{ANCHOR_14}",
     ),
 )
+
+
+View = tuple[str, str, Repo]  # (spec, `14`, repo)
+Mut = tuple[str, bool, Callable[[View], View | None]]  # (name, on the drawn view, apply)
+
+
+def literal(
+    old: str, new: str, times: int = 1, target: str = "spec"
+) -> Callable[[View], View | None]:
+    def apply(v: View) -> View | None:
+        spec, screens, repo = v
+        text = spec if target == "spec" else screens
+        if text.count(old) < times:
+            return None
+        text = text.replace(old, new, times)
+        return (text, screens, repo) if target == "spec" else (spec, text, repo)
+
+    return apply
+
+
+def row_cell(n: str, col: int, value: str) -> Callable[[View], View | None]:
+    def apply(v: View) -> View | None:
+        ls = v[0].split("\n")
+        for i, ln in enumerate(ls):
+            if BOARD_RX.match(ln) and cells(ln)[0] == n:
+                c = cells(ln)
+                c[col] = value
+                ls[i] = "| " + " | ".join(c) + " |"
+                return "\n".join(ls), v[1], v[2]
+        return None
+
+    return apply
+
+
+def extra_board(v: View) -> View | None:
+    ls = v[0].split("\n")
+    k = max(i for i, ln in enumerate(ls) if BOARD_RX.match(ln))
+    ls.insert(k, f"| 00 | `extra` | x | dark | {cells(ls[k])[4]} |")
+    return "\n".join(ls), v[1], v[2]
+
+
+def fake_png(w: int, h: int, tag: str) -> bytes:
+    """A PNG signature and IHDR of w x h, then the tag (the gate reads the size and the sha256)."""
+    return (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + w.to_bytes(4, "big")
+            + h.to_bytes(4, "big") + b"\x08\x06\x00\x00\x00" + tag.encode())  # fmt: skip
+
+
+def drawn_view(v: View) -> tuple[View, bool]:
+    """The drawn state: the committed one, or (§0 pending) one synthesised in memory — every Status
+    cell drawn with a made-up id, every export and render a fake PNG of 2032 x 1800."""
+    spec, screens, repo = v
+    if board_mode(spec) == "drawn":
+        return (
+            spec,
+            screens,
+            repo._replace(diff=repo.diff if repo.diff is not None else {}),
+        ), False
+    files: Files = {}
+    renders: list[str] = []
+    ls = spec.split("\n")
+    for i, ln in enumerate(ls):
+        if not BOARD_RX.match(ln):
+            continue
+        c = cells(ln)
+        rel = f"{IMG_REL}/E37-D03-{c[0]}-{c[1].strip('`')}.png"
+        files[rel] = fake_png(2032, 1800, "board " + c[0])
+        sha = hashlib.sha256(files[rel]).hexdigest()
+        th = ", light" if c[3].lower().startswith("light") else ""
+        bid = f"00000000-0000-4000-8000-0000000000{c[0]}"
+        c[4] = f"drawn (r2{th}): board id `{bid}`, `{rel}` (2032 × 1800, sha256 `{sha}`)"
+        ls[i] = "| " + " | ".join(c) + " |"
+        if c[0] in CVD_BOARDS:
+            for k in CVD_KINDS:
+                rr = rel[: -len(".png")] + f"-{k}.png"
+                files[rr] = fake_png(2032, 1800, f"render {c[0]} {k}")
+                renders.append(
+                    f"`{rr.rsplit('/', 1)[1]}` (sha256 `{hashlib.sha256(files[rr]).hexdigest()}`)"
+                )
+    last = max(i for i, ln in enumerate(ls) if BOARD_RX.match(ln))
+    ls.insert(
+        last + 1,
+        "\nDrawn on page id `00000000-0000-4000-8000-000000000000`; the renders: "
+        + "; ".join(renders)
+        + ".",
+    )
+    return ("\n".join(ls), screens, repo._replace(files=files, diff={})), True
+
+
+def swap_exports(v: View) -> View | None:
+    """Swap the bytes of two same-size PNGs (two exports, or a board's two renders): the size
+    holds, the sha256 catches it."""
+    fl = dict(v[2].files)
+    by: dict[tuple[int, int] | None, list[str]] = {}
+    for k in sorted(fl):
+        by.setdefault(png_size(fl[k]), []).append(k)
+    mains = [
+        ks
+        for ks in by.values()
+        if len([k for k in ks if not k.endswith(("-greyscale.png", "-deuteranopia.png"))]) > 1
+    ]
+    pair = (
+        [k for k in mains[0] if not k.endswith(("-greyscale.png", "-deuteranopia.png"))][:2]
+        if mains
+        else next(
+            (
+                [k for k in ks if k.endswith(("-greyscale.png", "-deuteranopia.png"))][:2]
+                for ks in by.values()
+                if len([k for k in ks if k.endswith(("-greyscale.png", "-deuteranopia.png"))]) > 1
+            ),
+            [],
+        )
+    )
+    if len(pair) != 2:
+        return None
+    a, b = pair
+    fl[a], fl[b] = fl[b], fl[a]
+    return v[0], v[1], v[2]._replace(files=fl)
+
+
+def render_missing(v: View) -> View | None:
+    gone = next((k for k in sorted(v[2].files) if k.endswith("-deuteranopia.png")), None)
+    if gone is None:
+        return None
+    return v[0], v[1], v[2]._replace(files={k: d for k, d in v[2].files.items() if k != gone})
+
+
+def first_drawn(v: View, fn: Callable[[re.Match[str]], str]) -> View | None:
+    ls = v[0].split("\n")
+    for i, ln in enumerate(ls):
+        if BOARD_RX.match(ln):
+            c = cells(ln)
+            m = DRAWN.fullmatch(c[4])
+            if m:
+                c[4] = fn(m)
+                ls[i] = "| " + " | ".join(c) + " |"
+                return "\n".join(ls), v[1], v[2]
+    return None
+
+
+def size_drifts(v: View) -> View | None:
+    return first_drawn(
+        v, lambda m: m[0].replace(f"({m[7]} × {m[8]},", f"({m[7]} × {int(m[8]) + 1},")
+    )
+
+
+def outside_file(v: View) -> View | None:
+    d = dict(v[2].diff or {})
+    d["docs/plan/05-accessibility-standard.md"] = []
+    return v[0], v[1], v[2]._replace(diff=d)
+
+
+def uuid_outside(v: View) -> View | None:
+    old = "## 20. Summary"
+    return (
+        None
+        if old not in v[0]
+        else (v[0].replace(old, old + " (`00000000-0000-4000-8000-00000000abcd`)", 1), v[1], v[2])
+    )
+
+
+def edit_text(field: str, old: str, new: str) -> Callable[[View], View | None]:
+    """A mutation of `15` / `16` / `14` in memory (the texts the A-row gate reads)."""
+
+    def apply(v: View) -> View | None:
+        tx = v[2].texts
+        cur = str(getattr(tx, field))
+        if old not in cur:
+            return None
+        return v[0], v[1], v[2]._replace(texts=tx._replace(**{field: cur.replace(old, new, 1)}))
+
+    return apply
+
+
+def shift15(v: View) -> View | None:
+    """Six lines added to `15` above CMP-146, in the base copy and at HEAD (as E47-S02 did)."""
+    tx = v[2].texts
+    pad = "### CMP-146 "
+    if pad not in tx.cat15 or tx.base15 is None or pad not in tx.base15:
+        return None
+    six = "- shifted\n" * 6
+    t2 = tx._replace(
+        cat15=tx.cat15.replace(pad, six + pad, 1), base15=tx.base15.replace(pad, six + pad, 1)
+    )
+    return v[0], v[1], v[2]._replace(texts=t2)
+
+
+# probes that must PASS (no new FAIL): a moved line is not a changed field
+PASSES: list[tuple[str, Callable[[View], View | None]]] = [
+    ("15 shifted by six lines above CMP-146 (both copies)", shift15),
+]
+
+
+def plan() -> list[Mut]:
+    lits: list[Mut] = [
+        (m[0], False, literal(m[1], m[2], int(m[3]) if len(m) > 3 else 1)) for m in MUTATIONS
+    ]
+    lits += [(name, False, literal(old, new, 1, "14")) for name, old, new in MUTATIONS_14]
+    return lits + [
+        ("a tenth board", False, extra_board),
+        ("a board theme drifts from §0", False, row_cell("06", 3, "dark (+ hc cells)")),
+        (
+            "a pending row among drawn ones (a mix; the drawn view)",
+            True,
+            row_cell("02", 4, STATUS_PENDING),
+        ),
+        ("a drawn Status cell loses its form (the drawn view)", True, row_cell("03", 4, "drawn")),
+        ("an export's size cell drifts (the drawn view)", True, size_drifts),
+        ("two same-size PNGs swap bytes (the drawn view)", True, swap_exports),
+        ("a greyscale / deuteranopia render is missing (the drawn view)", True, render_missing),
+        ("a uuid outside §0 (the drawn view)", True, uuid_outside),
+        ("a file outside the pack differs (the drawn view)", True, outside_file),
+        (
+            "an applied 15 row's New text drifts",
+            False,
+            edit_text(
+                "cat15", "**E37-D03 —** canvas `color.surface.canvas`", "**E37-D03 —** the canvas"
+            ),
+        ),
+        (
+            "an Old field's text differs at the merge base (CMP-238 Storybook)",
+            False,
+            edit_text(
+                "base15",
+                "- **Storybook**: SmallGraph, LargeGraph, WithErrorNodes.",
+                "- **Storybook**: SmallGraph, LargeGraph.",
+            ),
+        ),
+        (
+            "the 16 subsection loses a word",
+            False,
+            edit_text("brief16", "Node-graph motion (E37-D03;", "Node graph motion (E37-D03;"),
+        ),
+        (
+            "the 14 line is dropped",
+            False,
+            literal(
+                "- **Design-system tokens and motion (E37-D03):**",
+                "- **Design-system tokens (E37-D03):**",
+                1,
+                "14",
+            ),
+        ),
+    ]
 
 
 def read(path: Path) -> str:
@@ -858,25 +1420,31 @@ def self_test(spec_path: Path) -> int:
     spec = read(spec_path)
     screens = read(SCREENS)
     before = spec_path.read_bytes()
-    base, _ = evaluate(spec)
+    repo = read_repo()
+    base, _ = evaluate(spec, screens, repo)
     ok = not base
     print(f"clean spec: rc {1 if base else 0} ({len(base)} problem(s))")
     for p in base:
         print(f"  {p}")
+    dview, synth = drawn_view((spec, screens, repo))
+    dbase, _ = evaluate(*dview)
+    ok = ok and not dbase
+    print(
+        f"drawn view, {'synthesised in memory (§0 pending)' if synth else 'the committed state'}: rc {1 if dbase else 0}"
+    )
+    for p in dbase:
+        print(f"  {p}")
     seen: dict[str, str] = {}
-    runs: list[tuple[str, str, str, int, str]] = [
-        (name, old, new, int(rest[0]) if rest else 1, "spec") for name, old, new, *rest in MUTATIONS
-    ]
-    runs += [(name, old, new, 1, "14") for name, old, new in MUTATIONS_14]
-    for no, (name, old, new, times, target) in enumerate(runs, start=1):
-        text = spec if target == "spec" else screens
-        if text.count(old) < times:
+    muts = plan()
+    for no, (name, on_drawn, apply) in enumerate(muts, start=1):
+        start, ref = (dview, dbase) if on_drawn else ((spec, screens, repo), base)
+        view = apply(start)
+        if view is None:
             ok = False
             print(f"mutation {no:02d} {name}: DOES NOT APPLY (the text to mutate is gone)")
             continue
-        mutated = text.replace(old, new, times)
-        got, _ = evaluate(mutated) if target == "spec" else evaluate(spec, mutated)
-        fresh = [p for p in got if p not in base]
+        got, _ = evaluate(*view)
+        fresh = [p for p in got if p not in ref]
         rc = 1 if got else 0
         dup = [p for p in fresh if p in seen]
         caught = rc == 1 and len(fresh) == 1 and not dup
@@ -886,20 +1454,33 @@ def self_test(spec_path: Path) -> int:
         for p in fresh:
             print(f"  {p}")
             seen.setdefault(p, name)
-    restored, _ = evaluate(spec)
+    for name, apply in PASSES:
+        view = apply((spec, screens, repo))
+        if view is None:
+            ok = False
+            print(f"pass probe {name}: DOES NOT APPLY")
+            continue
+        got, _ = evaluate(*view)
+        fresh = [p for p in got if p not in base]
+        ok = ok and not fresh
+        print(f"pass probe {name}: {'PASS' if not fresh else 'FAIL'} ({len(fresh)} new FAIL)")
+        for p in fresh:
+            print(f"  {p}")
+    restored, _ = evaluate(spec, screens, read_repo())
     same = spec_path.read_bytes() == before and read(SCREENS) == screens
     ok = ok and not restored and same
     print(
         f"restore: rc {1 if restored else 0}; spec and 14 byte-identical: {same}; "
-        f"--self-test: {'ok' if ok else 'FAIL'} - {len(runs)} mutations in memory, "
+        f"--self-test: {'ok' if ok else 'FAIL'} - {len(muts)} mutations in memory, "
+        f"{len(PASSES)} pass probe(s), "
         f"{len(seen)} distinct FAILs"
     )
     return 0 if ok else 1
 
 
 def main(argv: list[str] | None = None) -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(encoding="utf-8")
     argv = sys.argv[1:] if argv is None else argv
     spec_path = SPEC
     for flag in ("--check", "--self-test"):
@@ -938,7 +1519,11 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"E. tiers {out['tiers']}; F. A-rows {out['amendments']}; L. pairs.mjs {out['registrations']}"
         )
-        print(f"G. boards {out['boards']['boards']}, light twins {out['boards']['light_twins']}")
+        bd = out["boards"]
+        print(
+            f"G. boards {bd['boards']}, light twins {bd['light_twins']}, §0 {bd['mode']}, "
+            f"exports {bd.get('exports', 0)}, scope {bd['scope']}"
+        )
         print(f"H. hygiene {out['hygiene']}; I. counts {out['counts']}")
         print(f"K. drift {len(out['drift'])}")
         for p in problems:
