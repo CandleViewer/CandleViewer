@@ -556,6 +556,12 @@ class World:
     #: more watch a test lets happen (`watches.tick`).
     watched: list[float] = field(default_factory=list)
     watches: Beats = field(default_factory=Beats)
+    #: The serving loop's tick (#913 L4) on a clock and a wait of the test's, as the heartbeat's
+    #: are `beats`, so the fence of new submits closes only when a test stalls the tick. On its
+    #: default wall clock a create the sweep resumed met the fence once the runner took longer than
+    #: `SERVING_STALE_S` between two beats, which are timers on the loop's clock, and that clock
+    #: stands still on a `VirtualTimeLoop` while a waiter turns it (#5317).
+    ticks: Beats = field(default_factory=Beats)
     binder: Binder = field(default_factory=Binder)
     #: The dev-only account fixture's lane transport factory, None in production (#913 L1d).
     lane_transport: Callable[[], Transport] | None = None
@@ -622,8 +628,12 @@ class World:
             "sleep": self.clock.sleep, "lane": self.lane, "heartbeat": self.heartbeat,
             "fencing": self.fencing, "watch": self.watch, "lane_signing": self.binder,
             "lane_transport": self.lane_transport, "health": self.tracked, "hub": self.hub,
+            "serving_tick": self.serving_tick,
         }  # fmt: skip
         return OmsRuntime(settings, **(built | over))
+
+    def serving_tick(self) -> oms_wiring.ServingTick:
+        return oms_wiring.ServingTick(clock=self.ticks.clock, wait=self.ticks.wait)
 
     async def watch(self, seconds: float) -> None:
         self.watched.append(seconds)
@@ -682,6 +692,15 @@ async def until(done: Callable[[], bool]) -> None:
             return
         await asyncio.sleep(0)
     raise AssertionError("never happened")
+
+
+async def ended(task: asyncio.Task[Any] | None) -> None:
+    """Until `task` ends, at most 10 s of wall time: a bound on the test, for a startup that asks
+    the lock again (CR-S3L2-01), whose composition probes the WAL on a thread (`run_in_thread`,
+    SEC-S3L2-03), so no count of loop turns bounds it (#5317)."""
+    assert task is not None
+    await asyncio.wait({task}, timeout=10)
+    assert task.done(), "never happened"
 
 
 async def test_start_composes_the_process_environment_only_and_announces_each_interim() -> None:
@@ -1180,9 +1199,6 @@ async def test_a_lock_postgres_cannot_answer_is_asked_again_with_the_sweeps_back
     assert world.log[:2] == ["pool.release", "pool.release"] and world.log[2:5] == STARTED
 
 
-# The loop-turn waiter races a real timer on fast runners (C-9.3).
-# ticket: GH-5317 quarantined: 2026-11-01
-@pytest.mark.flaky
 async def test_another_holder_met_on_a_later_ask_fails_the_runtime_closed_and_pages_once() -> None:
     """CR-S3L2-01/02: asked again, the lock is answered held elsewhere: the runtime fails closed as
     a start refused at once does, paged once, its lane stopped, and asks no more."""
@@ -1190,7 +1206,8 @@ async def test_another_holder_met_on_a_later_ask_fails_the_runtime_closed_and_pa
     world.lock.fails, world.lock.elsewhere = [StorageTierUnavailable("unreachable")], True
     with capture_logs() as logs:
         async with started(world.runtime()) as runtime:
-            await until(lambda: runtime.state == "degraded")
+            await ended(runtime._startup)
+            assert runtime.state == "degraded"
             assert (failed_closed(logs), failed_phases(logs)) == (
                 ["EnvironmentLocked"], ["environment_lock"]
             )  # fmt: skip
@@ -1473,18 +1490,19 @@ async def test_a_stop_that_begins_as_the_composition_ends_takes_and_closes_what_
     composition ends cancels the startup task before it resumes with what was composed; the
     composition handed it to the runtime under the lock the stop takes, so the stop closes it,
     never leaves it open."""
-    world, stops = World(), list[asyncio.Task[None]]()
+    world, stops, stopping = World(), list[asyncio.Task[None]](), asyncio.Event()
     world.lock.fails = [StorageTierUnavailable("out")]  # the startup task composes again
 
     def beat(lock: Any, pager: Any) -> Heart:  # the composition's last step
         stops.append(asyncio.ensure_future(runtime.stop()))
+        stopping.set()
         return world.heartbeat(lock, pager)
 
     runtime = world.runtime(heartbeat=beat)
     saved, b01._ATTEMPTS = b01._ATTEMPTS, OrderedDict()
     try:
         await runtime.start()
-        await until(lambda: bool(stops))
+        await asyncio.wait_for(stopping.wait(), 10)  # a bound on the test, as `ended`'s
         await asyncio.wait_for(stops[0], 10)  # a bound on the test
         assert runtime._parts is None and not b01.ports_wired()
         assert world.log == ["pool.release", *STARTED, *STOPPED]
@@ -1509,7 +1527,7 @@ async def test_a_composition_that_meets_a_begun_stop_closes_what_it_built_itself
         await runtime.start()
         startup = runtime._startup
         assert startup is not None
-        await until(startup.done)
+        await ended(startup)
         assert startup.cancelled() and runtime._parts is None and not b01.ports_wired()
         assert world.log == ["pool.release", *STARTED, *STOPPED]
         await runtime.stop()
@@ -1578,7 +1596,7 @@ async def test_what_the_asked_again_composition_meets_once_a_stop_began_is_the_s
             await runtime.start()
             startup = runtime._startup
             assert startup is not None
-            await until(startup.done)
+            await ended(startup)
         assert startup.cancelled() and (failed_closed(logs), world.pager.calls) == ([], [])
         await runtime.stop()
     finally:
