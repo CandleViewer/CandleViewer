@@ -840,6 +840,18 @@ class KeyExchangeProblem(Problem):
     exchange: Annotated[
         Exchange | None, Field(description="Present when the failure originated at Bybit.")
     ] = None
+    reason: Annotated[
+        Literal["clock_drift"] | None,
+        Field(
+            description="The `502` of a clock outside the `recv_window` (`10002`) only: a `KeyProbeError` name. Closed, never exchange text.\n"
+        ),
+    ] = None
+    clock_offset_ms: Annotated[
+        JsonInt | None,
+        Field(
+            description="With `reason` `clock_drift`: the host clock's measured offset to the exchange, in milliseconds; omitted while it is not measured.\n"
+        ),
+    ] = None
 
 
 class OrderExchangeProblem(Problem):
@@ -7253,7 +7265,13 @@ class KeyVerification(BaseModel):
     ] = None
     clock_offset_ms: JsonInt | None = None
     probe_ret_code: JsonInt | None = None
-    warnings: list[Literal["key_expiring_soon", "clock_skew"]] | None = None
+    warnings: list[Literal["key_expiring_soon", "clock_skew", "new_key_restricted"]] | None = None
+    new_key_restriction_lifts_at: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="Present only with the `new_key_restricted` warning: the exchange's `createdAt` of the key plus 48 hours, UTC, when its new-key restriction lifts.\n"
+        ),
+    ] = None
 
 
 class KeyVerificationPassed(KeyVerification):

@@ -2732,7 +2732,11 @@ export interface paths {
      *        `key_ip_whitelist_mismatch`. No setting can turn this check off (C-4.14).
      *     6. Expiry, if set, must be in the future (SR-030a): an expired key, or one the exchange
      *        itself refuses as expired, is rejected with `validation_failed` / `key_expired`. A key
-     *        that expires within 14 days is accepted, with the `key_expiring_soon` warning.
+     *        that expires within 14 days is accepted, with the `key_expiring_soon` warning. A key
+     *        the exchange created less than 48 hours ago is accepted too, with the
+     *        `new_key_restricted` warning and `verification.new_key_restriction_lifts_at`, the key's
+     *        `createdAt` plus 48 hours (the exchange's restriction on a new key); it never changes
+     *        the key's status.
      *     7. A signed no-op probe (`GET /v5/account/wallet-balance`) must pass: the exchange answers
      *        with return code 0 within the `recv_window`, which also validates clock sync
      *        (`key_probe_failed` when the exchange refuses the probe; a probe it cannot answer in
@@ -2762,12 +2766,19 @@ export interface paths {
      *     cannot be read). The pipeline then has no verdict: nothing is stored, no stored key or
      *     account changes, and the import may be sent again. `transport_error` and `timeout`,
      *     where the exchange gave no answer, give `503 exchange_unavailable` with `Retry-After`;
-     *     an error answer gives `502 exchange_error`. Neither answer echoes exchange text
-     *     (`KeyExchangeProblem`): `Problem.exchange` holds `ret_code` only (omitted when the
-     *     exchange sent none), never `ret_msg`, `endpoint`, `request_id` or any other exchange
-     *     text, header, URL or request fragment (SR-E27-08). A `502` or `503` of an import is
-     *     never stored for replay: the identical request re-sent with the same `Idempotency-Key`
-     *     is a first submission, which verifies again (no `Idempotency-Replayed`).
+     *     a rate limit (the exchange's `10018`, `10006` or `10429`, or the local IP-level hold
+     *     that one starts, during which nothing is sent) gives `429 exchange_rate_limited` with
+     *     the `Retry-After` header and `retry_after_seconds` (the hold's remaining seconds, at
+     *     least 1); any other error answer gives `502 exchange_error`. A clock outside the
+     *     `recv_window` (`10002`) stays a `502 exchange_error` and names its cause: `reason` is
+     *     `clock_drift`, `clock_offset_ms` is the host clock's measured offset (omitted while it
+     *     is not measured), and `detail` says to synchronise the host clock. No answer echoes
+     *     exchange text (`KeyExchangeProblem`): `Problem.exchange` holds `ret_code` only (omitted
+     *     when the exchange sent none), never `ret_msg`, `endpoint`, `request_id` or any other
+     *     exchange text, header, URL or request fragment (SR-E27-08). A `429`, `502` or `503` of
+     *     an import is never stored for replay: the identical request re-sent with the same
+     *     `Idempotency-Key` is a first submission, which verifies again (no
+     *     `Idempotency-Replayed`).
      *
      *     **Other statuses.** `404` is an account that does not exist. `409` is an `Idempotency-Key`
      *     first used with a different request (`idempotency_key_reuse`) or still being processed
@@ -9245,11 +9256,18 @@ export interface components {
       run_id: string;
       to_version: number;
     };
-    /** @description The `502` and `503` problems of a key operation: the problem body whose `exchange` member holds the exchange's return code only, never `ret_msg`, `endpoint`, `request_id` or any other exchange text (SR-E27-08): the text of a refused signature can echo the signed request, key id included. This schema alone refuses the other members: the generated Python class re-declares `exchange` with the type of `Problem`, which also admits `ret_msg`, `endpoint` and `request_id`, so a body built from that class type-checks while it leaks exchange text. A route builds `exchange` from the return code alone, and its provider test validates the real `502` and `503` against this schema. */
+    /** @description The `502` and `503` problems of a key operation: the problem body whose `exchange` member holds the exchange's return code only, never `ret_msg`, `endpoint`, `request_id` or any other exchange text (SR-E27-08): the text of a refused signature can echo the signed request, key id included. This schema alone refuses the other members: the generated Python class re-declares `exchange` with the type of `Problem`, which also admits `ret_msg`, `endpoint` and `request_id`, so a body built from that class type-checks while it leaks exchange text. A route builds `exchange` from the return code alone, and its provider test validates the real `429`, `502` and `503` against this schema. */
     KeyExchangeProblem: components["schemas"]["Problem"] & {
+      /** @description With `reason` `clock_drift`: the host clock's measured offset to the exchange, in milliseconds; omitted while it is not measured. */
+      clock_offset_ms?: number;
       exchange?: {
         ret_code?: number;
       };
+      /**
+       * @description The `502` of a clock outside the `recv_window` (`10002`) only: a `KeyProbeError` name. Closed, never exchange text.
+       * @enum {string}
+       */
+      reason?: "clock_drift";
     };
     /**
      * @description Closed vocabulary for a failed probe (SR-E27-08), named after the internal exchange-error taxonomy (`24-internal-schemas.md` §8.6). `auth_error`: key or signature refused (`10003`, `10004`) or the private WS refused `auth`. `permission_denied`: `10005`. `ip_not_allowed`: `10010` or HTTP 403. `clock_drift`: `10002`. `rate_limited`: `10006`, `10018`, `10429` or HTTP 429; in `KeyTestResult.websocket` it is also the deployment's own budget of private WS connections opened for tests being spent (SR-E27-05), when no connection is opened at all. `service_unavailable`: `10016`, `10019` or HTTP 5xx. `transport_error`: the connection failed or was reset. `timeout`, which refines §8.6's `TRANSPORT_ERROR`: no answer before the probe deadline. `exchange_unknown`: any other non-zero exchange refusal code (the code itself is in `ret_code`). The probe has its own translation table, owned and tested by E27-T03 (#836); it does not reuse the adapter's general mapping of exchange refusal codes (`map_ret_code`), which folds `10005` and `10010` into an auth error. `vault_refused`: the vault (M2) refused to sign with the key (a key version it cannot serve, the withdrawal re-check, a key revoked meanwhile, an audit write that could not complete); nothing was sent for the refused call. It is a result of the exposure read (`getAccountConsequences`, `updateExchangeAccount`, `revokeApiKey`, `deleteExchangeAccount`). No exchange error text, header, URL or request fragment is echoed.
@@ -9306,6 +9324,11 @@ export interface components {
       ip_whitelist?: string[];
       /** @description True only when the whitelist is non-empty and every entry is the configured egress IP itself (no wildcard, no range). */
       ip_whitelist_matches_egress?: boolean;
+      /**
+       * Format: date-time
+       * @description Present only with the `new_key_restricted` warning: the exchange's `createdAt` of the key plus 48 hours, UTC, when its new-key restriction lifts.
+       */
+      new_key_restriction_lifts_at?: string;
       passed: boolean;
       /** @description As reported. Every right must be on the `createApiKey` allow-list (step 2). A group or right whose name is not a plain identifier is left out of the display, though the right is still refused. */
       permissions?: {
@@ -9333,10 +9356,10 @@ export interface components {
       passed?: true;
     };
     /**
-     * @description Closed vocabulary (SR-E27-08). `key_expiring_soon`: the key expires within 14 days (`createApiKey` step 6). `clock_skew`: the probe measured a `clock_offset_ms` whose absolute value is above 500 ms, the exchange clock guard's warning threshold (`24-internal-schemas.md` §14.2 item 9).
+     * @description Closed vocabulary (SR-E27-08). `key_expiring_soon`: the key expires within 14 days (`createApiKey` step 6). `new_key_restricted`: the exchange created the key less than 48 hours ago; `new_key_restriction_lifts_at` says when it lifts. `clock_skew`: the probe measured a `clock_offset_ms` whose absolute value is above 500 ms, the exchange clock guard's warning threshold (`24-internal-schemas.md` §14.2 item 9).
      * @enum {string}
      */
-    KeyVerificationWarning: "key_expiring_soon" | "clock_skew";
+    KeyVerificationWarning: "key_expiring_soon" | "clock_skew" | "new_key_restricted";
     KillSwitch: {
       engaged: boolean;
       /** Format: date-time */
@@ -12752,9 +12775,19 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
-    /** @description An import whose signed call got an error answer that is not a refusal of the key: no verdict, nothing stored (`exchange_error`). `exchange` holds `ret_code` only (`KeyExchangeProblem`). */
+    /** @description An import whose signed call got an error answer that is not a refusal of the key: no verdict, nothing stored (`exchange_error`). `exchange` holds `ret_code` only (`KeyExchangeProblem`). A clock outside the `recv_window` also carries `reason` `clock_drift` and, once measured, `clock_offset_ms`. */
     KeyExchangeError: {
       headers: {
+        [name: string]: unknown;
+      };
+      content: {
+        "application/problem+json": components["schemas"]["KeyExchangeProblem"];
+      };
+    };
+    /** @description An import whose signed call was rate limited, or refused locally while the IP-level hold that a `10018` starts is in force (nothing was sent): no verdict, nothing stored (`exchange_rate_limited`). `retry_after_seconds` and `Retry-After` say when to send it again. `exchange` holds `ret_code` only (`KeyExchangeProblem`), absent for the local refusal. Never stored for replay. */
+    KeyRateLimited: {
+      headers: {
+        "Retry-After": components["headers"]["RetryAfter"];
         [name: string]: unknown;
       };
       content: {
@@ -17084,6 +17117,7 @@ export interface operations {
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
       422: components["responses"]["KeyRejected"];
+      429: components["responses"]["KeyRateLimited"];
       502: components["responses"]["KeyExchangeError"];
       503: components["responses"]["KeyServiceUnavailable"];
     };
