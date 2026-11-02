@@ -30,6 +30,8 @@ const ALLOW_UNMOUNTED: Readonly<Record<string, string>> = {
   positions: "E29-S01 (#911): SCR-063's data layer, dark until its closing PR mounts the panel",
   recorder:
     "E16-S01 (#484) PR 2: SCR-140's page only; PR 3 (#5347) mounts it at R-340, /admin/recorder",
+  drawings:
+    "E14-T02 (#400) PR-A: the DrawingStore behind a port; PR-B binds it to E14-T03's engine (#358)",
   "rule-builder-graph":
     "E47-S03 (#1317): the pure keyboard / screen-reader core; E37-S05 (#1071) wires it into SCR-082",
   "symbol-info": "E08-S10 (#4704): the data layer only; mounted by #4704 PR 3 (after #5335)",
