@@ -176,7 +176,12 @@ The offline break-glass CLI is modelled as a trust boundary distinct from the ru
   transaction revokes every MFA method and session of the named Owner and raises a critical, unresolved
   `break_glass_used` event, so the Owner signs in with the password and must enrol TOTP again; it mints
   no login, session, token or recovery path (decision O2 on #2119). In `live` it also needs one unused
-  Owner recovery code, which it consumes (ADR-0009 Amendment 1; O3 is the owner's to change). This is
+  Owner recovery code, which it consumes (ADR-0009 Amendment 1; O3 is the owner's to change). Since
+  #2152 the code is matched by digest: in the KEK proof's one custody pass, once the KEK is proven,
+  M2 opens only the environment's recovery-code key from its auth keyring into a digest-only
+  session, zeroed when the run ends, so the CLI never holds the key and reads no auth key setting;
+  a keyring it cannot use refuses `kek_unproven` before any code is asked for (ADR-0009
+  Amendment 4, "Break-glass"). This is
   necessarily powerful — it is the escape hatch for total lockout (U10) — so it is an offline CLI,
   `python -m candleviewer.breakglass` (R5), with no network listener: no HTTP route, WS topic or
   OpenAPI path reaches it, and nothing cv-api serves imports it (#2119 slice 5, S8). It proves KEK

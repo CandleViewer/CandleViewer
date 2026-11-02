@@ -397,7 +397,7 @@ logged.
 | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 0                                                                  | Reset done, and every record is in `audit_log` or waiting in the journal (the last line says which).                                                              |
 | 1 `step_failed`                                                    | A check broke (an error, or no answer within 60 s); nothing changed.                                                                                              |
-| 2                                                                  | Usage or settings error (`--owner` missing, invalid settings, `CV_AUTH_RECOVERY_HMAC_KEY_HEX` unset or not 32 bytes of hex): nothing ran and nothing is recorded. |
+| 2                                                                  | Usage or settings error (`--owner` missing, invalid settings, any old auth key setting in `live`: `auth_key_env_forbidden`): nothing ran and nothing is recorded. |
 | 3 `reset_failed`                                                   | The reset transaction failed and rolled back, unless the link broke at COMMIT: an unresolved `break_glass_used` event means it applied.                           |
 | 4 `host_fs_unavailable`                                            | `CV_AUDIT_WAL_PATH` is relative, holds `..` or a symlink, or the journal is unusable.                                                                             |
 | 5 `api_running`                                                    | cv-api or another break-glass run holds the run lock, or another session of its database role is connected.                                                       |
@@ -409,6 +409,9 @@ logged.
 | 14 `recovery_code_required`, 15 `recovery_code_invalid`            | `live` only: no code, or not an unused code of this Owner. Nothing is consumed.                                                                                   |
 | 16 `operator_cancelled`                                            | Ctrl-C before the reset began.                                                                                                                                    |
 | 130                                                                | A second Ctrl-C: the outcome is unknown. Read the run's audit rows (and look for an unresolved `break_glass_used` event) before running it again.                 |
+
+In `live`, 9 also covers an auth keyring the proven KEK cannot use: the refusal record's `proof`
+names its `auth_keyring_*` reason (`docs/ops/runbooks/kek-custody.md`, "Auth keyring").
 
 **Preconditions.**
 
@@ -424,9 +427,13 @@ logged.
   nothing. The settings default to `CV_KEK_SOURCE=handle`, `CV_KEK_HANDLE=/run/secrets/cv_kek` and
   `CV_KEK_VERSION=1`, so outside `live` a stack that mounts its KEK there passes the proof with the
   three unset: only an unreachable KEK is "no KEK" (Drilling the refusals, below).
-- cv-api's recovery-code key, `CV_AUTH_RECOVERY_HMAC_KEY_HEX`, in every environment: without 32
-  bytes of hex in it the CLI exits 2 before it runs anything (the `live` rule checks the code with
-  it). Never put its value, or any other secret, on a command line or in this file.
+- In `live`, the environment's auth keyring, the two `auth_keys` rows a cv-api boot made (ADR-0009
+  Amendment 4, #2152). In the KEK proof's one custody pass, once the KEK is proven, M2 opens only
+  the keyring's recovery-code key into a digest session; the CLI gets digests of the code, never
+  the key, and the session is zeroed when the run ends. A keyring that is missing, mismatched,
+  stranded or unreadable ends the run `kek_unproven` (9) before any code is asked for. Outside
+  `live` no keyring is read and no code is asked for. The CLI reads no auth key setting. Never put
+  a secret on a command line or in this file.
 - A terminal, on your side too: `docker compose run` allocates the container's only when the shell
   it runs from has one, and never with `-T` or with its output piped (`| tee` included). Over ssh
   use `ssh -t`; from automation, run it under a pty. Without one the run ends `no_tty` (11), and
@@ -442,11 +449,11 @@ without them a command fails, or runs in another project with a new, empty audit
 COMPOSE="docker compose -p <project> -f infra/compose/docker-compose.yml -f <override> --profile core"
 ```
 
-The repository's compose files (`infra/compose/`) run the fake backend and set neither
-`CV_AUTH_RECOVERY_HMAC_KEY_HEX` nor a KEK for `api`: with them alone the run exits 2, and no boot
-ever enrolled a KEK check value, so the stack must add both and run the real backend (its own
-override file or environment). The #2494 drill's stack also needed `CV_STORAGE_BACKEND=real`, the
-auth keys and pepper, a volume at `/data` owned by uid 10001 and holding a `parquet` directory (the
+The repository's compose files (`infra/compose/`) run the fake backend and set no KEK for `api`:
+with them alone no boot ever enrolled a KEK check value, so the run ends `kek_unproven` (9), and
+the stack must add a KEK and run the real backend (its own override file or environment). The
+#2494 drill's stack also needed `CV_STORAGE_BACKEND=real`, the pepper (and, before #2152, the two
+auth key settings), a volume at `/data` owned by uid 10001 and holding a `parquet` directory (the
 cold tier's root, `/data/parquet`: the real backend's storage creates nothing and refuses to start
 without it; a clean stop also writes `/data/admin-jobs/`, and a recording `/data/recorder-wal`),
 `CV_MESH_CIDRS_CSV` naming the compose network (without it the healthcheck itself gets `403`), and
@@ -550,7 +557,9 @@ $COMPOSE run -T --rm --no-deps -e CV_AUDIT_WAL_PATH=audit.wal --entrypoint pytho
 
 **Live gating (O3).** In `live` the CLI requires `--live`, the phrase naming `live`, and one unused
 Owner recovery code, verified offline against its hash and consumed in the reset's transaction:
-the rule ratified in ADR-0009 Amendment 1. There is no path with `--live` and the phrase alone.
+the rule ratified in ADR-0009 Amendment 1. The code's digests come from M2's digest session of the
+environment's recovery-code key (Preconditions, above), and the reset consumes the one unused row
+that matches any of them, else refuses `recovery_code_invalid` (15). There is no path with `--live` and the phrase alone.
 The owner may relax the code requirement (O3, asked on #2701); until then it stays, as ruled on
 #2119 on 2026-10-20 (see the comment of that date).
 
@@ -1415,10 +1424,15 @@ repository's secret settings, never from an agent session.
   stack, enrol TOTP, replace the three secrets, run the workflow manually, confirm the logged-in
   indicator check passes. The fixtures are not yet provisioned in CI (gate X3-1 / #1778 item D), so
   there may be nothing to rotate yet.
-- **Auth key settings.** `auth_totp_key_hex`, `auth_recovery_hmac_key_hex`, `auth_pepper`
-  (`settings.py`). **Do not rotate these casually.** Changing the pepper invalidates every stored
-  password hash; changing the recovery HMAC key invalidates every unused recovery code. No migration or
-  re-key tool exists for either. Treat as BLOCKED — not implemented; escalate to the Owner.
+- **Auth keys.** The TOTP sealing key and the recovery-code key are M2's auth keyring, wrapped
+  under the environment's KEK (ADR-0009 Amendment 4, #2152); a KEK rotation re-wraps them at its
+  rotation boot, and there is nothing to rotate by hand. The old settings `auth_totp_key_hex` and
+  `auth_recovery_hmac_key_hex` are read once, by the import boot of a `demo` or `testnet` database
+  enrolled under them, then scrubbed; `live` refuses them (`docs/ops/runbooks/kek-custody.md`,
+  "Auth keyring"). No tool re-keys the keyring itself: that means every user enrols again.
+- **Pepper (`auth_pepper`, `settings.py`).** **Do not rotate it casually**: changing it invalidates
+  every stored password hash, and no migration or re-key tool exists. Treat as BLOCKED — not
+  implemented; escalate to the Owner.
 - **CSRF key (`auth_csrf_key_hex`, SR-041, #2090).** Dedicated 32-byte hex key for the
   `__Host-cv_csrf` token MAC; required on live or `storage_backend=real`. Rotate: set the old value
   as `auth_csrf_previous_key_hex` (verify-only) and a new `auth_csrf_key_hex`, restart, then drop the

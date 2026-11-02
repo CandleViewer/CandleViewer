@@ -156,6 +156,86 @@ mount (one device, a filesystem that takes hard links); the sweep probes again e
 recovers with no restart. Never rotate the signing key for this: the key is sound, and an
 `unrecoverable` rotation would retire it and destroy its seed for nothing.
 
+<a id="alert-authkeyringunavailable"></a>
+
+## Auth keyring: `secrets` degraded with an `auth_keyring_*` reason
+
+Each environment has one auth keyring (ADR-0009 Amendment 4, #2152): the TOTP sealing key and the
+recovery-code key, generated inside M2 (or imported once on `demo` and `testnet`, below) and stored
+only as wraps under the environment's KEK in `auth_keys`. M2 opens it at every boot once the KEK
+is verified. When it cannot be used while the
+KEK is up, MFA fails closed and nothing else does: the eight MFA operations answer
+`503 auth_unavailable` with `Retry-After: 30` (`22-api-openapi.yaml`, `AuthUnavailable`), nothing
+is counted or consumed, users without MFA still sign in, and order entry is not latched. Signals:
+`cv_auth_keyring_unavailable_state` = 1 pages `AuthKeyringUnavailable` (its own component,
+`auth_keyring`, so it hides no `secrets` ticket); `/readyz` `degraded` with a failing `secrets`
+check; a critical `secrets.auth_keyring_unavailable` log and `security.auth_keyring_load_failed`
+at error, both carrying the reason and this remediation. With the KEK down, `KekUnavailable` pages
+instead (above): recover the KEK first.
+
+**Never delete MFA material (`mfa_methods`, `recovery_codes`) or `auth_keys` rows to force a new
+keyring.** A boot generates one only when the environment has no rows and no environment holds an
+unrevoked TOTP method or an unused recovery code, so a deletion either changes nothing or gives a
+keyring that opens nothing sealed before, and every enrolled user loses MFA.
+
+| reason                           | Check and recovery                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth_keyring_missing`           | No rows for this environment and MFA material that needs a key (`secrets.auth_keyring_material_without_keyring` gives the count), or on `demo` or `testnet` one of the two old settings set without the other (`secrets.auth_keyring_setting_missing` names it). In `live` also a database whose MFA material another environment sealed: live never imports and never generates over it. Restore the environment's two `auth_keys` rows from a backup under the owner role: they open nothing without the KEK. On `demo` or `testnet`, a boot with both old settings imports them once instead (below). Then restart |
+| `auth_keyring_mismatch`          | The rows do not open as one pair under this KEK: a swapped, edited or lone row, an `imported_env` row in `live`, or another keyring's rows. A custody or tampering incident: keep the rows as evidence, restore the pair from a backup under the owner role, restart                                                                                                                                                                                                                                                                                                                                                  |
+| `auth_keyring_stranded`          | The rows are wrapped under a KEK version this process did not load: a restart without `CV_KEK_PREV_HANDLE` before a rotation boot re-wrapped them. Restart with the previous KEK as `CV_KEK_PREV_HANDLE` (KEK rotation step 1): that boot re-wraps them                                                                                                                                                                                                                                                                                                                                                               |
+| `auth_keyring_store_unavailable` | `auth_keys` or the MFA material count could not be read or written within its bound (Postgres down, or a schema older than `0030`); `secrets.auth_keyring_store_failed` names the error's class. Fix Postgres, then restart                                                                                                                                                                                                                                                                                                                                                                                           |
+| `auth_keyring_audit_unavailable` | A keyring write's record (`security.auth_keyring_imported` or `_enrolled`, in the rows' transaction) failed, so nothing was written, or the load's `security.auth_keyring_loaded` was refused. Fix the audit writer or `audit_log`, then restart                                                                                                                                                                                                                                                                                                                                                                      |
+| `auth_keyring_unopenable`        | An error M2 did not expect stopped the open before any verdict on the rows (its class is logged). Keep the rows and never restore over them: fix the cause, then restart                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+
+**The `503`'s record.** Each `503` writes `auth.mfa_unavailable` (failure, warning) naming the
+operation, the user when known and the reason (`24-internal-schemas.md` §15.5). Besides the
+reasons above it can read `auth_keyring_unavailable` (no keyring is open in this process),
+`kek_unavailable` or `auth_keyring_closed` (the KEK went, or cv-api is stopping), or
+`auth_key_not_held`: the keyring is up, but one user's TOTP method names a key it does not hold,
+such as an old-format method on a generated keyring. Only that user gets the `503`: the Owner
+resets that user's TOTP (`auth-rbac.md` §2) and the user enrols again. A record that cannot be
+written is counted on `auth_audit_outcome_lost_total` (`action="other"`) and the answer is still
+the `503`.
+
+**The one-time import (`demo` and `testnet` only).** A database enrolled before #2152 sealed its
+TOTP seeds and digested its recovery codes with the two old settings, `CV_AUTH_TOTP_KEY_HEX` and
+`CV_AUTH_RECOVERY_HMAC_KEY_HEX`. The first boot that finds no rows and both settings imports them
+as the keyring (`origin = imported_env`, `security.auth_keyring_imported`), so every enrolment
+keeps working; a later boot that still has them warns
+(`secrets.auth_keyring_env_settings_ignored`) and ignores them. `live` refuses either setting at
+start-up (`auth_key_env_forbidden`) and never imports. After the import boot:
+
+1. Confirm `security.auth_keyring_imported`, then a `security.auth_keyring_loaded` with
+   `origin` `imported_env` at the next boot.
+2. **Scrub both settings** from the host's environment file (on the demo host, the compose `.env`
+   that `infra/compose/docker-compose.demo-host.yml` reads; both are optional there) and from any
+   copy of it, then restart. An imported key is the old value itself: until it is gone, a
+   database dump plus that file opens every seed of the environment, old and new.
+3. Old backups of the file still hold the values; they expire with the backups. Re-keying means
+   every user enrols again (the Owner's call; there is no re-key tool).
+
+**The dual-read window.** On an imported keyring only, M2 still opens the old formats: a TOTP seal
+with no binding (`secret_key_ref = 'local-dev-v1'`) and a recovery-code digest without the user.
+Every boot of an imported keyring logs the window's exit test as
+`secrets.auth_keyring_legacy_window`: `material` counts the unrevoked `local-dev-v1` methods and the
+unused recovery codes created before the import, and `exit_test_passed` is true at zero (a warning
+while material is left, else info; `secrets.auth_keyring_legacy_window_unknown` if the count
+failed, which never stops the boot). Material drains only through the audited flows (a re-enrolment
+after the Owner's TOTP reset, a code used at sign-in); never edit or delete the rows to pass the
+test. A follow-up retires the old reads once it passes.
+
+<a id="alert-authkeyringbootstepfailed"></a>
+
+**A failed re-wrap at a rotation boot** degrades nothing: `cv_auth_keyring_boot_failures_total`
+counts it with `step="rewrap"`, which raises the `AuthKeyringBootStepFailed` ticket, and
+`secrets.auth_keyring_boot_step_failed` names the step, the error's class and its `code`. The
+keyring still opens under the previous KEK on that boot, and the KEK re-wrap run does not record
+`security.kek_rotated` while an auth row is left at the old version. Fix the store or the audit
+writer, then restart with `CV_KEK_PREV_HANDLE` again (KEK rotation step 1): the next rotation boot
+moves the row, with `security.auth_keyring_rewrapped` in the same transaction. The ticket sees a
+failure only as an increase over a clean sample under 15 minutes old, so read that log line after
+every rotation restart.
+
 ## KEK rotation (owner-run, per environment)
 
 Each environment has its own KEK lineage (#2338): rotate one environment at a time, on that
@@ -222,4 +302,8 @@ Migration `0026_kek_versions_env` (#2338) keys `kek_versions` by `(env, version)
 
 Restore a dump on a host with **no** KEK: expect Degraded `kek_unavailable` and zero decryptions.
 Supplying a wrong KEK gives `kek_mismatch`. Automated equivalent:
-`tests/unit/credentials_m2/test_broker.py::test_broker_dump_without_kek_cannot_decrypt`.
+`tests/unit/credentials_m2/test_broker.py::test_broker_dump_without_kek_cannot_decrypt`. The auth
+keyring is in the dump only as wraps, so neither a TOTP seed nor a recovery-code digest can be
+computed from it without the KEK (#2152 AC12; on an imported keyring only once the old settings
+are scrubbed, above):
+`tests/integration/storage/test_restore_drill.py::test_a_restored_dump_without_the_kek_opens_no_seed_and_computes_no_digest`.
