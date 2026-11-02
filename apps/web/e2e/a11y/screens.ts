@@ -42,4 +42,7 @@ export const SIGNED_IN_SCREENS: readonly A11yScreen[] = ROUTE_MANIFEST.flatMap((
   return signedIn ? [{ ...screenOf(e), signedIn }] : [];
 });
 
+/** E11-Q05 (#517): the chart harness states, served by the e2e-only harness entry (chart-harness/). */
+export { CHART_SCREENS } from "./chart-harness/surfaces";
+
 export const REPORT_DIR = process.env["A11Y_REPORT_DIR"] ?? "../../reports/a11y";
