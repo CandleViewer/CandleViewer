@@ -77,6 +77,36 @@ describe("listOrders", () => {
   });
 
   it.each([
+    ["no cursor", { has_more: true, next_cursor: null }],
+    ["a cursor that is no string", { has_more: true, next_cursor: 7 }],
+    ["no cursor member at all", { has_more: true }],
+  ])(
+    "a page that says there is more but gives %s is a truncated read, never a complete one",
+    async (_, meta) => {
+      apiFetch.mockResolvedValueOnce(reply(200, { items: [{ id: "1" }], meta }));
+      expect(await ordersApi.listOrders()).toEqual({
+        kind: "ok",
+        items: [{ id: "1" }],
+        truncated: true,
+      });
+      expect(apiFetch).toHaveBeenCalledTimes(1); // nothing to follow
+    },
+  );
+
+  it.each([
+    ["a stale cursor", { has_more: false, next_cursor: "stale" }],
+    ["no meta", undefined],
+  ])("a page that does not say there is more is complete, with %s", async (_, meta) => {
+    apiFetch.mockResolvedValueOnce(reply(200, { items: [{ id: "1" }], meta }));
+    expect(await ordersApi.listOrders()).toEqual({
+      kind: "ok",
+      items: [{ id: "1" }],
+      truncated: false,
+    });
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
     [problem(403, "account_scope_denied"), "account_scope_denied"],
     [problem(403, "forbidden"), "forbidden"],
     [reply(403, "not json"), "forbidden"],

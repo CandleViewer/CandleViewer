@@ -27,7 +27,10 @@ export type OrdersOutcome =
   | {
       readonly kind: "ok";
       readonly items: readonly Order[];
-      /** More pages than `MAX_PAGES` were on offer: the read stops there, bounded (C-2.18). */
+      /**
+       * Pages were on offer that this read did not take: more than `MAX_PAGES` (it stops there,
+       * bounded, C-2.18), or a page that says there is more and names no cursor to follow.
+       */
       readonly truncated: boolean;
     }
   | { readonly kind: ReadFailure };
@@ -83,10 +86,11 @@ async function listOrders(query: OrdersQuery = {}, signal?: AbortSignal): Promis
       };
       if (!isObjectArray(body.items)) return { kind: "unavailable" };
       items.push(...(body.items as Order[]));
-      const next = body.meta?.next_cursor;
-      if (body.meta?.has_more !== true || typeof next !== "string") {
-        return { kind: "ok", items, truncated: false };
-      }
+      if (body.meta?.has_more !== true) return { kind: "ok", items, truncated: false };
+      const next = body.meta.next_cursor;
+      // More pages on offer and none to follow (no cursor, or one that is no string): the read is
+      // cut short, so it settles nothing (a complete read closes the rows it no longer lists)
+      if (typeof next !== "string") return { kind: "ok", items, truncated: true };
       cursor = next;
     }
     return { kind: "ok", items, truncated: true };
