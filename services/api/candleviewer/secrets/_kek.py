@@ -186,7 +186,7 @@ def _read_handoff_nonce(path: Path) -> str:
     finally:
         os.close(fd)
     nonce = raw.decode("ascii", "replace").strip()
-    if len(raw) > _HANDOFF_MAX or not _NONCE_RE.match(nonce):
+    if len(raw) > _HANDOFF_MAX or not _NONCE_RE.fullmatch(nonce):
         raise KekLoadError("kek_unavailable")
     return nonce
 
@@ -280,7 +280,7 @@ def write_ack(nonce: str, ack_path: Path) -> None:
     """Echo the handoff nonce (read earlier, held in memory) to the separate, writable ack path,
     exactly once, after *every* FIFO handle has been drained, so a second reader of any handle
     shows up as a missing/duplicate ack (e27-kek.md §3 step 4)."""
-    if not _NONCE_RE.match(nonce):
+    if not _NONCE_RE.fullmatch(nonce):
         raise KekLoadError("kek_unavailable")
     try:
         fd = os.open(ack_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)

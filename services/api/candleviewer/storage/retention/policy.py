@@ -80,7 +80,7 @@ def load_defaults(path: Path | None = None) -> list[RetentionRule]:
     """Parse the seed (flow-mapping list; avoids a runtime PyYAML dependency)."""
     rules: list[RetentionRule] = []
     for line in (path or default_seed_path()).read_text("utf-8").splitlines():
-        match = _LINE.match(line)
+        match = _LINE.fullmatch(line)
         if not match:
             continue
         kv = dict(p.strip().split(":", 1) for p in match.group("body").split(","))

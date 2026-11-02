@@ -101,7 +101,7 @@ def parse_ddl_file(path: Path) -> list[TableDef]:
             # token after comma-splitting collapses the intentional multi-decl
             # line in bars_* tables; `_split_columns` already separated those
             # on commas, so each `raw_col` here is a single `name TYPE` pair.
-            col_match = _COLUMN_RE.match(raw_col)
+            col_match = _COLUMN_RE.fullmatch(raw_col)
             if col_match:
                 columns.append(col_match.group("name").lower())
                 if col_match.group("type").upper() == "SYMBOL":

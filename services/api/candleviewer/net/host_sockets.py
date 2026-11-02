@@ -98,7 +98,7 @@ def _enumerate_windows_portproxy_sockets() -> list[str]:
 
     result: list[str] = []
     for line in proc.stdout.splitlines():
-        match = _PORTPROXY_LINE.match(line)
+        match = _PORTPROXY_LINE.fullmatch(line)
         if not match:
             continue
         result.append(_format(match["listen_addr"], match["listen_port"]))

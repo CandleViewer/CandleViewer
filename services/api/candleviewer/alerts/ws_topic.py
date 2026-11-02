@@ -193,7 +193,7 @@ def delivery_item(row: DeliveryRecord) -> dict[str, Any]:
         "id": row.id, "alert_id": row.alert_id, "channel": row.channel, "status": row.status,
         "severity": row.severity or "info", "title": row.title,
         "message": row.body or row.title,
-        "symbol": symbol if isinstance(symbol, str) and _SYMBOL.match(symbol) else None,
+        "symbol": symbol if isinstance(symbol, str) and _SYMBOL.fullmatch(symbol) else None,
         "fired_at_ms": _epoch_ms(row.queued_at),
         "acked_at_ms": None if row.acked_at is None else _epoch_ms(row.acked_at),
         "error": row.error_message,

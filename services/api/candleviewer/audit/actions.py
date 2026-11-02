@@ -429,7 +429,7 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
 )
 
 for _action in AUDIT_ACTIONS:
-    if not _ACTION_FMT_RE.match(_action):  # pragma: no cover - defends the registry itself
+    if not _ACTION_FMT_RE.fullmatch(_action):  # pragma: no cover - defends the registry itself
         raise AuditError(f"registry action {_action!r} violates au_action_fmt")
 
 #: `profile.save_refused`'s `reason` (E28-T02, #906; E28 threat model Sec.8.1), a closed set of the
