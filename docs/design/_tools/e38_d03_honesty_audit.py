@@ -49,8 +49,12 @@ Gates (each FAIL led by its name):
               and export, the export's number and slug agree with the row's board name, and on
               disk the PNG's IHDR width × height and sha256 equal the record; and no other
               E38-D03-*.png sits in `docs/design/E38/img/`.
-  G-SCOPE     the diff touches only the spec, this tool, the pins file and the E38-D03 exports in
-              `docs/design/E38/img/`.
+  G-AROW      §9's A-rows, applied in PR 2 (none held): every row ends "**Applied (PR 2)**" with
+              the `14` line it follows at the base; its quoted text stands nowhere in `14` at the
+              base, and in the working tree each quote stands once as the line right after that
+              base line ("after"), or ends that line ("appended", A-3).
+  G-SCOPE     the diff touches only the spec, this tool, the pins file, `14` (the applied A-rows)
+              and the E38-D03 exports in `docs/design/E38/img/`.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e38_d03_honesty_audit.py --check
@@ -77,7 +81,8 @@ ROOT = Path(__file__).resolve().parents[3]
 SPEC_REL = "docs/design/E38/E38-D03.md"
 TOOL_REL = "docs/design/_tools/e38_d03_honesty_audit.py"
 PINS_REL = "docs/design/_tools/e38_d03_ruled_pins.txt"
-OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
+CAT_REL = "docs/plan/14-screens-catalogue.md"
+OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL, CAT_REL)
 BASE = "c327ed438c01c5bab9247890dd00f5dce3717f97"  # origin/main when written; re-pinned by content
 D01_REF = "4774b2f8cd7b67a1ee934fe88546568f7aa3e34c"  # #5451's approved head; re-pinned at merge
 TOKENS = ROOT / "packages" / "ui" / "tokens"
@@ -168,6 +173,10 @@ DRAWN = re.compile(
     r"`docs/design/E38/img/(E38-D03-(\d\d)-([a-z0-9-]+)\.png)` "
     r"\((\d+) × (\d+), sha256 `([0-9a-f]{64})`\)"
 )
+AROW = re.compile(r"^- \*\*(A-\d),.*$", re.MULTILINE)
+APPLIED = re.compile(
+    r" \*\*Applied \(PR 2\)\*\*, (after|appended)[^(]*\(`14`:(\d+)(?:, :(\d+))?\)\.$"
+)
 FRAME_DRAWN = re.compile(r"drawn, boards? (\d\d)(?: and (\d\d))?")
 
 
@@ -179,6 +188,7 @@ class Texts:
     changed: list[str] | None
     memo: dict[str, str | None]
     files: dict[str, bytes]
+    work: str | None
 
 
 def git(*args: str) -> str | None:
@@ -629,6 +639,43 @@ def g_scope(t: Texts) -> list[str]:
     ]
 
 
+def g_arow(t: Texts) -> list[str]:
+    bad = []
+    rows = AROW.finditer(section(t.spec, "## 9."))
+    base = at(t, "14").split("\n")
+    work = None if t.work is None else t.work.split("\n")
+    if work is None:
+        return ["cannot read `14` in the working tree"]
+    seen = 0
+    for m in rows:
+        seen += 1
+        aid, ln = m[1], m[0]
+        a = APPLIED.search(ln)
+        if a is None:
+            bad.append(f"{aid}: not marked applied (PR 2 applies every A-row)")
+            continue
+        quotes = re.findall(r'"([^"]+)"', ln[: a.start()])
+        nos = [int(n) for n in a.groups()[1:] if n]
+        if not quotes or len(quotes) != len(nos):
+            bad.append(f"{aid}: {len(quotes)} quotes for {len(nos)} base lines")
+            continue
+        for q, n in zip(quotes, nos, strict=True):
+            if any(q in x for x in base):
+                bad.append(f"{aid}: its text already stands in `14` at the base")
+            anchor = base[n - 1] if 0 < n <= len(base) else None
+            hits = [i for i, x in enumerate(work) if anchor is not None and x.startswith(anchor)]
+            once = sum(q in x for x in work) == 1
+            if a[1] == "after":
+                ok = once and len(hits) == 1 and work[hits[0] + 1 : hits[0] + 2] == [q]
+            else:
+                ok = once and len(hits) == 1 and work[hits[0]] == f"{anchor} {q}"
+            if not ok:
+                bad.append(f"{aid}: its text does not stand once, {a[1]} `14`:{n} in the tree")
+    if seen != 4:
+        bad.append(f"§9 carries {seen} A-rows, not 4")
+    return bad
+
+
 def png_size(data: bytes) -> tuple[int, int] | None:
     if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
         return None
@@ -683,7 +730,7 @@ def g_drawn(t: Texts) -> list[str]:
 GATES: dict[str, Callable[[Texts], list[str]]] = {
     "G-STATE": g_state, "G-TOKEN": g_token, "G-CONTRAST": g_contrast, "G-CVD": g_cvd,
     "G-HIDDEN": g_hidden, "G-T2": g_t2, "G-RULED": g_ruled, "G-MERGED": g_merged, "G-CITE": g_cite, "G-HYGIENE": g_hygiene,
-    "G-DRAWN": g_drawn, "G-SCOPE": g_scope,
+    "G-DRAWN": g_drawn, "G-AROW": g_arow, "G-SCOPE": g_scope,
 }  # fmt: skip
 
 
@@ -721,7 +768,9 @@ def load() -> Texts:
     files = (
         {f.name: f.read_bytes() for f in sorted(img.glob("E38-D03-*.png"))} if img.is_dir() else {}
     )
-    return Texts(spec, pins, tool, changed_paths(), {}, files)
+    cat = ROOT / CAT_REL
+    work = cat.read_text(encoding="utf-8") if cat.exists() else None
+    return Texts(spec, pins, tool, changed_paths(), {}, files, work)
 
 
 def fill(t: Texts) -> str:
@@ -780,6 +829,16 @@ def with_file(name: str, data: bytes | None) -> Callable[[Texts], Texts]:
     return f
 
 
+def work_sub(old: str, new: str) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        if t.work is None or t.work.count(old) != 1:
+            raise SystemExit(f"self-test: `14` does not carry {old[:50]!r} once")
+        return replace(t, work=t.work.replace(old, new))
+
+    return f
+
+
+A2_SCR137 = "\n- **Hi-fi (E38-D03):** the environment parity report (freshness, candidates)"
 B04_PNG = "E38-D03-04-scr-137-paper-fidelity.png"
 B02_PNG = "E38-D03-02-scr-122-live-eligibility.png"
 
@@ -850,7 +909,12 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-DRAWN", "a board row's name off its export's slug", sub("`E38-D03 / 02 scr-122-live-eligibility`", "`E38-D03 / 02 scr-122-live-access`")),
     ("G-DRAWN", "the page id dropped", lambda t: replace(t, spec=re.sub(rf"page id `{UUID}`", "page id pending", t.spec))),
     ("G-DRAWN", "board 05's row dropped (its PNG then unlisted)", drop_row("| 05 ")),
-    ("G-SCOPE", "touch `14` in the diff", lambda t: replace(t, changed=[*OWN_PATHS, PATHS["14"]])),
+    ("G-AROW", "A-1's line dropped from `14`", work_sub("\n- **Hi-fi (E38-D03):** the paper reset", "\n- **Hi-fi:** the paper reset")),
+    ("G-AROW", "A-4's line moved one line down", work_sub("\n- **Parity link (E38-D03):**", "\n\n- **Parity link (E38-D03):**")),
+    ("G-AROW", "A-3's sentence dropped from item 5", work_sub(" A paper-only control has no object", " A control has no object")),
+    ("G-AROW", "A-2's SCR-137 line standing twice", work_sub(A2_SCR137, A2_SCR137 + " x" + A2_SCR137)),
+    ("G-AROW", "A-2 no longer marked applied", sub(" **Applied (PR 2)**, after each entry's last line (`14`:2593, :2857).", "")),
+    ("G-SCOPE", "touch `15` in the diff", lambda t: replace(t, changed=[*OWN_PATHS, PATHS["15"]])),
     ("G-SCOPE", "another ticket's export in the diff", lambda t: replace(t, changed=[*OWN_PATHS, "docs/design/E38/img/E38-D04-01-x.png"])),
 )  # fmt: skip
 
