@@ -23,10 +23,12 @@ from typing import Any
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.api.users import CHART_DROP_TIMEOUT_S
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.session_chart import (
     _MUST_REACH,
     _MUST_RECORD,
+    CHART_STOP_TIMEOUT_S,
     SessionChart,
     SessionChartError,
     SessionChartUnrecorded,
@@ -35,6 +37,7 @@ from candleviewer.auth.session_chart import (
 from candleviewer.auth.session_service import OWNER_REVOKE_AUDIT_TIMEOUT_S
 from candleviewer.statechart.bindings import b16_session
 from candleviewer.statechart.config import CV_EVENT_SCHEMAS
+from candleviewer.statechart.registry import Registry
 from tests.conftest import RecordingAuditSink
 
 from .session_fakes import LoopClock
@@ -75,11 +78,32 @@ async def test_send_raises_when_a_must_record_event_is_deferred(
         await chart.stop()
 
 
+@pytest.mark.parametrize("event", sorted(_PAYLOADS))
+async def test_a_held_event_behind_a_concurrent_revoke_raises(
+    event: str, b16_audit: RecordingAuditSink
+) -> None:
+    """The hold check reads the held chart's state from its receipt: the event the revoked chart
+    holds raises, the revoke returns, and the revocation is the only record."""
+    row, chart = _session(uuid.uuid4()), SessionChart()
+    try:
+        await chart.record(row, _T0, "REQUEST", replay=True)  # built from the row
+        revoked, held = await asyncio.gather(
+            chart.revoke(row, _T0, "admin"),
+            chart.record(row, _T0, event, **_PAYLOADS[event]),
+            return_exceptions=True,
+        )
+        assert revoked is None and isinstance(held, SessionChartUnrecorded)
+        assert (held.event, held.reason) == (event, "deferred")
+        assert b16_audit.actions() == ["auth.session_revoked"]
+    finally:
+        await chart.stop()
+
+
 async def test_a_hold_in_a_state_the_chart_leaves_again_returns_and_keeps_the_chart(
     b16_audit: RecordingAuditSink,
 ) -> None:
-    """Only a chart past its end holds an event for good: `readonly_downgrade` holds
-    `ACTION_REQUEST` until `READONLY_EXPIRED` leaves it, so that hold raises nothing."""
+    """`readonly_downgrade` holds `ACTION_REQUEST` until `READONLY_EXPIRED` leaves it; that hold
+    returns and keeps the chart, unchanged by #5512. A held `STEP_UP_OK` raises in any state."""
     row = _session(uuid.uuid4()).model_copy(
         update={"step_up_failures": 3, "readonly_until": _T0 + timedelta(minutes=5)}
     )
@@ -89,6 +113,25 @@ async def test_a_hold_in_a_state_the_chart_leaves_again_returns_and_keeps_the_ch
         assert chart.in_state(str(row.id), "readonly_downgrade")
         await chart.record(row, _T0, "ACTION_REQUEST", **_PAYLOADS["ACTION_REQUEST"])
         assert chart.in_state(str(row.id), "readonly_downgrade") and b16_audit.calls == []
+    finally:
+        await chart.stop()
+
+
+async def test_a_step_up_ok_held_in_readonly_downgrade_raises_and_drops_the_chart(
+    b16_audit: RecordingAuditSink,
+) -> None:
+    """The step-up's arm for it ends the grant (`StepUpUnrecorded`, `503`)."""
+    row = _session(uuid.uuid4()).model_copy(
+        update={"step_up_failures": 3, "readonly_until": _T0 + timedelta(minutes=5)}
+    )
+    chart = SessionChart()
+    try:
+        await chart.record(row, _T0, "REQUEST", replay=True)  # hydrated: three strikes
+        assert chart.in_state(str(row.id), "readonly_downgrade")
+        with pytest.raises(SessionChartUnrecorded) as raised:
+            await chart.record(row, _T0, "STEP_UP_OK", **_PAYLOADS["STEP_UP_OK"])
+        assert (raised.value.event, raised.value.reason) == ("STEP_UP_OK", "deferred")
+        assert b16_audit.calls == [] and chart.interpreter(str(row.id)) is None
     finally:
         await chart.stop()
 
@@ -247,10 +290,31 @@ def _catalogue() -> tuple[set[str], set[str]]:
     return events, recorded
 
 
+def _machine() -> set[str]:
+    """The same set from the machine JSON (`Registry`): each event with a transition whose own
+    actions, or the entry actions of the state it targets, include a recording binding."""
+    chart = Registry().get("session")
+    nodes: dict[str, dict[str, Any]] = {}  # every state, by its id
+    stack = [(str(chart["id"]), chart)]
+    while stack:
+        path, node = stack.pop()
+        nodes[path] = node
+        stack += [(f"{path}.{name}", child) for name, child in node.get("states", {}).items()]
+    writers, recorded = _writers(), set[str]()
+    for node in nodes.values():
+        for event, spec in node.get("on", {}).items():
+            for arm in spec if isinstance(spec, list) else [spec]:
+                target = nodes[arm["target"].removeprefix("#")] if "target" in arm else {}
+                if {*arm.get("actions", []), *target.get("entry", [])} & writers:
+                    recorded.add(event)
+    return recorded
+
+
 def test_the_must_record_set_is_every_b16_event_with_a_transition_that_writes_a_record() -> None:
     events, recorded = _catalogue()
     assert events == set(CV_EVENT_SCHEMAS["session"])  # the table names every event B16 takes
     assert _MUST_RECORD == recorded
+    assert _machine() == recorded  # the machine JSON agrees with the catalogue
     assert {"STEP_UP_OK", "ACTION_REQUEST", "IDLE_DEADLINE", "LOGOUT"} <= _MUST_RECORD
     assert events - _MUST_RECORD == {"ELEVATION_DEADLINE", "READONLY_EXPIRED"}
     assert set(_MUST_REACH) <= _MUST_RECORD
@@ -332,9 +396,10 @@ async def test_a_cut_short_revoke_drops_the_chart_while_another_build_holds_the_
 async def test_a_chart_stop_that_fails_or_overruns_is_logged_and_the_revoke_returns(
     failure: str, monkeypatch: pytest.MonkeyPatch, b16_audit: RecordingAuditSink
 ) -> None:
-    """The chart leaves the cache at once and its stop is bounded by the owner revoke's bound: a
-    stop that raises or overruns is logged with its error class and the session id only, and never
-    replaces how the record ended."""
+    """The chart leaves the cache at once and its stop is bounded by `CHART_STOP_TIMEOUT_S`, no
+    longer than the role change's drop bound: a stop that raises or overruns is logged with its
+    error class and the session id only, and never replaces how the record ended."""
+    assert CHART_STOP_TIMEOUT_S <= CHART_DROP_TIMEOUT_S
     clock, entered = LoopClock(monkeypatch), asyncio.Event()
     row, chart = _session(uuid.uuid4()), SessionChart()
     await chart.record(row, _T0, "REQUEST", replay=True)  # built from the row
@@ -354,8 +419,8 @@ async def test_a_chart_stop_that_fails_or_overruns_is_logged_and_the_revoke_retu
         with capture_logs() as logs:
             revoking = asyncio.create_task(chart.revoke(row, _T0, "admin"))
             await asyncio.wait_for(entered.wait(), timeout=5)
-            clock.advance(OWNER_REVOKE_AUDIT_TIMEOUT_S)  # the stop's own bound expires
-            await asyncio.wait_for(revoking, timeout=5)
+            clock.advance(CHART_STOP_TIMEOUT_S)  # the stop's own bound expires
+            await asyncio.wait_for(revoking, timeout=2)  # cut at this bound, not a longer one
         assert chart.interpreter(str(row.id)) is None
     finally:
         await real_stop(interp)
@@ -369,3 +434,31 @@ async def test_a_chart_stop_that_fails_or_overruns_is_logged_and_the_revoke_retu
         "log_level": "error",
     }
     assert b16_audit.actions() == ["auth.session_revoked"]
+
+
+async def test_a_drop_with_no_chart_cached_leaves_a_build_of_the_same_session_registered(
+    monkeypatch: pytest.MonkeyPatch, b16_audit: RecordingAuditSink
+) -> None:
+    """Nothing is cached while the session's chart is being built, so a drop then leaves the build
+    alone: it completes, and its chart records."""
+    row, chart = _session(uuid.uuid4()), SessionChart()
+    sid, hydrating, release = str(row.id), asyncio.Event(), asyncio.Event()
+    hydrate = chart._hydrate
+
+    async def parked(*args: Any) -> None:
+        hydrating.set()
+        await release.wait()
+        await hydrate(*args)
+
+    monkeypatch.setattr(chart, "_hydrate", parked)
+    try:
+        building = asyncio.create_task(chart.observe(row, _T0))
+        await asyncio.wait_for(hydrating.wait(), timeout=5)
+        await chart._drop(sid)
+        release.set()
+        await asyncio.wait_for(building, timeout=5)
+        await chart.record(row, _T0, "STEP_UP_OK", **_PAYLOADS["STEP_UP_OK"])
+        assert chart.in_state(sid, "elevated")
+        assert b16_audit.actions() == ["auth.step_up_granted"]
+    finally:
+        await chart.stop()
