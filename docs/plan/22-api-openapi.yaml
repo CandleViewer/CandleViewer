@@ -2747,9 +2747,11 @@ paths:
         `503 store_unavailable`: the new roles stand, and each remaining session of the user is
         revoked with `DELETE /users/{userId}/sessions/{sessionId}`. The `200` body is unchanged.
         A request of the user already authorised when the change lands completes on the
-        authority it had at entry, and a refresh of the user in flight across the revocation can
-        mint a successor that survives it (its claim and mint are two transactions, the window
-        a disable has too).
+        authority it had at entry, and a refresh or a step-up rotation of the user in flight
+        across the revocation can mint a successor that survives it: its claim and mint are two
+        transactions, and unlike a disable, whose mint refuses the user and whose next request
+        ends such a survivor, a role change changes nothing the mint or a request re-reads. The
+        survivor carries the new role set.
       x-rbac: { permissions: [users:write], scope: none }
       x-idempotency: optional
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
@@ -14531,15 +14533,20 @@ paths:
         `auth.session_created` (the new session, naming the old one in `rotated_from`) ahead of
         the mint. When either record cannot be written, the grant just made is ended and the
         answer is `503 audit_unavailable`: nothing is elevated, nothing is rotated and the old
-        tokens keep working. The old session's revocation is conditional, so of a step-up and a
-        `POST /auth/refresh` of the same session exactly one rotates it, and the old token gets
-        no grace period. When the step-up loses (a refresh, a logout or a revoke ended the old
-        session first), or the new session cannot be minted once the old one is revoked, the
-        answer is `401 unauthenticated`, a record voids the `auth.session_created` that
-        announced the new session, and the user signs in again. The client holds its refresh
-        lock across the step-up call, so its own refresh never races it; a request it sends in
-        parallel with the old token gets `401` and is sent again with the new bundle, which its
-        other tabs receive over its `BroadcastChannel`.
+        tokens keep working. The same holds for a step-up whose `auth.step_up_granted` cannot
+        be recorded once its grant is stored. A refused `auth.session_created` comes after the
+        rotation's `auth.session_revoked`, which then stands: an `auth.step_up_failed` row
+        (reason `unrotated`) voids it and names the ended grant; when `auth.step_up_granted` is
+        all that stands, the row's reason is `grant_ended`. A row the audit writer refuses too
+        is lost, counted and alerted (`AuthAuditOutcomeLost`). The old session's revocation is
+        conditional, so of a step-up and a `POST /auth/refresh` of the same session exactly one
+        rotates it, and the old token gets no grace period. When the step-up loses (a refresh,
+        a logout or a revoke ended the old session first), or the new session cannot be minted
+        once the old one is revoked, the answer is `401 unauthenticated`, a record voids the
+        `auth.session_created` that announced the new session, and the user signs in again. The
+        client holds its refresh lock across the step-up call, so its own refresh never races
+        it; a request it sends in parallel with the old token gets `401` and is sent again with
+        the new bundle, which its other tabs receive over its `BroadcastChannel`.
       x-rbac: { permissions: [], scope: self }
       x-idempotency: ignored
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]

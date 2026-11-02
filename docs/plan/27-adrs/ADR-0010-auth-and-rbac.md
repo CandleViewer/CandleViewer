@@ -105,10 +105,14 @@ decision_ are not settled here. Paths are under `services/api/candleviewer/`.
   old session is revoked `rotated` inside the family (its sockets re-`auth` in place, as after a
   refresh). A role change, on `setUserRoles` or `updateUser` with `roles`, revokes every live session
   of the target, never the actor's (#2101): each `auth.session_revoked` (reason `role_changed`) is
-  written ahead with the change, and the target signs in again under the new roles. A refresh of the
-  target in flight across that revocation can still mint a successor that survives it (its claim and
-  mint are two transactions), the window #2911 accepts for a disable. A password change
-  (`PUT /auth/password`, #2110) revokes every session of the user as `password_change`, the
+  written ahead with the change, and the target signs in again under the new roles. A refresh or a
+  step-up rotation of the target in flight across that revocation can still mint a successor that
+  survives it: its claim and mint are two transactions, and unlike a disable (#2911, whose mint
+  refuses the user and whose `require_active` ends a survivor on its next use) a role change
+  changes nothing the mint or the request path re-reads. The survivor carries the new role set,
+  since roles are read on every request; a refresh's survivor holds no step-up grant, and a
+  rotation's only the grants it carried, which authorise nothing the new roles do not. A password
+  change (`PUT /auth/password`, #2110) revokes every session of the user as `password_change`, the
   caller's included, and mints the caller a replacement that keeps the absolute expiry and idle
   timeout but no step-up grant. "Rotation on any privilege change" in the decision text means
   SR-013's list (login, MFA completion, role change, step-up, password change): an account-grant

@@ -56,11 +56,15 @@ def _described(spec: dict[str, Any], method: str, path: str) -> str:
         "of the user is revoked with `DELETE /users/{userId}/sessions/{sessionId}`",
         "The `200` body is unchanged.",
         # C-8: an in-flight request keeps its entry authority (#2593 re-checks at the effect); the
-        # refresh window is accepted and documented, as for a disable.
+        # refresh and rotation window is accepted and documented. Unlike a disable's, nothing
+        # re-reads its survivor, which carries the new role set.
         "A request of the user already authorised when the change lands completes on the "
         "authority it had at entry",
-        "a refresh of the user in flight across the revocation can mint a successor that "
-        "survives it",
+        "a refresh or a step-up rotation of the user in flight across the revocation can mint a "
+        "successor that survives it",
+        "unlike a disable, whose mint refuses the user and whose next request ends such a "
+        "survivor, a role change changes nothing the mint or a request re-reads. The survivor "
+        "carries the new role set.",
     ],
 )
 def test_set_user_roles_states_the_session_revocation(spec: dict[str, Any], rule: str) -> None:
