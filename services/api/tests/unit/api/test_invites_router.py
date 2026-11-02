@@ -149,6 +149,20 @@ async def test_create_rejects_owner_role_and_duplicate() -> None:
     assert c.post("/users", headers=_H, json=_BODY).status_code == 409
 
 
+async def test_create_user_mfa_required_false_is_rejected() -> None:
+    """C-12.2 / SR-020 (#3086): `mfa_required: false` is the generic 422 before anything is
+    persisted: no user row, no invite, no `users.invited` record (refusal audited)."""
+    c, em, seed, clock, repo, _ = await _setup()
+    _elevate(c, seed, clock)
+    r = c.post("/users", headers=_H, json={**_BODY, "mfa_required": False})
+    assert r.status_code == 422 and r.json()["detail"] == "invalid invite request"
+    assert not repo.rows and "users.invited" not in em.actions()
+    assert "users.invite_refused" in em.actions()
+    assert c.get("/users/invites", headers=_H).json()["items"] == []
+    ok = c.post("/users", headers=_H, json={**_BODY, "mfa_required": True})
+    assert ok.status_code == 201 and len(repo.rows) == 1
+
+
 async def test_create_rejects_manager_role_with_generic_422_and_audit() -> None:
     c, em, seed, clock, repo, _ = await _setup()
     _elevate(c, seed, clock)
