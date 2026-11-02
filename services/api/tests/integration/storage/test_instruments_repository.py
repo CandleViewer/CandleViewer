@@ -50,6 +50,7 @@ def _row(tick: str = "0.10") -> dict[str, Any]:
         "priceFilter": {"tickSize": tick},
         "lotSizeFilter": {"qtyStep": "0.001", "minOrderQty": "0.001", "maxOrderQty": "100"},
         "leverageFilter": {"maxLeverage": "100.00"},
+        "fundingInterval": 480,
     }
 
 

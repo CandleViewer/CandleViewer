@@ -32,10 +32,10 @@ rationale is given), **MANUAL** (not automatable here; the cadence is given).
 | #1890 | P0              | fixed → #1898. Off-tick book prices are truncated into the same `price_ticks`, so a level is silently lost or mispriced.                                                                                                                                                                                               |
 | #1891 | P1              | milestone: R0. Regraded from P2: the signed request (key + signature + timestamp) goes off-host, so exfiltration plus replay within recvWindow. `BybitRestClient` signs and sends to any absolute URL given as `path` (bypasses SR-040a).                                                                              |
 | #1892 | P0              | fixed → #1898. No plausibility checks: negative or crossed ticker, far-future trade `T`, `1e308` price and kline `high<low` are all accepted.                                                                                                                                                                          |
-| #1893 | P2              | milestone: R0. CPU part fixed → #1898; pump yield open. Frame pump never yields under a backlog (event-loop starvation); `1e4200` prices cost about 1.2 s of CPU per frame.                                                                                                                                            |
+| #1893 | P2              | fixed → #1898 (CPU part) and #5385 (the pump yields every 64 frames; strict xfail removed). Was: Frame pump never yields under a backlog (event-loop starvation); `1e4200` prices cost about 1.2 s of CPU per frame.                                                                                                   |
 | #1894 | P3              | fixed → #1898. No `ingest_rejected_total{reason}` counter; ticker and book rejections are uncounted and have no fingerprint.                                                                                                                                                                                           |
 | #1895 | P2              | fixed → #2339 (the signer holds a capability and a credential id, not the key; strict xfail removed). Was: the full key in `repr` reaches tracebacks/exc_info/debugger dumps and the redactor misses a bare key.                                                                                                       |
-| #1896 | P2              | milestone: R0. A malformed `instruments-info` row (`AttributeError` / `TypeError` / `OverflowError`) aborts the whole catalogue refresh.                                                                                                                                                                               |
+| #1896 | P2              | fixed → #5385 (every per-row failure is a counted rejection; strict xfail removed). Was: a malformed `instruments-info` row (`AttributeError` / `TypeError` / `OverflowError`) aborts the whole catalogue refresh.                                                                                                     |
 
 ## A — Malformed and hostile payloads (`test_hostile_payloads.py`, `corpus.py`)
 
@@ -74,7 +74,7 @@ rationale is given), **MANUAL** (not automatable here; the cadence is given).
 | B-12 | `KlineEvent` with `high < low`                                      | Model validates                                                                                                                                               | Rejected                           | FIXED → #1898 (#1892) (no adapter kline parser exists yet; the gate belongs in it or in the model) |
 | B-13 | `tickSize` set to `0`, `-0.1` or `NaN`                              | Row rejected                                                                                                                                                  | Rejected                           | PASS                                                                                               |
 | B-14 | `minNotionalValue=1e12`                                             | Accepted and surfaced in `changed_fields`, which bumps `metadata_version`                                                                                     | Visible change                     | ACCEPTED (an exchange-side change is legitimate; the signal exists)                                |
-| B-15 | `priceFilter: ["x"]`, `status: ["Trading"]`, `launchTime: Infinity` | Non-`InstrumentParseError` escapes; the whole refresh fails                                                                                                   | Per-row rejection                  | **DEFECT #1896**                                                                                   |
+| B-15 | `priceFilter: ["x"]`, `status: ["Trading"]`, `launchTime: Infinity` | Was: non-`InstrumentParseError` escapes; the whole refresh fails                                                                                              | Per-row rejection                  | FIXED → #5385 (#1896)                                                                              |
 
 ## C — Decoding abuse (`test_resource_exhaustion.py`)
 
@@ -85,16 +85,16 @@ rationale is given), **MANUAL** (not automatable here; the cadence is given).
 
 ## D — Resource exhaustion (`test_resource_exhaustion.py`)
 
-| Id   | Attempted                                                                    | Observed                                                                     | Expected                         | Verdict                                                       |
-| ---- | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------- |
-| D-01 | 1 500 distinct symbols in one trade frame                                    | Rejected as a whole (symbol mismatch; `MAX_PRINTS_PER_BATCH`)                | No per-symbol state is created   | PASS                                                          |
-| D-02 | 10 000 distinct symbol label values                                          | Fold to `other` once `MAX_SYMBOLS` = 32; free text becomes `other`           | Bounded cardinality              | PASS                                                          |
-| D-03 | `ws_frames` flood beyond 4 096                                               | Drop-newest; `ws_frames_dropped` counted; trade gap marked; book invalidated | Bounded and visible              | PASS                                                          |
-| D-04 | 5 000 resubscribe reservations                                               | `ConnectionBudget` public lane: 420 / 300 s, ≤ 1 window ahead, rest refused  | Bounded                          | PASS                                                          |
-| D-05 | 3 000 subscribe/unsubscribe cycles across all streams (fake clock)           | After the bounded caches fill, growth is under 64 KiB                        | No unbounded growth              | PASS                                                          |
-| D-06 | Never-idle stream (2 000 queued frames)                                      | `_pump_frames` drains everything without yielding; other tasks starve        | Pump yields every N frames       | PARTIAL: CPU part FIXED → #1898; pump starvation open (#1893) |
-| D-07 | 1 000 levels at `1e4200` (15 KB frame)                                       | About 1.2 s of loop CPU before rejection                                     | Rejected cheaply (≤ 20 ms slice) | FIXED → #1898 (#1893)                                         |
-| D-08 | "Memory returns to baseline within the declared window" after a 100 MB frame | Not applicable: the frame is never buffered (A-13)                           | —                                | PASS by construction                                          |
+| Id   | Attempted                                                                    | Observed                                                                     | Expected                         | Verdict                                            |
+| ---- | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | -------------------------------- | -------------------------------------------------- |
+| D-01 | 1 500 distinct symbols in one trade frame                                    | Rejected as a whole (symbol mismatch; `MAX_PRINTS_PER_BATCH`)                | No per-symbol state is created   | PASS                                               |
+| D-02 | 10 000 distinct symbol label values                                          | Fold to `other` once `MAX_SYMBOLS` = 32; free text becomes `other`           | Bounded cardinality              | PASS                                               |
+| D-03 | `ws_frames` flood beyond 4 096                                               | Drop-newest; `ws_frames_dropped` counted; trade gap marked; book invalidated | Bounded and visible              | PASS                                               |
+| D-04 | 5 000 resubscribe reservations                                               | `ConnectionBudget` public lane: 420 / 300 s, ≤ 1 window ahead, rest refused  | Bounded                          | PASS                                               |
+| D-05 | 3 000 subscribe/unsubscribe cycles across all streams (fake clock)           | After the bounded caches fill, growth is under 64 KiB                        | No unbounded growth              | PASS                                               |
+| D-06 | Never-idle stream (2 000 queued frames)                                      | `_pump_frames` drains everything without yielding; other tasks starve        | Pump yields every N frames       | FIXED → #1898 (CPU) and #5385 (pump yield) (#1893) |
+| D-07 | 1 000 levels at `1e4200` (15 KB frame)                                       | About 1.2 s of loop CPU before rejection                                     | Rejected cheaply (≤ 20 ms slice) | FIXED → #1898 (#1893)                              |
+| D-08 | "Memory returns to baseline within the declared window" after a 100 MB frame | Not applicable: the frame is never buffered (A-13)                           | —                                | PASS by construction                               |
 
 ## E — Credential and leakage probes (`test_leakage.py`)
 
@@ -144,7 +144,7 @@ returns or raises `ValueError` / `InstrumentParseError`.
 | ---- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------- |
 | H-01 | Bounded fuzz over trade, ticker and book | Holds within the PR budget                                                                                 | PASS                  |
 | H-02 | Long session, book                       | `ts: Infinity` leads to `OverflowError` (now `regressions/book_ts_infinity.frame`)                         | FIXED → #1898 (#1889) |
-| H-03 | Instrument rows                          | `launchTime: Infinity` leads to `OverflowError`; list-typed filters lead to `AttributeError` / `TypeError` | **DEFECT #1896**      |
+| H-03 | Instrument rows                          | `launchTime: Infinity` leads to `OverflowError`; list-typed filters lead to `AttributeError` / `TypeError` | FIXED → #5385 (#1896) |
 | H-04 | Checked-in crashers replay every PR      | `regressions/*.frame`; known-open crashers are `xfail` against their issue                                 | PASS (harness)        |
 
 ## Planted-defect verification (ticket test plan)
@@ -160,7 +160,7 @@ returns or raises `ValueError` / `InstrumentParseError`.
 
 - The sustained-rejection alert rule cannot be validated until #1894 adds the counter.
   It is tracked on #1894.
-- The p95 ≤ 20 ms rejection-flood latency slice is blocked by #1893 (D-06 / D-07). Once
-  that is fixed, the `perf` case becomes the budget gate.
+- The p95 ≤ 20 ms rejection-flood latency slice was blocked by #1893 (D-06 / D-07); both parts
+  are fixed (#1898, #5385), so the `perf` case is the budget gate.
 - TLS behaviour is asserted by configuration only (`wss://` / `https://`, allowlist).
   There is no MITM against Bybit (out of scope).
