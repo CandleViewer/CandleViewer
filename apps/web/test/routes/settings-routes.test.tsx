@@ -99,6 +99,6 @@ describe("settings routes", () => {
     }
     // SettingRow on a real screen: the palette group's description carries the scope.
     const palette = screen.getByRole("group", { name: "Chart palette" });
-    expect(palette).toHaveAccessibleDescription(/Scope: \[scope: pending ruling\]/);
+    expect(palette).toHaveAccessibleDescription(/Scope: Per device/);
   });
 });

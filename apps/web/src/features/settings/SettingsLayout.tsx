@@ -19,7 +19,7 @@ export interface SettingsLayoutProps {
   readonly reset?: SettingsResetSource;
 }
 
-const RESET_REASON = "Not available yet: resetting needs the settings service.";
+const RESET_REASON = "Resetting this section isn't available yet.";
 
 /** CMP-086 layout half: nav on the left, search above, the selected section on the right. */
 export function SettingsLayout({ children, reset }: SettingsLayoutProps): JSX.Element {
@@ -52,7 +52,7 @@ export function SettingsLayout({ children, reset }: SettingsLayoutProps): JSX.El
   }
 
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-inset-lg, 16px)" }}>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-inset-lg)" }}>
       {/* 16rem / 20rem: pane basis; packages/ui tokens define no layout sizes yet. */}
       <div style={{ flex: "0 1 16rem", minWidth: 0 }}>
         <label htmlFor={searchId}>Search settings</label>

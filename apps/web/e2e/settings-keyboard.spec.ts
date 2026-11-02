@@ -54,7 +54,7 @@ test("the nav is one Tab stop; arrows, Home, End and Enter work it", async ({ pa
   await page.keyboard.press("End");
   const help = nav.getByRole("button", { name: "Help & about" });
   await expect(help).toBeFocused();
-  await expect(help).toHaveAccessibleDescription(/not available yet/iu);
+  await expect(help).toHaveAccessibleDescription(/isn't available yet/iu);
   await page.keyboard.press("Home");
   await expect(nav.getByRole("link", { name: "Profile" })).toBeFocused();
   for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowDown"); // Security, Appearance, Hotkeys

@@ -7,7 +7,6 @@ import {
   ResetPreview,
   SettingRow,
   SettingsLayout,
-  SCOPE_PENDING_RULING,
   SCOPE_VOCABULARY,
   SETTINGS,
   currentSectionId,
@@ -79,7 +78,7 @@ describe("SettingsNav", () => {
     view();
     const item = screen.getByRole("button", { name: "Trading defaults" });
     expect(item).toHaveAttribute("aria-disabled", "true");
-    expect(item).toHaveAccessibleDescription(/not available yet/i);
+    expect(item).toHaveAccessibleDescription(/isn't available yet/i);
     item.focus();
     expect(item).toHaveFocus();
   });
@@ -148,7 +147,7 @@ describe("settings search", () => {
     fireEvent.change(box, { target: { value: "palette" } });
     const results = screen.getByRole("region", { name: /search results/i });
     expect(within(results).getByText("Settings > Appearance > Chart palette")).toBeVisible();
-    expect(within(results).getByText(/^Scope: \[scope: pending ruling\]$/)).toBeVisible();
+    expect(within(results).getByText(/^Scope: Per device$/)).toBeVisible();
     fireEvent.change(box, { target: { value: "zzzz" } });
     act(() => {
       vi.advanceTimersByTime(SEARCH_SAY_MS);
@@ -163,7 +162,7 @@ describe("settings search", () => {
     });
     const results = screen.getByRole("region", { name: /search results/i });
     expect(within(results).getByText("Settings > Trading defaults")).toBeVisible();
-    expect(within(results).getByText(/not available yet/i)).toBeVisible();
+    expect(within(results).getByText(/isn't available yet/i)).toBeVisible();
     expect(within(results).queryByRole("link")).toBeNull();
   });
 
@@ -184,7 +183,7 @@ describe("reset preview", () => {
     view();
     const button = screen.getByRole("button", { name: /Reset Appearance/ });
     expect(button).toHaveAttribute("aria-disabled", "true");
-    expect(button).toHaveAccessibleDescription(/not available yet/i);
+    expect(button).toHaveAccessibleDescription(/isn't available yet/i);
   });
 
   it("previews only what would change, and Cancel changes nothing", () => {
@@ -229,7 +228,7 @@ describe("reset preview", () => {
 
 describe("scope text", () => {
   it("is always a term of the SCR-110 vocabulary or the pending-ruling placeholder", () => {
-    const allowed: readonly string[] = [...Object.values(SCOPE_VOCABULARY), SCOPE_PENDING_RULING];
+    const allowed: readonly string[] = Object.values(SCOPE_VOCABULARY);
     expect(SETTINGS.length).toBeGreaterThan(0);
     for (const setting of SETTINGS) expect(allowed).toContain(setting.scope);
   });
@@ -238,8 +237,8 @@ describe("scope text", () => {
     const scopeOf = (id: string): string => settingEntry(id).scope;
     expect(scopeOf("reduced-motion")).toBe("Per user");
     expect(scopeOf("active-sessions")).toBe("Per user");
-    expect(scopeOf("chart-palette")).toBe(SCOPE_PENDING_RULING);
-    expect(scopeOf("keybindings")).toBe(SCOPE_PENDING_RULING);
+    expect(scopeOf("chart-palette")).toBe(SCOPE_VOCABULARY.device);
+    expect(scopeOf("keybindings")).toBe(SCOPE_VOCABULARY.device);
   });
 });
 

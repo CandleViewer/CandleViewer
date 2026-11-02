@@ -7,7 +7,6 @@ export {
 } from "./SettingsLayout";
 export { SettingsNav, currentSectionId } from "./SettingsNav";
 export {
-  SCOPE_PENDING_RULING,
   SCOPE_VOCABULARY,
   SECTIONS,
   SETTINGS,

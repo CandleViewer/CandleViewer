@@ -12,7 +12,7 @@ export interface SettingsSection {
 }
 
 /** T2 wording for a section whose screen has not shipped: disabled with a reason, never hidden. */
-export const NOT_BUILT_REASON = "Not available yet: this section ships in a later release.";
+export const NOT_BUILT_REASON = "This section isn't available yet.";
 
 /** The nine sections of SCR-110, in catalogue order. */
 export const SECTIONS: readonly SettingsSection[] = [
@@ -89,16 +89,14 @@ export const SCOPE_VOCABULARY = {
   workspace: "Per workspace",
   symbol: "Per symbol",
   account: "Per account",
+  /** Kept only in this browser's localStorage (BQ-S08-12, owner ruling 2026-11-02): never synced to the server. */
+  device: "Per device",
 } as const;
 
-/**
- * A setting kept only on this device (localStorage) has no term in that vocabulary. Until the owner rules on one,
- * it shows this placeholder, so no invented scope wording ships.
- */
-export const SCOPE_PENDING_RULING = "[scope: pending ruling]";
+export type SettingScope = (typeof SCOPE_VOCABULARY)[keyof typeof SCOPE_VOCABULARY];
 
-export type SettingScope =
-  (typeof SCOPE_VOCABULARY)[keyof typeof SCOPE_VOCABULARY] | typeof SCOPE_PENDING_RULING;
+/** Kept in this browser's localStorage only (`cv.chartColorMode`, `cv.keymap-profile.v1:<user id>`). */
+const DEVICE = SCOPE_VOCABULARY.device;
 
 /** Server-stored per user: `PUT /api/v1/settings` (accessibility subtree), `GET /api/v1/me/sessions`. */
 const USER = SCOPE_VOCABULARY.user;
@@ -110,14 +108,14 @@ export const SETTINGS: readonly SettingEntry[] = [
     sectionId: "appearance",
     label: "Chart palette",
     description: "Default or colour-blind safe colours for charts.",
-    scope: SCOPE_PENDING_RULING,
+    scope: DEVICE,
   },
   {
     id: "chart-convention",
     sectionId: "appearance",
     label: "Colour convention",
     description: "Which colour means buy and which means sell.",
-    scope: SCOPE_PENDING_RULING,
+    scope: DEVICE,
   },
   {
     id: "keybindings",
@@ -125,7 +123,7 @@ export const SETTINGS: readonly SettingEntry[] = [
     label: "Key bindings",
     description: "Rebind, unbind or reset a command's keys.",
     // Device store (localStorage, keyed by user); the server profile store is wired off (keymap/profileStore.ts).
-    scope: SCOPE_PENDING_RULING,
+    scope: DEVICE,
   },
   {
     id: "active-sessions",
