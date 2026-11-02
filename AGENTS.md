@@ -7,7 +7,7 @@
 > **Precedence:** `CONSTITUTION.md` > `AGENTS.md` > `CONTRIBUTING.md` > tool defaults. If this file
 > contradicts the Constitution, the Constitution wins and this file is a bug.
 >
-> **Version:** 2.1.2 · Last updated 2026-10-31 · Owner `@basiltt`
+> **Version:** 2.1.3 · Last updated 2026-11-02 · Owner `@basiltt`
 
 ---
 
@@ -561,7 +561,7 @@ N,UP,B,A,C4,SIM,ASYNC,S,PT,RET,ARG,PTH,ERA,TRY,RUF`), **`ruff format`** (line le
 The authoritative checklist is `.github/PULL_REQUEST_TEMPLATE.md`; do not delete items from it. Before
 requesting review, confirm:
 
-- [ ] One issue, one branch, one PR by default (a bundle under an owner delivery-speed directive closes each of its tickets with its own acceptance table and its own QA record); description contains `Closes #N` (C-4.6/C-4.7).
+- [ ] One issue, one branch, one PR by default (a bundle under an owner delivery-speed directive closes each of its tickets with its own acceptance table and its own QA record); description contains `Closes #N`, or a slice's `Refs #N` + `Partial: <reason>` with no closing keyword (C-4.6/C-4.7).
 - [ ] Branch name matches `<type>/<epic-key>-<slug>`; commits are conventional with an allowed scope.
 - [ ] Diff ≤400 LOC (or a justified `large-pr-approved` label); no unrelated changes.
 - [ ] Contract changed first and protocol types regenerated (if applicable); contract tests updated.
@@ -717,7 +717,7 @@ edit inside an unrelated ticket.
 ```
 Branch    : feat|fix|chore|design|spike|docs / <epic-key>-<short-slug>
 Commit    : type(scope): imperative subject   # scopes: Constitution §4.4
-PR        : one issue by default (bundles only under C-4.6's directive clause), "Closes #N" per ticket, ≤400 LOC, template complete, 2 independent agent reviews (C-10.1)
+PR        : one issue by default (bundles only under C-4.6's directive clause), "Closes #N" per ticket (a slice: C-4.7's form), ≤400 LOC, template complete, 2 independent agent reviews (C-10.1)
 Integrate : git pull --rebase origin main     # never merge, never force-push main
 Local gate: pnpm verify   |   ruff check . && ruff format --check . && mypy --strict . && pytest
 Contract  : edit docs/plan/22-api-openapi.yaml or 23-ws-protocol.md FIRST, then pnpm generate

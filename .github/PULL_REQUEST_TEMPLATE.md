@@ -79,7 +79,7 @@ Related:
 
 ### Process (§4, §10)
 
-- [ ] One issue → one branch → one PR by default (a bundle under an owner delivery-speed directive: `Closes #N` per ticket, one acceptance table each); description contains `Closes #N` (C-4.6, C-4.7)
+- [ ] One issue → one branch → one PR by default (a bundle under an owner delivery-speed directive: `Closes #N` per ticket, one acceptance table each); description contains `Closes #N`, or a slice's `Refs #N` + `Partial: <reason>` closing nothing (C-4.6, C-4.7)
 - [ ] Branch matches `<type>/<epic-key>-<slug>`; commits are Conventional with an allowed scope (C-4.4, C-4.10)
 - [ ] Branch rebased on `main` (no merge commits); will be **squash**-merged (C-4.12)
 - [ ] Diff ≤ 400 changed LOC, or `large-pr-approved` label with written justification (C-4.8)
