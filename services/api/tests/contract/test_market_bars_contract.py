@@ -701,6 +701,29 @@ class TestIncludeOpenFromTheLiveSeries:
         assert body["bars"][-1]["t"] == iso_us(forming.forming.open_time)
         assert body["meta"]["count"] == len(closed) + 1
 
+    def test_a_generation_swap_during_the_read_appends_no_live_rows_of_the_new_one(self) -> None:
+        """mn-3: `live_series` names another generation on its second call (after the storage
+        read): the page stays ascending with one bar per open time, and the live rows of the
+        generation the collapse did not use are not appended."""
+        store, rows, closed = self._live()
+        stored = {bar_param_for(self._SPEC): rows[bar_param_for(self._SPEC)][:-2]}
+        calls: list[int] = []
+
+        def live(symbol: str, spec: BarSpec, since: int | None) -> LiveTail | None:
+            tail = store.live_tail(symbol, spec, since)
+            assert tail is not None
+            calls.append(len(calls))
+            return tail if len(calls) == 1 else LiveTail(9, tail.closed, tail.forming)
+
+        q = {**self._Q, "include_open": "true"}
+        body = _client(fetch=_Fetch(stored), live=live).get("/market/bars", params=q).json()
+        ts = [b["t"] for b in body["bars"]]
+        assert len(calls) == 2 and len(ts) == len(set(ts)) and ts == sorted(ts)
+        assert [b["generation"] for b in body["bars"]] == [0] * len(
+            stored[bar_param_for(self._SPEC)]
+        )
+        assert all(b["confirm"] for b in body["bars"]) and closed
+
     @pytest.mark.parametrize("flag", [{}, {"include_open": "false"}])
     def test_without_include_open_there_is_no_forming_bar(self, flag: dict[str, str]) -> None:
         assert all(b["confirm"] for b in self._get(**flag)["bars"])
@@ -928,6 +951,21 @@ class TestFoldRegressions:
         assert [b["t"] for b in seen] == [iso_us(int(str(r["ts"]))) for r in tape[:4]]
         first = seen[0]  # the 11th and 12th rows were past the first read: re-read
         assert first["t"] == iso_us(ts) and first["generation"] == 11
+
+    @pytest.mark.parametrize(("limit", "calls"), [(502, 2), (503, 1)])
+    def test_a_read_of_512_rows_at_one_open_time_is_not_re_read(
+        self, limit: int, calls: int
+    ) -> None:
+        """mn-1: a read of 512 rows or more (limit >= 503) already holds the most a re-read
+        would fetch, so it is not repeated; the rows it fetched are the ones considered."""
+        tape = [r for r in _STORE[_PARAM] if int(str(r["ts"])) >= _T0]
+        twins = [{**tape[0], "generation": g, "close": float(g)} for g in range(600)]
+        for r in twins:
+            r["row_checksum"] = row_checksum(r)
+        fetch = _Fetch({_PARAM: twins})
+        body = _client(fetch=fetch).get("/market/bars", params={**self._Q, "limit": limit}).json()
+        assert fetch.calls == calls
+        assert [b["generation"] for b in body["bars"]] == [511]  # the 512th row in stored order
 
     def test_a_recorded_hole_at_the_forming_bar_stays_listed(self, tmp_path: Path) -> None:
         store, rows, closed = TestIncludeOpenFromTheLiveSeries()._live()
