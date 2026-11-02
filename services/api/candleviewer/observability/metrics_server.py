@@ -97,6 +97,7 @@ class MetricsRuntime:
             port=self._port,
             log_config=None,
             access_log=False,
+            proxy_headers=False,  # #2736: never rewrite client/scheme; see server.py (#2275)
         )
         self._server = uvicorn.Server(config)
         loop_lag = self._r0["event_loop_lag_seconds"]

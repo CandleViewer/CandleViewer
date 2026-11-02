@@ -82,11 +82,14 @@ async def _serve(settings: Settings) -> AsyncIterator[int]:
         await server.shutdown()
 
 
-async def _status_and_body(port: int, path: str, headers: Mapping[str, str]) -> tuple[int, bytes]:
-    """One raw HTTP/1.1 GET from a loopback socket, read until the server closes it."""
+async def _status_and_body(
+    port: int, path: str, headers: Mapping[str, str], *, local_addr: tuple[str, int] | None = None
+) -> tuple[int, bytes]:
+    """One raw HTTP/1.1 GET from a loopback socket (from `local_addr` if given), read until the
+    server closes it."""
     lines = [f"GET {path} HTTP/1.1", f"Host: {_LOOPBACK}"]
     lines += [f"{name}: {value}" for name, value in headers.items()]
-    reader, writer = await asyncio.open_connection(_LOOPBACK, port)
+    reader, writer = await asyncio.open_connection(_LOOPBACK, port, local_addr=local_addr)
     try:
         writer.write(("\r\n".join(lines) + "\r\n\r\n").encode("latin-1"))
         await writer.drain()
@@ -138,8 +141,34 @@ async def test_ws_upgrade_refusal_logs_the_peer_or_the_trusted_proxy_hop(
 async def test_forwarded_allow_ips_cannot_add_a_second_interpreter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """uvicorn reads `FORWARDED_ALLOW_IPS` only when its proxy-header handling is on."""
+    """uvicorn reads `FORWARDED_ALLOW_IPS` only when its proxy-header handling is on.
+
+    The peer is 127.0.0.2, not the 127.0.0.1 that uvicorn trusts by default, so only the
+    environment variable could make uvicorn read the header (#2736)."""
     monkeypatch.setenv("FORWARDED_ALLOW_IPS", "*")
     async with asyncio.timeout(_DEADLINE_S), _serve(_settings(None)) as port:
-        status, body = await _status_and_body(port, _PROBE, _request_headers("100.64.66.66"))
-    assert (status, json.loads(body)) == (200, {"client": _LOOPBACK, "mesh_source": _LOOPBACK})
+        status, body = await _status_and_body(
+            port, _PROBE, _request_headers("100.64.66.66"), local_addr=("127.0.0.2", 0)
+        )
+    assert (status, json.loads(body)) == (200, {"client": "127.0.0.2", "mesh_source": "127.0.0.2"})
+
+
+def test_server_main_starts_uvicorn_without_proxy_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#2736: `python -m candleviewer.server` (no `--reload`) builds its config with
+    `proxy_headers=False`."""
+    from candleviewer import server
+
+    seen: list[uvicorn.Config] = []
+
+    class _Fake:
+        started = True
+
+        def __init__(self, config: uvicorn.Config) -> None:
+            seen.append(config)
+
+        def run(self) -> None:
+            return None
+
+    monkeypatch.setattr(server, "PlannedShutdownServer", _Fake)
+    server.main([])
+    assert [c.proxy_headers for c in seen] == [False]

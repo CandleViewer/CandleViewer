@@ -364,7 +364,7 @@ exports, added in #3189) needs that package built: `turbo run test` builds the d
 | New migration                                  | `alembic revision -m "<summary>"` (autogenerate then **review by hand**) |
 | Apply / roll back migration                    | `alembic upgrade head` / `alembic downgrade -1`                          |
 | Deploy: apply Postgres and QuestDB schemas     | `python -m candleviewer.storage.migrate` (runbook: storage-migrate.md)   |
-| Run API locally                                | `python -m candleviewer.server --reload`                                 |
+| Run API locally                                | `CV_BIND_PORT=8000 python -m candleviewer.server --reload`               |
 
 `ruff format` is the only Python formatter: CI's `ruff format --check` and the commit hook run it.
 black stays in the dev group only because `datamodel-code-generator` formats the protocol models

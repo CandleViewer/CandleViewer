@@ -61,6 +61,17 @@ def _free_port() -> int:
         return int(s.getsockname()[1])
 
 
+async def test_metrics_listener_does_not_install_proxy_header_middleware() -> None:
+    """#2736: the second listener must not rewrite `scope["client"]` or the scheme either."""
+    runtime = MetricsRuntime(Metrics("dev", process_collectors=True), f"127.0.0.1:{_free_port()}")
+    runtime.start()
+    try:
+        assert runtime._server is not None
+        assert runtime._server.config.proxy_headers is False
+    finally:
+        await runtime.stop()
+
+
 async def test_runtime_serves_live_metrics_and_stops() -> None:
     metrics = Metrics("dev", process_collectors=True)
     runtime = MetricsRuntime(metrics, f"127.0.0.1:{_free_port()}")

@@ -48,6 +48,9 @@ def _address(text: str) -> IPv4Address | IPv6Address:
     return address
 
 
+_REASON_REPEATED = "forwarded_header_repeated"
+
+
 class MeshOnlyMiddleware:
     """Rejects any request whose real source address is off-mesh.
 
@@ -82,7 +85,7 @@ class MeshOnlyMiddleware:
             await self._app(scope, receive, send)
             return
 
-        source = self._resolve_source_address(scope)
+        source, reason = self._resolve_source(scope)
         if source is not None and self._allow_list.is_allowed(source):
             # #2090: downstream logs and audits (the CSRF guard, the WS Origin check)
             # record the address this check admitted.
@@ -96,8 +99,26 @@ class MeshOnlyMiddleware:
             source_address=source,
             path=_FETCH_PATH.sub(r"\1{backupId}\2{token}", str(scope.get("path", ""))),
             scope_type=scope["type"],
+            **({"reason": reason} if reason is not None else {}),
         )
         await self._reject(scope, send)
+
+    def _resolve_source(self, scope: Scope) -> tuple[str | None, str | None]:
+        """(source address, bounded refusal reason). The reason is set only when no source is
+        trusted: `forwarded_header_repeated`."""
+        source = self._resolve_source_address(scope)
+        if source is None and self._repeated_forwarded_header(scope):
+            return None, _REASON_REPEATED
+        return source, None
+
+    def _repeated_forwarded_header(self, scope: Scope) -> bool:
+        client = scope.get("client")
+        if self._trusted_proxy_header is None or not self._is_trusted_proxy(
+            client[0] if client else None
+        ):
+            return False
+        name = self._trusted_proxy_header
+        return sum(1 for key, _ in scope.get("headers") or () if key.lower() == name) > 1
 
     def _resolve_source_address(self, scope: Scope) -> str | None:
         client = scope.get("client")

@@ -203,6 +203,19 @@ async def test_a_repeated_forwarded_header_from_the_trusted_proxy_is_refused() -
     assert sent.messages[0]["status"] == 403
     assert admitted.sources == []
     assert audit.events[0]["source_address"] is None
+    assert audit.events[0]["reason"] == "forwarded_header_repeated"  # #2736: not a silent refusal
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_off_mesh_refusal_carries_no_reason() -> None:
+    audit = InMemoryAuditSink()
+    mw = MeshOnlyMiddleware(
+        _downstream_app, allow_list=CidrAllowList([MESH_CIDR]), audit_sink=audit
+    )
+
+    await mw(_http_scope("8.8.8.8"), _noop_receive, _Sent())
+
+    assert "reason" not in audit.events[0]
 
 
 @pytest.mark.parametrize(

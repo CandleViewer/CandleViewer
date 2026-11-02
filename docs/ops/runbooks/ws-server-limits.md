@@ -1,4 +1,7 @@
-# Runbook: WebSocket server limits
+# Runbook: API server limits and forwarded headers
+
+WebSocket and HTTP server limits are below; the forwarded-header and reverse-proxy guidance is
+under [Forwarded headers and a reverse proxy](#forwarded-headers-and-a-reverse-proxy-2275).
 
 The API container starts through `python -m candleviewer.server`, which builds the uvicorn
 configuration from `candleviewer/ws/limits.py` (single source; protocol `23-ws-protocol.md` §16.2).
@@ -82,13 +85,21 @@ example the TLS-terminating app proxy, SR-049):
 1. Make the proxy send one `X-Forwarded-For` line that ends with the client's address (the
    right-most hop). Only that hop is read; every hop to its left comes from the client and is
    ignored. A request from the proxy that carries the header more than once is refused (403): the
-   line the proxy wrote cannot be told apart from lines the client sent.
+   line the proxy wrote cannot be told apart from lines the client sent. The symptom is a
+   `net.off_mesh_request` audit event with `source_address` null and
+   `reason=forwarded_header_repeated`, once a real audit sink is wired to the mesh middleware.
+   Production builds it without one today, so the only visible symptom is a generic 403 on every
+   request through the proxy.
 2. Set both `CV_MESH_TRUSTED_PROXY_HEADER=x-forwarded-for` and `CV_MESH_TRUSTED_PROXY_ADDRESS` to
    the proxy's address as the API sees it (the TCP peer, as an IP address: `127.0.0.1` for a proxy
    on the same host). The header is read only when the TCP peer is that address. The API refuses
    to start when only one of the two is set, when the address is not an IP address (a hostname,
    `host:port` or a CIDR), or when the header is not a header name.
-3. Restart the API, sign in through the proxy, and check that the `auth.login` audit record's
+3. Make the proxy rewrite `Location` headers (for example nginx `proxy_redirect`). uvicorn does
+   not read `X-Forwarded-Proto`, so Starlette's slash redirects (`redirect_slashes`) build
+   `http://` Locations behind a TLS proxy (a 307 to `http://app.example/healthz`); without the
+   rewrite a browser follows a plain-HTTP redirect.
+4. Restart the API, sign in through the proxy, and check that the `auth.login` audit record's
    `actor_ip` is the client's mesh address, not the proxy's.
 
 Without step 2, every request through the proxy is judged and recorded as the proxy's address

@@ -1,4 +1,7 @@
-"""ASGI entrypoint (`uvicorn candleviewer.main:app`).
+"""ASGI entrypoint: the `app` object that `python -m candleviewer.server` serves.
+
+Start the API with `python -m candleviewer.server`, never the bare `uvicorn candleviewer.main:app`
+CLI: its default `--proxy-headers` turns uvicorn's forwarded-header handling back on (#2275).
 
 Wires the module supervisor into the FastAPI lifespan so `start_all()`/
 `stop_all()` run around the server's lifetime (Sec.6.2). Not exercised by

@@ -173,7 +173,11 @@ def drive_k6(duration: str, vus: int) -> dict[str, list[float]]:
         write_cold_lake(Path(tmp))
         apps = asyncio.run(build_app(Path(tmp))), asyncio.run(build_first_read_app(Path(tmp)))
         servers = [
-            uvicorn.Server(uvicorn.Config(a, host="127.0.0.1", port=p, log_level="warning"))
+            uvicorn.Server(
+                uvicorn.Config(
+                    a, host="127.0.0.1", port=p, log_level="warning", proxy_headers=False
+                )
+            )
             for a, p in zip(apps, ports, strict=True)
         ]
         import threading
