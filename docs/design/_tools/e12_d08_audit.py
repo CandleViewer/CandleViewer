@@ -81,7 +81,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "f8f6c3011e14a35a4254ea9616179ae70ae342f0"  # re-based at origin/main (RULED, orchestrator, 2026-11-02 02:14Z, at 8cb96b1875; re-pointed in the lens fold): every cite re-read here
+BASE = "85b6b6c1c3aa9ddc4fc92a13bca15550433d45fe"  # re-based at origin/main (RULED, orchestrator, 2026-11-02 02:14Z, at 8cb96b1875; re-pointed by content in the lens folds): every cite re-read here
 HEAD_REF = "origin/main"  # a cited line that differs here FAILs (G-VERSION)
 SPEC_REL = "docs/design/E12/E12-D08.md"
 TOOL_REL = "docs/design/_tools/e12_d08_audit.py"
