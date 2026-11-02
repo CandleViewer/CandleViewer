@@ -10,6 +10,7 @@ every job that launches Electron runs the SR-138 runner, which fetches it throug
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -70,7 +71,9 @@ def test_every_job_that_launches_electron_runs_the_allowlist_runner_after_its_in
             if not launches:
                 continue
             launching.append((workflow.name, name))
-            installs = [i for i, run in enumerate(runs) if run.startswith("pnpm install")]
+            # #5113: an install may run through the registry retry wrapper (CI-INFRA-002/003).
+            bare = [re.sub(r"^python3 tools/ci/registry_retry\.py .*? -- ", "", run) for run in runs]
+            installs = [i for i, run in enumerate(bare) if run.startswith("pnpm install")]
             fetches = [i for i, run in enumerate(runs) if run == RUNNER]
             where = f"{workflow.name} {name}"
             assert installs and fetches, f"{where}: no pnpm install or no allowlist runner step"

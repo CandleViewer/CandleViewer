@@ -140,15 +140,42 @@ def test_gates_installers_follow_every_tree_reading_gate_and_the_verdict_runs_la
     assert nodes and all("cache" not in s["with"] for s in nodes)
 
 
+# A repository path in command position: `tools/x`, `./scripts/y`, after `python`, `bash` etc.
+REPO_SCRIPT = re.compile(r"(?:^|[;&|{(]\s*|\b(?:python3?|bash|sh|node|exec)\s+(?:-\S+\s+)*)"
+                         r"(?:\./)?(?:tools|scripts)/")
+
+
+def test_no_pr_script_runs_before_the_secret_scanners() -> None:
+    # #5113 security lens (SR-142, C-9.1 secrets-scan): a PR script run before gitleaks and
+    # trufflehog could shim `docker` on the step's PATH or rewrite .git and pass its own scan, so
+    # nothing under tools/ or scripts/ runs until both scanners have run (a constraint file is
+    # data pip reads, not a script).
+    steps = JOBS["gates"]["steps"]
+    index = [s.get("id") for s in steps].index("secret-scan")
+    run = steps[index]["run"]
+    before = run[: run.index('"$TRUFFLEHOG_IMAGE" git file:///repo')]
+    texts = [s.get("run", "") for s in steps[:index]] + [before]
+    lines = [ln.strip() for text in texts for ln in text.splitlines()]
+    ran = [ln for ln in lines if not ln.startswith("#") and REPO_SCRIPT.search(ln)]
+    assert ran == []
+    assert REPO_SCRIPT.search("python3 tools/ci/registry_retry.py --registry pypi -- pip x")
+    assert REPO_SCRIPT.search("{ ./scripts/x.sh; }")
+    assert not REPO_SCRIPT.search("pip install -c scripts/requirements-ci.txt PyYAML")
+
+
 def test_gen_runs_the_old_job_on_a_full_install_and_a_bare_python() -> None:
     steps = JOBS["gates"]["steps"]
     lines = [line.strip() for line in steps[-2]["run"].splitlines()]
     # _job-gen.yml at 59bec409: the full install (commitlint's is `--filter .`), then PyYAML at its
     # pin in a fresh venv, so `pnpm generate`'s python3 sees nothing an earlier gate installed into
     # setup-python's 3.13 (pytest, pypi-attestations). The failure summary is the step's own.
-    order = ["pnpm install --frozen-lockfile", 'python -m venv "$RUNNER_TEMP/gen-venv"']
+    # #5113: both installs run through the registry retry wrapper (CI-INFRA-002/003).
+    retry = "python3 tools/ci/registry_retry.py --registry"
+    order = [f"{retry} npm --attempts 2 --timeout 180 -- pnpm install --frozen-lockfile"]
+    order += ['python -m venv "$RUNNER_TEMP/gen-venv"']
     order += ['export PATH="$RUNNER_TEMP/gen-venv/bin:$PATH"']
-    order += ["python -m pip install --quiet -c scripts/requirements-ci.txt PyYAML"]
+    pyyaml = "python -m pip install --quiet -c scripts/requirements-ci.txt PyYAML"
+    order += [f"{retry} pypi --timeout 60 -- {pyyaml}"]
     # E03-T05's acceptance criterion: the failure summary names the command `make gen`.
     # #3299: and `make gen-check`, the only command that reproduces CI-GEN-005.
     gen_check = (

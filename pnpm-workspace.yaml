@@ -21,6 +21,12 @@ frozenLockfile: true
 saveExact: true
 strictPeerDependencies: false
 
+# #5113 (CI-INFRA-002/003): pnpm's own per-request bound and retries (defaults 60 s and 2), under
+# tools/ci/registry_retry.py, which retries and bounds the whole install in the central CI jobs.
+# Why retry and not a registry mirror: docs/ci-runbook.md, CI-INFRA-*.
+fetchRetries: 4
+fetchTimeout: 60000
+
 # esbuild (a transitive dev-dependency of vitest and vite, and since #3422 a
 # direct devDependency of @candleviewer/ui) ships a legitimate, widely audited
 # postinstall script that fetches its platform binary; it is approved here so
