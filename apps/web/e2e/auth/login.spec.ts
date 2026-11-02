@@ -7,6 +7,10 @@ import { OTP_SEED, totp } from "../support/totp";
 // that is off by default, so A11's UI half stays deferred (see qa/plans/e09-q02-automation-status.md).
 // Tests tagged @electron also run in the Electron shell lane.
 
+// The second-factor handle's sentinel: long and hyphenated, so no built asset name or chunk
+// hash can contain it (#5401: a 3-character handle matched the chunk `SessionLockHost-1…`).
+const HANDLE = "mfa-handle-sentinel-9f3a";
+
 async function signIn(page: import("@playwright/test").Page): Promise<void> {
   await page.getByLabel("Username or email").fill("ann");
   await page.getByLabel("Password", { exact: true }).fill("pw-a1");
@@ -20,7 +24,7 @@ test("E09-TC-A01 password step returns mfa_required and shows the second-factor 
   let body = "";
   await page.route("**/api/v1/auth/login", (r) => {
     body = r.request().postData() ?? "";
-    return r.fulfill(json({ status: "mfa_required", mfa_token: "t-1", methods: ["totp"] }));
+    return r.fulfill(json({ status: "mfa_required", mfa_token: HANDLE, methods: ["totp"] }));
   });
   await page.goto("/login");
   await signIn(page);
@@ -28,12 +32,11 @@ test("E09-TC-A01 password step returns mfa_required and shows the second-factor 
   expect(JSON.parse(body)).toEqual({ identifier: "ann", password: "pw-a1" });
   // No session cookie before MFA completes.
   expect(await page.context().cookies()).toEqual([]);
-  await assertNoClientSecrets(page, ["pw-a1", "t-1"]);
+  await assertNoClientSecrets(page, ["pw-a1", HANDLE]);
   await guard.flush();
 });
 
 // ---- SCR-002 (#2711): the second-factor step, UI halves ----
-const HANDLE = "t-1";
 const CODE = "123456";
 const MFA = json({ status: "mfa_required", mfa_token: HANDLE, methods: ["totp"], expires_in: 300 });
 /** Every refused code is the one `401`, whatever its body (E09-D12 F-2). */
