@@ -95,17 +95,18 @@ def compute_spec_hash(spec: BarSpec) -> str:
 
 def _uint(bar_type: str, param: str) -> int:
     if not _UINT.fullmatch(param):
-        raise BarSpecError(
-            f"The param '{param}' is not valid for bar_type '{bar_type}'; "
-            "it must be a positive whole number."
-        )
+        raise BarSpecError(f"The param for bar_type '{bar_type}' must be a positive whole number.")
     return int(param)
 
 
 def from_wire(bar_type: str, param: str) -> BarSpec:
     """Parse an untrusted wire pair into a `BarSpec`; raises `BarSpecError` (-> 422)."""
     if bar_type not in WIRE_BAR_TYPES:
-        raise BarSpecError(f"The bar_type '{bar_type[:32]}' is not a supported bar type.")
+        raise BarSpecError(
+            "The bar_type is not a supported bar type; use one of: "
+            + ", ".join(sorted(WIRE_BAR_TYPES))
+            + "."
+        )
     if len(param) > PARAM_MAX_LEN:
         raise BarSpecError(f"The param must be at most {PARAM_MAX_LEN} characters long.")
     if "." in param:
@@ -121,7 +122,9 @@ def from_wire(bar_type: str, param: str) -> BarSpec:
     if bar_type == "time":
         if param not in TIME_INTERVALS:
             raise BarSpecError(
-                f"The param '{param}' is not a supported time interval for bar_type 'time'."
+                "The param is not a supported time interval for bar_type 'time'; use one of: "
+                + ", ".join(TIME_INTERVALS)
+                + "."
             )
         return BarSpec(kind="time", interval_ms=TIME_INTERVALS[param])
     if bar_type == "renko" and _ATR.fullmatch(param):
