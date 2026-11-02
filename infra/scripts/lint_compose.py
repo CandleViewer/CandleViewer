@@ -83,8 +83,37 @@ Rule 7 applies to the account fixture overlay, ``docker-compose.account-fixture.
    ``CV_FEED=synthetic``, ``CV_ACCOUNT_FIXTURE`` (a scenario token, or the operator's variable
    defaulting to one) and that absolute directory: no ``CV_BYBIT_API_*``, no ``CV_TEST_CLOCK``.
 
+Rule 8 applies to the fixture stack's real-backend overlay,
+``docker-compose.account-fixture-real.yml`` (#2893's closure), which
+``infra/scripts/account_fixture_stack.py`` layers after rule 7's overlay:
+
+8. It touches only ``api``, ``fixture-init`` and ``fixture-drive``, the base file's ``postgres``,
+   ``questdb`` and ``migrate`` (a label alone) and the top-level ``secrets``, ``volumes`` and
+   ``networks``. The api keeps the app's entrypoint and command, so the S8 boot guard runs
+   first; it builds nothing, names no image, publishes no port and takes no env file. Its
+   environment is exactly the committed ``CV_STORAGE_BACKEND=real``, ``CV_EGRESS_IP`` (the pack's
+   RFC 5737 egress), ``CV_KEK_SOURCE=file``, ``CV_KEK_HANDLE=/run/secrets/cv_kek``,
+   ``CV_KEK_VERSION=1`` and ``CV_PARQUET_ROOT=/data/parquet``, and the four auth values, each the
+   run's own ``${NAME:?...}``. It mounts ``cv_kek`` alone (the lane key is the base file's), the
+   cold tier's root as ``cv-api-data`` and nothing else, with no core dumps. The top-level
+   secrets are ``cv_kek`` and ``cv_audit_lane_key``, ``file: ${CV_KEK_FILE:?...}`` and
+   ``file: ${CV_AUDIT_LANE_MAC_SOURCE:?...}``. Every service of the stack, and every named
+   volume and network compose creates for it (this file's ``cv-api-data`` and
+   ``cv-acctfix-session``, the base file's ``cv-postgres-data``, ``cv-questdb-data`` and
+   ``cv-audit-data``, rule 7's ``cv-account-fixture`` and the base file's network ``cv-internal``),
+   carries one label, ``cv.lane: ${CV_ACCTFIX_LANE:?...}``, the lane the stack script runs under,
+   and each volume and the network sets no option besides it: ``down`` takes a project down only
+   when every object of it carries its own lane. The two one-shots build the builder stage, each
+   under a profile of its own name alone, from ``/build``, with the seed's ``init`` and the
+   driver as their commands; no port, no env file, no secret, a read-only root, no core dumps; their
+   environment is demo, the synthetic feed, rule 7's scenario and directory and the run's uid,
+   plus, for ``fixture-init``, the run's DSN, pepper and TOTP key: no ``CV_BYBIT_API_*``, no
+   ``CV_TEST_CLOCK``. ``fixture-init`` mounts ``cvdev`` and ``services/api/scripts`` read-only
+   and the run directory read-write, its one writable mount; ``fixture-drive`` mounts ``cvdev``
+   and the run directory read-only and the session volume.
+
 Run as a script (``python infra/scripts/lint_compose.py``, which checks the base
-file, the three overlays and rule 5 over every compose file; ``python
+file, the four overlays and rule 5 over every compose file; ``python
 infra/scripts/lint_compose.py <file>`` applies an overlay's own rule when the file
 has its name) or imported by ``infra/scripts/tests/test_lint_compose.py``.
 """
@@ -211,11 +240,84 @@ _API_MOUNTS: dict[str, dict[str, object]] = {
     name: {"source": name, "target": name, "uid": _RUNTIME_ID, "gid": _RUNTIME_ID, "mode": 0o400}
     for name in _DEMO_FILES
 }
+#: Rule 8: the fixture stack's real-backend overlay (#2893's closure) and its shape.
+ACCOUNT_FIXTURE_REAL_OVERLAY = COMPOSE_DIR / "docker-compose.account-fixture-real.yml"
+FIXTURE_EGRESS_IP = "203.0.113.10"  # the pack's egress (`cvdev/account_fixture/pack.py`, RFC 5737)
+PARQUET_ROOT = f"{DATA_DIR}/parquet"  # the cold tier's root, which the real backend never makes
+SESSION_VOLUME = "cv-acctfix-session"
+RUN_DIR = "/run-dir"
+#: The lane label every object of the stack carries, and the run's variable that names the lane.
+LANE_LABEL = "cv.lane"
+LANE_VARIABLE = "CV_ACCTFIX_LANE"
+#: The base file's services this overlay labels and sets nothing else on, and every named volume
+#: and network the stack creates (this file's two volumes, the base file's three, rule 7's one).
+_REAL_LABELLED = ("postgres", "questdb", "migrate")
+_REAL_SERVICES = ("api", "fixture-init", "fixture-drive", *_REAL_LABELLED)
+_REAL_VOLUMES = (
+    DATA_VOLUME, SESSION_VOLUME, "cv-postgres-data", "cv-questdb-data", AUDIT_VOLUME, FIXTURE_VOLUME
+)  # fmt: skip
+_REAL_NETWORKS = ("cv-internal",)
+_REAL_API_KEYS = frozenset({"environment", "secrets", "volumes", "ulimits", "labels"})
+_REAL_API_FIXED = {
+    "CV_STORAGE_BACKEND": "real",
+    "CV_EGRESS_IP": FIXTURE_EGRESS_IP,
+    "CV_KEK_SOURCE": "file",
+    "CV_KEK_HANDLE": KEK_HANDLE,
+    "CV_KEK_VERSION": "1",
+    "CV_PARQUET_ROOT": PARQUET_ROOT,
+}
+#: Values the run generates: each the run's own `${NAME:?...}`, never committed.
+_REAL_API_RUN = (
+    "CV_AUTH_PEPPER",
+    "CV_AUTH_TOTP_KEY_HEX",
+    "CV_AUTH_RECOVERY_HMAC_KEY_HEX",
+    "CV_AUTH_CSRF_KEY_HEX",
+)
+_RUN_DIR_SOURCE = r"\$\{CV_ACCTFIX_RUN_DIR:\?[^}]*\}"
+_CVDEV_RO = "../../services/api/cvdev:/build/cvdev:ro"
+#: What both one-shots set alike: the builder stage from this checkout, from its WORKDIR.
+_ONE_SHOT_SAME: dict[str, object] = {
+    "build": {**_API_BUILD, "target": "builder"},
+    "working_dir": _FIXTURE_WORKDIR,
+    "read_only": True,
+    "ulimits": {"core": 0},
+    "healthcheck": {"disable": True},
+    "networks": ["cv-internal"],
+}
+_ONE_SHOT_KEYS = frozenset({*_ONE_SHOT_SAME, "profiles", "entrypoint", "command", "environment",
+                            "volumes", "labels"})  # fmt: skip
+#: Each one-shot's own: its command, its mounts (patterns) and the run's variables it takes.
+_ONE_SHOTS: dict[str, dict[str, object]] = {
+    "fixture-init": {
+        "entrypoint": ["python", "-m", "cvdev.account_fixture.seed"],
+        "command": ["init", "--run-dir", RUN_DIR],
+        "volumes": [
+            re.escape(_CVDEV_RO),
+            re.escape("../../services/api/scripts:/build/scripts:ro"),
+            f"{_RUN_DIR_SOURCE}:{RUN_DIR}",
+        ],
+        "run": ("CV_ACCTFIX_RUN_UID", "CV_PG_DSN", "CV_AUTH_PEPPER", "CV_AUTH_TOTP_KEY_HEX"),
+    },
+    "fixture-drive": {
+        "entrypoint": [
+            "python", "-m", "cvdev.account_fixture.drive", "--run-dir", RUN_DIR,
+            "--session-dir", "/session",
+        ],
+        "command": None,
+        "volumes": [
+            re.escape(_CVDEV_RO),
+            f"{_RUN_DIR_SOURCE}:{RUN_DIR}:ro",
+            re.escape(f"{SESSION_VOLUME}:/session"),
+        ],
+        "run": ("CV_ACCTFIX_RUN_UID",),
+    },
+}  # fmt: skip
 #: `lint_compose.py <file>`: an overlay's own rule, by its file name (N1).
 _RULES_BY_NAME = {
     "docker-compose.deploy.yml": {"deploy_overlay": True},
     "docker-compose.demo-host.yml": {"demo_host_overlay": True},
     "docker-compose.account-fixture.yml": {"account_fixture_overlay": True},
+    "docker-compose.account-fixture-real.yml": {"account_fixture_real_overlay": True},
 }
 
 
@@ -710,15 +812,144 @@ def check_account_fixture_overlay(compose: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _run_variable(name: str, value: str) -> bool:
+    """A value the run generates, as the run's own variable for that name: `${NAME:?...}`."""
+    return re.fullmatch(rf"\$\{{{re.escape(name)}:\?[^}}]*\}}", value) is not None
+
+
+def check_account_fixture_real_overlay(compose: dict[str, Any]) -> list[str]:
+    """Rule 8 (module docstring): the real backend under the api, and the run's two one-shots,
+    nothing else. A message names a key, a service or a variable, never a value."""
+    compose = compose or {}
+    services = _services(compose)
+    where = "the real-backend fixture overlay sets only"
+    errors = [f"top-level '{k}': {where} services, secrets, volumes and networks" for k in compose
+              if k not in ("services", "secrets", "volumes", "networks")]  # fmt: skip
+    errors += [f"service '{name}': {where} {', '.join(_REAL_SERVICES)}" for name in services
+               if name not in _REAL_SERVICES]  # fmt: skip
+    errors += _real_api_problems(services.get("api") or {})
+    for name in _ONE_SHOTS:
+        errors += _one_shot_problems(name, services.get(name) or {})
+    for name in _REAL_LABELLED:
+        errors += _labelled_only_problems(name, services.get(name) or {})
+    declared = _section(compose, "secret") or {}
+    if set(declared) != set(_DEMO_FILES):
+        errors.append("top-level secrets: only cv_kek and cv_audit_lane_key, each a file secret")
+    for name, variable in _DEMO_FILES.items():
+        entry = declared.get(name)
+        source = str(entry["file"]) if _from_a_file(entry) else ""
+        if not _run_variable(variable, source):
+            errors.append(f"secret '{name}' is not file: ${{{variable}:?...}}, with no default")
+    errors += _lane_section_problems("volumes", _REAL_VOLUMES, compose.get("volumes"))
+    return errors + _lane_section_problems("networks", _REAL_NETWORKS, compose.get("networks"))
+
+
+def _lane_label_problems(where: str, node: dict[str, Any]) -> list[str]:
+    """The lane label alone, `cv.lane: ${CV_ACCTFIX_LANE:?...}`: the run's own lane variable."""
+    labels = _pairs(node.get("labels"))
+    if set(labels) == {LANE_LABEL} and _run_variable(LANE_VARIABLE, labels[LANE_LABEL]):
+        return []
+    return [
+        f"{where}: labels is not exactly {LANE_LABEL}: ${{{LANE_VARIABLE}:?...}}, the run's lane"
+    ]
+
+
+def _labelled_only_problems(name: str, service: dict[str, Any]) -> list[str]:
+    """A base file's service this overlay labels: the lane label, and nothing else set on it."""
+    where = f"service '{name}'"
+    errors = [f"{where}: the real-backend fixture overlay sets only labels on it, not {key}"
+              for key in sorted(set(service) - {"labels"})]  # fmt: skip
+    return errors + _lane_label_problems(where, service)
+
+
+def _lane_section_problems(kind: str, names: tuple[str, ...], declared: Any) -> list[str]:
+    """A top-level `volumes:` or `networks:`: the stack's objects exactly, each the lane label
+    alone (a driver, an option, a name or `external` would make it another object)."""
+    declared = declared if isinstance(declared, dict) else {}
+    errors: list[str] = []
+    if set(declared) != set(names):
+        errors.append(f"top-level {kind}: only {', '.join(names)}, each with the lane label alone")
+    for name, entry in declared.items():
+        node = entry if isinstance(entry, dict) else {}
+        if set(node) != {"labels"} or _lane_label_problems("", node):
+            errors.append(f"top-level {kind}: {name} is not the lane label alone")
+    return errors
+
+
+def _real_api_problems(api: dict[str, Any]) -> list[str]:
+    """The api on the real backend: the app's own entrypoint, the committed constants, the run's
+    variables, the KEK as a file secret, the cold tier's root as a named volume."""
+    where = "the real-backend fixture overlay sets only"
+    errors = [f"service 'api': {where} {sorted(_REAL_API_KEYS)}, not {key}"
+              for key in sorted(set(api) - _REAL_API_KEYS)]  # fmt: skip
+    env = _environment(api)
+    names = {*_REAL_API_FIXED, *_REAL_API_RUN}
+    if set(env) != names:
+        errors.append(f"service 'api': environment must be exactly {sorted(names)}: "
+                      f"{sorted(set(env) ^ names)}")  # fmt: skip
+    errors += [f"service 'api': {key} is not {value}" for key, value in _REAL_API_FIXED.items()
+               if key in env and env[key] != value]  # fmt: skip
+    errors += [f"service 'api': {key} is not the run's own ${{{key}:?...}}" for key in _REAL_API_RUN
+               if key in env and not _run_variable(key, env[key])]  # fmt: skip
+    if api.get("secrets") != [_DEFAULT_KEK_TARGET]:
+        errors.append(
+            "service 'api': secrets are not cv_kek alone (the base file has the lane key)"
+        )
+    if api.get("volumes") != [f"{DATA_VOLUME}:{PARQUET_ROOT}"]:
+        errors.append(f"service 'api': volumes are not {DATA_VOLUME} alone at {PARQUET_ROOT}")
+    if api.get("ulimits") != {"core": 0}:
+        errors.append("service 'api': ulimits is not core: 0 alone (SR-009: it loads the KEK)")
+    return errors + _lane_label_problems("service 'api'", api)
+
+
+def _one_shot_problems(name: str, service: dict[str, Any]) -> list[str]:
+    """`fixture-init` or `fixture-drive`: the builder stage under its own profile, its command,
+    no port or secret, a read-only root, the fixture gate's environment and its mounts alone."""
+    spec, where = _ONE_SHOTS[name], f"service '{name}'"
+    errors = [f"{where}: the real-backend fixture overlay does not set {key} on it"
+              for key in sorted(set(service) - _ONE_SHOT_KEYS)]  # fmt: skip
+    errors += [f"{where}: {key} is not the one-shot's" for key, value in _ONE_SHOT_SAME.items()
+               if service.get(key) != value]  # fmt: skip
+    if service.get("profiles") != [name]:
+        errors.append(f"{where}: profiles is not [{name}], so `up` would start it")
+    for key in ("entrypoint", "command"):
+        if service.get(key) != spec[key]:
+            errors.append(f"{where}: {key} is not the one this overlay runs")
+    env = _environment(service)
+    run = _strings(spec["run"])
+    names = {*_FIXTURE_ENV, *run}
+    if set(env) != names:
+        errors.append(f"{where}: environment must be exactly {sorted(names)}: "
+                      f"{sorted(set(env) ^ names)}")  # fmt: skip
+    errors += [f"{where}: {key} is off rule 7" for key, rule in _FIXTURE_ENV.items()
+               if key in env and not rule.fullmatch(env[key])]  # fmt: skip
+    errors += [f"{where}: {key} is not the run's own ${{{key}:?...}}" for key in run
+               if key in env and not _run_variable(key, env[key])]  # fmt: skip
+    mounts = [str(entry) for entry in service.get("volumes") or []]
+    patterns = _strings(spec["volumes"])
+    if len(mounts) != len(patterns) or not all(
+        re.fullmatch(pattern, mount) for pattern, mount in zip(patterns, mounts, strict=False)
+    ):
+        errors.append(f"{where}: volumes are not exactly its mounts (the run directory "
+                      f"{'read-write' if name == 'fixture-init' else 'read-only'})")  # fmt: skip
+    return errors + _lane_label_problems(where, service)
+
+
+def _strings(value: object) -> tuple[str, ...]:
+    """A `_ONE_SHOTS` entry's names or patterns, as the strings they are."""
+    return tuple(str(item) for item in value) if isinstance(value, list | tuple) else ()
+
+
 def lint(
     compose_path: Path,
     *,
     deploy_overlay: bool = False,
     demo_host_overlay: bool = False,
     account_fixture_overlay: bool = False,
+    account_fixture_real_overlay: bool = False,
 ) -> list[str]:
     """Rules 1-3 (rule 4 for the deploy overlay, 6 for the demo host's, 7 for the account
-    fixture's), then rule 5."""
+    fixture's, 8 for its real backend's), then rule 5."""
     compose = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
     if deploy_overlay:
         errors = check_deploy_overlay(compose)
@@ -726,6 +957,8 @@ def lint(
         errors = check_demo_host_overlay(compose)
     elif account_fixture_overlay:
         errors = check_account_fixture_overlay(compose)
+    elif account_fixture_real_overlay:
+        errors = check_account_fixture_real_overlay(compose)
     else:
         errors = check_port_bindings(compose)
         errors += check_image_digests(compose)
@@ -735,7 +968,7 @@ def lint(
 
 def main(argv: list[str] | None = None) -> int:
     """Lint `argv[0]` with rules 1-3 and 5, or with an overlay's own rule and 5 when it has the
-    overlay's file name (N1); with no argument, the base file and the three overlays, and rule 5
+    overlay's file name (N1); with no argument, the base file and the four overlays, and rule 5
     over every other compose file."""
     files: list[tuple[Path, dict[str, bool]]] = [(BASE_FILE, {})]
     if argv:
@@ -744,6 +977,7 @@ def main(argv: list[str] | None = None) -> int:
         files += [(DEPLOY_OVERLAY, {"deploy_overlay": True})]
         files += [(DEMO_HOST_OVERLAY, {"demo_host_overlay": True})]
         files += [(ACCOUNT_FIXTURE_OVERLAY, {"account_fixture_overlay": True})]
+        files += [(ACCOUNT_FIXTURE_REAL_OVERLAY, {"account_fixture_real_overlay": True})]
     errors = [f"{p.name}: {e}" for p, kind in files for e in lint(p, **kind)]
     linted = {p.resolve() for p, _ in files}
     for path in [] if argv else sorted(COMPOSE_DIR.glob("docker-compose*.yml")):

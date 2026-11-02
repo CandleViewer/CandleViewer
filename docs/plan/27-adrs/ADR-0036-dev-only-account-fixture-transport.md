@@ -152,12 +152,26 @@ invariant (C-4.14).
    gate. The roster is the test plan's four fixtures and two more Owners. Each password, TOTP secret, the roster
    and a marker go into the run directory as new files of fixed modes. There is no `CV_ENV=dev`: the gate is
    decision 2's structural one (the switch CLI's `armed()`), then a fresh run directory (absolute, no link in or
-   above it, owned by the effective uid with no group or other permission bit, no marker) and, over one read-only
-   transaction before the first write, a database named `test` or ending `_test` that holds no user, exchange
-   account or API key. A refusal is one fixed line and exit 2, never a value. No exchange-key material is
-   generated (the transport answers only the pack's fabricated keys, decision 4) and the Owner is seeded, not
-   invited. The module imports neither `candleviewer.secrets` nor `candleviewer.audit`. `E27-accounts.md` §12.3
-   holds the threat rows.
+   above it, owned by the uid the caller names, else the effective uid, with no group or other permission bit, no
+   marker) and, over one read-only transaction before the first write, a database named `test` or ending `_test`
+   that holds no user, exchange account or API key. A refusal is one fixed line and exit 2, never a value. No
+   exchange-key material is generated (the transport answers only the pack's fabricated keys, decision 4) and
+   the Owner is seeded, not invited. The module imports neither `candleviewer.secrets` nor `candleviewer.audit`.
+   `E27-accounts.md` §12.3 and §12.4 hold the threat rows.
+   _As built (2026-11-01, the closing PR):_ S16 is split. **S16a** is the real-backend fixture stack: the opt-in
+   overlay `infra/compose/docker-compose.account-fixture-real.yml` (lint rule 8) puts the real backend under the
+   fixture stack's api, which keeps the app's entrypoint so the S8 guard runs first, and adds the seed's `init`
+   as a root one-shot (`secrets`, the run's throwaway KEK and audit lane key, then `users`). Compose passes it
+   the invoking user's uid, and the gate accepts only a run directory that uid owns; root gets no pass of its
+   own, and the stack assumes a rootful Docker daemon. **S16b** is the fixture clock in the E27 timers, which
+   waits on #896 and #899. The stack is brought up and taken down by `infra/scripts/account_fixture_stack.py`
+   (runbook: `docs/ops/runbooks/account-fixture-stack.md`). Its driver (`cvdev/account_fixture/drive.py`, in the
+   `fixture-drive` one-shot, behind the seed's gate) signs a seeded user in with a TOTP step not used yet, steps
+   up and calls the api, printing statuses and masked bodies only. The re-run on the stack loaded 40 of the 49
+   scenarios through the shipped key pipeline: 32 pass, 8 on their stub half (their cases read routes not served
+   yet, #896, #899), and 9 stay blocked-pending-dependency with their owners named (rotation, #897; the order
+   lane and #3007; leverage, #899). #2893 closes on that record (#833, E27-Q01), as the closure ruling on #2893
+   has it, and each owner ticket re-runs its rows when it merges.
 10. **A test-only switch, not a C-4.13 flag,** like `CV_TEST_CLOCK` (`settings.py:264-266`), which is not in
     the flag catalogue (`admin/flags/catalogue.py:25`). A flag is runtime, Owner-toggled and in every build;
     this switch is fixed at boot and its code is not in the release image. Each slice fails closed (until S7

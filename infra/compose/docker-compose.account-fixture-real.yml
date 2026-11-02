@@ -1,0 +1,157 @@
+# infra/compose/docker-compose.account-fixture-real.yml: #2893's closure, the fixture stack's real
+# backend (ADR-0036 decision 9, S16a).
+#
+# Opt-in only, layered after docker-compose.account-fixture.yml, and run by
+# infra/scripts/account_fixture_stack.py (docs/ops/runbooks/account-fixture-stack.md), which makes
+# a run directory, writes the run's env file into it and runs compose over the base, dev, fixture
+# and this file under a `cv-acctfix-<hex>` project: Postgres and QuestDB, the schema step,
+# `fixture-init` (the KEK, the audit lane key and the users), then the api.
+#
+# Rule 8 of infra/scripts/lint_compose.py holds it to this shape, and
+# scripts/tests/test_compose_fixture_real_override.py to its rules:
+# - the api keeps the app's own entrypoint, so the S8 boot guard runs before any module starts;
+#   it takes the real backend, the pack's egress address and a file KEK, and every generated value
+#   is the run's own variable (`${NAME:?...}`), never a value committed here;
+# - the KEK and the audit lane key are file secrets from the run directory, with no default;
+# - the two one-shots build the builder stage, publish no port, run on a read-only root, and are
+#   demo and synthetic with no CV_BYBIT_API_* or CV_TEST_CLOCK; `fixture-init` alone writes the
+#   run directory, and `fixture-drive` reads it;
+# - every service of the stack, and every named volume and network compose creates for it, carries
+#   one label, `cv.lane: ${CV_ACCTFIX_LANE:?...}`, the lane the script runs under (its env file
+#   holds the name): the script's `down` takes a project down only when each object of it carries
+#   its own lane. The base file's postgres, questdb and migrate and the volumes and network the
+#   base and fixture files declare get that label here and nothing more.
+
+secrets:
+  cv_kek:
+    file: ${CV_KEK_FILE:?set by infra/scripts/account_fixture_stack.py}
+  cv_audit_lane_key:
+    file: ${CV_AUDIT_LANE_MAC_SOURCE:?set by infra/scripts/account_fixture_stack.py}
+
+volumes:
+  cv-api-data:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+  cv-acctfix-session:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+  # The next four are declared by the base and fixture files; this file only labels them.
+  cv-postgres-data:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+  cv-questdb-data:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+  cv-audit-data:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+  cv-account-fixture:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+
+networks:
+  cv-internal:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+
+services:
+  # The base file's stores and schema step: labelled here and set nowhere else in this file.
+  postgres:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+
+  questdb:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+
+  migrate:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+
+  api:
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+    environment:
+      CV_STORAGE_BACKEND: real
+      CV_EGRESS_IP: 203.0.113.10
+      CV_KEK_SOURCE: file
+      CV_KEK_HANDLE: /run/secrets/cv_kek
+      CV_KEK_VERSION: "1"
+      CV_PARQUET_ROOT: /data/parquet
+      CV_AUTH_PEPPER: ${CV_AUTH_PEPPER:?set by infra/scripts/account_fixture_stack.py}
+      CV_AUTH_TOTP_KEY_HEX: ${CV_AUTH_TOTP_KEY_HEX:?set by infra/scripts/account_fixture_stack.py}
+      CV_AUTH_RECOVERY_HMAC_KEY_HEX: ${CV_AUTH_RECOVERY_HMAC_KEY_HEX:?set by infra/scripts/account_fixture_stack.py}
+      CV_AUTH_CSRF_KEY_HEX: ${CV_AUTH_CSRF_KEY_HEX:?set by infra/scripts/account_fixture_stack.py}
+    secrets:
+      - cv_kek
+    volumes:
+      - cv-api-data:/data/parquet
+    ulimits:
+      core: 0
+
+  fixture-init:
+    build:
+      context: ../..
+      dockerfile: infra/images/Dockerfile.api
+      target: builder
+    profiles: ["fixture-init"]
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+    working_dir: /build
+    entrypoint: ["python", "-m", "cvdev.account_fixture.seed"]
+    command: ["init", "--run-dir", "/run-dir"]
+    environment:
+      CV_ENVIRONMENT: demo
+      CV_FEED: synthetic
+      CV_ACCOUNT_FIXTURE: ${CV_ACCOUNT_FIXTURE:-compliant}
+      CV_ACCOUNT_FIXTURE_DIR: /var/lib/candleviewer/account-fixture
+      CV_PG_DSN: ${CV_PG_DSN:?set by infra/scripts/account_fixture_stack.py}
+      CV_AUTH_PEPPER: ${CV_AUTH_PEPPER:?set by infra/scripts/account_fixture_stack.py}
+      CV_AUTH_TOTP_KEY_HEX: ${CV_AUTH_TOTP_KEY_HEX:?set by infra/scripts/account_fixture_stack.py}
+      CV_ACCTFIX_RUN_UID: ${CV_ACCTFIX_RUN_UID:?set by infra/scripts/account_fixture_stack.py}
+    volumes:
+      - ../../services/api/cvdev:/build/cvdev:ro
+      - ../../services/api/scripts:/build/scripts:ro
+      - ${CV_ACCTFIX_RUN_DIR:?set by infra/scripts/account_fixture_stack.py}:/run-dir
+    read_only: true
+    ulimits:
+      core: 0
+    healthcheck:
+      disable: true
+    networks: [cv-internal]
+
+  fixture-drive:
+    build:
+      context: ../..
+      dockerfile: infra/images/Dockerfile.api
+      target: builder
+    profiles: ["fixture-drive"]
+    labels:
+      cv.lane: ${CV_ACCTFIX_LANE:?set by infra/scripts/account_fixture_stack.py}
+    working_dir: /build
+    entrypoint:
+      [
+        "python",
+        "-m",
+        "cvdev.account_fixture.drive",
+        "--run-dir",
+        "/run-dir",
+        "--session-dir",
+        "/session",
+      ]
+    environment:
+      CV_ENVIRONMENT: demo
+      CV_FEED: synthetic
+      CV_ACCOUNT_FIXTURE: ${CV_ACCOUNT_FIXTURE:-compliant}
+      CV_ACCOUNT_FIXTURE_DIR: /var/lib/candleviewer/account-fixture
+      CV_ACCTFIX_RUN_UID: ${CV_ACCTFIX_RUN_UID:?set by infra/scripts/account_fixture_stack.py}
+    volumes:
+      - ../../services/api/cvdev:/build/cvdev:ro
+      - ${CV_ACCTFIX_RUN_DIR:?set by infra/scripts/account_fixture_stack.py}:/run-dir:ro
+      - cv-acctfix-session:/session
+    read_only: true
+    ulimits:
+      core: 0
+    healthcheck:
+      disable: true
+    networks: [cv-internal]
