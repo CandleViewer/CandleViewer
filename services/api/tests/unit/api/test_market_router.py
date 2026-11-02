@@ -270,7 +270,7 @@ class TestGetKlinesReadService:
         cache = _FakeCache(rows=[_FakeRow(ts_us=0), _FakeRow(ts_us=60_000_000)])
         meta = _client(cache).get("/market/klines", params=self._P).json()["meta"]
         assert meta["build_version"] == BUILD_VERSIONS["time"]
-        assert meta.get("stale_build", False) is False
+        assert meta["stale_build"] is False
 
     def test_provider_returning_none_falls_back_to_cache(self) -> None:
         body = self._client_with(None).get("/market/klines", params=self._P).json()

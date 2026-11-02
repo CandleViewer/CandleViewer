@@ -227,16 +227,26 @@ def with_tape_gaps(doc: dict[str, Any], drafts: Sequence[_Draft | None]) -> dict
 
 
 def restore_tape_gaps(
-    doc: dict[str, Any], drafts: Sequence[_Draft | None], *, legacy_gap_is_tape: bool = False
+    doc: dict[str, Any],
+    drafts: Sequence[_Draft | None],
+    *,
+    legacy_gap_is_tape: bool = False,
+    legacy_gap_ambiguous: bool = False,
 ) -> None:
-    """Set `tape_gap` on the drafts a blob's `tape_gap` key names. A blob without the key either
-    has none or was written before #5396, when `mark_gap` set `gap_before`: where `gap_before` can
-    mean nothing else (`legacy_gap_is_tape`: tick, volume, delta, renko) every draft holding it
-    is a tape gap, moved to `tape_gap`; elsewhere it is left as stored."""
+    """Set `tape_gap` on the drafts a blob's `tape_gap` key names. A blob without the key was
+    written before #5396 (new code always writes it), when `mark_gap` set `gap_before`: where
+    `gap_before` can mean nothing else (`legacy_gap_is_tape`: tick, volume, delta, renko) every
+    draft holding it is a tape gap, moved to `tape_gap`; for range (`legacy_gap_ambiguous`) a
+    price jump may also have set it, so it keeps `gap_before` and also takes `tape_gap`."""
     if legacy_gap_is_tape and "tape_gap" not in doc:
         for d in drafts:
             if d is not None and d.gap_before:
                 d.tape_gap, d.gap_before = True, False
+        return
+    if legacy_gap_ambiguous and "tape_gap" not in doc:
+        for d in drafts:
+            if d is not None and d.gap_before:
+                d.tape_gap = True
         return
     marks = doc.get("tape_gap", [])
     if not isinstance(marks, list) or not all(type(i) is int for i in marks):
@@ -267,7 +277,7 @@ def restore_legacy_time_gaps(
         prev_close: int | None = None
         if prev is not None:
             prev_close = prev.close_time
-        elif d is cur:
+        elif d is cur:  # defensive: only the open draft can lack a closed predecessor
             prev_close = doc.get("last_close")
         if (d.index == 0 and prev is None) or (
             prev_close is not None and prev_close == d.open_time

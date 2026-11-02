@@ -20,6 +20,7 @@ from candleviewer.bars.emit import EmitRouter
 from candleviewer.bars.metrics import bars_gap_detected_total
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.state_store import StateStore
+from candleviewer.bars.time_builder import STATE_VERSION
 from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import Topic
 from candleviewer.domain.events import uuid7
@@ -400,6 +401,7 @@ def test_tape_gap_survives_a_snapshot_and_an_older_blob_restores_unflagged(name:
     b, _ = _marked_open(name)
     state = b.snapshot()
     doc = json.loads(state.blob)
+    assert STATE_VERSION == state.state_version == 1
     assert doc["tape_gap"]
     later = _tape()[2]
     legacy = {k: v for k, v in doc.items() if k != "tape_gap"}

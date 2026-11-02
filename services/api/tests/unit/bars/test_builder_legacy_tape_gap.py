@@ -132,7 +132,7 @@ def test_activity_old_blob_gap_before_restores_by_what_it_can_mean(name: str) ->
     restored = factory(specs[name], SYM)
     restored.restore(state.model_copy(update={"blob": json.dumps(doc).encode()}))
     assert (restored._cur.gap_before, restored._cur.tape_gap) == (
-        (True, False) if name == "range" else (False, True)  # range: a price jump is possible
+        (True, True) if name == "range" else (False, True)  # range: a jump or a tape gap: both
     )
     doc["tape_gap"] = []
     other = factory(specs[name], SYM)
