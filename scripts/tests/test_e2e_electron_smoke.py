@@ -79,4 +79,6 @@ def test_every_job_that_launches_electron_runs_the_allowlist_runner_after_its_in
         ("_job-e2e.yml", "e2e-electron"),
         ("_job-js.yml", "build"),
         ("perf-engine-matrix.yml", "electron"),
+        ("perf-shell.yml", "electron"),  # #303: the shell cold-start bench, nightly
+        ("perf-shell.yml", "bench"),  # #303: the attended cv-bench-01 dispatch
     ]

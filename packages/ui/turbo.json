@@ -19,6 +19,7 @@
         "$TURBO_ROOT$/packages/config/tsconfig.dom.json",
         "$TURBO_ROOT$/apps/web/package.json",
         "$TURBO_ROOT$/packages/config/vitest.preset.mjs",
+        "$TURBO_ROOT$/packages/config/src/perf-calibration*.mjs",
         "$TURBO_ROOT$/tools/contrast/**",
         "$TURBO_ROOT$/tools/style-dictionary/**"
       ]
@@ -41,6 +42,7 @@
         "$TURBO_ROOT$/packages/config/tsconfig.dom.json",
         "$TURBO_ROOT$/apps/web/package.json",
         "$TURBO_ROOT$/packages/config/vitest.preset.mjs",
+        "$TURBO_ROOT$/packages/config/src/perf-calibration*.mjs",
         "$TURBO_ROOT$/tools/contrast/**",
         "$TURBO_ROOT$/tools/style-dictionary/**"
       ]
