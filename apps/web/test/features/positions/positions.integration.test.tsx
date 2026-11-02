@@ -2,9 +2,9 @@
  * E29-S01 (#911) integration: the real `PositionsPanel` (SCR-063) with the real `positionsApi` behind
  * a fake `fetch` and fake topic handles (BQ-19: no MSW, no new dependency), read through the
  * accessibility tree. Three accounts, grouping (account, trade group), filter and clear with their
- * results said, the empty state only for a book read, loading while nothing is read and a load's
- * result said once, a failed snapshot and Retry, an account withdrawn and served again, a
- * narrowing's reload left unsaid, the Viewer and the notices under the toolbar, the
+ * results said (the latest wins), the empty state only for a book read, loading while nothing is
+ * read and a load's result said once, a failed snapshot and Retry, an account withdrawn and served
+ * again, a narrowing's reload left unsaid, the Viewer and the notices under the toolbar, the
  * account states and the locks as far as no B20 allows, a tab switch that keeps them, the kill
  * switch, the deep links and per-user persistence, CSV export, the announcements (StrictMode
  * included), focus never left on `body`, and the client half of manager scope (BQ-13: the server
@@ -15,7 +15,17 @@ import { StrictMode, useLayoutEffect, useRef, type JSX, type ReactNode } from "r
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+  type Mock,
+} from "vitest";
 import type { generated } from "@candleviewer/protocol";
 import { PreferencesProvider } from "../../../src/features/a11y-preferences/PreferencesContext";
 import { clearAnnouncements, ShellAnnouncer } from "../../../src/features/app-shell/announcer";
@@ -28,6 +38,7 @@ import {
 } from "../../../src/features/positions/panelState";
 import { PositionsPanel } from "../../../src/features/positions/PositionsPanel";
 import type { PositionsDeps } from "../../../src/features/positions/positionsSession";
+import * as positionsTabModule from "../../../src/features/positions/PositionsTab";
 import {
   COMMIT_INTERVAL_MS,
   SNAPSHOT_BUDGET_MS,
@@ -475,6 +486,30 @@ describe("filter and clear", () => {
       expect(document.activeElement).toBe(screen.getByRole("button", { name: "Filter" }));
       idle(5_000);
       expect(region("polite")).toBe("5 rows");
+    },
+  );
+
+  it(
+    "two chip changes inside one region budget: the newer result replaces the one waiting, so only the latest is said",
+    SCREEN,
+    async () => {
+      await open();
+      positionsHandle()?.push(snap(snapshot));
+      await settle(TICK);
+      fireEvent.click(screen.getByRole("button", { name: "Filter" }));
+      fireEvent.click(screen.getByRole("option", { name: "Sub-1" }));
+      await settle(TICK);
+      expect(region("polite")).toBe("2 rows"); // said at once: the region's 5 s budget starts
+      // inside it, Main added (3 rows in view) waits, then Sub-2 added (5 rows) takes its place
+      fireEvent.click(screen.getByRole("option", { name: "Main" }));
+      await settle(TICK);
+      fireEvent.click(screen.getByRole("option", { name: "Sub-2" }));
+      await settle(TICK);
+      idle(5_000);
+      expect(region("polite")).toBe("5 rows");
+      const said = regionSeq("polite");
+      idle(10_000); // past two more budgets: the replaced "3 rows" never comes
+      expect(regionSeq("polite")).toBe(said);
     },
   );
 });
@@ -1022,6 +1057,10 @@ describe("the stored tab mounts alone", () => {
         `${PANEL_STORAGE_KEY}:${USER}`,
         JSON.stringify({ v: 1, tab: "fills", groupBy: "account", chips: [], columns: {} }),
       );
+      // the observer reads each added node's subtree after the fact, so a Positions tab drawn in
+      // the first commit and gone by the next would pass it: a render spy counts the tab's renders
+      const renders = vi.spyOn(positionsTabModule, "PositionsTab");
+      onTestFinished(() => renders.mockRestore());
       const added: Node[] = [];
       const observer = new MutationObserver((records) => {
         for (const record of records) added.push(...record.addedNodes);
@@ -1036,6 +1075,10 @@ describe("the stored tab mounts alone", () => {
         (n.matches('[data-part="PositionsTab"]') ||
           n.querySelector('[data-part="PositionsTab"]') !== null);
       expect(added.filter(positionsTab)).toEqual([]);
+      expect(renders).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("tab", { name: "Positions" }));
+      await settle(TICK);
+      expect(renders).toHaveBeenCalled(); // the spy sees the tab's renders once it is chosen
     },
   );
 });
