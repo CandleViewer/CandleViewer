@@ -68,7 +68,9 @@ const client = {
     listeners.add(listener);
     return () => void listeners.delete(listener);
   },
-} as unknown as WsClientHandle; // the slot reads only `getState`, `subscribe` and `retryNow`
+  topics: () => [], // the CMP-076 chip's (#5345): no topic is consumed here
+  clockMs: () => performance.now(), // and the clock they are on
+} as unknown as WsClientHandle; // the slots read only `getState`, `subscribe`, `retryNow`, `topics`, `clockMs`
 const go = (next: WsState): void =>
   act(() => {
     state = next;

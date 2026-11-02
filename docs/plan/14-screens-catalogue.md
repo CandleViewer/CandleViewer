@@ -3106,6 +3106,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Hand-off pack:** [E29-D06.md](../design/E29/E29-D06.md) v1 (E29-D06; owner approval pending) (a11y contract: E29-D05).
 - **A11y review (E08-D12):** [E08-D12.md](../design/E08/E08-D12.md) (E08-D12; the connection region's policy of record read from E17-D01 §7 and E17-D02 §11, one alert per Disconnected episode, the Details split by role; owner approval pending).
 - **Hand-off pack:** [E08-D13.md](../design/E08/E08-D13.md) v1 (E08-D13; E17-D02 the text of record, E08-D03's boards for the E08 states; owner approval pending; a11y contract: E08-D12).
+- **As built (#5345):** the CMP-076 chip reads the feed, not only the link (E17-D02 §2 rows 5, 10–13 and 16): "Stale — exchange feed down" while the exchange's public feed is down and until each public topic's first fresh frame, "Stale (server)", "Stale 7 seconds" and the strong "Stale 15 seconds" at a topic's T1 and T2 (the age spelled out, as its name says it), "Reduced rate ×4" while saturated, and "Reconnecting" after a reconnect until the public snapshots are in (at a topic's T1 from the link's return its age reads instead). The feed down's entry is CMP-092's row and its exit the chip container's "Price feed live."; the container also says a stale episode, its T2 and Delayed through the shell announcer. The `recovered` region and its announcement stay with E17-Q04 (#569); the chip's details popover and tooltip are carried to #302 with DF-25.
 
 ### SCR-153 — Degraded-mode state
 

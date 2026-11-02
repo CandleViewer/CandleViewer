@@ -646,7 +646,9 @@ describe("SCR-159 beside CMP-077 in the shell layout", () => {
       listeners.add(listener);
       return () => void listeners.delete(listener);
     },
-  } as unknown as WsClientHandle; // the hook reads only `getState` and `subscribe`
+    topics: () => [], // the CMP-076 chip's (#5345): no topic is consumed here
+    clockMs: () => performance.now(), // and the clock they are on
+  } as unknown as WsClientHandle; // the shell reads only `getState`, `subscribe`, `topics`, `clockMs`
   const go = (next: WsState): void =>
     act(() => {
       ws = next;

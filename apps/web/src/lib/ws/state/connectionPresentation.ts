@@ -2,8 +2,8 @@
 // shell chrome, pure over `WsState`. The CMP-076 chip and the CMP-208 / 210 status-bar word read it,
 // the CMP-077 region reads `connectionRegion` beside it, and all three split the link the same way:
 // live, a first connect, a running retry (a shell cause included), and a stopped one (a fatal close,
-// 4403 included). Delayed and Stale stay unfed: `WsState` carries no throttle multiplier or topic
-// ages, and no mapping is guessed from `quality` (a C-row on #325 asks for the shell-level source).
+// 4403 included). The chip's Delayed and Stale are `chipState`'s (#5345), which reads this split
+// first; the status-bar word stays the link's.
 import type { WsState } from "./types";
 
 /** The CMP-076 chip's five values (E17-D02 §3); this mapper feeds `live`, `reconnecting` and `offline`. */

@@ -37,6 +37,34 @@ const region = (live: "assertive" | "polite"): HTMLElement => {
 const seq = (live: "assertive" | "polite" = "assertive"): string | null =>
   region(live).querySelector("p")?.getAttribute("data-seq") ?? null;
 
+/**
+ * axe's label-content-name-mismatch (WCAG 2.5.3) needs a canvas jsdom lacks, so it lands in
+ * `incomplete` here and runs in a real browser only (the e2e spec, CI's a11y job). This is the
+ * house check in its place (`SymbolPicker.test.tsx`): the words the chip draws (its text outside
+ * `.cv-visually-hidden`, letters and digits only, lower case) are one run of its name's, in order.
+ */
+const drawn = (node: Node): string =>
+  [...node.childNodes]
+    .map((child) => {
+      if (child.nodeType === Node.TEXT_NODE) return child.nodeValue ?? "";
+      return child instanceof Element && !child.matches(".cv-visually-hidden") ? drawn(child) : "";
+    })
+    .join("");
+const words = (text: string): string[] =>
+  text
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .split(" ")
+    .filter(Boolean);
+/** "" when the drawn words are one run of the name's, else the pair that is not. */
+const labelInName = (chip: HTMLElement): string => {
+  const name = chip.getAttribute("aria-label") ?? "";
+  const [seen, all] = [words(drawn(chip)), words(name)];
+  const held = all.some((_, from) => seen.every((word, i) => all[from + i] === word));
+  return seen.length > 0 && held ? "" : `"${drawn(chip)}" ≠ "${name}"`;
+};
+
 afterEach(() => act(() => clearAnnouncements()));
 
 const T0 = Date.UTC(2026, 9, 27, 13, 42, 5);
@@ -48,10 +76,16 @@ const STATES: readonly [ConnectionStatusProps, string][] = [
     { status: "delayed", lastGoodTs: T0, throttleMultiplier: 4, nowMs: T0 },
     `Reduced rate ×4, ${UTC}`,
   ],
-  [{ status: "stale", lastGoodTs: T0, staleAgeMs: 7_400, nowMs: T0 }, `Stale 7s, ${UTC}`],
+  [{ status: "stale", lastGoodTs: T0, staleAgeMs: 7_400, nowMs: T0 }, `Stale 7 seconds, ${UTC}`],
   [
     { status: "stale", lastGoodTs: T0, staleAgeMs: 15e3, strong: true, nowMs: T0 },
-    `Stale 15s, ${UTC}`,
+    `Stale 15 seconds, ${UTC}`,
+  ],
+  // #5345: the two detail states E17-D02 §5 draws on the stale value (rows 12 and 13)
+  [{ status: "stale", lastGoodTs: null, serverStale: true, nowMs: T0 }, "Stale (server)"],
+  [
+    { status: "stale", lastGoodTs: T0, upstreamDown: true, nowMs: T0 },
+    `Stale — exchange feed down, ${UTC}`,
   ],
   [
     { status: "reconnecting", lastGoodTs: T0, attempt: 3, nowMs: T0 + 12e3 },
@@ -74,6 +108,7 @@ describe("CMP-076 ConnectionStatus chip", () => {
       for (const part of name.split(", ").filter((p) => !p.endsWith("UTC"))) {
         expect(chip).toHaveTextContent(part);
       }
+      expect(labelInName(chip)).toBe("");
       expect(chip.querySelector("[data-glyph] :is(svg, [aria-hidden='true'])")).not.toBeNull();
       expect(chip.getAttribute("title")).toBe(
         props.lastGoodTs === null ? null : "last 13:42:05 UTC",
@@ -83,6 +118,38 @@ describe("CMP-076 ConnectionStatus chip", () => {
       expect(await seriousAxe(container)).toEqual([]);
     },
   );
+});
+
+describe("DF-24 (CP-7): the stale age spelled out, drawn as it is named", () => {
+  it.each([
+    [7_400, "Stale 7 seconds", "Connection: Stale 7 seconds, last data 13:42:05 UTC"],
+    [15_000, "Stale 15 seconds", "Connection: Stale 15 seconds, last data 13:42:05 UTC"],
+    [1_999, "Stale 1 second", "Connection: Stale 1 second, last data 13:42:05 UTC"],
+  ])("%i ms: the chip reads %s and is named %s", async (staleAgeMs, word, name) => {
+    const { container } = render(
+      <ConnectionStatus status="stale" lastGoodTs={T0} staleAgeMs={staleAgeMs} nowMs={T0} />,
+    );
+    const chip = screen.getByRole("button", { name });
+    expect(chip).toHaveTextContent(word);
+    expect(labelInName(chip)).toBe("");
+    expect(await seriousAxe(container)).toEqual([]);
+  });
+
+  it("the other words are their own names", () => {
+    render(<ConnectionStatus status="stale" lastGoodTs={null} serverStale nowMs={T0} />);
+    expect(screen.getByRole("button", { name: "Connection: Stale (server)" })).toBeVisible();
+  });
+
+  it("the word-run check bites: a drawn abbreviation is not a run of the spelled-out name", () => {
+    render(
+      <button type="button" aria-label="Connection: Stale 7 seconds, last data 13:42:05 UTC">
+        Stale 7 s
+      </button>,
+    );
+    expect(labelInName(screen.getByRole("button"))).toBe(
+      '"Stale 7 s" ≠ "Connection: Stale 7 seconds, last data 13:42:05 UTC"',
+    );
+  });
 });
 
 describe("the shell announcer", () => {
