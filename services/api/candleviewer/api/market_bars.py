@@ -81,9 +81,9 @@ from candleviewer.bars.metrics import (
     bars_endpoint_422_no_data_recorded_total,
     record_page,
 )
-from candleviewer.bars.models import BarSpec
+from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.reader import BarKey, BarPage, StoredBar, row_key, stored_bar
-from candleviewer.bars.rows import BUILD_VERSIONS
+from candleviewer.bars.rows import BUILD_VERSIONS, bar_row
 from candleviewer.bars.spec import PARAM_MAX_LEN, check_param_bounds, from_wire, qty_step_for
 from candleviewer.bars.write_holes import Present, WriteHoleLedger
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -130,6 +130,9 @@ class BarReaderLike(Protocol):
 RecordingStart = Callable[[str], Awaitable[int | None]]
 #: SR-E12-02 (#2093): a symbol's stored prints in a window (`MarketDataRepository.trade_totals`).
 TradeTotalsSource = Callable[[str, TimeRange], Awaitable[TradeTotals]]
+#: `include_open`: a series' newest in-progress bar and its generation, from the live series store
+#: (storage holds closed bars only, `WriterSink`); `None` = no forming bar is known.
+FormingBarSource = Callable[[str, BarSpec], "tuple[Bar, int] | None"]
 
 
 class _Rejected(Exception):
@@ -202,6 +205,28 @@ def _window_too_large(detail: str) -> JSONResponse:
     return problem(422, "bar_window_too_large", "Window too large", detail)
 
 
+def _stored_key(row: StoredBar) -> BarKey:
+    return (row.ts_us, row.generation or 0, -1 if row.index is None else row.index)
+
+
+def _forming_row(
+    source: FormingBarSource, symbol: str, spec: BarSpec, first_us: int, end_us: int,
+    rows: list[StoredBar],
+) -> StoredBar | None:  # fmt: skip
+    """The in-progress bar as a stored-shape row (`confirm` false), when it opens inside the
+    window and is not already among `rows`; else None. Same serialisation path as stored bars."""
+    got = source(symbol, spec)
+    if got is None:
+        return None
+    bar, generation = got
+    if bar.closed or not first_us <= bar.open_time < end_us:
+        return None
+    row = stored_bar(bar_row(bar, spec, generation=generation))
+    if any(r.ts_us == row.ts_us and r.index == row.index for r in rows):
+        return None
+    return row
+
+
 def make_market_bars_router(
     reader_provider: Callable[[], BarReaderLike | None],
     *,
@@ -210,6 +235,7 @@ def make_market_bars_router(
     principal_resolver: _Resolver | None = None,
     symbol_listed: Callable[[str], bool] | None = None,
     qty_step: Callable[[str], Decimal | None] | None = None,
+    forming_bar: FormingBarSource | None = None,
     now_us: Callable[[], int],
     write_holes: WriteHoleLedger | None = None,
 ) -> APIRouter:
@@ -217,6 +243,7 @@ def make_market_bars_router(
     exists only once a real QuestDB is composed); `None` -> 503. `symbol_listed=None` fails
     closed (503), never open, and so does `trade_totals=None` for non-time bars. `qty_step` is the
     catalogue's lot step for the `volume`/`delta` floor (SR-E12-03); with none, they are refused.
+    `forming_bar` (None: closed bars only) supplies the in-progress bar for `include_open`.
     `write_holes` lists the closed bars not stored in `meta.coverage_holes` (module docstring)."""
     router = APIRouter(tags=["market-data"])
 
@@ -402,8 +429,20 @@ def make_market_bars_router(
                 resume = rows[-1].ts_us + 1
             next_cursor = encode_cursor(scope, resume)
             page_to = resume
+        served_forming: StoredBar | None = None
         if not include_open:
             rows = [r for r in rows if r.confirmed]  # only the newest bar can be forming
+        elif forming_bar is not None and next_cursor is None:  # the last page only
+            first_us = start_us if after_us is None else max(start_us, after_us + 1)
+            open_bar = _forming_row(forming_bar, symbol, spec, first_us, end_us, rows)
+            if open_bar is not None and len(rows) < limit:
+                rows.append(open_bar)
+                served_forming = open_bar
+            elif open_bar is not None:  # a full last page: the forming bar opens the next one
+                next_cursor = (
+                    encode_cursor(scope, open_bar.ts_us) if spec.kind == "time"
+                    else encode_key_cursor(scope, _stored_key(open_bar))
+                )  # fmt: skip
         sources = (["tape"] if any(r.tape_built for r in rows) else []) + (
             ["questdb"] if any(not r.tape_built for r in rows) else [])  # fmt: skip
         record_page("bars", len(rows), sources)
@@ -415,9 +454,12 @@ def make_market_bars_router(
                 page_from = at_key[0]
             else:
                 page_from = start_us if after_us is None else max(start_us, after_us + 1)
+            # A forming bar is no closed stored bar: it never suppresses a recorded hole.
+            stored_rows = [r for r in rows if r is not served_forming]
             holes = merge_coverage_holes(write_holes.holes_for(
-                symbol, spec.spec_hash, page_from, page_to, _present(spec, rows),
+                symbol, spec.spec_hash, page_from, page_to, _present(spec, stored_rows),
             )) or None  # fmt: skip
+        # The forming bar is tape-built at the running build_version: it counts in provenance.
         provenance = bars_provenance(rows, spec_hash=spec.spec_hash,
                                      running=BUILD_VERSIONS[spec.kind])  # fmt: skip
         meta = build_meta(count=len(rows), next_cursor=next_cursor, sources=sources,
@@ -445,6 +487,7 @@ def _present(spec: BarSpec, rows: list[StoredBar]) -> list[Present]:
 
 __all__ = [
     "BarReaderLike",
+    "FormingBarSource",
     "RecordingStart",
     "TradeTotalsSource",
     "make_market_bars_router",
