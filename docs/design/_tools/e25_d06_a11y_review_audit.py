@@ -89,6 +89,18 @@ PAIRS: dict[str, tuple[str, str, str | float | None]] = {
     "side": ("color.buy.default", "color.sell.default", None),
 }
 SEVERITIES = ("Blocking", "Major", "Minor", "Info")
+# BQ-04 RULED (6573604055): the P42 stale-tertiary 1.4.3 miss is Blocking, never lowered
+RULED_SEVERITY = {"F-02": "Blocking"}
+# every gated control BQ-14's rider puts in scope: (screen, words of the control, reason key)
+REQUIRED_T2 = (
+    ("SCR-055", "alert affordance", "rbac.permission"),  # D03 S55-13
+    ("SCR-056", "settings pills", "notice.panel_read_only"),  # D03 S56-12
+    ("SCR-056", "Sync footprint", "notice.panel_read_only"),  # D03 S56-12
+    ("SCR-056", "Recompute history", "rbac.owner_only"),  # D03 S56-3
+    ("SCR-056", "empty state", "notice.panel_read_only"),  # D03 S56-2, the sentence form
+    ("SCR-056", "Create alert at this level", "rbac.permission"),  # D03 S56-12
+)
+D04_T2_LINES = frozenset(range(280, 294)) - {285}  # D04 §4.10's rows T2-1 ... T2-14; T2-6 is inert
 RENDERINGS = (
     "2a",
     "2a; 2b at the 208 px cell",
@@ -349,6 +361,8 @@ def g_finding(t: Texts, vals: dict[str, str]) -> list[str]:
             bad.append(f"{fid}: a {sev} finding without a fix (R-2: no high finding stays open)")
         if not owner:
             bad.append(f"{fid}: no owner")
+        if fid in RULED_SEVERITY and sev != RULED_SEVERITY[fid]:
+            bad.append(f"{fid}: severity {sev}, ruled {RULED_SEVERITY[fid]} (BQ-04)")
     return bad + anchor_problems(t, vals, "F:")
 
 
@@ -388,6 +402,54 @@ def g_t2(t: Texts, vals: dict[str, str]) -> list[str]:
             bad.append(f"{r[0]}: reason key {r[4]!r} is not a registered key")
         if r[3].startswith(("2a", "2b", "sentence")) and r[4] == "\u2014":
             bad.append(f"{r[0]}: a T2 rendering without a reason key")
+    table = [r for r in rows(section(t.spec, "## 8."), "T") if len(r) == 7]
+    for screen, words, key in REQUIRED_T2:
+        if not any(r[1] == screen and words in r[2] and r[4] == key for r in table):
+            bad.append(f"no T row for {screen}'s {words!r} with {key} (BQ-14: every gated control)")
+    cited: set[int] = set()
+    for r in table:
+        for key, a, b in cites(r[5]):
+            if key == "D04":
+                cited |= set(range(a, b + 1))
+    for n in sorted(D04_T2_LINES - cited):
+        bad.append(f"D04 §4.10's row at `D04`:{n} has no T row")
+    return bad
+
+
+def g_arow(t: Texts, vals: dict[str, str]) -> list[str]:
+    """Each A-row is copy-ready at its parent's pinned head: its Old text (or its anchor) stands
+    there exactly once, and A-1's target cell exists."""
+    bad = []
+    for ln in section(t.spec, "## 12.").split("\n"):
+        m = re.match(r"- \*\*(A-\d+) \u2192 (E25-D0[34])", ln)
+        if not m:
+            continue
+        aid, parent = m[1], {"E25-D03": "D03", "E25-D04": "D04"}[m[2]]
+        text = at(t, parent)
+        anchors = re.findall(r'Old: "(.+?)"\. New:', ln) + re.findall(r'after "(.+?)"\*\* \(F-', ln)
+        for a in anchors:
+            if text.count(a) != 1:
+                bad.append(
+                    f"{aid}: {a[:40]!r} stands {text.count(a)} times in {parent} at its head"
+                )
+        cell = re.search(r"Append to the row's (.+?) cell", ln)
+        if cell:
+            row = re.search(r"the (\w[\w ]*? row)\*\*", ln)
+            ls = text.split("\n")
+            at_row = next(
+                (k for k, x in enumerate(ls) if row and x.startswith(f"| {row[1]} (")), None
+            )
+            head = ""
+            if at_row is not None:
+                head = next(
+                    (ls[k] for k in range(at_row, -1, -1) if ls[k].startswith("| Element")), ""
+                )
+            if cell[1] not in head:
+                bad.append(
+                    f"{aid}: its target cell ({cell[1]!r}) is not a column of {parent}'s table"
+                )
+        if not anchors and not cell:
+            bad.append(f"{aid}: names neither an Old text, an anchor nor a target cell")
     return bad
 
 
@@ -437,9 +499,15 @@ def g_scope(t: Texts, vals: dict[str, str]) -> list[str]:
 
 
 GATES: dict[str, Callable[[Texts, dict[str, str]], list[str]]] = {
-    "G-FINDING": g_finding, "G-CONTRAST": g_contrast, "G-NARRATIVE": g_narrative, "G-T2": g_t2,
-    "G-CITE": g_cite, "G-HYGIENE": g_hygiene, "G-SCOPE": g_scope,
-}  # fmt: skip
+    "G-FINDING": g_finding,
+    "G-CONTRAST": g_contrast,
+    "G-NARRATIVE": g_narrative,
+    "G-T2": g_t2,
+    "G-AROW": g_arow,
+    "G-CITE": g_cite,
+    "G-HYGIENE": g_hygiene,
+    "G-SCOPE": g_scope,
+}
 
 
 def audit(t: Texts) -> list[tuple[str, str]]:
@@ -523,6 +591,35 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "G-HYGIENE",
         "a closing keyword against #671",
         sub("nothing here claims it.", "nothing here claims it. Closes #671."),
+    ),
+    (
+        "G-T2",
+        "the Viewer's 'Create alert at this level' row dropped",
+        lambda t: replace(
+            t, spec="\n".join(x for x in t.spec.split("\n") if not x.startswith("| T-18 "))
+        ),
+    ),
+    (
+        "G-FINDING",
+        "F-02 lowered to Major, the counts kept consistent",
+        lambda t: set_cell("F-02", 1, "Major")(
+            sub("Blocking 1<!--=F:blocking--> · Major 1", "Blocking 0<!--=F:blocking--> · Major 2")(
+                t
+            )
+        ),
+    ),
+    (
+        "G-AROW",
+        "A-3's Old text off by one character",
+        sub(
+            'Old: "instant; the spinner\'s opacity pulse"',
+            'Old: "instant; the spinners opacity pulse"',
+        ),
+    ),
+    (
+        "G-AROW",
+        "A-1's target cell renamed",
+        sub("Append to the row's Text / glyph cell", "Append to the row's Glyph text cell"),
     ),
     (
         "G-SCOPE",
