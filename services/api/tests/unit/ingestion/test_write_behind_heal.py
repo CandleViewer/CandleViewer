@@ -7,6 +7,7 @@ store, a fake clock and sleep; no network, no real time (C-13.7).
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from collections.abc import Awaitable, Callable, Collection, Sequence
 from typing import Any
@@ -242,9 +243,8 @@ async def test_heal_rerun_is_idempotent_under_the_dedup_key() -> None:
     await _lose(rig.buf, [P3, P4])
     await rig.settled_tick()
     before = dict(rig.store.rows)
-    await _lose(rig.buf, [P3, P4])  # the same hole again
-    rig.clock.t += HEAL_SETTLE_S
-    await rig.healer.tick()
+    await _lose(rig.buf, [P3, P4])  # the same hole again: a new outage, a new settle window
+    await rig.settled_tick()
     assert rig.fetch.calls == 2 and rig.buf.lost_ranges(SYM) == []
     assert rig.store.rows.keys() == before.keys()  # upserted in place, no double rows
 
@@ -275,8 +275,7 @@ async def test_heal_short_read_back_is_read_once_more_then_partial() -> None:
     await _lose(rig.buf, [P4])
     rig.store.lagging_reads = 2  # stays short
     partial = _ranges("partial")
-    rig.clock.t += HEAL_SETTLE_S
-    await rig.healer.tick()
+    await rig.settled_tick()  # the second outage restarts the settle window
     assert _ranges("partial") == partial + 1 and len(rig.buf.closed_ranges(SYM)) == 1
 
 
@@ -304,6 +303,73 @@ async def test_heal_run_the_page_no_longer_reaches_is_unrecoverable_once_and_kep
     rig.clock.t += HEAL_HORIZON_S
     await rig.healer.tick()  # out of the work set: no second fetch, no second count
     assert rig.fetch.calls == 1 and _ranges("unrecoverable") == unrec + 1
+
+
+async def test_heal_run_starting_in_the_pages_oldest_ms_is_unrecoverable_and_kept() -> None:
+    # Timestamps are ms x 1000: prints share one, and the venue's page can cut through its
+    # oldest millisecond. `lost` shares P5's ms but fell off the page, so the page cannot prove
+    # the run whole: never verified, never cleared (#1944 BQ-6).
+    rig = _Rig()
+    lost = dataclasses.replace(P5, trade_id="lost-same-ms")
+    rig.fetch.page = [P5, P6, P7]
+    await _lose(rig.buf, [lost, P5])
+    run = rig.buf.lost_ranges(SYM)
+    assert run == [Range(P5.ts_event_us, P5.ts_event_us + 1)]
+    healed, unrec = _ranges("healed"), _ranges("unrecoverable")
+    await rig.settled_tick()
+    assert rig.buf.lost_ranges(SYM) == run  # never hidden
+    assert _ranges("unrecoverable") == unrec + 1 and _ranges("healed") == healed
+    assert lost.trade_id not in {k[2] for k in rig.store.rows}
+
+
+async def test_heal_cap_merge_of_counted_runs_is_not_counted_or_fetched_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(wb_mod, "MAX_LOST_RUNS", 2)  # the third close merges the two oldest
+    rig = _Rig()
+    rig.fetch.page = [P5, P6, P7]  # both runs start before the page: unrecoverable
+    await _lose(rig.buf, [P1])
+    await _lose(rig.buf, [P3])
+    unrec = _ranges("unrecoverable")
+    await rig.settled_tick()
+    assert _ranges("unrecoverable") == unrec + 2 and rig.fetch.calls == 1
+    await _lose(rig.buf, [P3])  # the same hole again: the cap merges P1's and P3's runs
+    merged = Range(P1.ts_event_us, P3.ts_event_us + 1)
+    assert rig.buf.closed_ranges(SYM) == [merged, Range(P3.ts_event_us, P3.ts_event_us + 1)]
+    await rig.settled_tick()
+    await rig.healer.tick()
+    assert _ranges("unrecoverable") == unrec + 2  # once per original run
+    assert rig.fetch.calls == 1  # the merged run inherits dead status: no page for it
+    assert rig.buf.closed_ranges(SYM)[0] == merged  # kept: lost rows are never hidden
+
+
+async def test_heal_run_left_out_of_a_pass_keeps_its_horizon() -> None:
+    rig = _Rig(max_work=1)
+    rig.fetch.fail = RateLimitError("10006")  # nothing heals
+    await _lose(rig.buf, [P3])
+    await _lose(rig.buf, [P4])
+    unrec = _ranges("unrecoverable")
+    await rig.settled_tick()  # both first seen now; only P3's run is worked
+    rig.clock.t += HEAL_HORIZON_S
+    await rig.healer.tick()  # P3's run passes the horizon
+    await rig.healer.tick()  # P4's run is worked now: first seen a horizon ago
+    assert _ranges("unrecoverable") == unrec + 2
+
+
+async def test_heal_a_flap_inside_one_tick_restarts_the_settle_window() -> None:
+    rig = _Rig()
+    await _lose(rig.buf, [P3])
+    await rig.healer.tick()  # recovered: the settle window starts
+    rig.clock.t += HEAL_SETTLE_S - 1
+    rig.buf.requeue([])  # fails and recovers between two ticks: `degraded` never seen
+    rig.buf.succeeded()
+    await rig.healer.tick()
+    rig.clock.t += 1
+    await rig.healer.tick()
+    assert rig.fetch.calls == 0
+    rig.clock.t += HEAL_SETTLE_S
+    await rig.healer.tick()
+    assert rig.fetch.calls == 1 and rig.buf.lost_ranges(SYM) == []
 
 
 async def test_heal_run_past_the_horizon_is_unrecoverable_counted_once() -> None:
@@ -358,15 +424,15 @@ async def test_heal_clear_racing_an_eviction_keeps_the_grown_run(
     await rig.healer.tick()  # heals the snapshot run [P3]; the buffer merged it meanwhile
     grown = [Range(P3.ts_event_us, P4.ts_event_us + 1)]
     assert rig.buf.closed_ranges(SYM) == grown  # not wholly covered: kept whole
-    await rig.healer.tick()  # the next pass heals the grown run whole
+    await rig.settled_tick()  # once the racing outage settles, the grown run heals whole
     assert rig.buf.lost_ranges(SYM) == []
 
 
 async def test_heal_work_set_is_bounded_per_pass() -> None:
     rig = _Rig(max_work=1)
-    await _lose(rig.buf, [P1])
     await _lose(rig.buf, [P3])
     await _lose(rig.buf, [P4])
+    await _lose(rig.buf, [P5])
     await rig.settled_tick()
     assert len(rig.buf.closed_ranges(SYM)) == 2  # one run worked this pass
     await rig.healer.tick()

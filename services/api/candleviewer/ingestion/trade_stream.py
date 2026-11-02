@@ -190,6 +190,7 @@ class TradeStream:
         hold_capacity: int = HOLD_CAPACITY,
         retry_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         retry_rand: Callable[[], float] = _JITTER,
+        write_queue_maxsize: int = WRITE_QUEUE_MAXSIZE,
     ) -> None:
         self._bus, self._env = bus, env
         self._set_desired, self._parse = set_desired, parse_frame
@@ -213,7 +214,7 @@ class TradeStream:
         #: #1918: a failed batch is requeued with backoff, never discarded.
         self._writes: WriteBehindBuffer[TradeEvent] = WriteBehindBuffer(
             table="trades",
-            maxsize=WRITE_QUEUE_MAXSIZE,
+            maxsize=write_queue_maxsize,
             dropped=trade_writes_dropped_total,
             key=lambda e: (e.symbol, e.ts_event),
             sleep=write_sleep,

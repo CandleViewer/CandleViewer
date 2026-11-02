@@ -75,6 +75,7 @@ class WriteBehindBuffer[T]:
         self._open: dict[str, list[int]] = {}  # symbol -> [start_us, end_us) open run
         self._closed: dict[str, deque[Range]] = {}
         self.failures = 0  # consecutive failed writes; 0 = healthy
+        self._failed_writes = 0  # every failed write ever: never resets
         self._unflushed = [0, 0]  # [outage, queue_full] evictions not yet on the counters
         self.evicted = 0
 
@@ -87,6 +88,12 @@ class WriteBehindBuffer[T]:
     @property
     def degraded(self) -> bool:
         return self.failures > 0
+
+    @property
+    def failed_writes(self) -> int:
+        """Failed writes since construction, monotonic (never reset by a success): a reader
+        that samples `degraded` now and then still sees a fail-then-succeed between samples."""
+        return self._failed_writes
 
     def lost_ranges(self, symbol: str) -> list[Range]:
         """Hot-tier holes for `symbol`, oldest first (closed runs + the open one)."""
@@ -190,6 +197,7 @@ class WriteBehindBuffer[T]:
     def requeue(self, rows: Iterable[T]) -> None:
         """Failed write: rows back at the head (order kept); overflow evicts oldest."""
         self.failures += 1
+        self._failed_writes += 1
         self.restore(rows)
 
     def restore(self, rows: Iterable[T]) -> None:

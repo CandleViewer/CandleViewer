@@ -274,13 +274,7 @@ class Rig:
         window = EventWindow(
             corrected_now_us(self.clock_guard.offset_us, self.host_now_us), self._launch_us
         )
-        cap = trade_stream_module.WRITE_QUEUE_MAXSIZE
-        if trades_buffer is not None:  # the module constant is read at construction only
-            trade_stream_module.WRITE_QUEUE_MAXSIZE = trades_buffer
-        try:
-            self.trades = self._make_trades(window)
-        finally:
-            trade_stream_module.WRITE_QUEUE_MAXSIZE = cap
+        self.trades = self._make_trades(window, trades_buffer)
         self.svc.attach_trades(self.trades)
         self.hot_ids = HotTradeIds(self.writer)
         self.healer: WriteBehindHealer | None = None
@@ -303,7 +297,8 @@ class Rig:
             self.svc.attach_healer(self.healer)
         self._wire_rest_of_stack(window)
 
-    def _make_trades(self, window: Any) -> TradeStream:
+    def _make_trades(self, window: Any, buffer: int | None) -> TradeStream:
+        cap = trade_stream_module.WRITE_QUEUE_MAXSIZE if buffer is None else buffer
         return TradeStream(
             bus=self.bus,
             env=self.env,
@@ -322,6 +317,7 @@ class Rig:
             write_rand=self.rng.random,
             retry_sleep=self.clock.sleep,  # #2715 unrecovered-gap retries on virtual time
             retry_rand=self.rng.random,
+            write_queue_maxsize=cap,
         )
 
     def _wire_rest_of_stack(self, window: Any) -> None:
