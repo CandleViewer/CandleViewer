@@ -3604,14 +3604,31 @@ export interface paths {
      *     specific data-availability fact, and the client cannot fix it by paginating.
      *
      *     **Paging (#2045, E12-T05).** A request without `cursor` is served as its first page:
-     *     the oldest `limit` bars of the window, oldest→newest, with `meta.has_more` and a
-     *     server-issued `meta.next_cursor` when more remain; the client continues with that cursor
-     *     until `has_more` is false. Every read fetches at most `limit + 1` rows, so the work per
-     *     request is bounded whatever the window. `bar_window_too_large` (422) is reserved for the
-     *     hard window caps (E12 STRIDE SR-E12-02): time bars span at most 400 days; non-time bars
-     *     at most 31 days and an estimated 250 000 bars. Cursor semantics are stated once, on the
-     *     `MarketCursor` parameter. A page that would exceed the response ceiling (SR-E12-01)
-     *     returns 422 `response_too_large`.
+     *     the oldest bars of the window, at most `limit`, oldest→newest, with `meta.has_more` and
+     *     a server-issued `meta.next_cursor` when more remain; the client continues with that
+     *     cursor until `has_more` is false. A page holds at most `limit` bars; stored rows that
+     *     share an open time are served as one time bar (below), so a time-bar page can hold fewer
+     *     than `limit` bars while `next_cursor` is set. A non-time read fetches at most
+     *     `limit + 1` stored rows. A time-bar read fetches at most `limit + 9` (the row that opens
+     *     the next page plus 8 rows of room for rows that share an open time) and, only when every
+     *     row it fetched shares one open time, re-reads that open time alone, at most 512 rows. So
+     *     the work per request is bounded whatever the window. `bar_window_too_large` (422) is
+     *     reserved for the hard window caps (E12 STRIDE SR-E12-02): time bars span at most 400
+     *     days; non-time bars at most 31 days and an estimated 250 000 bars. Cursor semantics are
+     *     stated once, on the `MarketCursor` parameter. A page that would exceed the response
+     *     ceiling (SR-E12-01) returns 422 `response_too_large`.
+     *
+     *     **One time bar per open time (#5396).** A time bar is served once per open time. The
+     *     stored key is `(t, generation, index)` (21 §4.8), so stored rows can share an open time:
+     *     an exchange kline row and a tape-built row, or rows of two generations (a builder cold
+     *     start, an ADR-0033 rebuild). When they do, the tape-built row is served over a
+     *     kline-sourced one. Among tape-built rows, the row of the series' current generation is
+     *     served: the generation the server is building live when it builds the series, otherwise
+     *     the generation of the newest tape-built row the read fetched (the highest `generation`
+     *     among those at its open time). Only then, as a deterministic tiebreak and not an order
+     *     (`generation` is opaque, `Bar.generation`), the highest `generation` and then the highest
+     *     `index`. Only the first 512 rows at one open time, in stored order, are considered. The
+     *     `t` cursor neither repeats nor skips an open time across pages.
      *
      *     **Integrity and provenance (#5396).** Each bar carries `gap_before`, `partial` and
      *     `tape_gap` (`Bar`), the flags its stored row holds: a bar that may not match the tape
@@ -7886,7 +7903,9 @@ export interface components {
        * @default false
        */
       tape_gap: boolean;
+      /** @description Absent on a bar not built from the recorded tape (a kline-sourced stored bar); never `0`. */
       trades?: number;
+      /** @description Absent on a bar not built from the recorded tape (a kline-sourced stored bar); never `0`. */
       turnover?: components["schemas"]["Decimal"];
       v: components["schemas"]["Decimal"];
     };
@@ -13138,7 +13157,7 @@ export interface components {
     Limit: number;
     /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a `23-ws-protocol.md` §13 `symbol` (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). A uuid is always the lowercase canonical form, so a machine has exactly one key in its environment. */
     MachineKey: string;
-    /** @description The single cursor statement for `/market/klines` and `/market/bars`: an opaque, server-issued cursor from `meta.next_cursor`. Ordering and the cursor are by `(generation, index)` for non-time bars (the cursor carries the last position's `t`, `generation` and `index`, #2017); `/market/klines` and time bars use a `t` position (open time is unique there). Clients must treat the cursor as opaque and never parse it, so the switch is non-breaking. Malformed, expired or foreign -> `invalid_cursor`. A cursor is bound to the request that issued it (route, symbol, interval or `bar_type`+`param`); replaying it on a different request is `invalid_cursor`. Uncursored requests are served as the first page (see the route text). */
+    /** @description The single cursor statement for `/market/klines` and `/market/bars`: an opaque, server-issued cursor from `meta.next_cursor`. Ordering and the cursor are by `(generation, index)` for non-time bars (the cursor carries the last position's `t`, `generation` and `index`, #2017); `/market/klines` and time bars use a `t` position (one bar is served per open time there, `getBars`). Clients must treat the cursor as opaque and never parse it, so the switch is non-breaking. Malformed, expired or foreign -> `invalid_cursor`. A cursor is bound to the request that issued it (route, symbol, interval or `bar_type`+`param`); replaying it on a different request is `invalid_cursor`. Uncursored requests are served as the first page (see the route text). */
     MarketCursor: string;
     MethodId: string;
     /**
@@ -18653,11 +18672,12 @@ export interface operations {
     parameters: {
       query: {
         bar_type: components["schemas"]["BarType"];
-        /** @description The single cursor statement for `/market/klines` and `/market/bars`: an opaque, server-issued cursor from `meta.next_cursor`. Ordering and the cursor are by `(generation, index)` for non-time bars (the cursor carries the last position's `t`, `generation` and `index`, #2017); `/market/klines` and time bars use a `t` position (open time is unique there). Clients must treat the cursor as opaque and never parse it, so the switch is non-breaking. Malformed, expired or foreign -> `invalid_cursor`. A cursor is bound to the request that issued it (route, symbol, interval or `bar_type`+`param`); replaying it on a different request is `invalid_cursor`. Uncursored requests are served as the first page (see the route text). */
+        /** @description The single cursor statement for `/market/klines` and `/market/bars`: an opaque, server-issued cursor from `meta.next_cursor`. Ordering and the cursor are by `(generation, index)` for non-time bars (the cursor carries the last position's `t`, `generation` and `index`, #2017); `/market/klines` and time bars use a `t` position (one bar is served per open time there, `getBars`). Clients must treat the cursor as opaque and never parse it, so the switch is non-breaking. Malformed, expired or foreign -> `invalid_cursor`. A cursor is bound to the request that issued it (route, symbol, interval or `bar_type`+`param`); replaying it on a different request is `invalid_cursor`. Uncursored requests are served as the first page (see the route text). */
         cursor?: components["parameters"]["MarketCursor"];
         /** @description Inclusive start of the time window (RFC 3339 UTC), required by `/market/klines` and `/market/bars`: a request without it is refused with 400 `validation_failed`. */
         from: components["parameters"]["FromRequired"];
         include_delta?: boolean;
+        /** @description `true` appends the series' in-progress bar (`confirm: false`) to the last page when it opens inside the window and after the last bar served, so no closed bar is served at its open time. Before it, the page serves the closed bars the server has built live but not yet stored (a close reaches storage shortly after it is built), when they open inside the window and after the last stored bar served: they count toward `limit`, and they never fill a `meta.coverage_holes` range (they are not stored yet). When `limit` is reached first, `next_cursor` points at the first bar not served and the next page continues there; the in-progress bar is then served on a later page, never twice. The in-progress bar and those closed bars are available only while the server builds the series live (a WS `bars` subscription to it holds the series); otherwise none is returned and a page serves stored closed bars only. Each counts toward `meta.build_version` and `meta.stale_build` at the version that built it (the in-progress bar at the running version). `false`: closed stored bars only. */
         include_open?: boolean;
         /** @description Maximum number of bars returned in one page. */
         limit?: components["parameters"]["BarLimit"];
@@ -18897,7 +18917,7 @@ export interface operations {
   getKlines: {
     parameters: {
       query: {
-        /** @description The single cursor statement for `/market/klines` and `/market/bars`: an opaque, server-issued cursor from `meta.next_cursor`. Ordering and the cursor are by `(generation, index)` for non-time bars (the cursor carries the last position's `t`, `generation` and `index`, #2017); `/market/klines` and time bars use a `t` position (open time is unique there). Clients must treat the cursor as opaque and never parse it, so the switch is non-breaking. Malformed, expired or foreign -> `invalid_cursor`. A cursor is bound to the request that issued it (route, symbol, interval or `bar_type`+`param`); replaying it on a different request is `invalid_cursor`. Uncursored requests are served as the first page (see the route text). */
+        /** @description The single cursor statement for `/market/klines` and `/market/bars`: an opaque, server-issued cursor from `meta.next_cursor`. Ordering and the cursor are by `(generation, index)` for non-time bars (the cursor carries the last position's `t`, `generation` and `index`, #2017); `/market/klines` and time bars use a `t` position (one bar is served per open time there, `getBars`). Clients must treat the cursor as opaque and never parse it, so the switch is non-breaking. Malformed, expired or foreign -> `invalid_cursor`. A cursor is bound to the request that issued it (route, symbol, interval or `bar_type`+`param`); replaying it on a different request is `invalid_cursor`. Uncursored requests are served as the first page (see the route text). */
         cursor?: components["parameters"]["MarketCursor"];
         /** @description Inclusive start of the time window (RFC 3339 UTC), required by `/market/klines` and `/market/bars`: a request without it is refused with 400 `validation_failed`. */
         from: components["parameters"]["FromRequired"];

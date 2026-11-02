@@ -1683,12 +1683,17 @@ class Bar(BaseModel):
     turnover: Annotated[
         str | None,
         Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            description="Absent on a bar not built from the recorded tape (a kline-sourced stored bar); never `0`.",
             examples=["63120.50", "-0.0004", "0"],
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    trades: JsonInt | None = None
+    trades: Annotated[
+        JsonInt | None,
+        Field(
+            description="Absent on a bar not built from the recorded tape (a kline-sourced stored bar); never `0`."
+        ),
+    ] = None
     confirm: Annotated[
         StrictBool | None,
         Field(description="False for the in-progress bar (Bybit `confirm` semantics)."),
