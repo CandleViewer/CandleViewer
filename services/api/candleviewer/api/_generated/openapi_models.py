@@ -5260,7 +5260,7 @@ class HotkeyBinding(BaseModel):
     action: Annotated[
         str,
         Field(
-            description="A command id of the client's default keymap, `apps/web/src/keymap/keymap.json` (E49-T04), which is the one action vocabulary; `HotkeyBindingAuditInput.command_id` carries the same ids. No parallel set of action names exists.",
+            description="A command id of the client's default keymap, `apps/web/src/keymap/keymap.json` (E49-T04), which is the one action vocabulary; `HotkeyBindingAuditInput.command_id` carries the same ids. No parallel set of action names exists. On a write, an id the keymap does not have is `422 validation_failed`, rule `unknown_action`.",
             examples=["ticket.side_buy", "positions.close_all", "chart.footprint_toggle"],
             max_length=60,
         ),
@@ -5268,7 +5268,7 @@ class HotkeyBinding(BaseModel):
     keys: Annotated[
         str,
         Field(
-            description="Chord notation, e.g. `Ctrl+Shift+F` or a sequence `Esc Esc`.",
+            description="The binding, in canonical form (E10-T05). The grammar is the client's (`validate.ts`\n`normaliseBinding`); the server checks it in code, and no pattern states it here:\n\n- **A key chord:** the modifiers it holds among `Ctrl`, `Alt` and `Shift`, in that\n  order, then one key, joined by `+` (`Ctrl+Shift+F`). The key is a named key (`Esc`,\n  `Del`, `Space`, `Enter`, `Tab`, `Backspace`, `Home`, `End`, `PageUp`, `PageDown`,\n  `←`, `→`, `↑`, `↓`), `F1` to `F24`, one character other than white space (a letter\n  in upper case), or a digit range `a..b` with `a` at most `b`, which binds each digit\n  from `a` to `b` (`Alt+1..9`).\n- **A pointer gesture:** modifiers as above, then `Space` when it is held, then\n  `click`, `drag` or `wheel` (`Ctrl+drag`, `Space+drag`).\n- **A modifier alone:** `Ctrl`, `Alt` or `Shift` (`positions.multi_ctrl`).\n- **Unbound:** `\"\"`.\n\nIn a key chord, `Shift` goes on a letter, a named key or a function key, never on a\ndigit, a digit range or another single character, since a press reads as the character\nShift typed (`?`, never `Shift+/`). Case and the client's aliases are accepted (`esc`\nor `Escape` for `Esc`; `Control`, `Cmd`, `Meta` or `Mod` for `Ctrl`; `Option` for\n`Alt`), and the server stores and answers the canonical form.\n\nA binding keeps the shape of its command's keymap default: a key stays a key; a digit\nrange keeps its digits (`1..9` may become `Alt+1..9`, never `1..4`); a gesture keeps\nits gesture (`Ctrl+drag` may become `Alt+drag`, never `Ctrl+click`); a modifier\nalone stays one. So every default of the keymap, its ranges, gestures and bare\nmodifiers included, is accepted as it is.\n\nOn a write, a binding that breaks a rule is `422 validation_failed` naming it (`field`\n`bindings[2].keys`), with the rule `HotkeyProfileInput.bindings` orders first among:\n\n- `invalid_keys`: not a binding of this grammar;\n- `shape_mismatch`: not its command's shape;\n- `bare_letter_dangerous`: a single letter, with or without `Shift`, on a command of\n  the dangerous set (`confirm`), whatever the user acknowledged;\n- `reserved_key`: `Esc` or `Ctrl+K` on any command but the ones they belong to; or a\n  key the client's `reserved-keys.json` reserves (a digit range by each of its\n  digits) on a command that does not hold it as its own default with a reviewed\n  override (`reservedOverride`);\n- `locked_command`: `global.palette` (`Ctrl+K`), `chart.cancel_drawing` or\n  `ticket.clear` (both `Esc`), the commands the keymap does not let a user remap,\n  bound to anything but its default, or unbound.\n\nThe acknowledgement a client takes before binding a bare key to a dangerous command\n(`HotkeyBindingAuditInput.acknowledged_unsafe`) is not checked here: a device reads a\nstored profile by its import rules, which return such a binding to its default\n(CR-305BD-04).\n",
             max_length=60,
         ),
     ]
@@ -5289,23 +5289,49 @@ class HotkeyBinding(BaseModel):
             "settings",
         ],
         Field(
-            description="The view the binding is active in (E10-S02, #305). It is fixed by the action: the\nscope that the `context` of its `keymap.json` command maps to in this table. The table\ngoes by `context`, not by id prefix: `global.auth.submit` is an `Auth` command, so its\nscope is `auth`.\n\n| `keymap.json` context | `scope`     |\n| --------------------- | ----------- |\n| `Global`              | `global`    |\n| `Auth`                | `auth`      |\n| `Workspace`           | `workspace` |\n| `Chart`               | `chart`     |\n| `DOM`                 | `dom`       |\n| `Ticket`              | `ticket`    |\n| `Positions`           | `positions` |\n| `Replay`              | `replay`    |\n| `Rules`               | `rules`     |\n| `Admin`               | `admin`     |\n| `Settings`            | `settings`  |\n\nSeven contexts had no scope among the original six, so each has its own (`auth`,\n`workspace`, `ticket`, `replay`, `rules`, `admin`, `settings`) rather than a fold into\nanother scope. The defaults reuse a key in contexts the keymap declares never active\ntogether (`B` is `ticket.side_buy` and `replay.bookmark`; `Enter` is\n`global.auth.submit`, `positions.open_sltp` and `rules.inspect_node`), and one shared\nscope would make each such pair a `conflict` under `createHotkeyProfile`'s rule. The\norder ticket is `ticket`, not `orders`: `05-accessibility-standard.md` §3.4 makes the\nOrder Ticket and Positions & Orders separate regions. `tape` and `orders` have no\nclient context yet. **Open-ended for readers:** clients must tolerate values they do\nnot know, so adding a scope is an additive change (C-6.3). Writers must send a listed\nvalue, the one this table gives the action.\n"
+            description="The view the binding is active in (E10-S02, #305). It is fixed by the action: the\nscope that the `context` of its `keymap.json` command maps to in this table. The table\ngoes by `context`, not by id prefix: `global.auth.submit` is an `Auth` command, so its\nscope is `auth`.\n\n| `keymap.json` context | `scope`     |\n| --------------------- | ----------- |\n| `Global`              | `global`    |\n| `Auth`                | `auth`      |\n| `Workspace`           | `workspace` |\n| `Chart`               | `chart`     |\n| `DOM`                 | `dom`       |\n| `Ticket`              | `ticket`    |\n| `Positions`           | `positions` |\n| `Replay`              | `replay`    |\n| `Rules`               | `rules`     |\n| `Admin`               | `admin`     |\n| `Settings`            | `settings`  |\n\nSeven contexts had no scope among the original six, so each has its own (`auth`,\n`workspace`, `ticket`, `replay`, `rules`, `admin`, `settings`) rather than a fold into\nanother scope. The defaults reuse a key in contexts the keymap declares never active\ntogether (`B` is `ticket.side_buy` and `replay.bookmark`; `Enter` is\n`global.auth.submit`, `positions.open_sltp` and `rules.inspect_node`), and one shared\nscope would make each such pair a `conflict` under `createHotkeyProfile`'s rule. The\norder ticket is `ticket`, not `orders`: `05-accessibility-standard.md` §3.4 makes the\nOrder Ticket and Positions & Orders separate regions. `tape` and `orders` have no\nclient context yet. **Open-ended for readers:** clients must tolerate values they do\nnot know, so adding a scope is an additive change (C-6.3). Writers must send a listed\nvalue, the one this table gives the action: on a write, any other is\n`422 validation_failed`, rule `scope_mismatch`. It is never stored; a read derives it\nfrom the action (E10-T05).\n"
         ),
     ]
     requires_arm: Annotated[
-        StrictBool,
+        StrictBool | None,
         Field(
-            description="Forced true for exactly the mutations `ArmToken` requires the token for; never forced for the C-2.6 carve-out `ArmToken` lists, nor for engaging the kill switch (no order mutation)."
+            description="Whether the command waits for the session's arm (SR-043), derived by the server from the action and never stored (E10-T05): `true` for exactly the five commands that place an order, which are mutations `ArmToken` requires the token for (a submit, reduce-only ones included): `ticket.submit`, `chart.limit_at_price`, `chart.market_order`, `dom.market_click` and `dom.stop_click`, as `keymap.json` marks them (`requiresArm`). It is `false` for every other command, so no protective command (the C-2.6 carve-out `ArmToken` lists: a cancel, a close, a stop) is ever armed, nor an arm toggle, nor engaging the kill switch, which is no order mutation (C-2.6, C-2.21). On a write it is advisory: left out it takes the derived value, and a value that differs is rewritten, in either direction, and named in `Hotkey-Bindings-Rewritten`. A read always answers it.\n"
         ),
-    ] = True
-    confirm: StrictBool = False
-    params: dict[str, Any] | None = None
-    __null_refused = field_validator("params", mode="before")(_refuse_null)
+    ] = None
+    confirm: Annotated[
+        StrictBool | None,
+        Field(
+            description="Whether the command's handler opens the confirm flow, derived by the server from the action and never stored (E10-T05): `true` for exactly the keymap's dangerous set, the eight commands `keymap.json` marks `confirm` and `audited`: `chart.delete_drawing`, `rules.delete`, `dom.cancel_all`, `positions.close`, `positions.close_all`, `ticket.submit`, `dom.arm` and `ticket.arm`; `false` for every other command. On a write it is advisory, as `requires_arm` is: left out it takes the derived value, and a value that differs is rewritten and named in `Hotkey-Bindings-Rewritten`. A read always answers it.\n"
+        ),
+    ] = None
+    params: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description="Reserved for a command that declares parameters (E30-S07); none does yet. On a write it must be absent or `{}`: anything else is `422 validation_failed`, rule `params_not_allowed`. It is not stored, and a read never answers it.\n"
+        ),
+    ] = None
+    __null_refused = field_validator("requires_arm", "confirm", "params", mode="before")(_refuse_null)
 
 
 class HotkeyProfileInput(BaseModel):
-    name: Annotated[str, Field(max_length=80, min_length=1)]
-    bindings: Annotated[list[HotkeyBinding], Field(max_length=200)]
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    name: Annotated[
+        str,
+        Field(
+            description="Unique among the owner's profiles, case-insensitively as Postgres `lower()` folds it (`409 conflict` / `name_taken`, `createHotkeyProfile`).\n",
+            max_length=80,
+            min_length=1,
+        ),
+    ]
+    bindings: Annotated[
+        list[HotkeyBinding],
+        Field(
+            description="The profile's bindings, at most one per command (E10-T05).\n\n- **Rules.** On a write, each entry is judged on its own, and each refused entry is one\n  `errors[]` item, its `field` the member at fault (`bindings[2].keys`) and its `rule`\n  the first it breaks in this order: `unknown_action` (`action`), `duplicate_action`\n  (an `action` an earlier entry names), `scope_mismatch` (`scope`),\n  `params_not_allowed` (`params`), then the rules of `keys` in their order:\n  `invalid_keys`, `shape_mismatch`, `bare_letter_dangerous`, `reserved_key`,\n  `locked_command`. Each is `422 validation_failed`. A command the caller's role or\n  account grants cannot run is no refusal (E47-S08's rule): its binding is stored and\n  stays inert, since the operation it would run is authorised, and armed, on its own.\n- **A partial profile.** A profile may name only some commands: one it leaves out\n  keeps its keymap default, and `createHotkeyProfile`'s conflict check runs on the\n  profile so filled in, as the client's `checkProfile` does.\n- **Storage.** A profile stores one jsonb object of `action` to `keys`, one string per\n  command it names, `\"\"` for an unbound one (`21-database-schema.md` section 3.8.5).\n  `scope`, `requires_arm`, `confirm` and `params` are not stored.\n- **Reads.** `HotkeyProfile.bindings` and `getMyKeymap` answer one entry per stored\n  command, in the keymap's command order, each with the `scope`, `requires_arm` and\n  `confirm` derived from its action, and leave out an action the keymap no longer has.\n",
+            max_length=200,
+        ),
+    ]
 
 
 class HotkeyBindingAuditInput(BaseModel):
@@ -5318,11 +5344,38 @@ class HotkeyBindingAuditInput(BaseModel):
     acknowledged_unsafe: StrictBool
 
 
-class HotkeyProfile(HotkeyProfileInput):
-    id: UUID | None = None
-    owner_user_id: UUID | None = None
-    is_active: StrictBool | None = None
-    updated_at: AwareDatetime | None = None
+class HotkeyProfile(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    id: UUID
+    owner_user_id: UUID
+    name: Annotated[str, Field(max_length=80, min_length=1)]
+    bindings: Annotated[
+        list[HotkeyBinding],
+        Field(
+            description='The stored entries, as `HotkeyProfileInput.bindings` says under "Reads".',
+            max_length=200,
+        ),
+    ]
+    is_active: Annotated[
+        StrictBool,
+        Field(
+            description="The profile `getMyKeymap` answers. At most one profile of a user is active (`activateHotkeyProfile`); a new profile is not.\n"
+        ),
+    ]
+    version: Annotated[
+        JsonInt,
+        Field(
+            description="Server-assigned: 1 on create, one more on each replace (`updateHotkeyProfile`); activation leaves it as it is. `updateHotkeyProfile` takes it back through `If-Match` (`HotkeyProfileETag`), never in the body.\n",
+            ge=1,
+        ),
+    ]
+    created_at: AwareDatetime
+    updated_at: Annotated[
+        AwareDatetime,
+        Field(description="The last create or replace; activation leaves it as it is."),
+    ]
 
 
 class Detail(BaseModel):

@@ -2117,6 +2117,26 @@ watchlists = Table(
     Index("ux_wl_name", "user_id", text("lower(name)"), unique=True),
 )
 
+#: `hotkey_profiles` (E10-T05 #5211, revision 0064_hotkey_profiles): 21 Sec.3.8.5. `bindings` is one
+#: jsonb object of command id to binding; scope, `requires_arm` and `confirm` are derived on read.
+hotkey_profiles = Table(
+    "hotkey_profiles",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("owner_user_id", ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("name", Text, nullable=False),
+    Column("is_active", Boolean, nullable=False, server_default=text("false")),
+    Column("bindings", JSONB, nullable=False),
+    Column("version", Integer, nullable=False, server_default=text("1")),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint("char_length(name) BETWEEN 1 AND 80", name="hk_name_len"),
+    CheckConstraint("jsonb_typeof(bindings) = 'object'", name="hk_bindings"),
+    CheckConstraint("version >= 1", name="hk_version"),
+    Index("ux_hk_name", "owner_user_id", text("lower(name)"), unique=True),
+    Index("ux_hk_active", "owner_user_id", unique=True, postgresql_where=text("is_active")),
+)
+
 
 #: `settings` (E42-T01, revision 0025_settings): 21-database-schema.md Sec.3.9, `settings` only.
 settings = Table(

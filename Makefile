@@ -33,7 +33,7 @@ gen:
 	uv run --project services/api python tools/contracts/gen_ws_constants.py
 	uv run --project services/api python tools/errorcodes/generate.py
 	uv run --project services/api python services/api/scripts/generate_cvwb_vectors.py
-	uv run --project services/api python scripts/keymap_lint.py --docs
+	uv run --project services/api python scripts/keymap_lint.py --docs --vocabulary
 
 # E17-T01: offline WS contract gates (23-ws-protocol.md 16.5): bundle freshness,
 # constants freshness and the blocking `ws_message_schemas` gate. E17-T07: and the cv.v1 wire

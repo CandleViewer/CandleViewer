@@ -26,6 +26,7 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import StepUpChallenge
 from candleviewer.settings import Environment, Settings
+from tests.hotkey_profiles._fake_store import FakeHotkeyProfileStore
 from tests.openapi_helpers import deref
 from tests.unit.auth.auth_fakes import FullUsers
 from tests.unit.auth.session_fakes import FakeSessionRepository
@@ -106,6 +107,7 @@ class _Env:
         self.identity = _Identity()
         self.auth = _Auth(self.svc)
         self.settings: FakeUserSettings | None = FakeUserSettings()  # E02-T13's store
+        self.hotkeys: FakeHotkeyProfileStore | None = FakeHotkeyProfileStore()  # E10-T05's
         app = FastAPI()
         app.include_router(
             me.make_me_router(
@@ -113,6 +115,7 @@ class _Env:
                 identity=self.identity if identity else None,
                 environment=environment,
                 settings=lambda: self.settings,
+                hotkeys=lambda: self.hotkeys,
                 clock=lambda: self.now,
             ),
             prefix="/api/v1",
@@ -563,6 +566,96 @@ async def test_keymap_is_the_empty_profile_when_no_profile_is_stored(env: _Env) 
     schema = _SPEC["paths"]["/me/keymap"]["get"]["responses"]["200"]["content"]
     jsonschema.validate(resp.json(), deref(_SPEC, schema["application/json"]["schema"]))
     assert resp.json() == {"bindings": []}
+
+
+def _assert_keymap(resp: Any) -> dict[str, Any]:
+    """A 200 `getMyKeymap` answers, valid against 22's schema for it."""
+    assert resp.status_code == 200, resp.text
+    schema = _SPEC["paths"]["/me/keymap"]["get"]["responses"]["200"]["content"]
+    jsonschema.validate(resp.json(), deref(_SPEC, schema["application/json"]["schema"]))
+    body: dict[str, Any] = resp.json()
+    return body
+
+
+async def test_keymap_is_the_callers_active_profile_flattened_in_keymap_order(env: _Env) -> None:
+    """E10-T05: the active profile's id and its stored entries, as `HotkeyProfile.bindings`
+    answers them: in the keymap's command order, each with the derived `scope`, `requires_arm`
+    and `confirm`; an id the keymap no longer has is left out (BQ-2)."""
+    assert env.hotkeys is not None
+    user_id, headers, _ = await env.sign_in(roles=("owner",))
+    owner = uuid.UUID(user_id)
+    stored = {"ticket.submit": "Ctrl+Enter", "chart.footprint_toggle": "Ctrl+Alt+F",
+              "chart.gone_command": "Q", "dom.cancel_all": ""}  # fmt: skip
+    env.hotkeys.seed(owner, "Inactive", bindings={"chart.footprint_toggle": "Alt+Z"})
+    active = env.hotkeys.seed(owner, "Scalping", is_active=True, bindings=stored)
+    env.hotkeys.seed(uuid.uuid4(), "Someone else's", is_active=True)
+    body = _assert_keymap(env.client.get(_KEYMAP, headers=headers))
+    assert body == {
+        "hotkey_profile_id": str(active.id),
+        "bindings": [
+            {"action": "chart.footprint_toggle", "keys": "Ctrl+Alt+F", "scope": "chart",
+             "requires_arm": False, "confirm": False},
+            {"action": "dom.cancel_all", "keys": "", "scope": "dom", "requires_arm": False,
+             "confirm": True},
+            {"action": "ticket.submit", "keys": "Ctrl+Enter", "scope": "ticket",
+             "requires_arm": True, "confirm": True},
+        ],
+    }  # fmt: skip
+
+
+async def test_keymap_with_no_active_profile_has_no_id_and_no_bindings(env: _Env) -> None:
+    """22: while the caller has no active profile, `hotkey_profile_id` is absent and `bindings`
+    is empty, whatever profiles it stores; another user's active profile is not its own."""
+    assert env.hotkeys is not None
+    user_id, headers, _ = await env.sign_in()
+    env.hotkeys.seed(uuid.UUID(user_id), "Stored, never activated")
+    env.hotkeys.seed(uuid.uuid4(), "Someone else's", is_active=True)
+    assert _assert_keymap(env.client.get(_KEYMAP, headers=headers)) == {"bindings": []}
+
+
+def _assert_hotkey_store_down(resp: Any) -> None:
+    """The problem `/settings/hotkeys` answers for its store, and when to retry."""
+    body = _assert_problem(resp, 503, "store_unavailable")
+    assert (body["detail"], body["retry_after_seconds"]) == (
+        "The hotkey profile store is unavailable.", 5)  # fmt: skip
+    assert resp.headers["retry-after"] == "5" and "bindings" not in body
+
+
+async def test_keymap_answers_503_when_no_hotkey_store_is_wired(env: _Env) -> None:
+    _, headers, _ = await env.sign_in()
+    env.hotkeys = None
+    _assert_hotkey_store_down(env.client.get(_KEYMAP, headers=headers))
+
+
+async def test_keymap_answers_503_when_the_hotkey_store_cannot_be_read(env: _Env) -> None:
+    assert env.hotkeys is not None
+    _, headers, _ = await env.sign_in()
+    env.hotkeys.fail = OSError("connection refused")
+    with capture_logs() as logs:
+        resp = env.client.get(_KEYMAP, headers=headers)
+    _assert_hotkey_store_down(resp)
+    assert [(log["event"], log["error"]) for log in logs] == [
+        ("auth.me.hotkey_store_unavailable", "OSError")
+    ]
+
+
+async def test_keymap_lets_a_hotkey_store_error_that_is_no_outage_propagate(env: _Env) -> None:
+    """A defect is never dressed as an outage: it reaches the server's error handling."""
+    assert env.hotkeys is not None
+    _, headers, _ = await env.sign_in()
+    env.hotkeys.fail = LookupError("a defect, not an outage")
+    with pytest.raises(LookupError):
+        env.client.get(_KEYMAP, headers=headers)
+
+
+async def test_keymap_reads_no_store_before_the_checks_pass(env: _Env) -> None:
+    """The store is read only after authentication and `settings:read`: a refused caller costs
+    no store read."""
+    assert env.hotkeys is not None
+    env.hotkeys.fail = OSError("a read here would answer 503")
+    _, headers, _ = await env.sign_in(permissions=["accounts:read"])
+    assert env.client.get(_KEYMAP).status_code == 401
+    assert env.client.get(_KEYMAP, headers=headers).status_code == 403
 
 
 @pytest.mark.parametrize("path", _SETTINGS_ROUTES)

@@ -96,6 +96,14 @@ before commit.
   figures only, no path, no id, no secret. Read by `services/api/tests/contract/storage/` and meant
   for E16's mock layer. Regenerate from `services/api` with
   `python -m tests.contract.storage.test_storage_usage_verification --write-baseline`.
+- `golden/hotkeys/profile_cases.json` — E10-T05 (#5211, BQ-4) hotkey profile cases: bindings and
+  whole profiles with the answer each gets (the canonical binding, a `422` rule, a `409` pair, the
+  actions whose `requires_arm` or `confirm` is rewritten), one table for the server's port of the
+  client's binding rules (`services/api/candleviewer/api/hotkey_rules.py`) and the client itself
+  (`apps/web/src/keymap/validate.ts`). Run by `services/api/tests/unit/api/test_hotkey_rules_cases.py`
+  and `apps/web/test/keymap-server-parity.test.ts`. Hand-written, date 2026-10-31; no recorded data
+  (command ids of `keymap.json` and key names only), no credentials. Edit it by hand and keep both
+  suites green.
 
 ## Scripts
 

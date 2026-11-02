@@ -133,7 +133,7 @@ ALWAYS = {
     "runbook": "scripts/check_runbook_completeness.py",  # CI-DOC-001
     "bypass-register": "scripts/check_bypass_register.py",
     "accepted-risks": "tools/ci/check_accepted_risk_expiry.py",
-    "keymap": "scripts/keymap_lint.py --check-docs",
+    "keymap": "scripts/keymap_lint.py --check-docs --check-vocabulary",
     "governance-canary": "scripts/gov_self_test.py --self-test",
     "backlog-schema": "scripts/validate-backlog.py --quiet",
     "backlog-twins": "docs/plan/backlog/_tools/validate.py --check",

@@ -299,6 +299,7 @@
 ["heatmap_pinned_symbols", "gauge", [], "live", "E21"]
 ["heatmap_reconstruct_unverified_total", "counter", [], "live", "E21"]
 ["heatmap_subscriptions_active", "gauge", [], "live", "E21"]
+["hotkey_profile_refusals_total", "counter", ["code", "rule"], "planned", "E10"]
 ["indicator_cache_hits_total", "counter", [], "live", "E13"]
 ["indicator_cache_misses_total", "counter", [], "live", "E13"]
 ["indicator_cap_rejected_total", "counter", ["cap"], "live", "E13"]

@@ -450,7 +450,7 @@ erDiagram
     drawings { uuid id PK  symbol_code symbol  jsonb geometry }
     indicator_presets { uuid id PK  text indicator_code  jsonb params }
     scanner_presets { uuid id PK  uuid user_id FK  jsonb filter }
-    hotkey_profiles { uuid id PK  jsonb bindings }
+    hotkey_profiles { uuid id PK  uuid owner_user_id FK  jsonb bindings  int version }
     watchlists { uuid id PK  uuid user_id FK  text name  int version }
     settings { uuid id PK  text key  jsonb value }
     feature_flags { uuid id PK  text key UK  flag_kind kind }
@@ -3623,7 +3623,22 @@ CREATE INDEX ix_ip_fav ON indicator_presets (owner_user_id) WHERE is_favourite A
 
 #### 3.8.5 `hotkey_profiles`
 
-One global hotkey layer spanning all views (cross-cutting requirement from digest 23).
+One global hotkey layer spanning all views (cross-cutting requirement from digest 23). E10-T05
+(#5211): the profiles `22` `/settings/hotkeys*` persists, migrated by Alembic
+`0064_hotkey_profiles`, which revises `0063_rule_version_account_refs` (§3.1.1a). A profile belongs to one
+user and is read and written only by its owner: the API answers another user's profile id as an id
+that does not exist (`404`). A user holds at most 20 profiles (the API checks it: `409 conflict` /
+`limit_reached`) and at most one active one (`ux_hk_active`): activating a profile deactivates the
+user's other one in the same transaction. `version` starts at 1 and goes up by one on each replace.
+A replace that carries `If-Match` is one statement guarded by the version it names (`UPDATE … WHERE
+id = :id AND owner_user_id = :owner AND version = :expected`), so of two writers holding the same
+version exactly one wins and the other is `412 version_conflict`; one without it is last-write-wins.
+Activation changes neither `version` nor `updated_at`. `ux_hk_name` makes a name unique per user
+case-insensitively, as `lower()` folds it (`409 conflict` / `name_taken`). A delete removes the row:
+there is no soft delete, and the history is the audit trail (`hotkey_profile.created`, `.updated`,
+`.deleted` and `.activated`, `24-internal-schemas.md` §15.5), which records the name, the binding
+count and the active flag, never the bindings. Rows also go with their owner's `users` row
+(`ON DELETE CASCADE`).
 
 ```sql
 CREATE TABLE hotkey_profiles (
@@ -3631,28 +3646,32 @@ CREATE TABLE hotkey_profiles (
   owner_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name          text NOT NULL,
   is_active     boolean NOT NULL DEFAULT false,
-  bindings      jsonb NOT NULL,   -- {"ticket.side_buy":["B"],"positions.close_all":["Ctrl+Shift+W"],…}
-  scheme_base   text NOT NULL DEFAULT 'candleviewer',  -- candleviewer | tradingview | sierra
-  requires_arm  boolean NOT NULL DEFAULT true,         -- trading hotkeys need the arm toggle
+  bindings      jsonb NOT NULL,   -- {"ticket.side_buy":"B","positions.close_all":"Ctrl+Shift+W",…}; "" unbinds
+  version       integer NOT NULL DEFAULT 1,
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now(),
-  deleted_at    timestamptz,
-  CONSTRAINT hk_base     CHECK (scheme_base IN ('candleviewer','tradingview','sierra','custom')),
-  CONSTRAINT hk_bindings CHECK (jsonb_typeof(bindings) = 'object')
+  CONSTRAINT hk_name_len CHECK (char_length(name) BETWEEN 1 AND 80),
+  CONSTRAINT hk_bindings CHECK (jsonb_typeof(bindings) = 'object'),
+  CONSTRAINT hk_version  CHECK (version >= 1)
 );
-CREATE UNIQUE INDEX ux_hk_name   ON hotkey_profiles (owner_user_id, lower(name)) WHERE deleted_at IS NULL;
-CREATE UNIQUE INDEX ux_hk_active ON hotkey_profiles (owner_user_id) WHERE is_active AND deleted_at IS NULL;
+CREATE UNIQUE INDEX ux_hk_name   ON hotkey_profiles (owner_user_id, lower(name));
+CREATE UNIQUE INDEX ux_hk_active ON hotkey_profiles (owner_user_id) WHERE is_active;
 ```
 
-The keys of `bindings` are command ids of the client's default keymap,
-`apps/web/src/keymap/keymap.json`, the one action vocabulary (`22` `HotkeyBinding.action`); the
-chords use `22`'s notation. A binding's scope is not stored: it follows from its command's keymap
-context by the fixed table under `22` `HotkeyBinding.scope` (E10-S02, #305).
+`bindings` is one jsonb object. Its keys are command ids of the client's default keymap,
+`apps/web/src/keymap/keymap.json`, the one action vocabulary (`22` `HotkeyBinding.action`), and each
+value is that command's binding as one string in `22`'s canonical notation (`HotkeyBinding.keys`),
+`""` for an unbound command. A profile may name only some commands; one it leaves out keeps its
+keymap default. Nothing else is stored per binding: `scope`, `requires_arm` and `confirm` follow
+from the command id, `scope` by the fixed table under `22` `HotkeyBinding.scope` (E10-S02, #305),
+`requires_arm` and `confirm` by the keymap's forced and dangerous sets. So the API derives all three
+on every read, and the table has no arm column (`22` `HotkeyProfileInput.bindings`). A read leaves
+out an id the keymap no longer has.
 
 Conflict detection is an application check at save time, not a trigger, because a binding's scope is
-derived from its id rather than stored: two bindings conflict when they share a chord within an
-overlapping scope, and the save is refused with `409 conflict` naming the pair, as `22`
-`createHotkeyProfile` states.
+derived from its id rather than stored: two bindings conflict when they share a key within an
+overlapping scope, on the profile filled in with the keymap's defaults, and the save is refused with
+`409 conflict` naming the pair, as `22` `createHotkeyProfile` states.
 
 #### 3.8.6 `watchlists`
 
@@ -3948,7 +3967,7 @@ Inserts into `audit_log` are **serialised** by an advisory lock (`pg_advisory_xa
 The same revision gives `audit_chain()` a `search_path` of its own, `pg_catalog, public, pg_temp` (#4032), so what it calls (`digest()`, and `audit_field()`, which runs under that path when the chain calls it), the `audit_log` it reads and the `audit_log_id_seq` it draws from no longer resolve through the inserting session's path: a schema that session puts first, with a `digest()` of its own, cannot forge the hash. `pg_catalog` first; `public`, where the tables, the sequence and pgcrypto live; `pg_temp` last, so a temporary table never stands in for `audit_log`. The pin holds while `public` stays closed to other roles: a better-typed overload created there (a `pg_advisory_xact_lock(int4)`, a `nextval(text)`) would still win over `pg_catalog`'s. `cv_owner` owns `public`, `pg_bootstrap.sql` revokes CREATE on it from PUBLIC (PostgreSQL's default since 15), and the role privilege matrix pins it for `cv_app` (`test_cv_app_may_use_schema_public_but_not_create_in_it`); schema-qualified calls in a later revision would remove the dependency. `forbid_mutation()` and `audit_refuse_truncate()` only raise, so they resolve nothing and keep no path of their own. The bodies above are 0003's but for the id line, so the hash input is unchanged; CI-MIG-003 exempts that revision only in its reviewed shape, each statement's text pinned by its sha256.
 
 Actions that MUST be audited (non-exhaustive, enforced by a Semgrep rule on the service layer):
-`auth.login`, `auth.login_failed`, `auth.logout`, `auth.session_created`, `auth.session_refreshed`, `auth.session_revoked`, `auth.disabled_user_session_revoked`, `auth.idle_locked`, `auth.session_locked`, `auth.refresh_reuse_detected`, `auth.refresh_reuse_replayed`, `auth.session_fixation_attempt`, `auth.session_revoke_denied`, `auth.mfa_enroll`, `auth.mfa_reset`, `auth.password_change`, `users.create`, `users.disable`, `roles.grant`, `roles.revoke`, `accounts.create`, `accounts.enable_trading`, `api_key.import`, `api_key.rotate`, `api_key.revoke`, `api_key.reveal_attempt`, `profile.created`, `profile.updated`, `profile.deleted`, `profile.bound`, `profile.unbound`, `profile.save_refused`, `orders.submit`, `orders.cancel`, `orders.amend`, `trade_group.submit`, `trade_group.override_refused`, `trade_group.previewed`, `trade_group_definition.created`, `trade_group_definition.updated`, `trade_group_definition.deleted`, `trade_group_definition.save_refused`, `positions.flatten`, `risk.freeze_manager`, `risk.unfreeze_manager`, `rules.arm`, `rules.disarm`, `rules.version_create`, `alert.created`, `alert.updated`, `alert.enabled`, `alert.disabled`, `alert.deleted`, `alert.denied`, `alert.scope_refused`, `alert.fired`, `alert.disarmed`, `alert.delivery_acked`, `alert.deliveries_acked`, `alert.desktop_outcome`, `indicator_preset.created`, `indicator_preset.updated`, `indicator_preset.deleted`, `indicator_preset.imported`, `watchlist.created`, `watchlist.updated`, `watchlist.deleted`, `scanner_preset.created`, `scanner_preset.updated`, `scanner_preset.deleted`, `recorder.start`, `recorder.stop`, `recorder.update`, `retention.change`, `retention.purge`, `flags.change`, `settings.change`, `onboarding.checklist_tamper_rejected`, `backup.run`, `backup.restore`, `backup.verified`, `backup.downloaded`, `backup.deleted`, `env.switch_live`.
+`auth.login`, `auth.login_failed`, `auth.logout`, `auth.session_created`, `auth.session_refreshed`, `auth.session_revoked`, `auth.disabled_user_session_revoked`, `auth.idle_locked`, `auth.session_locked`, `auth.refresh_reuse_detected`, `auth.refresh_reuse_replayed`, `auth.session_fixation_attempt`, `auth.session_revoke_denied`, `auth.mfa_enroll`, `auth.mfa_reset`, `auth.password_change`, `users.create`, `users.disable`, `roles.grant`, `roles.revoke`, `accounts.create`, `accounts.enable_trading`, `api_key.import`, `api_key.rotate`, `api_key.revoke`, `api_key.reveal_attempt`, `profile.created`, `profile.updated`, `profile.deleted`, `profile.bound`, `profile.unbound`, `profile.save_refused`, `orders.submit`, `orders.cancel`, `orders.amend`, `trade_group.submit`, `trade_group.override_refused`, `trade_group.previewed`, `trade_group_definition.created`, `trade_group_definition.updated`, `trade_group_definition.deleted`, `trade_group_definition.save_refused`, `positions.flatten`, `risk.freeze_manager`, `risk.unfreeze_manager`, `rules.arm`, `rules.disarm`, `rules.version_create`, `alert.created`, `alert.updated`, `alert.enabled`, `alert.disabled`, `alert.deleted`, `alert.denied`, `alert.scope_refused`, `alert.fired`, `alert.disarmed`, `alert.delivery_acked`, `alert.deliveries_acked`, `alert.desktop_outcome`, `indicator_preset.created`, `indicator_preset.updated`, `indicator_preset.deleted`, `indicator_preset.imported`, `watchlist.created`, `watchlist.updated`, `watchlist.deleted`, `scanner_preset.created`, `scanner_preset.updated`, `scanner_preset.deleted`, `hotkey_profile.created`, `hotkey_profile.updated`, `hotkey_profile.deleted`, `hotkey_profile.activated`, `recorder.start`, `recorder.stop`, `recorder.update`, `retention.change`, `retention.purge`, `flags.change`, `settings.change`, `onboarding.checklist_tamper_rejected`, `backup.run`, `backup.restore`, `backup.verified`, `backup.downloaded`, `backup.deleted`, `env.switch_live`.
 
 #### 3.10.2 `system_events`
 
@@ -5113,7 +5132,7 @@ NAMING_CONVENTION = {
 | `0008_rules`                    | `rules`, `rule_versions`, `rule_runs`, `rule_events`                                                                                                                                                                                                                                                                                    |
 | `0009_alerts`                   | `alerts`, `alert_deliveries`, `outbox`                                                                                                                                                                                                                                                                                                  |
 | `0010_journal`                  | `journal_trades`, `journal_tags`, `journal_trade_tags`, `notes`                                                                                                                                                                                                                                                                         |
-| `0011_workspace`                | `workspaces`, `layouts`, `layout_panes`, `chart_templates`, `drawings`, `indicator_presets`, `hotkey_profiles` — `drawings` = `0021_drawings`; `workspaces`, `layouts`, `layout_panes` = `0022_workspaces`; `indicator_presets` = `0040_indicator_presets`; rest pending                                                                |
+| `0011_workspace`                | `workspaces`, `layouts`, `layout_panes`, `chart_templates`, `drawings`, `indicator_presets`, `hotkey_profiles` — `drawings` = `0021_drawings`; `workspaces`, `layouts`, `layout_panes` = `0022_workspaces`; `indicator_presets` = `0040_indicator_presets`; `hotkey_profiles` = `0064_hotkey_profiles`; rest pending                    |
 | `0012_governance`               | `settings`, `feature_flags`, `feature_flag_overrides`, `audit_log` + chain trigger, `audit_checkpoints`, `system_events`, `backups` — `settings` = `0025_settings`; flags = `0027_feature_flags`; `backups` = `0028_incidents_backups`                                                                                                  |
 | `0013_partitioning`             | convert `order_events` to monthly range partitions; attach initial partitions                                                                                                                                                                                                                                                           |
 | `0030_auth_keys`                | `auth_keys`, the per-environment auth keyring (§3.1.5a, ADR-0009 Amendment 4) — **#2152 S2**, landed after `0029_oms_core`; the downgrade refuses while any row exists                                                                                                                                                                  |
@@ -5145,6 +5164,7 @@ NAMING_CONVENTION = {
 | `0057_se_component_statechart`  | `statechart` added to `se_component` (§3.10.2): the inspector's failed-seal row — **E42-T07 #1025**; on `0056_sessions_lock_state` (#4743); the downgrade refuses while a `statechart` row exists                                                                                                                                       |
 | `0058_oms_handovers`            | `oms_handovers` (§3.3.12): what a lookup or the private stream hands to the next reconciliation pass, at most 1,000 entries per account, its guard `trg_oh_guard` and the `PII:` comments of `record` and `payload` — **E29-T06 #914**; the downgrade refuses while any entry exists; on `0057_se_component_statechart` (#1025)         |
 | `0061_password_history`         | `password_history` (§3.1.1a): the retired Argon2id hashes behind SR-028's reuse rule, 4 kept per user, `ph_pwd_argon` and the `SECRET:` comment of `password_hash` — **#2110 / #2330**; the downgrade refuses while any row exists; on `0060_recording_write_owner_only` (#5265)                                                        |
+| `0064_hotkey_profiles`          | `hotkey_profiles` (§3.8.5): a user's hotkey profiles, `bindings` a jsonb object of command id to binding, `version` the guard of a replace, unique indexes `ux_hk_name` on `(owner_user_id, lower(name))` and `ux_hk_active` — **E10-T05 #5211**; the downgrade refuses while any profile exists; on `0063_rule_version_account_refs`   |
 
 ---
 
@@ -5319,9 +5339,16 @@ registered (for `cvd(never reset)`: until the `cvd` descriptor has an anchor it 
 copy is `422` rule `enum` on `params.anchor`). Names are unique per owner, so a copy may keep the
 built-in's name.
 
-### 10.6 Default hotkey profile (`CandleViewer Default`, `requires_arm = true`)
+### 10.6 Default hotkey profile (`CandleViewer Default`, never seeded)
 
-Its bindings are **not listed here**. They are the client's default keymap,
+No `hotkey_profiles` row is seeded (E10-T05, #5211). A profile belongs to one user (§3.8.5), and a
+migration cannot write one for users who do not exist yet. Until a user stores a profile and
+activates it, `22` `getMyKeymap` answers no `hotkey_profile_id` and no binding, and the client applies
+its built-in keymap. `CandleViewer Default` is the name the client gives the profile it creates for a
+user the first time it saves their keymap (`apps/web/src/keymap/profileStore.ts`). No profile carries
+an arm flag: `requires_arm` belongs to each binding, derived from its command (§3.8.5).
+
+The default bindings are **not listed here**. They are the client's default keymap,
 `apps/web/src/keymap/keymap.json`, the single source of the default hotkeys (E49-T04): its command
 ids, the one action vocabulary (`22` `HotkeyBinding.action`, #305), each with its default chord, as
 `scripts/keymap_lint.py --docs` renders them in `docs/generated/default-keymap.md`. A copy here
@@ -5472,6 +5499,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `workspaces`, `layouts`, `layout_panes`                | `name`, `grid_spec`, `pane_config`      | P0         | text / jsonb                                    | User layout preferences; never logged. Pane settings must never carry credentials or account identifiers                                        |
 | `indicator_presets`                                    | `name`, `params`, `style`               | P0         | text / jsonb                                    | User indicator settings (`name` is free text); no credentials or PII intended; never logged or audited                                          |
 | `watchlists`                                           | `name`, `symbols`, `columns`            | P0         | text / text[]                                   | User list preferences; no credentials or PII beyond the owning `user_id`; never logged; audited by name, count and version only                 |
+| `hotkey_profiles`                                      | `name`, `bindings`                      | P0         | text / jsonb                                    | Command ids and chords only (C-5.9): no secret or PII beyond the owning `owner_user_id`; never logged; audited by name and count, not bindings  |
 | `scanner_presets`                                      | `name`, `filter`                        | P0         | text / jsonb                                    | User scanner criteria (`name` is free text); never results; no credentials or PII intended; never logged; audit carries a content hash only     |
 | `journal_trades`                                       | all P&L columns                         | P1         | plaintext                                       | Financial personal data                                                                                                                         |
 | `exchange_accounts`                                    | `exchange_uid`, `label`                 | P1         | plaintext                                       | Account identifiers                                                                                                                             |
