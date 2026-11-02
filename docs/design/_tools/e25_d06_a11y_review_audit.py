@@ -15,11 +15,16 @@ Gates (each FAIL led by its name):
               heading equal the rows.
   G-CONTRAST  every CR anchor re-derived from `packages/ui/tokens` at the base (dark / light /
               high contrast; a blend at alpha a is fg*a + bg*(1 - a) per channel; WCAG 2.x, 4
-              decimals).
+              decimals); Q-1 records a T2 label inside a stale panel at CR-1's dark and light.
   G-NARRATIVE every N row's quoted sentence stands verbatim on its cited line at its ref.
-  G-T2        every T row's rendering and reason key come from the allowed sets.
+  G-T2        every T row's rendering and reason key come from the allowed sets; §8 names CMP-079,
+              the one notice its `aria-describedby` points at, and CMP-026 with `cta` omitted for
+              every sentence-form row; §2 names CMP-079 and CMP-019 (and CMP-026 for a sentence
+              form) on every screen with a gated row.
   G-CITE      every cite in range and on a non-blank line at its ref, its content equal to the
-              pins file's hash; the SHA anchors are the pinned refs.
+              pins file's hash; the SHA anchors are the pinned refs; the inputs paragraph and
+              the R6 row carry the "if #5404 / #5415 merge as is" qualifier, the R6 row both
+              parents' SHA anchors (R6).
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
               public-text deny word in the review; no unknown anchor key.
   G-SCOPE     the diff against `git merge-base HEAD origin/main` touches only the review, this
@@ -52,7 +57,7 @@ PINS_REL = "docs/design/_tools/e25_d06_ruled_pins.txt"
 OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
 BASE = "e5b286ed50d3a320d80b24df5030fb09dd405a4a"  # origin/main when written
 D03_REF = "5a73e7b9dd24f855b0d02926a85b16a8ccfbd0f4"  # #5404's head (E25-D03 PR 2)
-D04_REF = "f61afd6afbcc0e4f9c2a1a7d0615f1693580c8f8"  # #5415's head (E25-D04 PR 2)
+D04_REF = "35993be7eb18c1466ea6b0e80aa2bf2c99cdb675"  # #5415's head (E25-D04 PR 2)
 TOKENS = "packages/ui/tokens"
 PATHS: dict[str, str] = {
     "05": "docs/plan/05-accessibility-standard.md",
@@ -367,7 +372,13 @@ def g_finding(t: Texts, vals: dict[str, str]) -> list[str]:
 
 
 def g_contrast(t: Texts, vals: dict[str, str]) -> list[str]:
-    return anchor_problems(t, vals, "CR:")
+    bad = anchor_problems(t, vals, "CR:")
+    q1 = next((r for r in rows(section(t.spec, "## 13."), "Q") if r[0] == "Q-1"), [])
+    reading = q1[2] if len(q1) == 3 else ""
+    needs = ("a T2 label inside a stale panel", "CR:stale.ter.dark", "CR:stale.ter.light")
+    if not all(n in reading for n in needs):
+        bad.append("Q-1 does not record a T2 label inside a stale panel at CR-1 (BQ-11)")
+    return bad
 
 
 def g_narrative(t: Texts, vals: dict[str, str]) -> list[str]:
@@ -413,6 +424,27 @@ def g_t2(t: Texts, vals: dict[str, str]) -> list[str]:
                 cited |= set(range(a, b + 1))
     for n in sorted(D04_T2_LINES - cited):
         bad.append(f"D04 §4.10's row at `D04`:{n} has no T row")
+    lead = section(t.spec, "## 8.").split("\n| T ")[0]
+    for need, what in (
+        ("CMP-079 RbacGate", "CMP-079, the wrapper (G-T2.1d)"),
+        ("`aria-describedby` points at it", "the one notice every pointer names (G-T2.5)"),
+    ):
+        if need not in lead:
+            bad.append(f"§8 does not name {what}")
+    form = re.search(r"CMP-026 with `cta` omitted (.*?)(?:; a panel|$)", lead)
+    for r in table:
+        if r[3] == "sentence form" and not (form and re.search(rf"\b{r[0]}\b", form[0])):
+            bad.append(f"{r[0]}: a sentence form not named under CMP-026 with `cta` omitted")
+    inv = {
+        r[0]: r[1] for r in (cells(x) for x in section(t.spec, "## 2.").split("\n")) if len(r) > 1
+    }
+    for screen in sorted({r[1] for r in table if r[3].startswith(("2a", "2b", "sentence"))}):
+        wants = ["CMP-079", "CMP-019"]
+        if any(r[1] == screen and r[3] == "sentence form" for r in table):
+            wants.append("CMP-026 with `cta` omitted")
+        for c in wants:
+            if c not in inv.get(screen, ""):
+                bad.append(f"§2's {screen} row does not list {c} (G-T2.6)")
     return bad
 
 
@@ -463,6 +495,13 @@ def g_cite(t: Texts, vals: dict[str, str]) -> list[str]:
             bad.append(
                 f"cite {label}: the line at its ref is not the pinned content (moved or edited)"
             )
+    qual = "if #5404 / #5415 merge as is"
+    inputs = next((x for x in t.spec.split("\n") if x.startswith("**Inputs pinned.**")), "")
+    r6 = next((x for x in t.spec.split("\n") if x.startswith("| R6 ")), "")
+    if qual not in inputs:
+        bad.append(f"the inputs paragraph lacks {qual!r} (R6)")
+    if qual not in r6 or not all(f"<!--=SHA:{k}-->" in r6 for k in ("D03", "D04")):
+        bad.append("the R6 row does not name both pinned heads with the qualifier (R6)")
     return bad + anchor_problems(t, vals, "SHA:")
 
 
@@ -574,7 +613,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     (
         "G-CONTRAST",
         "a contrast value typed by hand",
-        sub("4.4307<!--=CR:stale.ter.dark-->", "4.5100<!--=CR:stale.ter.dark-->"),
+        sub("| 4.4307<!--=CR:stale.ter.dark-->", "| 4.5100<!--=CR:stale.ter.dark-->"),
     ),
     (
         "G-NARRATIVE",
@@ -625,6 +664,47 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "G-SCOPE",
         "a parent file in the diff",
         lambda t: replace(t, changed=[*OWN_PATHS, PATHS["D03"]]),
+    ),
+    (
+        "G-CITE",
+        "the inputs paragraph's qualifier dropped",
+        sub("every reading of the parents holds if #5404 / #5415 merge as is; ", ""),
+    ),
+    (
+        "G-CITE",
+        "the R6 row's qualifier dropped",
+        sub('qualified "if #5404 / #5415 merge as is" (§0)', "qualified (§0)"),
+    ),
+    (
+        "G-CONTRAST",
+        "Q-1's stale T2 label clause dropped",
+        sub("a T2 label inside a stale panel keeps", "a T2 label keeps"),
+    ),
+    (
+        "G-T2",
+        "CMP-079 dropped from §8's wrapper sentence",
+        sub("composes CMP-079 RbacGate with", "composes a wrapper with"),
+    ),
+    (
+        "G-T2",
+        "the one-notice pointer dropped from §8",
+        sub(
+            "every gated control's `aria-describedby` points at it",
+            "every gated control names it",
+        ),
+    ),
+    (
+        "G-T2",
+        "T-10 unnamed under CMP-026 with `cta` omitted",
+        sub(' and T-10 ("T2 sentence form", `D04`:284)', ""),
+    ),
+    (
+        "G-T2",
+        "CMP-079 dropped from §2's SCR-059 row",
+        sub(
+            "(CMP-043, CMP-044); gated: CMP-079, CMP-019",
+            "(CMP-043, CMP-044); gated: CMP-019",
+        ),
     ),
 )
 
