@@ -92,6 +92,14 @@ const isFocusVisible = (element: HTMLElement): boolean => {
   }
 };
 
+/** The trigger opens a popup (a Popover, a Menu: `aria-haspopup`) and that popup is open. A disclosure that is
+ * merely expanded does not count: it opens no layer above the echo. */
+const popupOpen = (element: HTMLElement | null): boolean => {
+  if (element === null || element.getAttribute("aria-expanded") !== "true") return false;
+  const popup = element.getAttribute("aria-haspopup");
+  return popup !== null && popup !== "false";
+};
+
 const warnUnfocusable = (): void => {
   if (import.meta.env?.DEV)
     console.warn("Tooltip: the trigger cannot take focus, so the tooltip never shows (CMP-016).");
@@ -101,7 +109,9 @@ const warnUnfocusable = (): void => {
  * CMP-016: a short text that describes or echoes its trigger (H10). It shows after `delay` on hover
  * and at once on keyboard focus, stays while the pointer is on the trigger or on the tooltip (WCAG
  * 1.4.13), and hides on leave after a 100 ms grace, on blur and on `Esc`, which stops there and keeps
- * focus on the trigger (APG Tooltip). Never on a timer, never focused. The node is in the DOM from
+ * focus on the trigger (APG Tooltip). While the trigger's own popup is open (`aria-haspopup` and
+ * `aria-expanded="true"`) the echo never shows, and an `Esc` hides it and passes on to the popup, the
+ * topmost layer. Never on a timer, never focused. The node is in the DOM from
  * mount, `hidden` until shown; the document `Esc` listener and the positioning listeners exist only
  * while it is shown.
  */
@@ -142,9 +152,9 @@ export function Tooltip({
   }, [clearTimers]);
   const show = (): void => {
     clearTimers();
-    // A trigger whose popup is open (a Popover, a Menu) has its own surface and owns `Esc`: the echo stays
-    // away however the pointer or focus comes back to it, so it never takes the popup's first `Esc`.
-    if (trigger.current?.getAttribute("aria-expanded") === "true") return;
+    // A trigger whose popup is open (a Popover, a Menu: `aria-haspopup`) has its own surface and owns `Esc`: the
+    // echo stays away however the pointer or focus comes back to it, so it never takes the popup's first `Esc`.
+    if (popupOpen(trigger.current)) return;
     if (!dismissed.current && !empty) setOpen(true);
   };
   const leave = (): void => {
@@ -170,7 +180,7 @@ export function Tooltip({
     else if ((focused.current || hovered.current) && !dismissed.current) {
       const element = trigger.current;
       if (element !== null && !isFocusable(element)) hovered.current = false;
-      else setOpen(true);
+      else if (!popupOpen(element)) setOpen(true);
     }
   }, [empty, hide]);
 
@@ -182,7 +192,7 @@ export function Tooltip({
       hide();
       // A trigger whose popup is open (a Popover, a Menu) is under that popup: the popup is the topmost layer,
       // so the echo goes and the same `Esc` passes on to close it.
-      if (trigger.current?.getAttribute("aria-expanded") === "true") return;
+      if (popupOpen(trigger.current)) return;
       // Otherwise the echo is the topmost layer: it takes Esc and stops it there (conventions 32); focus never moves.
       event.preventDefault();
       event.stopPropagation();
