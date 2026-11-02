@@ -8,9 +8,8 @@ the rest follow in PR-2.
 **Harness.** A production `BarBuilderSet` is registered on the bus of the ingestion `Rig`
 (`tests/chaos/ingestion/`: stub exchange, virtual clock, seeded jitter, `settle()`), used through
 its public attributes only. The bars see the rig's own `TradeStream` output. `tick()` is driven
-from the virtual clock once per virtual second and `sample()` (the forming bar, #2022) once per
-virtual 250 ms and at the end; `BarBuilderSet.start()` (a real-time ticker and sampler) is never
-called and a guard in `conftest.py` makes it fail if it is. The only sink is a
+from the virtual clock once per virtual second; `BarBuilderSet.start()` (a real-time ticker) is
+never called and a guard in `conftest.py` makes it fail if it is. The only sink is a
 `CaptureSink`; no store, no network, recorded corpus only (C-13.5).
 
 **Golden.** What the venue printed (`StubExchange.trades`, untouched by wire faults), folded

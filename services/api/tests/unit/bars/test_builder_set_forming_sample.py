@@ -24,6 +24,7 @@ from candleviewer.bars.emit import EmitRouter
 from candleviewer.bars.models import BarBuilder, BarSpec, BarUpdate
 from candleviewer.bars.state_store import StateStore
 from candleviewer.bus.bus import Bus
+from candleviewer.bus.models import Topic
 from candleviewer.exchange.base.models import TradeEvent
 
 from ._set_harness import ENV, M1, T3, TOPIC, V5, Clock, FakeTape, RecordingSink, settle
@@ -190,20 +191,66 @@ async def test_an_amend_is_routed_at_once_and_does_not_suppress_the_sample(
     await s.stop()
 
 
-async def test_the_sample_waits_for_the_lane_lock(tmp_path: Path) -> None:
+async def test_a_held_lane_is_skipped_this_period_and_sampled_once_released(
+    tmp_path: Path,
+) -> None:
+    other = "ETHUSDT"
+    other_topic = Topic(env=ENV, domain="md", symbol=other, detail="trade")
+    bus, sink = Bus(), RecordingSink()
+    s = _set(tmp_path, bus, sink, factory=lambda spec, sym: default_factory(spec, sym))
+    await s.register(M1, SYM, "a")
+    await s.register(M1, other, "a")
+    await _publish(bus, s, trade(T0 + 1, seq=1), trade(T0 + 2, seq=2))
+    for i in (1, 2, 3):  # three prints: its sample counts 3, the held lane's counts 2
+        await bus.publish(other_topic, trade(T0 + i, seq=i).model_copy(update={"symbol": other}))
+    await settle(bus, s)
+    async with s._lanes[SYM].lock:  # a restore replay or a stalled sink holds this lane
+        await asyncio.wait_for(s.sample(), timeout=1)  # does not wait for it
+        assert _sampled(sink, M1) == [3]  # the other symbol's sample still routed
+    await s.sample()  # released: the dirty flag survived
+    assert _sampled(sink, M1) == [3, 2]
+    await s.sample()
+    assert _sampled(sink, M1) == [3, 2]  # once
+    await s.stop()
+
+
+async def test_a_lane_quarantined_while_the_pass_waits_gets_no_sample(tmp_path: Path) -> None:
     bus, sink = Bus(), RecordingSink()
     s = _set(tmp_path, bus, sink)
     await s.register(M1, SYM, "a")
     await _publish(bus, s, trade(T0 + 1, seq=1), trade(T0 + 2, seq=2))
     lane = s._lanes[SYM]
-    async with lane.lock:  # a trade or a tick in progress
+    real_locked = lane.lock.locked
+    lane.lock.locked = lambda: False  # type: ignore[method-assign]  # pass reaches the wait
+    async with lane.lock:
         task = asyncio.ensure_future(s.sample())
         for _ in range(20):
             await asyncio.sleep(0)
-        assert not task.done() and _sampled(sink, M1) == []
+        assert not task.done()
+        s._on_lane_death(lane)  # the lane dies while the pass waits for the lock
     await task
-    assert _sampled(sink, M1) == [2]
+    lane.lock.locked = real_locked  # type: ignore[method-assign]
+    assert _sampled(sink, M1) == []
     await s.stop()
+
+
+async def test_stop_routes_a_final_sample_for_a_bar_the_drain_changed(tmp_path: Path) -> None:
+    bus, sink, periods = Bus(), RecordingSink(), Periods()
+    s = _set(tmp_path, bus, sink, sleep=periods)
+    await s.register(M1, SYM, "a")
+    await s.start()
+    await _publish(bus, s, trade(T0 + 1, seq=1))  # opens the bar
+    await periods.release()
+    lane = s._lanes[SYM]
+    assert lane.task is not None
+    lane.task.cancel()  # the lane loop is gone: what the bus delivers now waits for stop()
+    await asyncio.gather(lane.task, return_exceptions=True)
+    for i in (2, 3):
+        await bus.publish(TOPIC, trade(T0 + i, seq=i))
+    assert lane.sub.qsize() == 2
+    assert _sampled(sink, M1) == []  # the open is routed as built; nothing sampled yet
+    await s.stop()
+    assert _sampled(sink, M1) == [3]  # the drain's changes are routed before the final blobs
 
 
 async def test_a_restored_series_routes_no_sample_mid_catch_up_then_its_forming_bar(

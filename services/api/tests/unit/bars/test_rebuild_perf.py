@@ -8,6 +8,10 @@ so its budget is `N_TRADES * 10 us` = 1.5 s of `process_time` per series (one bu
 `process_time` (CPU of this process) rather than wall time, so a busy runner's other processes do
 not count against the builder; a scheduler stall cannot pass it, only fail it on a starved host.
 
+Scope. This pins the builders' share of the NFR (11:935), not the whole rebuild: reading the tape
+and writing the bars are not timed here, so the end-to-end 10 s / 1M budget also needs those two
+stages to fit in what the builders leave.
+
 What is timed: the builder alone over an in-memory tape, through `invariants.count`, the harness
 throughput path that retains no emission (PROPOSED in 24 §3.2: measured on the CI Linux runner, no
 retained output); tape generation is excluded. Every kind of the harness's standard spec matrix.

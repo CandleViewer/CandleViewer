@@ -362,7 +362,8 @@ class BarBuilderSet:
         """Refuse new registrations, cancel the ticker and the sampler, then per lane:
         unsubscribe (no new deliveries), cancel the loop, apply everything still queued
         (including publishers that were blocked on a full queue and wake as it drains), write
-        final blobs.
+        final blobs. After the drain, one last forming-bar sampling pass per lane routes any
+        forming bar the drain changed (the sampler was cancelled first, so none else would).
 
         Bounded loss: none for trades delivered before the unsubscribe. A publish that starts
         after it never reaches the set; the restart replays it from the tape."""
@@ -389,6 +390,7 @@ class BarBuilderSet:
                     else:
                         idle += 1
                         await asyncio.sleep(0)
+                await self._sample_lane(lane)  # the final pass: bars the drain changed
                 saves = [self._stored(lane, e) for e in lane.entries]
             for stored in saves:
                 await self._save(stored, "final")
@@ -469,20 +471,28 @@ class BarBuilderSet:
         of every series whose forming bar changed since it was last routed, each under its lane's
         lock (module docstring, "Forming bar")."""
         for lane in list(self._lanes.values()):
+            if lane.lock.locked():
+                continue  # held (a restore replay, a stalled sink): its dirty flags wait a period
             async with lane.lock:
-                for e in lane.entries:
-                    if not e.dirty:
-                        continue
-                    e.dirty = False
-                    try:
-                        u = e.builder.forming()
-                    except Exception as exc:  # as on the trade path: quarantine, keep the lane
-                        self._quarantine(lane, e, exc)
-                        continue
-                    if u is None or u.bar == e.routed:
-                        continue
-                    e.routed = u.bar
-                    await self._router.emit(e.spec, (u,), e.generation)
+                if self._lanes.get(lane.symbol) is not lane:
+                    continue  # quarantined or closed while this pass waited for the lock
+                await self._sample_lane(lane)
+
+    async def _sample_lane(self, lane: _Lane) -> None:
+        """Route the changed forming bars of one lane; the caller holds `lane.lock`."""
+        for e in lane.entries:
+            if not e.dirty:
+                continue
+            e.dirty = False
+            try:
+                u = e.builder.forming()
+            except Exception as exc:  # as on the trade path: quarantine, keep the lane
+                self._quarantine(lane, e, exc)
+                continue
+            if u is None or u.bar == e.routed:
+                continue
+            e.routed = u.bar
+            await self._router.emit(e.spec, (u,), e.generation)
 
     # -- leases ----------------------------------------------------------------------------
     def check(self, spec: BarSpec, symbol: str, user: str | None = None) -> None:
@@ -815,6 +825,8 @@ class BarBuilderSet:
         saves: list[StoredState] = []
         for lane in list(self._lanes.values()):
             async with lane.lock:
+                if self._lanes.get(lane.symbol) is not lane:
+                    continue  # quarantined or closed while this pass waited for the lock
                 for e in lane.entries:
                     try:
                         ups = e.builder.on_clock(now)
