@@ -313,9 +313,6 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             health_pg = getattr(app.state, "health_pg", None)
             if health_pg is not None:
                 await teardown.run("health_pg", health_pg.dispose)
-            reads = getattr(app.state, "oms_reads", None)
-            if reads is not None:  # #915: the OMS reads' own pool
-                await teardown.run("oms_reads", reads.aclose)
             kline_pg = getattr(app.state, "kline_boundary_pg", None)
             if kline_pg is not None:
                 await teardown.run("kline_boundary_pg", kline_pg.dispose)
@@ -381,6 +378,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                     rules_pg = getattr(app.state, pool, None)
                     if rules_pg is not None:
                         await teardown.run(pool, rules_pg.dispose)
+                reads = getattr(app.state, "oms_reads", None)
+                if reads is not None:  # #915: its own pool, after the rules' exits that read it
+                    await teardown.run("oms_reads", reads.aclose)
             finally:
                 # #3641: the last stop, after `stop_all` has zeroed the KEK and DEK (the zeroing is
                 # explicit, never the collector's): what startup built is collectable again. In its

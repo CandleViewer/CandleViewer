@@ -21,9 +21,13 @@ its detail a generic sentence that never holds the id; a principal view gone sin
   rule's origin, so on `entry`, and never `protective`, so the OMS's switches judge it as any
   order and the routes' Partial-mode sweep stays theirs: the position's native stop stays in
   place. Each close has an anchor of its own (`uuid5` of the action's `client_ref` and the
-  position's key); the first that does not take effect ends the account's action; a flat
-  position is `ok` with no order. A symbol outside the rule's `scope.symbols`, when it names
-  any, is never closed.
+  position's key). Every position is tried, as an exit only reduces risk: a close that does not
+  take effect ends that position alone, and the exit stops early only at a refusal that belongs
+  to the account (`ACCOUNT_REFUSALS`) or at a close the OMS runtime's stop cuts short; its answer
+  is then the first close that did not take effect, its detail counting the positions not closed.
+  A `scale_out` quantity is judged as its close is built, for a fresh key alone (`ExceedsPosition`,
+  as K4b's `NoPosition`), so a repeat is answered from its anchor. A flat position is `ok` with no
+  order. A symbol outside the rule's `scope.symbols`, when it names any, is never closed.
 """
 
 from __future__ import annotations
@@ -37,6 +41,7 @@ from typing import Any, Final, Protocol
 from uuid import UUID, uuid5
 
 from candleviewer.domain.primitives import AccountId
+from candleviewer.oms.errors import AccountScopeDenied
 from candleviewer.oms.ports import RuleOrigin, SubmitActor
 from candleviewer.oms.position_writes import CloseTerms, close_request
 from candleviewer.oms.submit import OrderRequest, SubmitContext
@@ -64,6 +69,10 @@ _HUNDRED: Final = Decimal(100)
 #: The failed answers of an exit whose request cannot be built or whose positions are unread.
 _INVALID: Final = HandlerAnswer("refused", error_code="invalid_params")
 _UNREAD: Final = HandlerAnswer("refused", error_code="position_unavailable")
+_EXCEEDS: Final = HandlerAnswer("refused", error_code="exceeds_position")
+#: The refusals that belong to the account, not to one position (24 §11.5 "Exits"): an exit stops
+#: at one, as no later close of the account would pass it; any other refusal ends one position.
+ACCOUNT_REFUSALS: Final = frozenset({"rate_limited", "kill_switch", "order_entry"})
 
 
 def owner_scope(owner: PrincipalView, account_id: UUID) -> AccountScope:
@@ -77,11 +86,12 @@ def owner_scope(owner: PrincipalView, account_id: UUID) -> AccountScope:
 @dataclass(frozen=True, slots=True)
 class RulePrincipal:
     """The rule's request as the OMS takes it (24 §11.5 "The principal"): the owner as the
-    principal, the owner's snapshot, and the rule as the origin (`RuleOrigin`)."""
+    principal, the owner's snapshot, and the rule as the origin (`RuleOrigin`). Its repr shows none
+    of them, as `PreparedExit`'s does not (C-12.6)."""
 
-    actor: SubmitActor
-    owner: PrincipalView
-    origin: RuleOrigin
+    actor: SubmitActor = field(repr=False)
+    owner: PrincipalView = field(repr=False)
+    origin: RuleOrigin = field(repr=False)
 
 
 def rule_principal(principals: PrincipalReads, req: ActionRequest) -> RulePrincipal | HandlerAnswer:
@@ -187,10 +197,28 @@ def admitted_exit(prepared: Prepared) -> PreparedExit | HandlerAnswer:
     return prepared
 
 
+class ExceedsPosition(Exception):
+    """A `scale_out` quantity above the position it closes (`exceeds_position`, nothing sent),
+    judged as the close is built (`_close`), so for a fresh key alone, as K4b's `NoPosition`."""
+
+
 async def _close(row: PositionRow, terms: CloseTerms) -> OrderRequest:
     """The close routes' own order for `row` (`close_request`), which `RuleOrders.submit` builds
-    for a fresh key alone, as it builds an entry's: a repeat replays its anchor's answer."""
+    for a fresh key alone, as it builds an entry's: a repeat replays its anchor's answer whatever
+    the position holds now, and only a fresh key's quantity is judged against it."""
+    if terms.qty is not None and terms.qty > row.size:
+        raise ExceedsPosition
     return close_request(row, terms)
+
+
+def _not_closed(first: HandlerAnswer, missed: int, of: int) -> HandlerAnswer:
+    """The answer of an account whose exit left `missed` of its `of` positions not closed: the
+    first close that did not take effect, its detail, when there was more than one position to
+    close, counting the ones not closed (a count, never a symbol or an id; C-12.6)."""
+    if of < 2:
+        return first
+    verb = "was" if missed == 1 else "were"
+    return replace(first, detail=f"Not done — {missed} of {of} positions {verb} not closed.")
 
 
 def _position_key(row: PositionRow) -> str:
@@ -235,33 +263,53 @@ class RuleReduceHandler:
             return _INVALID
         try:
             held = await self._read(principal.owner, account)
+        except AccountScopeDenied:  # the owner may no longer read the account: as check 5 refuses
+            return _PRINCIPAL_GONE
         except Exception:  # never `CancelledError`, which is no `Exception`
             return _UNREAD
         targets = self._targets(exit_, held)
         if not targets:  # flat: the exit's end state holds (BQ-6)
             return HandlerAnswer("done")
-        key, first = UUID(client_ref), None
-        for row in targets:
-            terms = self._terms(exit_.params, row) if exit_.params is not None else _INVALID
-            if isinstance(terms, HandlerAnswer):
-                return terms
-            context = SubmitContext(
-                actor=principal.actor, client_ref=key, request_sha256=prepared.request_sha256,
-                anchor_ref=uuid5(key, _position_key(row)), origin=principal.origin,
-            )  # fmt: skip
-            try:
-                outcome = await self._orders.submit(
-                    AccountId(account), context, partial(_close, row, terms)
-                )
-            except SubmitCutShort:
-                return HandlerAnswer("in_flight", error_code="submit_cut_short")
-            except Exception as error:  # never `CancelledError`, which is no `Exception`
-                return refusal_answer(error)
-            answer = answer_of(outcome)
-            if answer.answer != "accepted":
-                return answer
-            first = first or answer
-        return first or HandlerAnswer("done")
+        key = UUID(client_ref)
+        taken: list[HandlerAnswer] = []
+        missed: list[HandlerAnswer] = []
+        for row in targets:  # every position is tried: an exit only reduces risk (24 §11.5)
+            answer = await self._close_one(exit_, principal, account, row, key, prepared)
+            (taken if answer.answer == "accepted" else missed).append(answer)
+            if answer.blocked_by in ACCOUNT_REFUSALS or answer.error_code == "submit_cut_short":
+                break  # the account's refusal, or the runtime's stop: no later close is sent
+        if not missed:
+            return taken[0]
+        return _not_closed(missed[0], len(targets) - len(taken), len(targets))
+
+    async def _close_one(
+        self,
+        exit_: PreparedExit,
+        principal: RulePrincipal,
+        account: UUID,
+        row: PositionRow,
+        key: UUID,
+        prepared: Prepared,
+    ) -> HandlerAnswer:
+        """One position's close, under an anchor of its own, as its answer: never a raise."""
+        terms = self._terms(exit_.params, row) if exit_.params is not None else _INVALID
+        if isinstance(terms, HandlerAnswer):
+            return terms
+        context = SubmitContext(
+            actor=principal.actor, client_ref=key, request_sha256=prepared.request_sha256,
+            anchor_ref=uuid5(key, _position_key(row)), origin=principal.origin,
+        )  # fmt: skip
+        try:
+            outcome = await self._orders.submit(
+                AccountId(account), context, partial(_close, row, terms)
+            )
+        except ExceedsPosition:
+            return _EXCEEDS
+        except SubmitCutShort:
+            return HandlerAnswer("in_flight", error_code="submit_cut_short")
+        except Exception as error:  # never `CancelledError`, which is no `Exception`
+            return refusal_answer(error)
+        return answer_of(outcome)
 
     async def _read(self, owner: PrincipalView, account: UUID) -> Sequence[PositionRow]:
         if self._positions is None:
@@ -270,7 +318,7 @@ class RuleReduceHandler:
             return await self._positions.open_positions(owner, account)
 
     def _targets(self, exit_: PreparedExit, held: Sequence[PositionRow]) -> list[PositionRow]:
-        """The open positions to close, in symbol order (module docstring)."""
+        """The open positions to close, in symbol order, then position index (module docstring)."""
         params = exit_.params
         named = params.symbols if isinstance(params, FlattenParams) else None
         wanted: set[str | None] | None = None if named is None else set(named)
@@ -287,13 +335,13 @@ class RuleReduceHandler:
     @staticmethod
     def _terms(params: ReduceParams, row: PositionRow) -> CloseTerms | HandlerAnswer:
         """A flatten's close of the whole position; a `scale_out`'s percent of it, or its
-        quantity, never above the position's size (`exceeds_position`, nothing sent)."""
+        quantity, which `_close` judges against the position's size for a fresh key alone."""
         if isinstance(params, FlattenParams):
             return CloseTerms("market", pct=_HUNDRED)
         if params.qty_pct is not None:
             return CloseTerms("market", pct=params.qty_pct)
-        if params.qty is None or params.qty > row.size:
-            return HandlerAnswer("refused", error_code="exceeds_position")
+        if params.qty is None:  # the parameters hold one of the two
+            return _INVALID
         return CloseTerms("market", qty=params.qty)
 
 

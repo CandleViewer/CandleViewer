@@ -1,11 +1,12 @@
 """E35-T12 slice 3d: the reduce-only exits' adapter at the composition root (`rules_oms_exits`;
 24 §11.5 "Exits", §11.6; the rulings of record on #5004, BQ-5 and BQ-6), unit by unit: the
 parameters, the positions read in the owner's scope, the request built once, and the closes sent
-in symbol order, each under an anchor of its own, the first that does not take effect ending the
-account's action."""
+in symbol order, each under an anchor of its own: every position tried, the first close that did
+not take effect answering, the exit stopping early only at the account's own refusal."""
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
@@ -14,7 +15,7 @@ from typing import Any, cast
 
 import pytest
 
-from candleviewer.oms.errors import RateBudgetExceeded
+from candleviewer.oms.errors import AccountScopeDenied, LotSizeViolation, RateBudgetExceeded
 from candleviewer.oms.submit import OrderRequest, SubmitContext, SubmitOutcome
 from candleviewer.rules.executor.params import FlattenParams, ScaleOutParams, reduce_params
 from candleviewer.rules.executor.ports import PrincipalView
@@ -110,13 +111,16 @@ Built = Callable[[], Awaitable[OrderRequest]]
 
 @dataclass
 class Orders:
-    """The order port in memory: each request recorded, each answered by `answers` in turn."""
+    """The order port in memory: each request recorded, each answered by `answers` in turn; a
+    close whose anchor is `decided` is answered without its request built, as a repeat is."""
 
     answers: list[SubmitOutcome | BaseException] = field(default_factory=list)
     sent: list[tuple[OrderRequest, SubmitContext]] = field(default_factory=list)
+    decided: set[uuid.UUID] = field(default_factory=set)
 
     async def submit(self, account: Any, context: SubmitContext, request: Built) -> SubmitOutcome:
-        self.sent.append((await request(), context))  # a fresh key's: the port builds it
+        if context.anchor_ref not in self.decided:  # a fresh key's: the port builds it
+            self.sent.append((await request(), context))
         answer = self.answers.pop(0)
         if isinstance(answer, BaseException):
             raise answer
@@ -146,7 +150,7 @@ def handler(action_type: str, orders: Orders, rows: tuple[Any, ...] = ()) -> Rul
 async def test_a_flatten_closes_in_symbol_order_each_under_its_own_anchor() -> None:
     """Each position is closed in symbol order, then by its index, under an anchor of its own
     (`uuid5` of the action's `client_ref` and the position's key) and the action's fingerprint;
-    the first close that does not take effect ends the account's action, nothing more sent."""
+    a close that does not take effect is the account's answer once every position was tried."""
     rows = (
         stored(symbol="ETHUSDT", qty="1"), stored(qty="0.050", idx=2, side="Sell"),
         stored(qty="0.020", idx=1),
@@ -180,6 +184,117 @@ async def test_a_close_cut_short_is_in_flight_and_a_failure_no_answer() -> None:
             exit_request("flatten_position"), cr.ACCOUNT, max_notional_usd=None
         )
         assert (await exit_.send(prepared, client_ref=REF)).answer == expected
+
+
+def answered(status: int, code: str, **over: Any) -> SubmitOutcome:
+    """A close the OMS answered without taking it: `502 exchange_error`, or `429`."""
+    return SubmitOutcome(
+        status=status, anchor_id=uuid.UUID(int=0xE0), order_id=uuid.UUID(int=2), code=code, **over
+    )
+
+
+#: Three positions, closed as BTCUSDT:1, BTCUSDT:2, ETHUSDT:0.
+THREE = (
+    stored(symbol="ETHUSDT", qty="1"), stored(qty="0.050", idx=2, side="Sell"),
+    stored(qty="0.020", idx=1),
+)  # fmt: skip
+UNKNOWN = SubmitOutcome(
+    status=202, anchor_id=uuid.UUID(int=0xE1), order_id=uuid.UUID(int=2), lifecycle="unknown"
+)
+
+
+@pytest.mark.parametrize(
+    ("second", "expected", "sent", "missed"),
+    [
+        (answered(502, "exchange_error", ret_code=10001),
+         ("refused", "exchange_error", None), 3, 1),
+        (LotSizeViolation(), ("refused", "lot_size_violation", None), 3, 1),
+        (UNKNOWN, ("in_flight", "unknown", None), 3, 1),
+        (answered(429, "exchange_rate_limited", retry_after_s=1),
+         ("refused", "exchange_rate_limited", "rate_limited"), 2, 2),
+        (RateBudgetExceeded(retry_after_s=1),
+         ("refused", "exchange_rate_limited", "rate_limited"), 2, 2),
+        (SubmitCutShort(), ("in_flight", "submit_cut_short", None), 2, 2),
+    ],
+    ids=["502", "lot-step", "unknown", "429", "rate-budget", "cut-short"],
+)  # fmt: skip
+async def test_every_position_is_tried_and_the_first_close_not_taken_answers(
+    second: SubmitOutcome | BaseException, expected: tuple[str, str, str | None], sent: int,
+    missed: int,
+) -> None:  # fmt: skip
+    """24 §11.5 "Exits": a close that does not take effect ends that position alone, so the
+    positions after it are still closed, and the account's answer is the first close that did
+    not take effect, its detail counting the positions not closed (never a symbol or an id); a
+    refusal that belongs to the account (`rate_limited`), or a close the runtime's stop cut
+    short, ends the account's action there, the positions after it not sent."""
+    orders = Orders([accepted(1), second, accepted(3)])
+    exit_ = handler("flatten_all_positions", orders, THREE)
+    prepared = exit_.prepare(
+        exit_request("flatten_all_positions"), cr.ACCOUNT, max_notional_usd=None
+    )
+    answer = await exit_.send(prepared, client_ref=REF)
+    assert (answer.answer, answer.error_code, answer.blocked_by) == expected
+    assert len(orders.sent) == sent
+    verb = "was" if missed == 1 else "were"
+    assert answer.detail == f"Not done — {missed} of 3 positions {verb} not closed."
+    assert "BTCUSDT" not in answer.detail and "ETHUSDT" not in answer.detail
+
+
+async def test_the_actions_bound_cuts_an_exit_short_and_sends_no_later_close() -> None:
+    """24 §11.5 "Exits": the read and every close share the action's bound; a cancel between two
+    closes ends the exit there (the engine records it `unknown`), the later positions not sent."""
+    orders = Orders([accepted(1), asyncio.CancelledError()])
+    exit_ = handler("flatten_all_positions", orders, THREE)
+    prepared = exit_.prepare(
+        exit_request("flatten_all_positions"), cr.ACCOUNT, max_notional_usd=None
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await exit_.send(prepared, client_ref=REF)
+    assert len(orders.sent) == 2
+
+
+async def test_a_repeat_is_answered_from_its_anchor_whatever_the_position_holds_now() -> None:
+    """24 §11.5 "Exits": a `scale_out` quantity is judged as its close is built, for a fresh key
+    alone: a repeat whose anchor is decided is answered from it though the position is now
+    smaller than the quantity, nothing built; a fresh key's quantity above the position is
+    `exceeds_position`, nothing sent."""
+    row, params = stored(qty="0.020"), {"order_type": "market", "qty": "0.050"}
+    request = exit_request("scale_out", params)
+    decided = {uuid.uuid5(uuid.UUID(REF), f"{cr.SYMBOL}:0")}
+    replay = Orders([accepted(7)], decided=decided)
+    exit_ = handler("scale_out", replay, (row,))
+    prepared = exit_.prepare(request, cr.ACCOUNT, max_notional_usd=None)
+    answer = await exit_.send(prepared, client_ref=REF)
+    assert (answer.answer, answer.order_id) == ("accepted", uuid.UUID(int=7))
+    assert replay.sent == [] and replay.answers == []
+    fresh = Orders([accepted(8)])
+    first = handler("scale_out", fresh, (row,))
+    refused = await first.send(
+        first.prepare(request, cr.ACCOUNT, max_notional_usd=None), client_ref=REF
+    )
+    assert (refused.answer, refused.error_code) == ("refused", "exceeds_position")
+    assert fresh.sent == [] and len(fresh.answers) == 1
+
+
+@dataclass
+class Denied:
+    """A position read the OMS refuses for scope: the owner may no longer read the account."""
+
+    async def open_positions(self, owner: PrincipalView, account_id: uuid.UUID) -> Any:
+        raise AccountScopeDenied
+
+
+async def test_a_position_read_refused_for_scope_blocks_as_permission() -> None:
+    """An owner whose grant on the account went since check 5, so the reads refuse for scope, is
+    refused `permission`, as a principal gone since check 5 is, never `position_unavailable`;
+    nothing is sent."""
+    orders = Orders()
+    exit_ = RuleReduceHandler(
+        "flatten_position", cast(RuleOrders, orders), Principals(frozenset({cr.ACCOUNT})), Denied()
+    )
+    prepared = exit_.prepare(exit_request("flatten_position"), cr.ACCOUNT, max_notional_usd=None)
+    answer = await exit_.send(prepared, client_ref=REF)
+    assert (answer.answer, answer.blocked_by) == ("refused", "permission") and orders.sent == []
 
 
 async def test_an_exit_with_no_account_symbol_or_position_read_sends_nothing() -> None:
@@ -243,3 +358,13 @@ def test_a_prepared_exit_shows_nothing_of_its_request() -> None:
     with pytest.raises(ValueError, match="not a reduce-only exit"):
         RuleReduceHandler("place_order", cast(RuleOrders, Orders()), Principals(), Held())
     assert isinstance(prepared.params, ScaleOutParams) and prepared.params.qty == Decimal("0.012")
+
+
+def test_a_rule_principal_shows_nothing_of_its_users() -> None:
+    """C-12.6: the principal an exit acts as names neither the owner, the armer nor the rule in
+    its repr, as the prepared exit does not."""
+    exit_ = handler("flatten_position", Orders())
+    prepared = exit_.prepare(exit_request("flatten_position"), cr.ACCOUNT, max_notional_usd=None)
+    assert isinstance(prepared, PreparedExit) and prepared.principal is not None
+    shown = repr(prepared.principal)
+    assert str(OWNER) not in shown and str(ARMER) not in shown and "owner" not in shown

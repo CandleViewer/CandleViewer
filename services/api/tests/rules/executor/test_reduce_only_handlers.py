@@ -144,7 +144,7 @@ class Exits:
         venue = cr.position(
             AccountId(row.exchange_account_id), side=side, qty=str(row.size),
             stop_loss=row.stop_loss, position_idx=row.position_idx,
-        )  # fmt: skip
+        ).model_copy(update={"symbol": row.symbol})  # fmt: skip
         self.rig.port.demo.seed_position(venue)
 
     async def assert_stops_untouched(self) -> None:
@@ -155,9 +155,13 @@ class Exits:
         for account, rows in self.held.rows.items():
             venue = await self.rig.port.demo.positions(cr.ref(AccountId(account)))
             for row in rows:
-                [now] = [p for p in venue if p.position_idx == row.position_idx]
+                [now] = [p for p in venue if (p.symbol, p.position_idx) == _key(row)]
                 side: Literal["Buy", "Sell"] = "Sell" if row.side == "Sell" else "Buy"
                 assert_position_stop_untouched(side, before=row.stop_loss, after=now.stop_loss)
+
+
+def _key(row: PositionRow) -> tuple[str, int]:
+    return row.symbol, row.position_idx
 
 
 def build(rig: SubmitRig, *, switches: Switches | None = None) -> Exits:
@@ -300,6 +304,13 @@ async def test_scale_out_by_quantity_closes_that_quantity(rig: SubmitRig) -> Non
         True, "sell", Decimal("0.020"),
     )  # fmt: skip
     await exits.assert_stops_untouched()
+    whole = build(rig)  # a quantity equal to the position is no more than it (24 §11.6)
+    whole.hold(stored(qty="0.050"))
+    await whole.run(exit_request("scale_out", {"order_type": "market", "qty": "0.050"}, run=RUN_2))
+    assert whole.outcomes() == [("x1", str(cr.ACCOUNT), "ok", None)]
+    [(sent, _)] = whole.runtime.requests
+    assert (sent.reduce_only, sent.sizing.qty) == (True, Decimal("0.050"))
+    await whole.assert_stops_untouched()
 
 
 async def test_reduce_only_rule_orders_never_draw_the_reserve(rig: SubmitRig) -> None:
@@ -322,8 +333,8 @@ async def test_reduce_only_rule_orders_never_draw_the_reserve(rig: SubmitRig) ->
 async def test_flatten_all_positions_runs_per_account_in_resolved_order(rig: SubmitRig) -> None:
     """G "flatten_all_positions runs per account in the resolved order": `all_accounts` resolves
     to the owner's and the armer's intersection, sorted, and each account's open positions are
-    closed in turn, one OMS call each through the pipeline and its rate headroom (`entry`); an
-    algo's child order resting on an account is never cancelled (E11)."""
+    closed in turn, one OMS call each through the pipeline and its rate headroom (`entry`); no
+    order of any kind is cancelled or amended and no stop is set (E11; `assert_stops_untouched`)."""
     seed_other(rig)
     exits = build(rig)
     exits.hold(stored(cr.ACCOUNT, qty="0.050"))
@@ -340,17 +351,44 @@ async def test_flatten_all_positions_runs_per_account_in_resolved_order(rig: Sub
     await exits.assert_stops_untouched()
 
 
-async def test_flatten_never_acts_on_another_rules_or_algos_children(rig: SubmitRig) -> None:
+async def test_an_exit_closes_the_symbols_it_names_alone(rig: SubmitRig) -> None:
+    """24 §11.5 "Exits": on an account holding BTCUSDT and ETHUSDT, `scale_out` and
+    `flatten_position` on the BTCUSDT instance close BTCUSDT alone, and `flatten_position` and
+    `flatten_all_positions` naming `symbols: ["ETHUSDT"]` close ETHUSDT alone; the position left
+    open keeps its native stop (C-2.6)."""
+    rig.instruments.listed["ETHUSDT"] = sr.instrument(symbol="ETHUSDT", base_coin="ETH")
+    cases: list[tuple[str, dict[str, Any], str]] = [
+        ("scale_out", {"order_type": "market", "qty_pct": "50"}, cr.SYMBOL),
+        ("flatten_position", {}, cr.SYMBOL),
+        ("flatten_position", {"symbols": ["ETHUSDT"]}, "ETHUSDT"),
+        ("flatten_all_positions", {"symbols": ["ETHUSDT"]}, "ETHUSDT"),
+    ]
+    for n, (action_type, params, closed) in enumerate(cases):
+        exits = build(rig)
+        exits.hold(stored(qty="0.050"))
+        exits.hold(stored(symbol="ETHUSDT", qty="1"))
+        await exits.run(exit_request(action_type, params, run=uuid.UUID(int=0x5E50 + n)))
+        assert exits.outcomes() == [("x1", str(cr.ACCOUNT), "ok", None)], action_type
+        assert [r.symbol for r, _ in exits.runtime.requests] == [closed], action_type
+        await exits.assert_stops_untouched()
+
+
+@pytest.mark.parametrize("exclude_algo_children", [True, False])
+async def test_flatten_never_acts_on_another_rules_or_algos_children(
+    rig: SubmitRig, exclude_algo_children: bool
+) -> None:
     """G "A rule never touches another rule's or algo's orders (E11)", a flatten: it closes
-    positions only, with reduce-only orders, and never cancels or amends an order: another
-    rule's resting entry and an order resting on the account stay as they were."""
-    resting = await rig.submit()  # a user's (or another rule's) resting limit entry
+    positions only, with reduce-only orders, and never cancels or amends an order: a resting
+    entry on the account (a user's) stays as it was, and no cancel, amend or stop call is sent.
+    `exclude_algo_children: false` changes none of it: the flag only narrows (BQ-8)."""
+    resting = await rig.submit()  # a user's resting limit entry
     await rig.quiet()
     assert resting.order_id is not None
     before = await rig.port.orders.get(cr.ACCOUNT, resting.order_id)
     exits = build(rig)
     exits.hold(stored(qty="0.050"))
-    await exits.run(exit_request("flatten_position"))
+    scope = {"exclude_algo_children": exclude_algo_children}  # the rule's scope flag (BQ-8)
+    await exits.run(exit_request("flatten_position", scope=scope))
     assert exits.outcomes() == [("x1", str(cr.ACCOUNT), "ok", None)]
     after = await rig.port.orders.get(cr.ACCOUNT, resting.order_id)
     assert after == before and rig.machines.state(resting.order_id) == (
