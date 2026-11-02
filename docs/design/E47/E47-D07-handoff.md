@@ -16,7 +16,7 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 | Transcripts                                              | [x] the JSON and spec §10; [ ] QA acceptance pending (E47-Q01 #1314) |
 | Variants × states (the panel)                            | [x] spec §8.3                                                        |
 | Keyboard table (the panel)                               | [x] spec §8.3                                                        |
-| Data contract                                            | [ ] NO: D07-G1, D07-G2, D07-G3, D07-G7, D07-G8                       |
+| Data contract                                            | [ ] NO: D07-G1, D07-G2, D07-G3, D07-G7, D07-G8, D07-G11              |
 | Boards                                                   | [ ] pending, drawn in a later push of this PR (§H)                   |
 | NVDA and JAWS evidence                                   | [ ] the session protocol (§I), not run                               |
 | Sign-off                                                 | [ ] owner approval pending (#2701)                                   |
@@ -63,41 +63,42 @@ Old is a verbatim fragment of the cited line at `85b6b6c1c` (the tool checks it)
 ## §E Owner walkthrough checklist (each frame a 1280 × 800 window unless named)
 
 - [ ] Board 01: every event you know from trading is on the map, in one class; nothing silent that you would want spoken.
-- [ ] Board 03: at 10 Hz the polite line changes at most every 2 s and always shows the newest price.
+- [ ] Board 03: at 10 Hz the polite line changes at most every 2 s, speaks at most half the time and always shows the newest price.
 - [ ] Board 04: the auto-flatten is spoken first, then the reject, then the disconnect; each has its toast and its log row.
 - [ ] Board 05: the typed price stays in the ticket after a reject; the auto-flatten dialog returns focus where it was.
 - [ ] Board 06: each class has Assertive / Polite / Off; the safety row shows the lock glyph and its reason and stays in the Tab order.
 - [ ] Board 08: Off, significant and Low read no prices; Normal adds the tape summary; High adds big trades.
 - [ ] Board 10: read W-1, W-3 and W-5 aloud; each is clear by ear on first hearing.
-- [ ] §I: listen to the fast transcript at your screen reader's default rate for one minute; note any line you could not follow.
+- [ ] §I: listen to the fast transcript for one minute at 100 % and at 60 % of your screen reader's default rate; note any line you could not follow.
 - [ ] §I: listen to the incident transcript; note whether any line arrived too late to act on.
 - [ ] Record `approved` on #1306, or the findings `(heuristic)` with board and frame names.
 
 ## §F Consumers and what each builds from
 
-| Consumer        | Builds from                                       | Waits on               |
-| --------------- | ------------------------------------------------- | ---------------------- |
-| E47-D05 (#1304) | spec §8.1 class names, §10 transcripts (preview)  | —                      |
-| E47-D06 (#1305) | spec §4 (each surface's class), §6.1 (the joiner) | —                      |
-| E10-S01 (#304)  | spec §2, §5, §7.3, §12                            | D07-G1, D07-G2, D07-G7 |
-| E47-S01 (#1316) | spec §6                                           | D07-G8                 |
-| E47-S07 (#1321) | spec §8                                           | D07-G3                 |
-| E47-D10 (#1309) | §C D07-A5, D07-A6, D07-A7; §D                     | D07-G4                 |
-| E47-Q01 (#1314) | the transcripts, §G                               | D07-G6                 |
-| E47-Q02 (#1355) | §I                                                | the boards             |
+| Consumer        | Builds from                                       | Waits on                        |
+| --------------- | ------------------------------------------------- | ------------------------------- |
+| E47-D05 (#1304) | spec §8.1 class names, §10 transcripts (preview)  | —                               |
+| E47-D06 (#1305) | spec §4 (each surface's class), §6.1 (the joiner) | —                               |
+| E10-S01 (#304)  | spec §2, §5, §7.3, §12                            | D07-G1, D07-G2, D07-G7, D07-G11 |
+| E47-S01 (#1316) | spec §6                                           | D07-G8                          |
+| E47-S07 (#1321) | spec §8                                           | D07-G3                          |
+| E47-D10 (#1309) | §C D07-A5, D07-A6, D07-A7; §D                     | D07-G4                          |
+| E47-Q01 (#1314) | the transcripts, §G                               | D07-G6                          |
+| E47-Q02 (#1355) | §I                                                | the boards                      |
 
 ## §G QA draft assertions (deterministic)
 
-| QA   | Given / when                                                            | Then (assert)                                                                                                               |
-| ---- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| QA-1 | replay the fast script under Always · Normal with a fake clock          | the polite region's writes equal the transcript's polite lines, in time and text                                            |
-| QA-2 | replay the fast script under Always · Low                               | no polite write; the assertive writes equal the transcript's assertive lines                                                |
-| QA-3 | replay the incident script                                              | the assertive region's writes are W-5, W-3, W-13 in that order, each once and in full; three CMP-060 entries                |
-| QA-4 | focus the ticket's price field, type "6400", inject a reject            | `document.activeElement` and the field's value are unchanged; the ticket is open                                            |
-| QA-5 | inject three partial fills of one order and its fill inside 1.6 s       | one partial line and one "Filled" line, as the quiet transcript                                                             |
-| QA-6 | inject a reject with an unmapped code                                   | the line ends "Reason not recognised. See the order log."; the upstream text is in no region                                |
-| QA-7 | open SCR-117; Tab to the Risk and safety group; press `Space`, then `↓` | every radio has `aria-disabled="true"`, the reason W-39 is its description, the value is unchanged, one polite announcement |
-| QA-8 | mount and unmount ten panels; read the shell pair's containers          | the two containers are the same nodes before and after; no other `aria-live` container carries a taxonomy event             |
+| QA   | Given / when                                                                                            | Then (assert)                                                                                                                                                                                               |
+| ---- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| QA-1 | replay the fast script under Always · Normal with a fake clock                                          | the polite region's writes equal the transcript's polite lines, in time and text                                                                                                                            |
+| QA-2 | replay the fast script under Always · Low                                                               | no polite write; the assertive writes equal the transcript's assertive lines                                                                                                                                |
+| QA-3 | replay the incident script                                                                              | the dialog takes focus first and its focus speech carries W-40, W-5 and W-41; then the assertive region's writes are W-3, W-13 in that order, each once and in full; three CMP-060 entries and three toasts |
+| QA-4 | focus the ticket's price field, type "6400", inject a reject                                            | `document.activeElement` and the field's value are unchanged; the ticket is open                                                                                                                            |
+| QA-5 | inject three partial fills of one order and its fill inside 1.6 s                                       | one partial line and one "Filled" line, as the quiet transcript                                                                                                                                             |
+| QA-6 | inject a reject with an unmapped code                                                                   | the line ends "Reason not recognised. See the order log."; the upstream text is in no region                                                                                                                |
+| QA-7 | open SCR-117; Tab to the Risk and safety group; press `Space`, then `↓`                                 | every radio has `aria-disabled="true"`, the reason W-39 is its description, the value is unchanged, one polite announcement                                                                                 |
+| QA-8 | mount and unmount ten panels; read the shell pair's containers                                          | the two containers are the same nodes before and after; no other `aria-live` container carries a taxonomy event                                                                                             |
+| QA-9 | replay the fast script five times back to back (5 minutes at 10 Hz) under each of the six §6.4 settings | the polite writes per minute equal §6.4's column in every minute; the assertive writes are identical in every setting; no composite starts inside twice the previous one's speech estimate                  |
 
 ## §H The board plan (pending; drawn in a later push of this PR)
 
@@ -122,7 +123,7 @@ Setup: Windows, NVDA and JAWS at their default rates and verbosity, the browser 
 
 1. Quiet script under Always · Normal: confirm the polite lines arrive as the transcript says and the partial fills read as one.
 2. Fast script for one minute under Always · Normal, then Low: count the lines heard; compare with §10.2 and §6.4.
-3. Incident script: note the order heard and whether any line was cut; open the bell and confirm three entries.
+3. Incident script at 100 % and at 60 % of the default rate: note the order heard, whether any line was cut and how late the disconnect is heard; open the bell and confirm three entries.
 4. Focus in the ticket's price field while the incident plays: confirm the typed value stays and the dialog returns focus.
 5. SCR-117 panel: walk it by keyboard; confirm the safety row's reason is read and `Space` changes nothing.
 6. Record per screen reader: lines heard, lines missed, lines late, and a usable / not usable verdict in the owner's words (T Test); label every finding `(heuristic)` unless measured.
@@ -130,7 +131,7 @@ Setup: Windows, NVDA and JAWS at their default rates and verbosity, the browser 
 ## §J Summary for #1306
 
 1. Text-first spec of the live-region layer over the shipped announcer and ambient writer; every difference a G-row; 10<!--=COUNT:boards--> boards pending; default-deny audit tool.
-2. A taxonomy of 48<!--=COUNT:taxonomy--> events in five classes, each with its source, topic, surface, panel class and words; silent rows say where to read the value.
+2. A taxonomy of 55<!--=COUNT:taxonomy--> events in five classes, each with its source, topic, surface, panel class and words; silent rows say where to read the value.
 3. An assertive queue by rank, never throttled, merged or cut; bursts of one entity collapse, distinct events never merge.
 4. Ambient fields as one composite per cadence, latest value, never appended; verbosity levels each with a demonstrable output.
 5. Closed words: grammar, slots and a reason map from `24`; no secret is ever spoken; account-scoped.

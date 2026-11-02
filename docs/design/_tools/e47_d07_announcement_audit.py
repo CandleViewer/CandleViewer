@@ -482,6 +482,13 @@ def estimate(text: str, chars_per_s: int, floor_ms: int) -> int:
 FIELD_ORDER = ("quote", "mark", "pnl", "cvd", "tape", "big")
 FIELD_ROW = {"quote": "T-30", "mark": "T-31", "pnl": "T-32", "cvd": "T-33", "tape": "T-35"}
 FIELD_ROW["big"] = "T-36"
+POLITE_SHARE = 2  # a composite waits >= this many times the previous one's speech estimate (§6.1)
+DIALOG_ROW = "T-17"  # its `alertdialog` is the event's one speaker, on focus (§9)
+
+
+def focus_speech(spec: str, text: str) -> str:
+    """What a reader says when the auto-flatten dialog takes focus: name, role, description, button."""
+    return f"{template(spec, 'W-40')}, dialog. {text} {template(spec, 'W-41')}, button."
 
 
 @dataclass
@@ -610,7 +617,7 @@ def replay(
     latest: dict[str, str | None] = {f: None for f in FIELD_ORDER}
     spoken: dict[str, str | None] = {f: None for f in FIELD_ORDER}
     tape = {"n": 0, "buy": 0, "sell": 0, "last": 0}
-    last_own, busy_until = never, never
+    last_own, busy_until, gap = never, never, cadence
     due: int | None = None
     queue: list[Queued] = []
     last_partial: dict[str, int] = {}
@@ -658,14 +665,17 @@ def replay(
                 break
             q = min(ready, key=lambda x: (x.rank, x.seq))
             queue.remove(q)
-            out.lines.append(Line(now, "assertive", "significant-assertive", q.tid, q.text))
+            channel, text = "assertive", q.text
+            if q.tid == DIALOG_ROW:
+                channel, text = "focus", focus_speech(spec, q.text)
+            out.lines.append(Line(now, channel, "significant-assertive", q.tid, text))
             out.written[q.seq] = now
-            busy_until = now + estimate(q.text, cps, floor_ms)
+            busy_until = now + estimate(text, cps, floor_ms)
             if q.tid == "T-2":
                 last_partial[q.entity] = now
         pending = any(latest[f] is not None for f in FIELD_ORDER) or tape["n"] > 0
         if pending and due is None:
-            due = max(last_own + cadence, now)
+            due = max(last_own + gap, now)
         if due is not None and due <= now and busy_until <= now:
             parts: list[tuple[str, str]] = []
             for f in FIELD_ORDER:
@@ -687,6 +697,7 @@ def replay(
                 text = ". ".join(p for _, p in parts)
                 out.lines.append(Line(now, "polite", "ambient-polite", tids, text))
                 last_own = now
+                gap = max(cadence, POLITE_SHARE * estimate(text, cps, floor_ms))
     return out
 
 
@@ -769,6 +780,13 @@ def sim_values(t: Texts) -> Values:
         out[f"SIM:{sid}.assertive"] = str(sum(1 for ln in rp.lines if ln.channel == "assertive"))
         per = [sum(1 for ln in rp.lines if FIELD_ROW[f] in ln.rows.split()) for f in FIELD_ORDER]
         out[f"SIM:{sid}.max-per-field"] = str(max(per))
+        cps, floor_ms = int(str(doc["speech_chars_per_s"])), int(str(doc["speech_floor_ms"]))
+        pol = [ln for ln in rp.lines if ln.channel == "polite"]
+        said = [estimate(ln.text, cps, floor_ms) for ln in pol]
+        cad = int(str(settings["cadence_ms"]))
+        spans = [b.t - a.t for a, b in itertools.pairwise(pol)]
+        spans += [max(cad, POLITE_SHARE * said[-1])] if said else []
+        out[f"SIM:{sid}.polite-share"] = str(round(100 * sum(said) / max(1, sum(spans))))
         if sid == "fast":
             minutes = int(str(sc["duration_ms"])) / 60000
             for cell, cs in CELLS.items():
@@ -885,12 +903,12 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     _m(
         "M-10",
-        "set the quiet script's cadence to 1 s in the JSON",
+        "set the quiet script's cadence to 5 s in the JSON",
         "G-SIM",
         "json",
         "",
         '"cadence_ms": 2000',
-        '"cadence_ms": 1000',
+        '"cadence_ms": 5000',
     ),
     _m(
         "M-11",
@@ -1381,10 +1399,16 @@ def g_sim(t: Texts) -> list[Finding]:
                 bad.append((f"{sid}: {ev.tid} at {ev.t} ms was dropped", r10))
             if ev.tid != "T-2" and ev.seq in {s for s, _ in rp.collapsed}:
                 bad.append((f"{sid}: {ev.tid} collapsed, only a partial may", r10))
-        ass = [ln for ln in rp.lines if ln.channel == "assertive"]
+        ass = [ln for ln in rp.lines if ln.channel in ("assertive", "focus")]
         for a, b in itertools.pairwise(ass):
             if b.t - a.t < estimate(a.text, cps, floor_ms):
                 bad.append((f"{sid}: an assertive line cut the one before it", r10))
+        pol = [ln for ln in rp.lines if ln.channel == "polite"]
+        for a, b in itertools.pairwise(pol):
+            if b.t - a.t < max(cadence, POLITE_SHARE * estimate(a.text, cps, floor_ms)):
+                bad.append((f"{sid}: a composite at {b.t} ms talks over the speech share", r10))
+        if any(ln.channel == "focus" and ln.rows != DIALOG_ROW for ln in rp.lines):
+            bad.append((f"{sid}: a focus line is not the auto-flatten dialog", r10))
         for ev in rp.events:
             w = rp.written.get(ev.seq)
             if w is None or ev.tid == "T-2":
@@ -1396,11 +1420,13 @@ def g_sim(t: Texts) -> list[Finding]:
                 if other.t <= w < ow and rank_of(tax, other.tid) < rank_of(tax, ev.tid):
                     bad.append((f"{sid}: {ev.tid} spoken before the higher {other.tid}", r10))
         if sid in ("fast", "incident"):
-            base = [ln for ln in rp.lines if ln.channel == "assertive"]
+            base = [ln for ln in rp.lines if ln.channel in ("assertive", "focus")]
             for cell, cs in CELLS.items():
                 c = {**settings, "reduce": False, **cs}
                 other_ass = [
-                    ln for ln in replay(t.spec, doc, sc, c).lines if ln.channel == "assertive"
+                    ln
+                    for ln in replay(t.spec, doc, sc, c).lines
+                    if ln.channel in ("assertive", "focus")
                 ]
                 if other_ass != base:
                     bad.append((f"{sid}: the assertive lines change under {cell}", r10))
@@ -1485,7 +1511,8 @@ def g_t2(t: Texts) -> list[Finding]:
     for prefix in T2_CITERS:
         s2, e2, reg = section(t.spec, prefix)
         for ln in t.spec.split("\n")[s2:e2]:
-            if re.search(r"\bT2\b", ln) and "§8.2" not in ln:
+            # E17-D02's stale threshold ("Stale ≥ T2", "Stale < T2") is not the T2 gate
+            if re.search(r"\bT2\b", re.sub(r"[<≥] T2\b", "", ln)) and "§8.2" not in ln:
                 out.append(("G-T2", f"a {prefix} line shows T2 without citing §8.2", "spec", reg))
     lines, regions = t.hand.split("\n"), line_regions(t.hand)
     comp = [i for i, ln in enumerate(lines) if ln.startswith("Components: ")]
