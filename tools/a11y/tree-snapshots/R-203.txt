@@ -36,13 +36,57 @@
         - /url: /admin
   - button "Collapse navigation rail" [expanded]
 - main:
+  - text: Search settings
+  - searchbox "Search settings"
+  - navigation "Settings":
+    - list:
+      - listitem:
+        - link "Profile":
+          - /url: /settings/profile
+        - text: Name, contact details and defaults.
+      - listitem:
+        - link "Security":
+          - /url: /settings/profile#security
+        - text: Password, two-factor and active sessions.
+      - listitem:
+        - link "Appearance":
+          - /url: /settings/appearance
+        - text: Theme, density and chart colours.
+      - listitem:
+        - link "Hotkeys":
+          - /url: /settings/hotkeys
+        - text: Every command with its key binding.
+      - listitem:
+        - button "Trading defaults" [disabled]
+        - text: This section isn't available yet.
+      - listitem:
+        - link "Notifications":
+          - /url: /settings/notifications
+        - text: Channels and quiet hours per event.
+      - listitem:
+        - button "Data & performance" [disabled]
+        - text: This section isn't available yet.
+      - listitem:
+        - link "Accessibility":
+          - /url: /settings/appearance#accessibility
+        - text: Motion, contrast, focus and announcements.
+      - listitem:
+        - button "Help & about" [disabled]
+        - text: This section isn't available yet.
+  - button "Reset Appearance…" [disabled]
+  - text: Resetting this section isn't available yet.
   - heading "Appearance" [level=1]
+  - paragraph: Chart palette
+  - paragraph: Default or colour-blind safe colours for charts.
+  - paragraph: "Scope: Per device"
   - group "Chart palette":
-    - text: Chart palette
     - radio "Default (green / red)" [checked]
     - text: Default (green / red)
     - radio "Colour-blind safe (blue / orange)"
     - text: Colour-blind safe (blue / orange)
+  - paragraph: Colour convention
+  - paragraph: Which colour means buy and which means sell.
+  - paragraph: "Scope: Per device"
   - checkbox "Invert buy/sell colours"
   - text: Invert buy/sell colours
   - status

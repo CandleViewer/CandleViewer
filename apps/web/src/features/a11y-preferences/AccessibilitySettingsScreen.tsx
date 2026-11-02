@@ -68,7 +68,11 @@ export function AccessibilitySettingsScreen(): JSX.Element {
   const { prefs, media, update, saveError, retry } = usePreferences();
   const set = (patch: Partial<A11yPreferences>): void => void update(patch);
   return (
-    <section aria-labelledby="a11y-h" style={{ maxWidth: "60rem", overflowWrap: "anywhere" }}>
+    <section
+      id="accessibility"
+      aria-labelledby="a11y-h"
+      style={{ maxWidth: "60rem", overflowWrap: "anywhere" }}
+    >
       <h2 id="a11y-h">Accessibility</h2>
       <p>Changes apply immediately, including chart canvases. They are saved to your account.</p>
       <div role="status" aria-live="polite">

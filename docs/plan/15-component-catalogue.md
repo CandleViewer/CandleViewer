@@ -977,6 +977,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `layout.settings.*`.
 - **Storybook**: Default.
 - **Tests**: unit, visual, axe.
+- **As built (E47-S08)**: the nav and layout live in `apps/web/src/features/settings/` because they use the router (`Link`, `useLocation`, `aria-current` from the location), which `packages/ui` does not depend on. The wrapper (`SettingsNav`) supplies the router's `Link` and the location to the router-free `SettingsNavView`; the stories render the view with plain anchors, so `packages/ui` needs no router dependency. The story file stays beside the nav and `packages/ui/.storybook/main.ts` lists it. One Tab stop (roving tabindex), Up/Down/Home/End move; a section not built yet is a focusable `aria-disabled` button with its reason, never hidden. The layout is a `div` inside the shell's one `main`, not a second landmark.
 
 ### CMP-087 AdminLayout (RBAC-gated shell)
 

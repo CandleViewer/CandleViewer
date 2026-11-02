@@ -23,6 +23,9 @@ const SIGNED_IN = new Map<string, NonNullable<A11yScreen["signedIn"]>>([
   ["R-201", { role: "owner", heading: "Security settings" }],
   ["R-202", { role: "owner", heading: "Hotkeys" }],
   ["R-203", { role: "owner", heading: "Appearance" }],
+  // R-204/R-205 are routed stubs inside the settings layout (E47-S08); their h1 is the stub's.
+  ["R-204", { role: "owner", heading: "R-204 — owned by E11" }],
+  ["R-205", { role: "owner", heading: "R-205 — owned by E11" }],
 ]);
 
 export const FULL = process.env["A11Y_SWEEP"] === "full";
