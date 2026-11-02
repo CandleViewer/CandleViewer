@@ -24,8 +24,8 @@ export const DOCK_ERROR_CODES = Object.freeze([
   /** A stored `grid_preset` that is neither `custom` nor a named preset (refused, never guessed). */
   "unknown_preset",
   /**
-   * A layout with panes but none docked: `22` has no stored form for it (a named preset docks its
-   * first slots and `custom` needs a spec), so it is refused on write rather than stored wrongly.
+   * A layout with panes but none docked: a named preset docks its first slots and `custom` needs
+   * a spec, so this package has no stored form for it; it is refused on write, never stored wrongly.
    */
   "empty_dock",
 ] as const);
