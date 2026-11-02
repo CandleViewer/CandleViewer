@@ -174,6 +174,9 @@ export function createChart(opts: ChartOptions): Chart {
           barSpacing: msg.barSpacing,
         });
         return;
+      case "dataState":
+        emit("dataState", { state: msg.state }); // BQ-9: SCR-047 is the app's
+        return;
       case "error":
         emit("error", {
           code: msg.code,

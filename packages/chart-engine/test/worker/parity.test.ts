@@ -151,7 +151,8 @@ describe("Scenario: Inline fallback is behaviourally identical", () => {
     const worker = transport("worker");
     const inline = transport("inline");
     const kinds = new Set(worker.map((e) => ((e as unknown[])[1] as FromWorker).t));
-    expect([...kinds].sort()).toEqual(["a11y", "frame", "pick", "ready", "viewport"]);
+    // E12-S06 (BQ-9): `dataState` on the first frame (no series: empty).
+    expect([...kinds].sort()).toEqual(["a11y", "dataState", "frame", "pick", "ready", "viewport"]);
     expect(inline).toEqual(worker);
   });
 });

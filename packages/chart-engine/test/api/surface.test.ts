@@ -83,6 +83,8 @@ function readSketch(): { declared: string[]; text: string } {
 }
 
 const surface = readSurface();
+/** Root exports the rulings of record add outside the §8 sketch (E11-T09 is told of each). */
+const RULED_ADDITIONS = ["toTicks"]; // E12-S06 BQ-10
 
 describe("Scenario: The package builds and exports the designed surface", () => {
   it("exports exactly the frozen name list (a widening shows up in review)", () => {
@@ -142,6 +144,7 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       "Viewport",
       "VisibleWindow",
       "createChart",
+      "toTicks", // E12-S06 BQ-10: ruled additive
     ]);
   });
 
@@ -151,15 +154,18 @@ describe("Scenario: The package builds and exports the designed surface", () => 
     expect(declared.filter((name) => !surface.names.includes(name))).toEqual([]);
   });
 
-  it("exports no symbol the §8 sketch does not name", () => {
+  it("exports no symbol the §8 sketch does not name, except the ruled additions", () => {
     const { text } = readSketch();
     const outside = surface.names.filter((name) => !new RegExp(`\\b${name}\\b`).test(text));
-    expect(outside).toEqual([]);
+    expect(outside).toEqual(RULED_ADDITIONS);
   });
 
-  it("has one runtime export, createChart, with the §8 signature", () => {
-    expect(Object.keys(root)).toEqual(["createChart"]);
+  it("has two runtime exports: createChart with the §8 signature, and toTicks (BQ-10)", () => {
+    expect(Object.keys(root).sort()).toEqual(["createChart", "toTicks"]);
     expect(surface.print("createChart")).toBe("(opts: ChartOptions) => Chart");
+    expect(surface.print("toTicks")).toBe(
+      "(price: number, priceOrigin: number, tickSize: number) => number",
+    );
   });
 
   it("keeps the §8 data shapes: Int32Array ticks with priceOrigin/tickSize, Float64Array µs", () => {
@@ -172,6 +178,7 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       volume: "Float32Array<ArrayBufferLike>",
       priceOrigin: "number",
       tickSize: "number",
+      flags: "Uint8Array<ArrayBufferLike> | undefined", // E12-S06 BQ-3, 24 §19.75
     });
     expect(surface.members("FootprintData")).toEqual({
       barIndexOffsets: "Uint32Array<ArrayBufferLike>",
@@ -220,6 +227,7 @@ describe("Scenario: The package builds and exports the designed surface", () => 
     expect(Object.keys(surface.members("ChartEvents")).sort()).toEqual([
       "click",
       "crosshair",
+      "dataState",
       "drawingChanged",
       "error",
       "frameStats",

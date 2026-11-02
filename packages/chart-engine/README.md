@@ -34,8 +34,8 @@ violating file.
 
 ## Public API (`src/index.ts`)
 
-The package root exports `createChart` (its one runtime export) and every type the §8 sketch
-names, and nothing the sketch does not name (BQ-6); `test/api/surface.test.ts` holds the frozen
+The package root exports `createChart`, `toTicks` (E12-S06 BQ-10: its two runtime exports) and
+every type the §8 sketch names, and nothing else the sketch does not name (BQ-6); `test/api/surface.test.ts` holds the frozen
 name list and both directions of that rule, so a widening shows up in review. The
 facade lives in `src/api/` (`chart.ts`, `pane.ts`, `scales.ts`, `types.ts`). Today
 `createChart` is a stub: it mounts a canvas sized to the container (CSS px times the device
@@ -372,19 +372,19 @@ the price gutter is no longer plot. The keyboard, reduced motion and the plot's 
 | BQ-111 | Data     | Bars for the wheel and drag tests.                    | RULED (4): a synthetic 1-minute map (`test/interaction/fixtures.ts`) and the test-only `RuntimeDeps.timeMap?` seam; the Playwright E2E waits for E12's store and E11-Q01 (G-8, C-26).                                                                                                                                                                                                                                                                                                                                                                             |
 | BQ-112 | Perf     | "≥ 55 fps".                                           | PROPOSED: gate on `06` §2 #1 (p95 ≤ 16.6 ms, C-25). `bench/scenes/input-router.ts` and its `*.perf.test.ts`: the worker's input stage ≤ 1 ms and zero per-frame allocations, run by CI's `engine-bench` only. The scene times `Gestures.apply` in the scheduler's input hook, while the runtime applies input on message arrival: the same work by a different path. The LOD-change bound waits on E11-S12 #418.                                                                                                                                                  |
 
-| C / G | Topic  | The ticket                              | Reading                                                                                                                                                                           |
-| ----- | ------ | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| C-20  | Path   | `src/interaction/InputRouter.ts`.       | BQ-98's split: a DOM file cannot live in the DOM-free program.                                                                                                                    |
-| C-23  | Wheel  | "`Ctrl+wheel` zoom price".              | The orchestrator's ruling (1): `Ctrl+wheel` is the trackpad pinch, a time zoom (BQ-100). It diverges from E11-D01's "unbound on the plot"; routed to D01's owner.                 |
-| C-25  | Perf   | "≥ 55 fps".                             | `06` §2 #1's p95 frame time is the gate (BQ-112; D06 C-10 / O-10).                                                                                                                |
-| C-26  | E2E    | The Playwright scenarios.               | Deferred to E12's store and E11-Q01 (BQ-111).                                                                                                                                     |
-| C-27  | Motion | E11-D06 D5: a two-finger drag coasts.   | A second touch counts as a pinch, so a two-finger drag never coasts; telling a drag from a pinch by its spread is left to D06's owner.                                            |
-| G-5   | Price  | Price-axis gestures, the vertical drag. | Closed by E11-S05 PR 1 (BQ-119, BQ-122): the price-axis wheel, drag and double-click, the locked vertical drag and autoscale on reset.                                            |
-| G-6   | Keys   | Key registration; the data cursor.      | Gap: chart-key and Space registration, the `chart.zoom_price` rebind and `default-keymap.md` are E11-S13 #520 / E10-S02's; the pointer-hover `a11y` summary stays as shipped.     |
-| G-7   | Motion | E11-D06 D6/D7 animated jumps.           | Gap: every jump is a cut; a follow-up ticket owns the transitions and `setViewport { transition }`.                                                                               |
-| G-8   | Data   | Bars in the runtime; the E2E.           | Gap: tests use a synthetic 1-minute map and the test-only `RuntimeDeps.timeMap` (BQ-111) until E12 wires the store; the Playwright run waits for E11-Q01.                         |
-| G-10  | Sync   | The leader coasts, members follow.      | Gap: a `sync` cancels a member's glide; publishing the final range once is E11-S09's.                                                                                             |
-| G-11  | Motion | One integrator (E11-D06 C-2 / G-2).     | Gap: `stepFrame` in `src/core/flags.ts` (px/s, 0.01, a hard-coded 120) is served by `./compat` only and never runs in the worker; aligning or retiring it is E47-S07 / E11-T09's. |
+| C / G | Topic  | The ticket                              | Reading                                                                                                                                                                                                                    |
+| ----- | ------ | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| C-20  | Path   | `src/interaction/InputRouter.ts`.       | BQ-98's split: a DOM file cannot live in the DOM-free program.                                                                                                                                                             |
+| C-23  | Wheel  | "`Ctrl+wheel` zoom price".              | The orchestrator's ruling (1): `Ctrl+wheel` is the trackpad pinch, a time zoom (BQ-100). It diverges from E11-D01's "unbound on the plot"; routed to D01's owner.                                                          |
+| C-25  | Perf   | "≥ 55 fps".                             | `06` §2 #1's p95 frame time is the gate (BQ-112; D06 C-10 / O-10).                                                                                                                                                         |
+| C-26  | E2E    | The Playwright scenarios.               | Deferred to E12's store and E11-Q01 (BQ-111).                                                                                                                                                                              |
+| C-27  | Motion | E11-D06 D5: a two-finger drag coasts.   | A second touch counts as a pinch, so a two-finger drag never coasts; telling a drag from a pinch by its spread is left to D06's owner.                                                                                     |
+| G-5   | Price  | Price-axis gestures, the vertical drag. | Closed by E11-S05 PR 1 (BQ-119, BQ-122): the price-axis wheel, drag and double-click, the locked vertical drag and autoscale on reset.                                                                                     |
+| G-6   | Keys   | Key registration; the data cursor.      | Gap: chart-key and Space registration, the `chart.zoom_price` rebind and `default-keymap.md` are E11-S13 #520 / E10-S02's; the pointer-hover `a11y` summary stays as shipped.                                              |
+| G-7   | Motion | E11-D06 D6/D7 animated jumps.           | Gap: every jump is a cut; a follow-up ticket owns the transitions and `setViewport { transition }`.                                                                                                                        |
+| G-8   | Data   | Bars in the runtime; the E2E.           | Closed by E12-S06 PR 1 (#395): the runtime owns a `BarStore` per `addSeries` id and the main series is the viewport's `IndexTimeMap`; `RuntimeDeps.timeMap` stays a test seam. The Playwright run still waits for E11-Q01. |
+| G-10  | Sync   | The leader coasts, members follow.      | Gap: a `sync` cancels a member's glide; publishing the final range once is E11-S09's.                                                                                                                                      |
+| G-11  | Motion | One integrator (E11-D06 C-2 / G-2).     | Gap: `stepFrame` in `src/core/flags.ts` (px/s, 0.01, a hard-coded 120) is served by `./compat` only and never runs in the worker; aligning or retiring it is E47-S07 / E11-T09's.                                          |
 
 C-21, C-22, C-24, G-9 and G-12 are PR 2's rows (the keyboard and reduced motion, below).
 
@@ -523,7 +523,7 @@ internal, for E14 / E22 / E31): hover picks per `input` message and explicit `pi
 | C-39  | Labels     | Brief `priority/p0`.                                 | The ticket field says P1 High; the orchestrator labels the PR.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | G-21  | Selection  | "pick → main-thread selection state".                | Gap: `ChartEvents.pick` and selection state are a §8 change (E11-T04 / the owner); the facade keeps dropping `pick`; E14 and E31 own selection.                                                                                                                                                                                                                                                                                                                                                                                               |
 | G-22  | Mirror     | Mirror-node rects match pickable bounds within 1 px. | Gap: E11-S13 #520 asserts it against `boundsOf`; an `it.todo` holds the place.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| G-23  | Store      | Prepends rebase anchors.                             | Gap: `onMutation` is wired when E12 attaches the BarStore to the runtime (G-8's sibling); the tests drive a real `BarStore`.                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| G-23  | Store      | Prepends rebase anchors.                             | Closed by E12-S06 PR 1 (#395): every mutation of the main series' store reaches `ObjectIndex.onMutation` (`test/worker/runtime-series.test.ts`).                                                                                                                                                                                                                                                                                                                                                                                              |
 | G-24  | Stats      | `engine.pick.*` in SCR-046.                          | Gap: the counters on `FrameStats` / SCR-046 are E11-T04 / T07's (as G-15).                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | G-25  | B8 frame   | "Drag one, frame p95 ≤ 12 ms".                       | Gap: it needs E14's drawings; only "pick ≤ 1 ms" is gated here.                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | G-26  | Cells      | Footprint cells, ladder and profile rows.            | Gap: `cell` on `pick` and the resolvers themselves are E18 / E21's; the `registerStructural` seam ships now.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
@@ -740,3 +740,72 @@ figure without any code change; such a move still follows rules 1–3.
 4. Until a runtime's file exists the job records "no baseline yet" and still publishes its report; the
    first file is committed from the first green `main` run (for Chromium, a `workflow_dispatch` on `main`;
    that job runs on PRs and on dispatch, never on a push).
+
+## Candle series (E12-S06 PR 1) and the #395 BQ-16 bench ruling
+
+The runtime owns a `BarStore` and a `CandleRing` per `addSeries` id (closing G-8 and G-23); a
+`CandleSeries` draws the ring as two hosts, the wick and the body, of one `candle` program over one
+shared buffer: two draws per series, a pan and a theme switch upload nothing (BQ-1, BQ-4, BQ-14).
+Deviation: `BatchBuilder.patch` folded an empty range into the pending one, so `[4, 4)` then
+`[0, 0)` uploaded `[0, 4)`; an empty range now only rebases and resets (regression test in
+`test/scene/batch-builder.test.ts`), and `CandleRing` never sends one.
+
+#395's own BQ numbers (the E12-S06 plan's list; not the E11-T02 table's BQ-16 above):
+
+| BQ         | Where                    | Shipped                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ---------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #395 BQ-16 | `bar-store` microbenches | Coordinator ruling 2026-11-01 02:51Z / acceptance 03:38Z (RelayRoom R28), as the chart-engine CODEOWNER: F-02's per-bar checks stay unconditional. With the flags column written only once a series carries flags and the merge checked only when the first time is at or before the last bar's, the interleaved medians (8 rounds) are 1 M one-bar appends 34.4 → 40.6 ms (+6.3 ms per 1 M, about 6 ns a bar; ≤ 120 ms budget, about 79 ms headroom) and 100 k mutation steps 9.6 → 10.6 ms. No baseline moved: both are `*.perf.test.ts` budgets, in neither `bench/baseline.json` nor the matrix baselines, and `bench/results.json` is byte-identical. Joining the baselined set is a row for E11-T06 #449. |
+
+Seam limit: the scene graph cannot remove nodes, so `removeSeries` hides and unregisters the
+series' three hosts (wick, body and, since PR 2, the gap seam) and frees its store and ring, and host node ids carry a generation number so a
+re-added series id cannot collide. Node removal is a row for E11 (the scene graph).
+
+## OHLC bars, gap seams, bar picks and `dataState` (E12-S06 PR 2)
+
+`BarSeries` (`src/layers/candle/bars.ts`) draws an OHLC series with the same `candle` program, ring
+and palette as `CandleSeries`, as E12-D06 §3.2 / §4.1 set out. The stem runs from high to low on the
+centre column. The open tick sits to its left and the close tick to its right, each
+clamp(floor(body / 2), 1, floor((s − 3) / 2)) CSS px long. Stem and ticks are 1 hairline thick for
+an up bar and 2 for a down bar. A doji is a neutral hairline mark, and a zero-range bar gets the
+neutral zero-range mark. Each series draws twice: the stem as a 4-vertex strip, and both ticks as one
+10-vertex strip with degenerate bridges, through `PART_VERTICES` (BQ-15). Below 5 CSS px,
+`CandleSeries.frame` switches the two batches to the wick and body parts, so the series draws the
+candle mark. Every series has a third host, the gap seam (BQ-8). `SeamRing` lists the physical slots
+of the `gap_before` bars, sorted by logical index and kept in step with each ring sync: only the
+mutated range is rescanned, and the list is patched only when it changes. The seam draws through the
+`candle` program as part 4, a hairline in `color.candle.wick` at the slot's left edge. It is one more
+draw, and only while a gap is in view and `isTimeAligned` holds (BQ-12, `setSeriesOptions`); a batch
+block's `instances` = 0 skips the draw. Draw-trace `labels` name the parts `series.candle.wick` /
+`.body` / `.seam` and `series.ohlc.stem` / `.ticks` / `.seam`, for FrameStats attribution (SCR-046).
+
+A plot pick that misses every object goes to `CandleSeries.hitTest`. The structural bar is measured
+against its drawn parts through the geometry twin, with the frame's pane block and the object
+tolerance; a hit is `pick { kind: "bar", objectId: "series.<id>" }`. A seeded property test checks
+that hit-testing is the inverse of the drawn geometry. Each frame, before collect, the runtime posts
+`dataState` when the main series' visible range empties or fills, and hides the background layer
+while it is empty (BQ-9); SCR-047's surface, copy, E2E and axe belong to `apps/web`. Goldens: a CPU
+stand-in raster of the 2D output is pinned as text in `test/layers/candle-golden.test.ts`. The 48
+SwiftShader cases are `it.todo`s that become rows on E11-T08 #391 (BQ-5).
+
+Accepted pick limits (PR 2 lens): `hitTest` measures the parts the last frame drew (its pane block
+and `u_geom`), so a pick between a data change and the next frame answers against what is on
+screen. It tests only the bar in the slot under x, so a neighbour's wick within the tolerance is
+not hit.
+
+Consumer note for E12-S12 (`apps/web`, SCR-047; the BQ-9 comment at merge): `dataState` posts
+`empty` on the first frame, before any data arrives, and then `ready` once bars are in view. The
+app should debounce SCR-047 (show it only when `empty` lasts past the initial load), or the empty
+state flashes on every chart open.
+
+Deviations from the plan (#395 plan §2–§3), each for a stated reason:
+
+1. The seam uses the `candle` program and a per-series slot list, not the `line` program. A
+   pixel-space line buffer would have to be re-uploaded on every pan while a gap is in view. This way
+   a pan stays a uniform write, and the slot list survives prepends and evictions.
+2. The OHLC stem is its own part (3), not the wick (0). Its colour follows the direction
+   (`color.candle.up` / `.down`), while the candle wick stays neutral (E12-D06 §3.2, R-6).
+3. PR 1 drew the zero-range mark 1 hairline tall below 8 px. It is now 2 hairlines tall at every
+   spacing (E12-D06 §9); only the doji drops to 1 below 8 px. Twin, shader and tests changed
+   together.
+4. Each series gets a 16-entry (320 B) seam buffer, uploaded once at its first build even when it
+   has no gap; the PR 1 runtime tests now count that upload and its VAO.

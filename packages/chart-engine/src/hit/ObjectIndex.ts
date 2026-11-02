@@ -63,7 +63,8 @@ export interface Pickable {
 
 export interface PickHit {
   id: string | null;
-  kind: PickKind | "none";
+  /** E12-S06: `bar` is a series bar (the runtime's pick, never stored in this index). */
+  kind: PickKind | "bar" | "none";
   part: "body" | "handle";
   /** The handle's position in `handles`, -1 for the body. */
   handle: number;

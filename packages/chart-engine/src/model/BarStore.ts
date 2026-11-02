@@ -2,12 +2,18 @@
 // lives at (head + i) & mask; growth doubles and re-linearises (one copy), eviction at maxBars
 // moves head (no memmove); the ceiling capacity keeps ≥ maxBars / 4 spare slots (BQ-32). Every
 // mutation is validated in full before its first write (a rejected one leaves the store
-// byte-identical) and returns the range it touched, for sub-range uploads.
+// byte-identical) and returns the range it touched, for sub-range uploads. E12-S06 adds the
+// optional `flags` column (BQ-3), refuses bars no candle can draw (threat model F-02) and lets a
+// live append merge into the last bar when it carries that bar's time (equal time → patch).
 import { ModelCounters, type MutationRange, RangeSlot, pow2 } from "./counters.js";
 
 export const DEFAULT_MAX_BARS = 200_000; // §8 ChartOptions.maxBars default
-/** time 8 + open/high/low/close 4×4 + volume 4 + delta 4 bytes per slot (26 §7). */
-export const BAR_BYTES = 32;
+/** time 8 + open/high/low/close 4×4 + volume 4 + delta 4 + flags 1 bytes per slot (26 §7). */
+export const BAR_BYTES = 33;
+
+/** The `flags` bits (BQ-3); bits 4..7 are reserved and refused (the ring packs `dir` there). */
+export const BAR_FLAG = { gapBefore: 1, forming: 2, partial: 4, amended: 8 } as const;
+const FLAG_MASK = 0x0f;
 
 /** A batch of bars: §8 `CandleData` plus an optional `delta` column (zeros when absent). */
 export interface BarBatch {
@@ -18,6 +24,8 @@ export interface BarBatch {
   readonly close: Int32Array;
   readonly volume: Float32Array;
   readonly delta?: Float32Array | undefined;
+  /** E12-S06 (BQ-3): `BAR_FLAG` bits per bar; zeros when absent. */
+  readonly flags?: Uint8Array | undefined;
   readonly priceOrigin: number;
   readonly tickSize: number;
 }
@@ -36,8 +44,9 @@ interface Columns {
   close: Int32Array;
   volume: Float32Array;
   delta: Float32Array;
+  flags: Uint8Array;
 }
-const KEYS = ["time", "open", "high", "low", "close", "volume", "delta"] as const;
+const KEYS = ["time", "open", "high", "low", "close", "volume", "delta", "flags"] as const;
 const allocate = (cap: number): Columns => ({
   time: new Float64Array(cap),
   open: new Int32Array(cap),
@@ -46,6 +55,7 @@ const allocate = (cap: number): Columns => ({
   close: new Int32Array(cap),
   volume: new Float32Array(cap),
   delta: new Float32Array(cap),
+  flags: new Uint8Array(cap),
 });
 
 /** The §8 `BarView`: views into the store's ring over bars [0, length), valid until the next
@@ -58,6 +68,7 @@ export class BarView {
   close: Int32Array = new Int32Array(0);
   volume: Float32Array = new Float32Array(0);
   delta: Float32Array = new Float32Array(0);
+  flags: Uint8Array = new Uint8Array(0);
   priceOrigin = 0;
   tickSize = 0;
   length = 0;
@@ -74,6 +85,9 @@ export class BarStore {
   private n = 0;
   private origin = 0;
   private tick = 0;
+  /** Set by the first batch carrying `flags` (sticky): until then the column stays all zeros and
+   * `put` skips it, so a series without flags pays no write for them. */
+  private hasFlags = false;
   private readonly range = new RangeSlot();
   private readonly bars = new BarView();
   private viewOf: Columns | null = null;
@@ -120,27 +134,37 @@ export class BarStore {
     return this.head;
   }
 
-  /** Appends bars at the end; at maxBars the oldest are evicted and `indexShift` says how many. */
-  append(b: BarBatch): MutationRange {
+  /**
+   * Appends bars at the end; at maxBars the oldest are evicted and `indexShift` says how many.
+   * With `merge` (E12-S06, the live feed), a first bar carrying the last bar's time overwrites it:
+   * the range then starts at that bar, and a batch of that one bar alone is a `patch`.
+   */
+  append(b: BarBatch, merge = false): MutationRange {
     const k = this.check(b);
+    let merged = 0;
+    // One comparison on the hot path: only a first time at or before the last bar's is looked at.
     if (k > 0 && this.n > 0 && (b.time[0] as number) <= this.timeAt(this.n - 1)) {
-      this.counters.reject("order", "append is not newer than the last bar held");
+      if (!merge || (b.time[0] as number) !== this.timeAt(this.n - 1)) {
+        this.counters.reject("order", "append is not newer than the last bar held");
+      }
+      merged = 1;
     }
     this.adopt(b);
-    const fill = this.n + k; // capFor only when it can change the capacity: off the hot path
+    const add = k - merged;
+    const fill = this.n + add; // capFor only when it can change the capacity: off the hot path
     if (this.cap < this.ceilCap && (fill > this.cap || fill >= this.maxBars)) {
-      this.grow(this.capFor(Math.min(fill, this.maxBars)), 0, k);
+      this.grow(this.capFor(Math.min(fill, this.maxBars)), 0, add);
     }
-    const evict = Math.max(0, this.n + k - this.maxBars);
+    const evict = Math.max(0, this.n + add - this.maxBars); // ≤ n - 1: the merged bar survives
     if (evict > 0) {
       this.head = (this.head + evict) & (this.cap - 1);
       this.n -= evict;
       this.counters.evictions += evict;
     }
-    const from = this.n;
+    const from = this.n - merged;
     for (let j = 0; j < k; j += 1) this.put(from + j, b, j);
-    this.n += k;
-    return this.range.set("append", from, this.n, evict);
+    this.n += add;
+    return this.range.set(add === 0 && k > 0 ? "patch" : "append", from, this.n, evict);
   }
 
   /** Overwrites bars [index, index + count) in place, keeping time order with its neighbours. */
@@ -153,6 +177,7 @@ export class BarStore {
     const after =
       index + k < this.n && k > 0 && (b.time[k - 1] as number) >= this.timeAt(index + k);
     if (before || after) this.counters.reject("order", "patch breaks the time order");
+    if (b.flags !== undefined) this.hasFlags = true;
     for (let j = 0; j < k; j += 1) this.put(index + j, b, j);
     return this.range.set("patch", index, index + k, 0);
   }
@@ -182,13 +207,14 @@ export class BarStore {
     const cap = this.capFor(Math.max(k, this.initial));
     const next = allocate(cap);
     const lead = (cap - k) >> 1; // centred, so the first history page prepends without wrapping
-    for (const key of KEYS) if (key !== "delta" || b.delta) next[key].set(b[key] ?? [], lead);
+    for (const key of KEYS) next[key].set(b[key] ?? [], lead); // absent delta / flags: zeros
     this.c = next;
     this.cap = cap;
     this.head = lead;
     this.n = k;
     this.origin = b.priceOrigin;
     this.tick = b.tickSize;
+    if (b.flags !== undefined) this.hasFlags = true;
     this.counters.reallocations += 1;
     return this.range.set("replace", 0, k, 0);
   }
@@ -230,6 +256,7 @@ export class BarStore {
       v.close = c.close.subarray(h, e);
       v.volume = c.volume.subarray(h, e);
       v.delta = c.delta.subarray(h, e);
+      v.flags = c.flags.subarray(h, e);
       this.viewOf = c;
       this.viewHead = h;
       v.length = this.n;
@@ -250,7 +277,7 @@ export class BarStore {
 
   /** Validates a whole batch before any write; returns its count. Allocates nothing. */
   private check(b: BarBatch, sameSeries = true): number {
-    const { time, open, high, low, close, volume, delta } = b;
+    const { time, open, high, low, close, volume, delta, flags } = b;
     const cs = this.counters;
     const typed =
       time instanceof Float64Array &&
@@ -259,12 +286,14 @@ export class BarStore {
       low instanceof Int32Array &&
       close instanceof Int32Array &&
       volume instanceof Float32Array &&
-      (delta === undefined || delta instanceof Float32Array);
+      (delta === undefined || delta instanceof Float32Array) &&
+      (flags === undefined || flags instanceof Uint8Array);
     if (!typed) cs.reject("type", "bar columns must be the declared typed arrays");
     const k = time.length;
     if (k > this.maxBars) cs.reject("ceiling", `${k} bars declared, maxBars is ${this.maxBars}`);
     const ohlc = open.length === k && high.length === k && low.length === k && close.length === k;
-    if (!ohlc || volume.length !== k || (delta !== undefined && delta.length !== k)) {
+    const extra = (delta !== undefined && delta.length !== k) || (flags?.length ?? k) !== k;
+    if (!ohlc || volume.length !== k || extra) {
       cs.reject("length", "bar columns differ in length");
     }
     if (!Number.isFinite(b.priceOrigin) || !(b.tickSize > 0 && b.tickSize < Infinity)) {
@@ -277,17 +306,28 @@ export class BarStore {
     for (let j = 0; j < k; j += 1) {
       // Typed columns: ticks are int32 by construction; f32 volume / delta can still be ±Inf / NaN.
       const t = time[j] as number;
+      const v = volume[j] as number;
       const d = delta === undefined ? 0 : (delta[j] as number);
-      if (!Number.isFinite(t) || !Number.isFinite(volume[j] as number) || !Number.isFinite(d)) {
+      if (!Number.isFinite(t) || !Number.isFinite(v) || !Number.isFinite(d)) {
         cs.reject("non_finite", `bar ${j}: non-finite time, volume or delta`);
       }
       if (t <= prev) cs.reject("order", `bar ${j}: time does not increase`);
       prev = t;
+      // F-02 (CE-T04): low ≤ open, close ≤ high (so low ≤ high), volume ≥ 0, no reserved flag
+      // bit, as one boolean expression and one branch per bar (measured cheaper than a
+      // Math.min of the margins); the reason is worked out only for a refusal.
+      const lo = low[j] as number;
+      const hi = high[j] as number;
+      const o = open[j] as number;
+      const c = close[j] as number;
+      const f = flags === undefined ? 0 : (flags[j] as number);
+      if (o < lo || o > hi || c < lo || c > hi || v < 0 || f > FLAG_MASK) refuse(cs, j, v, f);
     }
     return k;
   }
 
   private adopt(b: BarBatch): void {
+    if (b.flags !== undefined) this.hasFlags = true;
     if (this.n > 0) return;
     this.origin = b.priceOrigin;
     this.tick = b.tickSize;
@@ -304,6 +344,7 @@ export class BarStore {
     c.close[p] = b.close[j] as number;
     c.volume[p] = b.volume[j] as number;
     c.delta[p] = b.delta === undefined ? 0 : (b.delta[j] as number);
+    if (this.hasFlags) c.flags[p] = b.flags === undefined ? 0 : (b.flags[j] as number);
   }
 
   /** Re-linearises the n bars held into `cap` slots, centred in the room left by `pre` bars about
@@ -322,4 +363,11 @@ export class BarStore {
     this.head = lead;
     this.counters.reallocations += 1;
   }
+}
+
+/** F-02's refusal, off the hot path: the first rule bar j breaks. */
+function refuse(cs: ModelCounters, j: number, volume: number, flags: number): never {
+  if (volume < 0) cs.reject("negative", `bar ${j}: negative volume`);
+  if (flags > FLAG_MASK) cs.reject("flags", `bar ${j}: reserved flag bits set`);
+  return cs.reject("relation", `bar ${j}: needs low <= open, close <= high`);
 }

@@ -4,6 +4,8 @@
 // markers, each as the narrowest shape the engine needs today (package README "Design deltas").
 // Types only: no React, no DOM globals, no I/O here (C-2.16). `HTMLElement` is a type reference.
 
+import type { DataRange, InstanceRing, SeriesProjection } from "../layers/plugin-api.js";
+
 // ---- §8 verbatim ----------------------------------------------------------
 
 export interface ChartOptions {
@@ -94,6 +96,8 @@ export interface CandleData {
   volume: Float32Array;
   priceOrigin: number;
   tickSize: number;
+  // E12-S06 (BQ-3, additive; 24 §19.75): gap_before, forming, partial, amended bits per bar.
+  flags?: Uint8Array;
 }
 
 export interface FootprintData {
@@ -154,6 +158,8 @@ export interface ChartEvents {
   viewportChanged: { timeStart: number; timeEnd: number; barSpacing: number };
   visibleRangeNeedsData: { fromTime: number; toTime: number }; // triggers paging
   frameStats: FrameStats;
+  /** E12-S06 (BQ-9, additive): the visible range holds no bar (`empty`, no grid drawn) or some. */
+  dataState: { state: "empty" | "ready" };
   error: {
     code: string;
     message: string;
@@ -198,6 +204,11 @@ export interface RenderContext {
   glyphRun(x: number, y: number, text: string, style: TextStyle): void;
   quadBatch(instances: Float32Array, stride: number, program: "cell" | "disc" | "bar"): void;
   texture(id: TextureId, rect: Rect, uv: Rect, lut: LutId): void;
+  // E12-S06 (BQ-2, additive; reported to E11-T09): retained rings and the pane's projection.
+  /** Draws the ring's instances with `program`'s `part` (0 wick, 1 body, 2 OHLC ticks, 3 stem, 4 seam). */
+  instances(ring: InstanceRing, program: "candle", part: number): void;
+  /** The one projection (G-2): bar index and tick to CSS px on this series' pane. */
+  readonly projection: SeriesProjection;
 }
 
 export interface SeriesPlugin<D, O> {
@@ -209,6 +220,11 @@ export interface SeriesPlugin<D, O> {
   hitTest(pt: Point): PickResult | null;
   priceRange(visibleBars: Range): { low: number; high: number } | null;
   detach(): void;
+  /**
+   * E12-S06 (BQ-2, additive; reported to E11-T09): the retained path. The series' store after a
+   * mutation and the range it touched, `patch` included; called instead of `onData` when present.
+   */
+  onMutation?(view: BarView, range: DataRange): void;
 }
 
 export interface IndicatorPlugin {
@@ -322,6 +338,8 @@ export interface IndicatorHandle {
 export interface CandleOptions {
   upColorToken: string;
   downColorToken: string;
+  /** E12-S06 (BQ-12, additive): false suppresses the gap seam (and E11-S06's time labels). */
+  isTimeAligned?: boolean;
 }
 
 export interface LineOptions {

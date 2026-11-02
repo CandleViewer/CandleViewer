@@ -37,7 +37,11 @@ describe("draw submission: steady state", () => {
     const bench = new DrawSubmitBench(gl);
     bench.step(); // warm-up: compiles, first full uploads
     const { registry, programs } = bench.backend;
-    const uniforms = PROGRAMS.reduce((n, p) => n + p.uniforms.length, 0) - 1; // quad unused
+    // The scene draws line, sdf-text and bar-cell: quad's one and candle's (E12-S06) never resolve.
+    const unused =
+      (PROGRAMS[PROGRAM.quad]?.uniforms.length ?? 0) +
+      (PROGRAMS[PROGRAM.candle]?.uniforms.length ?? 0);
+    const uniforms = PROGRAMS.reduce((n, p) => n + p.uniforms.length, 0) - unused;
     const before = [registry.stats.created, programs.stats.compiles, bench.builder.pool.created];
     expect(calls(gl, "getUniformLocation")).toBe(uniforms);
     const list = bench.builder.drawList;

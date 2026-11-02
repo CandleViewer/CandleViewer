@@ -135,6 +135,18 @@ export class FakeGl implements GL2Like {
   uniform1i = (at: unknown, ...v: number[]): void => this.uniform("uniform1i", at, v);
   uniform2f = (at: unknown, ...v: number[]): void => this.uniform("uniform2f", at, v);
   uniform4f = (at: unknown, ...v: number[]): void => this.uniform("uniform4f", at, v);
+  uniform4i = (at: unknown, ...v: number[]): void => this.uniform("uniform4i", at, v);
+  uniform4fv = (at: unknown, d: Float32Array): void => this.uniform("uniform4fv", at, [...d]);
+  /** Instance attribute setup (E12-S06): `attrib <index> <size> <stride> <offset>`, `divisor`. */
+  readonly attribs: string[] = [];
+  enableVertexAttribArray = (): void => void this.call("enableVertexAttribArray");
+  vertexAttribIPointer(i: number, size: number, _t: number, stride: number, offset: number): void {
+    if (this.call("vertexAttribIPointer"))
+      this.attribs.push(`attrib ${i} ${size} ${stride} ${offset}`);
+  }
+  vertexAttribDivisor(i: number, d: number): void {
+    if (this.call("vertexAttribDivisor")) this.attribs.push(`divisor ${i} ${d}`);
+  }
   compileShader = (): void => void this.call("compileShader");
   attachShader = (): void => void this.call("attachShader");
   linkProgram = (): void => void this.call("linkProgram");
@@ -174,7 +186,14 @@ export class FakeGl implements GL2Like {
   clear(): void {
     if (this.call("clear")) this.clears.push(this.color);
   }
-  drawArraysInstanced = (): void => void this.call("drawArraysInstanced");
+  /** E12-S06: `<vertices> <instances>` per instanced draw, once `trackDraws` is set (opt-in:
+   * the engine-bench scenes draw on this fake and must not pay a string per draw). */
+  readonly draws: string[] = [];
+  trackDraws = false;
+  drawArraysInstanced(_m: number, _f: number, count: number, instances: number): void {
+    if (this.call("drawArraysInstanced") && this.trackDraws)
+      this.draws.push(`${count} ${instances}`);
+  }
 }
 
 /** The `full` report a roomy context yields: the stub probe of the worker and host tests. */
