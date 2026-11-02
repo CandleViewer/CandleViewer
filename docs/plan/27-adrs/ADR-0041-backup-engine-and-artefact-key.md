@@ -85,10 +85,11 @@ which alone carry the Postgres client tools and the age implementation. The API 
   `admin/backups/` (M21), using the standard library only: no new edge.
 - **The channel.** The API reaches the sidecar over a Unix socket on a small volume shared by the two containers
   only, never the backup volume. The socket is reachable only by the API's user (file mode and a peer-credential
-  check); the sidecar has no network listener. Requests and answers are versioned, size-bounded and strict (unknown
+  check); the sidecar has no network listener. In the other direction, the API checks the socket's peer uid against
+  the sidecar's before it sends a request (AD-SC09). Requests and answers are versioned, size-bounded and strict (unknown
   fields refused); the vocabulary is `plan`, `run`, `verify`, `remove` and `restore`, keyed by the backup or job id.
   No request or answer carries a credential, a DSN or key material. Its schema is specified in
-  `24-internal-schemas.md` by B1, which ships both ends.
+  `24-internal-schemas.md` §15.8 by B1a; B1b ships both ends.
 - **The sidecar's own floor.** A well-formed request is not proof that it is wanted, so the sidecar keeps its own
   record of the runs it finished (id, kind, digest, `covers_to`, and the outcome of its own header check at each
   verification) on the backup volume and holds three rules no request can lift. A `remove` never takes the newest
@@ -126,11 +127,11 @@ which alone carry the Postgres client tools and the age implementation. The API 
   every other key. The sidecar holds only the public recipient, which is configuration, not a secret, so a run, a
   scheduled run and the automatic verification need no secret. The identity (private half) is held offline by the
   Owner and reaches the sidecar only for a restore or a restore drill (section 4). The recipient's fingerprint (the
-  SHA-256 over the lower-case Bech32 `age1…` recipient string as ASCII, written `age-x25519-sha256:<64 lower-case hex
-digits>`) is pinned in the sidecar's configuration; the sidecar refuses to run while the recipient it would encrypt
+  SHA-256 over the lower-case Bech32 `age1…` recipient string as ASCII, written
+  `age-x25519-sha256:<64 lower-case hex digits>`) is pinned in the sidecar's configuration; the sidecar refuses to run while the recipient it would encrypt
   to does not match it. `encryption_ref` on the catalogue row is that fingerprint as the sidecar's plan reports it, a
-  public value that keeps the column's class (`21` §12); a plan without one stays refused as `503
-backup_engine_invalid` (E42-T05 BK-8).
+  public value that keeps the column's class (`21` §12); a plan without one stays refused as
+  `503 backup_engine_invalid` (E42-T05 BK-8).
 - **Custody of the identity.** There is one recipient, so losing the identity loses every backup encrypted to it. The
   Owner holds the identity offline, never on the host that runs CandleViewer, and keeps an escrow copy sealed in a
   second place under their sole control; both are recorded in `21` §8.1's secrets row. Rotation: a new key pair is
@@ -273,7 +274,9 @@ Negative and risks:
 | PR  | Content                                                                                                                                                                           | Links                    |
 | --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
 | A   | this record; `21` and `22` text (contract first, C-6.1)                                                                                                                           | `Refs #3319`, `Partial:` |
-| B1  | grants revision for `cv_backup` / `cv_restore`; the sidecar and its image; the socket clients; run, verify, remove                                                                | `Refs #3319`, `Partial:` |
+| B1a | the socket contract (`24` §15.8); role creation in `pg_bootstrap.sql` and `cv_backup`'s grants revision; the API boot membership check; the verify port's `digest`                | `Refs #3319`, `Partial:` |
+| B1b | the sidecar core (config, protocol, server, run record, floor); both socket clients; verify and remove; the identity module                                                       | `Refs #3319`, `Partial:` |
+| B1c | the run path (`pg_dump`, `config_bundle`, the age tool); the image, its pins and the CI scans                                                                                     | `Refs #3319`, `Partial:` |
 | B2  | scheduler and `start_scheduled`; BK-9d and the refused chain; the unwired executor; the latch; `absent()` guards for the v1 kinds (after #5433); the flip of `BACKUPS_CATALOGUED` | `Closes #3319`           |
 
 Each code PR stays at or under about 1,500 counted lines with `large-pr-approved` asked in advance, and all three
