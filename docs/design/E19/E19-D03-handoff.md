@@ -15,7 +15,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [ ] **Motion pair** — N/A — every change here is a state flip; recompute choreography and the busy bar are E19-D05's
 - [x] **Density notes** — the shared density table
 - [x] **Essential-exceptions log** — merged rows under 24 px are not pointer targets; the mirror and the table reach them (D02 §11, `05` §3.4.7)
-- [x] **Tokens used** — spec §2.1: `color.profile.bar`, `color.profile.poc`, `color.profile.valuearea`, `color.buy.default`, `color.sell.default`, `color.text.secondary`, `color.text.tertiary`, `color.tpo.letter` (PROPOSED), `color.focus.ring`; patterns `pattern.hatch.estimated`, `pattern.dashed.tested`; equal to the rewritten `15` entry
+- [x] **Tokens used** — spec §2.1: `color.profile.bar`, `color.profile.poc`, `color.profile.valuearea`, `color.buy.default`, `color.sell.default`, `color.text.secondary`, `color.text.tertiary`, `color.tpo.letter` (PROPOSED), `color.focus.ring`, `color.chart.focus.ring`, `color.surface.canvas` (the halos and key swatches); patterns `pattern.hatch.estimated`, `pattern.dashed.tested`; equal to the rewritten `15` entry
 - [x] **Data contract confirmed** — `24` §5.1 VolumeProfile / ProfileLevel (`buy_volume`, `sell_volume`, `poc_ticks`, `hvn_ticks`, `lvn_ticks`, `naked_poc_ticks`); gaps D03-G1 … D03-G3 (spec §14.2)
 - [ ] **Contrast and CVD** — measured (spec §2.2, §2.3); PENDING: the `pairs.mjs` rows and the exemption drop in E19-T04's token PR (D03-A6), the export sheets in the boards PR
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — the spec's §3, §12 and §17 stand in until the boards; E19-D06 reviews
@@ -49,14 +49,15 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ### Table 1 — Variants × States (CMP-183)
 
-| Variant                       | State                                                              | Penpot ref frame                                          | Story name                                                                            | Notes          |
-| ----------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------- |
-| Session (multiples an option) | developing, final, approximated, partial                           | `CMP-183 · VolumeProfilePane — ref frame (Session)`       | Session, Multiples, Developing, Final, Approximated                                   | spec §7.1–§7.3 |
-| Fixed range, Anchored         | default; Anchored "contract pending A-1"                           | `CMP-183 · VolumeProfilePane — ref frame (Fixed range)`   | FixedRange, Anchored                                                                  | spec §7.1      |
-| Visible range                 | default, bucketed 5 000 rows                                       | `CMP-183 · VolumeProfilePane — ref frame (Visible range)` | Visible, Bucketed5000                                                                 | spec §7.4      |
-| Composite                     | default, covered range                                             | `CMP-183 · VolumeProfilePane — ref frame (Composite)`     | Composite                                                                             | D02 §7         |
-| levels                        | extended lines, naked POCs capped, tested shown, POC tooltip, VWAP | `CMP-183 · VolumeProfilePane — ref frame (levels)`        | ExtendLines, NakedPocCapped, NakedPocTested, PocTooltip, WithVwap, ValueAreaHighlight | spec §5, §9    |
-| host                          | docked, overlay, table                                             | `CMP-183 · VolumeProfilePane — ref frame (host)`          | Docked, Overlay, Table                                                                | spec §10, §12  |
+| Variant                       | State                                                              | Penpot ref frame                                          | Story name                                                                            | Notes           |
+| ----------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------- | ------------------------------------------------------------------------------------- | --------------- |
+| any                           | high contrast, forced colours                                      | `CMP-183 · VolumeProfilePane — ref frame (contrast)`      | HighContrast, ForcedColors                                                            | spec §2.2, §2.4 |
+| Session (multiples an option) | developing, final, approximated, partial                           | `CMP-183 · VolumeProfilePane — ref frame (Session)`       | Session, Multiples, Developing, Final, Approximated                                   | spec §7.1–§7.3  |
+| Fixed range, Anchored         | default; Anchored "contract pending A-1"                           | `CMP-183 · VolumeProfilePane — ref frame (Fixed range)`   | FixedRange, Anchored                                                                  | spec §7.1       |
+| Visible range                 | default, bucketed 5 000 rows                                       | `CMP-183 · VolumeProfilePane — ref frame (Visible range)` | Visible, Bucketed5000                                                                 | spec §7.4       |
+| Composite                     | default, covered range                                             | `CMP-183 · VolumeProfilePane — ref frame (Composite)`     | Composite                                                                             | D02 §7          |
+| levels                        | extended lines, naked POCs capped, tested shown, POC tooltip, VWAP | `CMP-183 · VolumeProfilePane — ref frame (levels)`        | ExtendLines, NakedPocCapped, NakedPocTested, PocTooltip, WithVwap, ValueAreaHighlight | spec §5, §9     |
+| host                          | docked, overlay, table                                             | `CMP-183 · VolumeProfilePane — ref frame (host)`          | Docked, Overlay, Table                                                                | spec §10, §12   |
 
 ## Handoff checklist — CMP-184 MarketProfileTpoPane (E19-D03, #438)
 
@@ -76,33 +77,41 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ### Table 1 — Variants × States (CMP-184)
 
-| Variant | State                                         | Penpot ref frame                                         | Story name                                      | Notes     |
-| ------- | --------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------- | --------- |
-| profile | letters that fit; letter size 12              | `CMP-184 · MarketProfileTpoPane — ref frame (profile)`   | Profile, LetterSize12                           | spec §6.1 |
-| blocks  | the 48-period day at compact; the legend note | `CMP-184 · MarketProfileTpoPane — ref frame (blocks)`    | Blocks, LettersFullDay48, BlocksFallbackCompact | spec §6.2 |
-| IB      | bar + label + band; single prints on and off  | `CMP-184 · MarketProfileTpoPane — ref frame (ib)`        | InitialBalanceShaded, SinglePrints              | spec §6.3 |
-| any     | greyscale                                     | `CMP-184 · MarketProfileTpoPane — ref frame (greyscale)` | Greyscale                                       | spec §2.3 |
+| Variant | State                                             | Penpot ref frame                                         | Story name                                      | Notes                  |
+| ------- | ------------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------- | ---------------------- |
+| profile | letters that fit; letter size 12                  | `CMP-184 · MarketProfileTpoPane — ref frame (profile)`   | Profile, LetterSize12                           | spec §6.1              |
+| blocks  | the 48-period day at compact; the legend note     | `CMP-184 · MarketProfileTpoPane — ref frame (blocks)`    | Blocks, LettersFullDay48, BlocksFallbackCompact | spec §6.2              |
+| IB      | bar + label + band; single prints on and off      | `CMP-184 · MarketProfileTpoPane — ref frame (ib)`        | InitialBalanceShaded, SinglePrints              | spec §6.3              |
+| any     | greyscale, focused, high contrast, forced colours | `CMP-184 · MarketProfileTpoPane — ref frame (greyscale)` | Greyscale, Focused, HighContrast, ForcedColors  | spec §2.3, §2.4, §12.2 |
 
 ## Shared tables (CMP-110, CMP-183, CMP-184)
 
 ### Table 2 — Keyboard
 
-| Key                           | Action                                        | Focus after         | Global conflict?                 | Notes                  |
-| ----------------------------- | --------------------------------------------- | ------------------- | -------------------------------- | ---------------------- |
-| ↑ / ↓                         | previous / next row (merged rows one stop)    | the row             | none (inside the composite grid) | `15`:592 (shared grid) |
-| `Home` / `End`                | first / last displayed row                    | the row             | none                             | —                      |
-| `PageUp` / `PageDown`         | by a page of rows                             | the row             | none                             | —                      |
-| `Enter`                       | reads the row detail (D02 W-34; POC adds W-1) | stays on the row    | none                             | spec §9                |
-| `Enter` / `Space` on W-2, W-6 | toggles reveal / tested                       | stays on the button | none                             | spec §5                |
+| Key                                       | Action                                                                                           | Focus after                           | Global conflict?                                          | Notes                  |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------- | --------------------------------------------------------- | ---------------------- |
+| ↑ / ↓                                     | previous / next row (merged rows one stop)                                                       | the row                               | none (inside the composite grid)                          | `15`:592 (shared grid) |
+| `Home` / `End`                            | first / last displayed row                                                                       | the row                               | none                                                      | —                      |
+| `PageUp` / `PageDown`                     | by a page of rows                                                                                | the row                               | none                                                      | —                      |
+| `Enter`                                   | reads the row detail (D02 W-34; POC adds W-1)                                                    | stays on the row                      | none                                                      | spec §9                |
+| `Enter` / `Space` on W-2, W-6             | toggles reveal / tested                                                                          | stays on the button                   | none                                                      | spec §5                |
+| `Esc` on a shown POC tooltip              | dismisses the tooltip                                                                            | stays on the row                      | none: `Esc` keeps its global cancel meaning, not remapped | spec §9                |
+| (no key) W-2 leaves the legend when k = 0 | —                                                                                                | the legend's first item, never `body` | none                                                      | spec §5, §12.3         |
+| `Tab`                                     | docked: header controls → mirror → legend → table; overlay: legend-row controls → mirror → table | the next stop                         | none                                                      | spec §12.3             |
 
 ### Table 3 — Accessible name / role
 
-| Element               | Role                      | Accessible name (source)                     | States / properties                        |
-| --------------------- | ------------------------- | -------------------------------------------- | ------------------------------------------ |
-| histogram mirror      | the composite grid's stop | "Profile rows" + the row's D02 W-34 sentence | `aria-activedescendant` on the focused row |
-| nPOC reveal button    | `button`                  | W-3 (visible W-2)                            | `aria-pressed`                             |
-| tested toggle         | `button`                  | W-6                                          | `aria-pressed`                             |
-| CMP-227 in the header | `button` (CMP-227's)      | "Estimated, …" (CMP-227's)                   | `aria-haspopup="dialog"`                   |
+| Element               | Role                                                    | Accessible name (source)                       | States / properties                                          |
+| --------------------- | ------------------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------ |
+| histogram mirror      | the composite grid's stop                               | "Profile rows" + the row's D02 W-34 sentence   | `aria-activedescendant` on the focused row                   |
+| nPOC reveal button    | `button`                                                | W-3 (visible W-2); pressed W-22 (visible W-21) | none: the label-swap pattern, no `aria-pressed`              |
+| tested toggle         | `button`                                                | W-6 (constant)                                 | `aria-pressed`; pressed adds a leading CMP-019 `check` glyph |
+| Levels group          | the table's first row group; the mirror's first entries | W-19                                           | each row W-4 / word, price, W-5, W-20                        |
+| CMP-227 in the header | `button` (CMP-227's)                                    | "Estimated, …" (CMP-227's)                     | `aria-haspopup="dialog"`                                     |
+
+### Table 4 — Motion
+
+N/A — no animated property here; recompute and developing → final choreography are E19-D05's.
 
 ### Table 5 — Live data
 
@@ -115,11 +124,11 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ### Density
 
-| Density     | Inset            | Header row | Canvas text   | Smallest target                                 |
-| ----------- | ---------------- | ---------- | ------------- | ----------------------------------------------- |
-| compact     | `space.inset.sm` | 24 px      | `type.num.xs` | 24 px controls; rows via the mirror (exception) |
-| dense       | `space.inset.xs` | 24 px      | `type.num.xs` | as compact                                      |
-| comfortable | `space.inset.md` | 32 px      | `type.num.xs` | 32 px controls                                  |
+| Density     | Inset            | Header row | Canvas text                | Smallest target                                                                         |
+| ----------- | ---------------- | ---------- | -------------------------- | --------------------------------------------------------------------------------------- |
+| compact     | `space.inset.sm` | 24 px min  | `type.num.xs` × text scale | 24 × 24 px controls; rows via the mirror and the table (`05`:100's essential exception) |
+| dense       | `space.inset.xs` | 24 px min  | `type.num.xs` × text scale | as compact                                                                              |
+| comfortable | `space.inset.md` | 32 px min  | `type.num.xs` × text scale | 32 × 32 px controls                                                                     |
 
 ## Who applies what
 

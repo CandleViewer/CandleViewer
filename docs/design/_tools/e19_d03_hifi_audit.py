@@ -13,13 +13,13 @@ Usage:
   python3 -I docs/design/_tools/e19_d03_hifi_audit.py --self-test    every mutation must FAIL its gate
   python3 -I docs/design/_tools/e19_d03_hifi_audit.py --repin-ruled  rewrite the BQ-section pins
 
-The D02 pin (D02_HEAD) and the memo pin (MEMO_HEAD) re-pin to their PRs' merge commits when they
-merge; BASE moves with a rebase. The BQ list (BQ_LIST_ID) is not yet ruled (RULING_ID is None):
-the spec's BQ heading reads "defaults built; ruling pending" and every bullet states its
-ORCH-default; once ruled, set RULING_ID and RULED_OVERRIDES and run `--repin-ruled`. BQ-2's default
-lets this ticket rewrite the CMP-110, CMP-183 and CMP-184 entries of `15` in place and add one
-pointer line under SCR-038 and one under SCR-039 in `14`; G-UNTOUCHED checks both diffs line by
-line against the merge-base with origin/main (BASE when that is absent).
+The D02 pin (D02_HEAD) re-pins to its PR's merge commit when it merges; the memo pin (MEMO_HEAD) is
+already the E19-D01 memo's merge commit; BASE moves with a rebase. The BQ list (BQ_LIST_ID) is not
+yet ruled (RULING_ID is None): the spec's BQ heading reads "defaults built; ruling pending" and
+every bullet states its ORCH-default; once ruled, set RULING_ID and RULED_OVERRIDES and run
+`--repin-ruled`. BQ-2's default lets this ticket rewrite the CMP-110, CMP-183 and CMP-184 entries of
+`15` in place and add one pointer line under SCR-038 and one under SCR-039 in `14`; G-UNTOUCHED
+checks both diffs line by line against the merge-base with origin/main (BASE when that is absent).
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ OWNED_ENTRIES = ("### CMP-110 ", "### CMP-183 ", "### CMP-184 ")
 BASE = "9b77e6b83"
 D02_HEAD = "bed73afaa"
 D02_REL = "docs/design/E19/E19-D02.md"
-MEMO_HEAD = "949755375"
+MEMO_HEAD = "b005ce610"
 MEMO_REL = "docs/design/research/e19-profiles.md"
 TOKENS = "packages/ui/tokens/"
 BQ_LIST_ID = "6579617671"
@@ -61,6 +61,7 @@ BQ_COUNT = 14
 BOARD_CAP = 10
 WALK_CAP = 10
 TICKET_KEY = "E19-D03"
+CHECKLIST_LINES = (1017, 1028)  # `14`: the SCR-038 and SCR-039 design sign-off checklists
 MEANINGS = (
     "Bar magnitude",
     "Buy / sell split",
@@ -129,6 +130,7 @@ KEY_CITES: tuple[tuple[str, int, str], ...] = (
     ("15", 592, "composite-grid"),
     ("15", 1292, "chart-primitive-adjacent"),
     ("15", 1298, "Volume, Delta, TPO, POC, ValueArea"),
+    ("15", 1331, "`Esc` dismisses it"),
     ("15", 2380, "periodType"),
     ("15", 2390, "color.tpo.letter"),
     ("15", 2937, '"(estimated)"'),
@@ -159,6 +161,8 @@ KEY_CITES: tuple[tuple[str, int, str], ...] = (
     ("D02", 163, "zero net delta"),
     ("D02", 353, "Developing · as of {HH:MM} UTC"),
     ("D02", 376, "Net delta zero"),
+    ("D02", 342, "200 % zoom"),
+    ("D02", 459, "the 10 px floor kept"),
     ("MEMO", 140, "2.86"),
     ("MEMO", 142, "binding on E19-D03"),
     ("MEMO", 146, "reserved, F-3"),
@@ -175,8 +179,10 @@ KEY_CITES: tuple[tuple[str, int, str], ...] = (
     ("SD", 114, "color.sell.default"),
     ("SD", 222, "color.footprint.bid"),
     ("SD", 234, "color.profile.bar"),
+    ("SD", 715, "color.chart.focus.ring"),
     ("SL", 57, "color.profile.bar"),
     ("PM", 64, "color.profile.bar"),
+    ("PM", 337, "color.chart.focus.ring"),
     ("EX", 65, "dark:color.profile.bar"),
     ("CM", 48, "contrastRatio"),
     ("CM", 109, "simulateCvd"),
@@ -693,6 +699,19 @@ def g_ac(c: Ctx) -> list[str]:
     for i, t in enumerate(titles, 1):
         if f"| AC {i} — Scenario: {t} " not in trace:
             bad.append(f"AC {i} must quote 'Scenario: {t}' verbatim")
+    # The `14` design sign-off checklists of SCR-038 and SCR-039, item by item (§18.4).
+    src = c.sources.get("14", [])
+    sign = section(c.spec, "### 18.4")
+    for n in CHECKLIST_LINES:
+        line = src[n - 1] if n <= len(src) else ""
+        items = [i.strip() for i in line.split("[ ]")[1:]]
+        if not items:
+            bad.append(f"`14`:{n} carries no sign-off checklist at {BASE}")
+        for item in items:
+            if f"\u201c{item}\u201d" not in sign:
+                bad.append(f"§18.4 does not quote the `14`:{n} item {item!r}")
+    if "§18.4" not in trace:
+        bad.append("the trace has no row for the `14` sign-off checklists (§18.4)")
     return bad
 
 
@@ -1488,6 +1507,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Ctx], Ctx]], ...] = (
         "G-AC",
         sub_spec("Scenario: Naked POC clutter is capped", "Scenario: Naked POC capped"),
     ),
+    ("M-53", "G-AC", sub_spec("\u201clive preview\u201d", "\u201cpreview\u201d")),
     ("M-15", "G-DOD", sub_spec("written and attached to the ticket.", "written.")),
     ("M-16", "G-TOKENS", sub_re(r"^(\| `color\.profile\.bar` .*\| )shipped ", r"\1PROPOSED")),
     ("M-17", "G-TOKENS", sub_spec(_ANCHOR, _ANCHOR + "Canvas #11151A.\n")),
@@ -1606,7 +1626,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"     {d}")
     fails = sum(not r.ok for r in results)
     if not args.json:
-        print(f"FAIL {fails} of {len(results)} gates")
+        print(
+            f"FAIL {fails} of {len(results)} gates" if fails else f"PASS all {len(results)} gates"
+        )
     return 1 if fails else 0
 
 
