@@ -324,6 +324,23 @@ def quoted(s: str) -> list[str]:
     return re.findall(r'"([^"\n]+)"', s)
 
 
+def whole_string(text: str, line: str) -> bool:
+    """True when `text` is a whole string on the cited line, not a part of a longer one.
+
+    It must equal a quoted string, a table cell, a bold span or a code span of the line, or stand
+    alone in the line's prose: delimited on both sides by anything but a letter, digit, hyphen or
+    apostrophe. A cut-short string ("Sav" in "Save") fails both tests.
+    """
+    want = norm(text)
+    units = set(quoted(line))
+    if line.lstrip().startswith("|"):
+        units |= {unquote(c) for c in cells(line)}
+    units |= set(re.findall(r"\*\*([^*\n]+)\*\*", line)) | set(re.findall(r"`([^`\n]+)`", line))
+    if want in {norm(u) for u in units}:
+        return True
+    return bool(re.search(rf"(?<![\w'\u2019-]){re.escape(want)}(?![\w'\u2019-])", line))
+
+
 # ---------------------------------------------------------------------------- the pack's tables
 
 
@@ -813,10 +830,12 @@ def g_cover(t: Texts, vals: dict[str, str]) -> list[str]:
             bad.append(f"the copy.ts export {ex} is no row's source")
     for r in table:
         c = first_cite(r["source"])
-        if c and c[0] in ("D02", "D04", "14"):
+        if c and (c[0] in ("D02", "D04", "14") or (c[0] == "COPY" and r["status"] == "merged")):
             line = unesc(slots_to_braces(norm(line_at(t, c[0], c[1]))))
-            if norm(r["text"]) not in line:
-                bad.append(f"{r['key']}: {r['text'][:40]!r} is not verbatim on `{c[0]}`:{c[1]}")
+            if not whole_string(r["text"], line):
+                bad.append(
+                    f"{r['key']}: {r['text'][:40]!r} is not a whole string on `{c[0]}`:{c[1]}"
+                )
         elif not c and not r["source"].startswith("new ("):
             bad.append(f"{r['key']}: its source is neither a cite nor `new (...)`")
     e36 = e36_deck(t)
@@ -1070,6 +1089,14 @@ def gates_of(t: Texts) -> dict[str, Callable[[Texts, dict[str, str]], list[str]]
     return {"G-STAGE": g_stage, **{g: GATES[g] for g in names}}
 
 
+# the parts of the deck-stage gates that need the spec, named so the stage skips nothing silently
+DECK_LEAVES = (
+    "G-DECK's twin equal to sections 8.1, 8.4 and 9",
+    "G-COVER's coverage of every quoted D02 / D04 / `T` string",
+    "G-STATUS's section 3.1 check",
+)
+
+
 def not_run(t: Texts) -> list[str]:
     return [g for g in GATES if g not in gates_of(t)]
 
@@ -1302,6 +1329,10 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
     ("G-DECK", "an 8.1 status outside the three words",
      row_set("rules.graph.edge.delete", 6, "DECIDED", "status", "DECIDED")),
     ("G-DECK", "the label cap stated as merged in the head", deck_head("caps", caps_with("label", "merged"))),
+    ("G-COVER", "a `COPY` type label drifts in the spec and the deck",
+     row_set("rules.graph.type.trigger", 1, '"Trigga"', "text", "Trigga")),
+    ("G-COVER", "a merged D04 string cut short in the spec and the deck",
+     row_set("rules.graph.bar.save", 1, '"Sav"', "text", "Sav")),
     ("G-CHECKLIST", "DA-17 dropped", drop_row("DA-17")),
     ("G-CHECKLIST", "DA-17 cites SC-9's line", set_cell("DA-17", 3, "`D04`:320")),
 )
@@ -1322,6 +1353,14 @@ DECK_MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
      deck_set("rules.graph.aria.position", "source", "`COPY`:144")),
     ("G-COVER", "a cited E36-D05 string drifts",
      deck_cited("rules.editor.roundtrip.mismatch", "text", "Round-trip differs")),
+    ("G-COVER", "a `COPY` type label drifts",
+     deck_set("rules.graph.type.trigger", "text", "Trigga")),
+    ("G-COVER", "a `COPY` port label made longer",
+     deck_set("rules.graph.portlabel.when", "text", "run whenever")),
+    ("G-COVER", "a merged D04 string cut short",
+     deck_set("rules.graph.bar.save", "text", "Sav")),
+    ("G-COVER", "a merged D02 string cut short",
+     deck_set("rules.graph.panel.title", "text", "What won't round-tri")),
     ("G-RAW", "a raw hex in a context",
      deck_set("rules.graph.canvas.fit", "context", "a foot-row button (L-4), #11151A")),
     ("G-RAW", "a raw px value in a row with no D0x cite",
@@ -1368,6 +1407,7 @@ def header(t: Texts) -> list[str]:
     out = [f"stage: {stage(t)} ({len(gates_of(t))} gates)"]
     if skipped:
         out.append(f"stage: not run here, the full stage runs them: {', '.join(skipped)}")
+        out.append(f"stage: parts of the gates that run, left out here: {'; '.join(DECK_LEAVES)}")
     return out
 
 
