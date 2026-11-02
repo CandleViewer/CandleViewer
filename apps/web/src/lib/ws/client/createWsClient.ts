@@ -9,6 +9,7 @@
 import type {
   ConsumerSpec,
   PaneVisibility,
+  SnapFrame,
   TokenResult,
   TokenSource,
   TopicFrame,
@@ -31,6 +32,7 @@ import {
   type WsDiagnostics,
 } from "../port/messages";
 import type { SystemUpdate } from "../protocol/frames";
+import type { TopicReading } from "../state/chipState";
 import { INITIAL_WS_STATE, reduce } from "../state/reducer";
 import type { TopicStatus, WsState } from "../state/types";
 import { createFrameScheduler, type FrameMark } from "./frameScheduler";
@@ -101,6 +103,11 @@ export interface WsClientOptions {
 export interface WsClientHandle extends WsClient {
   /** The worker's counters as of its last `diag` (D8): in memory, never exported. */
   diagnostics(): WsDiagnostics | undefined;
+  /**
+   * #5345 (E17-D02 §3): what the CMP-076 chip reads of each consumer's topic, as of the call. A
+   * frame notifies nobody of it: the chip reads it on its own 1 Hz clock and its transitions.
+   */
+  topics(): readonly TopicReading[];
 }
 
 /** What a handle reads, as of the last animation frame that had news of it. */
@@ -126,6 +133,12 @@ interface Consumer {
   answer: unknown;
   /** The wait for the snapshot it asked for (`waiting`): when it ends the `resync` is sent again. */
   reask: unknown;
+  /** #5345: wall ms of its newest fresh frame (a `d`, or a `snap` without `stale`); its consume time until one. */
+  freshAtMs: number;
+  /** #5345: its baseline's `meta.stale` (23 7.2), held from that `snap` to the next one. */
+  serverStale: boolean;
+  /** #5345: a reconnect voided its state (`reset` `reconnect`) and no `snap` has come since. */
+  awaitingReconnect: boolean;
 }
 
 /** `Retry now` is offered on a down link that may come back: not up or opening, not after a 4403 (the session ended). */
@@ -136,6 +149,17 @@ export function mayRetry(state: WsState): boolean {
 }
 
 const NOTHING: Readonly<Record<string, unknown>> = Object.freeze({});
+
+/** 23 7.2: a snapshot's `meta.stale`, or a structured body's own `stale` (`book`, 14.1), which agree. */
+const staleSnap = (frame: SnapFrame): boolean =>
+  frame.meta?.stale === true ||
+  frame.bodies.some(
+    (b) =>
+      b.e === "j" &&
+      typeof b.p === "object" &&
+      b.p !== null &&
+      (b.p as Readonly<Record<string, unknown>>)["stale"] === true,
+  );
 
 /** What the worker reads of a token result and no more: a field the source adds (a refresh token, a user) stays in the tab. */
 const picked = (result: TokenResult): TokenResult =>
@@ -222,6 +246,23 @@ export function createWsClient(options: WsClientOptions): WsClientHandle {
     if (consumer.queue.push(frame) === "overflow") voided(consumer);
   }
 
+  /**
+   * #5345: what `topics()` says of a consumer, noted at the frame's arrival, never at the display. A
+   * delta that extends a baseline gone (`waiting`) is no fresh data; a snapshot ends a reconnect's
+   * wait whatever it says, and is fresh unless it says `stale`, which it holds until the next one.
+   */
+  function note(consumer: Consumer, frame: TopicFrame): void {
+    if (frame.kind === "reset") {
+      if (frame.reason === "reconnect") consumer.awaitingReconnect = true;
+    } else if (frame.kind === "d") {
+      if (!consumer.waiting) consumer.freshAtMs = wallClock();
+    } else {
+      consumer.awaitingReconnect = false;
+      consumer.serverStale = staleSnap(frame);
+      if (!consumer.serverStale) consumer.freshAtMs = wallClock();
+    }
+  }
+
   function onData(message: DataMessage): void {
     const consumer = consumers.get(message.id);
     if (consumer === undefined) return; // released since: its frames are for nobody
@@ -239,6 +280,7 @@ export function createWsClient(options: WsClientOptions): WsClientHandle {
         ts = frame.ts;
       }
       if (frame.kind === "snap" && frame.meta?.reason === "instrument_revision") revised = true;
+      note(consumer, frame); // before `enqueue`, which may void it
       enqueue(consumer, frame);
     }
     if (!consumer.waiting || message.status === "revoked") stopAsking(consumer); // a snapshot came, or none will
@@ -377,6 +419,9 @@ export function createWsClient(options: WsClientOptions): WsClientHandle {
         waiting: false,
         answer: undefined,
         reask: undefined,
+        freshAtMs: wallClock(),
+        serverStale: false,
+        awaitingReconnect: false,
       };
       if (stopped) return handleOf(consumer); // nothing is served any more
       consumers.set(consumer.id, consumer);
@@ -423,6 +468,16 @@ export function createWsClient(options: WsClientOptions): WsClientHandle {
       return () => void listeners.delete(listener);
     },
     diagnostics: () => diag,
+    topics: () =>
+      [...consumers.values()].map((c): TopicReading => ({
+        ch: c.ch,
+        rs: c.rs,
+        source: c.view.source,
+        status: c.view.status,
+        freshAtMs: c.freshAtMs,
+        serverStale: c.serverStale,
+        awaitingReconnect: c.awaitingReconnect,
+      })),
     stop() {
       if (stopped) return;
       post({ t: "stop" });

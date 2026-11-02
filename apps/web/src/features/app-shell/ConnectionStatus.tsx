@@ -16,6 +16,10 @@ export interface ConnectionStatusProps {
   /** `connecting` before the session's first `auth_ok` (§5, Q1): "Connecting…", no counter. */
   readonly firstConnect?: boolean;
   readonly staleAgeMs?: number;
+  /** §2 row 12: `meta.stale` on a ticker or book: "Stale (server)". */
+  readonly serverStale?: boolean;
+  /** §2 row 13: the exchange's public feed is down: "Stale — exchange feed down". */
+  readonly upstreamDown?: boolean;
   readonly strong?: boolean;
   readonly throttleMultiplier?: number;
   /** The clock for the age; the container ticks it at 1 Hz while disconnected. */
@@ -37,7 +41,11 @@ const LOOK: Record<ConnectionChipStatus | "strong", readonly [Glyph, string, str
   offline: [{ icon: "close" }, "status-danger-subtle", "status-danger-strong"],
 };
 
-/** The chip word (E17-D02 §10 A). Words without a number are PROPOSED where §10 A has none. */
+/**
+ * The chip word (E17-D02 §10 A). Words without a number are PROPOSED where §10 A has none. The age
+ * reads "Stale 7 s" (#5345, as §10 C and §11 space it): §10 A's "Stale 7s" is not part of its own
+ * name "Stale 7 seconds", which SC 2.5.3 (Label in Name) needs; "7 s" is.
+ */
 export function chipWord(p: ConnectionStatusProps): string {
   switch (p.status) {
     case "live":
@@ -47,7 +55,9 @@ export function chipWord(p: ConnectionStatusProps): string {
         ? "Reduced rate"
         : `Reduced rate ×${p.throttleMultiplier}`;
     case "stale":
-      return p.staleAgeMs === undefined ? "Stale" : `Stale ${Math.floor(p.staleAgeMs / 1000)}s`;
+      if (p.upstreamDown === true) return "Stale — exchange feed down";
+      if (p.serverStale === true) return "Stale (server)";
+      return p.staleAgeMs === undefined ? "Stale" : `Stale ${Math.floor(p.staleAgeMs / 1000)} s`;
     case "reconnecting":
       if (p.firstConnect === true) return "Connecting…";
       return p.attempt === undefined ? "Reconnecting" : `Reconnecting (${p.attempt})`;
@@ -120,8 +130,7 @@ function useCrossFade(status: ConnectionChipStatus): CSSProperties {
  * E47-T01 re-audit). The content cross-fades on a status change (BQ-10).
  *
  * PROPOSED / deferred visuals: `density` (one compact pill for now); hover styling; the `type.ui.caption` /
- * `.label` token (inherited font); the 20 px pill inside a 24 px target (the pill is the target);
- * the `serverStale` and `upstreamDown` detail states (no source in the shell store).
+ * `.label` token (inherited font); the 20 px pill inside a 24 px target (the pill is the target).
  */
 export function ConnectionStatus(props: ConnectionStatusProps): JSX.Element {
   const { status, lastGoodTs, nowMs } = props;
