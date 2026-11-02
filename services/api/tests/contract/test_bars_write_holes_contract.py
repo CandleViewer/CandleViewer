@@ -10,7 +10,7 @@ klines). The hole comes from the real write path: a `BarWriter` whose sink store
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -19,9 +19,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from candleviewer.api._generated.openapi_models import KlineResponse
-from candleviewer.api.market import make_market_router
+from candleviewer.api.market import _write_holes, make_market_router
 from candleviewer.api.market_bars import make_market_bars_router
-from candleviewer.api.market_response import iso_us
+from candleviewer.api.market_response import BarSegments, iso_us
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.reader import BarReader
 from candleviewer.bars.rows import bar_param_for, bar_row
@@ -230,3 +230,34 @@ def test_klines_a_served_kline_row_fills_the_hole(tmp_path: Path) -> None:
     KlineResponse.model_validate(body)
     holes = body["meta"]["coverage_holes"]
     assert not any(h["start_us"] <= corpus[20].ts_us < h["end_us"] for h in holes)
+
+
+@dataclass(frozen=True, slots=True)
+class _NoSource:
+    """A row that names no `source` (the klines rows' other fields)."""
+
+    ts_us: int
+    open: str = "1"
+    high: str = "2"
+    low: str = "0.5"
+    close: str = "1.5"
+    volume: str = "3"
+    turnover: str = "4.5"
+    confirmed: bool = True
+
+
+@pytest.mark.parametrize(("row", "listed"), [
+    (lambda t: klines_world._Kline(t, "1", "2", "0.5", "1.5", "3", "4.5"), False),  # source ws
+    (lambda t: _NoSource(t), True),  # no source: read as tape, never trusted (fail closed)
+    (lambda t: klines_world._Tape(t), True),  # tape at an unknown version
+])  # fmt: skip
+def test_klines_only_an_exchange_kline_row_fills_a_hole_whatever_its_version(
+    tmp_path: Path, row: Any, listed: bool
+) -> None:
+    open_us = 1_700_000_000_000_000
+    ledger = WriteHoleLedger(tmp_path)
+    _klines_hole(ledger, open_us)
+    bars = BarSegments()
+    bars.add_rows([row(open_us)])
+    got = _write_holes(ledger, "BTCUSDT", "1", _MIN, open_us, open_us + _MIN, bars)
+    assert got == ([(open_us, open_us + _MIN)] if listed else [])

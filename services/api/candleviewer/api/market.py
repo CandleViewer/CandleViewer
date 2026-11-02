@@ -74,8 +74,10 @@ from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.models import TierHint, TimeRange
 
 _REQUIRED_PERMISSION = "marketdata:read"
-#: Row sources built from the recorded tape (`bars.reader.StoredBar.tape_built`).
-_TAPE_SOURCES = frozenset({"tape", "parquet"})
+#: Row sources that are exchange klines (QuestDB `klines.source`: `ws`, `rest`; a `bars_time`
+#: kline row: `kline`). Only these fill a write hole whatever its version; any other row, one with
+#: no `source` included, is read as tape-built and compared by version (fail closed).
+_EXCHANGE_KLINE_SOURCES = frozenset({"ws", "rest", "kline"})
 
 #: `price_type` values the contract enumerates; only `trade` klines are stored today (the
 #: mark/index/premium-index kline streams are not ingested), so the others are refused 422.
@@ -558,7 +560,7 @@ def _write_holes(
     served = [
         # a tape-built row is served as the version its checksum names; any other row (an
         # exchange kline) fills the interval whatever the tape built
-        Present(None, None, t, t + width, checksum, trusted=source not in _TAPE_SOURCES)
+        Present(None, None, t, t + width, checksum, trusted=source in _EXCHANGE_KLINE_SOURCES)
         for t, source, checksum in bars.row_versions()
     ]
     return ledger.holes_for(symbol, spec.spec_hash, start_us, end_us, served)

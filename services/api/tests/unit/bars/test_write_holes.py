@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import orjson
@@ -129,7 +129,7 @@ async def test_write_holes_journal_is_written_after_each_change(tmp_path: Path) 
     ledger.lost([_key(1)], "refused")
     await ledger.flush()
     doc = orjson.loads((tmp_path / JOURNAL_NAME).read_bytes())
-    assert doc["v"] == 2 and doc["series"][0]["symbol"] == SYM
+    assert doc["v"] == 3 and doc["series"][0]["symbol"] == SYM
     ledger.written([_key(1)])
     await ledger.flush()
     assert orjson.loads((tmp_path / JOURNAL_NAME).read_bytes())["series"] == []
@@ -146,7 +146,7 @@ async def test_write_holes_missing_journal_starts_empty_without_a_count(tmp_path
 
 def _doc(ranges: list[list[object]], **series: object) -> bytes:
     one = {"symbol": SYM, "spec_hash": H, "kind": "time", "bar_param": "1m", "ranges": ranges}
-    return orjson.dumps({"v": 2, "series": [{**one, **series}]})
+    return orjson.dumps({"v": 3, "series": [{**one, **series}]})
 
 
 @pytest.mark.parametrize(
@@ -156,28 +156,49 @@ def _doc(ranges: list[list[object]], **series: object) -> bytes:
         (orjson.dumps({"v": 99, "series": []}), "version"),
         (_doc([], symbol="../x"), "corrupt"),
         (_doc([], spec_hash="../x"), "corrupt"),
-        (_doc([[7, 1, 1, 5, 9, "refused", 0, 1, False, False, []]], kind="ohlc"), "corrupt"),
+        (_doc([[7, 1, 1, 5, 9, "refused", 0, 1, False, False, [], False]], kind="ohlc"), "corrupt"),
         (_doc([]), "corrupt"),  # a series with no record
-        (_doc([[7, 1, 1, 5, 5, "refused", 0, 1, False, False, []]]), "corrupt"),  # an empty span
         (
-            _doc([[7, 2, 1, 5, 9, "refused", 0, 1, False, False, []]]),
+            _doc([[7, 1, 1, 5, 5, "refused", 0, 1, False, False, [], False]]),
+            "corrupt",
+        ),  # an empty span
+        (
+            _doc([[7, 2, 1, 5, 9, "refused", 0, 1, False, False, [], False]]),
             "corrupt",
         ),  # indexes out of order
         (
-            _doc([[7, 1, 1, 5, 9, "lost", 0, 1, False, False, []]]),
+            _doc([[7, 1, 1, 5, 9, "lost", 0, 1, False, False, [], False]]),
             "corrupt",
         ),  # a reason not in the set
-        (_doc([[7, 1, 1, 5, 9, "refused", 0, 0, False, False, []]]), "corrupt"),  # a zero count
-        (_doc([[7, 1, 1, 5, 9, "refused", 0, 1, 0, False, []]]), "corrupt"),  # `merged` not a bool
         (
-            _doc([[True, 1, 1, 5, 9, "refused", 0, 1, False, False, []]]),
+            _doc([[7, 1, 1, 5, 9, "refused", 0, 0, False, False, [], False]]),
+            "corrupt",
+        ),  # a zero count
+        (
+            _doc([[7, 1, 1, 5, 9, "refused", 0, 1, 0, False, [], False]]),
+            "corrupt",
+        ),  # `merged` not a bool
+        (
+            _doc([[True, 1, 1, 5, 9, "refused", 0, 1, False, False, [], False]]),
             "corrupt",
         ),  # a bool generation
-        (_doc([[7, 1, 1, 5, 9, "refused", 0, 1, False, 1, []]]), "corrupt"),  # stale not a bool
+        (
+            _doc([[7, 1, 1, 5, 9, "refused", 0, 1, False, 1, [], False]]),
+            "corrupt",
+        ),  # stale not a bool
         (_doc([[7, 1, 1, 5, 9, "refused", 0, 1, False, False]]), "corrupt"),  # ten fields (v1's)
-        (_doc([[7, 1, 1, 5, 9, "refused", 0, 1, True, False, [[1, 5]]]]), "corrupt"),  # merged
-        (_doc([[7, 1, 1, 5, 9, "refused", 0, 1, False, False, [[1]]]]), "corrupt"),  # a half pair
-        (_doc([[7, 1, 1, 5, 9, "refused", 0, 1, False, False, [[1, "5"]]]]), "corrupt"),
+        (_doc([[7, 1, 1, 5, 9, "refused", 0, 1, False, False, []]]), "corrupt"),  # eleven (v2's)
+        (_doc([[7, 1, 1, 5, 9, "refused", 0, 1, False, False, [], 0]]), "corrupt"),  # overflow
+        (orjson.dumps({"v": 2, "series": []}), "version"),  # a v2 journal is discarded
+        (
+            _doc([[7, 1, 1, 5, 9, "refused", 0, 1, True, False, [[1, 5]], False]]),
+            "corrupt",
+        ),  # merged
+        (
+            _doc([[7, 1, 1, 5, 9, "refused", 0, 1, False, False, [[1]], False]]),
+            "corrupt",
+        ),  # a half pair
+        (_doc([[7, 1, 1, 5, 9, "refused", 0, 1, False, False, [[1, "5"]], False]]), "corrupt"),
         (orjson.dumps({"v": 1, "series": []}), "version"),  # a v1 journal is discarded
         (_doc([[7, 1, 1, 5, 9, "refused", 0, 1, False]]), "corrupt"),  # a row of nine fields
     ],
@@ -202,7 +223,7 @@ async def test_write_holes_oversized_journal_is_discarded(
     from candleviewer.bars import write_holes
 
     (tmp_path / JOURNAL_NAME).write_bytes(
-        _doc([[7, 1, 1, 5, 9, "refused", 0, 1, False, False, []]])
+        _doc([[7, 1, 1, 5, 9, "refused", 0, 1, False, False, [], False]])
     )
     monkeypatch.setattr(write_holes, "MAX_JOURNAL_BYTES", 16)
     ledger = WriteHoleLedger(tmp_path)
@@ -382,6 +403,41 @@ def test_write_holes_m2_storing_an_earlier_version_keeps_the_lost_amend(tmp_path
     assert ledger.pending() == []
 
 
+def test_write_holes_two_lost_versions_of_a_key_are_never_suppressed(tmp_path: Path) -> None:
+    """#5432 delta: the v2 amend is recorded lost, then v1 is reported lost too (`shutdown`) though
+    v1 was stored. Kept as the last version lost, v1 served would hide v2's hole: a slot with two
+    different versions is unknown for good, so neither served version suppresses it."""
+    ledger = WriteHoleLedger(tmp_path)
+    ledger.lost([_key(1, ver=222)], "permanent")
+    ledger.lost([_key(1, ver=111)], "shutdown")
+    assert _all(ledger, [_served(1, ver=111)]) == [(T0 + W, T0 + 2 * W)]
+    assert _all(ledger, [_served(1, ver=222)]) == [(T0 + W, T0 + 2 * W)]
+    ledger.written([_key(1, ver=222)])  # a store of either no longer clears it: a heal does
+    assert len(ledger.pending()) == 1
+
+
+def test_write_holes_a_lost_version_unknown_is_never_suppressed(tmp_path: Path) -> None:
+    ledger = WriteHoleLedger(tmp_path)
+    ledger.lost([replace(_key(1), checksum=None)], "refused")
+    ledger.lost([_key(1, ver=V1)], "refused")  # a known version later does not make it known
+    assert _all(ledger, [_served(1, ver=V1)]) == [(T0 + W, T0 + 2 * W)]
+
+
+def test_write_holes_the_global_version_budget_makes_the_largest_record_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from candleviewer.bars import write_holes
+
+    monkeypatch.setattr(write_holes, "MAX_TOTAL_VERSIONS", 3)
+    ledger = WriteHoleLedger(tmp_path)
+    ledger.lost([_key(1), _key(2), _key(3)], "refused")  # one record, 3 slots
+    assert _all(ledger, [_served(2)]) == [(T0 + W, T0 + 2 * W), (T0 + 3 * W, T0 + 4 * W)]
+    ledger.lost([_key(9)], "refused")  # a 4th slot: the largest record gives its slots up
+    assert _all(ledger, [_served(2)]) == [(T0 + W, T0 + 4 * W), (T0 + 9 * W, T0 + 10 * W)]
+    ledger.lost([_key(4)], "refused")  # it stays unknown: no slot comes back
+    assert _all(ledger, [_served(4)]) == [(T0 + W, T0 + 5 * W), (T0 + 9 * W, T0 + 10 * W)]
+
+
 def test_write_holes_a_record_keeps_at_most_its_bound_of_versions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -519,8 +575,8 @@ async def test_write_holes_hand_edited_journal_loads_or_is_discarded_never_raise
 ) -> None:
     from candleviewer.bars import write_holes
 
-    one = [[7, 1, 1, T0, T0 + W, "refused", 0, 1, False, False, []]]
-    doc = {"v": 2, "series": [{"symbol": SYM, "spec_hash": h * 64, "kind": "time",
+    one = [[7, 1, 1, T0, T0 + W, "refused", 0, 1, False, False, [], False]]
+    doc = {"v": 3, "series": [{"symbol": SYM, "spec_hash": h * 64, "kind": "time",
                                "bar_param": "1m", "ranges": one} for h in "abc"]}  # fmt: skip
     (tmp_path / JOURNAL_NAME).write_bytes(orjson.dumps(doc))
     monkeypatch.setattr(write_holes, "MAX_TOTAL_RANGES", 2)  # over it, one record a series
@@ -618,11 +674,14 @@ async def test_write_holes_a_cancelled_write_loses_no_change_and_writes_never_ov
     assert _all(again) == [(T0 + W, T0 + 2 * W), (T0 + 5 * W, T0 + 6 * W)]
 
 
-# -- properties: versions decide; every lost version is counted once and listed until stored ----
+# -- properties: versions decide; every loss is counted once and listed until it is resolved ---
 
+#: Events: a tape loss or store at a version, a kline row stored (time series only), at a
+#: (generation, index); and bars served: the model's keys at the version stored, plus bars of
+#: other indexes at arbitrary versions.
 _EVENTS = st.lists(
     st.tuples(
-        st.sampled_from(("lost", "written")),
+        st.sampled_from(("lost", "written", "kline")),
         st.integers(0, 3),  # generation
         st.integers(0, 40),  # index
         st.sampled_from((V1, V2, V1 + 2)),  # the version (row checksum)
@@ -630,7 +689,20 @@ _EVENTS = st.lists(
     max_size=60,
 )
 _SERVED = st.sets(st.tuples(st.integers(0, 3), st.integers(0, 40)), max_size=20)
-_Model = dict[tuple[int, int], dict[str, int | None]]
+_OTHERS = st.sets(
+    st.tuples(st.integers(0, 3), st.integers(41, 45), st.sampled_from((V1, V2))), max_size=6
+)
+_KLINE = 7_777  # a kline row's checksum: never a tape version
+
+
+@dataclass
+class _K:
+    """The model of one key: the version the store holds, the one the ledger remembers as stored
+    and the versions reported lost since its hole opened (empty: no hole)."""
+
+    store: int | None = None
+    recent: int | None = None
+    lost: set[int] = field(default_factory=set)
 
 
 def _prop_key(kind: str, gen: int, idx: int, ver: int) -> HoleKey:
@@ -639,103 +711,126 @@ def _prop_key(kind: str, gen: int, idx: int, ver: int) -> HoleKey:
 
 
 def _play(
-    ledger: WriteHoleLedger, kind: str, events: list[tuple[str, int, int, int]]
-) -> tuple[_Model, int, int]:
-    """Drive `ledger` and a model of it: per key, the version the store holds (`store`), the one
-    the ledger remembers as stored (`recent`) and the one recorded lost (`hole`). Returns the
-    model and the plain and superseded holes the model counts."""
-    model: _Model = {}
+    ledger: WriteHoleLedger, kind: str, events: list[tuple[str, int, int, int]], *, exact: bool
+) -> tuple[dict[tuple[int, int], _K], int, int]:
+    """Drive `ledger` and the model; with `exact`, assert each `lost`'s return. Returns the model
+    and the plain and superseded holes it counts."""
+    model: dict[tuple[int, int], _K] = {}
     plain = superseded = 0
     for op, gen, idx, ver in events:
-        m = model.setdefault((gen, idx), {"store": None, "recent": None, "hole": None})
-        k = _prop_key(kind, gen, idx, ver)
+        m = model.setdefault((gen, idx), _K())
+        if op == "kline":
+            if kind != "time":
+                continue
+            # a kline row: no builder index, at that open time
+            k = replace(_prop_key(kind, gen, idx, _KLINE), generation=None, index=None)
+            op, ver = "written", _KLINE
+        else:
+            k = _prop_key(kind, gen, idx, ver)
         if op == "written":
             ledger.written([k])
-            m["store"] = m["recent"] = ver
-            if m["hole"] == ver:
-                m["hole"] = None
+            m.store = m.recent = ver
+            if m.lost == {ver}:
+                m.lost = set()
             continue
         new = ledger.lost([k], "refused")
-        if m["recent"] == ver:  # the very version stored: no hole
-            assert new == 0, (gen, idx, ver)
+        if m.recent == ver:  # the very version stored: no hole
+            assert not exact or new == 0, (gen, idx, ver)
             continue
-        stale, m["recent"] = m["recent"] is not None, None
-        expect = int(m["hole"] is None)
-        assert new == expect, (gen, idx, ver, m)
-        if expect:
+        stale, m.recent = m.recent is not None, None
+        opened = not m.lost
+        assert not exact or new == int(opened), (gen, idx, ver, m)
+        if opened:
             superseded += stale
             plain += not stale
-        m["hole"] = ver
+        m.lost.add(ver)
     return model, plain, superseded
 
 
-def _served_present(kind: str, model: _Model, served: set[tuple[int, int]]) -> list[Present]:
-    """Each served key at the version the store holds (keys never stored are not served)."""
+def _presence(
+    kind: str,
+    model: dict[tuple[int, int], _K],
+    served: set[tuple[int, int]],
+    others: set[tuple[int, int, int]],
+) -> list[Present]:
+    """The model's served keys at the version stored, and bars of other indexes."""
     out = []
     for gen, idx in served:
-        stored = model.get((gen, idx), {}).get("store")
-        if stored is not None:
-            k = _prop_key(kind, gen, idx, stored)
-            out.append(Present(gen, idx, k.open_us, k.end_us, stored))
+        m = model.get((gen, idx))
+        if m is not None and m.store is not None:
+            k = _prop_key(kind, gen, idx, m.store)
+            out.append(Present(gen, idx, k.open_us, k.end_us, m.store))
+    for gen, idx, ver in others:
+        k = _prop_key(kind, gen, idx, ver)
+        out.append(Present(gen, idx, k.open_us, k.end_us, ver))
     return out
 
 
-@settings(max_examples=150, deadline=None)
-@given(events=_EVENTS, kind=st.sampled_from(("time", "tick")), served=_SERVED)
-def test_write_holes_property_each_lost_version_counted_once_and_listed_until_stored(
-    tmp_path_factory: pytest.TempPathFactory,
-    events: list[tuple[str, int, int, int]],
+def _no_false_negative(
     kind: str,
+    model: dict[tuple[int, int], _K],
     served: set[tuple[int, int]],
+    spans: list[tuple[int, int]],
 ) -> None:
-    """No merge here, so the model is exact: each new loss is counted once (`superseded` when
-    another version is remembered as stored); a key is listed while its lost version is not the
-    one served, and a stored time bar with no hole is never listed."""
-    ledger = WriteHoleLedger(tmp_path_factory.mktemp("holes"))
-    before, sup_before = _metric("refused"), _metric("superseded")
-    model, plain, superseded = _play(ledger, kind, events)
-    assert (_metric("refused"), _metric("superseded")) == (before + plain, sup_before + superseded)
-    spans = _all(ledger, _served_present(kind, model, served))
+    """A key with a loss is listed unless its one lost version is the one served."""
     for (gen, idx), m in model.items():
         k = _prop_key(kind, gen, idx, V1)
-        covered = any(a <= k.open_us and k.end_us <= b for a, b in spans)
-        suppressed = (gen, idx) in served and m["store"] == m["hole"]
-        if m["hole"] is not None and not suppressed:
-            assert covered, (gen, idx, m)  # no false negative
-        elif kind == "time" and m["hole"] is None:
-            assert not any(a < k.end_us and k.open_us < b for a, b in spans), (gen, idx, m)
+        suppressed = (gen, idx) in served and m.store is not None and m.lost == {m.store}
+        if m.lost and not suppressed:
+            assert any(a <= k.open_us and k.end_us <= b for a, b in spans), (gen, idx, m)
 
 
 @settings(max_examples=150, deadline=None)
-@given(events=_EVENTS, kind=st.sampled_from(("time", "tick")), served=_SERVED)
-def test_write_holes_property_merging_never_hides_a_lost_version(
+@given(events=_EVENTS, kind=st.sampled_from(("time", "tick")), served=_SERVED, others=_OTHERS)
+def test_write_holes_property_each_loss_counted_once_and_listed_until_resolved(
     tmp_path_factory: pytest.TempPathFactory,
     events: list[tuple[str, int, int, int]],
     kind: str,
     served: set[tuple[int, int]],
+    others: set[tuple[int, int, int]],
 ) -> None:
-    """With merging exercised (at most 4 records a series) and a random set of bars served at
-    their stored versions, every key whose lost version is not the one served is listed."""
+    """No merge and room for every version, so the model is exact: each new loss is counted once
+    (`superseded` when another version is remembered as stored); a key is listed unless exactly
+    one version was lost and it is the one served; a time bar with no loss is never listed."""
+    ledger = WriteHoleLedger(tmp_path_factory.mktemp("holes"))
+    before, sup_before = _metric("refused"), _metric("superseded")
+    model, plain, superseded = _play(ledger, kind, events, exact=True)
+    assert (_metric("refused"), _metric("superseded")) == (before + plain, sup_before + superseded)
+    spans = _all(ledger, _presence(kind, model, served, others))
+    _no_false_negative(kind, model, served, spans)
+    if kind == "time":
+        for (gen, idx), m in model.items():
+            k = _prop_key(kind, gen, idx, V1)
+            if not m.lost:
+                assert not any(a < k.end_us and k.open_us < b for a, b in spans), (gen, idx, m)
+
+
+@settings(max_examples=150, deadline=None)
+@given(
+    events=_EVENTS,
+    kind=st.sampled_from(("time", "tick")),
+    served=_SERVED,
+    others=_OTHERS,
+    bound=st.sampled_from(("records", "versions")),
+)
+def test_write_holes_property_bounds_never_hide_a_loss(
+    tmp_path_factory: pytest.TempPathFactory,
+    events: list[tuple[str, int, int, int]],
+    kind: str,
+    served: set[tuple[int, int]],
+    others: set[tuple[int, int, int]],
+    bound: str,
+) -> None:
+    """With merging exercised (at most 4 records a series) or a record keeping at most 2
+    versions, every key with a loss is still listed unless its one lost version is served."""
     from candleviewer.bars import write_holes
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(write_holes, "MAX_RANGES_PER_SERIES", 4)
+        if bound == "records":
+            mp.setattr(write_holes, "MAX_RANGES_PER_SERIES", 4)
+        else:
+            mp.setattr(write_holes, "MAX_VERSIONS", 2)
         ledger = WriteHoleLedger(tmp_path_factory.mktemp("holes"))
-        model: _Model = {}
-        for op, gen, idx, ver in events:  # the model's `hole` only; counts are not exact here
-            m = model.setdefault((gen, idx), {"store": None, "hole": None})
-            k = _prop_key(kind, gen, idx, ver)
-            if op == "written":
-                ledger.written([k])
-                m["store"] = ver
-                m["hole"] = None if m["hole"] == ver else m["hole"]
-            else:
-                ledger.lost([k], "refused")
-                if m["store"] != ver or m["hole"] is not None:
-                    m["hole"] = ver
-        spans = _all(ledger, _served_present(kind, model, served))
-        for (gen, idx), m in model.items():
-            k = _prop_key(kind, gen, idx, V1)
-            suppressed = (gen, idx) in served and m["store"] == m["hole"]
-            if m["hole"] is not None and not suppressed:
-                assert any(a <= k.open_us and k.end_us <= b for a, b in spans), (gen, idx, m)
+        model, _, _ = _play(ledger, kind, events, exact=False)
+        spans = _all(ledger, _presence(kind, model, served, others))
+        _no_false_negative(kind, model, served, spans)

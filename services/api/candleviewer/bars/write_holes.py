@@ -15,8 +15,12 @@ question of version (**Versions**, **Reads**).
 `[from_us, to_us)` (a bar's span is `[open_time, close_time + 1)`), the reason of its first key,
 the time it was first seen and the number of terminal outcomes it holds. Keys are recorded only
 at a terminal outcome, never per attempt; a repeat raises `count` and is not counted again by the
-metric. Each record keeps, per key, the row checksum of the version lost (at most
-`MAX_VERSIONS` a record; past it, and on a merged span, a key's version is unknown).
+metric. Each record keeps, per key, the row checksum of the version lost. A key whose loss is
+reported for two different versions, or for an unknown one, is unknown for good: a served copy of
+either version could otherwise hide the other's loss. At most `MAX_VERSIONS` slots a record and
+`MAX_TOTAL_VERSIONS` in all; past either, and on a merged span, a key's version is unknown. An
+unknown key is never suppressed by a served bar and is not cleared by a store: only a heal (#535)
+clears it (an over-report).
 
 **Versions.** A key leaves its record only when the version lost is stored (`written` with the
 same checksum). A store of another version keeps the record (`stale_served`): the store serves a
@@ -77,8 +81,9 @@ from candleviewer.bars.models import BarKind
 from candleviewer.bars.state_store import SPEC_HASH_PATTERN, SYMBOL_PATTERN
 from candleviewer.observability.context import run_in_thread, spawn, thread_future
 
-#: 2: a record row has 11 fields (`stale_served`, the lost versions); a v1 file is discarded.
-JOURNAL_VERSION: Final = 2
+#: 3: a record row has 12 fields (`stale_served`, the lost versions, `overflow`); an older file
+#: is discarded as `version`.
+JOURNAL_VERSION: Final = 3
 JOURNAL_NAME: Final = "write_holes.json"
 MAX_JOURNAL_BYTES: Final = 8 * 1024 * 1024
 MAX_RANGES_PER_SERIES: Final = 256
@@ -93,8 +98,10 @@ MAX_SERIES: Final = 16_384
 #: Keys remembered as stored lately (a later loss is `superseded`) and as counted lately (a repeat
 #: inside a merged span is not counted again).
 MAX_RECENT_KEYS: Final = 4096
-#: Lost versions kept per record; past it a key's version is unknown (it is never suppressed).
+#: Lost versions kept per record and in all; past either a key's version is unknown: a served
+#: bar never suppresses it and only a heal (#535) clears it (an over-report).
 MAX_VERSIONS: Final = 64
+MAX_TOTAL_VERSIONS: Final = 16_384
 #: Recorded and superseded losses are logged at most once per series per minute.
 LOG_EVERY_US: Final = 60_000_000
 #: The closed `reason` values `lost` takes; a record also takes `superseded` (a stored key's).
@@ -180,9 +187,12 @@ class _Range:
     #: compares versions, `versions`).
     stale_served: bool = False
     #: The lost version's row checksum per key (`_vkey`: open time for a time bar, else index),
-    #: at most `MAX_VERSIONS` a record; a key without one is of unknown version. Empty on a
-    #: merged span.
-    versions: dict[int, int] = field(default_factory=dict)
+    #: at most `MAX_VERSIONS` a record. None: unknown for good (an unknown version was lost, or
+    #: two different ones were). A key with no slot is unknown too. Empty on a merged span.
+    versions: dict[int, int | None] = field(default_factory=dict)
+    #: The record could not keep a slot (`MAX_VERSIONS`, or the global budget): a key with no slot
+    #: never gets one, so it stays unknown.
+    overflow: bool = False
 
     def holds(self, kind: str, key: Present) -> bool:
         """True when `key` is one of this record's keys (a time bar: by its open time)."""
@@ -222,7 +232,7 @@ class _Range:
                 if (from_us <= k < to_us if kind == "time" else first <= k <= last)}  # fmt: skip
         return _Range(
             self.generation, first, last, from_us, to_us, self.reason, self.first_seen_us,
-            self.count, self.merged, self.stale_served, kept,
+            self.count, self.merged, self.stale_served, kept, self.overflow,
         )  # fmt: skip
 
 
@@ -398,6 +408,7 @@ class WriteHoleLedger:
                 before.last, before.to_us = after.last, max(before.to_us, after.to_us)
                 before.count += after.count
                 before.stale_served = before.stale_served or after.stale_served
+                before.overflow = before.overflow or after.overflow
                 for k, v in after.versions.items():
                     _note_version(before, k, v)
                 series.ranges.remove(after)
@@ -418,7 +429,17 @@ class WriteHoleLedger:
 
     def _enforce_total(self) -> None:
         """At most `MAX_TOTAL_RANGES` records in all: the series with the most merges its oldest
-        (a series with one record is left as it is)."""
+        (a series with one record is left as it is). At most `MAX_TOTAL_VERSIONS` slots in all:
+        the record with the most gives all of them up (its keys become unknown: an over-report)."""
+        slots = sum(len(r.versions) for s in self._series.values() for r in s.ranges)
+        while slots > MAX_TOTAL_VERSIONS:
+            series_key, r = max(
+                ((k, r) for k, s in self._series.items() for r in s.ranges),
+                key=lambda kr: len(kr[1].versions),
+            )
+            slots -= len(r.versions)
+            r.versions, r.overflow = {}, True
+            self._changed(series_key, spans=True)
         total = sum(len(s.ranges) for s in self._series.values())
         while total > MAX_TOTAL_RANGES and self._series:
             series_key = max(self._series, key=lambda k: len(self._series[k].ranges))
@@ -555,7 +576,7 @@ class WriteHoleLedger:
         return [
             (sym, h, s.kind, s.bar_param,
              [(r.generation, r.first, r.last, r.from_us, r.to_us, r.reason, r.first_seen_us,
-               r.count, r.merged, r.stale_served, sorted(r.versions.items()))
+               r.count, r.merged, r.stale_served, sorted(r.versions.items()), r.overflow)
               for r in s.ranges])
             for (sym, h), s in sorted(self._series.items())
         ]  # fmt: skip
@@ -581,7 +602,7 @@ class WriteHoleLedger:
 
 #: `(symbol, spec_hash, generation, index, open_us)`; a time bar's is `(…, -1, -1, open_us)`.
 _KeyId = tuple[str, str, int, int, int]
-_Row = tuple[int, int, int, int, int, str, int, int, bool, bool, list[tuple[int, int]]]
+_Row = tuple[int, int, int, int, int, str, int, int, bool, bool, list[tuple[int, int | None]], bool]
 _Snapshot = list[tuple[str, str, str, str, list[_Row]]]
 
 
@@ -622,7 +643,7 @@ def _serialise_and_write(path: Path, snapshot: _Snapshot) -> None:
     while True:
         series = [
             {"symbol": sym, "spec_hash": h, "kind": kind, "bar_param": param,
-             "ranges": [[*r[:10], [list(v) for v in r[10]]] for r in rows]}
+             "ranges": [[*r[:10], [list(v) for v in r[10]], r[11]] for r in rows]}
             for sym, h, kind, param, rows in snapshot
         ]  # fmt: skip
         data = orjson.dumps({"v": JOURNAL_VERSION, "series": series})
@@ -632,8 +653,10 @@ def _serialise_and_write(path: Path, snapshot: _Snapshot) -> None:
         if len(rows) < 2:
             raise ValueError("the write-hole journal cannot fit its bound")
         a, b = rows[0], rows[1]
-        rows[0:2] = [(a[0], min(a[1], b[1]), max(a[2], b[2]), min(a[3], b[3]), max(a[4], b[4]),
-                      a[5], min(a[6], b[6]), a[7] + b[7], True, a[9] or b[9], [])]  # fmt: skip
+        rows[0:2] = [(
+            a[0], min(a[1], b[1]), max(a[2], b[2]), min(a[3], b[3]), max(a[4], b[4]), a[5],
+            min(a[6], b[6]), a[7] + b[7], True, a[9] or b[9], [], True,
+        )]  # fmt: skip
     _write_atomic(path, data)
 
 
@@ -698,24 +721,27 @@ def _parse_series(doc: dict[str, Any]) -> _Series:
     if not isinstance(rows, list) or not 0 < len(rows) <= MAX_RANGES_PER_SERIES:
         raise ValueError("ranges")
     ranges = []
-    for gen, first, last, from_us, to_us, reason, seen, count, merged, stale, pairs in rows:
-        if reason not in _RECORD_REASONS or type(merged) is not bool or type(stale) is not bool:
-            raise ValueError("reason, merged or stale_served")
+    for gen, first, last, from_us, to_us, reason, seen, count, merged, stale, pairs, over in rows:
+        flags = (merged, stale, over)
+        if reason not in _RECORD_REASONS or any(type(f) is not bool for f in flags):
+            raise ValueError("reason, merged, stale_served or overflow")
         r = _Range(_int(gen), _int(first), _int(last), _int(from_us), _int(to_us), reason,
-                   _int(seen), _int(count, 1), merged, stale, _versions(pairs, merged))  # fmt: skip
+                   _int(seen), _int(count, 1), merged, stale, _versions(pairs, merged),
+                   over)  # fmt: skip
         if r.last < r.first or r.to_us <= r.from_us:
             raise ValueError("empty range")
         ranges.append(r)
     return _Series(kind, param, sorted(ranges, key=lambda r: (r.from_us, r.to_us)))
 
 
-def _versions(pairs: object, merged: bool) -> dict[int, int]:
-    """A journal row's lost versions: `[[slot, checksum], ...]`, none on a merged span."""
+def _versions(pairs: object, merged: bool) -> dict[int, int | None]:
+    """A journal row's lost versions: `[[slot, checksum or null], ...]`, none on a merged span."""
     if not isinstance(pairs, list) or len(pairs) > MAX_VERSIONS or (merged and pairs):
         raise ValueError("versions")
-    out: dict[int, int] = {}
+    out: dict[int, int | None] = {}
     for pair in pairs:
-        if not isinstance(pair, list) or len(pair) != 2 or type(pair[1]) is not int:
+        ok = isinstance(pair, list) and len(pair) == 2
+        if not ok or not (pair[1] is None or type(pair[1]) is int):
             raise ValueError("version pair")
         out[_int(pair[0])] = pair[1]
     return out
@@ -753,15 +779,23 @@ def _same_version(kind: str, r: _Range, p: Present) -> bool:
 
 
 def _note_version(r: _Range, vk: int, checksum: int | None) -> bool:
-    """Record `checksum` as the version lost for slot `vk`; True when the record changed. An
-    unknown checksum, a merged span or a full record leaves the slot unknown."""
-    before = r.versions.get(vk)
-    full = vk not in r.versions and len(r.versions) >= MAX_VERSIONS
-    if checksum is None or r.merged or full:
-        r.versions.pop(vk, None)
-    else:
-        r.versions[vk] = checksum
-    return r.versions.get(vk) != before
+    """Record `checksum` (None: unknown) as a version lost for slot `vk`; True when a version
+    a read compares with changed. A slot that holds another version, or an unknown one, becomes
+    unknown for good: a served copy of either version could otherwise hide the other's loss. A
+    merged span keeps none; a full record keeps no new slot (`overflow`)."""
+    if r.merged:
+        return False
+    if vk in r.versions:
+        held = r.versions[vk]
+        if held is None or held == checksum:
+            return False
+        r.versions[vk] = None
+        return True
+    if r.overflow or len(r.versions) >= MAX_VERSIONS:
+        r.overflow = True
+        return False
+    r.versions[vk] = checksum
+    return checksum is not None
 
 
 def cap_spans(spans: list[tuple[int, int]], limit: int) -> list[tuple[int, int]]:
