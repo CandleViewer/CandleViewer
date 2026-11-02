@@ -369,7 +369,9 @@ groups:
         # nothing (`step="rewrap"`): the keyring still opens under the previous KEK on that boot,
         # and the KEK re-wrap run holds `kek_rotated` back until a boot moves the row. Bound at
         # import, so read as the export key's is; the runbook reads the boot log after a restart.
-        # Held past the quiet-hours mute as UserLifecycleStepFailed is.
+        # Held past the quiet-hours mute as UserLifecycleStepFailed is. PROPOSED, not ruled: the
+        # [15m] window and keep_firing_for 9h30m copy AuditSigningKeyBootStepFailed's (no ruling
+        # sets them for this alert; the #2152 owner decides).
         expr: sum by (env, step) (increase(cv_auth_keyring_boot_failures_total[15m])) > 0
         for: 0m
         keep_firing_for: 9h30m
