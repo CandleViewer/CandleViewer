@@ -37,6 +37,8 @@ import type {
   RecorderRowState,
   RecorderStatusRowData,
   RecorderStatusRowProps,
+  PaginationLabels,
+  PaginationProps,
   TableRowContext,
   WatchlistGroupTabsProps,
   WatchlistRowProps,
@@ -305,6 +307,7 @@ describe("@candleviewer/ui audit log components (E42-S04)", () => {
   it.each([
     ["AuditActionTrigger", Atoms.AuditActionTrigger],
     ["CopyableCodeBlock", Atoms.CopyableCodeBlock],
+    ["Pagination", Atoms.Pagination],
     ["auditMarkerText", Atoms.auditMarkerText],
   ])("exports %s from the package entry as a function", (_name, value) => {
     expect(typeof value).toBe("function");
@@ -312,7 +315,16 @@ describe("@candleviewer/ui audit log components (E42-S04)", () => {
 
   it("exports the marker's copy and each props type (checked by the typechecker)", () => {
     expect(Atoms.AUDIT_MARKER_COPY.recorded).toBe("Recorded in the audit log");
-    const props: [AuditActionTriggerProps, AuditMarker, CopyableCodeBlockProps] | null = null;
+    expect(Atoms.PAGINATION_COPY.nav).toBe("Pagination");
+    const props:
+      | [
+          AuditActionTriggerProps,
+          AuditMarker,
+          CopyableCodeBlockProps,
+          PaginationLabels,
+          PaginationProps,
+        ]
+      | null = null;
     expect(props).toBeNull();
   });
 });
