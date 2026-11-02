@@ -66,7 +66,7 @@ function loadPersisted(user: string | null): ReadonlyMap<string, string> {
   return defaults();
 }
 function persist(user: string | null, b: ReadonlyMap<string, string>): void {
-  if (user === null) return; // no one signed in: the change holds for this page only
+  if (user === null) return; // no keymap user (`session.ts`): the change holds for this page only
   try {
     window.localStorage.setItem(keyOf(user), JSON.stringify(overridesOf(b)));
   } catch {

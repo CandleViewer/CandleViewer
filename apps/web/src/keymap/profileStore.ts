@@ -15,7 +15,14 @@ import { ERROR_META, type generated } from "@candleviewer/protocol";
 import { announce, forget } from "../features/app-shell/announcer";
 import { apiFetch } from "../lib/http/csrfFetch";
 import { KEYMAP, requiresArm, type KeymapContext } from "./keymap";
-import { keymapUser, savesToServer, subscribeKeymapUser, subscribeSignOut } from "./session";
+import {
+  VIEW_AS_PATH,
+  keymapUser,
+  savesToServer,
+  subscribeKeymapUser,
+  subscribeSignOut,
+  viewAsNone,
+} from "./session";
 import { importProfile, type ImportReport } from "./validate";
 
 type Schemas = generated.rest.components["schemas"];
@@ -38,8 +45,6 @@ const SCOPE: Readonly<Record<KeymapContext, Schemas["HotkeyBinding"]["scope"]>> 
   Settings: "settings",
 };
 const PATH = "/api/v1/settings/hotkeys";
-/** `22` `getViewAs`: the session's view-as context, live or held (`200`), or none (`204`). */
-const VIEW_AS_PATH = "/api/v1/auth/session/view-as";
 /** `21` §10.6: the name the client gives the profile it keeps for a user. */
 const DEFAULT_NAME = "CandleViewer Default";
 /** The device holds a change of this user's profile the server has not acknowledged (BQ-9): the profile, in a mark. */
@@ -258,6 +263,7 @@ export function httpProfileStore(
   }
   /** BQ-14: the session's view, read once per session from `22` `getViewAs`, and again while not known. */
   async function viewOf(s: Session, u: string): Promise<Session["view"]> {
+    if (s.view === "unknown" && viewAsNone(u)) s.view = "none"; // the keymap's own read answered it
     if (s.view !== "unknown") return s.view;
     const res = await call(s, u, VIEW_AS_PATH);
     if (res?.status === 204) s.view = "none";

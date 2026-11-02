@@ -779,6 +779,7 @@ describe("A55: a Viewer stays on the device", () => {
       bindings: [{ action: "chart.footprint_toggle", keys: "Ctrl+Alt+F", scope: "chart" }],
     });
     const { store } = startSync();
+    await vi.advanceTimersByTimeAsync(0); // the view-as read answers 204: the keymap names the Viewer
     render(<m.Cheatsheet />);
     expect(footprintRow()).toHaveTextContent(/^Toggle footprintF$/); // a server profile is never applied (A55)
     rebind("chart.footprint_toggle", "Alt+Q"); // as the editor's Save lands it
@@ -787,7 +788,7 @@ describe("A55: a Viewer stays on the device", () => {
     act(() => void window.dispatchEvent(new Event("online")));
     await store.flush();
     expect(await store.read()).toBeNull();
-    expect(server.calls).toEqual([]);
+    expect(lines(server.calls)).toEqual([`GET ${VIEW_AS}`]); // the view-as read alone
     expect([stored(`${DEVICE}:u-viewer`), store.unsent("u-viewer")]).toEqual([
       { "chart.footprint_toggle": "Alt+Q" },
       false,
@@ -802,7 +803,7 @@ describe("A55: a Viewer stays on the device", () => {
     const server = stubServer();
     signIn("u-1", "viewer");
     await startSync().store.flush();
-    expect(server.calls).toEqual([]);
+    expect(lines(server.calls)).toEqual([`GET ${VIEW_AS}`]); // the view-as read alone
   });
 });
 
@@ -826,7 +827,7 @@ describe("BQ-14: nothing is sent while a view is live", () => {
       signIn("u-target", "manager"); // `/me` names the target while the view is live
       const { store } = startSync();
       rebind("chart.footprint_toggle", "Alt+Q");
-      rebind("chart.footprint_toggle", "Alt+W"); // both queued before the context is read
+      rebind("chart.footprint_toggle", "Alt+W"); // both before the context is read: read-only too
       await store.flush();
       rebind("chart.footprint_toggle", "Alt+E"); // once it is read, never queued
       await store.flush();
