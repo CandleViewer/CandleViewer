@@ -317,9 +317,11 @@ class BarSegments:
             left -= len(part)
         self._segs, self._n = kept, sum(map(len, kept))
 
-    def row_open_times(self) -> list[int]:
-        """The open times of the bars held as rows (an emitted-JSON page exposes none)."""
-        return [r.ts_us for seg in self._segs if isinstance(seg, list) for r in seg]
+    def row_versions(self) -> list[tuple[int, str | None, int | None]]:
+        """`(open time, source, row checksum)` of each bar held as a row (an emitted-JSON page
+        exposes none); a row without a field reads None for it."""
+        return [(r.ts_us, getattr(r, "source", None), getattr(r, "checksum", None))
+                for seg in self._segs if isinstance(seg, list) for r in seg]  # fmt: skip
 
     def last_ts_us(self) -> int:
         """`ts` of the newest bar; the page must not be empty."""

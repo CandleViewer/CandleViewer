@@ -24,7 +24,7 @@ from candleviewer.api.market_bars import make_market_bars_router
 from candleviewer.api.market_response import iso_us
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.reader import BarReader
-from candleviewer.bars.rows import bar_param_for
+from candleviewer.bars.rows import bar_param_for, bar_row
 from candleviewer.bars.spec import from_wire
 from candleviewer.bars.write_holes import HoleKey, WriteHoleLedger
 from candleviewer.bars.writer import BarWriter
@@ -105,14 +105,49 @@ def test_bars_a_closed_bar_not_stored_is_named_on_the_next_read(
     assert all(b["t"] for b in body["bars"])  # the other bars are still served
 
 
-def test_bars_a_served_bar_suppresses_its_recorded_hole(tmp_path: Path) -> None:
-    """The row is in the store after all (e.g. written by a later amend): it is not a hole."""
+def _time_key(bar: Bar, checksum: int | None) -> HoleKey:
+    return HoleKey("BTCUSDT", _TIME.spec_hash, "time", "1m", 0, bar.index, bar.open_time,
+                   bar.open_time + _MIN, checksum)  # fmt: skip
+
+
+def _stored_checksum(bar: Bar) -> int:
+    """The `row_checksum` of `bar`'s stored row (the version the store serves)."""
+    return int(str(bar_row(bar, _TIME, generation=0)["row_checksum"]))
+
+
+def test_bars_the_version_lost_served_after_all_suppresses_its_hole(tmp_path: Path) -> None:
+    """The row the store serves is the very version recorded lost (it was stored after all): it
+    is not a hole."""
     bar = [b for b in bars_world._build(_TIME) if b.closed][5]
     ledger = WriteHoleLedger(tmp_path)
-    ledger.lost([HoleKey("BTCUSDT", _TIME.spec_hash, "time", "1m", 0, bar.index, bar.open_time,
-                         bar.open_time + _MIN)], "refused")  # fmt: skip
+    ledger.lost([_time_key(bar, _stored_checksum(bar))], "refused")
     body = _get_bars(_bars_client(ledger), "time", "1")
     assert "coverage_holes" not in body["meta"]
+
+
+def test_bars_m1_a_lost_amend_is_listed_with_no_memory_of_the_store(tmp_path: Path) -> None:
+    """M1 (#5432 delta): a ledger that does not remember the store (after a restart) records a
+    lost amend; the earlier version the store serves must not suppress it."""
+    bar = [b for b in bars_world._build(_TIME) if b.closed][5]
+    ledger = WriteHoleLedger(tmp_path)  # nothing remembered as stored
+    ledger.lost([_time_key(bar, _stored_checksum(bar) + 1)], "permanent")  # the amend, lost
+    body = _get_bars(_bars_client(ledger), "time", "1")
+    assert body["meta"]["coverage_holes"] == [{"start_us": bar.open_time,
+                                               "end_us": bar.open_time + _MIN}]  # fmt: skip
+
+
+def test_bars_m2_an_earlier_version_stored_later_keeps_the_lost_amend_listed(
+    tmp_path: Path,
+) -> None:
+    """M2 (#5432 delta): the earlier version is stored after its amend was recorded lost. The
+    store serves the earlier version, so the amend's hole stays listed."""
+    bar = [b for b in bars_world._build(_TIME) if b.closed][5]
+    ledger = WriteHoleLedger(tmp_path)
+    ledger.lost([_time_key(bar, _stored_checksum(bar) + 1)], "transient_exhausted")
+    ledger.written([_time_key(bar, _stored_checksum(bar))])  # the earlier version lands
+    body = _get_bars(_bars_client(ledger), "time", "1")
+    assert body["meta"]["coverage_holes"] == [{"start_us": bar.open_time,
+                                               "end_us": bar.open_time + _MIN}]  # fmt: skip
 
 
 def test_bars_a_failed_amend_of_a_stored_bar_is_listed_though_the_bar_is_served(

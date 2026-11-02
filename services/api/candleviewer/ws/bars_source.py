@@ -110,8 +110,9 @@ class BarsSnapshotSource:
         build = BUILD_VERSIONS[spec.kind] if latest.oldest_build is None else latest.oldest_build
         meta: Item = {"spec_hash": spec.spec_hash, "build_version": build, "include_delta": flow}
         if self._holes is not None and bars:
-            present = [Present(latest.generation, b.index, b.open_time, b.close_time + 1)
-                       for b in bars]  # fmt: skip
+            # the store's in-memory bars are the latest built: trusted (`write_holes.Present`)
+            present = [Present(latest.generation, b.index, b.open_time, b.close_time + 1,
+                               trusted=True) for b in bars]  # fmt: skip
             spans = self._holes.holes_for(
                 symbol, spec.spec_hash, bars[0].open_time, _LIVE_EDGE_US, present
             )

@@ -428,13 +428,14 @@ def make_market_bars_router(
 
 
 def _present(spec: BarSpec, rows: list[StoredBar]) -> list[Present]:
-    """The bars a page serves, as the hole ledger keys them: a time bar spans its interval, any
-    other bar `[open, close + 1)`."""
+    """The bars a page serves, as the hole ledger keys them, with the version served (its
+    `row_checksum`): a time bar spans its interval, any other bar `[open, close + 1)`."""
     if spec.kind == "time":
         width = int(spec.param_value) * 1000
-        return [Present(r.generation, r.index, r.ts_us, r.ts_us + width) for r in rows]
+        return [Present(r.generation, r.index, r.ts_us, r.ts_us + width, r.checksum)
+                for r in rows]  # fmt: skip
     return [Present(r.generation, r.index, r.ts_us,
-                    (r.ts_us if r.close_ts_us is None else r.close_ts_us) + 1)
+                    (r.ts_us if r.close_ts_us is None else r.close_ts_us) + 1, r.checksum)
             for r in rows]  # fmt: skip
 
 

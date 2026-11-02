@@ -74,6 +74,8 @@ from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.models import TierHint, TimeRange
 
 _REQUIRED_PERMISSION = "marketdata:read"
+#: Row sources built from the recorded tape (`bars.reader.StoredBar.tape_built`).
+_TAPE_SOURCES = frozenset({"tape", "parquet"})
 
 #: `price_type` values the contract enumerates; only `trade` klines are stored today (the
 #: mark/index/premium-index kline streams are not ingested), so the others are refused 422.
@@ -300,8 +302,9 @@ def make_market_router(
 
     #5396 (24 §19.81): `write_holes` adds the time series' closed bars not stored
     (`bars.write_holes`) to `meta.coverage_holes`, inside the page's span and only where the page
-    serves no bar at that open time (a kline row there fills it); the list is joined and bounded
-    by `market_response.merge_coverage_holes`.
+    serves no bar that suppresses it there (`_write_holes`: a tape-built row only when it is the
+    version lost, an exchange kline always); the list is joined and bounded by
+    `market_response.merge_coverage_holes`.
 
     S3 (#2087 security review): FastAPI parses and validates query parameters before this
     handler, so an unauthenticated caller can see a 400/422 schema error before the 401. Those
@@ -541,8 +544,9 @@ def _write_holes(
     ledger: WriteHoleLedger | None, symbol: str, interval: str, width: int, start_us: int,
     end_us: int, bars: BarSegments,
 ) -> list[tuple[int, int]]:  # fmt: skip
-    """The time series' closed bars not stored inside `[start_us, end_us)` where `bars` serves no
-    bar at that open time; none for an interval with no tape-built series. A cold-tier page
+    """The time series' closed bars not stored inside `[start_us, end_us)`, minus the bars
+    `bars` serves there: a tape-built row only when it is the version lost, an exchange kline
+    always; none for an interval with no tape-built series. A cold-tier page
     (emitted JSON) exposes no open times, so a hole under it is listed even when that page serves
     a bar there: an over-report, never a range left out."""
     if ledger is None:
@@ -551,7 +555,12 @@ def _write_holes(
         spec = from_wire("time", interval)
     except BarsError:
         return []
-    served = [Present(None, None, t, t + width) for t in bars.row_open_times()]
+    served = [
+        # a tape-built row is served as the version its checksum names; any other row (an
+        # exchange kline) fills the interval whatever the tape built
+        Present(None, None, t, t + width, checksum, trusted=source not in _TAPE_SOURCES)
+        for t, source, checksum in bars.row_versions()
+    ]
     return ledger.holes_for(symbol, spec.spec_hash, start_us, end_us, served)
 
 

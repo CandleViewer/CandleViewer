@@ -609,6 +609,7 @@ class StoredBar:
     source: str
     index: int | None = None  # NULL on kline-sourced `bars_time` rows (no builder index)
     generation: int | None = None
+    checksum: int | None = None  # the row's `row_checksum`: the version served (#5396)
 
     @property
     def tape_built(self) -> bool:
@@ -637,6 +638,7 @@ def stored_bar(row: dict[str, object]) -> StoredBar:
         max_delta=_num(row.get("max_delta") or 0) if flow else None, source=source,
         index=None if idx is None else int(str(idx)),
         generation=None if gen is None else int(str(gen)),
+        checksum=None if row.get("row_checksum") is None else int(str(row["row_checksum"])),
     )  # fmt: skip
 
 
