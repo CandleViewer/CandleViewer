@@ -3,6 +3,7 @@ import { composeStories } from "@storybook/react-vite";
 import { expect, within } from "storybook/test";
 import { describe, expectTypeOf, it } from "vitest";
 import { PnLBadge, PositionModeToggle, type PnLBadgeProps } from "../src/components/index.js";
+import { pnlReading } from "../src/components/PnLBadge.js";
 import * as pnlStories from "../src/components/PnLBadge.stories.js";
 import * as modeStories from "../src/components/PositionModeToggle.stories.js";
 import { seriousViolations } from "./axe.js";
@@ -79,6 +80,22 @@ describe("PnLBadge (CMP-116)", () => {
     const own = await mount(<PnLBadge value="12.3456" format="abs" />);
     expect(visible(own)).toBe("+12.3456");
   });
+
+  it.each([
+    { value: "34.4", places: 2, format: "abs", currency: "USDT" },
+    { value: "-205.84", format: "currency", currency: "USDT" },
+    { value: "0.32", format: "r" },
+    { value: "-1.5", format: "pct" },
+    { value: null, format: "r" },
+    { value: null, format: "abs", nullReading: "not served yet" },
+    { value: "junk", format: "abs" },
+  ] satisfies PnLBadgeProps[])(
+    "pnlReading(%j) is the sentence the badge's hidden node reads",
+    async (props) => {
+      const host = await mount(<PnLBadge {...props} />);
+      expect(pnlReading(props)).toBe(spoken(host));
+    },
+  );
 
   it("maps size to its digit step and defaults to md", async () => {
     const host = await mount(<PnLBadge value="1" size="lg" />);

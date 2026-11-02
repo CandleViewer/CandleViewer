@@ -43,6 +43,27 @@ export type { PnLBadgeProps, PnLFormat } from "./PnLBadge.js";
 export { PositionModeToggle } from "./PositionModeToggle.js";
 export type { PositionMode, PositionModeToggleProps } from "./PositionModeToggle.js";
 
+export {
+  LiqTierCell,
+  POSITIONS_GRID_COLUMNS,
+  POSITIONS_GRID_NARROW_COLUMNS,
+  PositionsGrid,
+  UpdatesPausedChip,
+  liqSentence,
+} from "./PositionsGrid.js";
+export type {
+  LiqTierCellProps,
+  PositionsGridColumnId,
+  PositionsGridGroup,
+  PositionsGridLiq,
+  PositionsGridProps,
+  PositionsGridRUnavailable,
+  PositionsGridRow,
+  PositionsGridTier,
+  PositionsGridTotals,
+  UpdatesPausedChipProps,
+} from "./PositionsGrid.js";
+
 export { SplitButton } from "./SplitButton.js";
 export type { SplitButtonPrimary, SplitButtonProps } from "./SplitButton.js";
 

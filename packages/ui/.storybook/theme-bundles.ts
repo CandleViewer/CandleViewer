@@ -58,6 +58,7 @@ import "../src/components/pageheader.css";
 import "../src/components/pnlbadge.css";
 import "../src/components/popover.css";
 import "../src/components/positionmode.css";
+import "../src/components/positionsgrid.css";
 import "../src/components/previewtile.css";
 import "../src/components/progress.css";
 import "../src/components/radio.css";
