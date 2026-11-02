@@ -9,6 +9,7 @@
 import type {
   ConsumerSpec,
   PaneVisibility,
+  SnapFrame,
   TokenResult,
   TokenSource,
   TopicFrame,
@@ -31,6 +32,8 @@ import {
   type WsDiagnostics,
 } from "../port/messages";
 import type { SystemUpdate } from "../protocol/frames";
+import type { DataBody } from "../protocol/codec";
+import { judgedFamily, type TopicReading } from "../state/chipState";
 import { INITIAL_WS_STATE, reduce } from "../state/reducer";
 import type { TopicStatus, WsState } from "../state/types";
 import { createFrameScheduler, type FrameMark } from "./frameScheduler";
@@ -101,6 +104,17 @@ export interface WsClientOptions {
 export interface WsClientHandle extends WsClient {
   /** The worker's counters as of its last `diag` (D8): in memory, never exported. */
   diagnostics(): WsDiagnostics | undefined;
+  /**
+   * #5345 (E17-D02 §3): what the CMP-076 chip reads of each consumer's topic, as of the call, its
+   * times on this client's monotonic clock (`timers.now`). A frame notifies nobody of it: the chip
+   * reads it on its own 1 Hz clock and its transitions. A pane that collapses must release its
+   * consumers first: the engine unsubscribes its stream, so one still held here is never fed again
+   * and the chip reads it by its age, Stale from its T1 (after a reconnect: Reconnecting for its T1
+   * from the link's return, then Stale).
+   */
+  topics(): readonly TopicReading[];
+  /** #5345: the clock `topics()` stamps its times on (`timers.now`); a reader that ages them reads it. */
+  clockMs(): number;
 }
 
 /** What a handle reads, as of the last animation frame that had news of it. */
@@ -126,6 +140,16 @@ interface Consumer {
   answer: unknown;
   /** The wait for the snapshot it asked for (`waiting`): when it ends the `resync` is sent again. */
   reask: unknown;
+  /** #5345: its consume time (`timers.now`): T1 and T2 age it from here until a fresh frame. */
+  readonly consumedAtMs: number;
+  /** #5345: its newest fresh frame (`timers.now`): a `d`, or a `snap` without `stale`; `null` before one. */
+  freshAtMs: number | null;
+  /** #5345: the wall time of that frame, for the chip's "last data … UTC" alone. */
+  lastDataMs: number | null;
+  /** #5345: its baseline's `meta.stale` (23 7.2), held from that `snap` to the next one. */
+  serverStale: boolean;
+  /** #5345: the link dropped (or it was made while down) and no `snap` has come since. */
+  awaitingReconnect: boolean;
 }
 
 /** `Retry now` is offered on a down link that may come back: not up or opening, not after a 4403 (the session ended). */
@@ -136,6 +160,28 @@ export function mayRetry(state: WsState): boolean {
 }
 
 const NOTHING: Readonly<Record<string, unknown>> = Object.freeze({});
+
+const isRecord = (v: unknown): v is Readonly<Record<string, unknown>> =>
+  typeof v === "object" && v !== null;
+
+/** 23 7.2: a snapshot's `meta.stale`, or a structured body's own `stale` (`book`, 14.1), which agree. */
+const staleSnap = (frame: SnapFrame): boolean =>
+  frame.meta?.stale === true ||
+  frame.bodies.some((b) => b.e === "j" && isRecord(b.p) && b.p["stale"] === true);
+
+/**
+ * 23 14.8: a ticker body whose every item says `stale` (its symbol silent past 5 s, sent once on
+ * crossing it, and in a `snap` taken after) brings no fresh price; one fresh item in a batch does.
+ */
+const staleTickers = (body: DataBody): boolean => {
+  if (body.e !== "j" || !isRecord(body.p)) return false;
+  const items = body.p["tickers"];
+  return (
+    Array.isArray(items) &&
+    items.length > 0 &&
+    items.every((item: unknown) => isRecord(item) && item["stale"] === true)
+  );
+};
 
 /** What the worker reads of a token result and no more: a field the source adds (a refresh token, a user) stays in the tab. */
 const picked = (result: TokenResult): TokenResult =>
@@ -155,6 +201,8 @@ export function createWsClient(options: WsClientOptions): WsClientHandle {
   let stopped = false;
   let sequence = 0;
   let connectWait: unknown;
+  /** #5345: when the link last came up (`timers.now`); `-Infinity` before it first does. */
+  let upSinceMs = -Infinity;
 
   const post = (message: ClientMessage): void => port.postMessage(message, []);
 
@@ -222,6 +270,29 @@ export function createWsClient(options: WsClientOptions): WsClientHandle {
     if (consumer.queue.push(frame) === "overflow") voided(consumer);
   }
 
+  /**
+   * #5345: what `topics()` says of a consumer, noted at the frame's arrival, never at the display. A
+   * delta that extends a baseline gone (`waiting`) is no fresh data, nor is a ticker frame whose
+   * every item is stale; a snapshot ends a reconnect's wait whatever it says, and is fresh unless
+   * it says `stale`, which it holds until the next one. Plain field writes: nobody is notified.
+   */
+  function note(consumer: Consumer, frame: TopicFrame): void {
+    if (frame.kind === "reset") {
+      if (frame.reason === "reconnect") consumer.awaitingReconnect = true;
+      return;
+    }
+    const ticker = judgedFamily(consumer.ch) === "ticker";
+    if (frame.kind === "d") {
+      if (consumer.waiting || (ticker && staleTickers(frame.body))) return;
+    } else {
+      consumer.awaitingReconnect = false;
+      consumer.serverStale = staleSnap(frame);
+      if (consumer.serverStale || (ticker && frame.bodies.every(staleTickers))) return;
+    }
+    consumer.freshAtMs = timers.now();
+    consumer.lastDataMs = wallClock();
+  }
+
   function onData(message: DataMessage): void {
     const consumer = consumers.get(message.id);
     if (consumer === undefined) return; // released since: its frames are for nobody
@@ -239,6 +310,7 @@ export function createWsClient(options: WsClientOptions): WsClientHandle {
         ts = frame.ts;
       }
       if (frame.kind === "snap" && frame.meta?.reason === "instrument_revision") revised = true;
+      note(consumer, frame); // before `enqueue`, which may void it
       enqueue(consumer, frame);
     }
     if (!consumer.waiting || message.status === "revoked") stopAsking(consumer); // a snapshot came, or none will
@@ -275,12 +347,22 @@ export function createWsClient(options: WsClientOptions): WsClientHandle {
     const message = parseWorkerMessage(data);
     if (message === undefined) return; // not the worker's: nothing to answer, and nobody to tell
     switch (message.t) {
-      case "state":
+      case "state": {
         if (connectWait !== undefined) timers.clearTimeout(connectWait);
         connectWait = undefined;
+        const wasUp = state.link.kind === "up";
         state = message.state;
+        const up = state.link.kind === "up";
+        // #5345: T1 and T2 age a topic from the link's coming up at the earliest (a consumer made
+        // before it, or while it was down, has had no chance of a frame); a drop voids every
+        // consumer's state, whether its sequence was live or not, until a reconnect's snapshot
+        if (up && !wasUp) upSinceMs = timers.now();
+        if (wasUp && !up) {
+          for (const consumer of consumers.values()) consumer.awaitingReconnect = true;
+        }
         notify();
         break;
+      }
       case "system":
         try {
           options.onSystem?.(message.update);
@@ -377,6 +459,12 @@ export function createWsClient(options: WsClientOptions): WsClientHandle {
         waiting: false,
         answer: undefined,
         reask: undefined,
+        consumedAtMs: timers.now(),
+        freshAtMs: null,
+        lastDataMs: null,
+        serverStale: false,
+        // made in an outage (held from a drop to the next `auth_ok`): a reconnect owes it a snapshot
+        awaitingReconnect: state.outage !== null,
       };
       if (stopped) return handleOf(consumer); // nothing is served any more
       consumers.set(consumer.id, consumer);
@@ -423,6 +511,19 @@ export function createWsClient(options: WsClientOptions): WsClientHandle {
       return () => void listeners.delete(listener);
     },
     diagnostics: () => diag,
+    clockMs: () => timers.now(),
+    topics: () =>
+      [...consumers.values()].map((c): TopicReading => ({
+        ch: c.ch,
+        rs: c.rs,
+        source: c.view.source,
+        status: c.view.status,
+        freshAtMs: c.freshAtMs,
+        agedFromMs: Math.max(c.freshAtMs ?? c.consumedAtMs, upSinceMs),
+        lastDataMs: c.lastDataMs,
+        serverStale: c.serverStale,
+        awaitingReconnect: c.awaitingReconnect,
+      })),
     stop() {
       if (stopped) return;
       post({ t: "stop" });
