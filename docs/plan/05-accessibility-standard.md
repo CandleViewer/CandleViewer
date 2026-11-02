@@ -104,7 +104,7 @@ CandleViewer screens are unusually dense (multi-pane chart + footprint + DOM hea
 
 ### 3.5 Keyboard equivalents (E47-D09)
 
-The normative expansion of §3.1 items 6 and 7 and §3.4 item 8, one line per rule; the census of every drag- and hover-only interaction, the order line, the node graph, the palette, the cheatsheet and the inert message are `docs/design/E47/E47-D09.md`:
+The normative expansion of §3.1 items 6 and 7 and §3.4 item 8, one line per rule, the owner of K-1 … K-12 (the spec mirrors them by id); the census of every drag- and hover-only interaction, the order line, the node graph, the palette, the cheatsheet and the inert message are `docs/design/E47/E47-D09.md`:
 
 - K-1 Every value a pointer drags is reached by one grammar, select → adjust → commit / cancel, reused by every surface.
 - K-2 Selecting an object changes nothing and announces the object with its value.
@@ -116,8 +116,8 @@ The normative expansion of §3.1 items 6 and 7 and §3.4 item 8, one line per ru
 - K-8 The command palette lists every registered command with its current binding or "unbound"; a command absent from it is a defect.
 - K-9 The cheatsheet lists every command with its current binding, remaps marked, searchable by action or key.
 - K-10 A binding pressed where it is not valid says once, non-modally, that it is not available here and where it is.
-- K-11 A role-gated equivalent keeps its keys and changes nothing, saying its reason (E09-D09 T2).
-- K-12 A bare letter or digit binding is scoped to its focus context and remappable (SC 2.1.4).
+- K-11 A gated equivalent (E09-D09 T2) stays focusable with `aria-disabled="true"`, keeps its keys and changes nothing, saying its reason.
+- K-12 A bare letter or digit binding is scoped to its focus context and remappable (SC 2.1.4); a destructive command never takes one.
 
 ## 4. Colour-independence for buy/sell and all status signalling
 

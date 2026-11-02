@@ -17,7 +17,8 @@ form follows the E47-D04 tool (the same modes, anchored values, default-deny pin
    its pinned commit (G-CITE); every "verbatim" copy string occurs on its cited line (G-QUOTE);
    every Old fragment of the hand-off's A-rows occurs verbatim on its cited line (G-AROW).
 3. **Gates.** One FAIL line per gate: G-RULED (the heading names the ruling 6566806943 and the
-   list 6566521186; the ruling's sentence verbatim, bold dropped), G-PENDING (BQ-0 ... BQ-15 once
+   list 6566521186; "Where each is built" cites the BQ-12 ... BQ-15 ruling 6567605660; the
+   ruling's sentence verbatim, bold dropped, its last clause naming the closing keyword in words), G-PENDING (BQ-0 ... BQ-15 once
    each, the nine the ruling pins "ruled as the default, pinned", the other seven "ruled as the
    default"), G-BOARDS (at most ten
    boards, twins at most a third, each pending or drawn with its id and PNG, the not-drawn
@@ -28,10 +29,14 @@ form follows the E47-D04 tool (the same modes, anchored values, default-deny pin
    table only `Enter` sends, and it names US-SET-003; `Esc` sends nothing), G-COALESCE (the three
    D5 parameters in §6 equal E06-D03's line), G-PALETTE (K-8 in §8; QA-1 enumerates the registry),
    G-FINDINGS (the rows equal the register's E47-D09 rows, each with a disposition), G-T2 (the T2
-   paragraph names its parts; §3, §4 and §8 cite it; the hand-off lists CMP-079 and CMP-019),
-   G-NORM (`05` §3.5 carries every K-n of §1.4 and points here; `05`:36 and `05`:88 fixed; §3.2
-   byte-identical to the base), G-HEUR, G-WALK (at most ten items), G-OWNER (G-ledger owners are
-   tickets, never an agent), G-UNMERGED, G-URL, G-UNTOUCHED (only this ticket's files, `05` and the
+   paragraph names its parts: `aria-disabled`, never `disabled`, the `opacity.disabled` ban, the
+   primary-action fill pin, one notice with many pointers, CMP-079, the CMP-019 lock, the reason at
+   mount, every §3.1 key, `Space` and the hotkey with one polite announcement, the menu arrows and
+   form validity never T2; §3, §4 and §8 cite it; RL-1's Save is a form-validity state, never T2;
+   W-8 names its state key and vocabulary owner; the hand-off lists CMP-079 and CMP-019), G-NORM
+   (`05` §3.5 owns every K-n and §1.4 mirrors the same ids, each citing `05` §3.5; `05`:36 and
+   `05`:88 fixed; §3.2 byte-identical to the base), G-HEUR, G-WALK (at most ten items), G-OWNER
+   (G-ledger owners are tickets, never an agent), G-UNMERGED, G-URL, G-UNTOUCHED (only this ticket's files, `05` and the
    boards differ from the merge base with origin/main), G-BUDGET, G-MUTLIST.
 4. **Pins (G-RULED-PIN).** A whole-document default-deny pin set over every unit of both documents
    (each heading, table row by its lead cell and prose line, by heading path and occurrence, with
@@ -133,6 +138,7 @@ UNMERGED_PATHS = (
 )
 
 RULING_ID = "6566806943"  # the rulings of record on #1308 (2026-11-02 01:20Z)
+READ_ID = "6567605660"  # the design read of record on PR #5418: BQ-12 ... BQ-15 ruled as proposed
 BQ_LIST_ID = "6566521186"  # the BQ list on #1308
 BQ_DEFAULT = "ruled as the default"
 BQ_PINNED = "ruled as the default, pinned (the ruled sentence above)"
@@ -173,10 +179,25 @@ T2_NAMES = (
     "CMP-079 RbacGate",
     "CMP-019 Icon `lock`",
     "rendering 2a",
+    '`aria-disabled="true"`, never the `disabled` attribute',
+    "never `color.text.disabled` and never `opacity.disabled`",
+    "`color.surface.raised` with a `color.border.default` hairline",
+    "one notice, many pointers",
     "in the DOM at mount",
+    "`rbac.view_as`",
+    "`rbac.permission`",
+    "`rbac.owner_only`",
+    "`rbac.account`",
+    "`rbac.account_read_only`",
+    "`rbac.env`",
+    "`keymap.not_here`",
+    "`Enter`, `Space`, an arrow nudge or a bound hotkey",
     "one polite announcement",
-    "CMP-041 menu",
+    "CMP-041 menu `↑` / `↓`",
+    "Form validity is never T2",
 )
+T2_STATE_KEY = "`keymap.not_here`"
+T2_STATE_OWNER = "E47-S08"
 AGENT_RE = re.compile(r"worker|orchestrator|\bagent\b|anvil|claude|codex|lane\b", re.IGNORECASE)
 OWNER_OK_RE = re.compile(r"\bE\d\d-[A-Z]+\d\d\b|\bowner")
 URL_RE = re.compile(
@@ -646,6 +667,96 @@ MUTATIONS: tuple[Mutation, ...] = (
         "never one amend per keypress; Live never weaker than Demo — handed",
         "never one amend per keypress — handed",
     ),
+    Mutation(
+        "M-29",
+        "use the `disabled` attribute in §12's T2 paragraph",
+        "G-T2",
+        "spec",
+        "## 12.",
+        '`aria-disabled="true"`, never the `disabled` attribute',
+        "the `disabled` attribute",
+    ),
+    Mutation(
+        "M-30",
+        "drop the `opacity.disabled` ban from the T2 paragraph",
+        "G-T2",
+        "spec",
+        "## 12.",
+        "never `color.text.disabled` and never `opacity.disabled`",
+        "never `color.text.disabled`",
+    ),
+    Mutation(
+        "M-31",
+        "drop the primary-action fill pin from the T2 paragraph",
+        "G-T2",
+        "spec",
+        "## 12.",
+        "`color.surface.raised` with a `color.border.default` hairline",
+        "a lighter fill",
+    ),
+    Mutation(
+        "M-32",
+        "give each gated control its own notice in §12",
+        "G-T2",
+        "spec",
+        "## 12.",
+        "one notice, many pointers",
+        "a notice each",
+    ),
+    Mutation(
+        "M-33",
+        "drop `Space` from the T2 keys in §12",
+        "G-T2",
+        "spec",
+        "## 12.",
+        "`Enter`, `Space`, an arrow nudge",
+        "`Enter`, an arrow nudge",
+    ),
+    Mutation(
+        "M-34",
+        "drop `rbac.env` from the T2 paragraph's keys",
+        "G-T2",
+        "spec",
+        "## 12.",
+        "then `rbac.env`;",
+        "then a live reason;",
+    ),
+    Mutation(
+        "M-35",
+        "route RL-1's Save to T2 in §10",
+        "G-T2",
+        "spec",
+        "## 10.",
+        "Save is held by form validity",
+        "Save stays T2",
+    ),
+    Mutation(
+        "M-36",
+        "drop W-8's vocabulary owner in §16",
+        "G-T2",
+        "spec",
+        "## 16.",
+        "owner E47-S08, D09-A18",
+        "owner pending",
+    ),
+    Mutation(
+        "M-37",
+        "restate K-7 in §1.4 without its owner",
+        "G-NORM",
+        "spec",
+        "### 1.4",
+        "- **K-7 Never per keypress** (`05` §3.5): stops",
+        "- **K-7 Never per keypress.** Stops",
+    ),
+    Mutation(
+        "M-38",
+        "rule BQ-12 … BQ-15 by inference again",
+        "G-RULED",
+        "spec",
+        "## The questions",
+        "BQ-12 … BQ-15 by the orchestrator's design read of record (comment 6567605660",
+        "BQ-12 … BQ-15 by inference (the list",
+    ),
 )
 
 PROBES: tuple[Mutation, ...] = (
@@ -812,8 +923,11 @@ def g_ruled(t: Texts) -> list[Finding]:
     head = t.spec.split("\n")[s - 1] if s else ""
     lines = t.spec.split("\n")[s:e]
     bad: list[str] = []
-    if f"RULED (orchestrator, comment {RULING_ID}, on the BQ list {BQ_LIST_ID})" not in head:
+    if f"RULED (orchestrator, comment {RULING_ID}, on the BQ list {BQ_LIST_ID}" not in head:
         bad.append("the heading does not name the ruling and the list")
+    read = f"BQ-12 … BQ-15 by the orchestrator's design read of record (comment {READ_ID}"
+    if not any(ln.startswith("**Where each is built.**") and read in ln for ln in lines):
+        bad.append("'Where each is built' does not cite the BQ-12 ... BQ-15 ruling")
     if RULED not in lines:
         bad.append("the ruled sentence is not verbatim")
     return [("G-RULED", b, "spec", region) for b in bad]
@@ -976,10 +1090,20 @@ def g_t2(t: Texts) -> list[Finding]:
             for n in T2_NAMES
             if n not in para[0]
         ]
-    for prefix in ("## 4.", "## 8."):
+    for prefix in ("## 3.", "## 4.", "## 8."):
         _, _, reg = section(t.spec, prefix)
         if "§12" not in "\n".join(body(t.spec, prefix)):
             out.append(("G-T2", f"{prefix} does not cite §12", "spec", reg))
+    _, _, r10 = section(t.spec, "## 10.")
+    rl1 = [r for r in first_table(t.spec, "## 10.") if r and r[0] == "RL-1"]
+    if len(rl1) != 1 or not all(
+        x in rl1[0][1] for x in ("held by form validity", "`aria-invalid", "D09E09:230", "never T2")
+    ):
+        out.append(("G-T2", "RL-1's Save is not a form-validity state outside T2", "spec", r10))
+    _, _, r16 = section(t.spec, "## 16.")
+    w8 = [r for r in first_table(t.spec, "## 16.") if r and r[0] == "W-8"]
+    if len(w8) != 1 or not all(x in w8[0][3] for x in (T2_STATE_KEY, f"owner {T2_STATE_OWNER}")):
+        out.append(("G-T2", "W-8 names no state key or vocabulary owner", "spec", r16))
     lines, regions = t.hand.split("\n"), line_regions(t.hand)
     comp = [i for i, ln in enumerate(lines) if ln.startswith("Components: ")]
     if len(comp) != 1 or not all(x in lines[comp[0]] for x in ("CMP-079 RbacGate", "CMP-019")):
@@ -998,6 +1122,10 @@ def norm_section(text: str, prefix: str) -> list[str]:
 
 def g_norm(t: Texts) -> list[Finding]:
     bad: list[str] = []
+    _, _, r14 = section(t.spec, "### 1.4")
+    mirror = [ln for ln in body(t.spec, "### 1.4") if re.match(r"^- \*\*K-\d+ ", ln)]
+    unowned = [ln for ln in mirror if "** (`05` §3.5): " not in ln]
+    spec_bad = [("G-NORM", "a §1.4 K-rule does not cite its owner `05` §3.5", "spec", r14)]
     sec = norm_section(t.norm, "### 3.5 Keyboard equivalents (E47-D09)")
     if not sec:
         bad.append("`05` §3.5 is missing")
@@ -1007,13 +1135,15 @@ def g_norm(t: Texts) -> list[Finding]:
         got = [m.group(1) for ln in sec if (m := re.match(r"- (K-\d+) ", ln))]
         if got != rule_ids(t.spec):
             bad.append("`05` §3.5's rules differ from the spec's §1.4")
+        if not any("the owner of K-1 … K-12" in ln for ln in sec):
+            bad.append("`05` §3.5 does not say it owns the K-rules")
     if not any(ln.startswith("7. Chart pan") and "E06-D03 D6" in ln for ln in t.norm.split("\n")):
         bad.append("`05` §3.1 item 7 does not cite E06-D03 D6")
     if "once that screen is specced" in t.norm or "E37-D02.md` §13" not in t.norm:
         bad.append("the `05` §3.3 node-graph pointer is not fixed")
     if norm_section(t.norm, "### 3.2 ") != norm_section(at_base(NORM_REL), "### 3.2 "):
         bad.append("`05` §3.2 (the locked keymap) differs from the base")
-    return [("G-NORM", b, "norm", "") for b in bad]
+    return [("G-NORM", b, "norm", "") for b in bad] + (spec_bad if unowned or not mirror else [])
 
 
 def g_heur(t: Texts) -> list[Finding]:
