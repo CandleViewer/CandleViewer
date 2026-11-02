@@ -324,14 +324,14 @@ async def _serving(
     settle: bool = True, drain_s: float | None = None,
 ) -> AsyncIterator[httpx.AsyncClient]:  # fmt: skip
     """One API process until the block ends, when its facade, once composed, settles and its lane
-    sink flushes into Postgres (unless `settle` is False: a venue call left held would never let
-    it) and it goes down, draining for `drain_s` when given: `POST /orders`,
-    `POST /orders/cancel-all` and the exit routes, mounted in `create_app()`'s order over its OMS
-    runtime (`world.runtime`), which is ready unless `ready` is False, and then composed nothing to
-    settle (CR-S3L2X-01); once ready, its startup reconciliation pass has recorded itself before
-    the block starts (`_reconciled`). Its own pools, both on `dsn` (the OMS stores', and the
-    profile cache's unless `profiles` stands in), metrics and 24 h record; the venue, the audit log
-    and the pager are the world's."""
+    sink flushes into Postgres (unless `settle` is False: a venue call left held, or a cut to
+    Postgres that outlasts the block, would never let it) and it goes down, draining for `drain_s`
+    when given: `POST /orders`, `POST /orders/cancel-all` and the exit routes, mounted in
+    `create_app()`'s order over its OMS runtime (`world.runtime`), which is ready unless `ready` is
+    False, and then composed nothing to settle (CR-S3L2X-01); once ready, its startup
+    reconciliation pass has recorded itself before the block starts (`_reconciled`). Its own
+    pools, both on `dsn` (the OMS stores', and the profile cache's unless `profiles` stands in),
+    metrics and 24 h record; the venue, the audit log and the pager are the world's."""
     metrics = Metrics("demo")
     process_dsn = dsn or c6._login(world.dsn, "cv_app")
     pool = SqlAlchemyRelationalRepository(process_dsn, "place-order-route-it")
@@ -575,7 +575,9 @@ async def test_order_entry_blocked_when_we_cannot_record_it_postgres_unreachable
     relay = _Relay(world.dsn)
     dsn = await relay.through(c6._login(world.dsn, "cv_app"))
     try:
-        async with _serving(world, dsn=dsn) as client:
+        # Not settled: the cut lasts past the block, so the lane sink, which also carries the
+        # reconciliation machine's rows (B19), can never flush the ones that meet the cut.
+        async with _serving(world, dsn=dsn, settle=False) as client:
             relay.cut()
             calls = len(world.port.calls)
             answer = await _post(client, world.body)
