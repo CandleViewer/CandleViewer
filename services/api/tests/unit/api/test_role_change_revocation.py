@@ -8,17 +8,21 @@ reason `role_changed`) inside the change's write-ahead hook, so a refused record
 back; the rows are revoked after the commit, every member of each rotation family published, then
 the role push runs. The target's tokens and refresh tokens are refused afterwards, its sockets
 close `4401`; the actor's and a third user's sessions stay; a refused, no-op or failed change ends
-nothing.
+nothing. A change whose write-ahead bound expires while a revocation records rolls back too, with
+that session's chart dropped (over `test_step_up_router._build`'s step-up world, on the test's own
+loop under `LoopClock`).
 """
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, cast
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -27,7 +31,12 @@ from structlog.testing import capture_logs
 
 from candleviewer.admin.lifecycle_metrics import user_lifecycle_steps_total
 from candleviewer.api.contract_conformance import load_openapi_spec
-from candleviewer.api.users import make_user_admin_router, make_users_router
+from candleviewer.api.users import (
+    CHART_DROP_TIMEOUT_S,
+    ROLE_CHANGED_REASON,
+    make_user_admin_router,
+    make_users_router,
+)
 from candleviewer.app import _hub_publisher
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.errors import SessionRevoked
@@ -38,8 +47,14 @@ from candleviewer.auth.session_chart import SessionChart
 from candleviewer.auth.session_service import SessionService
 from candleviewer.statechart.bindings import b16_session
 from candleviewer.statechart.gateway import GatewayOverloadedError
+from candleviewer.storage.repositories.user_roles_sqlalchemy import (
+    WRITE_AHEAD_TIMEOUT_S,
+    bounded_write_ahead,
+)
 from candleviewer.ws.revocation import RevocationHub
 from tests.conftest import RecordingAuditSink
+from tests.unit.api.test_step_up_rotation_router import _chart, _live, _rows, _users_body
+from tests.unit.api.test_step_up_router import _H, _build
 from tests.unit.api.test_user_admin_routes import (
     _T0,
     CALLER,
@@ -54,6 +69,7 @@ from tests.unit.api.test_user_admin_routes import (
     _Store,
     _user,
 )
+from tests.unit.auth.session_fakes import LoopClock
 
 THIRD = uuid.uuid4()
 _SPEC = load_openapi_spec()
@@ -67,8 +83,9 @@ def _steps(outcome: str) -> float:  # the session revoke's `cv_user_lifecycle_st
 
 class _RoleStore:
     """`UserRoleStore` in memory, as the SQL store runs it: under its "lock" the owner floor, the
-    write-ahead `audit` with the roles read under the lock, then the commit; nothing changes when
-    either raises. `at_commit` runs where the commit lands, after the hook."""
+    write-ahead `audit` with the roles read under the lock, under the SQL store's bound
+    (`bounded_write_ahead`), then the commit; nothing changes when either raises. `at_commit` runs
+    where the commit lands, after the hook."""
 
     def __init__(self, log: _Log, roles: dict[uuid.UUID, frozenset[str]]) -> None:
         self.log, self.roles = log, roles
@@ -96,7 +113,7 @@ class _RoleStore:
         before = self.roles[user_id]
         owners = await self.count_active_owners()
         assert_owner_floor(current_roles=before, new_roles=roles, active_owner_count=owners)
-        await audit(before)
+        await bounded_write_ahead(audit(before), WRITE_AHEAD_TIMEOUT_S)
         if self.at_commit is not None:
             await self.at_commit()
         self.roles[user_id] = roles
@@ -105,7 +122,8 @@ class _RoleStore:
 
 
 class _AdminStore(_Store):
-    """The PATCH store, with the same `at_commit` seam just ahead of its commit."""
+    """The PATCH store, with the SQL store's bound on its hook and the same `at_commit` seam just
+    ahead of its commit."""
 
     at_commit: _Hook | None = None
 
@@ -113,7 +131,7 @@ class _AdminStore(_Store):
         audit = kw.pop("audit")
 
         async def hooked(change: Any) -> None:
-            await audit(change)
+            await bounded_write_ahead(audit(change), WRITE_AHEAD_TIMEOUT_S)
             if self.at_commit is not None:
                 await self.at_commit()
 
@@ -568,3 +586,140 @@ async def test_an_after_the_fact_record_that_cannot_be_written_is_counted_lost(
         error,
     )
     assert late[0] in forgotten
+
+
+class _ParkedRevocation:
+    """B16's sink: the role change's `auth.session_revoked` (reason `role_changed`) waits for
+    `release`; every other record goes straight to *sink*."""
+
+    def __init__(self, sink: Any) -> None:
+        self.sink, self.parked, self.release = sink, asyncio.Event(), asyncio.Event()
+
+    async def emit(self, action: str, **kwargs: Any) -> None:
+        if kwargs.get("reason") == ROLE_CHANGED_REASON:
+            self.parked.set()
+            await self.release.wait()
+        await self.sink.emit(action, **kwargs)
+
+
+async def _no_push(_user_id: uuid.UUID) -> None:
+    return None
+
+
+def _role_route(
+    c: TestClient, route: str, target: uuid.UUID, clock: Any, emitter: Any
+) -> Callable[[], frozenset[str]]:
+    """The owner's role route *route* on the step-up world *c* (`test_step_up_router._build`), over
+    its session rows and B16 charts. The bearer `tok` names the elevated `CALLER` to this route,
+    and *target*'s session to the step-up route. Answers a reader of *target*'s role set."""
+    app, log = cast(FastAPI, c.app), _Log()
+    auth = _Auth(
+        _Sessions(_rows(c), Hasher(), clock=clock), _StepUp(log, elevated=True, chart=_chart(c))
+    )
+    resolver = SimpleNamespace(resolve=lambda request: _principal("owner", _SPEC))
+    notifier = SimpleNamespace(roles_changed=_no_push)
+    if route == "put":
+        store = _RoleStore(log, {CALLER: frozenset({"owner"}), target: frozenset({"manager"})})
+        router = make_users_router(store, emitter, resolver, notifier, auth=cast(Any, auth))
+        app.include_router(router)
+        return lambda: store.roles[target]
+    admin = _AdminStore(log, _user(CALLER, ("owner",)), _user(target, ("manager",)))
+    app.include_router(
+        make_user_admin_router(admin, emitter, resolver, notifier, auth=cast(Any, auth))
+    )
+    return lambda: frozenset(admin.users[target]["roles"])
+
+
+def _http(c: TestClient) -> httpx.AsyncClient:
+    """A client on the test's own loop, so its requests share the B16 charts and `LoopClock`."""
+    transport = httpx.ASGITransport(app=c.app)
+    return httpx.AsyncClient(transport=transport, base_url="http://testserver", headers=_H)
+
+
+async def _change_past_the_bound(
+    c: TestClient,
+    route: str,
+    target: uuid.UUID,
+    sink: _ParkedRevocation,
+    clock: LoopClock,
+    then: _Hook | None = None,
+) -> httpx.Response:
+    """The change of *target*'s roles to `viewer`, whose write-ahead bound expires while B16
+    records the revocation of *target*'s session (parked in *sink*); *then* runs after that."""
+    path = f"/users/{target}/roles" if route == "put" else f"/users/{target}"
+    async with _http(c) as http:
+        change = asyncio.create_task(http.request(route.upper(), path, json={"roles": ["viewer"]}))
+        await asyncio.wait_for(sink.parked.wait(), timeout=5)
+        clock.advance(WRITE_AHEAD_TIMEOUT_S)  # the bound expires; the real clock has not moved
+        if then is not None:
+            await then()
+        return await asyncio.wait_for(change, timeout=5)
+
+
+@ROUTES
+async def test_a_change_past_its_bound_mid_revocation_drops_the_chart_and_the_next_step_up_records(
+    route: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The store's write-ahead bound expires while B16 records a session's revocation: the change
+    rolls back (`503 audit_unavailable`, the roles unchanged), the session's chart is dropped,
+    not kept, and the session's next step-up records as any other does: `200`, with
+    `auth.step_up_granted` and its rotation's two records."""
+    c, em, seed, clock, user = await _build()
+    (session,) = _live(c, user)
+    roles_of = _role_route(c, route, user, clock, em)
+    sink = _ParkedRevocation(em)
+    b16_session.set_audit_sink(sink)
+
+    r = await _change_past_the_bound(c, route, user, sink, LoopClock(monkeypatch))
+
+    assert (r.status_code, r.json()["code"]) == (503, "audit_unavailable")
+    assert roles_of() == frozenset({"manager"})
+    assert _chart(c).interpreter(str(session.id)) is None
+    sink.release.set()  # the audit writer answers at last
+    async with _http(c) as http:
+        ok = await http.post("/auth/step-up", json=_users_body(seed, clock))
+    assert ok.status_code == 200, ok.text
+    assert [(x["action"], x.get("reason")) for x in em.calls if x["action"][:5] == "auth."] == [
+        ("auth.step_up_granted", "users"),
+        ("auth.session_revoked", "rotated"),
+        ("auth.session_created", None),
+    ]
+
+
+@pytest.mark.parametrize("failure", ["raises", "overruns"])
+async def test_a_chart_drop_that_fails_or_overruns_leaves_the_503_and_is_logged(
+    failure: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dropping the chart of a revocation cut short is bounded (`CHART_DROP_TIMEOUT_S`) and never
+    replaces the interruption: a drop that raises or overruns is logged with its error class, and
+    the change still rolls back with `503 audit_unavailable`."""
+    c, em, _seed, clock, user = await _build()
+    (session,) = _live(c, user)
+    roles_of = _role_route(c, "put", user, clock, em)
+    sink, entered, loop_clock = _ParkedRevocation(em), asyncio.Event(), LoopClock(monkeypatch)
+
+    async def stuck(self: SessionChart, session_id: str) -> None:
+        entered.set()
+        if failure == "raises":
+            raise RuntimeError("the chart cannot be dropped")
+        await asyncio.Event().wait()  # only the drop's bound ends this
+
+    async def overrun() -> None:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        loop_clock.advance(CHART_DROP_TIMEOUT_S)  # the drop's own bound expires
+
+    monkeypatch.setattr(SessionChart, "forget", stuck)
+    b16_session.set_audit_sink(sink)
+    with capture_logs() as logs:
+        r = await _change_past_the_bound(c, "put", user, sink, loop_clock, then=overrun)
+    await _chart(c).stop()  # the parked chart, which the stub never dropped
+
+    assert (r.status_code, r.json()["code"]) == (503, "audit_unavailable")
+    assert roles_of() == frozenset({"manager"})
+    (line,) = [e for e in logs if e["event"] == "users.role_change.chart_not_dropped"]
+    error = "RuntimeError" if failure == "raises" else "TimeoutError"
+    assert (line["session_id"], line["error"], line["log_level"]) == (
+        str(session.id),
+        error,
+        "error",
+    )

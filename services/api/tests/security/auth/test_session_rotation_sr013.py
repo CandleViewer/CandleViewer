@@ -215,7 +215,9 @@ def test_a_replayed_pre_step_up_refresh_token_kills_the_family_and_its_socket(
     world: tuple[Stack, _Roles],
 ) -> None:
     """C-8: a client that lost the `200` keeps only the old tokens: its refresh trips reuse
-    detection, which revokes the new session too and closes the socket now on it."""
+    detection, which revokes the new session too and closes the socket now on it. The replay is
+    recorded ahead as one `auth.refresh_reuse_detected` (`denied`, `critical`, reason
+    `rotation_reuse`) naming the rotated-out session and its user."""
     stack, _roles = world
     uid, seed = stack.add_user("owner-d")
     minted = stack.call(stack.auth.sessions.mint, str(uid))  # the step-up reads no principal
@@ -241,3 +243,13 @@ def test_a_replayed_pre_step_up_refresh_token_kills_the_family_and_its_socket(
         assert (bye["t"], bye["p"]["reason"]) == ("bye", "session_revoked")
     gone = stack.client.get("/auth/session", headers={"Authorization": f"Bearer {new}"})
     assert gone.status_code == 401
+    (reuse,) = stack.audit.of("auth.refresh_reuse_detected")
+    assert (reuse["reason"], reuse["outcome"], reuse["severity"]) == (
+        "rotation_reuse",
+        "denied",
+        "critical",
+    )
+    assert (str(reuse["actor_user_id"]), str(reuse["session_id"])) == (
+        str(uid),
+        str(minted.session_id),
+    )
