@@ -30,12 +30,18 @@ Gates (each FAIL led by its name):
   G-T2        every §4.3 row is classed: V (form validity: it names validity and carries no T2
               rendering and no lock look) or T2 (its reason a quoted sentence). A T2 reason that
               names an E09-D09 §3.1 key is that key's text at the base (its `{slot}` filled);
-              any other is marked PROPOSED; S74-07 is `rbac.env` (ruling BQ-22).
+              any other is marked PROPOSED; S74-07 is `rbac.env` (ruling BQ-22). §4.3 states the
+              T2 anatomy once (G-T2.1a-d, G-T2.2, G-T2.6: role and full label, `aria-disabled`,
+              the reason node at mount by `aria-describedby`, CMP-079, the CMP-019 `lock`, the
+              hi-fi pins), every T2 row cites it, and A-3 names CMP-079 and the `lock`.
   G-RULED     the rulings' texts hold (comment 6577247518): the demo statement verbatim from
               `14`:1787 with its em dash (BQ-10); DEMO `font.weight.medium` (BQ-07); the panel
               LIVE `border.thick` rule present and the word never underlined (BQ-08); "LIVE
               since" outside any live region (BQ-11); the typed match exact and case-sensitive
-              (BQ-14); to demo a click-confirm only (BQ-16); the audit on the 200 only (BQ-24).
+              (BQ-14); to demo a click-confirm only (BQ-16); the audit on the 200 only, in §4.3's
+              prose and in S74-05's Audit cell (BQ-24); and the orchestrator's read: the pill a
+              button inside the `role="status"` slot, never itself a status, in §3.1 and §9; the
+              exports name all three CVD simulations.
   G-AROW      A-1 … A-9 are all present; every Old text, and A-8's row text, stands exactly once
               in its target at the base and on the line the row cites; A-9's anchor is A-6's
               New text.
@@ -500,7 +506,40 @@ def g_t2(t: Texts) -> list[str]:
                 bad.append(f"{r[0]}: a validity state (V) drawn with a T2 rendering")
         elif "T2" in cell and not re.search(r"\"[^\"]{8,}\"", cell):
             bad.append(f"{r[0]}: a T2 presentation with no quoted reason")
+        if "T2" in cell and "validity" not in cell and "T2 anatomy" not in cell:
+            bad.append(f"{r[0]}: a T2 row that does not cite the T2 anatomy")
+    sec = section(t.spec, "### 4.3")
+    start = sec.find("- **T2 anatomy")
+    if start < 0:
+        return [*bad, "§4.3 states no T2 anatomy (G-T2.1a-d, G-T2.2, G-T2.6)"]
+    end = sec.find("\n- **", start + 1)
+    body = sec[start : end if end > 0 else len(sec)]
+    bad += [f"the T2 anatomy drops {p!r}" for p in T2_ANATOMY if p not in body]
+    a3 = next((ln for ln in t.spec.split("\n") if ln.startswith("- **A-3,")), "")
+    bad += [
+        f"A-3 does not name {p!r} (G-T2.6)"
+        for p in ("CMP-079", "CMP-019 `lock`")
+        if p not in a3
+    ]
     return bad
+
+
+T2_ANATOMY = (
+    "native role",
+    "full label",
+    'aria-disabled="true"',
+    "never the `disabled` attribute",
+    "in the DOM at mount",
+    "`aria-describedby`",
+    "CMP-079 RbacGate",
+    "`rbac.env`",
+    "CMP-019 `lock`",
+    '"Not available"',
+    "`color.text.tertiary`",
+    "`color.text.secondary`",
+    "`color.surface.raised` with a `color.border.default` hairline",
+    "never `color.text.disabled`, never `opacity.disabled`",
+)
 
 
 def g_cite(t: Texts) -> list[str]:
@@ -575,6 +614,24 @@ RULED: tuple[tuple[str, str, str | None], ...] = (
         "on the 200 of `POST /session/environment`, at S74-05, never on intent",
         None,
     ),
+    (
+        "the pill's role (§3.1)",
+        (
+            'the pill inside it is a button, CMP-017\'s anchor (`aria-haspopup="dialog"`, '
+            '`aria-expanded`, `aria-controls`), never itself `role="status"`'
+        ),
+        'The pill is a `role="status"`',
+    ),
+    (
+        "the pill's role (§9)",
+        "- **The pill:** a button named",
+        '- **The pill:** `role="status"`',
+    ),
+    (
+        "the exports (AC 2)",
+        "greyscale, deuteranopia, protanopia and tritanopia renders",
+        None,
+    ),
 )
 
 
@@ -623,6 +680,11 @@ def g_ruled(t: Texts) -> list[str]:
             bad.append(f"{what}: {must[:50]!r} no longer stands")
         if never is not None and never in t.spec:
             bad.append(f"{what}: {never!r} stands")
+    s05 = [
+        r for r in table_rows(section(t.spec, "### 4.3"), "S74-") if r[0] == "S74-05"
+    ]
+    if s05 and (len(s05[0]) < 6 or "on the 200" not in s05[0][5]):
+        bad.append("BQ-24: S74-05's Audit cell is not on the 200")
     since = next(
         (ln for ln in t.spec.split("\n") if ln.startswith("- **LIVE since")), ""
     )
@@ -803,6 +865,14 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-HYGIENE", "write a closing keyword against #1003", sub("carries the closing line.", "carries the closing line. Closes #1003.")),
     ("G-HYGIENE", "put a deny word into the tool's own text", lambda t: replace(t, tool=t.tool + "\n# " + DENY[6] + "\n")),
     ("G-SCOPE", "touch `14` in the diff", lambda t: replace(t, changed=[*OWN_PATHS, PATHS["14"]])),
+    ("G-RULED", "S74-05's Audit cell moved to intent", sub("`session.environment_switched`, high, on the 200 (`14`:1779)", "`session.environment_switched`, high, on press (`14`:1779)")),
+    ("G-T2", "the T2 anatomy drops the describedby link", sub("in the DOM at mount and linked by `aria-describedby`", "in the DOM at mount")),
+    ("G-T2", "the T2 anatomy drops the hi-fi pins", sub("never `color.text.disabled`, never `opacity.disabled` on the label", "on the label")),
+    ("G-T2", "S74-08 stops citing the T2 anatomy", sub("`E33D03`:317; the T2 anatomy below)", "`E33D03`:317)")),
+    ("G-T2", "A-3 drops CMP-079", sub("(S74-07, S74-08) CMP-079 RbacGate wraps the popover's action", "(S74-07, S74-08) the popover's action is gated")),
+    ("G-RULED", "the pill made a status again (§3.1)", sub("the pill inside it is a button, CMP-017's anchor", "the pill inside it is a `role=\"status\"` element, CMP-017's anchor")),
+    ("G-RULED", "the pill made a status again (§9)", sub("- **The pill:** a button named", "- **The pill:** `role=\"status\"`, named")),
+    ("G-RULED", "the exports drop tritanopia", sub("protanopia and tritanopia renders", "protanopia renders")),
 )  # fmt: skip
 
 
