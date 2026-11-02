@@ -5,7 +5,9 @@ Plaintext keys and unwrapped DEKs never leave this package (C-2.7, #2339). M4 ho
 caller-bound signing capability (`CredentialBorrower`, minted once by `admin.wiring` via
 `mint_borrower`): it sends a message with `KEY_ID_SLOT` where the key id goes and gets back a
 `RequestSignature` (hex MAC + key id), never the secret. `admin` alone may call the offline
-break-glass proof `prove_kek_possession` (#2119): metadata only, it never enrols a KEK. `_kek`,
+break-glass proof `prove_kek_possession` (#2119): metadata only, it never enrols a KEK; and,
+in live, `open_recovery_digests` (#2152 S6), the same proof with a digest-only `RecoveryDigests`
+session of the recovery key, opened in its custody pass (digests out, never the key). `_kek`,
 `_envelope`, `_auth_keyring`, `_export_key`, `_export_custody`, `_source`, `_metrics` and `broker`
 are internal.
 Key import holds `CandidateKeys` (minted by `admin.wiring` too): M2 verifies a pasted pair through
@@ -24,6 +26,7 @@ there for the account delete and the key revoke, destroys one stored key of one 
 
 from __future__ import annotations
 
+from candleviewer.secrets._auth_keyring import RecoveryDigests
 from candleviewer.secrets.broker import Purpose
 from candleviewer.secrets.candidate import CandidateKeys, CandidateSigner
 from candleviewer.secrets.errors import (
@@ -63,11 +66,13 @@ from candleviewer.secrets.service import (
     mint_rotation_running,
     mint_signing_key_rotator,
     mint_signing_keys,
+    open_recovery_digests,
     prove_kek_possession,
 )
 from candleviewer.secrets.signing import KEY_ID_SLOT, RequestSignature
 from candleviewer.secrets.store import (
     AuditSink,
+    AuthKeyRows,
     AuthKeyStore,
     CredentialStore,
     ExportKeyStore,
@@ -77,6 +82,7 @@ from candleviewer.secrets.store import (
 __all__ = [
     "KEY_ID_SLOT",
     "AuditSink",
+    "AuthKeyRows",
     "AuthKeyStore",
     "AuthKeyring",
     "AuthKeyringUnavailable",
@@ -98,6 +104,7 @@ __all__ = [
     "LoopSigning",
     "LoopStoreFactory",
     "Purpose",
+    "RecoveryDigests",
     "RequestSignature",
     "RewrapReport",
     "RotationRunning",
@@ -123,5 +130,6 @@ __all__ = [
     "mint_rotation_running",
     "mint_signing_key_rotator",
     "mint_signing_keys",
+    "open_recovery_digests",
     "prove_kek_possession",
 ]

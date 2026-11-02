@@ -666,9 +666,13 @@ def test_demo_host_overlay_lint_refuses(path: str, value: object, why: str) -> N
         ("services.api.secrets", [KEK_MOUNT, LANE_MOUNT]),
         (f"{ENV}.CV_ALLOWED_ORIGINS", "${CV_ALLOWED_ORIGINS:?x}"),
         ("volumes.cv-api-data", {}),
+        (f"{ENV}.CV_AUTH_TOTP_KEY_HEX", "${CV_AUTH_TOTP_KEY_HEX:?x}"),
     ],
-    ids=["api-restates-the-lane-key", "origins-required", "data-volume-empty-mapping"],
-)
+    ids=[
+        "api-restates-the-lane-key", "origins-required", "data-volume-empty-mapping",
+        "auth-key-still-required",
+    ],
+)  # fmt: skip
 def test_demo_host_overlay_lint_accepts(path: str, value: object) -> None:
     """api reads the base file's lane key, so the overlay may restate that mount exactly."""
     assert lint_compose.check_demo_host_overlay(_demo_host(path, value)) == []
@@ -681,6 +685,15 @@ BOOT = "services.bootstrap-owner"
 #: address, no auth keys).
 BOOT_ENV = {"CV_ENVIRONMENT", "CV_PG_DSN", "CV_KEK_SOURCE", "CV_KEK_HANDLE", "CV_KEK_VERSION",
             "CV_AUDIT_WAL_PATH"}  # fmt: skip
+
+
+@pytest.mark.parametrize("name", ["CV_AUTH_TOTP_KEY_HEX", "CV_AUTH_RECOVERY_HMAC_KEY_HEX"])
+def test_the_old_env_auth_keys_are_optional_and_never_committed(name: str) -> None:
+    """#2152 (BQ-10): cv-api imports them once and the operator then scrubs them, so the overlay
+    takes each as `${NAME:-}`; a committed value is still refused."""
+    assert _demo_host()["services"]["api"]["environment"][name] == f"${{{name}:-}}"
+    errors = lint_compose.check_demo_host_overlay(_demo_host(f"{ENV}.{name}", "ab" * 32))
+    assert any(f"{name} is committed here" in error for error in errors), errors
 
 
 def test_the_bootstrap_owner_service_is_cvapis_twin_for_the_cli_and_logs_nothing() -> None:

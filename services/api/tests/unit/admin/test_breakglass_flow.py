@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import hashlib
+import hmac
 import inspect
 import json
 import re
@@ -36,7 +38,7 @@ from candleviewer.audit.redact import redact
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.break_glass import BreakGlassRefusal, BreakGlassResetService
 from candleviewer.auth.break_glass import BreakGlassStoreRefusal as StoreRefusal
-from candleviewer.auth.recovery_codes import hash_recovery_code, normalize_recovery_code
+from candleviewer.auth.recovery_codes import normalize_recovery_code
 from candleviewer.secrets import KekCheckResult
 from candleviewer.settings import Environment
 
@@ -49,7 +51,7 @@ ATTEMPT, REFUSED, RESET = (
 _OWNER, _OWNER_ID, _RUN = "alice", uuid.UUID(int=7), uuid.UUID(int=9)
 _KEY = bytes(range(32))  # test-only HMAC key, not a credential
 _CODE = "ABCD-EFGH-JKMN-PQRS-TUVW-XYZ2-3456"  # test value, not a real recovery code
-_HASH = hash_recovery_code(_CODE, key=_KEY)
+_HASH = hmac.new(_KEY, normalize_recovery_code(_CODE).encode(), hashlib.sha256).hexdigest()
 _PROVEN, _DONE = KekCheckResult(3, True, None), (2, 3, 41)  # methods, sessions, event id
 _PRE_AUDIT = "Audit: no record could be written (pre-audit refusal); the log has the reason."
 _UNRECORDED = "Audit: the outcome record could not be written; the attempt record is kept."
@@ -59,6 +61,22 @@ LIVE, DEMO, TESTNET = Environment.LIVE, Environment.DEMO, Environment.TESTNET
 DENIED, FAILURE, SUCCESS = AuditOutcome.DENIED, AuditOutcome.FAILURE, AuditOutcome.SUCCESS
 P = pytest.param
 _Outcome = tuple[int, int, int] | StoreRefusal
+
+
+class _Digests:
+    """M2's live digest session as break-glass holds it (#2152 BQ-11): `_HASH` for a code, the
+    users it digested for, and `closed` once the flow closed it."""
+
+    def __init__(self) -> None:
+        self.users: list[uuid.UUID] = []
+        self.closed = False
+
+    def recovery_code_digests(self, code: str, user_id: uuid.UUID) -> tuple[str, ...]:
+        self.users.append(user_id)
+        return (hmac.new(_KEY, normalize_recovery_code(code).encode(), hashlib.sha256).hexdigest(),)
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def _answer[T](value: T | BaseException) -> T:
@@ -137,7 +155,9 @@ class _Host:
         park: dict[str, Any] = {"release": self.release, "entered": self.entered}  # one per test
         self.journal = _Trail(self.calls, self.pending, self.refuse, self.hang, self.lock, **park)
         self.direct = _Trail(self.calls, **self.direct_trail, **park)
-        reset = BreakGlassResetService(self, recovery_code_key=_KEY, environment=self.env)
+        #: The KEK proof opens a digest session in live alone (#2152 S6).
+        self.digests = _Digests() if self.env is LIVE else None
+        reset = BreakGlassResetService(self, digests=self.digests, environment=self.env)
         ports = BreakGlassPorts(
             self.open_journal, self.open_direct, self.prove_kek, self.probe, self.resolve_owner,
             reset, self, new_run_id=lambda: _RUN,
@@ -197,7 +217,8 @@ class _Host:
         return await self._port("ask_secret", self.code)
 
     async def reset_owner_mfa(self, target_user_id: str, **kw: Any) -> _Outcome:
-        code_hash, corr = kw["recovery_code_hash"], kw["correlation_id"]
+        hashes, corr = kw["recovery_code_hashes"], kw["correlation_id"]
+        code_hash = None if hashes is None else hashes[0]
         self.seen.append({"target": target_user_id, "hash": code_hash, "corr": corr})
         return await self._port("reset", self.outcome)
 
@@ -224,6 +245,32 @@ async def _cancelled(w: _Host, *, live_flag: bool) -> X:
     running.cancel()
     w.release.set()
     return await _cancel_exit(running)
+
+
+@pytest.mark.parametrize(
+    ("setup", "exit_code"),
+    [
+        P({}, X.RESET, id="reset"),
+        P({"owner_id": None}, X.NOT_OWNER, id="refused-before-the-code"),
+        P({"outcome": "recovery_code_invalid"}, X.RECOVERY_CODE_INVALID, id="wrong-code"),
+        P({"outcome": ConnectionError("link lost")}, X.RESET_FAILED, id="reset-failed"),
+    ],
+)
+async def test_the_live_digest_session_is_closed_whatever_the_run_s_end(
+    setup: dict[str, Any], exit_code: X
+) -> None:
+    """#2152 BQ-11: the session the KEK proof opened is closed, its key zeroed, once the run
+    has ended; the code is digested for the Owner the run resolved, whose user it binds."""
+    w = _Host(LIVE, **setup)
+    assert await w.run(live_flag=True) is exit_code
+    assert w.digests is not None and w.digests.closed
+    assert w.digests.users in ([], [_OWNER_ID])
+
+
+async def test_a_cancelled_live_run_closes_the_digest_session_too() -> None:
+    w = _Host(LIVE, hang="ask_secret")
+    assert await _cancelled(w, live_flag=True) is X.OPERATOR_CANCELLED
+    assert w.digests is not None and w.digests.closed
 
 
 def _rows(records: list[dict[str, Any]]) -> list[tuple[str, AuditOutcome, str | None]]:

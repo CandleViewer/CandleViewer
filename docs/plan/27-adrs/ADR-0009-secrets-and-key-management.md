@@ -274,3 +274,34 @@ Adds one key class to M2 (Design §8): the audit export signing key, which ADR-0
   previous version. Database backups hold only the sealed seed (Design §7). Losing the KEK loses
   the key, an accepted loss: exports signed before still verify with the listed public key, and a
   rotation provides the next key.
+
+## Implementation notes (2026-11-01, #2152)
+
+Additive: the decisions and amendments above stand and are not reopened. This records what the
+last slices of #2152 (S5b and S6) built where Amendment 4 says less, so a reader can tell decision
+from detail. Paths are under `services/api/candleviewer/`.
+
+- **`available(*key_refs)`** (Amendment 4, "Injected capability"). The capability's `available()`
+  takes the key references of a user's TOTP methods and answers from metadata alone whether the
+  open keyring holds the key of every one (with none, whether a keyring is open at all). M18 asks
+  it before any seed is opened or any code is tried, so the `503 auth_unavailable` comes first and
+  one method this process cannot open is enough for it (`auth/mfa_keyring.py`,
+  `require_available`; `22-api-openapi.yaml`, "Order of checks").
+- **Reasons beyond the "Operator recovery" list.** At boot, `auth_keyring_store_unavailable` and
+  `auth_keyring_audit_unavailable` (a keyring read, write or record failed: restart once fixed)
+  and `auth_keyring_unopenable` (the open reached no verdict on the rows: keep them). In the
+  `auth.mfa_unavailable` record only: `auth_keyring_unavailable` (no keyring open in the process),
+  `kek_unavailable` and `auth_keyring_closed` (the KEK went, or the process is stopping), and
+  `auth_key_not_held` (one user's method names a key the keyring does not hold; that user alone
+  gets the `503`). Each has its step in `docs/ops/runbooks/kek-custody.md`, "Auth keyring".
+- **Break-glass's digest session** ("Break-glass"). `prove_kek_possession` is unchanged, since the
+  bootstrap-Owner CLI uses it. Live break-glass calls `secrets.open_recovery_digests`: the same
+  proof with the keyring step inside its one custody pass. Once every KEK is proven, it checks the
+  pair and unwraps the recovery-code key alone, then zeroes the KEKs; a keyring problem is a failed
+  proof with its reason, so the CLI ends `kek_unproven` (status 9). Outside `live` it opens nothing.
+- **The dual-read window.** Its exit test (no unrevoked `local-dev-v1` method, no unused recovery
+  code older than the import) is logged as a count at every boot of an imported keyring
+  (`secrets.auth_keyring_legacy_window`); retiring the old reads is a follow-up of #2152.
+- **Dev, demo and CI** (from S5b). The process-local fallback is gone. The four CI workflows that
+  run MFA on the real backend mint a 32-byte file KEK per run and keep both env keys, so their
+  first boot imports them.

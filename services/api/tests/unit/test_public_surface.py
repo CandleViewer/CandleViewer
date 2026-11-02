@@ -228,6 +228,14 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "mint_auth_keyring",  # #2152 S4: its mint, pinned to admin/wiring.py likewise
         "AuthKeyringUnavailable",  # #2152 S4: its refusals, which wiring maps to `auth`'s
         "AuthSealInvalid",
+        # #2152 S6 (BQ-11, ADR-0009 Amendment 4 "Break-glass"): live break-glass's custody pass,
+        # `prove_kek_possession` plus the recovery key alone, unwrapped into a digest-only session
+        # (digests out, never the key). The mint is admin's alone (the M2 guard's `_ADMIN_ONLY`);
+        # the session is its type, which admin/breakglass_wiring.py holds and closes, and the
+        # rows port the one read of `auth_keys` it takes from that wiring (as `AuthKeyStore`).
+        "open_recovery_digests",
+        "RecoveryDigests",
+        "AuthKeyRows",
     },
     # E26-T02: the replay read path's request, in-stream gap marker, storage ports, typed
     # errors and bounded read-ahead source (docs/plan/24-internal-schemas.md Sec.13.7).

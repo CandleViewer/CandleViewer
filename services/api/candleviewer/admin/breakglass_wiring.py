@@ -6,9 +6,12 @@ M10's `SqlAlchemyBreakGlassDatabase`, one pool) and its terminal, and gets the f
 journal is an `AuditWriter` on `journal.wal` under the run lock, held exclusively until that writer
 has stopped (R2a, R2b); its flusher moves the records into `audit_log` before the CLI exits, and
 what Postgres did not take stays for cv-api's boot fold-in (R2d). The KEK proof is
-`prove_kek_possession`, which never enrols (O1); the live recovery-code rule is the reset
-service's (ADR-0009 Amendment 1; O3 kept). cv-api imports neither this module nor the flow (S8),
-which is why this is not `admin.wiring`: the composition root imports that one.
+`prove_kek_possession`, which never enrols (O1); in live it is `open_recovery_digests` (#2152 S6,
+BQ-11), the same proof that also opens, in its one custody pass, M2's digest-only session of the
+environment's recovery key, which the reset digests the Owner's code with and the flow closes when
+the run ends. The live recovery-code rule is the reset service's (ADR-0009 Amendment 1; O3 kept).
+cv-api imports neither this module nor the flow (S8), which is why this is not `admin.wiring`: the
+composition root imports that one.
 
 `build_bootstrap_owner_ports` composes the bootstrap-Owner flow's ports the same way (#4479 C2),
 over that CLI's own Postgres side (`BootstrapOwnerStores`: the mint, no reset store, DC-4479-17);
@@ -54,8 +57,16 @@ from candleviewer.audit.writer import AuditWriter
 from candleviewer.auth.bootstrap_owner import BootstrapOwnerService, BootstrapOwnerStore
 from candleviewer.auth.break_glass import BreakGlassResetService, BreakGlassResetStore
 from candleviewer.observability.context import run_in_thread
-from candleviewer.secrets import KcvStore, KekCheckResult, prove_kek_possession
-from candleviewer.settings import Settings
+from candleviewer.secrets import (
+    AuthKeyringUnavailable,
+    AuthKeyRows,
+    KcvStore,
+    KekCheckResult,
+    RecoveryDigests,
+    open_recovery_digests,
+    prove_kek_possession,
+)
+from candleviewer.settings import Environment, Settings
 
 
 class BreakGlassOwners(BreakGlassResetStore, Protocol):
@@ -73,14 +84,46 @@ class BreakGlassStores(Protocol):
     def kcv(self) -> KcvStore: ...
     @property
     def owners(self) -> BreakGlassOwners: ...
+    @property
+    def auth_keys(self) -> AuthKeyRows: ...
     async def reachable(self) -> bool: ...
     async def others_connected(self) -> bool: ...
 
 
+class _LiveDigests:
+    """Break-glass's hold on M2's digest session for one live run (#2152 BQ-11): opened by the KEK
+    proof, read by the reset, closed by the flow when the run ends (`BreakGlassResetService.close`).
+    With no session (the proof failed) or a closed one, a code matches nothing."""
+
+    def __init__(self) -> None:
+        self._session: RecoveryDigests | None = None
+
+    @audit_exempt("lifecycle")
+    def hold(self, session: RecoveryDigests) -> None:
+        self.close()
+        self._session = session
+
+    @audit_exempt("read")  # digests: nothing stored changes
+    def recovery_code_digests(self, code: str, user_id: uuid.UUID) -> tuple[str, ...]:
+        if self._session is None:
+            return ()
+        try:
+            return self._session.recovery_code_digests(code, user_id)
+        except AuthKeyringUnavailable:
+            return ()
+
+    @audit_exempt("lifecycle")
+    def close(self) -> None:
+        session, self._session = self._session, None
+        if session is not None:
+            session.close()
+
+
 def build_break_glass_ports(
-    settings: Settings, stores: BreakGlassStores, terminal: Terminal, *, recovery_code_key: bytes
+    settings: Settings, stores: BreakGlassStores, terminal: Terminal
 ) -> BreakGlassPorts:
     """The flow's ports over `stores`, `terminal` and the configured environment. No I/O."""
+    digests = _LiveDigests() if settings.environment is Environment.LIVE else None
 
     async def open_journal() -> AuditTrail:
         return await _open_journal(settings.audit_wal_path, stores.audit_log)
@@ -89,15 +132,18 @@ def build_break_glass_ports(
         return _DirectTrail(stores.audit_log) if await stores.reachable() else None
 
     async def prove_kek() -> KekCheckResult:
-        return await prove_kek_possession(settings, stores.kcv)
+        if digests is None:  # outside live no recovery code is asked for, so no key is opened
+            return await prove_kek_possession(settings, stores.kcv)
+        proof, session = await open_recovery_digests(settings, stores.kcv, stores.auth_keys)
+        if session is not None:
+            digests.hold(session)
+        return proof
 
     async def resolve_owner(identifier: str) -> uuid.UUID | None:
         found = await stores.owners.find_active_owner(identifier)
         return None if found is None else uuid.UUID(found)
 
-    reset = BreakGlassResetService(
-        stores.owners, recovery_code_key=recovery_code_key, environment=settings.environment
-    )
+    reset = BreakGlassResetService(stores.owners, digests=digests, environment=settings.environment)
     return BreakGlassPorts(
         open_journal=open_journal,
         open_direct=open_direct,

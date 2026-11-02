@@ -46,13 +46,14 @@ import asyncio
 import re
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from candleviewer.auth.errors import (
     AuthServiceUnavailable,
+    MfaSealInvalid,
     ResetTargetNotFound,
     SelfResetRefused,
     SessionReadOnly,
@@ -73,9 +74,9 @@ from candleviewer.auth.metrics import (
     auth_step_up_total,
     auth_stepup_failures_total,
 )
-from candleviewer.auth.mfa_keyring import MfaKeyring, zero_seeds
+from candleviewer.auth.mfa_keyring import MfaKeyring, require_available, zero_seeds
 from candleviewer.auth.mfa_repository import MfaRepository
-from candleviewer.auth.models import SessionRecord, UserRecord
+from candleviewer.auth.models import MfaMethodRecord, SessionRecord, UserRecord
 from candleviewer.auth.repository import UserRepository
 from candleviewer.auth.session_chart import SessionChart, to_us
 from candleviewer.auth.session_repository import SessionRepository, StepUpChange, StepUpState
@@ -533,7 +534,8 @@ class StepUpService:
         `SessionReadOnly` (the third strike, or a downgrade that lands during the check), and
         `SessionRevoked` when the session is revoked during the check. A session already revoked
         or read-only when the call begins is refused at once, before any factor is checked. A
-        grant is never held."""
+        grant is never held. #2152: `MfaKeyringUnavailable` once the challenge is answered and
+        before either factor, unheld and with nothing recorded (22 `AuthUnavailable`)."""
         started = self._failure_hold.start()
         if action_class is not None and action_class not in ACTION_CLASSES:
             raise UnknownActionClass(action_class)
@@ -544,8 +546,14 @@ class StepUpService:
         now = self._clock()
         action_class, challenge = _answered(record, now, action_class, challenge_id)
         grant_key = _grant_key(action_class, challenge)
+        # #2152 (22 `AuthUnavailable`): after validation and `session_read_only`, before either
+        # factor. The password sent is not verified, so no strike, failed-login count, lockout or
+        # downgrade is recorded, nothing is elevated and the live challenge stays live.
+        methods = await self._mfa.find_active_totp_methods(user_id)
+        refs = (m.secret_key_ref or "" for m in methods)
+        await require_available(self._keyring, *refs, user_id=uuid.UUID(user_id))
         try:
-            if not await self._verify_both(user_id, code, password, now):
+            if not await self._verify_both(user_id, code, password, now, methods):
                 auth_stepup_failures_total.inc()  # SR-125; the audit row names the action class
                 strike = _Strike(now)
                 struck = await self._update(session_id, strike)
@@ -650,15 +658,22 @@ class StepUpService:
             await self._failure_hold.hold(started)
         return verdict
 
-    async def _verify_both(self, user_id: str, code: str, password: str, now: datetime) -> bool:
-        """Password first (login's hasher + lockout counters), then TOTP.
+    async def _verify_both(
+        self,
+        user_id: str,
+        code: str,
+        password: str,
+        now: datetime,
+        methods: Sequence[MfaMethodRecord],
+    ) -> bool:
+        """Password first (login's hasher + lockout counters), then TOTP over `methods`.
 
         The TOTP step (and its replay guard) is only reached with a correct
         password, so a wrong password never burns a valid time step."""
         user = await self._users.find_by_id(user_id)
         if not (await self._password_verdict(user, password, now)).ok:
             return False
-        return await self._verify(user_id, code, now)
+        return await self._verify(user_id, code, now, methods)
 
     async def _password_verdict(
         self, user: UserRecord | None, password: str, now: datetime
@@ -681,17 +696,22 @@ class StepUpService:
             auth_lockouts_total.inc()  # SR-125: a wrong step-up password can lock the account
         return PasswordVerdict(ok=False, locked_until=locked_until)
 
-    async def _verify(self, user_id: str, code: str, now: datetime) -> bool:
+    async def _verify(
+        self, user_id: str, code: str, now: datetime, methods: Sequence[MfaMethodRecord]
+    ) -> bool:
         refused: list[tuple[bytes | bytearray, int | None]] = []
         seeds: list[bytearray] = []
         accepted: tuple[str, int] | None = None
         try:
-            for method in await self._mfa.find_active_totp_methods(user_id):
+            for method in methods:
                 if method.secret_enc is None:
                     continue
-                seed = await self._keyring.open_totp_seed(
-                    method.secret_enc, method.secret_key_ref or "", uuid.UUID(user_id)
-                )
+                try:
+                    seed = await self._keyring.open_totp_seed(
+                        method.secret_enc, method.secret_key_ref or "", uuid.UUID(user_id)
+                    )
+                except MfaSealInvalid:
+                    continue  # #2152 AC9: moved or tampered, so this method matches no code
                 seeds.append(seed)
                 step = verify_code(seed, code, unix_time=now.timestamp())
                 if step is not None:

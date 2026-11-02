@@ -48,6 +48,9 @@ R10 Plaintext stays in `secrets/` (C-2.7, #2339): the plaintext borrow (`with_cr
     the credential plaintext holders `SecretStr` / `get_secret_value`. M2 computes the MAC.
     Everywhere outside `settings.py`: the Settings fields `bybit_api_key` / `bybit_api_secret`
     (attribute, name, reflection) and `CV_BYBIT_API_` literals (the env plaintext source).
+    #2152 (BQ-6): the old env auth keys' Settings fields `auth_totp_key_hex` /
+    `auth_recovery_hmac_key_hex` (attribute, name, reflection) outside `settings.py` and the
+    functions of `_AUTH_ENV_READERS`: M2 alone imports them, and those only compare or seal.
 """
 
 from __future__ import annotations
@@ -107,8 +110,11 @@ _BORROW = frozenset({"with_credentials", "borrow_handle"})
 #: (refused in the exchange adapter).
 _REVEAL = "reveal"
 _ADAPTER_PLAINTEXT = frozenset({"SecretStr", "get_secret_value"})
-#: Admin metadata; `prove_kek_possession` is the offline break-glass proof (#2119).
-_ADMIN_ONLY = frozenset({"rewrap_deks", "verify_kek_possession", "prove_kek_possession"})
+#: Admin metadata; `prove_kek_possession` is the offline break-glass proof (#2119), and
+#: `open_recovery_digests` that proof with its live digest session (#2152 S6).
+_ADMIN_ONLY = frozenset(
+    {"rewrap_deks", "verify_kek_possession", "prove_kek_possession", "open_recovery_digests"}
+)
 _AUDIT_TARGETS = frozenset({"emit", "writer", "_writer", "_audit_sink", "_audit"})
 _REFLECT = frozenset({"getattr", "setattr", "hasattr", "delattr", "getattr_static"})
 _OBJ_REFLECT = frozenset({"__getattribute__", "__setattr__", "__delattr__"})
@@ -117,6 +123,18 @@ _STR_PREFIXES = ("candleviewer.secrets", "/run/credentials", "CV_KEK_", "CV_BYBI
 #: R10: the configured plaintext exchange credential fields (Settings),
 #: readable only in settings.py.
 _SETTINGS_CREDS = frozenset({"bybit_api_key", "bybit_api_secret"})
+#: R10 (#2152 BQ-6): the old env auth keys (Settings fields), which M2 imports once on demo or
+#: testnet (`secrets/` is not scanned) and nothing else may read, but in `settings.py` and these
+#: functions, by (file, function): the two checks that refuse another key equal to one of them,
+#: and the dev account fixture's seeder, whose legacy sealer an imported keyring reads (BQ-12).
+_AUTH_ENV_KEYS = frozenset({"auth_totp_key_hex", "auth_recovery_hmac_key_hex"})
+_AUTH_ENV_READERS = frozenset(
+    {
+        ("app.py", "build_csrf_codec"),
+        ("audit_lane_wiring.py", "refuse_reused_key"),
+        ("cvdev/account_fixture/seed.py", "_auth_material"),
+    }
+)
 
 #: Exact allow-list: (file, rule, construct). Each entry is one reviewed, unrelated use.
 ALLOW: frozenset[tuple[str, str, str]] = frozenset(
@@ -260,9 +278,23 @@ class _Checker:
         self.aliases = _aliases(rel, tree)
         self.bases = _m2_bases(rel, tree)
         self.docs = _docstrings(tree)
+        #: Every node inside a function `_AUTH_ENV_READERS` names for this file.
+        self.env_key_readers = {
+            id(inner)
+            for fn in ast.walk(tree)
+            if isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef)
+            and (rel, fn.name) in _AUTH_ENV_READERS
+            for inner in ast.walk(fn)
+        }
 
     def flag(self, msg: str) -> None:
         self.bad.append(f"{self.rel}: {msg}")
+
+    def auth_env_key(self, name: str, node: ast.AST, via: str) -> None:
+        """R10 (#2152 BQ-6): an old env auth key read outside `settings.py` and its readers."""
+        if name in _AUTH_ENV_KEYS and self.rel != "settings.py":
+            if id(node) not in self.env_key_readers:
+                self.flag(f"{via}{name} (env auth key outside settings.py and its readers)")
 
     def allowed(self, rule: str, construct: str) -> bool:
         return (rule, construct) in self.pkg_allow
@@ -326,6 +358,7 @@ class _Checker:
             lit = args[1] if len(args) > 1 else None
             if isinstance(lit, ast.Constant) and isinstance(lit.value, str):
                 self.name_rules(lit.value, recv, f"{fname}(…, ")
+                self.auth_env_key(lit.value, node, f"{fname}(…, ")
                 if recv is not None:  # R3 via reflection: getattr(ctx.<field>, '_private')
                     self.ctx_rules(ast.Attribute(value=recv, attr=lit.value))
                 if fname in {"setattr", "delattr", "__setattr__", "__delattr__"}:
@@ -338,11 +371,13 @@ class _Checker:
                 if isinstance(a, ast.Constant) and isinstance(a.value, str):
                     for part in a.value.split("."):
                         self.name_rules(part, None, f"{fname}(")
+                        self.auth_env_key(part, node, f"{fname}(")
 
     def run(self) -> list[str]:
         for node in ast.walk(self.tree):
             if isinstance(node, ast.Attribute):
                 self.name_rules(node.attr, node.value, ".")
+                self.auth_env_key(node.attr, node, ".")
                 self.ctx_rules(node)
                 if isinstance(node.value, ast.Name) and node.value.id in self.aliases:
                     if node.attr not in m2.__all__:
@@ -358,6 +393,7 @@ class _Checker:
             elif isinstance(node, ast.Name):
                 if node.id in _SETTINGS_CREDS and self.rel != "settings.py":
                     self.flag(f"{node.id} (configured plaintext exchange credential)")
+                self.auth_env_key(node.id, node, "")
                 if node.id in _BORROW:
                     self.flag(f"{node.id}")
                 if node.id in _ADAPTER_PLAINTEXT and self.rel.startswith(_ADAPTER_SITE):

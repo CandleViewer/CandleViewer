@@ -96,7 +96,9 @@ def _refuse(action: str, fields: dict[str, str]) -> dict[str, Any]:
 
 
 def test_statements_name_their_columns_and_never_delete() -> None:
-    assert set(_STATEMENTS) == {"_ROWS", "_INSERT", "_REWRAP", "_COUNT", "_MFA_MATERIAL"}
+    assert set(_STATEMENTS) == {
+        "_ROWS", "_INSERT", "_REWRAP", "_COUNT", "_MFA_MATERIAL", "_LEGACY_MATERIAL",
+    }  # fmt: skip
     for name, stmt in _STATEMENTS.items():
         text = str(stmt)
         # 21 Sec.12 forbids `SELECT *` on auth_keys; for this module this test is the guard.
@@ -110,6 +112,24 @@ def test_the_rewrap_is_a_compare_and_set_on_the_row_s_environment_and_kek_versio
     assert " ".join(where) == (
         "id = :id AND env = CAST(:env AS exchange_env) AND kek_version = :from_v"
     )
+
+
+def test_the_exit_test_counts_only_what_the_old_formats_still_serve() -> None:
+    """#2152 BQ-3: unrevoked TOTP methods under the old env key, and unused codes made before the
+    environment's keyring was imported (a code's age, since both digests are 64 hex digits).
+    The behaviour runs on Postgres in `test_auth_keys_pg.py`."""
+    text = " ".join(str(m._LEGACY_MATERIAL).split())
+    methods, codes = text.split(" + ", 1)
+    assert "kind = 'totp' AND revoked_at IS NULL AND secret_key_ref = 'local-dev-v1'" in methods
+    assert "used_at IS NULL AND created_at < (SELECT min(created_at) FROM auth_keys" in codes
+    assert "env = CAST(:env AS exchange_env) AND origin = 'imported_env'" in codes
+
+
+async def test_the_exit_test_reads_the_process_environment_only() -> None:
+    tx = _Tx()
+    with pytest.raises(m.AuthKeyEnvironmentError):
+        await _store(tx).count_legacy_material("live")
+    assert tx.log == []
 
 
 def test_the_fakes_copies_of_the_table_and_m10_have_not_drifted() -> None:

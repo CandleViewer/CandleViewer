@@ -54,10 +54,9 @@ from typing import Final, NamedTuple, NewType
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from candleviewer.auth.envelope import LOCAL_KEY_REF, TotpEncryptor
 from candleviewer.settings import Settings
 from cvdev.account_fixture.cli import CliRefused, armed
-from scripts.seed_fixture_user import seed
+from scripts.seed_fixture_user import LegacyTotpSealer, seed
 
 COMMANDS: Final = ("users", "secrets", "init")
 EXIT_REFUSED: Final = 2
@@ -255,8 +254,9 @@ async def probe_database(dsn: str) -> DatabaseFacts:
     return DatabaseFacts(str(name), bool(holds_rows))
 
 
-def _auth_material(settings: Settings) -> tuple[str, TotpEncryptor]:
-    """The pepper and the TOTP encryptor the stack's auth uses, or a refusal naming the setting."""
+def _auth_material(settings: Settings) -> tuple[str, LegacyTotpSealer]:
+    """The pepper and the sealer of the env TOTP key the stack's demo keyring imports at its first
+    boot (#2152 BQ-12), or a refusal naming the setting."""
     pepper = settings.auth_pepper.get_secret_value()
     if not pepper:
         raise SeedRefused(NO_PEPPER)
@@ -267,7 +267,7 @@ def _auth_material(settings: Settings) -> tuple[str, TotpEncryptor]:
         key = b""
     if len(key) != 32:
         raise SeedRefused(BAD_TOTP_KEY)
-    return pepper, TotpEncryptor(key, key_ref=LOCAL_KEY_REF)
+    return pepper, LegacyTotpSealer(key)
 
 
 def _create(directory: Path, name: str, content: bytes, mode: int) -> None:

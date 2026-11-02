@@ -19,7 +19,7 @@ from candleviewer.auth.login_service import LOCKOUT_THRESHOLD, EnrolmentOnlyLogi
 from candleviewer.auth.models import LoginRequest, MfaChallengeResult, MfaMethodKind, UserStatus
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user, no_wait
-from tests.unit.auth.mfa_fakes import FakeMfaRepository
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
 
 PASSWORD = "correct-horse-battery-staple"
 
@@ -332,6 +332,7 @@ async def test_successful_login_persists_hashed_mfa_challenge_when_repository_in
         per_ip_throttle=PerIpLoginThrottle(max_attempts=1000),
         mfa_repository=mfa_repo,
         sleep=no_wait,
+        mfa_keyring=FakeMfaKeyring(),  # #2152: the keyring is up
     )
 
     result = await service.login(

@@ -2,12 +2,13 @@
 
 The real shared seeder (argon2id and all) and the real database probe run against one migrated
 database per test, cloned from a template; the Owner then signs in through the real app
-(`create_app`, `storage_backend=real`, the fixture armed as on the stack): password, TOTP code made
-from the seeded secret file, session, `GET /me`. The S8 boot guard, which the stack's api runs
-before any module starts, then passes on the seeded database. Fabricated throwaway values only.
-Every password and secret is read back from the run directory and never put in an assertion
-message. It starts its own Postgres container (testcontainers) and runs in CI's integration job; on
-any other host it is skipped unless `CV_CHAOS_STACK=1`.
+(`create_app`, `storage_backend=real`, the fixture armed as on the stack, M2 on a file KEK as the
+stack mounts one, #2152): password, TOTP code made from the seeded secret file, session, `GET /me`.
+The S8 boot guard, which the stack's api runs before any module starts, then passes on the seeded
+database. Fabricated throwaway values only. Every password and secret is read back from the run
+directory and never put in an assertion message. It starts its own Postgres container
+(testcontainers) and runs in CI's integration job; on any other host it is skipped unless
+`CV_CHAOS_STACK=1`.
 """
 
 from __future__ import annotations
@@ -34,9 +35,11 @@ from testcontainers.postgres import PostgresContainer
 
 from candleviewer.app import create_app
 from candleviewer.auth.totp import base32_to_secret, generate_code, time_step_for
+from candleviewer.secrets import SecretsService
 from candleviewer.settings import Environment, FeedMode, Settings
 from cvdev.account_fixture import boot, seed
 from tests._account_fixtures import PACK
+from tests.unit.credentials_m2._vectors import KEK_V1
 
 pytestmark = [
     pytest.mark.integration,
@@ -45,6 +48,9 @@ pytestmark = [
         reason="starts its own Postgres container: CI's integration job, or CV_CHAOS_STACK=1",
     ),
 ]
+
+#: `SecretsService`'s keyword defaults, where `create_app` takes its hardening from.
+_SECRETS_DEFAULTS: dict[str, object] = SecretsService.__init__.__kwdefaults__ or {}
 
 _ROOT = Path(__file__).resolve().parents[3]
 # Track real time: rows carry DB-stamped `created_at` (now()), so a frozen date is a time bomb.
@@ -105,8 +111,20 @@ def lane_key(tmp_path_factory: pytest.TempPathFactory) -> str:
     return str(key)
 
 
-def _settings(tmp_path: Path, dsn: str, lane_key: str) -> Settings:
-    """The stack's armed settings: demo, the synthetic feed, the fixture on, the real backend."""
+@pytest.fixture
+def kek_file(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """#2152: the file KEK M2 boots on, as the stack mounts one (32 raw bytes, mode 0400); its first
+    boot enrols it and imports the env auth keys the seeder sealed under."""
+    kek = tmp_path_factory.mktemp("kek").resolve() / "kek"
+    kek.write_bytes(KEK_V1)  # a fixed test vector (C-13.5), never a key
+    kek.chmod(0o400)
+    return str(kek)
+
+
+def _settings(tmp_path: Path, dsn: str, lane_key: str, kek_file: str | None = None) -> Settings:
+    """The stack's armed settings: demo, the synthetic feed, the fixture on, the real backend, and
+    the file KEK when the app boots M2."""
+    kek = {} if kek_file is None else {"kek_source": "file", "kek_handle": kek_file}
     return Settings(
         environment=Environment.DEMO,
         feed=FeedMode.SYNTHETIC,
@@ -120,6 +138,7 @@ def _settings(tmp_path: Path, dsn: str, lane_key: str) -> Settings:
         auth_pepper=SecretStr("it-pepper"),
         audit_wal_path=str(tmp_path / "audit.wal"),
         CV_AUDIT_LANE_KEY_FILE=lane_key,
+        **kek,
     )
 
 
@@ -138,16 +157,20 @@ def _run_dir(tmp_path: Path, name: str) -> Path:
 
 @pytest.fixture
 async def app_client(
-    database: Callable[[str], str], tmp_path: Path, lane_key: str
+    database: Callable[[str], str], tmp_path: Path, lane_key: str, kek_file: str
 ) -> AsyncIterator[tuple[httpx.AsyncClient, Path]]:
-    """The seeded database behind the real app, with only its audit and auth modules started."""
-    settings = _settings(tmp_path, database("signin_test"), lane_key)
+    """The seeded database behind the real app, with only its audit, secrets and auth modules
+    started: M2 serves MFA its keyring (#2152)."""
+    settings = _settings(tmp_path, database("signin_test"), lane_key, kek_file)
     run_dir = _run_dir(tmp_path, "run")
     assert await _seed(settings, run_dir) == 0
-    app = create_app(settings, auth_clock=lambda: _NOW)
+    with pytest.MonkeyPatch.context() as patch:  # M2 without SR-009 hardening, kept out of pytest
+        patch.setitem(_SECRETS_DEFAULTS, "harden", lambda: True)
+        app = create_app(settings, auth_clock=lambda: _NOW)
     assert app.state.account_fixture is not None  # the fixture is armed, as on the stack
     ctx = app.state.app_context
     await ctx.audit.start(ctx)
+    await ctx.secrets.start(ctx)
     await ctx.auth.start(ctx)
     transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 50000))
     try:
@@ -156,6 +179,7 @@ async def app_client(
     finally:
         await ctx.audit.writer.flush(10.0)
         await ctx.auth.stop(1.0)
+        await ctx.secrets.stop(1.0)
         await ctx.audit.stop(1.0)
 
 

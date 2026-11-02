@@ -52,10 +52,9 @@ from candleviewer.audit.journal import journal_dir
 from candleviewer.audit.service import AuditService
 from candleviewer.audit.wal import AuditWal
 from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER
-from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.models import MfaChallengeRecord, MfaMethodRecord
 from candleviewer.auth.totp import generate_code, generate_secret, time_step_for
-from candleviewer.secrets import prove_kek_possession
+from candleviewer.secrets import SecretsService, prove_kek_possession
 from candleviewer.secrets._kek import LoadedKek
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
@@ -66,9 +65,11 @@ from candleviewer.storage.repositories.mfa_sqlalchemy import SqlAlchemyMfaReposi
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
-from scripts.seed_fixture_user import seed
+from scripts.seed_fixture_user import LegacyTotpSealer, seed
 
 pytestmark = pytest.mark.integration
+#: `SecretsService`'s keyword defaults, where `create_app` takes its hardening from.
+_SECRETS_DEFAULTS: dict[str, object] = SecretsService.__init__.__kwdefaults__ or {}
 
 _ROOT = Path(__file__).resolve().parents[3]
 _NOW = datetime.now(UTC).replace(microsecond=0)  # rows are DB-stamped: track real time
@@ -224,9 +225,7 @@ async def _cli(settings: Settings, owner: str) -> tuple[X, _Operator]:
     proof = functools.partial(prove_kek_possession, harden=lambda: True)
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(breakglass_wiring, "prove_kek_possession", proof)
-        status = await breakglass.run(
-            settings, owner, live_flag=False, recovery_code_key=_RC_KEY, terminal=operator
-        )
+        status = await breakglass.run(settings, owner, live_flag=False, terminal=operator)
     return status, operator
 
 
@@ -253,8 +252,7 @@ def _child_env(dsn: str, kek: Path, wal: Path) -> dict[str, str]:
         "CV_PG_DSN": dsn,
         "CV_KEK_SOURCE": "file",
         "CV_KEK_HANDLE": str(kek),
-        "CV_AUDIT_WAL_PATH": str(wal),
-        "CV_AUTH_RECOVERY_HMAC_KEY_HEX": _RC_KEY.hex(),
+        "CV_AUDIT_WAL_PATH": str(wal),  # no auth key: the CLI reads none (#2152 S6)
     }
 
 
@@ -320,7 +318,7 @@ def test_cli_end_to_end(pg_dsn: str, kek: Path, tmp_path: Path) -> None:
 
 @pytest.mark.usefixtures("alone")
 async def test_api_probe_sees_other_session(pg_dsn: str) -> None:
-    cli = SqlAlchemyBreakGlassDatabase(pg_dsn)
+    cli = SqlAlchemyBreakGlassDatabase(pg_dsn, env="demo")
     api = SqlAlchemyRelationalRepository(pg_dsn)  # as cv-api's pools: named per transaction only
     try:
         # Three of the CLI's own sessions at once, then idle in its pool: never "another".
@@ -333,7 +331,9 @@ async def test_api_probe_sees_other_session(pg_dsn: str) -> None:
         assert await cli.others_connected()  # the same session, idle in cv-api's pool
         await api.dispose()
         assert not await cli.others_connected()
-        second = SqlAlchemyBreakGlassDatabase(pg_dsn)  # another run is another session too
+        second = SqlAlchemyBreakGlassDatabase(
+            pg_dsn, env="demo"
+        )  # another run is another session too
         try:
             assert await second.reachable() and await cli.others_connected()
         finally:
@@ -381,7 +381,7 @@ async def _enrol_totp(dsn: str, user_id: str) -> None:
         lambda **f: MfaChallengeRecord.model_validate(f),
     )
     try:
-        sealer = TotpEncryptor(_TOTP_KEY)
+        sealer = LegacyTotpSealer(_TOTP_KEY)  # the env key's old seal, which the import reads
         sealed = sealer.encrypt(generate_secret())
         method = await mfa.create_pending_method(
             user_id, secret_enc=sealed, secret_key_ref=sealer.key_ref, label="lost"
@@ -397,10 +397,16 @@ async def _enrol_totp(dsn: str, user_id: str) -> None:
 
 @asynccontextmanager
 async def _cv_api(settings: Settings) -> AsyncIterator[httpx.AsyncClient]:
-    """cv-api's auth and audit modules over the same Postgres and audit directory."""
-    app = create_app(settings, auth_clock=lambda: _NOW)
+    """cv-api's auth, secrets and audit modules over the same Postgres and audit directory; M2
+    imports the demo keyring from the two env keys at its first boot (#2152)."""
+    with (
+        pytest.MonkeyPatch.context() as patch
+    ):  # M2 without SR-009 hardening, which must not reach pytest
+        patch.setitem(_SECRETS_DEFAULTS, "harden", lambda: True)
+        app = create_app(settings, auth_clock=lambda: _NOW)
     ctx = app.state.app_context
     await ctx.audit.start(ctx)
+    await ctx.secrets.start(ctx)
     await ctx.auth.start(ctx)
     transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 50000))
     try:
@@ -408,6 +414,7 @@ async def _cv_api(settings: Settings) -> AsyncIterator[httpx.AsyncClient]:
             yield c
     finally:
         await ctx.auth.stop(1.0)
+        await ctx.secrets.stop(1.0)
         await ctx.audit.stop(1.0)
 
 

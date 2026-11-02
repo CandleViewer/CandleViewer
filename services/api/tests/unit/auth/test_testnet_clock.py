@@ -25,7 +25,6 @@ from candleviewer.api.csrf import CsrfMiddleware
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.audit.models import AuditEmission, ExchangeEnv, Severity
 from candleviewer.auth import testnet_clock
-from candleviewer.auth.env_keyring import EnvMfaKeyring
 from candleviewer.auth.errors import SessionIdleLocked, StepUpRequired
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind, UserRecord
@@ -33,6 +32,7 @@ from candleviewer.auth.service import AuthService
 from candleviewer.auth.testnet_clock import OffsetFileClock, OffsetFileError, build_test_clock
 from candleviewer.auth.totp import base32_to_secret, generate_code, time_step_for
 from candleviewer.settings import Environment, Settings
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring
 
 from .auth_fakes import FakeUserRepository, make_user
 from .mfa_fakes import FakeMfaRepository
@@ -292,9 +292,11 @@ def _create_app(
     seen: list[Callable[[], datetime] | None] = []
     real = app_module.build_auth_service
 
-    def _spy(settings: Settings, *, clock: Callable[[], datetime] | None = None) -> AuthService:
+    def _spy(
+        settings: Settings, *, clock: Callable[[], datetime] | None = None, **kwargs: Any
+    ) -> AuthService:
         seen.append(clock)
-        return real(settings, clock=clock)
+        return real(settings, clock=clock, **kwargs)
 
     monkeypatch.setattr(app_module, "build_auth_service", _spy)
     app = app_module.create_app(settings, **kwargs)
@@ -421,7 +423,7 @@ async def _auth(clock: OffsetFileClock, password_hash: str) -> tuple[AuthService
         users,
         pepper="pepper",
         mfa_repository=FakeMfaRepository(),
-        mfa_keyring=EnvMfaKeyring(b"t" * 32, b"r" * 32),
+        mfa_keyring=FakeMfaKeyring(b"t" * 32, b"r" * 32),
         session_repository=FakeSessionRepository(),
         clock=clock,
     )

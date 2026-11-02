@@ -34,6 +34,7 @@ from fastapi import APIRouter, Path, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from candleviewer.api.auth_unavailable import auth_unavailable, record_unavailable, unavailable_row
 from candleviewer.api.csrf import source_ip
 from candleviewer.api.refusal_session import NamesSession, SessionsLike
 from candleviewer.api.step_up import RequestElevation, demand_elevation
@@ -50,6 +51,7 @@ from candleviewer.auth.errors import (
     InviteConflict,
     InviteNotFound,
     InviteRejected,
+    MfaKeyringUnavailable,
     PasswordPolicyViolation,
 )
 from candleviewer.auth.generated_permissions import Permission, Scope
@@ -245,6 +247,16 @@ def make_invites_router(
             reason=reason,
             request_id=current_request_uuid(),
         )
+
+    async def _mfa_unavailable(
+        request: Request, operation: str, exc: MfaKeyringUnavailable
+    ) -> JSONResponse:
+        """#2152 (22 `AuthUnavailable`): the invite stays open, no failed attempt is recorded
+        for the address and the enrolment window keeps running; the `auth.mfa_unavailable` row
+        is best effort (BQ-8)."""
+        row = unavailable_row(operation, exc, actor_ip=_actor_ip(request))
+        await record_unavailable(emitter.emit, row)
+        return auth_unavailable()
 
     async def _json_body(request: Request) -> dict[str, Any] | None:
         try:
@@ -485,6 +497,8 @@ def make_invites_router(
             return _problem(422, "Unprocessable entity", exc.reason, code="password_policy")
         except BreachedListUnavailable:  # #5269: fail closed, nothing consumed (logged at start)
             return _problem(503, "Service unavailable", "service temporarily unavailable")
+        except MfaKeyringUnavailable as exc:  # #2152: before the hash and the token's use
+            return await _mfa_unavailable(request, "redeemInvite", exc)
         return JSONResponse(
             status_code=200,
             content={
@@ -558,6 +572,8 @@ def make_invites_router(
             )
         except (_AuditRefused, WriteAheadTimeout):  # the grant rolled back; the user stays invited
             return _problem(503, "Service unavailable", _AUDIT_DOWN)
+        except MfaKeyringUnavailable as exc:  # #2152: after the method lookup, before the code
+            return await _mfa_unavailable(request, "confirmInvite", exc)
         except InviteRejected as exc:
             await _reject_audit(exc.reason, request)
             if exc.reason == "enrollment_invalid":

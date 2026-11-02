@@ -52,7 +52,7 @@ from candleviewer.secrets import (
     export_signer,
 )
 from candleviewer.secrets import _metrics as m
-from candleviewer.secrets._auth_keyring import LoadedAuthKeyring
+from candleviewer.secrets._auth_keyring import LoadedAuthKeyring, RecoveryDigests, recovery_digests
 from candleviewer.secrets._rotation import RotatingBroker
 from candleviewer.secrets.broker import _IO_TIMEOUT_S, ALLOWED_CALLERS, Purpose, _LoopIo, _m2_only
 from candleviewer.secrets.candidate import CANDIDATE_HOLD_S, CandidateKeys, hold_candidate
@@ -70,7 +70,13 @@ from candleviewer.secrets.export_rotator import RotationRunning, SigningKeyRotat
 from candleviewer.secrets.export_signer import ExportSigner, SigningKeys
 from candleviewer.secrets.models import KekCheckResult, RewrapReport, StoredCredential
 from candleviewer.secrets.signing import RequestSignature, SigningMessage, scrub_frames
-from candleviewer.secrets.store import AuditSink, AuthKeyStore, CredentialStore, KcvStore
+from candleviewer.secrets.store import (
+    AuditSink,
+    AuthKeyRows,
+    AuthKeyStore,
+    CredentialStore,
+    KcvStore,
+)
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
@@ -142,6 +148,9 @@ def _log() -> Any:
 
 for _r in REASONS:
     m.kek_load_failures_total.labels(reason=_r)
+
+#: A step of the possession proof's custody pass, given the proven KEKs: a refusal code, or None.
+_ProvenStep = Callable[["_kek.LoadedKek", "_kek.LoadedKek | None"], Awaitable[str | None]]
 
 
 class LatchableGate(Protocol):
@@ -917,8 +926,12 @@ class SecretsService:
             return KekCheckResult(None, False, self._reason or "kek_unavailable")
         return KekCheckResult(self._kek_version, True, self._reason)  # `kek_rows_stranded`
 
-    async def _prove_possession(self, settings: Settings) -> KekCheckResult:
-        """`prove_kek_possession`: the shared custody path, then a KCV check that never enrols."""
+    async def _prove_possession(
+        self, settings: Settings, then: _ProvenStep | None = None
+    ) -> KekCheckResult:
+        """`prove_kek_possession`: the shared custody path, then a KCV check that never enrols.
+        `then` runs in the same pass once every KEK is proven, before they are zeroed; the code
+        it answers is a failed proof (#2152's break-glass digest session)."""
         held: list[_kek.LoadedKek] = []
         try:
             kek, prev = await self._acquire_keks(settings, self._sources(settings), held)
@@ -928,6 +941,8 @@ class SecretsService:
                     raise KekLoadError("kek_not_enrolled")
                 if not _kek.kcv_matches(k, known[k.version][0]):
                     raise KekLoadError("kek_mismatch")
+            if then is not None and (refused := await then(kek, prev)) is not None:
+                return KekCheckResult(None, False, refused)
         except KekSourceNotPermitted as exc:
             return KekCheckResult(None, False, exc.code)
         except KekLoadError as exc:
@@ -1236,3 +1251,51 @@ async def prove_kek_possession(
         kcv_store=kcv_store, sources=sources, harden=harden, load_timeout_s=load_timeout_s
     )
     return await svc._prove_possession(settings)
+
+
+async def open_recovery_digests(
+    settings: Settings,
+    kcv_store: KcvStore,
+    auth_keys: AuthKeyRows,
+    *,
+    sources: Callable[[Any], _source.KekSources] = _source.sources_from_settings,
+    harden: Callable[[], bool] = _kek.harden_process,
+    load_timeout_s: float = 10.0 + _LOAD_MARGIN_S,
+) -> tuple[KekCheckResult, RecoveryDigests | None]:
+    """Break-glass's custody pass in live (#2152 S6, BQ-11, AC10, AC11; ADR-0009 Amendment 4
+    "Break-glass"); `admin` only. `prove_kek_possession`'s proof, then, in the same pass and only
+    once every KEK is proven, the environment's two `auth_keys` rows checked as a pair and the
+    recovery key alone unwrapped into a digest-only session; every KEK is zeroed before this
+    returns. A keyring that cannot be opened fails the proof with its reason (`auth_keyring_` and
+    `missing`, `mismatch`, `stranded`, `store_unavailable`), so the CLI refuses before any digest
+    is computed (`KEK_UNPROVEN`). The caller closes the session it gets (it zeroes the key).
+    Live only: elsewhere the CLI takes no recovery code, and an imported keyring's old digests are
+    not this session's."""
+    if settings.environment.value != "live":
+        raise ValueError("the recovery digest session is break-glass's, in live only")
+    svc = SecretsService(
+        kcv_store=kcv_store, sources=sources, harden=harden, load_timeout_s=load_timeout_s
+    )
+    opened: list[RecoveryDigests] = []
+
+    async def session(kek: _kek.LoadedKek, prev: _kek.LoadedKek | None) -> str | None:
+        try:
+            async with asyncio.timeout(_IO_TIMEOUT_S):
+                rows = await auth_keys.rows_for(kek.env_name)
+        except Exception:
+            return _auth_custody.STORE_DOWN
+        if not rows:
+            return _auth_custody.MISSING
+        try:
+            opened.append(recovery_digests(kek, rows, prev=prev))
+        except AuthKeyringUnavailable as exc:
+            return exc.reason
+        return None
+
+    try:
+        proof = await svc._prove_possession(settings, then=session)
+    except BaseException:
+        for opened_session in opened:
+            opened_session.close()
+        raise
+    return proof, opened[0] if proof.kcv_ok else None

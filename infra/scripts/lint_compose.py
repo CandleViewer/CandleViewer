@@ -230,8 +230,12 @@ _BOOTSTRAP_CLI = ["python", "-m", "candleviewer.bootstrap_owner"]
 _API_BUILD = {"context": "../..", "dockerfile": "infra/images/Dockerfile.api"}
 #: A name reads its own variable; migrate's CV_PG_DSN reads the owner role's.
 _SOURCES = {("migrate", "CV_PG_DSN"): "CV_PG_OWNER_DSN"}
-#: The one name that may default to empty: no browser origin (fail closed).
-_MAY_BE_EMPTY = frozenset({"CV_ALLOWED_ORIGINS"})
+#: The names that may default to empty: no browser origin (fail closed), and the old env auth keys,
+#: which cv-api imports once and the operator then scrubs (#2152 BQ-10; Settings reads a blank one
+#: as unset).
+_MAY_BE_EMPTY = frozenset(
+    {"CV_ALLOWED_ORIGINS", "CV_AUTH_TOTP_KEY_HEX", "CV_AUTH_RECOVERY_HMAC_KEY_HEX"}
+)
 _OWNER_DSN = re.compile(r"\$\{CV_PG_OWNER_DSN:\?[^}]*\}")
 #: The overlay's two file secrets, each the host file its variable names, with no default.
 _DEMO_FILES = {"cv_kek": "CV_KEK_FILE", "cv_audit_lane_key": "CV_AUDIT_LANE_MAC_SOURCE"}

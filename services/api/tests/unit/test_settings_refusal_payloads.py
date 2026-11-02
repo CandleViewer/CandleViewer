@@ -103,6 +103,13 @@ def test_settings_every_text_setting_is_marked_or_named_unmarkable() -> None:
     assert "bybit_api_key" in _text_fields() and "pg_dsn" in _text_fields()
 
 
+#: Live refuses the old env auth keys (#2152 AC2), which the marker sweep sets: a live trigger
+#: unsets them, so each refusal stays its own.
+_NO_ENV_AUTH_KEYS: dict[str, str | None] = {
+    "CV_AUTH_TOTP_KEY_HEX": None,
+    "CV_AUTH_RECOVERY_HMAC_KEY_HEX": None,
+}
+
 #: (id, env that triggers the refusal, the field it reports, a sentence of its message).
 _REFUSALS = [
     pytest.param(
@@ -130,16 +137,25 @@ _REFUSALS = [
         id="shared-volume",
     ),
     pytest.param(
-        {"CV_ENVIRONMENT": "live", "CV_KEK_SOURCE": "file"},
+        {"CV_ENVIRONMENT": "live", "CV_KEK_SOURCE": "file", **_NO_ENV_AUTH_KEYS},
         "kek_source",
         "kek_source_not_permitted: CV_KEK_SOURCE=file is refused in live",
         id="file-kek-on-live",
     ),
     pytest.param(
-        {"CV_ENVIRONMENT": "live", "CV_STORAGE_BACKEND": "real", "CV_QUESTDB_PG_PASSWORD": "quest"},
+        {
+            "CV_ENVIRONMENT": "live", "CV_STORAGE_BACKEND": "real",
+            "CV_QUESTDB_PG_PASSWORD": "quest", **_NO_ENV_AUTH_KEYS,
+        },
         "storage_backend",
         "CV_QUESTDB_PG_PASSWORD must be set to a non-default value",
         id="questdb-dev-password-on-live",
+    ),
+    pytest.param(
+        {"CV_ENVIRONMENT": "live", "CV_AUTH_RECOVERY_HMAC_KEY_HEX": None},
+        "auth_totp_key_hex",
+        "auth_key_env_forbidden: CV_AUTH_TOTP_KEY_HEX refused in live",
+        id="env-auth-key-on-live",
     ),
     pytest.param(
         {"CV_REPLAY_READAHEAD_BYTES": "67108864", "CV_REPLAY_MEMORY_CEILING_BYTES": "67108864"},
@@ -232,7 +248,7 @@ def test_load_settings_refusal_carries_messages_only(
 def test_refusal_messages_name_the_field_and_message_without_inputs(
     monkeypatch: pytest.MonkeyPatch, marked_env: dict[str, str]
 ) -> None:
-    _set(monkeypatch, CV_ENVIRONMENT="live", CV_KEK_SOURCE="file")
+    _set(monkeypatch, CV_ENVIRONMENT="live", CV_KEK_SOURCE="file", **_NO_ENV_AUTH_KEYS)
     with pytest.raises(ValidationError) as refused:
         Settings()
     assert refusal_messages(refused.value) == [
@@ -263,7 +279,7 @@ def test_cli_settings_refusal_reports_messages_only_and_exits_2(
     argv: list[str],
     prog: str,
 ) -> None:
-    _set(monkeypatch, CV_ENVIRONMENT="live", CV_KEK_SOURCE="file")
+    _set(monkeypatch, CV_ENVIRONMENT="live", CV_KEK_SOURCE="file", **_NO_ENV_AUTH_KEYS)
     assert main(argv) == breakglass.EXIT_INVALID
 
     captured = capsys.readouterr()

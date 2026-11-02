@@ -1,6 +1,6 @@
 """MFA fails closed with `503 auth_unavailable` (#2152 S1, rulings D1-D7): contract and design pins.
 
-No route emits the code yet; S5b maps it, audits it and adds the provider test (C-6.1).
+The routes emit it since S5b; the provider half is `test_auth_unavailable_provider.py` (C-6.1).
 """
 
 from __future__ import annotations

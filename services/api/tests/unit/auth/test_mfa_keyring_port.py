@@ -5,8 +5,6 @@ only; integer-built keys (C-13.5)."""
 
 from __future__ import annotations
 
-import copy
-import pickle
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -14,7 +12,6 @@ from typing import Any
 import pytest
 
 from candleviewer.auth import mfa_service, step_up
-from candleviewer.auth.env_keyring import EnvMfaKeyring
 from candleviewer.auth.errors import MfaCodeInvalid, RecoveryCodeInvalid
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.mfa_service import MfaService, _hash_token
@@ -111,7 +108,8 @@ async def test_the_step_up_verifier_zeroes_every_seed_it_opened(right: bool) -> 
     )  # fmt: skip
     keyring.opened.clear()
     code = generate_code(seed, time_step_for(_NOW.timestamp())) if right else "000000"
-    assert await svc._verify(user, code, _NOW) is right
+    methods = await repo.find_active_totp_methods(user)
+    assert await svc._verify(user, code, _NOW, methods) is right
     assert len(keyring.opened) == 1 and _all_zero(keyring)
 
 
@@ -129,21 +127,6 @@ async def test_a_recovery_code_is_found_by_any_candidate_digest_in_one_lookup() 
     with pytest.raises(RecoveryCodeInvalid):
         await svc.check_recovery(await _login_token(repo, user), "WRONG-CODE")
     assert len(repo.lookups) == 2
-
-
-async def test_the_env_keyring_keeps_today_s_ref_and_shows_no_key() -> None:
-    keyring = EnvMfaKeyring(bytes(range(32)), bytes(range(32, 64)))
-    blob, ref = await keyring.seal_totp_seed(b"s" * 20, uuid.UUID(int=1))
-    assert (
-        ref == "local-dev-v1"
-        and await keyring.available(ref)
-        and not await keyring.available("akey:x")
-    )
-    assert repr(keyring) == str(keyring) == "EnvMfaKeyring(***)"
-    for op in (pickle.dumps, copy.copy):
-        with pytest.raises(TypeError):
-            op(keyring)
-    assert bytes(await keyring.open_totp_seed(blob, "any ref", uuid.UUID(int=2))) == b"s" * 20
 
 
 # --- Seeded mutants (repo convention, `tests/unit/credentials_m2/test_mutations.py`) -----------

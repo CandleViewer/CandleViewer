@@ -26,6 +26,7 @@ import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID
 
 import httpx
 import psycopg
@@ -36,15 +37,22 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from pydantic import SecretStr
 from testcontainers.postgres import PostgresContainer
 
+from candleviewer.admin.wiring import secrets_audit_row
 from candleviewer.app import create_app
 from candleviewer.audit.query import AuditQueryService
 from candleviewer.audit.writer import AuditWriter
+from candleviewer.secrets.errors import AuthKeyringUnavailable
+from candleviewer.secrets.service import AuthKeyring, SecretsService, mint_auth_keyring
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.cold.writer import write_parquet_file
 from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
+from candleviewer.storage.repositories.auth_keys_sqlalchemy import SqlAlchemyAuthKeyStore
+from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyCredentialStore
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+from tests.unit.credentials_m2._service_fakes import _bound_sources, _ctx, _Src
+from tests.unit.credentials_m2._vectors import KEK_V1, KEK_V2, AuditLog
 
 pytestmark = pytest.mark.integration
 
@@ -282,3 +290,51 @@ async def test_sr093_restore_drill_pg_and_parquet_restored_app_ready(
     assert restored_sha == part_sha
     assert readyz == 200
     assert verified and checked == _AUDIT_ROWS + 2  # and `audit.lane_started`, `_resumed`
+
+
+async def _keyring_boot(dsn: str, src: _Src) -> tuple[SecretsService, AuthKeyring]:
+    """One testnet M2 boot with the keyring seam over `dsn`, and its capability."""
+    rel = SqlAlchemyRelationalRepository(dsn)
+    store = SqlAlchemyCredentialStore(rel, audit_row=secrets_audit_row("testnet"))
+    keys = SqlAlchemyAuthKeyStore(rel, env="testnet", audit_row=secrets_audit_row("testnet"))
+    svc = SecretsService(
+        store=store, kcv_store=store, audit=AuditLog(), sources=_bound_sources(src),
+        harden=lambda: True, auth_keys=keys, auth_keyring=keys,
+    )  # fmt: skip
+    await svc.start(_ctx(environment="testnet"))
+    return svc, mint_auth_keyring(svc)
+
+
+@pytest.mark.asyncio
+async def test_a_restored_dump_without_the_kek_opens_no_seed_and_computes_no_digest(
+    pg: PostgresContainer,
+) -> None:
+    """#2152 AC12: the dump holds the auth keyring only as wraps under the KEK, so restored where
+    the KEK is missing or another one is loaded, no TOTP seed opens and no recovery-code digest
+    can be computed to test a guess offline."""
+    dsn, user, db = _dsn(pg, "asyncpg"), pg.username, pg.dbname
+    _alembic_head(pg)
+    svc, cap = await _keyring_boot(dsn, _Src(KEK_V1, 1))  # the first boot generates the keyring
+    owner = UUID(int=0x0E)
+    blob, ref = await cap.seal_totp_seed(bytes(range(1, 21)), owner)
+    assert await cap.recovery_code_digests("-".join(["7K3M"] * 7), owner)
+    await svc.stop(1.0)
+    _exec(pg, "pg_dump", "-U", user, "-d", db, "-Fc", "-f", _DUMP_IN_CONTAINER)
+    with psycopg.connect(_sync(pg), autocommit=True) as conn:
+        conn.execute("DROP SCHEMA public CASCADE")
+        conn.execute("CREATE SCHEMA public")
+    _exec(pg, "pg_restore", "-U", user, "-d", db, "--no-owner", "--exit-on-error",
+          _DUMP_IN_CONTAINER)  # fmt: skip
+    try:
+        for src in (_Src(None, 1), _Src(KEK_V2, 1)):  # no KEK; a KEK that is not the enrolled one
+            svc, cap = await _keyring_boot(dsn, src)
+            assert not await cap.available()
+            with pytest.raises(AuthKeyringUnavailable):
+                await cap.open_totp_seed(blob, ref, owner)
+            with pytest.raises(AuthKeyringUnavailable):
+                await cap.recovery_code_digests("-".join(["7K3M"] * 7), owner)
+            await svc.stop(1.0)
+    finally:  # the drill above counts its own audit rows: leave it an empty schema
+        with psycopg.connect(_sync(pg), autocommit=True) as conn:
+            conn.execute("DROP SCHEMA public CASCADE")
+            conn.execute("CREATE SCHEMA public")

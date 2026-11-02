@@ -115,7 +115,7 @@ class LoadedAuthKeyring:
         try:
             self._require_open()
             norm = normalise_code(code)
-            bound = hmac.new(self._rc_key, env.rc_preimage(user_id, norm), sha256).hexdigest()
+            bound = _bound_digest(self._rc_key, user_id, norm)
             old = hmac.new(self._rc_key, norm, sha256).hexdigest() if self._ak_imported else None
         except BaseException as exc:
             scrub_frames(exc)  # the frames below hold the code and the key
@@ -136,6 +136,59 @@ class LoadedAuthKeyring:
 
     def __reduce_ex__(self, protocol: object) -> NoReturn:
         raise TypeError("LoadedAuthKeyring cannot be pickled")
+
+
+def _bound_digest(key: bytearray, user_id: UUID, norm: bytes) -> str:
+    """The user-bound recovery digest (`cv-rc-v2`, 21 Sec.3.1.5a), the one a new code stores."""
+    return hmac.new(key, env.rc_preimage(user_id, norm), sha256).hexdigest()
+
+
+@final
+class RecoveryDigests:
+    """Break-glass's live digest session (#2152 S6, BQ-11; ADR-0009 Amendment 4 "Break-glass"):
+    the environment's recovery key alone, in M2 memory for one CLI run, opened in the KEK proof's
+    custody pass. It gives a code's user-bound digest, never the key (a live keyring is
+    generated, so there is no old digest to try); `close()` zeroes the key and every later call
+    refuses (`auth_keyring_closed`). Renders as `***`, refuses pickling and copying."""
+
+    __slots__ = ("_rd_closed", "_rd_key")
+
+    def __init_subclass__(cls, **kw: Any) -> None:
+        _m2_only(cls)
+        super().__init_subclass__(**kw)
+
+    def __init__(self, recovery: bytearray) -> None:
+        if len(recovery) != env.KEY_LEN:
+            env.zero(recovery)
+            raise ValueError("recovery key shape")
+        self._rd_key, self._rd_closed = recovery, False
+
+    def recovery_code_digests(self, code: str, user_id: UUID) -> tuple[str, ...]:
+        """`code`'s digest for `user_id`; over the cap, `ValueError` (a wrong code). A failure
+        leaves no code or key in a frame."""
+        norm = b""
+        try:
+            if self._rd_closed:
+                raise AuthKeyringUnavailable("auth_keyring_closed")
+            norm = normalise_code(code)
+            return (_bound_digest(self._rd_key, user_id, norm),)
+        except BaseException as exc:
+            scrub_frames(exc)  # the frames below hold the code and the key
+            del code
+            norm = b""
+            raise
+
+    def close(self) -> None:
+        self._rd_closed = True
+        env.zero(self._rd_key)
+
+    def __repr__(self) -> str:
+        return "***"
+
+    __str__ = __repr__
+
+    def __reduce_ex__(self, protocol: object) -> NoReturn:
+        raise TypeError("RecoveryDigests cannot be pickled")
 
 
 def generate_keyring(kek: LoadedKek) -> tuple[Records, LoadedAuthKeyring]:
@@ -214,13 +267,7 @@ def load_keyring(
     """Unwrap the environment's two rows (`prev`: the previous KEK at a rotation boot). Fails
     closed, never regenerates: `auth_keyring_stranded` for a row at a KEK version this process
     does not hold, else `auth_keyring_mismatch` (a missing, extra, moved or tampered row)."""
-    by_purpose = {r["purpose"]: r for r in rows}
-    origins = {r["origin"] for r in rows}
-    imported = origins == {IMPORTED}
-    if len(rows) != 2 or set(by_purpose) != {TOTP, RECOVERY} or origins not in _ORIGIN_SETS:
-        raise AuthKeyringUnavailable("auth_keyring_mismatch")
-    if imported and kek.env_name not in IMPORT_ENVIRONMENTS:  # D3: no old format is read in live
-        raise AuthKeyringUnavailable("auth_keyring_mismatch")
+    by_purpose, imported = _checked_pair(kek, rows)
     totp = _unwrap(by_purpose[TOTP], kek, prev)
     try:
         recovery = _unwrap(by_purpose[RECOVERY], kek, prev)
@@ -231,6 +278,33 @@ def load_keyring(
     return LoadedAuthKeyring(
         kek.env_name, imported=imported, totp_id=totp_id, totp=totp, recovery=recovery
     )
+
+
+def recovery_digests(
+    kek: LoadedKek, rows: Sequence[Mapping[str, Any]], *, prev: LoadedKek | None = None
+) -> RecoveryDigests:
+    """Break-glass's session (#2152 BQ-11): the pair checked as `load_keyring` checks it, then
+    the recovery key alone unwrapped (the TOTP key stays wrapped); an imported keyring, which live
+    never has (D3), is a mismatch here too."""
+    by_purpose, imported = _checked_pair(kek, rows)
+    if imported:
+        raise AuthKeyringUnavailable("auth_keyring_mismatch")
+    return RecoveryDigests(_unwrap(by_purpose[RECOVERY], kek, prev))
+
+
+def _checked_pair(
+    kek: LoadedKek, rows: Sequence[Mapping[str, Any]]
+) -> tuple[dict[str, Mapping[str, Any]], bool]:
+    """The two rows by purpose, and whether they were imported: one of each purpose and one
+    origin, an imported pair only outside live (D3), else `auth_keyring_mismatch`."""
+    by_purpose = {r["purpose"]: r for r in rows}
+    origins = {r["origin"] for r in rows}
+    imported = origins == {IMPORTED}
+    if len(rows) != 2 or set(by_purpose) != {TOTP, RECOVERY} or origins not in _ORIGIN_SETS:
+        raise AuthKeyringUnavailable("auth_keyring_mismatch")
+    if imported and kek.env_name not in IMPORT_ENVIRONMENTS:  # D3: no old format is read in live
+        raise AuthKeyringUnavailable("auth_keyring_mismatch")
+    return by_purpose, imported
 
 
 def _holder(version: int, kek: LoadedKek, prev: LoadedKek | None) -> LoadedKek | None:

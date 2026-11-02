@@ -31,12 +31,11 @@ from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.metrics import AUTH_EXPORTED_NAMES
 from candleviewer.auth.mfa_service import CHALLENGE_ATTEMPT_CAP, MfaService, _hash_token
 from candleviewer.auth.models import UserRecord, UserStatus
-from candleviewer.auth.recovery_codes import hash_recovery_code
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.settings import Environment, Settings
 from tests.unit.api._fakes import Identity, WriterLane, sessions
 from tests.unit.auth.auth_fakes import no_wait
-from tests.unit.auth.mfa_fakes import FakeMfaKeyring
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, recovery_digest
 
 from .mfa_fakes import FakeMfaRepository
 
@@ -130,7 +129,7 @@ async def _repo_with(
 ) -> tuple[FakeMfaRepository, uuid.UUID]:
     repo, user_id = (FakeMfaRepository() if repo is None else repo), uuid.uuid4()
     await repo.replace_recovery_codes(
-        str(user_id), code_hashes=tuple(hash_recovery_code(c, key=_RC_KEY) for c in codes)
+        str(user_id), code_hashes=tuple(recovery_digest(c, _RC_KEY) for c in codes)
     )
     for token in ("t1", "t2"):
         await repo.create_challenge(

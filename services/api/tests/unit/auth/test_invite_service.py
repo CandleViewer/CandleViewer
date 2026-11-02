@@ -154,6 +154,9 @@ class FakeHasher:
 
 
 class FakeMfa:
+    async def require_keyring(self, *, user_id: uuid.UUID | None = None) -> None:
+        """The keyring is up: a redemption goes on (#2152)."""
+
     async def enroll(self, user_id: str, request: Any, *, account_name: str) -> Any:
         return EnrollmentStart(
             method_id=uuid.uuid4(), otpauth_uri="otpauth://x", secret_base32="AAAA"

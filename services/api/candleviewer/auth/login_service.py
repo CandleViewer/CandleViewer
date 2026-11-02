@@ -13,6 +13,8 @@
 - disabled account -> `AccountDisabled`, only ever raised *after* a correct password;
 - five consecutive failures -> `AccountLocked` for 15 minutes, persisted across restarts;
 - a user without `mfa_required` (C-12.2 forbids it) -> `MfaNotRequired`, after the password;
+- a second factor the keyring cannot serve (#2152) -> `MfaKeyringUnavailable` in place of the
+  challenge, after the password and before anything is written (22 `AuthUnavailable`);
 - a per-IP throttle independent of the per-account one (ticket "Scope /
   Deliverables": "one attacker cannot lock every account");
 - every failed sign-in (each of the four errors above) returns no sooner than
@@ -54,6 +56,7 @@ from candleviewer.auth.errors import (
 from candleviewer.auth.failure_hold import FAILURE_MINIMUM, FailureHold, MonotonicClock, Sleep
 from candleviewer.auth.hashing import DEFAULT_ARGON2_PARAMS, DUMMY_PASSWORD_HASH, Hasher
 from candleviewer.auth.metrics import auth_lockouts_total, auth_login_verify_refused_total
+from candleviewer.auth.mfa_keyring import MfaKeyring, require_available
 from candleviewer.auth.models import LoginRequest, MfaChallengeResult, UserRecord, UserStatus
 from candleviewer.auth.repository import UserRepository
 from candleviewer.auth.throttle import PerIpLoginThrottle, VerifyAdmission
@@ -142,8 +145,11 @@ class LoginService:
         sleep: Sleep = asyncio.sleep,
         verify_concurrency: int = LOGIN_VERIFY_CONCURRENCY,
         admission: VerifyAdmission | None = None,
+        mfa_keyring: MfaKeyring | None = None,
     ) -> None:
         self._repository = repository
+        #: #2152: what decides the `503` in place of the challenge (metadata only, never a seed).
+        self._mfa_keyring = mfa_keyring
         self._hasher = hasher
         self._per_ip_throttle = per_ip_throttle or PerIpLoginThrottle()
         self._clock = clock
@@ -163,6 +169,10 @@ class LoginService:
         Raises `InvalidCredentials`, `AccountDisabled`, `AccountLocked` or `MfaNotRequired`
         (a user without `mfa_required`, see the note at that branch), all before either
         outcome; the router gives each of them the same answer (SR-014, #4961).
+
+        #2152: raises `MfaKeyringUnavailable` after those, for a user with a confirmed method
+        whose keys the keyring cannot serve, before anything is written or counted. It is not
+        held: the password verified, so it says no more than the challenge it replaces.
 
         #4648: each of those four refusals returns no sooner than the failure floor after
         the attempt started (`FailureHold.hold`); a successful outcome is never held.
@@ -248,6 +258,10 @@ class LoginService:
             self._per_ip_throttle.record_failure(source_ip)
             raise MfaNotRequired()
 
+        # #2152 (ruling D4, BQ-13): the `503` replaces the challenge before anything is written:
+        # no rehash, no count reset, no challenge row (22 `AuthUnavailable`, "Order of checks").
+        await self._require_keyring(user)
+
         if self._hasher.needs_rehash(user.password_hash, DEFAULT_ARGON2_PARAMS):
             new_hash = await self._hasher.hash(request.password, DEFAULT_ARGON2_PARAMS)
             await self._repository.rehash_password(
@@ -285,6 +299,17 @@ class LoginService:
             methods=user.mfa_methods,
             expires_in=300,
         )
+
+    async def _require_keyring(self, user: UserRecord) -> None:
+        """#2152: a user with a confirmed method is challenged only while the keyring holds the
+        key of each of their TOTP methods (one read of their key refs; nothing is opened), else
+        `MfaKeyringUnavailable`, never "no method" (AC6). A user without a method needs no key: the
+        enrolment-only session (#2295). Without an MFA store no challenge is persisted at all."""
+        if not user.mfa_methods or self._mfa_repository is None:
+            return
+        methods = await self._mfa_repository.find_active_totp_methods(str(user.id))
+        refs = (m.secret_key_ref or "" for m in methods)
+        await require_available(self._mfa_keyring, *refs, user_id=user.id)
 
     async def _on_failure(self, user: UserRecord) -> None:
         # The increment and the lock decision are one atomic repository

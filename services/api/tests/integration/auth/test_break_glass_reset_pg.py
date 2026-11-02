@@ -13,6 +13,8 @@ Not run locally (no docker); exercised by CI `integration`.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import os
 import subprocess
@@ -39,7 +41,7 @@ from candleviewer.auth.break_glass import (
 )
 from candleviewer.auth.break_glass_notice import BreakGlassEvents
 from candleviewer.auth.errors import BreakGlassRefused
-from candleviewer.auth.recovery_codes import generate_recovery_code, hash_recovery_code
+from candleviewer.auth.recovery_codes import generate_recovery_code, normalize_recovery_code
 from candleviewer.settings import Environment
 from candleviewer.storage.repositories.break_glass_sqlalchemy import (
     SqlAlchemyBreakGlassEvents,
@@ -55,6 +57,23 @@ pytestmark = pytest.mark.integration
 
 _ROOT = Path(__file__).resolve().parents[3]
 _KEY = bytes(range(32))  # test-only HMAC key, not a credential
+
+
+def _digest(code: str) -> str:
+    """A stored code's keyed digest, as the live digest session would give it (#2152 S6)."""
+    return hmac.new(_KEY, normalize_recovery_code(code).encode(), hashlib.sha256).hexdigest()
+
+
+class _Digests:
+    """M2's live digest session as the reset holds it: `_digest` of the code."""
+
+    def recovery_code_digests(self, code: str, user_id: uuid.UUID) -> tuple[str, ...]:
+        return (_digest(code),)
+
+    def close(self) -> None:
+        """Nothing to zero here."""
+
+
 _PW = "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA"  # placeholder digest, not a credential
 _KINDS = {  # kind -> (role, status, owner role already expired)
     "owner": ("owner", "active", False),
@@ -165,7 +184,7 @@ async def _user(engine: AsyncEngine, kind: str = "owner") -> tuple[str, str]:
     params: dict[str, object] = {"u": uid, "email": f"{uid}@example.invalid", "name": uid[:30]}
     params |= {"pw": _PW, "status": status, "role": role, "expired": expired}
     async with engine.begin() as conn:
-        await conn.execute(_SEED, {**params, "h": hash_recovery_code(code, key=_KEY)})
+        await conn.execute(_SEED, {**params, "h": _digest(code)})
     return uid, code
 
 
@@ -176,13 +195,14 @@ async def _state(engine: AsyncEngine, uid: str) -> tuple[int, ...]:
 
 
 async def _reset(
-    store: BreakGlassResetStore, uid: str, code: str | None
+    store: BreakGlassResetStore, uid: str, code: str | None, *extra: str
 ) -> tuple[int, int, int] | str:
-    """Reset `uid`, handing the store only the keyed hash (SR-022) of `code`, if any.
-    Real time, not a frozen clock: seeded rows and role expiries are DB-stamped."""
-    code_hash = None if code is None else hash_recovery_code(code, key=_KEY)
+    """Reset `uid`, handing the store only the keyed hashes (SR-022) of `code`, if any: its
+    one candidate first, then any `extra` ones (#2152 S6, `= ANY`). Real time, not a frozen
+    clock: seeded rows and role expiries are DB-stamped."""
+    hashes = None if code is None else [*extra, _digest(code)]
     return await store.reset_owner_mfa(
-        uid, now=datetime.now(UTC), recovery_code_hash=code_hash, correlation_id=str(uuid.uuid4())
+        uid, now=datetime.now(UTC), recovery_code_hashes=hashes, correlation_id=str(uuid.uuid4())
     )
 
 
@@ -276,7 +296,7 @@ async def test_code_consumed_once_concurrently(pg_dsn: str) -> None:
     async with _env(pg_dsn) as (engine, store):
         uid, code = await _user(engine)
         # The live rule sits in the service, which hands the store only the keyed hash.
-        svc = BreakGlassResetService(store, recovery_code_key=_KEY, environment=Environment.LIVE)
+        svc = BreakGlassResetService(store, digests=_Digests(), environment=Environment.LIVE)
         target = uuid.UUID(uid)
         runs = await asyncio.gather(
             *(svc.reset(target, recovery_code=code, correlation_id=uuid.uuid4()) for _ in range(6)),
@@ -286,6 +306,42 @@ async def test_code_consumed_once_concurrently(pg_dsn: str) -> None:
         refused = [r.reason for r in runs if isinstance(r, BreakGlassRefused)]
         assert refused == [BreakGlassRefusal.RECOVERY_CODE_INVALID] * 5  # the row lock serialises
         assert await _state(engine, uid) == _RESET
+
+
+async def test_any_candidate_digest_consumes_its_code_and_only_it(pg_dsn: str) -> None:
+    """#2152 S6: the store looks a code up by every candidate (`= ANY`) and consumes the one
+    unused code that matches; a candidate list matching none is refused, changing nothing."""
+    async with _env(pg_dsn) as (engine, store):
+        uid, code = await _user(engine)
+        assert await _reset(store, uid, "NOT-THE-CODE") == "recovery_code_invalid"
+        assert await _state(engine, uid) == _UNTOUCHED
+        assert not isinstance(await _reset(store, uid, code, "00" * 32), str)  # the second one
+        assert await _state(engine, uid) == _RESET
+
+
+async def test_candidates_matching_two_codes_consume_neither(pg_dsn: str) -> None:
+    """AC10: exactly one code is consumed; two codes matching the candidates are refused."""
+    async with _env(pg_dsn) as (engine, store):
+        uid, code = await _user(engine)
+        other = generate_recovery_code()
+        async with engine.begin() as conn:
+            await conn.execute(
+                sa.text(
+                    "INSERT INTO recovery_codes (id, user_id, code_hash) "
+                    "VALUES (gen_random_uuid(), CAST(:u AS uuid), :h)"
+                ),
+                {"u": uid, "h": _digest(other)},
+            )
+        assert await _reset(store, uid, code, _digest(other)) == "recovery_code_invalid"
+        async with engine.connect() as conn:
+            unused = await conn.execute(
+                sa.text(
+                    "SELECT count(*) FROM recovery_codes "
+                    "WHERE user_id = CAST(:u AS uuid) AND used_at IS NULL"
+                ),
+                {"u": uid},
+            )
+            assert unused.scalar_one() == 2
 
 
 async def test_notice_port_counts_only_unresolved_break_glass(pg_dsn: str) -> None:

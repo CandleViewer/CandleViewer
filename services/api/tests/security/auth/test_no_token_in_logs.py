@@ -160,7 +160,7 @@ def stack(monkeypatch: pytest.MonkeyPatch) -> Any:
         )
 
     monkeypatch.setattr(
-        appmod, "build_auth_service", lambda s, *, clock=None: _auth(s, clock=clock)
+        appmod, "build_auth_service", lambda s, *, clock=None, **_k: _auth(s, clock=clock)
     )
     monkeypatch.setattr(appmod, "build_identity_provider", lambda _s: _Identity())
     app = appmod.create_app(auth_clock=clock)

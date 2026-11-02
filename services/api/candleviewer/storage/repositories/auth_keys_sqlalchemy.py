@@ -53,6 +53,15 @@ _MFA_MATERIAL = sa.text(
     "SELECT (SELECT count(*) FROM mfa_methods WHERE kind = 'totp' AND revoked_at IS NULL) "
     "+ (SELECT count(*) FROM recovery_codes WHERE used_at IS NULL) AS material"
 )
+# #2152 BQ-3, the dual-read window's exit test, counts only: what the old env formats still serve.
+# Both digests are 64 hex digits, so an unused code's age tells the old one apart: made before the
+# environment's keyring was imported. Without an imported row the bound is NULL and none counts.
+_LEGACY_MATERIAL = sa.text(
+    "SELECT (SELECT count(*) FROM mfa_methods WHERE kind = 'totp' AND revoked_at IS NULL "
+    "AND secret_key_ref = 'local-dev-v1') + (SELECT count(*) FROM recovery_codes "
+    "WHERE used_at IS NULL AND created_at < (SELECT min(created_at) FROM auth_keys "
+    "WHERE env = CAST(:env AS exchange_env) AND origin = 'imported_env')) AS legacy"
+)
 
 
 class AuthKeyEnvironmentError(ValueError):
@@ -127,6 +136,14 @@ class SqlAlchemyAuthKeyStore:
             res: Any = await uow.session.execute(_MFA_MATERIAL)
             return int(res.scalar_one())
 
+    async def count_legacy_material(self, env: str) -> int:
+        """#2152 BQ-3's exit test for `env`, the process's: unrevoked `local-dev-v1` TOTP methods
+        plus unused recovery codes made before its keyring was imported. Counts only."""
+        self._own(env)
+        async with self._rel.unit_of_work() as uow:
+            res: Any = await uow.session.execute(_LEGACY_MATERIAL, {"env": env})
+            return int(res.scalar_one())
+
     async def rewrap(
         self,
         key_id: UUID,
@@ -156,6 +173,23 @@ class SqlAlchemyAuthKeyStore:
         except DBAPIError as exc:
             state = getattr(exc.orig, "sqlstate", None)
         raise StorageQueryFailed(state if isinstance(state, str) else None)  # nothing chained
+
+
+class SqlAlchemyAuthKeyRows:
+    """`rows_for` alone, read only (#2152 S6, BQ-11): the offline break-glass CLI's read of its
+    environment's keyring rows, so that CLI holds no object that can write a key. Bound to the
+    process environment like the store, it refuses another before any I/O (C-2.11)."""
+
+    def __init__(self, relational: SqlAlchemyRelationalRepository, *, env: Environment) -> None:
+        self._rel, self._env = relational, env
+
+    async def rows_for(self, env: str) -> list[dict[str, Any]]:
+        """Every row of `env`, which must be the process's, by purpose then key version."""
+        if env != self._env:
+            raise AuthKeyEnvironmentError("the auth key store serves only the process environment")
+        async with self._rel.unit_of_work() as uow:
+            res: Any = await uow.session.execute(_ROWS, {"env": env})
+            return [dict(row) for row in res.mappings().all()]
 
 
 async def _record(session: Any, row: dict[str, Any]) -> None:

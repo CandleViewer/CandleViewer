@@ -507,10 +507,10 @@ class Settings(BaseSettings):
     # error the storage service surfaces via `StorageTierUnavailable`.
     storage_backend: Literal["fake", "real"] = "fake"
 
-    # QA #1658: auth key material (hex, 32 bytes each) resolved by the
-    # composition root until E27-T02's M2 KEK loader lands. Required when
-    # `storage_backend="real"` and environment is live (AuthService also
-    # refuses a live start without them).
+    # #2152 (ADR-0009 Amendment 4, D3): the old env auth keys (hex, 32 bytes each), read only by
+    # M2, which imports both once as a demo or testnet auth keyring at its first boot; later boots
+    # warn and ignore them. Live always generates its keyring, so either one refuses a live start
+    # (`auth_key_env_forbidden`, AC2). A blank value counts as unset (a compose passthrough).
     auth_totp_key_hex: SecretStr | None = None
     auth_recovery_hmac_key_hex: SecretStr | None = None
     auth_pepper: SecretStr = SecretStr("")
@@ -1044,6 +1044,15 @@ class Settings(BaseSettings):
         """E27-T02 / e27-kek.md §4: fatal before any module starts (`kek_source_not_permitted`)."""
         if info.data.get("environment") is Environment.LIVE and value == "file":
             raise ValueError("kek_source_not_permitted: CV_KEK_SOURCE=file is refused in live")
+        return value
+
+    @field_validator("auth_totp_key_hex", "auth_recovery_hmac_key_hex")
+    @classmethod
+    def _blank_env_auth_key_is_unset(cls, value: SecretStr | None) -> SecretStr | None:
+        """#2152: a blank old env auth key counts as unset (a compose passthrough), as a blank
+        `CV_AUDIT_LANE_MAC_FILE` does. Live refuses a set one in `model_post_init`."""
+        if value is None or not value.get_secret_value().strip():
+            return None
         return value
 
     @field_validator("storage_backend")
@@ -1595,6 +1604,19 @@ class Settings(BaseSettings):
                 "docs/plan/20-architecture.md Sec.7.3). Use CV_FEED=synthetic for local "
                 "development without exchange credentials.",
             )
+        # #2152 AC2: live generates its auth keyring inside M2, so an old env auth key refuses
+        # the start before any module starts (`auth_key_env_forbidden`). Raised here, not in a
+        # field validator, so the refusal carries a placeholder input and never the key itself.
+        if self.environment is Environment.LIVE:
+            env_keys = {
+                "auth_totp_key_hex": self.auth_totp_key_hex,
+                "auth_recovery_hmac_key_hex": self.auth_recovery_hmac_key_hex,
+            }
+            named = [f"CV_{field.upper()}" for field, key in env_keys.items() if key is not None]
+            if named:
+                field = named[0].removeprefix("CV_").lower()
+                message = f"auth_key_env_forbidden: {' and '.join(named)} refused in live"
+                raise _refusal(field, "(set)", message)
         # #5303: an anchor that met an unknown `~user` kept its value (`_expanded`); expanding
         # the three paths again raises the `RuntimeError` an unanchorable path always raised.
         for path in (self.parquet_root, self.recorder_wal_dir, self.bars_state_root):

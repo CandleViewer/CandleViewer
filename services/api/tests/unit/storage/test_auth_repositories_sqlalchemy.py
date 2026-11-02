@@ -11,7 +11,7 @@ from typing import Any, cast
 
 import pytest
 import sqlalchemy as sa
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from candleviewer.app import build_auth_service
 from candleviewer.auth.mfa_repository import MfaRepository
@@ -23,6 +23,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
 from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserRepository
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring
 
 _NOW = datetime(2026, 10, 1, tzinfo=UTC)
 
@@ -275,15 +276,37 @@ def test_build_auth_service_real_backend_wires_repositories() -> None:
     assert isinstance(svc._owner_reset, SqlAlchemyOwnerTotpReset)
 
 
-def test_build_auth_service_live_without_keys_refuses() -> None:
-    with pytest.raises(ValueError, match="CV_AUTH_TOTP_KEY_HEX"):
-        build_auth_service(
-            Settings(
-                storage_backend="real",
-                environment=Environment.LIVE,
-                questdb_pg_password=SecretStr("not-the-dev-default"),
-            )
-        )
+def test_build_auth_service_live_needs_no_env_key_and_takes_the_injected_keyring() -> None:
+    """#2152: MFA reaches its keys only through M2's keyring, so live builds with the pepper
+    alone, and the keyring the composition root passes is the one MFA uses."""
+    keyring = FakeMfaKeyring()
+    svc = build_auth_service(
+        Settings(
+            storage_backend="real",
+            environment=Environment.LIVE,
+            questdb_pg_password=SecretStr("not-the-dev-default"),
+            auth_pepper=SecretStr("pepper"),
+        ),
+        mfa_keyring=keyring,
+    )
+    assert svc._mfa_keyring is keyring
+
+
+@pytest.mark.parametrize("field", ["auth_totp_key_hex", "auth_recovery_hmac_key_hex"])
+def test_settings_refuse_either_env_auth_key_in_live_and_name_no_value(field: str) -> None:
+    """#2152 AC2: before any module starts (`auth_key_env_forbidden`), naming the variable."""
+    key: dict[str, Any] = {field: SecretStr("ab" * 32)}
+    with pytest.raises(ValidationError, match="auth_key_env_forbidden") as refused:
+        Settings(environment=Environment.LIVE, **key)
+    shown = str(refused.value) + repr(refused.value.errors(include_input=True))
+    assert f"CV_{field.upper()}" in shown and "ab" * 32 not in shown
+
+
+@pytest.mark.parametrize("environment", [Environment.LIVE, Environment.DEMO])
+def test_a_blank_env_auth_key_counts_as_unset(environment: Environment) -> None:
+    """A compose passthrough (`${VAR:-}`) neither refuses live nor imports anything."""
+    settings = Settings(environment=environment, auth_totp_key_hex=SecretStr(" "))
+    assert settings.auth_totp_key_hex is None
 
 
 @pytest.mark.parametrize("env", ["live", "demo"])
@@ -345,40 +368,31 @@ def test_build_auth_service_fake_backend_scaffold_all_inactive(env: Environment)
     assert svc._session_repository is None
 
 
-def test_build_auth_service_live_fake_backend_with_keys_still_scaffold() -> None:
-    """Live + fake backend: keys are validated (fail closed), and the result
-    stays an inert scaffold, never a half-wired service."""
+def test_build_auth_service_live_fake_backend_still_scaffold() -> None:
+    """Live + fake backend: the pepper is checked (fail closed), and the result stays an inert
+    scaffold, never a half-wired service."""
     from pydantic import SecretStr
 
     svc = build_auth_service(
-        Settings(
-            environment=Environment.LIVE,
-            auth_totp_key_hex=SecretStr("11" * 32),
-            auth_recovery_hmac_key_hex=SecretStr("22" * 32),
-            auth_pepper=SecretStr("pepper"),
-        )
+        Settings(environment=Environment.LIVE, auth_pepper=SecretStr("pepper")),
+        mfa_keyring=FakeMfaKeyring(),
     )
-    assert svc.is_active is False and svc._repository is None
+    assert svc.is_active is False and svc._repository is None and svc.mfa_is_active is False
 
 
 def test_build_auth_service_live_fake_backend_empty_pepper_refuses() -> None:
-    from pydantic import SecretStr
 
     with pytest.raises(ValueError, match="CV_AUTH_PEPPER"):
-        build_auth_service(
-            Settings(
-                environment=Environment.LIVE,
-                auth_totp_key_hex=SecretStr("11" * 32),
-                auth_recovery_hmac_key_hex=SecretStr("22" * 32),
-            )
-        )
+        build_auth_service(Settings(environment=Environment.LIVE))
 
 
-def test_build_auth_service_non_hex_key_refuses() -> None:
+def test_build_auth_service_leaves_a_malformed_env_key_to_m2() -> None:
+    """#2152: the env keys are M2's to read (it imports nothing from a malformed one); building
+    auth no longer decodes them."""
     from pydantic import SecretStr
 
-    with pytest.raises(ValueError, match="hex-encoded"):
-        build_auth_service(_real_settings(auth_recovery_hmac_key_hex=SecretStr("zz" * 32)))
+    svc = build_auth_service(_real_settings(auth_recovery_hmac_key_hex=SecretStr("zz" * 32)))
+    assert svc._repository is not None
 
 
 def test_identity_and_audit_wiring_follow_storage_backend() -> None:
@@ -391,7 +405,7 @@ def test_identity_and_audit_wiring_follow_storage_backend() -> None:
 
 
 def test_build_auth_service_live_fake_backend_still_refuses() -> None:
-    with pytest.raises(ValueError, match="CV_AUTH_TOTP_KEY_HEX"):
+    with pytest.raises(ValueError, match="CV_AUTH_PEPPER"):
         build_auth_service(Settings(environment=Environment.LIVE))
 
 
@@ -404,22 +418,16 @@ def test_build_auth_service_live_empty_pepper_refuses() -> None:
                 storage_backend="real",
                 environment=Environment.LIVE,
                 questdb_pg_password=SecretStr("not-the-dev-default"),
-                auth_totp_key_hex=SecretStr("11" * 32),
-                auth_recovery_hmac_key_hex=SecretStr("22" * 32),
             )
         )
 
 
-def test_build_auth_service_wrong_key_length_refuses() -> None:
+def test_build_auth_service_non_live_real_without_env_keys_builds() -> None:
+    """#2152: a fresh demo or testnet database generates its keyring in M2; auth needs no key."""
     from pydantic import SecretStr
 
-    with pytest.raises(ValueError, match="32 bytes"):
-        build_auth_service(_real_settings(auth_totp_key_hex=SecretStr("11" * 16)))
-
-
-def test_build_auth_service_non_live_real_missing_keys_refuses() -> None:
-    with pytest.raises(ValueError, match="CV_AUTH_TOTP_KEY_HEX"):
-        build_auth_service(Settings(storage_backend="real"))
+    svc = build_auth_service(Settings(storage_backend="real", auth_pepper=SecretStr("pepper")))
+    assert svc._repository is not None
 
 
 def test_build_auth_service_non_live_real_empty_pepper_refuses() -> None:

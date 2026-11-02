@@ -139,9 +139,9 @@ class SecretsBundle:
     `lane_signing(audit=)`, called on the order lane's loop with the lane's own audit writer, binds
     signing there (#913 L3b) over a credential store M2 builds on that loop (#913 L1d).
     `key_destroyer` destroys one stored key of one account (#898's delete and revoke).
-    `mfa_keyring` is the environment's auth keyring as `auth`'s `MfaKeyring` (#2152 S4): M2's
-    `AuthKeyring`, its refusals mapped to `auth`'s errors. Nothing holds it until #2152's
-    switch-over passes the keyring's store to `SecretsService`; until then it refuses every call."""
+    `mfa_keyring` is the environment's auth keyring as `auth`'s `MfaKeyring` (#2152): M2's
+    `AuthKeyring`, its refusals mapped to `auth`'s errors. It is on once `build_secrets_service`
+    is given the keyring's store (the real backend); otherwise it refuses every call."""
 
     lifecycle: SecretsLifecycle
     metadata: SecretsMetadata
@@ -314,14 +314,16 @@ def build_secrets_service(
     `start()`. Without an injected store (fake backend) every credential op fails closed. A KEK
     re-wrap run counts `auth_keys`, the environment's auth keyring, and `export_keys`, its audit
     export signing keys, which boot opens or generates, and is never complete without both
-    (#3505; #889). `loop_store` builds the order lane's own credential store; only M2 calls it."""
+    (#3505; #889). `auth_keys` is also the composition seam that turns MFA's keyring on (#2152,
+    BQ-7): boot opens, imports or generates it there, and `SecretsBundle.mfa_keyring` serves it.
+    `loop_store` builds the order lane's own credential store; only M2 calls it."""
     sink = secrets_audit_sink(audit) if audit is not None else None
     if store is None or kcv_store is None:
         svc = SecretsService(audit=sink)  # no store: fail closed, but still audited (C-2.9)
     else:
         svc = SecretsService(
             store=store, kcv_store=kcv_store, audit=sink, auth_keys=auth_keys,
-            export_keys=export_keys,
+            export_keys=export_keys, auth_keyring=auth_keys,
         )  # fmt: skip
     return secrets_bundle(svc, serving=audit, loop_store=loop_store)
 

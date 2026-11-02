@@ -19,7 +19,6 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol
 
 from candleviewer.auth.break_glass_notice import BreakGlassEvents, BreakGlassNotice
-from candleviewer.auth.env_keyring import EnvMfaKeyring
 from candleviewer.auth.errors import AuthServiceUnavailable
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.invite_service import InviteService
@@ -48,7 +47,6 @@ from candleviewer.auth.totp_skew import TotpSkewReporter
 from candleviewer.auth.view_as import ViewAsSessionStore
 from candleviewer.observability.health import HealthReport, HealthStatus
 from candleviewer.observability.health_probes import SystemEventWriter
-from candleviewer.settings import Environment
 from candleviewer.statechart.plugins import MachineStatePort
 
 if TYPE_CHECKING:
@@ -290,6 +288,7 @@ class AuthService:
                 failure_floor=self._login_failure_floor,
                 verify_concurrency=self._login_verify_concurrency,
                 admission=self._verify_admission,
+                mfa_keyring=self._mfa_keyring,  # #2152: the 503 in place of the challenge
             )
         if self._session_repository is not None:
             self._sessions = SessionService(
@@ -299,22 +298,12 @@ class AuthService:
                 publish_revocation=self._publish_revocation,
                 backstop_audit=self._audit_backstop,
             )
-        if self._mfa_repository is not None:
-            # The keyring the composition root injects (#2152 S5a; M18 cannot import
-            # `candleviewer.secrets`, C-3.2): today the env-backed one. PR #1618 review finding 3:
-            # a process-local fallback must never silently reach a live deployment: it is not
-            # persisted, so seeds become undecryptable and stored recovery codes unverifiable
-            # after any restart. It is refused in live, so a `live`-configured process fails fast
-            # at startup instead of quietly running with ephemeral keys.
+        if self._mfa_repository is not None and self._mfa_keyring is not None:
+            # #2152 (ADR-0009 Amendment 4): M2's auth keyring, which the composition root injects
+            # (M18 cannot import `candleviewer.secrets`, C-3.2). There is no process-local
+            # fallback: without a keyring MFA is not wired in any environment, and while the
+            # keyring cannot serve, the MFA operations answer `503 auth_unavailable`.
             keyring = self._mfa_keyring
-            if keyring is None:
-                if ctx is not None and ctx.settings.environment is Environment.LIVE:
-                    raise RuntimeError(
-                        "AuthService: no MFA keyring configured for a live environment; "
-                        "process-local keys would make TOTP seeds undecryptable and recovery "
-                        "codes unverifiable after restart (#2152)"
-                    )
-                keyring = EnvMfaKeyring.process_local()
             skew_reporter = TotpSkewReporter(
                 self._system_events, clock=lambda: self._clock().timestamp()
             )

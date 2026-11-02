@@ -32,13 +32,13 @@ from pydantic import SecretStr
 from sqlalchemy.exc import ProgrammingError
 
 from candleviewer.audit_lane_wiring import read_key_file
-from candleviewer.auth.envelope import LOCAL_KEY_REF, TotpEncryptor
 from candleviewer.secrets._kek import LoadedKek, PathKekSource
 from candleviewer.settings import Environment, FeedMode, Settings
 from cvdev.account_fixture import cli, seed
 from cvdev.account_fixture.pack import PACK_ROOT, Pack, fixture_key_ids
 from cvdev.account_fixture.seed import DatabaseFacts
 from scripts import seed_fixture_user
+from scripts.seed_fixture_user import LEGACY_KEY_REF, LegacyTotpSealer
 
 KEY_HEX, PEPPER = "11" * 32, "unit-pepper-marker"
 DSN_MARK, DB_MARK, RUN_MARK = "dsn-marker-7", "dbmark_prod", "runmark-7f3"
@@ -220,7 +220,8 @@ KEY, SECRET = SecretStr("k"), SecretStr("s")
 #: Settings fields, or `env` (set once the settings exist, as the gate reads it), `dir` (a run
 #: directory kind), `db` (the probe's name and whether it holds rows) or `command`; then the reason.
 REFUSALS: dict[str, tuple[dict[str, Any], str]] = {
-    "live": ({"environment": Environment.LIVE}, cli.LIVE),
+    # No env auth key: live refuses one before any module starts (#2152 AC2).
+    "live": ({"environment": Environment.LIVE, "auth_totp_key_hex": None}, cli.LIVE),
     "testnet": ({"environment": Environment.TESTNET}, "CV_ENVIRONMENT=demo"),
     "live-feed": (
         {"feed": FeedMode.LIVE, "bybit_api_key": KEY, "bybit_api_secret": SECRET},
@@ -334,8 +335,8 @@ def test_users_seeds_the_roster_through_the_shared_seeder(
         assert (args[0], args[3]) == (DSN, PEPPER)
         assert kwargs["totp_out"] == run_dir / f"totp-{args[1]}"
     encryptor = seeder.calls[0][1]["totp"]
-    assert isinstance(encryptor, TotpEncryptor) and encryptor.key_ref == LOCAL_KEY_REF
-    assert TotpEncryptor(bytes.fromhex(KEY_HEX)).decrypt(encryptor.encrypt(b"x")) == b"x"
+    assert isinstance(encryptor, LegacyTotpSealer) and encryptor.key_ref == LEGACY_KEY_REF
+    assert LegacyTotpSealer(bytes.fromhex(KEY_HEX)).decrypt(encryptor.encrypt(b"x")) == b"x"
     roster = [{"role": role, "username": user} for user, role in zip(USERS, ROLES, strict=True)]
     assert json.loads((run_dir / "roster.json").read_text()) == {"users": roster}
 

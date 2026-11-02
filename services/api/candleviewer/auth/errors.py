@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from uuid import UUID
 
@@ -64,12 +65,14 @@ class AuthServiceUnavailable(AuthError):
 class MfaKeyringUnavailable(AuthError):
     """The keyring MFA seals and digests through cannot serve this call (#2152, ADR-0009
     Amendment 4): the KEK or the auth key is unavailable, or the key a method is sealed under is
-    not held here. `reason` is the keyring's bounded code; the HTTP edge answers
-    `503 auth_unavailable`, never "no method" (AC6), and names no cause (C-12.6)."""
+    not held here. `reason` is the keyring's bounded code and `user_id` the user's, when known;
+    the HTTP edge answers `503 auth_unavailable`, never "no method" (AC6), names no cause
+    (C-12.6) and audits both (`auth.mfa_unavailable`)."""
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, *, user_id: uuid.UUID | None = None) -> None:
         super().__init__(reason)
         self.reason = reason
+        self.user_id = user_id
 
 
 class MfaSealInvalid(AuthError):

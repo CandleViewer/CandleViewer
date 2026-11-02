@@ -75,6 +75,9 @@ class _FakeMfaService:
         assert isinstance(result, MfaVerifiedResult)
         return result
 
+    async def require_keyring(self, *, user_id: uuid.UUID | None = None) -> None:
+        """The keyring is up (#2152): an enrolment goes on."""
+
     async def enroll(
         self, user_id: str, request: MfaEnrollRequest, *, account_name: str
     ) -> MfaEnrollResult:

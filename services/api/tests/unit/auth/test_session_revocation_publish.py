@@ -410,8 +410,9 @@ async def test_auth_service_publishes_through_the_sink_attached_after_start() ->
         session_repository=repo,
         clock=clock,
         owner_reset=InMemoryOwnerReset(users, mfa, repo),
+        mfa_keyring=FakeMfaKeyring(),  # #2152: MFA and step-up are wired only with a keyring
     )
-    ctx: Any = None  # no settings: not a live environment, so process-local keys are used
+    ctx: Any = None  # no settings: not a live environment
     await auth.start(ctx)
     sink = _Sink(repo)
     auth.attach_revocation_sink(sink)

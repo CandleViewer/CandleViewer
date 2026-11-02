@@ -43,6 +43,7 @@ from candleviewer.auth.metrics import auth_owner_bootstrap_events
 from candleviewer.auth.totp import generate_code, time_step_for
 from candleviewer.observability.logging import configure_logging, reset_logging
 from candleviewer.observability.redaction import redact_text
+from candleviewer.secrets import SecretsService
 from candleviewer.secrets._kek import LoadedKek
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.break_glass_sqlalchemy import SqlAlchemyBreakGlassEvents
@@ -53,6 +54,8 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 from tests.integration import _refused
 
 pytestmark = pytest.mark.integration
+#: `SecretsService`'s keyword defaults, where `create_app` takes its hardening from.
+_SECRETS_DEFAULTS: dict[str, object] = SecretsService.__init__.__kwdefaults__ or {}
 pg_dsn = _refused.pg_dsn  # the module-scoped Postgres 16 at head, on loopback
 
 ATTEMPT, REFUSED, INVITED = (
@@ -178,9 +181,14 @@ async def _redeem(settings: Settings, token: str) -> dict[str, Any]:
     """The Owner's side in an in-process cv-api (its auth and audit modules): the offer, the
     password, the first TOTP code, then a password sign-in and its MFA step a minute later."""
     clock = [datetime.now(UTC).replace(microsecond=0)]
-    app = create_app(settings, auth_clock=lambda: clock[0])
+    with (
+        pytest.MonkeyPatch.context() as patch
+    ):  # M2 without SR-009 hardening, which must not reach pytest
+        patch.setitem(_SECRETS_DEFAULTS, "harden", lambda: True)
+        app = create_app(settings, auth_clock=lambda: clock[0])
     ctx = app.state.app_context
     await ctx.audit.start(ctx)
+    await ctx.secrets.start(ctx)  # #2152: MFA's keyring, imported from the two env keys
     await ctx.auth.start(ctx)
     transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 50000))
     dsn = settings.pg_dsn.get_secret_value()
@@ -203,6 +211,7 @@ async def _redeem(settings: Settings, token: str) -> dict[str, Any]:
         await ctx.audit.writer.flush(10.0)
     finally:
         await ctx.auth.stop(1.0)
+        await ctx.secrets.stop(1.0)
         await ctx.audit.stop(1.0)
     relational = SqlAlchemyRelationalRepository(dsn)  # the reads a cv-api boot makes first
     try:

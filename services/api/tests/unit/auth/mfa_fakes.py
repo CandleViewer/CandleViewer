@@ -4,13 +4,18 @@ and the rig the TOTP clock-skew tests share (#2146). No database, no real key.""
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
+import os
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Literal, NoReturn
 
-from candleviewer.auth.env_keyring import EnvMfaKeyring
-from candleviewer.auth.envelope import LOCAL_KEY_REF, TotpEncryptor
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+from candleviewer.auth.errors import MfaKeyringUnavailable, MfaSealInvalid
 from candleviewer.auth.mfa_service import MfaService, _hash_token
 from candleviewer.auth.models import (
     MfaChallengeRecord,
@@ -18,7 +23,7 @@ from candleviewer.auth.models import (
     MfaMethodRecord,
     MfaVerifyRequest,
 )
-from candleviewer.auth.recovery_codes import hash_recovery_code
+from candleviewer.auth.recovery_codes import normalize_recovery_code
 from candleviewer.auth.totp import TOTP_STEP_SECONDS, generate_code, time_step_for
 from candleviewer.auth.totp_skew import SKEW_HOLD_S, TotpSkewReporter
 from candleviewer.observability.health_probes import SystemEvent, SystemEventWriter
@@ -26,37 +31,89 @@ from tests.unit.auth.auth_fakes import no_wait
 
 #: Integer-built test keys (C-13.5), never a real one: TOTP sealing and recovery-code HMAC.
 TEST_TOTP_KEY, TEST_RECOVERY_KEY = bytes(range(32)), bytes(range(32, 64))
+#: The `secret_key_ref` the env keys' old seal carries; an imported keyring still reads it.
+LEGACY_KEY_REF = "local-dev-v1"
+_CODE_MAX = 512  # bytes once normalised, as M2's `_auth_keyring` bounds a code
 
 
-class FakeMfaKeyring(EnvMfaKeyring):
-    """The env-backed `MfaKeyring` over test keys (#2152 S5a), in today's formats. It records every
-    seed it opens (`opened`), so a test can assert the verifier zeroed each, and keeps the sync
-    fixture helpers the tests used on `TotpEncryptor`: `encrypt`, `decrypt`, `key_ref`, plus
-    `digest` for a stored recovery code."""
+def recovery_digest(code: str, key: bytes = TEST_RECOVERY_KEY) -> str:
+    """A code's digest in the env key's old format, as `FakeMfaKeyring` makes one: the HMAC-SHA256
+    of the normalised code under `key`, with no user bound."""
+    norm = normalize_recovery_code(code).encode()
+    if len(norm) > _CODE_MAX:
+        raise ValueError("recovery code too long")
+    return hmac.new(key, norm, hashlib.sha256).hexdigest()
 
-    key_ref = LOCAL_KEY_REF
+
+class FakeMfaKeyring:
+    """An `MfaKeyring` over test keys (#2152), in the env keys' old formats: a TOTP seal is
+    AES-256-GCM `nonce || ct || tag` with no AAD under `LEGACY_KEY_REF`, a recovery-code digest the
+    HMAC-SHA256 of the normalised code with no user bound. It refuses as M2's keyring does through
+    `admin.wiring`: while `down` names a reason every call refuses with it (`available` answers
+    false); a ref outside `held` (when set) is not held; a seal that does not open is
+    `MfaSealInvalid` (a wrong code) and a code over the bound a `ValueError`. It records each
+    seed it opens (`opened`), so a test can assert the verifier zeroed it, and keeps the sync
+    fixture helpers `encrypt`, `decrypt`, `key_ref` and `digest` for seeding rows."""
+
+    key_ref = LEGACY_KEY_REF
 
     def __init__(
         self, totp_key: bytes = TEST_TOTP_KEY, recovery_key: bytes = TEST_RECOVERY_KEY
     ) -> None:
-        super().__init__(totp_key, recovery_key)
-        self._fixture = TotpEncryptor(totp_key, key_ref=LOCAL_KEY_REF)
-        self._digest_key = recovery_key
+        self._aead, self._digest_key = AESGCM(totp_key), recovery_key
         self.opened: list[bytearray] = []
+        #: While set, the reason every call refuses with (the KEK or the keyring is down).
+        self.down: str | None = None
+        #: When set, the only refs whose key is held (`auth_key_not_held` for any other).
+        self.held: frozenset[str] | None = None
+
+    def _require(self, *key_refs: str) -> None:
+        if self.down is not None:
+            raise MfaKeyringUnavailable(self.down)
+        if self.held is not None and not set(key_refs) <= self.held:
+            raise MfaKeyringUnavailable("auth_key_not_held")
+
+    async def available(self, *key_refs: str) -> bool:
+        try:
+            self._require(*key_refs)
+        except MfaKeyringUnavailable:
+            return False
+        return True
+
+    async def seal_totp_seed(
+        self, seed: bytes | bytearray, user_id: uuid.UUID
+    ) -> tuple[bytes, str]:
+        self._require()
+        return self.encrypt(bytes(seed)), self.key_ref
 
     async def open_totp_seed(self, blob: bytes, key_ref: str, user_id: uuid.UUID) -> bytearray:
-        seed = await super().open_totp_seed(blob, key_ref, user_id)
+        self._require(key_ref)
+        try:
+            seed = bytearray(self.decrypt(blob))
+        except (InvalidTag, ValueError):
+            raise MfaSealInvalid("auth_seal_invalid") from None
         self.opened.append(seed)
         return seed
 
+    async def recovery_code_digests(self, code: str, user_id: uuid.UUID) -> tuple[str, ...]:
+        self._require()
+        return (self.digest(code),)
+
     def encrypt(self, seed: bytes) -> bytes:
-        return self._fixture.encrypt(seed)
+        nonce = os.urandom(12)
+        return nonce + self._aead.encrypt(nonce, seed, None)
 
     def decrypt(self, blob: bytes) -> bytes:
-        return self._fixture.decrypt(blob)
+        return self._aead.decrypt(blob[:12], blob[12:], None)
 
     def digest(self, code: str) -> str:
-        return hash_recovery_code(code, key=self._digest_key)
+        return recovery_digest(code, self._digest_key)
+
+    def __repr__(self) -> str:
+        return "FakeMfaKeyring(***)"
+
+    def __reduce_ex__(self, protocol: object) -> NoReturn:
+        raise TypeError("FakeMfaKeyring cannot be pickled")
 
 
 class FakeMfaRepository:

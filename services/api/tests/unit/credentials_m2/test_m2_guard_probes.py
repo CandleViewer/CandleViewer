@@ -262,6 +262,9 @@ ADMIN_ONLY_PROBES: dict[str, str] = {
     "proof_attr": "import candleviewer.secrets as m\nr = await m.prove_kek_possession(s, k)",
     "proof_getattr": "import candleviewer.secrets as m\n"
     "r = await getattr(m, 'prove_kek_possession')(s, k)",
+    "digests_name": "from candleviewer.secrets import open_recovery_digests\n"
+    "r = await open_recovery_digests(s, k, a)",
+    "digests_attr": "import candleviewer.secrets as m\nr = await m.open_recovery_digests(s, k, a)",
 }
 
 
@@ -274,3 +277,37 @@ def test_admin_only_probe_is_flagged_outside_admin(name: str, where: str) -> Non
 @pytest.mark.parametrize("name", sorted(ADMIN_ONLY_PROBES))
 def test_admin_may_prove_kek_possession(name: str) -> None:
     assert not m2_violations("admin/wiring.py", _free(ADMIN_ONLY_PROBES[name])), name
+
+
+#: R10 (#2152 BQ-6): the old env auth keys are M2's to import; every other read is flagged.
+ENV_AUTH_KEY_PROBES: dict[str, str] = {
+    "totp_attr": "v = s.auth_totp_key_hex",
+    "recovery_attr": "v = settings.auth_recovery_hmac_key_hex.get_secret_value()",
+    "name": "v = auth_totp_key_hex",
+    "getattr": "v = getattr(s, 'auth_recovery_hmac_key_hex')",
+    "attrgetter": "import operator\nv = operator.attrgetter('auth_totp_key_hex')(s)",
+}
+
+
+@pytest.mark.parametrize("where", ["app.py", "auth/service.py", "breakglass.py", "admin/x.py"])
+@pytest.mark.parametrize("name", sorted(ENV_AUTH_KEY_PROBES))
+def test_an_env_auth_key_read_is_flagged_outside_its_readers(name: str, where: str) -> None:
+    assert m2_violations(where, _free(ENV_AUTH_KEY_PROBES[name])), name
+    assert m2_violations(where, _method(ENV_AUTH_KEY_PROBES[name])), name
+
+
+@pytest.mark.parametrize(
+    ("where", "function"),
+    [
+        ("app.py", "build_csrf_codec"),
+        ("audit_lane_wiring.py", "refuse_reused_key"),
+        ("cvdev/account_fixture/seed.py", "_auth_material"),
+    ],
+)
+def test_an_env_auth_key_is_read_only_by_its_named_readers(where: str, function: str) -> None:
+    """Each reader by file and function: the same read one function over is flagged."""
+    body = "    return settings.auth_totp_key_hex, settings.auth_recovery_hmac_key_hex\n"
+    assert not m2_violations(where, ast.parse(f"def {function}(settings):\n{body}"))
+    assert not m2_violations("settings.py", ast.parse(f"def any_name(settings):\n{body}"))
+    assert m2_violations(where, ast.parse(f"def {function}_too(settings):\n{body}"))
+    assert m2_violations("other.py", ast.parse(f"def {function}(settings):\n{body}"))

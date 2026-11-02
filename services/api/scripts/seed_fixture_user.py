@@ -13,8 +13,10 @@ Owner fixture only, and is refused outside testnet. Every seed writes
 `--role manager` or `--role viewer` seeds that role instead of `owner` (E42-X03,
 the ZAP admin profile's synthetic users). `--totp-secret-out PATH` enrols a
 confirmed TOTP method with a fresh secret (a real TOTP step, no MFA
-exception), encrypted as the API encrypts one, under `CV_AUTH_TOTP_KEY_HEX`,
-and writes its base32 form to PATH, a new file of mode 0600, never to the
+exception), sealed in the env key's old format under `CV_AUTH_TOTP_KEY_HEX`
+(`LegacyTotpSealer`: the API no longer makes it, and the testnet keyring it
+imports from that key at its first boot still reads it, #2152 BQ-12), and
+writes its base32 form to PATH, a new file of mode 0600, never to the
 output; the enrolment is audited as `auth.mfa_enrolled`. A user that already
 exists is left as it is, so with `--totp-secret-out` that is an error: no
 secret was made and PATH was not written.
@@ -32,15 +34,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import sqlalchemy as sa
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
-from candleviewer.auth.envelope import LOCAL_KEY_REF, TotpEncryptor
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.totp import generate_secret, secret_to_base32
 from candleviewer.settings import Environment
 
 ACTOR_LABEL = "seed_fixture_user"
 ROLES = ("owner", "manager", "viewer")
+#: The `secret_key_ref` of a seed sealed under the old env TOTP key, with no AAD (#2152 D3).
+LEGACY_KEY_REF = "local-dev-v1"
 
 _INSERT = sa.text("""
     INSERT INTO users (id, email, username, password_hash, status, mfa_required)
@@ -82,6 +86,30 @@ def check_options(role: str, *, allow_no_mfa: bool, totp_out: Path | None) -> No
         raise SystemExit(f"refusing an MFA-less {role}: EX-01 covers the Owner fixture only")
     if allow_no_mfa and totp_out is not None:
         raise SystemExit("--allow-no-mfa and --totp-secret-out contradict each other")
+
+
+class LegacyTotpSealer:
+    """The old env TOTP key's seal, which the API stopped making at #2152's switch-over:
+    AES-256-GCM `nonce(12) || ciphertext || tag(16)` with no AAD, `secret_key_ref` `local-dev-v1`.
+    A keyring imported from that key (demo or testnet only, D3) still reads it, so the fixture
+    seeders keep this small sealer of their own (BQ-12). Never logs or returns the key."""
+
+    key_ref = LEGACY_KEY_REF
+
+    def __init__(self, key: bytes) -> None:
+        if len(key) != 32:
+            raise ValueError("the TOTP key must be 32 bytes")
+        self._aead = AESGCM(key)
+
+    def encrypt(self, seed: bytes) -> bytes:
+        nonce = os.urandom(12)
+        return nonce + self._aead.encrypt(nonce, seed, None)
+
+    def decrypt(self, blob: bytes) -> bytes:
+        return self._aead.decrypt(blob[:12], blob[12:], None)
+
+    def __repr__(self) -> str:
+        return "LegacyTotpSealer(***)"
 
 
 def totp_key(value: str | None) -> bytes:
@@ -128,7 +156,7 @@ async def seed(
     *,
     allow_no_mfa: bool = False,
     role: str = "owner",
-    totp: TotpEncryptor | None = None,
+    totp: LegacyTotpSealer | None = None,
     totp_out: Path | None = None,
 ) -> str | None:
     """Seed one user of `role`; returns the new user id, or None if it already existed. With
@@ -198,7 +226,7 @@ def main(argv: list[str] | None = None) -> int:
     totp = None
     if args.totp_secret_out is not None:
         key = totp_key(os.environ.get("CV_AUTH_TOTP_KEY_HEX"))
-        totp = TotpEncryptor(key, key_ref=LOCAL_KEY_REF)
+        totp = LegacyTotpSealer(key)
     user_id = asyncio.run(
         seed(
             os.environ["CV_PG_DSN"],

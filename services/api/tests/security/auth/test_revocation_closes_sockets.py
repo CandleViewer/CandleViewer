@@ -37,7 +37,7 @@ from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.revocation import CLOSE_TOKEN_EXPIRED, CLOSE_USER_DISABLED, RevocationHub
 from tests.csrf_helpers import arm_csrf
 from tests.unit.auth.auth_fakes import FakeUserRepository, InMemoryOwnerReset, make_user
-from tests.unit.auth.mfa_fakes import FakeMfaRepository
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
 _T0 = datetime(2026, 10, 15, 12, 0, 0, tzinfo=UTC)
@@ -113,6 +113,7 @@ class _Env:
             session_repository=self.repo,
             clock=self.clock,
             owner_reset=InMemoryOwnerReset(users, mfa, self.repo),  # #2593
+            mfa_keyring=FakeMfaKeyring(),  # #2152: step-up is wired only with a keyring
         )
         monkeypatch.setattr(app_module, "build_auth_service", lambda *_a, **_k: self.auth)
         # The gateway on the injected clock: its token-expiry check (`wall_ms`, #2259), and its

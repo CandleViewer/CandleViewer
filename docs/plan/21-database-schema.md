@@ -834,7 +834,8 @@ and the recovery-code HMAC key (`recovery_hmac`), each 256-bit. M2 generates the
 once from the old env settings on `demo` and `testnet` (`origin = 'imported_env'`). A row holds only
 the key wrapped under the KEK of `(env, kek_version)`, so nothing in it opens without the KEK. Data
 class: S for `dek_ref`, Internal for the other columns. Status: designed in #2152 S1; the migration
-landed in S2 as `0030_auth_keys`; M2 writes the rows from S5b.
+landed in S2 as `0030_auth_keys`; M2 writes the rows from S5b, when `admin/wiring.py` passes the
+keyring store (`SecretsService(auth_keyring=...)`, BQ-7).
 
 ```sql
 -- 0030_auth_keys: the next slot after 0029_oms_core in the single-head queue (C-5.3)
@@ -890,7 +891,14 @@ CREATE TRIGGER trg_auth_keys_touch BEFORE UPDATE ON auth_keys
   `str.upper`, as `normalize_recovery_code` does today), as UTF-8 bytes, so a generated code becomes
   its 28 alphabet characters. Only on an imported keyring is the old digest,
   `HMAC-SHA256(key, normalised code)` over the bare normalised code, also tried: the lookup takes
-  every candidate digest (`code_hash = ANY(...)`).
+  every candidate digest (`code_hash = ANY(...)`), and a new code stores the first, user-bound one.
+  Live break-glass computes the same digests through M2's digest session (ADR-0009 Amendment 4,
+  "Break-glass") and consumes only when exactly one unused row matches.
+- **The dual-read window's exit test** (#2152 BQ-3). The old formats stay readable on an imported
+  keyring until none is left: no unrevoked TOTP method with `secret_key_ref = 'local-dev-v1'` and no
+  unused recovery code created before the environment's earliest `imported_env` row. M2 counts both
+  at every boot of an imported keyring (`AuthKeyStore.count_legacy_material`, one read) and logs the
+  count, never a row (`secrets.auth_keyring_legacy_window`); a follow-up retires the old reads.
 - **Privileges and triggers.** M2 inserts the rows. After that only `dek_ref` and `kek_version`
   change, together, at a re-wrap, and `updated_at` records when (`trg_auth_keys_touch`, the §1.4
   `set_updated_at` trigger). Trigger `trg_auth_keys_write_once` (BEFORE UPDATE, per row,
@@ -1418,9 +1426,11 @@ Non-secret key-check values identifying each KEK version (`e27-kek.md` §5). `kc
 HMAC-SHA256(KEK, `"cv-kek-kcv-v1"`), compared in constant time at start-up. No trust-on-first-use: a
 KCV is recorded only when no unrevoked `api_keys` row and no `auth_keys` row (§3.1.5a) of the
 process's environment exists at that version, or after a trial unwrap of one such row succeeds; the
-previous KEK's KCV must already exist. With no `api_keys` row as evidence, the trial unwraps the
-environment's active audit export signing key when it is wrapped at that version (§3.1.5b; #889,
-ADR-0039 decision 6): its failure is `kek_mismatch`, an unreadable table `kcv_store_unavailable`.
+previous KEK's KCV must already exist. With no `api_keys` row as evidence, the trial unwraps an
+`auth_keys` row of the environment wrapped at that version (§3.1.5a; #2152, once M2 is wired with
+the keyring), else the environment's active audit export signing key when it is wrapped at that
+version (§3.1.5b; #889, ADR-0039 decision 6): a failure is `kek_mismatch`, an unreadable table
+`kcv_store_unavailable`.
 Data class: Internal (`env` and `kcv`).
 
 Each environment has its own KEK lineage (#2338, ADR-0009 Amendment 3). Rows are keyed

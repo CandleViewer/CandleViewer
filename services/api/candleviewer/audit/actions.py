@@ -84,6 +84,10 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "auth.mfa_verified",
         "auth.mfa_failed",
         "auth.mfa_enrolled",
+        # #2152 (BQ-8, 22 `AuthUnavailable`): one per `503 auth_unavailable` an MFA operation
+        # answers while the auth keyring cannot serve: the operation, the user when known and the
+        # bounded reason, written after the decision, best effort (`api/auth_unavailable.py`).
+        "auth.mfa_unavailable",
         "auth.recovery_code_used",
         "auth.recovery_codes_exhausted",
         "auth.recovery_codes_regenerated",

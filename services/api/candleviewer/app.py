@@ -238,8 +238,8 @@ from candleviewer.api.watchlists import make_watchlists_router
 from candleviewer.api.workspaces import OPERATIONS, make_workspaces_router
 from candleviewer.audit_lane_wiring import lane_key_loader
 from candleviewer.auth.csrf import CsrfCodec
-from candleviewer.auth.env_keyring import EnvMfaKeyring
 from candleviewer.auth.metrics import export_auth_metrics
+from candleviewer.auth.mfa_keyring import MfaKeyring
 from candleviewer.auth.models import (
     InviteRecord,
     MfaChallengeRecord,
@@ -833,34 +833,26 @@ def _decode_key(name: str, secret: Any) -> bytes | None:
 
 
 def build_auth_service(
-    settings: Settings, *, clock: Callable[[], datetime] | None = None
+    settings: Settings,
+    *,
+    clock: Callable[[], datetime] | None = None,
+    mfa_keyring: MfaKeyring | None = None,
 ) -> AuthService:
     """QA #1658: wire `AuthService` to Postgres when `storage_backend="real"`
     (no I/O at construction: the engine connects lazily). With the fake
     backend it stays the no-op scaffold so `create_app()` needs no database.
-    Live refuses to start (any backend) without pepper + key material."""
-    totp = settings.auth_totp_key_hex
-    rc = settings.auth_recovery_hmac_key_hex
+    Live refuses to start (any backend) without a pepper. #2152: MFA seals,
+    opens and digests only through `mfa_keyring`, M2's auth keyring
+    (`SecretsBundle.mfa_keyring`); without one MFA is not wired."""
     pepper = settings.auth_pepper.get_secret_value()
     real = settings.storage_backend == "real"
-    if settings.environment is Environment.LIVE or real:
-        if totp is None or rc is None:
-            raise ValueError(
-                "CV_AUTH_TOTP_KEY_HEX and CV_AUTH_RECOVERY_HMAC_KEY_HEX are required "
-                "(live or storage_backend=real); refusing to start auth (C-12 TOTP)"
-            )
-        if not pepper:
-            raise ValueError(
-                "a non-empty CV_AUTH_PEPPER is required (live or storage_backend=real); "
-                "refusing to start auth"
-            )
-    totp_key = _decode_key("CV_AUTH_TOTP_KEY_HEX", totp)
-    rc_key = _decode_key("CV_AUTH_RECOVERY_HMAC_KEY_HEX", rc)
+    if (settings.environment is Environment.LIVE or real) and not pepper:
+        raise ValueError(
+            "a non-empty CV_AUTH_PEPPER is required (live or storage_backend=real); "
+            "refusing to start auth"
+        )
     if not real:
         return AuthService()
-    # #2152 S5a: MFA reaches the keys only through its keyring, still env-backed (behaviour
-    # unchanged); the real backend has both keys, checked above.
-    keyring = None if totp_key is None or rc_key is None else EnvMfaKeyring(totp_key, rc_key)
     relational = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "auth")
     users = SqlAlchemyUserRepository(
         relational, _record_factory(UserRecord), clock=clock or (lambda: datetime.now(UTC))
@@ -873,7 +865,7 @@ def build_auth_service(
         mfa_repository=SqlAlchemyMfaRepository(
             relational, _record_factory(MfaMethodRecord), _record_factory(MfaChallengeRecord)
         ),
-        mfa_keyring=keyring,
+        mfa_keyring=mfa_keyring,
         session_repository=SqlAlchemySessionRepository(relational, _record_factory(SessionRecord)),
         clock=clock,
         invite_repository=SqlAlchemyInviteRepository(relational, _record_factory(InviteRecord)),
@@ -1140,7 +1132,8 @@ def build_app_context(
         rules=RulesService(),
         paper=PaperService(),
         risk=RiskService(),
-        auth=build_auth_service(resolved, clock=auth_clock),
+        # #2152: MFA seals, opens and digests through M2's auth keyring, never a key.
+        auth=build_auth_service(resolved, clock=auth_clock, mfa_keyring=secrets.mfa_keyring),
         audit=audit,
         journal=JournalService(),
         admin=AdminService(secrets=secrets.metadata, signing_keys=secrets.signing_key_rotator),

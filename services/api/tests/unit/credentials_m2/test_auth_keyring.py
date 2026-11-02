@@ -26,7 +26,7 @@ from hypothesis import strategies as st
 from pydantic import SecretStr
 from structlog.testing import capture_logs
 
-from candleviewer.auth.recovery_codes import hash_recovery_code, normalize_recovery_code
+from candleviewer.auth.recovery_codes import normalize_recovery_code
 from candleviewer.secrets import _auth_keyring as ak
 from candleviewer.secrets import _envelope as env
 from candleviewer.secrets._kek import LoadedKek
@@ -213,7 +213,8 @@ def test_normalised_code_is_golden_and_the_legacy_form(code: str) -> None:
 def test_imported_keyring_old_digest_is_the_legacy_hash(code: str) -> None:
     """AC3: an unused code made under the env key still matches after the import."""
     assert ak.normalise_code(code) == normalize_recovery_code(code).encode()
-    assert imported().recovery_code_digests(code, ALICE)[1] == hash_recovery_code(code, key=AK_R)
+    legacy = hmac.new(AK_R, normalize_recovery_code(code).encode(), sha256).hexdigest()
+    assert imported().recovery_code_digests(code, ALICE)[1] == legacy
 
 
 def test_same_code_for_two_users_gives_different_digests() -> None:
