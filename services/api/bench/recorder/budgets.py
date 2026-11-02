@@ -154,8 +154,8 @@ def check_rate(achieved: float, target: float, floor: float = RATE_FLOOR, note: 
 
 
 def ingest_verdict(r: RunResult) -> Verdict:
-    """The 50k msg/s ingest load: flush p95, the memory ceiling, the rate it reached, no loss,
-    and (reported) the rows it left in its WAL."""
+    """The ingest load (the 50k msg/s product budget, scaled per runner class): flush p95, the
+    memory ceiling, the rate it reached, no loss, and (reported) the rows it left in its WAL."""
     v = Verdict("recorder_ingest")
     klass = RUNNER_CLASSES.get(r.profile)
     rate_note = f"runner class {klass}" if klass else ""
