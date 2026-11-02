@@ -23,6 +23,8 @@
 //     on pull_request only, and only the boolean `true` counts as a draft; off it, or with the
 //     event unknown, the lane is a lane like the rest.
 
+import { appendFileSync } from "node:fs";
+
 /**
  * @typedef {"success"|"failure"|"cancelled"|"skipped"} LaneResult
  * @typedef {{ applicable: boolean, result: LaneResult }} LaneInput
@@ -40,6 +42,10 @@ const DEFERRED_REASON = "runs on the merge group";
 // never carries the flag, so both run them.
 const DRAFT_DEFERRED = new Set(["e2e", "a11y", "engine-bench"]);
 const DRAFT_DEFERRED_REASON = "runs when the pull request leaves draft";
+// Lanes whose not-applicable state is named in the output (E03-T14, Gherkin S1): a diff outside
+// the engine and protocol filters skips engine-bench, and the reader sees that, not a silent pass.
+const REPORT_NA = new Set(["engine-bench"]);
+const NOT_APPLICABLE_REASON = "no engine or protocol path changed";
 
 /**
  * @param {string} name @param {LaneInput} input @param {string} [event]
@@ -86,24 +92,28 @@ function evaluateLane(name, { applicable, result }, event = "", draft = false) {
  * @param {Record<string, LaneInput>} lanes
  * @param {string} [event] the workflow's event name (GITHUB_EVENT_NAME); unknown is ""
  * @param {boolean} [draft] whether the pull request is a draft (PR_DRAFT); unknown is false
- * @returns {{ conclusion: "success" | "failure", failures: LaneOutcome[], deferred: { lane: string, reason: string }[] }}
+ * @returns {{ conclusion: "success" | "failure", failures: LaneOutcome[], deferred: { lane: string, reason: string }[], notApplicable: { lane: string, reason: string }[] }}
  */
 export function resolveGate(lanes, event = "", draft = false) {
   const failures = [];
   const deferred = [];
+  const notApplicable = [];
   for (const [name, input] of Object.entries(lanes)) {
     const outcome = evaluateLane(name, input, event, draft);
     if (!outcome.ok) failures.push(outcome);
     if (outcome.deferred) deferred.push({ lane: name, reason: outcome.deferred });
+    if (!input.applicable && REPORT_NA.has(name))
+      notApplicable.push({ lane: name, reason: NOT_APPLICABLE_REASON });
   }
   return {
     conclusion: failures.length === 0 ? "success" : "failure",
     failures,
     deferred,
+    notApplicable,
   };
 }
 
-export { evaluateLane, MERGE_GROUP_ONLY, DRAFT_DEFERRED };
+export { evaluateLane, MERGE_GROUP_ONLY, DRAFT_DEFERRED, REPORT_NA };
 
 // --- CLI entry point (used by actions/github-script step) -----------------
 // Reads lane definitions from argv[2] as a JSON string:
@@ -120,7 +130,7 @@ async function main() {
   }
   /** @type {Record<string, LaneInput>} */
   const lanes = JSON.parse(raw);
-  const { conclusion, failures, deferred } = resolveGate(
+  const { conclusion, failures, deferred, notApplicable } = resolveGate(
     lanes,
     process.env.GITHUB_EVENT_NAME ?? "",
     process.env.PR_DRAFT === "true",
@@ -130,6 +140,26 @@ async function main() {
   }
   for (const { lane, reason } of deferred) {
     console.log(`::notice title=${lane} deferred::${lane}: skipped — ${reason}`);
+  }
+  for (const { lane, reason } of notApplicable) {
+    console.log(`::notice title=${lane} not applicable::${lane}: not applicable — ${reason}`);
+  }
+  const summary = process.env.GITHUB_STEP_SUMMARY;
+  if (summary && notApplicable.length > 0) {
+    const rows = notApplicable.map(
+      ({ lane, reason }) => `| ${lane} | not applicable | ${reason} |`,
+    );
+    appendFileSync(
+      summary,
+      [
+        "## ci-required: lanes not applicable",
+        "",
+        "| Lane | State | Why |",
+        "| --- | --- | --- |",
+        ...rows,
+        "",
+      ].join("\n"),
+    );
   }
   console.log(`ci-required conclusion: ${conclusion}`);
   process.exit(conclusion === "success" ? 0 : 1);

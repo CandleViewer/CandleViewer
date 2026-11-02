@@ -1,12 +1,17 @@
 #!/usr/bin/env node
-// E06-T02 — the CI matrix job's comparison against the committed baseline. Recording only
-// (R0, `30-release-roadmap.md` §4.4 "not yet gating"): a regression is printed, never an
+// E06-T02 — the CI matrix job's comparison against the committed baseline. Recording only by
+// default (R0, `30-release-roadmap.md` §4.4 "not yet gating"): a regression is printed, never an
 // exit code. A failure to RUN is an exit code: no report, an invalid report (`validateReport`),
 // or a run error from the harness (watchdog, early shell exit) all exit 1 so the job goes red.
 //
+// E03-T14: `--enforce` (the GPU-runner mode of `_job-engine-bench.yml`, never the hosted
+// fallback) makes a like-for-like regression above the threshold exit 1 with CI-BEN-001. A run that
+// is not like-for-like with the baseline (other reps, fixture, hardware class) is never enforced:
+// it is reported (CI-BEN-002 warning), because a gate must compare the same thing to the same thing.
+//
 //   node bench/matrix/ci-compare.mjs --runtime chromium --report-dir <dir> \
 //        --baseline bench/matrix/baselines/chromium-ubuntu-latest.json [--summary <out.md>]
-//        [--threshold-pct 5] [--min-delta-ms 0.2]
+//        [--threshold-pct 5] [--min-delta-ms 0.2] [--enforce]
 //
 // The threshold is 06 §7.4's 5 %. The `--min-delta-ms` floor is this job's own (not 06's): frame
 // times are quantised to the page's 0.1 ms timer, so a delta under two ticks is reported but never
@@ -28,7 +33,11 @@ export function metrics(report) {
       for (const [mode, m] of Object.entries(c.modes ?? {}))
         out[`B7 ${mode} decode p95`] = m.decodeP95Ms;
     } else if (c.scenario === "B9") out["B9 cold init"] = c.coldInitToFirstFrameMs;
-    else out[`${c.scenario} frame p95`] = c.p95;
+    else {
+      out[`${c.scenario} frame p95`] = c.p95;
+      // C-9.1 #16 also gates draw calls; the counts are exact, so the same percentage applies.
+      if (typeof c.drawCalls === "number") out[`${c.scenario} draw calls`] = c.drawCalls;
+    }
   }
   return out;
 }
@@ -50,7 +59,8 @@ export function comparability(a, b) {
   return why;
 }
 
-/** Rows of { metric, baseline, current, deltaMs, deltaPct, status }. */
+/** Rows of { metric, baseline, current, deltaMs, deltaPct, status }. `opts.enforce` renames the
+ * regression status "REGRESSION (enforced)". */
 export function compareToBaseline(report, baseline, opts = DEFAULTS) {
   const cur = metrics(report);
   const base = baseline ? metrics(baseline) : {};
@@ -64,7 +74,8 @@ export function compareToBaseline(report, baseline, opts = DEFAULTS) {
     const deltaPct = b > 0 ? (deltaMs / b) * 100 : null;
     const big = Math.abs(deltaMs) >= opts.minDeltaMs - 1e-9;
     let status = "within threshold";
-    if (big && deltaPct != null && deltaPct > opts.thresholdPct) status = "REGRESSION (recorded)";
+    if (big && deltaPct != null && deltaPct > opts.thresholdPct)
+      status = opts.enforce ? "REGRESSION (enforced)" : "REGRESSION (recorded)";
     else if (big && deltaPct != null && deltaPct < -opts.thresholdPct) status = "improved";
     return { metric, baseline: b, current: c, deltaMs, deltaPct, status };
   });
@@ -72,13 +83,28 @@ export function compareToBaseline(report, baseline, opts = DEFAULTS) {
 
 const f = (v, d = 2) => (typeof v === "number" && Number.isFinite(v) ? v.toFixed(d) : "-");
 
-export function renderSummary({ runtime, file, rows, notComparable, baselineName, thresholds }) {
-  const L = [
-    `## Engine matrix (${runtime}) — recording only, not gating`,
-    "",
-    `Report \`${file}\`; baseline ${baselineName ? `\`${baselineName}\`` : "none committed yet"}; flag at > ${thresholds.thresholdPct} % (06 §7.4) and ≥ ${thresholds.minDeltaMs} ms (two timer ticks). A regression here never fails the build in R0. Hosted software-GL numbers are regression tracking only, not reference-hardware evidence (the committed matrix on \`main\` is).`,
-    "",
-  ];
+export function renderSummary({
+  runtime,
+  file,
+  rows,
+  notComparable,
+  baselineName,
+  thresholds,
+  enforce = false,
+}) {
+  const L = enforce
+    ? [
+        `## Engine matrix (${runtime}) — GPU mode, enforced`,
+        "",
+        `Report \`${file}\`; baseline ${baselineName ? `\`${baselineName}\`` : "none committed yet"}; a like-for-like regression > ${thresholds.thresholdPct} % (C-9.1 #16) and ≥ ${thresholds.minDeltaMs} ms fails the job (CI-BEN-001). A run that is not like-for-like is reported, never enforced.`,
+        "",
+      ]
+    : [
+        `## Engine matrix (${runtime}) — recording only, not gating`,
+        "",
+        `Report \`${file}\`; baseline ${baselineName ? `\`${baselineName}\`` : "none committed yet"}; flag at > ${thresholds.thresholdPct} % (06 §7.4) and ≥ ${thresholds.minDeltaMs} ms (two timer ticks). A regression here never fails the build in R0. Hosted software-GL numbers are regression tracking only, not reference-hardware evidence (the committed matrix on \`main\` is).`,
+        "",
+      ];
   if (notComparable.length)
     L.push(`**Not like-for-like with the baseline:** ${notComparable.join("; ")}.`, "");
   L.push("| Metric | Baseline ms | This run ms | Delta ms | Delta % | Status |");
@@ -109,7 +135,7 @@ export function run(argv, io = { log: console.log, error: console.error, append:
   const dir = get("--report-dir");
   if (!runtime || !dir) {
     io.error(
-      "usage: ci-compare.mjs --runtime <r> --report-dir <dir> [--baseline <f>] [--summary <f>]",
+      "usage: ci-compare.mjs --runtime <r> --report-dir <dir> [--baseline <f>] [--summary <f>] [--enforce]",
     );
     return 2;
   }
@@ -117,8 +143,9 @@ export function run(argv, io = { log: console.log, error: console.error, append:
     thresholdPct: Number(get("--threshold-pct") ?? DEFAULTS.thresholdPct),
     minDeltaMs: Number(get("--min-delta-ms") ?? DEFAULTS.minDeltaMs),
   };
+  const enforce = argv.includes("--enforce");
   const fail = (msg) => {
-    io.error(`::error title=engine-matrix ${runtime}::${msg}`);
+    io.error(`::error title=engine-matrix ${runtime}::CI-BEN-002: ${msg}`);
     const out = get("--summary");
     if (out) io.append(out, `## Engine matrix (${runtime}) — FAILED TO RUN\n\n${msg}\n`);
     return 1;
@@ -146,18 +173,33 @@ export function run(argv, io = { log: console.log, error: console.error, append:
     const bad = validateReport(baseline);
     if (bad.length) return fail(`baseline ${basename(bPath)} is invalid: ${bad.join("; ")}`);
   }
-  const rows = compareToBaseline(report, baseline, thresholds);
+  const notComparable = baseline ? comparability(report, baseline) : [];
+  // Enforcement needs a like-for-like baseline: with none, or a different one, it only reports.
+  const enforcing = enforce && baseline != null && notComparable.length === 0;
+  const rows = compareToBaseline(report, baseline, { ...thresholds, enforce: enforcing });
   const md = renderSummary({
     runtime,
     file: basename(path),
     rows,
-    notComparable: baseline ? comparability(report, baseline) : [],
+    notComparable,
     baselineName: baseline ? basename(String(bPath)) : null,
     thresholds,
+    enforce,
   });
   io.log(md);
   const out = get("--summary");
   if (out) io.append(out, md);
+  if (enforce && notComparable.length > 0)
+    io.log(
+      `::warning title=engine-matrix ${runtime}::CI-BEN-002: not like-for-like with the baseline (${notComparable.join("; ")}): regressions reported, not enforced`,
+    );
+  const regressed = rows.filter((r) => r.status === "REGRESSION (enforced)");
+  if (regressed.length > 0) {
+    io.error(
+      `::error title=engine-matrix ${runtime}::CI-BEN-001: regression above ${thresholds.thresholdPct} %: ${regressed.map((r) => r.metric).join(", ")}`,
+    );
+    return 1;
+  }
   return 0;
 }
 

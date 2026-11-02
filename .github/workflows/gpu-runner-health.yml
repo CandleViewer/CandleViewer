@@ -1,0 +1,104 @@
+name: gpu-runner-health
+
+# E03-T14 (CI-BEN-003, CI-BEN-004): hourly health of the self-hosted GPU bench runner named by the
+# repository variable CV_GPU_BENCH_RUNNER (JSON label array). It reads the repository's runner list
+# with CV_RUNNER_HEALTH_TOKEN (a fine-grained, read-only Administration token: an owner item, never
+# created by an agent) and raises ONE tracker issue (_nightly-issue.yml) only when the variable is
+# set and the runner is offline, missing, its health cannot be read (no token configured included)
+# or it has been busy on 3 consecutive hourly checks. With no runner registered the check writes
+# "no GPU runner registered: fallback active" to the summary and files nothing. One busy check is
+# not an alert. engine-bench does NOT route around an unfit runner: with the variable set a lane
+# queues for it (the owner unsets the variable to re-route), see _job-engine-bench.yml and
+# docs/ci-runbook.md (CI-BEN-003). The busy streak is a tiny JSON file carried between hourly runs
+# by actions/cache in the separate `streak` job, which holds no secret; the `check` job holds the
+# token and restores no cache (E03 threat model G2: a poisoned default-branch cache must not reach
+# a job with a secret). A miss on the first run counts as zero.
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check:
+    name: gpu-runner-health
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      alert: ${{ steps.check.outputs.alert }}
+      code: ${{ steps.check.outputs.code }}
+      reason: ${{ steps.check.outputs.reason }}
+      busy: ${{ steps.check.outputs.busy }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/ci
+      - name: Check the runner
+        id: check
+        env:
+          CV_GPU_BENCH_RUNNER: ${{ vars.CV_GPU_BENCH_RUNNER }}
+          CV_RUNNER_HEALTH_TOKEN: ${{ secrets.CV_RUNNER_HEALTH_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 -I tools/ci/gpu_runner_health.py check
+
+  streak:
+    name: gpu-runner-busy-streak
+    needs: check
+    if: ${{ needs.check.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      alert: ${{ steps.streak.outputs.alert }}
+      code: ${{ steps.streak.outputs.code }}
+      reason: ${{ steps.streak.outputs.reason }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/ci
+      - name: Restore the busy streak
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: gpu-busy-state.json
+          key: gpu-runner-busy-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: gpu-runner-busy-
+      - name: Count the busy streak
+        id: streak
+        env:
+          CV_GPU_BUSY_STATE_FILE: gpu-busy-state.json
+          CV_GPU_BUSY: ${{ needs.check.outputs.busy }}
+        run: python3 -I tools/ci/gpu_runner_health.py streak
+      - name: Save the busy streak
+        if: ${{ !cancelled() && hashFiles('gpu-busy-state.json') != '' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: gpu-busy-state.json
+          key: gpu-runner-busy-${{ github.run_id }}-${{ github.run_attempt }}
+
+  alert:
+    needs: [check, streak]
+    # always(): a skipped or failed streak must not suppress an alert that check raised, and a
+    # failed check is itself an alert (health unknown), never a silent pass.
+    if: >-
+      ${{ always() && (needs.check.result != 'success'
+      || needs.check.outputs.alert == 'true'
+      || needs.streak.outputs.alert == 'true') }}
+    permissions:
+      issues: write
+    uses: ./.github/workflows/_nightly-issue.yml
+    with:
+      signal: gpu-runner-health
+      title-prefix: "GPU bench runner unavailable"
+      labels: area/infra-devops,priority/p1
+      body: |
+        The self-hosted GPU bench runner is not fit (${{ needs.check.outputs.alert == 'true' && needs.check.outputs.code || needs.streak.outputs.code || 'check-failed' }}): ${{ needs.check.outputs.alert == 'true' && needs.check.outputs.reason || needs.streak.outputs.reason || 'the health check job did not succeed' }}
+
+        CV_GPU_BENCH_RUNNER is set, so engine-bench jobs on merge_group / schedule / dispatch queue for this runner; they do not fall back. They wait until a runner picks them up or the variable is unset (the fallback procedure). A manual dispatch also counts toward the busy streak.
+        Runbook: docs/ci-runbook.md, CI-BEN-003. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

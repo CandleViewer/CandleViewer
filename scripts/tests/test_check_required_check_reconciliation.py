@@ -243,7 +243,7 @@ NAMED_LANES = [
     ("_job-contract.yml", "contract", "contract"),
     ("_job-integration.yml", "integration", "integration"),
     ("_job-a11y.yml", "a11y", "a11y"),
-    ("_job-engine-bench.yml", "engine-bench-stub", "engine-bench"),
+    ("_job-engine-bench.yml", "bench", "engine-bench"),
     ("_job-migrations.yml", "migrations", "migrations"),
 ]
 SPARE = "\n  spare:\n    if: false\n    runs-on: x\n    steps:\n      - run: echo$&"
@@ -436,7 +436,7 @@ NESTED_ERROR = "job 'nested' of lane 'contract' calls another workflow"
             for workflow, job, check in NAMED_LANES
             for never in ("if: false", "continue-on-error: true")
         ],
-        ("_job-engine-bench.yml", "\n  engine-bench-stub:\n", SPARE, "'engine-bench' is missing"),
+        ("_job-engine-bench.yml", "\n  bench:\n", SPARE, "'engine-bench' is missing"),
         # ... and the step whose outputs decide which lanes apply is the pinned paths filter.
         ("pr.yml", "dorny/paths-filter@", "other/paths-filter@", FILTER_STEP),
         ("pr.yml", FILTER_PIN, "dorny/paths-filter@v4", FILTER_STEP),

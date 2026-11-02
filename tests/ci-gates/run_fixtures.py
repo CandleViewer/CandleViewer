@@ -90,7 +90,39 @@ def _case_secret_clean() -> tuple[bool, str]:
     return result
 
 
+def _case_engine_bench(fn: str) -> Callable[[], tuple[bool, str]]:
+    def run() -> tuple[bool, str]:
+        result: tuple[bool, str] = getattr(_load("engine_bench"), fn)()
+        return result
+
+    return run
+
+
 CASES: list[FixtureCase] = [
+    FixtureCase(
+        "E03-GT-18a",
+        "engine-bench reported not applicable on a non-engine diff",
+        True,
+        _case_engine_bench("build_not_applicable_fixture"),
+    ),
+    FixtureCase(
+        "E03-GT-18b",
+        "CI-GATE-001: applicable engine-bench lane failed",
+        False,
+        _case_engine_bench("build_applicable_failure_fixture"),
+    ),
+    FixtureCase(
+        "E03-GT-19a",
+        "CI-BEN-004: no GPU runner registered, fallback, no alert",
+        True,
+        _case_engine_bench("build_no_runner_fixture"),
+    ),
+    FixtureCase(
+        "E03-GT-19b",
+        "CI-BEN-003: GPU runner offline, fallback and alert",
+        False,
+        _case_engine_bench("build_runner_offline_fixture"),
+    ),
     FixtureCase(
         "E03-GT-16a",
         "branch-protection reconciliation, clean",

@@ -1,8 +1,36 @@
 name: _job-engine-bench
 
-# Reusable-workflow stub (E03-T01). Filled in by E03-T14 (chart-engine
-# benchmarks B1-B10 on the pinned self-hosted GPU runner, >10% regression
-# gate against the stored baseline) per ADR-0013 binding rule 4.
+# E03-T14 (ADR-0013 binding rule 4, Amendment 7): the required `engine-bench` lane (C-9.1 #16).
+# Chart-engine benchmarks B1-B5 and B9, the median of 5 repetitions, against the stored baseline,
+# a regression above 5 % failing the job. The check name stays `engine-bench` (the caller job in
+# pr.yml); nothing here renames it.
+#
+# HARD PRECONDITION (security): before a runner is registered or CV_GPU_BENCH_RUNNER is set, the
+# runner sits in an ORGANISATION runner group with a workflow allow-list (it is not attached to the
+# repository directly), or behind K01's host pre-job check. E03-K01 marks plan-tier allow-list
+# support UNVERIFIED, so confirm it first. Without runner-side admission control any workflow able
+# to name the label could run on the host; this file's event policy alone is not enough.
+#
+# Where it runs (docs/plan/spikes/E03-K01.md section 5, policy P4):
+#  * gpu      the self-hosted GPU runner named by the repository variable CV_GPU_BENCH_RUNNER (a
+#             JSON label array), ONLY for merge_group, schedule and workflow_dispatch on main. The
+#             regression gate is enforced (--enforce, CI-BEN-001). The runner's isolation (O1:
+#             ephemeral, non-root, no host mounts, read-only root, no secrets, egress allow-list) is
+#             enforced by its host, not by this file.
+#  * fallback GitHub-hosted ubuntu-latest, headless Chromium on SwiftShader. This is the ACTIVE path
+#             until the owner registers a runner, and always the path for pull_request events (forks
+#             included). It records the comparison and fails only on a run that did not finish.
+#             Software-GL numbers are never reference-hardware evidence.
+# The route job (tools/ci/gpu_runner_health.py) decides by event policy and the variable, holds no
+# secret (a lane gets none, ADR-0013 rule 6), prints the reason (CI-BEN-004 none registered) and
+# never pretends a GPU exists. The fallback is taken only when the variable is unset or malformed
+# (a malformed one also alerts) or the event policy says so; with a valid variable set a busy,
+# offline or missing runner QUEUES the job. Runner health is the hourly gpu-runner-health.yml's
+# job (CI-BEN-003, including 3 consecutive busy checks); the owner re-routes by unsetting the
+# variable. The matrix driver's
+# Chromium arm uses the K01 pinned software-GL flags in both modes today; hardware-GL flags and a
+# per-runner-class baseline arrive with the GPU runner (E11-T06). Runbook: docs/ci-runbook.md
+# (CI-BEN-001..004). The cheap wall-clock budgets run in both modes.
 
 on:
   workflow_call: {}
@@ -11,12 +39,40 @@ permissions:
   contents: read
 
 jobs:
-  engine-bench-stub:
-    name: engine-bench (stub — see E03-T14)
+  route:
+    name: engine-bench-route
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.route.outputs.mode }}
+      runs_on: ${{ steps.route.outputs.runs_on }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/ci
+      - name: Choose the runner (GPU only on merge_group, schedule and dispatch on main)
+        id: route
+        env:
+          CV_GPU_BENCH_RUNNER: ${{ vars.CV_GPU_BENCH_RUNNER }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 -I tools/ci/gpu_runner_health.py route
+
+  bench:
+    name: engine-bench-run
+    needs: route
+    runs-on: ${{ fromJSON(needs.route.outputs.runs_on) }}
+    # timeout-minutes starts only once a runner picks the job up: a queued self-hosted job waits up to
+    # 24 h or the queue's check timeout (docs/ci-runbook.md CI-BEN-003). No concurrency group here: GitHub
+    # keeps one pending job per group and cancels older ones, which would drop merge-queue entries; the
+    # self-hosted runner runs one job at a time itself.
+    timeout-minutes: 45
+    env:
+      BENCH_MODE: ${{ needs.route.outputs.mode }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: ".nvmrc"
@@ -29,5 +85,33 @@ jobs:
         run: pnpm --filter @candleviewer/protocol test:perf
       - name: Rule-graph adapter budgets, 200 nodes (E37-T01, no coverage)
         run: pnpm --filter @candleviewer/rule-graph test:perf
-      - name: Placeholder (E03-T14 fills in GPU benchmark run + baseline diff)
-        run: echo "engine-bench lane stub — implemented by E03-T14"
+      # A GPU host ships its browser and system libraries (its image is the owner's); the hosted
+      # fallback installs the lockfile's Chromium as perf-engine-matrix.yml does.
+      - name: Install the lockfile's Playwright Chromium (hosted fallback only)
+        if: ${{ needs.route.outputs.mode != 'gpu' }}
+        working-directory: apps/desktop
+        run: pnpm exec playwright install --with-deps chromium
+      # continue-on-error: the harness exits 1 on a run error; the compare step re-reads the report
+      # and fails the job then (CI-BEN-002), after the summary is written and the artefact kept.
+      - name: Run the matrix, 5 repetitions (C-9.1 #16), headless Chromium
+        continue-on-error: true
+        working-directory: packages/chart-engine
+        run: >-
+          node bench/matrix/run-matrix.mjs --runtime chromium --reps 5
+          --scenarios B1,B2,B3,B4,B5,B9 --out-dir "$RUNNER_TEMP/matrix"
+      - name: Compare with the committed baseline (enforced on the GPU runner, recorded on the fallback)
+        working-directory: packages/chart-engine
+        run: |
+          enforce=()
+          if [ "$BENCH_MODE" = "gpu" ]; then enforce=(--enforce); fi
+          node bench/matrix/ci-compare.mjs --runtime chromium --report-dir "$RUNNER_TEMP/matrix" \
+            --baseline bench/matrix/baselines/chromium-ubuntu-latest.json \
+            --summary "$GITHUB_STEP_SUMMARY" "${enforce[@]}"
+      - name: Upload the matrix report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: engine-bench-matrix
+          path: ${{ runner.temp }}/matrix/
+          if-no-files-found: warn
+          retention-days: 30

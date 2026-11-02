@@ -3,6 +3,7 @@ import {
   DRAFT_DEFERRED,
   evaluateLane,
   MERGE_GROUP_ONLY,
+  REPORT_NA,
   resolveGate,
 } from "../../../scripts/ci_gate_resolver.mjs";
 
@@ -255,5 +256,41 @@ describe("draft-deferred lanes", () => {
       { lane: "integration", reason: "runs on the merge group" },
       { lane: "e2e", reason },
     ]);
+  });
+});
+
+// E03-T14 (Gherkin S1): a diff outside the engine and protocol filters skips engine-bench; the
+// resolver names that as not applicable and the conclusion stays success.
+describe("not-applicable reporting", () => {
+  const off = { applicable: false, result: "skipped" };
+
+  it("names only engine-bench", () => {
+    expect([...REPORT_NA]).toEqual(["engine-bench"]);
+  });
+
+  it("reports a skipped engine-bench that does not apply, with a success conclusion", () => {
+    const { conclusion, failures, notApplicable } = resolveGate({ "engine-bench": off, js: off });
+    expect(conclusion).toBe("success");
+    expect(failures).toEqual([]);
+    expect(notApplicable).toEqual([
+      { lane: "engine-bench", reason: "no engine or protocol path changed" },
+    ]);
+  });
+
+  it("reports nothing when engine-bench applies and passed", () => {
+    const lane = { applicable: true, result: "success" };
+    expect(resolveGate({ "engine-bench": lane }).notApplicable).toEqual([]);
+  });
+
+  it("does not name other lanes that do not apply", () => {
+    expect(resolveGate({ e2e: off, py: off }).notApplicable).toEqual([]);
+  });
+
+  it("still fails an applicable engine-bench that was skipped", () => {
+    const { conclusion, notApplicable } = resolveGate({
+      "engine-bench": { applicable: true, result: "skipped" },
+    });
+    expect(conclusion).toBe("failure");
+    expect(notApplicable).toEqual([]);
   });
 });
