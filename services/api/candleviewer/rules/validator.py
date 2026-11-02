@@ -83,7 +83,7 @@ def estimate_evaluations_per_minute(rule: Rule) -> int:
             return min(_MAX_PRICE_RATE, max(1, 60_000 // t.debounce_ms))
         return _MAX_PRICE_RATE
     if t.type == "on_bar_close" and t.timeframe:
-        m = _TF.match(t.timeframe)
+        m = _TF.fullmatch(t.timeframe)
         return max(1, 60_000 // (int(m[1]) * _TF_MS[m[2]])) if m and int(m[1]) else 1
     if t.type == "on_timer" and t.interval_ms:
         return max(1, 60_000 // t.interval_ms)
