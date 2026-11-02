@@ -49,6 +49,7 @@ from candleviewer.domain.archive import (
     ArchiveTrade,
 )
 from candleviewer.exchange.base.frame_guard import MAX_TS_MS
+from candleviewer.exchange.bybit.tls import exchange_tls_context
 
 ALLOWED_ARCHIVE_HOSTS: frozenset[str] = frozenset({"public.bybit.com"})
 DEFAULT_ARCHIVE_BASE = "https://public.bybit.com"
@@ -173,7 +174,7 @@ class BybitTradeArchive:
                     self._cfg.read_timeout_s, connect=self._cfg.connect_timeout_s
                 ),
                 follow_redirects=False,
-                verify=True,
+                verify=exchange_tls_context(),
                 trust_env=False,  # never route through an env-configured proxy
             )
         return self._client

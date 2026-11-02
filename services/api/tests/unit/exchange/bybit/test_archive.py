@@ -8,6 +8,7 @@ fixture (tests/fixtures/archive/README.md) or built in-test.
 from __future__ import annotations
 
 import gzip
+import ssl
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -145,7 +146,10 @@ async def test_owned_client_is_built_with_tls_verification(
     archive = BybitTradeArchive()
     archive._http()
     await archive.aclose()
-    assert len(built) == 1 and built[0]["verify"] is True
+    (kwargs,) = built
+    context = kwargs["verify"]
+    assert isinstance(context, ssl.SSLContext) and kwargs["trust_env"] is False
+    assert (context.verify_mode, context.check_hostname) == (ssl.CERT_REQUIRED, True)
 
 
 def test_config_defaults_match_architecture_keys() -> None:

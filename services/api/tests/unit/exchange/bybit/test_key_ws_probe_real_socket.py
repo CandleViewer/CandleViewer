@@ -12,6 +12,7 @@ import contextlib
 import json
 import os
 import ssl
+import sys
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from http import HTTPStatus
@@ -161,6 +162,37 @@ def _builder(
     )
 
 
+#: Besides every `*_proxy` name, the variables the exchange clients take nothing from (#3461).
+TLS_VARIABLES = ("SSL_CERT_FILE", "SSL_CERT_DIR", "SSLKEYLOGFILE")
+
+
+def clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every `*_proxy` name in either case, `no_proxy` too, and `TLS_VARIABLES`, gone for the row,
+    which then sets its own synthetic values."""
+    for name in [name for name in os.environ if name.lower().endswith("_proxy")]:
+        monkeypatch.delenv(name)
+    for name in TLS_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+
+
+def key_log(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """A clean environment, then `SSLKEYLOGFILE` naming a fresh path. CPython reads it only when
+    started without `-E` or `-I`, which is asserted first."""
+    assert sys.flags.ignore_environment == 0
+    clean_environment(monkeypatch)
+    keys = tmp_path / "keys.log"
+    monkeypatch.setenv("SSLKEYLOGFILE", str(keys))
+    return keys
+
+
+def assert_default_opens(keys: Path) -> None:
+    """The control, in this interpreter: CPython's default context, built under the same value,
+    opens the key log, so a row that finds no file there is not vacuous."""
+    assert not keys.exists()
+    ssl.create_default_context()
+    assert keys.exists()
+
+
 @pytest.fixture(autouse=True)
 def _loopback_only(monkeypatch: pytest.MonkeyPatch) -> None:
     """A proxy named in the environment would carry the library's own dials off 127.0.0.1;
@@ -241,9 +273,8 @@ async def test_a_root_ssl_cert_file_names_never_sees_the_signed_auth(
 ) -> None:
     """C-2.7 and C-12.2, defence in depth: a TLS-inspecting gateway's root named by
     `SSL_CERT_FILE` is trusted by OpenSSL's default store, which the library's default dial takes,
-    and by httpx's default context, the signed REST client's. The probe's context, built again
-    under that environment, ignores it and trusts certifi's bundle only, so its handshake fails
-    before any frame."""
+    and by httpx's default context. The probe's context, built again under that environment,
+    ignores it and trusts certifi's bundle only, so its handshake fails before any frame."""
     root, served = _issue(tmp_path)
     monkeypatch.setenv("SSL_CERT_FILE", str(root))
     monkeypatch.setattr(key_ws_probe, "_TLS", key_ws_probe._probe_tls())
@@ -257,20 +288,58 @@ async def test_a_root_ssl_cert_file_names_never_sees_the_signed_auth(
     assert (peer.handshakes, peer.frames) == (2, [])
 
 
+#: Per variable, the scheme of the proxy the library's own dial takes for a `wss://` stream.
+TAKEN = {
+    "HTTPS_PROXY": "http", "https_proxy": "http", "WSS_PROXY": "http", "SOCKS_PROXY": "socks5h",
+    "ALL_PROXY": None, "all_proxy": None,
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("connector", ["probe", "stream"])
+@pytest.mark.parametrize("name", list(TAKEN))
 async def test_a_proxy_the_environment_names_never_carries_the_dial(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, connector: str, name: str
 ) -> None:
-    """C-2.7 and C-12.2, defence in depth: with `HTTPS_PROXY` set, the library's default dial
-    goes through that proxy (`ws://` takes it as well); production's connector dials the stream
-    itself, so no proxy sees the signed `auth`."""
-    for name in [name for name in os.environ if name.lower().endswith("_proxy")]:
-        monkeypatch.delenv(name)
-    proxy, peer = Proxy(), Peer()
-    async with asyncio.timeout(_DEADLINE_S), proxy.listening() as via, peer.serving() as url:
-        monkeypatch.setenv("HTTPS_PROXY", via)
-        assert get_proxy(parse_uri(url)) == via  # the proxy the library's default dial takes
-        assert await probe(url) == GRANTED
+    """C-2.7 and C-12.2, defence in depth: for a `wss://` stream the library's default dial takes
+    `wss_proxy`, `socks_proxy` or `https_proxy`, in either case, and never `all_proxy`; both of
+    production's connectors dial the stream itself in every row, so no proxy sees the signed
+    `auth`. `_TLS` trusts the stream's root here: the route is under test."""
+    clean_environment(monkeypatch)
+    root, served = _issue(tmp_path)
+    monkeypatch.setattr(key_ws_probe, "_TLS", ssl.create_default_context(cafile=root))
+    proxy, peer, scheme = Proxy(), Peer(), TAKEN[name]
+    async with asyncio.timeout(_DEADLINE_S), proxy.listening() as via, peer.serving(served) as url:
+        monkeypatch.setenv(name, via)
+        taken = None if scheme is None else via.replace("http", scheme, 1)
+        assert get_proxy(parse_uri(url)) == taken  # the proxy the library's default dial takes
+        if connector == "probe":
+            assert await probe(url) == GRANTED
+        else:
+            socket = await key_ws_probe.connect_private_stream(url)
+            await socket.send("frame")
+            assert await socket.recv(len(OK)) == OK
+            await socket.close()
     assert (proxy.asked, peer.handshakes, len(peer.frames)) == (0, 1, 1)
+
+
+@pytest.mark.parametrize("connector", ["probe", "stream"])
+async def test_neither_private_ws_connector_writes_a_key_log(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, connector: str
+) -> None:
+    """#3461: the connectors' context, built again under `SSLKEYLOGFILE`, opens no key log, and a
+    dial that reaches the stream's TLS handshake (on a root certifi does not hold) writes none."""
+    keys = key_log(monkeypatch, tmp_path)
+    monkeypatch.setattr(key_ws_probe, "_TLS", key_ws_probe._probe_tls())
+    _, served = _issue(tmp_path)
+    peer = Peer()
+    async with asyncio.timeout(_DEADLINE_S), peer.serving(served) as url:
+        if connector == "probe":
+            assert await probe(url) == FAILED
+        else:
+            with pytest.raises(ssl.SSLCertVerificationError):
+                await key_ws_probe.connect_private_stream(url)
+    assert (peer.handshakes, keys.exists()) == (0, False)
+    assert_default_opens(keys)
 
 
 async def test_the_streams_connector_reads_a_frame_above_1_mib_as_frame_too_large() -> None:

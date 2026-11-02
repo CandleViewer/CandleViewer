@@ -114,10 +114,13 @@ passing check for the interval plus 15 minutes; the warning log `key_selfcheck_i
 `api_keys.last_error_code` give the cause, as a `KeyProbeError` name: `auth_error` (10004, the
 signature was refused), `clock_drift` (10002: the host clock is off and the ingestion clock guard has
 not measured the offset), `rate_limited` (10006, 10018, or the IP-level hold after a 10018, which
-makes no call), `service_unavailable` (10016, 10019 or an HTTP 5xx), `transport_error` (a reset, or
-a reply that is not JSON), `timeout`, `exchange_unknown` (any other refusal or unreadable reply), or
+makes no call), `service_unavailable` (10016, 10019 or an HTTP 5xx), `transport_error` (a reset, a
+reply that is not JSON, a TLS handshake the bundled CA set does not verify, or no direct route to
+the host), `timeout`, `exchange_unknown` (any other refusal or unreadable reply), or
 one of the job's own: `probe_slow` (accepted later than the receive window), `probe_clock_step` (the
-host clock stepped during the probe) or `check_error`.
+host clock stepped during the probe) or `check_error`. The key checks reach the exchange directly,
+with no proxy and the bundled CA set only, so a `transport_error` on every key points at the host's
+egress first (`demo-host.md`, "The host").
 
 A borrow that M2's C-2.8 re-check refuses is no `check_error`: it is reported as a policy
 violation (`key_withdraw_permission`, the first symptom above, with the force-disable and the

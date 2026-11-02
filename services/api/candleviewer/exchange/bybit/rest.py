@@ -48,6 +48,7 @@ from candleviewer.exchange.bybit.metrics import (
 from candleviewer.exchange.bybit.models import ServerTime
 from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.exchange.bybit.signer import BybitSigner
+from candleviewer.exchange.bybit.tls import exchange_tls_context
 
 
 def logger() -> Any:
@@ -286,6 +287,10 @@ class BybitRestClient:
             transport=transport,
             # SR-040a: a 3xx from the real host must never carry the signature elsewhere.
             follow_redirects=False,
+            # #3461 (C-12.2): the adapter's TLS context, one per client, and no proxy, CA file or
+            # key log from the environment. An injected transport keeps its own.
+            verify=exchange_tls_context(),
+            trust_env=False,
         )
 
     async def check_reachable(self) -> bool:
