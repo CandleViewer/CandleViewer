@@ -45,7 +45,12 @@ export const AtMinimum: Story = {
   render: () => <Demo direction="row" initial={[0.8, 0.2]} mins={[0.2, 0.2]} />,
 };
 
-/** The keyboard resize demo: arrows 2 %, Shift+arrows 10 %, Home equal, End maximum. */
+/**
+ * The keyboard resize demo: arrows 2 %, Shift+arrows 10 %, End moves this separator to the
+ * maximum, Home sets equal sizes. Home's reach differs by host: with `onEqualise` (the dock wires
+ * it, E15-D04 §6) it equalises the whole split; without it, as here, only the separator's pair.
+ * Arrow keys are physical (Left/Up shrink the cell before): the app is LTR only, so no RTL mirror.
+ */
 export const KeyboardResize: Story = {
   render: () => <Demo direction="row" initial={[0.5, 0.5]} mins={[0.2, 0.2]} />,
   play: async ({ canvasElement }) => {

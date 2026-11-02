@@ -37,6 +37,8 @@ export function DockPanel({
       data-cmp="CMP-080"
       data-focused={focused ? "" : undefined}
       data-state={state}
+      // A programmatic focus target only (the dock moves focus here when a pane closes, FM-11).
+      tabIndex={-1}
       onFocus={onFocus}
     >
       {header}
