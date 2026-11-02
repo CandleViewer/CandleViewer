@@ -13,6 +13,7 @@ from bench.recorder.budgets import (
     check_memory,
     check_rate,
     check_reconciliation,
+    check_wal_residue,
     ingest_verdict,
     soak_verdict,
 )
@@ -116,3 +117,14 @@ def test_rate_below_95_percent_of_target_fails() -> None:
 def test_run_result_rates_are_zero_for_an_empty_run() -> None:
     r = RunResult("smoke", 1.0, 0.0, ())
     assert r.achieved_msgs_per_s == 0.0 and r.gb_per_day_per_symbol() == 0.0
+
+
+def test_ingest_reports_a_wal_residue_without_failing_on_it() -> None:
+    """#5333: rows a run left in its WAL are not lost (the reconciliation counts the replayed
+    rows as written) but say the run ended spilling: reported, never a hard failure."""
+    v = ingest_verdict(_clean(target_msgs_per_s=100.0, recovered_rows={"BTCUSDT": 7}))
+    (c,) = [c for c in v.checks if c.name == "wal_residue"]
+    assert not c.passed and not c.hard and c.measured == 7.0
+    assert c.note == "replayed after the run: BTCUSDT=7"
+    assert v.passed == all(x.passed for x in v.checks if x.hard)
+    assert check_wal_residue({}).passed and check_wal_residue({}).note == ""

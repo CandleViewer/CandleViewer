@@ -119,8 +119,10 @@ class RecorderRuntime:
         quarter of `grace_s` (so the four fit the bound the supervisor puts on `stop`), each run
         whatever the one before did. `wait`, not `await task`: the task's cancellation is not
         ours. The writer's own flush bound is half its share, so its spill path runs before the
-        cut. A cancellation that reaches this stop is held until the last step has run, then
-        re-raised, as `Supervisor._stop_each` does (#3361): the sessions still close."""
+        cut; a WAL thread still running at the cut adds at most `WriterConfig.wal_join_timeout_s`
+        (0.5 s) once, which `STOP_SLACK_S` covers (#5333). A cancellation that reaches this stop
+        is held until the last step has run, then re-raised, as `Supervisor._stop_each` does
+        (#3361): the sessions still close."""
         share = grace_s / 4
         held: BaseException | None = None
         recorder_up.set(0)

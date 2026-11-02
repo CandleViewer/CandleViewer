@@ -4,7 +4,7 @@ Budgets (ticket perf notes, 06-performance-and-load-standard budget #12 and the 
 p95 flush < 50 ms, process RSS <= 512 MiB, API p95 < 150 ms, a `recorder` frame < 8 KiB for 20
 symbols, GB/day within 20 % of the E16-K01 figure, and no silent loss: zero dropped rows, a backlog
 p95 of 0 at flush boundaries, zero spill bytes, and produced rows == written rows + rows a gap
-accounts for, per stream, exactly (either sign is a failure: loss or duplication).
+accounts for, per symbol, exactly (either sign is a failure: loss or duplication).
 The API and frame budgets are judged by k6's thresholds (`tests/load/k6/recorder_api.js`); their
 numbers live here so the script and the docs quote one place.
 """
@@ -38,6 +38,8 @@ class RunResult:
     produced_rows: dict[str, int] = field(default_factory=dict)
     written_rows: dict[str, int] = field(default_factory=dict)
     dropped_rows: dict[str, int] = field(default_factory=dict)
+    #: Of the written rows, those the run left in its WAL and a restart's replay wrote.
+    recovered_rows: dict[str, int] = field(default_factory=dict)
     flush_ms: list[float] = field(default_factory=list)
     rss_bytes: list[int] = field(default_factory=list)
     backlog_rows: list[int] = field(default_factory=list)
@@ -95,8 +97,8 @@ def check_spill(spill_bytes: Sequence[int]) -> Check:
 def check_reconciliation(
     produced: Mapping[str, int], written: Mapping[str, int], gap_accounted: Mapping[str, int]
 ) -> Check:
-    """Produced == written + gap-accounted, per stream; any difference is undetected loss (or a
-    duplicate) and fails."""
+    """Produced == written + gap-accounted, per key (the harness keys by symbol); any difference
+    is undetected loss (or a duplicate) and fails, and the note names each key's difference."""
     streams = sorted(set(produced) | set(written) | set(gap_accounted))
     bad = {
         s: produced.get(s, 0) - written.get(s, 0) - gap_accounted.get(s, 0)
@@ -108,6 +110,19 @@ def check_reconciliation(
     return Check(
         "reconciliation", "E16-Q04 oracle", off, 0.0, "rows", off == 0.0,
         note=f"undetected: {note}" if bad else "",
+    )  # fmt: skip
+
+
+def check_wal_residue(recovered_rows: Mapping[str, int]) -> Check:
+    """Rows the run left durable in its WAL, written only by the restart's replay (#5333).
+    Reported, not judged: they are not lost (the reconciliation counts them as written), but a
+    run that ends spilling did not keep up, which the ingest leg's drop check alone would miss
+    when nothing was dropped."""
+    n = float(sum(recovered_rows.values()))
+    note = ", ".join(f"{s}={v}" for s, v in sorted(recovered_rows.items()) if v)
+    return Check(
+        "wal_residue", "E16-Q04 no loss", n, 0.0, "rows", n == 0.0, hard=False,
+        note=f"replayed after the run: {note}" if note else "",
     )  # fmt: skip
 
 
@@ -129,7 +144,8 @@ def check_rate(achieved: float, target: float, floor: float = RATE_FLOOR) -> Che
 
 
 def ingest_verdict(r: RunResult) -> Verdict:
-    """The 50k msg/s ingest load: flush p95, the memory ceiling, the rate it reached, no loss."""
+    """The 50k msg/s ingest load: flush p95, the memory ceiling, the rate it reached, no loss,
+    and (reported) the rows it left in its WAL."""
     v = Verdict("recorder_ingest")
     for c in (
         check_rate(r.achieved_msgs_per_s, r.target_msgs_per_s),
@@ -137,6 +153,7 @@ def ingest_verdict(r: RunResult) -> Verdict:
         check_memory(r.rss_bytes),
         check_drops(r.dropped_rows),
         check_reconciliation(r.produced_rows, r.written_rows, r.dropped_rows),
+        check_wal_residue(r.recovered_rows),
     ):
         v.add(c)
     v.metrics = _metrics(r)

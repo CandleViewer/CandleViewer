@@ -175,6 +175,8 @@ class Mix:
         self.phase = "steady"
         self.produced_msgs = 0
         self.produced_rows: dict[str, int] = {}
+        #: The same rows per symbol: the reconciliation's per-symbol breakdown (#5333).
+        self.produced_by_symbol: dict[str, int] = {}
         self.phases_seen: dict[str, int] = {}
 
     def _pick_phase(self) -> None:
@@ -186,9 +188,10 @@ class Mix:
                 break
         self.phases_seen[self.phase] = self.phases_seen.get(self.phase, 0) + 1
 
-    def _count(self, kind: Kind, rows: int) -> None:
+    def _count(self, kind: Kind, symbol: str, rows: int) -> None:
         self.produced_msgs += 1
         self.produced_rows[kind] = self.produced_rows.get(kind, 0) + rows
+        self.produced_by_symbol[symbol] = self.produced_by_symbol.get(symbol, 0) + rows
 
     def next(self, ts_us: int) -> tuple[Kind, Event]:
         if self._i % PHASE_MSGS == 0:
@@ -205,7 +208,7 @@ class Mix:
 
     def _trade(self, symbol: str, ts_us: int) -> Trade:
         t = self._rng.choice(self._trades[symbol])
-        self._count("trades", 1)
+        self._count("trades", symbol, 1)
         return Trade(
             symbol=symbol, ts_event=ts_us, trade_id=str(uuid.UUID(int=self._rng.getrandbits(128))),
             price=t.price, qty=t.qty, notional=t.price * t.qty, side=t.side,
@@ -216,7 +219,7 @@ class Mix:
         bids, asks = self._rng.choice(self._books)
         prev = self._update_id[symbol]
         uid = self._update_id[symbol] = prev + 1
-        self._count("orderbook_deltas", len(bids) + len(asks))
+        self._count("orderbook_deltas", symbol, len(bids) + len(asks))
         return Delta(
             symbol=symbol, ts_event=ts_us, depth=self._depth, bids=bids, asks=asks,
             update_id=uid, prev_update_id=prev, cross_seq=uid, ts_match=ts_us,
@@ -225,7 +228,7 @@ class Mix:
     def _liquidation(self, symbol: str, ts_us: int) -> Liquidation:
         t = self._rng.choice(self._trades[symbol])
         self._batch[symbol] += 1
-        self._count("liquidations", 1)
+        self._count("liquidations", symbol, 1)
         return Liquidation(
             symbol=symbol, ts_event=ts_us, price=t.price, qty=t.qty,
             liquidated_side="long" if t.side == "sell" else "short",

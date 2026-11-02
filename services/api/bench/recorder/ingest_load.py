@@ -9,6 +9,8 @@ counting in-memory sink stands in. `smoke` is the PR-cheap scale (200 msg/s for 
     uv run python -m bench.recorder.ingest_load --profile full --ilp 127.0.0.1:9009 \\
         --out bench/reports/recorder_ingest.json
     uv run python -m bench.recorder.ingest_load --msgs-per-s 1000 --duration-s 5   # ad hoc
+    uv run python -m bench.recorder.ingest_load --msgs-per-s 5000 --duration-s 20 \\
+        --max-queue-rows 2000 --wal-max-bytes 4000000   # forced overflow: drops, gaps, a replay
 
 Never run the full profile on a shared host (an agent VPS or the bench runner during a soak).
 """
@@ -41,6 +43,8 @@ def parse(argv: Sequence[str] | None) -> argparse.Namespace:
     ap.add_argument("--msgs-per-s", type=float, default=None, help="overrides the profile's rate")
     ap.add_argument("--duration-s", type=float, default=None, help="overrides its duration")
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--max-queue-rows", type=int, default=None, help="per-lane queue bound")
+    ap.add_argument("--wal-max-bytes", type=int, default=None, help="the WAL budget")
     ap.add_argument("--ilp", default=None, help="host:port of a loopback QuestDB ILP port")
     ap.add_argument("--out", type=Path, default=None, help="the JSON report")
     ap.add_argument("--record-baseline", action="store_true", help="local only; refused in CI")
@@ -50,7 +54,8 @@ def parse(argv: Sequence[str] | None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse(argv)
     rate, duration, symbols = PROFILES[args.profile]
-    custom = args.msgs_per_s is not None or args.duration_s is not None
+    knobs = (args.msgs_per_s, args.duration_s, args.max_queue_rows, args.wal_max_bytes)
+    custom = any(k is not None for k in knobs)
     profile = "custom" if custom else args.profile
     with tempfile.TemporaryDirectory(prefix="cv-recorder-ingest-") as tmp:
         cfg = LoadConfig(
@@ -58,7 +63,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             msgs_per_s=args.msgs_per_s if args.msgs_per_s is not None else rate,
             duration_s=args.duration_s if args.duration_s is not None else duration,
             symbols=symbols, wal_dir=Path(tmp) / "wal", clock="real", seed=args.seed,
-            ilp=args.ilp,
+            ilp=args.ilp, max_queue_rows=args.max_queue_rows, wal_max_bytes=args.wal_max_bytes,
         )  # fmt: skip
         result = asyncio.run(run(cfg))
     verdict = ingest_verdict(result)

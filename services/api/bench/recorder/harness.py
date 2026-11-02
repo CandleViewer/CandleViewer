@@ -11,9 +11,15 @@ hot-tier bytes of each row (the E16-K01 on-disk model, `bench/storage_measure.py
 a QuestDB ILP port on loopback instead (the CI pipeline's container), still counted the same way.
 The store and the event sink are in memory: dropped rows come from the writer's own counters, so
 the reconciliation (`budgets.check_reconciliation`) reads produced, written and gap-accounted rows
-from three independent places. The counter the writer persists as `messages_dropped` counts rows,
-not messages: both of its drop paths (the disk gate and a refused WAL append) add one per row they
-put in a `backpressure_drop` gap, so it is in the same unit as the written rows it is added to.
+from three independent places, per symbol. The counter the writer persists as `messages_dropped`
+counts rows, not messages: both of its drop paths (the disk gate and a refused WAL append) add one
+per row they put in a `backpressure_drop` gap, so it is in the same unit as the written rows.
+
+A spilling run ends with rows durable in its WAL, neither written nor dropped: the next start
+replays them (writer `start()`). Before counting, the run restarts a writer on the same WAL and
+sinks and lets that replay finish, as a restarted process would; the rows it writes count as
+written and are reported apart as `recovered_rows` (#5333: without this step a run that spilled
+read its WAL residue as undetected loss).
 """
 
 from __future__ import annotations
@@ -23,7 +29,7 @@ import json
 import os
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Final
@@ -75,6 +81,8 @@ class TimingSink:
         self.inner, self._perf = inner, perf
         self.flush_ms: list[float] = []
         self.rows: dict[str, int] = {}
+        #: Rows per symbol (the `symbol` column every recorded row carries).
+        self.by_symbol: dict[str, int] = {}
         self.hot_bytes = 0
         self._started: dict[str, float] = {}
         self._types: dict[str, dict[str, str]] = {}
@@ -89,6 +97,9 @@ class TimingSink:
         self._started.setdefault(table, self._perf())
         await self.inner.write_rows(table, rows, ts_us_key)
         self.rows[table] = self.rows.get(table, 0) + len(rows)
+        for row in rows:
+            symbol = str(row["symbol"])
+            self.by_symbol[symbol] = self.by_symbol.get(symbol, 0) + 1
         self.hot_bytes += self._model(table, rows)
 
     async def flush(self, table: str | None = None) -> None:
@@ -157,6 +168,9 @@ class LoadConfig:
     ilp: str | None = None  # "host:port" on loopback; None: the counting sink
     #: The E16-T07 write gate; open in every script, closed by the reconciliation's own test.
     disk_gate: DiskGate = OPEN_GATE
+    #: Forced-overflow knobs (`WriterConfig.max_queue_rows`, `.wal_max_bytes`); None: defaults.
+    max_queue_rows: int | None = None
+    wal_max_bytes: int | None = None
     rss: Callable[[], int] = field(default=lambda: psutil.Process(os.getpid()).memory_info().rss)
 
 
@@ -184,9 +198,16 @@ async def dispatch(w: StreamWriter, kind: str, ev: Trade | Delta | Liquidation) 
         await w.on_liquidation(ev)
 
 
-async def run(cfg: LoadConfig, *, mix: Mix | None = None) -> RunResult:
+async def run(
+    cfg: LoadConfig,
+    *,
+    mix: Mix | None = None,
+    before_recover: Callable[[Path], None] | None = None,
+) -> RunResult:
     """One run; returns what it measured (the verdict is `budgets`' to give). `mix` replaces the
-    default phase mix (the soak's reference rates); it must name `cfg.symbols`."""
+    default phase mix (the soak's reference rates); it must name `cfg.symbols`.
+    `before_recover(wal_dir)` runs between the run's stop and the restart's replay (the oracle's
+    own test damages the WAL there, to prove a lost residue fails the reconciliation)."""
     if cfg.clock not in ("real", "virtual"):
         raise ValueError(f"clock {cfg.clock!r}: real or virtual")
     ilp = await _ilp_sinks(cfg.ilp) if cfg.ilp else None
@@ -201,29 +222,67 @@ async def run(cfg: LoadConfig, *, mix: Mix | None = None) -> RunResult:
     wall_us: Callable[[], int] = (
         (lambda: T0_US + int(vclock.t * 1e6)) if virtual else (lambda: time.time_ns() // 1000)
     )
-    writer = StreamWriter(
-        lambda s: sinks[s], store, events, WriterConfig(wal_dir=cfg.wal_dir, env="demo"),
-        clock=clock, wall_clock_us=wall_us, disk_gate=cfg.disk_gate,
-    )  # fmt: skip
+    wcfg = WriterConfig(wal_dir=cfg.wal_dir, env="demo")
+    if cfg.max_queue_rows is not None:
+        wcfg = replace(wcfg, max_queue_rows=cfg.max_queue_rows)
+    if cfg.wal_max_bytes is not None:
+        wcfg = replace(wcfg, wal_max_bytes=cfg.wal_max_bytes)
+
+    def new_writer() -> StreamWriter:
+        return StreamWriter(lambda s: sinks[s], store, events, wcfg, clock=clock,
+                            wall_clock_us=wall_us, disk_gate=cfg.disk_gate)  # fmt: skip
+
+    writer = new_writer()
     await writer.open()
     writer.seed(cfg.symbols)
     result = RunResult(cfg.profile, cfg.msgs_per_s, cfg.duration_s, cfg.symbols)
     drive = _drive_virtual if virtual else _drive_real
+    stopped = False
     try:
         result.duration_s = await drive(cfg, writer, mix, vclock, result)
-    finally:
+        stopped = True
         await writer.stop()
+        if before_recover is not None:
+            before_recover(cfg.wal_dir)
+        before = _by_symbol(sinks)
+        await _recover(new_writer())
+        result.recovered_rows = _minus(_by_symbol(sinks), before)
+    finally:
+        if not stopped:
+            await writer.stop()
         if ilp:
             for sink in ilp.values():
                 await sink.stop()
     result.produced_msgs = mix.produced_msgs
-    result.produced_rows = {"all": sum(mix.produced_rows.values())}
-    result.written_rows = {"all": sum(sum(s.rows.values()) for s in sinks.values())}
-    result.dropped_rows = {"all": sum(store.dropped_rows.values())}
+    result.produced_rows = dict(mix.produced_by_symbol)
+    result.written_rows = _by_symbol(sinks)
+    result.dropped_rows = {s: n for s, n in store.dropped_rows.items() if n}
     result.flush_ms = [ms for s in sinks.values() for ms in s.flush_ms]
     result.hot_bytes = sum(s.hot_bytes for s in sinks.values())
     result.critical_events = sum(1 for e in events.events if e.severity == "critical")
     return result
+
+
+def _by_symbol(sinks: dict[Stream, TimingSink]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for sink in sinks.values():
+        for symbol, n in sink.by_symbol.items():
+            out[symbol] = out.get(symbol, 0) + n
+    return out
+
+
+def _minus(after: dict[str, int], before: dict[str, int]) -> dict[str, int]:
+    return {s: n - before.get(s, 0) for s, n in after.items() if n != before.get(s, 0)}
+
+
+async def _recover(writer: StreamWriter) -> None:
+    """A restart on the run's WAL: `start()` replays what the run left durable, `stop()`
+    persists the counters of anything that replay could not write."""
+    await writer.open()
+    try:
+        await writer.start()
+    finally:
+        await writer.stop()
 
 
 def _sample(cfg: LoadConfig, writer: StreamWriter, r: RunResult) -> None:
@@ -349,6 +408,7 @@ def finish(
                 "produced_rows": result.produced_rows,
                 "written_rows": result.written_rows,
                 "dropped_rows": result.dropped_rows,
+                "recovered_rows": result.recovered_rows,
                 "critical_events": result.critical_events,
             },
         }
