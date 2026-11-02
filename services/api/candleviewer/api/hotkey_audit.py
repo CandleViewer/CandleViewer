@@ -7,17 +7,21 @@ permission, 503 if the audit record cannot be made durable.
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.errors import AuditError
+from candleviewer.auth.generated_permissions import Permission
+from candleviewer.auth.scopes import Allow, PrincipalSnapshot, decide
 from candleviewer.domain.text import refuse_unstorable_text
 
 ACTION = "hotkey.trading_binding_changed"
 _ID = r"^[a-z0-9_]+([.][a-z0-9_]+){1,3}$"
+_PERMISSIONS: Final = {p.value: p for p in Permission}
 
 
 class HotkeyBindingAuditInput(BaseModel):
@@ -49,6 +53,12 @@ def _problem(status: int, title: str, detail: str) -> JSONResponse:
     )
 
 
+def _snapshot(p: AuditPrincipal) -> PrincipalSnapshot:
+    """Known permission codes only, and the owner flag the session resolver derived."""
+    perms = frozenset(_PERMISSIONS[c] for c in p.permissions if c in _PERMISSIONS)
+    return PrincipalSnapshot(p.user_id, frozenset({"owner"} if p.is_owner else ()), perms)
+
+
 def make_hotkey_audit_router(emitter: _Emitter | None, resolver: _Resolver | None) -> APIRouter:
     router = APIRouter(tags=["settings"])
 
@@ -59,7 +69,8 @@ def make_hotkey_audit_router(emitter: _Emitter | None, resolver: _Resolver | Non
         principal = await resolver.resolve(request)
         if principal is None:
             return _problem(401, "Unauthorized", "no verified session for this request")
-        if "settings:write" not in principal.permissions:
+        snapshot = _snapshot(principal)
+        if not isinstance(decide(snapshot, Permission.SETTINGS_WRITE), Allow):
             return _problem(403, "Forbidden", "settings:write required")
         try:
             body = HotkeyBindingAuditInput.model_validate_json(await request.body())

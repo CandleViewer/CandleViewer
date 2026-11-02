@@ -28,6 +28,7 @@ class _P:
     user_id: uuid.UUID = UID
     username: str = "alice"
     ip: str | None = "127.0.0.1"
+    is_owner: bool = False
     session_id: uuid.UUID | None = None
     request_id: uuid.UUID | None = None
 
@@ -75,14 +76,30 @@ def test_record_valid_appends_audit_row_attributed_to_principal() -> None:
 
 def test_record_without_session_is_401_and_unaudited() -> None:
     em = _Emitter()
-    assert _client(em).post("/settings/hotkey-audit", json=BODY).status_code == 401
+    r = _client(em).post("/settings/hotkey-audit", json=BODY)
+    assert r.status_code == 401
+    assert r.headers["content-type"] == "application/problem+json"
+    assert r.json() == {
+        "type": "about:blank",
+        "title": "Unauthorized",
+        "status": 401,
+        "detail": "no verified session for this request",
+    }
     assert em.calls == []
 
 
 def test_record_without_settings_write_is_403() -> None:
     em = _Emitter()
     c = _client(em, frozenset({"settings:read"}))
-    assert c.post("/settings/hotkey-audit", json=BODY, headers=H).status_code == 403
+    r = c.post("/settings/hotkey-audit", json=BODY, headers=H)
+    assert r.status_code == 403
+    assert r.headers["content-type"] == "application/problem+json"
+    assert r.json() == {
+        "type": "about:blank",
+        "title": "Forbidden",
+        "status": 403,
+        "detail": "settings:write required",
+    }
     assert em.calls == []
 
 
@@ -122,3 +139,18 @@ def test_record_unwired_is_501() -> None:
     app = FastAPI()
     app.include_router(make_hotkey_audit_router(None, None))
     assert TestClient(app).post("/settings/hotkey-audit", json=BODY).status_code == 501
+
+
+def test_record_with_unknown_permission_codes_only_is_403_and_unaudited() -> None:
+    em = _Emitter()
+    c = _client(em, frozenset({"settings:write-ish", "nonsense"}))
+    r = c.post("/settings/hotkey-audit", json=BODY, headers=H)
+    assert r.status_code == 403
+    assert r.headers["content-type"] == "application/problem+json"
+    assert r.json() == {
+        "type": "about:blank",
+        "title": "Forbidden",
+        "status": 403,
+        "detail": "settings:write required",
+    }
+    assert em.calls == []

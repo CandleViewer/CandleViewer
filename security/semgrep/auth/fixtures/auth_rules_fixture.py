@@ -47,6 +47,32 @@ def adhoc_getattr_bad(principal):
     return getattr(principal, "role") == "owner"  # ruleid: no-adhoc-authz
 
 
+def adhoc_not_in_bad(principal):
+    if "orders.read" not in principal.permissions:  # ruleid: no-adhoc-authz
+        return False
+    return True
+
+
+def adhoc_roles_not_in_bad(principal, wanted):
+    return wanted not in principal.roles  # ruleid: no-adhoc-authz
+
+
+def adhoc_permissions_not_in_bad(principal, wanted):
+    return wanted not in principal.permissions  # ruleid: no-adhoc-authz
+
+
+def adhoc_capabilities_not_in_bad(principal, wanted):
+    return wanted not in principal.capabilities  # ruleid: no-adhoc-authz
+
+
+def adhoc_role_not_in_bad(principal, allowed):
+    return principal.role not in allowed  # ruleid: no-adhoc-authz
+
+
+def adhoc_not_in_ok(items, wanted):
+    return wanted not in items  # ok: no-adhoc-authz
+
+
 def adhoc_ok(principal):
     return authorize(principal, "orders.read", None)  # ok: no-adhoc-authz
 

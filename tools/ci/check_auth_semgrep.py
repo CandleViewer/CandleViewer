@@ -33,7 +33,7 @@ from tools.ci.suppressions import field_problems
 
 ANNOT_RE = re.compile(r"(?:#|//)\s*(ruleid|ok):\s*([\w-]+)\s*$")
 SUPPRESS_RE = re.compile(r"(#\s*(?:nosem|nosec)\b.*|#\s*noqa:\s*S\d+.*)$")
-AUTH_PKGS = ("auth", "accounts", "secrets", "api")
+AUTH_PKGS = ("auth", "accounts", "secrets", "api", "ws")
 
 
 def load_rule_ids(rules_dir: Path) -> dict[str, dict[str, Any]]:

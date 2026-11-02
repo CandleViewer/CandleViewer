@@ -1581,7 +1581,7 @@ def _routed(
         return True if allowed else None
     # `decide()`'s permission clause, inline: no per-delta `Allow()`; pinned: test_decide_fanout.py
     # nosemgrep: cv-ws-no-adhoc-authz reason=fan-out owner=@CandleViewer/security review=2027-03-25
-    if family.permission not in authz.principal.permissions:
+    if family.permission not in authz.principal.permissions:  # nosem: no-adhoc-authz reason=fan-out-inline-decide-clause-2527-pinned-by-test_decide_fanout owner=@CandleViewer/security review=2027-03-25  # noqa: E501  # fmt: skip
         return None
     if family.scope is Scope.SELF:  # #2521: the owner recorded at admit, as the snapshot reads
         return user is not None and sub.owner == user

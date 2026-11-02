@@ -12,9 +12,13 @@ rules:
       - pattern: $P.role == $V
       - pattern: $P.role != $V
       - pattern: $P.role in $V
+      - pattern: $P.role not in $V
       - pattern: $V in $P.roles
       - pattern: $V in $P.permissions
       - pattern: $V in $P.capabilities
+      - pattern: $V not in $P.roles
+      - pattern: $V not in $P.permissions
+      - pattern: $V not in $P.capabilities
       - pattern: $P.role is $V
       - pattern: getattr($P, "role") == $V
       - pattern: getattr($P, "role", $D) == $V
