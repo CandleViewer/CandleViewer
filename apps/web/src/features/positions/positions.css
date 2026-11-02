@@ -16,10 +16,28 @@
   margin: 0;
 }
 
+/* The read-only notice (D02 §10.4, board 17): the `lock` leads the first line, the lines aligned after it. */
 .cv-positions__notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-inset-xs);
+}
+
+.cv-positions__notice-lines {
   display: flex;
   flex-direction: column;
   gap: var(--space-stack-xs);
+}
+
+/* CMP-019 `lock` before a T2 reason's notice: `color.text.tertiary` (D02 §12, :521), never the disabled grey. */
+.cv-positions__lock {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-tertiary);
+}
+
+.cv-positions__reason > .cv-positions__lock {
+  margin-inline-end: var(--space-inset-xs);
 }
 
 .cv-positions__reason {
@@ -79,6 +97,14 @@
 
 .cv-positions__grid {
   min-width: 0;
+}
+
+/* S-08 (D02 §10.1, board 17): an account's "No longer shown" line where its rows were, `color.text.secondary`. */
+.cv-positions__withdrawn p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
 }
 
 /* A group header's state marker and read-only notice sit after its figures (D02 §5.5, §10.4). */

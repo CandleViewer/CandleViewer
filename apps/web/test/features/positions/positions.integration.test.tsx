@@ -1,29 +1,24 @@
 /**
  * E29-S01 (#911) integration: the real `PositionsPanel` (SCR-063) with the real `positionsApi` behind
  * a fake `fetch` and fake topic handles (BQ-19: no MSW, no new dependency), read through the
- * accessibility tree. Three accounts, grouping (account, trade group), filter and clear, the empty
- * state, a failed snapshot and Retry, the Viewer, the account states and the locks as far as no B20
- * allows, the kill switch, the deep links and per-user persistence, CSV export, the announcements,
- * and the client half of manager scope (BQ-13: the server refuses a filter naming an account
- * outside the grants, audited; its tests are E29-T07's), run as a manager granted only B.
+ * accessibility tree. Three accounts, grouping (account, trade group), filter and clear with their
+ * results said, the empty state only for a book read, loading while nothing is read, a failed
+ * snapshot and Retry, an account withdrawn, the Viewer and the notices under the toolbar, the
+ * account states and the locks as far as no B20 allows, a tab switch that keeps them, the kill
+ * switch, the deep links and per-user persistence, CSV export, the announcements (StrictMode
+ * included), focus never left on `body`, and the client half of manager scope (BQ-13: the server
+ * refuses a filter naming an account outside the grants, audited; its tests are E29-T07's), run as a
+ * manager granted only B.
  */
-import { act, configure, fireEvent, render, screen, within } from "@testing-library/react";
+import { StrictMode, useLayoutEffect, useRef, type JSX, type ReactNode } from "react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-  type Mock,
-} from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type { generated } from "@candleviewer/protocol";
 import { PreferencesProvider } from "../../../src/features/a11y-preferences/PreferencesContext";
 import { clearAnnouncements, ShellAnnouncer } from "../../../src/features/app-shell/announcer";
+import { InShellProvider } from "../../../src/features/app-shell/ScreenRoot";
 import { positionsApi } from "../../../src/features/positions/api";
 import {
   PANEL_STORAGE_KEY,
@@ -31,7 +26,7 @@ import {
   updateChips,
 } from "../../../src/features/positions/panelState";
 import { PositionsPanel } from "../../../src/features/positions/PositionsPanel";
-import type { PositionsDeps } from "../../../src/features/positions/PositionsTab";
+import type { PositionsDeps } from "../../../src/features/positions/positionsSession";
 import {
   COMMIT_INTERVAL_MS,
   SNAPSHOT_BUDGET_MS,
@@ -43,6 +38,7 @@ import {
   fakeRaf,
   golden,
   MAIN,
+  reset,
   snap,
   SUB1,
   SUB2,
@@ -56,8 +52,11 @@ const USER = "11111111-2222-4333-8444-555555555555";
 const FULL = ["positions:read", "positions:write", "orders:read", "orders:write", "accounts:read"];
 const snapshot = golden<Positions>("ws_positions_snapshot.json");
 
-/** `fetch` as the server answers each read: the goldens, and the audited 403 for an account out of scope. */
-function fakeFetch(scope: readonly string[] = [MAIN, SUB1, SUB2]) {
+/**
+ * `fetch` as the server answers each read: the goldens, and the audited 403 for an account out of scope;
+ * with `hangPositions`, `/positions` never answers (no request carries a timeout).
+ */
+function fakeFetch(scope: readonly string[] = [MAIN, SUB1, SUB2], hangPositions = false) {
   const accounts = golden<{ items: { id: string }[] }>("rest_list_exchange_accounts.json");
   const positions = golden<{ items: { exchange_account_id: string }[] }>(
     "rest_list_positions.json",
@@ -77,6 +76,7 @@ function fakeFetch(scope: readonly string[] = [MAIN, SUB1, SUB2]) {
       });
     }
     if (url.pathname === "/api/v1/positions") {
+      if (hangPositions) return new Promise<Response>(() => undefined);
       const named = url.searchParams.getAll("exchange_account_ids");
       if (named.some((id) => !scope.includes(id))) {
         return json(403, {
@@ -102,6 +102,26 @@ interface OpenOptions {
   readonly scope?: readonly string[];
   readonly grants?: readonly { readonly id: string; readonly mode: "read" | "trade" }[];
   readonly path?: string;
+  /** Under StrictMode, as `main.tsx` mounts the app (dev: effects run twice on mount). */
+  readonly strict?: boolean;
+  /** In a `main` holding focus as the panel mounts: the route's focus move, made before a lazy chunk renders. */
+  readonly focusedMain?: boolean;
+  /** `/positions` never answers; the directory does. */
+  readonly hangPositions?: boolean;
+}
+
+/**
+ * The shell's one `main` (its screens render inside it, `InShellProvider`) as `useRouteFocus` leaves it on a
+ * first visit: focused before the panel's effects run.
+ */
+function FocusedMain({ children }: { readonly children: ReactNode }): JSX.Element {
+  const main = useRef<HTMLElement>(null);
+  useLayoutEffect(() => main.current?.focus(), []);
+  return (
+    <main ref={main} tabIndex={-1}>
+      <InShellProvider>{children}</InShellProvider>
+    </main>
+  );
 }
 
 let ws: FakeClient;
@@ -153,7 +173,7 @@ async function open(o: OpenOptions = {}): Promise<{ unmount: () => void }> {
     } as Me,
     environment: "live",
   });
-  fetchMock = fakeFetch(scope);
+  fetchMock = fakeFetch(scope, o.hangPositions === true);
   vi.stubGlobal("fetch", fetchMock);
   const deps: PositionsDeps = {
     client: ws.client,
@@ -164,19 +184,25 @@ async function open(o: OpenOptions = {}): Promise<{ unmount: () => void }> {
     [{ path: "/positions", element: <PositionsPanel deps={deps} /> }],
     { initialEntries: [o.path ?? "/positions"] },
   );
-  const view = render(
+  const routed = <RouterProvider router={router} />;
+  const tree = (
     <PreferencesProvider>
-      <RouterProvider router={router} />
+      {o.focusedMain === true ? <FocusedMain>{routed}</FocusedMain> : routed}
       <ShellAnnouncer />
-    </PreferencesProvider>,
+    </PreferencesProvider>
   );
+  const view = render(o.strict === true ? <StrictMode>{tree}</StrictMode> : tree);
   await settle(TICK);
   return { unmount: view.unmount };
 }
 
-const grid = (): HTMLElement => screen.getByRole("treegrid", { name: "Positions" });
+/**
+ * The grid's queries skip RTL's "is it accessible" walk (a computed style up every ancestor of every row: 2 s
+ * for one query of this page at a load of about 34, `hidden: true`); a test asserts a row's visibility itself.
+ */
+const grid = (): HTMLElement => screen.getByRole("treegrid", { name: "Positions", hidden: true });
 /** The grid's rows; a position row's name is its `aria-label` (N-02), read without walking every row's content. */
-const gridRows = (): HTMLElement[] => within(grid()).getAllByRole("row");
+const gridRows = (): HTMLElement[] => within(grid()).getAllByRole("row", { hidden: true });
 function positionRow(name: string): HTMLElement {
   const row = gridRows().find((r) => r.getAttribute("aria-label") === name);
   if (row === undefined) throw new Error(`no position row named ${name}`);
@@ -192,27 +218,39 @@ const groupRow = (label: string): HTMLElement | undefined =>
   gridRows().find(
     (r) =>
       r.dataset["part"] === "GroupHeaderRow" &&
-      (within(r).getByRole("rowheader").textContent ?? "").startsWith(label),
+      (within(r).getByRole("rowheader", { hidden: true }).textContent ?? "").startsWith(label),
   );
 const headers = (): string[] =>
-  within(grid())
-    .getAllByRole("row")
+  gridRows()
     .filter((r) => r.getAttribute("aria-level") === "1" && r.dataset["part"] === "GroupHeaderRow")
-    .map((r) => within(r).getByRole("rowheader").textContent ?? "");
+    .map((r) => within(r).getByRole("rowheader", { hidden: true }).textContent ?? "");
 const positionsHandle = () => ws.live("positions")[0];
 /** The shell announcer's region (its two are the page's only inert-exempt live regions). */
 const region = (politeness: "polite" | "assertive"): string =>
   document.querySelector(`[data-cv-inert-exempt][aria-live="${politeness}"]`)?.textContent ?? "";
+/** The message a region last took: a new message is a new node with the next `data-seq`. */
+const regionSeq = (politeness: "polite" | "assertive"): string | null =>
+  document
+    .querySelector(`[data-cv-inert-exempt][aria-live="${politeness}"] [data-seq]`)
+    ?.getAttribute("data-seq") ?? null;
+/**
+ * The panel's own live regions (E17-D02 §11: it owns none): every one but the shell's two and the atoms' own,
+ * CMP-042's refusal status and the toolbar controls' (CMP-009's field message).
+ */
+const ownRegions = (): Element[] =>
+  [...document.querySelectorAll('[aria-live], [role="status"], [role="alert"]')].filter(
+    (el) =>
+      !el.hasAttribute("data-cv-inert-exempt") &&
+      el.closest('.cv-tabs__bar, [data-part="Toolbar"]') === null,
+  );
 
 /**
  * The first render of the panel's whole tree in a worker compiles each component it reaches: 4.6 s
  * cold at a load of about 34 on the build host, against well under 1 s warm. It is paid here once,
- * inside the default hook timeout, not by whichever test runs first.
+ * under the screen tests' measured bound (`SCREEN`, past the default hook timeout's 10 s), not by
+ * whichever test runs first.
  */
 beforeAll(async () => {
-  // Role queries skip RTL's "is it accessible" walk (a computed style up every ancestor of every
-  // element: 2 s for one `getByRole` of this page at that load); a test asserts visibility itself.
-  configure({ defaultHidden: true });
   vi.useFakeTimers();
   Element.prototype.scrollIntoView = vi.fn();
   ws = fakeClient();
@@ -223,11 +261,7 @@ beforeAll(async () => {
   alive = false;
   vi.unstubAllGlobals();
   vi.useRealTimers();
-});
-
-afterAll(() => {
-  configure({ defaultHidden: false });
-});
+}, SCREEN.timeout);
 
 beforeEach(() => {
   alive = true;
@@ -251,17 +285,24 @@ afterEach(() => {
 
 describe("Rows render the whole book: three accounts", () => {
   it(
-    "REST paints first, the WS snapshot replaces it; each row's columns; a TOTAL row aggregates",
+    "REST paints first, the WS snapshot replaces it in the same decimal form; each row's columns; a TOTAL row aggregates",
     SCREEN,
     async () => {
       await open();
       expect(screen.getByRole("heading", { level: 1, name: "Positions and orders" })).toBeVisible();
+      // focus was not on the shell's main as the panel mounted: the panel leaves it where it is
+      expect(document.activeElement).toBe(document.body);
       expect(headers().map((h) => h.split(" · ").slice(0, 2).join(" · "))).toEqual([
         "Main · LIVE",
         "Sub-1 · LIVE",
         "Sub-2 · LIVE",
       ]);
-      expect(positionRow("BTCUSDT · Long · 0.250 BTC · Main")).toBeVisible();
+      // REST sends "0.250" and "63980.0": the row reads as the snapshot's will, so its name never changes
+      const first = positionRow("BTCUSDT · Long · 0.25 BTC · Main");
+      expect(first).toBeVisible();
+      expect(within(first).getAllByRole("gridcell", { hidden: true })[3]?.textContent).toBe(
+        "63,980",
+      );
       positionsHandle()?.push(snap(snapshot));
       await settle(TICK);
       const row = positionRow("BTCUSDT · Long · 0.25 BTC · Main");
@@ -380,7 +421,7 @@ describe("Liquidation proximity is not colour-only", () => {
 
 describe("filter and clear", () => {
   it(
-    "the account filter narrows to Sub-1's rows and a removable chip; removing it restores the book",
+    "the account filter narrows to Sub-1's rows and a removable chip, each result said politely once; removing it restores the book",
     SCREEN,
     async () => {
       await open();
@@ -391,30 +432,48 @@ describe("filter and clear", () => {
       await settle(TICK);
       expect(headers().map((h) => h.split(" · ")[0])).toEqual(["Sub-1"]);
       expect(totalsRow()).toHaveTextContent("LIVE total · 2 open");
+      // D04 §2.6, D05 §8.1 (WCAG 4.1.3): the filtered result, in CMP-049's words, through the shell's region
+      expect(region("polite")).toBe("2 rows");
       const group = screen.getByRole("group", { name: "Active filters" });
       fireEvent.click(within(group).getByRole("button", { name: "Remove filter Account: Sub-1" }));
       await settle(TICK);
       expect(headers()).toHaveLength(3);
+      expect(region("polite")).toBe("2 rows"); // the region's 5 s budget: the next result waits
+      idle(5_000);
+      expect(region("polite")).toBe("5 rows");
     },
   );
 
   it(
-    "chips that leave no row are filter-empty, restated, and Clear filters restores the book",
+    "a picker change that leaves no row is filter-empty, restated and said; Clear filters restores the book, says it and keeps focus off body",
     SCREEN,
     async () => {
-      await open({ path: `/positions?account=${SUB1}` });
+      await open();
       positionsHandle()?.push(snap(snapshot));
       await settle(TICK);
+      // a stored Symbol chip (no chooser is drawn for it yet), then an Account chosen in the picker
       act(() => updateChips({ type: "add", chip: { kind: "symbol", value: "SOLUSDT" } }));
+      await settle(TICK);
+      expect(region("polite")).toBe(""); // a change the user did not make is not said
+      fireEvent.click(screen.getByRole("button", { name: "Filter" }));
+      fireEvent.click(screen.getByRole("option", { name: "Sub-1" }));
+      fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
       await settle(TICK);
       expect(
         screen.getByRole("heading", { level: 2, name: "No rows match 2 filters" }),
       ).toBeVisible();
-      expect(screen.getByText("Account: Sub-1 · Symbol: SOLUSDT")).toBeVisible();
-      fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+      expect(screen.getByText("Symbol: SOLUSDT · Account: Sub-1")).toBeVisible();
+      expect(region("polite")).toBe("No rows match 2 filters");
+      const clear = screen.getByRole("button", { name: "Clear filters" });
+      act(() => clear.focus());
+      fireEvent.click(clear);
       await settle(TICK);
       expect(headers()).toHaveLength(3);
       expect(screen.queryByRole("group", { name: "Active filters" })?.textContent).toBe("Filter");
+      // the button left with the state: focus is on "+ Filter", as CMP-055's Clear all leaves it
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Filter" }));
+      idle(5_000);
+      expect(region("polite")).toBe("5 rows");
     },
   );
 });
@@ -436,11 +495,29 @@ describe("Empty state", () => {
       expect(totalsRow()).toBeUndefined();
     },
   );
+
+  it(
+    "offline with nothing read: loading and busy, never 'No open positions' (S-03 needs a book read empty)",
+    SCREEN,
+    async () => {
+      ws.setLink({ kind: "offline", cause: "offline" });
+      await open({ hangPositions: true });
+      expect(screen.queryByRole("heading", { name: "No open positions", hidden: true })).toBeNull();
+      expect(screen.getByText("Loading Main · LIVE…")).toBeVisible();
+      const groups = document.querySelectorAll('[data-part="Loading"] [role="group"]');
+      expect([...groups].map((g) => g.getAttribute("aria-busy"))).toEqual(["true", "true", "true"]);
+      // the loading lines own no live region: the panel says them once, through the shell's
+      expect(ownRegions()).toEqual([]);
+      expect(region("polite")).toBe(
+        "Loading Main · LIVE… Loading Sub-1 · LIVE… Loading Sub-2 · LIVE…",
+      );
+    },
+  );
 });
 
 describe("a failed snapshot (S-02)", () => {
   it(
-    "no snapshot within the 5 s budget: Could not load per account, said once; Retry re-subscribes",
+    "no snapshot within the 5 s budget: Could not load per account, said once, no row of them; Retry re-subscribes, focus kept",
     SCREEN,
     async () => {
       await open();
@@ -450,13 +527,75 @@ describe("a failed snapshot (S-02)", () => {
       expect(region("polite")).toBe(
         "Could not load Main · LIVE Could not load Sub-1 · LIVE Could not load Sub-2 · LIVE",
       );
-      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      // D02:333, :389: a failed account shows no row, whatever the first-paint read painted
+      expect(screen.queryByRole("treegrid", { hidden: true })).toBeNull();
+      expect(screen.queryByText(/LIVE total/)).toBeNull();
+      const before = positionsHandle();
+      const retry = screen.getByRole("button", { name: "Retry" });
+      act(() => retry.focus());
+      fireEvent.click(retry);
+      await settle(TICK);
+      // before any snapshot: the failure is gone, a fresh subscription waits, and focus stayed in the tab
+      const panel = screen.getByRole("tabpanel", { hidden: false });
+      expect(within(panel).queryByText(/Could not load/)).toBeNull();
+      expect(before?.released).toBe(true);
+      expect(positionsHandle()).not.toBe(before);
+      expect(document.activeElement).toBe(panel.querySelector('[data-part="PositionsTab"]'));
       positionsHandle()?.push(snap(snapshot));
       await settle(TICK);
-      expect(
-        within(screen.getByRole("tabpanel", { hidden: false })).queryByText(/Could not load/),
-      ).toBeNull();
       expect(positionRow("BTCUSDT · Long · 0.25 BTC · Main")).toBeVisible();
+    },
+  );
+});
+
+describe("an account withdrawn (S-08)", () => {
+  const withdrawnLines = [
+    "No longer shown — access to Main was withdrawn.",
+    "No longer shown — access to Sub-1 was withdrawn.",
+    "No longer shown — access to Sub-2 was withdrawn.",
+  ];
+
+  it(
+    "a revoke: each account's line where its rows were, not live, not dismissible, said once in one message, Retry with them",
+    SCREEN,
+    async () => {
+      await open();
+      positionsHandle()?.push(snap(snapshot));
+      await settle(TICK);
+      positionsHandle()?.push(reset("revoked"));
+      await settle(TICK);
+      for (const line of withdrawnLines) expect(screen.getByText(line)).toBeVisible();
+      expect(screen.queryByRole("treegrid", { hidden: true })).toBeNull();
+      expect(screen.queryByRole("button", { name: /Dismiss/ })).toBeNull();
+      expect(ownRegions()).toEqual([]);
+      expect(region("polite")).toBe(withdrawnLines.join(" "));
+      expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+    },
+  );
+
+  it(
+    "F-02: the focused row's account narrowed away, focus goes to its line, never body, and RT-15 leaves the line to the focus move",
+    SCREEN,
+    async () => {
+      await open();
+      positionsHandle()?.push(snap(snapshot));
+      await settle(TICK);
+      const sol = positionRow("SOLUSDT · Long · 20 SOL · Sub-2");
+      act(() => (within(sol).getByRole("rowheader", { hidden: true }) as HTMLElement).focus());
+      // the directory now lists Main and Sub-1; the narrowing drops every row until it says who left
+      vi.stubGlobal("fetch", fakeFetch([MAIN, SUB1]));
+      positionsHandle()?.push(reset("narrowed"));
+      await settle(TICK);
+      await settle(TICK);
+      expect(document.activeElement).toBe(screen.getByText(withdrawnLines[2] as string));
+      idle(10_000); // past every region's budget: a queued line would have been written by now
+      expect(region("polite")).not.toContain("No longer shown");
+      positionsHandle()?.push(
+        snap({ positions: snapshot.positions.filter((p) => p.exchange_account_id !== SUB2) }),
+      );
+      await settle(TICK);
+      expect(headers().map((h) => h.split(" · ")[0])).toEqual(["Main", "Sub-1"]);
+      expect(screen.getByText(withdrawnLines[2] as string)).toBeVisible();
     },
   );
 });
@@ -473,7 +612,16 @@ describe("the Viewer (S-22)", () => {
       positionsHandle()?.push(snap(snapshot));
       await settle(TICK);
       const lines = ["Your role can't change positions.", "Your role can't place orders."];
-      for (const line of lines) expect(screen.getByText(line)).toHaveAttribute("id");
+      // each line's id is keyed by its permission, so a gated control's pointer survives a grant
+      expect(screen.getByText(lines[0] as string).id).toMatch(/-positions-write$/);
+      expect(screen.getByText(lines[1] as string).id).toMatch(/-orders-write$/);
+      // boards 16 and 17: the notice sits in the band under the toolbar, led by CMP-019's lock
+      const notice = screen.getByText(lines[0] as string).closest('[data-part="ReadOnlyNotice"]');
+      const toolbar = document.querySelector('[data-part="Toolbar"]');
+      expect(
+        (toolbar?.compareDocumentPosition(notice as Node) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(notice?.querySelector(".cv-positions__lock svg")).not.toBeNull();
       expect(positionNames()).toHaveLength(5);
       // a read or a view choice is never T2 (E29-D04 §4.2): nothing in the panel is aria-disabled
       expect(document.querySelectorAll('[aria-disabled="true"]')).toHaveLength(0);
@@ -503,24 +651,22 @@ const notice = (
 
 describe("the account states and the locks (BQ-14; no B20 subscription)", () => {
   it(
-    "reconciling: the header's 'checking', one slot line with live off, said politely once",
+    "reconciling, seeded at mount under StrictMode: the header's 'checking', one slot line with live off, said once by the account's label",
     SCREEN,
     async () => {
-      await open();
+      // the shell's last notice is in before the panel mounts; the directory names Sub-1 only later
+      setShellState({ systemByKind: { account_notice: golden("ws_system_account_notice.json") } });
+      await open({ strict: true });
       positionsHandle()?.push(snap(snapshot));
-      await settle(TICK);
-      act(() =>
-        setShellState({
-          systemByKind: { account_notice: golden("ws_system_account_notice.json") },
-        }),
-      );
       await settle(TICK);
       expect(groupRow("Sub-1 · LIVE")).toHaveTextContent("checking");
       const slot = screen.getByText(/^Sub-1 · LIVE — Reconciling with the exchange…/);
       expect(slot.closest('[role="status"], [role="alert"]')).toBeNull();
+      // held until its label is known (never "…0002"), and heard although StrictMode remounted the panel
       expect(region("polite")).toBe(
         "Reconciling Sub-1 with Bybit. Closing, cancelling and tightening stops still work.",
       );
+      expect(ownRegions()).toEqual([]);
     },
   );
 
@@ -545,7 +691,7 @@ describe("the account states and the locks (BQ-14; no B20 subscription)", () => 
   });
 
   it(
-    "the locked chip as far as no B20 allows: the stale lock and the kill-switch lock on the header",
+    "the locked chip as far as no B20 allows: the stale lock with no cause for any role, and the kill-switch lock, each on its header and said",
     SCREEN,
     async () => {
       await open();
@@ -558,11 +704,15 @@ describe("the account states and the locks (BQ-14; no B20 subscription)", () => 
       );
       await settle(TICK);
       expect(groupRow("Sub-2 · LIVE")).toHaveTextContent(/Stale — locked since \d\d:\d\d:\d\d UTC/);
+      // no client reads B19, so even the Owner reads and hears the lock with its cause withheld (D03 §4.1)
       expect(
-        screen.getByText(/^Sub-2 · LIVE is stale — CandleViewer could not reconcile/),
+        screen.getByText(
+          "Sub-2 · LIVE is stale — new orders are locked until the owner resolves it; closing, cancelling and tightening stops still work.",
+        ),
       ).toBeVisible();
+      expect(screen.queryByText(/could not reconcile/)).toBeNull();
       expect(region("assertive")).toBe(
-        "Sub-2 is locked for new orders: reconciliation with Bybit failed for 2 minutes. Closing, cancelling and tightening stops still work.",
+        "Sub-2 is locked for new orders until the owner resolves it. Closing, cancelling and tightening stops still work.",
       );
       // under a kill switch that covers Sub-1, Sub-1's stale notice is the kill-switch lock
       act(() => {
@@ -582,20 +732,97 @@ describe("the account states and the locks (BQ-14; no B20 subscription)", () => 
       expect(
         screen.getByText("Kill switch active — engaged by the owner at 14:02:11 UTC"),
       ).toBeVisible();
+      // RT-07: the kill-switch lock is said too, assertively, after the region's 5 s budget
+      idle(5_000);
+      expect(region("assertive")).toBe(
+        "Sub-1 is still locked for new orders after the kill switch. Closing, cancelling and tightening stops still work.",
+      );
       expect(ws.subs.filter((ch) => ch.startsWith("machines."))).toEqual([]);
       expect(screen.queryByText(/daily loss limit/)).toBeNull(); // S-21's chip waits for B20
     },
   );
 
-  it("a Manager sees S-20's two lines under the kill switch", SCREEN, async () => {
-    await open({ role: "manager" });
-    act(() => {
-      ws.setState({ killSwitch: { state: "engaged", scope: "global", exchangeAccountIds: [] } });
-    });
-    await settle(TICK);
-    expect(screen.getByText(/^Kill switch active since — UTC$/)).toBeVisible();
-    expect(screen.getByText("Ask the owner to close or release.")).toBeVisible();
-  });
+  it(
+    "a Manager sees S-20's two lines under the kill switch, in the band under the toolbar",
+    SCREEN,
+    async () => {
+      await open({ role: "manager" });
+      act(() => {
+        ws.setState({ killSwitch: { state: "engaged", scope: "global", exchangeAccountIds: [] } });
+      });
+      await settle(TICK);
+      expect(screen.getByText(/^Kill switch active since — UTC$/)).toBeVisible();
+      expect(screen.getByText("Ask the owner to close or release.")).toBeVisible();
+      // board 16: tab strip, toolbar, then the band, then the grid
+      const band = document.querySelector('[data-part="KillSwitchBanner"]');
+      const toolbar = document.querySelector('[data-part="Toolbar"]');
+      expect(
+        (toolbar?.compareDocumentPosition(band as Node) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(
+        (band?.compareDocumentPosition(grid()) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    },
+  );
+});
+
+describe("a tab switch (CMP-042 mounts the selected tab only; the panel owns the feed)", () => {
+  const sizeHeader = (): HTMLElement | undefined =>
+    within(grid())
+      .getAllByRole("columnheader", { hidden: true })
+      .find((h) => (h.textContent ?? "").startsWith("Size"));
+
+  it(
+    "keeps the book, the sort, every account state and its since; re-reads nothing and says nothing again",
+    SCREEN,
+    async () => {
+      await open();
+      positionsHandle()?.push(snap(snapshot));
+      await settle(TICK);
+      act(() =>
+        setShellState({
+          systemByKind: { account_notice: notice("oms.account_stale", [SUB2], "critical") },
+        }),
+      );
+      await settle(TICK);
+      // the shell keeps one notice, its last: Sub-1's now, Sub-2's no longer
+      act(() =>
+        setShellState({
+          systemByKind: { account_notice: notice("oms.account_resyncing", [SUB1], "info") },
+        }),
+      );
+      await settle(TICK);
+      const since = /Stale — locked since (\d\d:\d\d:\d\d) UTC/.exec(
+        groupRow("Sub-2 · LIVE")?.textContent ?? "",
+      )?.[1];
+      expect(since).toBeDefined();
+      fireEvent.click(sizeHeader()?.querySelector("button") as HTMLElement);
+      await settle(TICK);
+      const sorted = sizeHeader()?.getAttribute("aria-sort");
+      expect(sorted).not.toBe("none");
+      idle(10 * 60_000); // ten minutes on: a "since" taken again would read the return's time
+      const said = { polite: regionSeq("polite"), assertive: regionSeq("assertive") };
+      const handle = positionsHandle();
+      const reads = fetchMock.mock.calls.length;
+      const subs = ws.subs.length;
+      fireEvent.click(screen.getByRole("tab", { name: "Fills" }));
+      await settle(TICK);
+      expect(ws.live("positions")).toEqual([handle]); // the feed runs while another tab shows
+      fireEvent.click(screen.getByRole("tab", { name: "Positions" }));
+      await settle(TICK);
+      expect(groupRow("Sub-2 · LIVE")).toHaveTextContent(
+        `Stale — locked since ${String(since)} UTC`,
+      );
+      expect(groupRow("Sub-1 · LIVE")).toHaveTextContent("checking");
+      expect(screen.getByText(/^Sub-2 · LIVE is stale — new orders are locked/)).toBeVisible();
+      expect(sizeHeader()?.getAttribute("aria-sort")).toBe(sorted);
+      expect(positionRow("BTCUSDT · Long · 0.25 BTC · Main")).toBeVisible();
+      expect({ polite: regionSeq("polite"), assertive: regionSeq("assertive") }).toEqual(said);
+      expect(positionsHandle()).toBe(handle);
+      expect(fetchMock.mock.calls.length).toBe(reads);
+      expect(ws.subs.length).toBe(subs);
+    },
+  );
 });
 
 describe("Manager scope is enforced server-side (the client half; BQ-13)", () => {
@@ -635,13 +862,13 @@ describe("Manager scope is enforced server-side (the client half; BQ-13)", () =>
       snap({ positions: snapshot.positions.filter((p) => p.exchange_account_id === SUB2) }),
     );
     await settle(TICK);
-    expect(
-      screen.getByRole("heading", { level: 2, name: "No rows match 1 filters" }),
-    ).toBeVisible();
+    // one chip: the singular, PROPOSED as `blotter.ui.filter_empty#2` (the deck's plural reads "1 filters")
+    expect(screen.getByRole("heading", { level: 2, name: "No rows match 1 filter" })).toBeVisible();
     expect(positionNames()).toEqual([]);
     fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
     await settle(TICK);
     expect(positionNames()).toHaveLength(2);
+    expect(region("polite")).toBe("2 rows");
   });
 
   it(
@@ -700,6 +927,55 @@ describe("deep links and per-user persistence (BQ-16)", () => {
       expect(screen.getByRole("combobox", { name: "Group by" })).toHaveTextContent("Symbol");
     },
   );
+});
+
+describe("the stored tab mounts alone", () => {
+  it(
+    "the tabs wait for the user's view, so a stored Fills never mounts the Positions tab first",
+    SCREEN,
+    async () => {
+      localStorage.setItem(
+        `${PANEL_STORAGE_KEY}:${USER}`,
+        JSON.stringify({ v: 1, tab: "fills", groupBy: "account", chips: [], columns: {} }),
+      );
+      const added: Node[] = [];
+      const observer = new MutationObserver((records) => {
+        for (const record of records) added.push(...record.addedNodes);
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      await open();
+      for (const record of observer.takeRecords()) added.push(...record.addedNodes);
+      observer.disconnect();
+      expect(screen.getByRole("tab", { name: "Fills", selected: true })).toBeVisible();
+      const positionsTab = (n: Node): boolean =>
+        n instanceof Element &&
+        (n.matches('[data-part="PositionsTab"]') ||
+          n.querySelector('[data-part="PositionsTab"]') !== null);
+      expect(added.filter(positionsTab)).toEqual([]);
+    },
+  );
+});
+
+describe("focus and teardown", () => {
+  it(
+    "the first visit: focus the route left on the shell's main, before the lazy chunk rendered, goes to the h1",
+    SCREEN,
+    async () => {
+      await open({ focusedMain: true });
+      expect(document.activeElement).toBe(
+        screen.getByRole("heading", { level: 1, name: "Positions and orders" }),
+      );
+    },
+  );
+
+  it("unmounting the panel releases the feed's subscriptions", SCREEN, async () => {
+    const view = await open();
+    expect(ws.live("positions")).toHaveLength(1);
+    expect(ws.live("wallet")).toHaveLength(1);
+    view.unmount();
+    expect(ws.live("positions")).toEqual([]);
+    expect(ws.live("wallet")).toEqual([]);
+  });
 });
 
 describe("the five tabs (BQ-15)", () => {

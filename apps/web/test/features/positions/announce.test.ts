@@ -2,9 +2,12 @@
  * E29-S01 (#911) the Positions tab's announcements: the serial queue over the shell's one announcer
  * (one message per region at a time, each after the region's 5 s budget, bounded), the batch order
  * (most severe first, E29-D05 §8.3), the crossing sentences (RT-05 assertive, RT-12 polite), the
- * account episodes (RT-07, RT-11: once each, synced only for an account still listed, the
- * kill-switch lock shown and not said) and RT-16's value lines.
+ * account episodes (RT-07, RT-11: once each, in D03:329's words by variant, held until the directory
+ * lists the account, synced only for an account still listed), the latest-wins slot, the announcer
+ * hook under StrictMode, and RT-16's value lines.
  */
+import { StrictMode, createElement, type ReactNode } from "react";
+import { renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearAnnouncements,
@@ -23,6 +26,7 @@ import {
   sayAll,
   signOf,
   totalsValuesText,
+  usePanelAnnouncer,
   type Announcement,
 } from "../../../src/features/positions/announce";
 import type { LiqReading } from "../../../src/features/positions/model/liqTier";
@@ -132,6 +136,47 @@ describe("the serial queue over the shell's announcer", () => {
     announcer.say("assertive", "said");
     expect(lastWrittenAt("assertive")).toBe(Date.now());
   });
+
+  it("a message said into a slot replaces the one of that slot still waiting, in its place", () => {
+    const write = vi.fn();
+    let last = -Infinity;
+    const announcer = createPanelAnnouncer({
+      write: (politeness, text) => {
+        last = Date.now();
+        write(politeness, text);
+      },
+      lastWrittenAt: () => last,
+    });
+    announcer.say("polite", "first");
+    announcer.say("polite", "3 rows", "filter");
+    announcer.say("polite", "other");
+    announcer.say("polite", "5 rows", "filter");
+    vi.advanceTimersByTime(REGION_BUDGET_MS * 3);
+    expect(write.mock.calls.map(([, text]) => text as string)).toEqual([
+      "first",
+      "5 rows",
+      "other",
+    ]);
+  });
+});
+
+describe("usePanelAnnouncer", () => {
+  const strict = ({ children }: { children: ReactNode }) =>
+    createElement(StrictMode, null, children);
+
+  it("still speaks after StrictMode's simulated unmount, and is silent after the real one", () => {
+    const write = vi.fn();
+    const { result, unmount } = renderHook(
+      () => usePanelAnnouncer({ write, lastWrittenAt: () => -Infinity }),
+      { wrapper: strict },
+    );
+    result.current.say("assertive", "heard");
+    expect(write.mock.calls).toEqual([["assertive", "heard"]]);
+    const facade = result.current;
+    unmount();
+    facade.say("assertive", "after");
+    expect(write).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("sayAll: most severe first (D05 §8.3)", () => {
@@ -186,14 +231,13 @@ describe("the account episodes (RT-07, RT-11)", () => {
   const label = (id: string): string => (id === SUB1 ? "Sub-1" : "Sub-2");
   const listed = (): boolean => true;
 
-  it("says each new episode once, in D03 §4.1's words and region", () => {
+  it("says each new episode once, in D03 §4.1's words and region, the lock's cause withheld", () => {
     const first = accountAnnouncements(
       new Map(),
       new Map([
         [SUB1, signal("reconciling", 1)],
         [SUB2, signal("stale", 2)],
       ]),
-      "owner",
       label,
       listed,
     );
@@ -204,8 +248,9 @@ describe("the account episodes (RT-07, RT-11)", () => {
         rank: 2,
       },
       {
+        // D03:329's cause-not-shown sentence: the notice carries no cause, and no client reads B19's
         politeness: "assertive",
-        text: "Sub-2 is locked for new orders: reconciliation with Bybit failed for 2 minutes. Closing, cancelling and tightening stops still work.",
+        text: "Sub-2 is locked for new orders until the owner resolves it. Closing, cancelling and tightening stops still work.",
         rank: 0,
       },
     ]);
@@ -215,11 +260,36 @@ describe("the account episodes (RT-07, RT-11)", () => {
         [SUB1, signal("reconciling", 1)],
         [SUB2, signal("stale", 2)],
       ]),
-      "owner",
       label,
       listed,
     );
     expect(again.batch).toEqual([]);
+  });
+
+  it("holds an episode until the directory lists its account, then names it by its label", () => {
+    const states = new Map([[SUB2, signal("stale", 4)]]);
+    const held = accountAnnouncements(new Map(), states, label, () => false);
+    expect(held.batch).toEqual([]);
+    expect(held.said.size).toBe(0);
+    const named = accountAnnouncements(held.said, states, label, listed);
+    expect(named.batch.map((a) => a.text)).toEqual([
+      "Sub-2 is locked for new orders until the owner resolves it. Closing, cancelling and tightening stops still work.",
+    ]);
+    // an episode said stays said while its account leaves the list, and says no end
+    const gone = accountAnnouncements(named.said, states, label, () => false);
+    expect(gone.batch).toEqual([]);
+    expect(gone.said.get(SUB2)).toBe(4);
+  });
+
+  it("an episode that ends before its account is listed is never said, nor its end", () => {
+    const held = accountAnnouncements(
+      new Map(),
+      new Map([[SUB1, signal("desync", 5)]]),
+      label,
+      () => false,
+    );
+    const ended = accountAnnouncements(held.said, new Map(), label, listed);
+    expect(ended.batch).toEqual([]);
   });
 
   it("an episode's end is synced for a listed account, nothing for one withdrawn", () => {
@@ -227,22 +297,27 @@ describe("the account episodes (RT-07, RT-11)", () => {
       [SUB1, 1],
       [SUB2, 2],
     ]);
-    const out = accountAnnouncements(said, new Map(), "viewer", label, (id) => id === SUB1);
+    const out = accountAnnouncements(said, new Map(), label, (id) => id === SUB1);
     expect(out.batch).toEqual([
       { politeness: "polite", text: "Sub-1 reconciled with Bybit.", rank: 2 },
     ]);
     expect(out.said.size).toBe(0);
   });
 
-  it("the kill-switch lock is shown, not said (no deck announcement)", () => {
+  it("the kill-switch lock is said assertively, once, in D03:329's kill-switch sentence (RT-07)", () => {
     const out = accountAnnouncements(
       new Map(),
       new Map([[SUB2, signal("stale", 3, true)]]),
-      "manager",
       label,
       listed,
     );
-    expect(out.batch).toEqual([]);
+    expect(out.batch).toEqual([
+      {
+        politeness: "assertive",
+        text: "Sub-2 is still locked for new orders after the kill switch. Closing, cancelling and tightening stops still work.",
+        rank: 0,
+      },
+    ]);
     expect(out.said.get(SUB2)).toBe(3);
   });
 });
