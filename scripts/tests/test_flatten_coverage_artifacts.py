@@ -242,7 +242,12 @@ def test_packages_sharing_an_artifact_are_each_judged_on_their_own_report(
 ) -> None:
     frontend = {"packages/ui": 100, "apps/web": 70, "apps/desktop": 90}
     _upload(tmp_path, "coverage-unit-frontend", frontend)
-    engine = {"packages/chart-engine": 99, "packages/protocol": 80, "packages/rule-graph": 99}
+    engine = {
+        "packages/chart-engine": 99,
+        "packages/protocol": 80,
+        "packages/rule-graph": 99,
+        "packages/dock": 99,
+    }
     _upload(tmp_path, "coverage-unit-engine", engine)
     judged = _judged(tmp_path, capsys)
     assert {name: measured for name, (measured, _) in judged.items()} == {
@@ -250,6 +255,7 @@ def test_packages_sharing_an_artifact_are_each_judged_on_their_own_report(
         "packages/chart-engine": "99.0%",
         "packages/protocol": "80.0%",
         "packages/rule-graph": "99.0%",
+        "packages/dock": "99.0%",
         "packages/ui": "100.0%",
         "apps/app-web": "70.0%",
         "apps/app-electron": "90.0%",
