@@ -124,6 +124,8 @@ gate(4, "unit-engine", () =>
     "@candleviewer/chart-engine",
     "--filter",
     "@candleviewer/rule-graph",
+    "--filter",
+    "@candleviewer/dock",
     "test:cov",
   ]),
 );

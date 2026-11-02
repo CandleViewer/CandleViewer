@@ -1,0 +1,41 @@
+{
+  "name": "@candleviewer/dock",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Framework-free dock layout tree: node model, operations, normalisation, presets, drop resolution and LayoutGridSpec serialisation (E15-T02). No React, no DOM, no network, no chart engine.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "lint": "eslint . --max-warnings=0",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:cov": "vitest run --coverage",
+    "build": "tsup",
+    "size": "echo \"@candleviewer/dock: no bundle budget (library; the workspace route carries it)\""
+  },
+  "dependencies": {
+    "@candleviewer/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@candleviewer/config": "workspace:*",
+    "@types/node": "^22.20.5",
+    "@vitest/coverage-v8": "^4.1.12",
+    "eslint": "^9.17.0",
+    "fast-check": "^4.10.2",
+    "globals": "^15.14.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.71.2",
+    "vitest": "^4.1.12"
+  }
+}
