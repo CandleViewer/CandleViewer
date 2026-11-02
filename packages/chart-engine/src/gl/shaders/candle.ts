@@ -9,7 +9,9 @@
 // gap seam, 5 / 6 the hollow wick and body (E12-S07, D06 §4.2: placed as 0 / 1; `a_meta` bit 8
 // hollow, bit 9 colour-up, `CANDLE_META`). `u_geom[0]` = (body, hairline, tick) device px and
 // spacing CSS px; `u_geom[1]` = (DPR, plot top, plot bottom) in device px; the seam spans top to
-// bottom. Mirrors `src/layers/candle/geometry.ts` line for line.
+// bottom. Mirrors `src/layers/candle/geometry.ts` line for line. E12-S09: `u_geom[1].w` is the
+// candle tier (BQ-04): from L1 every wick is a hairline and an up body is outline-only from 2
+// device px, else `dash.1-1` (v_outline 3, by window row).
 // `u_palette` = up, down, wick, up tint, down tint, neutral (E12-D06 §2-§4, §9).
 export const CANDLE = {
   name: "candle",
@@ -81,7 +83,9 @@ void main() {
     y0 = u_geom[1].z > 0.0 ? u_geom[1].y : 0.0;
   } else {
     float left = floor(centre - body * 0.5 + 0.5);
-    float weight = part == 5 && dir != 3 ? (colourUp ? h : 2.0 * h) : (dir == 1 ? 2.0 * h : h);
+    float weight = u_geom[1].w >= 1.0
+      ? h
+      : part == 5 && dir != 3 ? (colourUp ? h : 2.0 * h) : (dir == 1 ? 2.0 * h : h);
     float stem = left + floor((body - h) * 0.5);
     x0 = stem;
     w = weight;
@@ -123,8 +127,12 @@ void main() {
   v_fill = v_color;
   int outline = w >= 3.0 * u_geom[1].x ? 2 : 1; // D06 §3.2: every side from 3 CSS px
   if (part == 1 && dir == 0) {
-    v_fill = u_palette[3];
-    v_outline = outline;
+    if (u_geom[1].w < 1.0) {
+      v_fill = u_palette[3];
+      v_outline = outline;
+    } else {
+      v_outline = w >= 2.0 ? outline + 4 : 3; // D06 §5.3: outline-only, else dash.1-1
+    }
   } else if (part == 6 && dir < 2 && (mark & 16) != 0) {
     v_outline = outline + 4; // D06 §4.2: hollow, the interior unpainted
   }
@@ -148,6 +156,12 @@ out vec4 o_color;
 void main() {
   float h = u_geom[0].y;
   int mode = v_outline & 3;
+  if (mode == 3) {
+    // E12-D06 §4.3 dash.1-1: even window rows on, so a pan never crawls (geometry.ts dashOn).
+    if (mod(floor(gl_FragCoord.y), 2.0) >= 1.0) discard;
+    o_color = v_color;
+    return;
+  }
   bool edgeY = v_local.y < h || v_local.y > v_size.y - h;
   bool edgeX = mode == 2 && (v_local.x < h || v_local.x > v_size.x - h);
   bool edge = mode == 0 || edgeX || edgeY;

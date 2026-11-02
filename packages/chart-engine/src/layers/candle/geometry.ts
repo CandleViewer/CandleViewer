@@ -43,10 +43,20 @@ export const GEOM = {
   /** The plot rect's top and bottom edges, device px (`CandleSeries.frame`); bottom 0 = unset. */
   plotTop: 5,
   plotBottom: 6,
+  /** E12-S09 (BQ-04): the candle tier, 0 / 1 / 2 (`u_geom[1].w`, free until now). */
+  tier: 7,
 } as const;
 export const GEOM_FLOATS = 8;
 /** D06 §3.2: an up body is outlined on every side once it is ≥ 3 CSS px wide. */
 export const FULL_OUTLINE_CSS = 3;
+/** E12-D06 §5.3: an L1 up body is outline-only from 2 device px wide, else the `dash.1-1` span. */
+export const L1_OUTLINE_MIN = 2;
+/**
+ * The fill mode a part's fragment uses (`v_outline`): 0 solid; 1 / 2 an up body's outline over
+ * its tint (top and bottom; every side); + 4 the interior unpainted; `dash` E12-D06 §4.3's
+ * `dash.1-1`, 1 device row on, 1 off, by window row (`gl_FragCoord.y`, so a pan never crawls).
+ */
+export const FILL = { solid: 0, hollow: 4, dash: 3 } as const;
 
 /**
  * E12-D06 §3.1 / E12-D12 §5.2: body = clamp(roundHalfUp(0.7 s), 1, 35) CSS px, forced odd from
@@ -55,7 +65,7 @@ export const FULL_OUTLINE_CSS = 3;
  * its parity is the hairline's, so it centres on the wick exactly. Hairline max(1, floor(dpr));
  * OHLC tick clamp(floor(body / 2), 1, floor((s - 3) / 2)).
  */
-export function candleGeometry(spacingCss: number, dpr: number, out: Float32Array): void {
+export function candleGeometry(spacingCss: number, dpr: number, out: Float32Array, tier = 0): void {
   const s = spacingCss > 0 ? spacingCss : 0;
   let css = Math.min(35, Math.max(1, Math.floor(0.7 * s + 0.5)));
   if (css >= 4 && css % 2 === 0) css = css + 1 <= s - 1 ? css + 1 : css - 1;
@@ -68,6 +78,7 @@ export function candleGeometry(spacingCss: number, dpr: number, out: Float32Arra
   out[GEOM.tick] = Math.max(hair, Math.round(tick * dpr));
   out[GEOM.spacing] = s;
   out[GEOM.dpr] = dpr > 0 ? dpr : 1;
+  out[GEOM.tier] = tier >= 2 ? 2 : tier >= 1 ? 1 : 0; // NaN and below 0 are L0
 }
 
 /** D06 §3.2: a `w` device-px up body gets the full outline from 3 CSS px, else top and bottom. */
@@ -100,6 +111,30 @@ export const hollowFill = (part: number, mark: number): boolean =>
   part === CANDLE_PART.hollowBody &&
   (mark & MARK.dir) < CANDLE_DIR.doji &&
   (mark & MARK.hollow) !== 0;
+
+/**
+ * The shader's `v_outline` for a part of width `w` device px (`FILL`). L0 up body: its outline
+ * over the tint. L1 up body (D06 §5.3): outline-only from `L1_OUTLINE_MIN`, else `dash.1-1`.
+ * A hollow up / down body (§4.2): outline-only. Else solid.
+ */
+export function fillMode(part: number, mark: number, w: number, geom: ArrayLike<number>): number {
+  const dir = mark & MARK.dir;
+  const outline = fullOutline(w, geom) ? 2 : 1;
+  if (part === CANDLE_PART.body && dir === CANDLE_DIR.up) {
+    if ((geom[GEOM.tier] ?? 0) < 1) return outline;
+    return w >= L1_OUTLINE_MIN ? outline + FILL.hollow : FILL.dash;
+  }
+  if (part === CANDLE_PART.hollowBody && dir < CANDLE_DIR.doji && (mark & MARK.hollow) !== 0) {
+    return outline + FILL.hollow;
+  }
+  return FILL.solid;
+}
+
+/**
+ * `dash.1-1` (D06 §4.3): device row `row` (y down) of a `height`-row window is painted when
+ * the shader's `floor(gl_FragCoord.y)` (y up) is even.
+ */
+export const dashOn = (row: number, height: number): boolean => ((height - 1 - row) & 1) === 0;
 
 /**
  * Part `part` (`CANDLE_PART`) of bar `index` (logical) as [x, y, w, h] in `u_viewport` px, y
@@ -143,15 +178,17 @@ export function candleRect(
   const left = Math.floor(centre - body * 0.5 + 0.5);
   // D06 §3.1 / §3.2: 1 hairline up, 2 down; doji and zero-range marks keep one. §4.2: the hollow
   // wick's weight follows the colour-up bit (close vs previous close), not the body's dir; a
-  // doji's too (§9 doji row), a zero-range bar's not.
+  // doji's too (§9 doji row), a zero-range bar's not. §5.3: from L1 every wick is a hairline.
   const weight =
-    part === CANDLE_PART.hollowWick && dir !== CANDLE_DIR.zeroRange
-      ? mark & MARK.colourUp
-        ? hair
-        : 2 * hair
-      : dir === CANDLE_DIR.down
-        ? 2 * hair
-        : hair;
+    (geom[GEOM.tier] ?? 0) >= 1
+      ? hair
+      : part === CANDLE_PART.hollowWick && dir !== CANDLE_DIR.zeroRange
+        ? mark & MARK.colourUp
+          ? hair
+          : 2 * hair
+        : dir === CANDLE_DIR.down
+          ? 2 * hair
+          : hair;
   const stem = left + Math.floor((body - hair) * 0.5);
   let x = stem;
   let w = weight;
