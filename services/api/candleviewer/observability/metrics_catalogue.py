@@ -3280,6 +3280,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "cv_ws_subscription_quota_rejections_total",
+        "counter",
+        "refusals",
+        ("reason",),
+        "WS sub entries and ctl frames the subscription quota family refused (23 section 16.2), by "
+        "limit.",
+        "sustained: a client past its quota, or a quota too tight for real use",
+        _L,
+        "E21",
+        max_series=10,  # E21-X02: the closed `ws/quota.REASONS`, each bound at import
+        exported=True,
+    ),
+    _s(
         "cv_ws_snapshot_bytes",
         "histogram",
         "bytes",

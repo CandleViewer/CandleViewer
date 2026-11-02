@@ -346,6 +346,7 @@ CV_WS_NAMES: Final[frozenset[str]] = frozenset(
         "cv_ws_upstream_consumers_in_use",
         "cv_ws_resync_total",
         "cv_ws_rebuild_refused_total",
+        "cv_ws_subscription_quota_rejections_total",
         "cv_ws_snapshot_bytes",
         "cv_ws_snapshot_build_seconds",
         "cv_ws_sequence_gaps_detected_total",
