@@ -20,7 +20,7 @@ import itertools
 import struct
 from dataclasses import dataclass, replace
 from time import perf_counter
-from typing import Final
+from typing import Any, Final
 
 from candleviewer.ws._generated.cvwb_layout import HEADER, KINDS, MAGIC, Kind, Part
 from candleviewer.ws.errors import WsError
@@ -32,6 +32,9 @@ TRADES: Final = 3
 BARS: Final = 4
 FOOTPRINT: Final = 5
 HEATMAP_COLUMN: Final = 6
+#: 24 §6.1 `rows` (23 §3.4, §16.2): the most rows a heatmap column holds, `orderflow.heatmap.ROWS`
+#: (a test pins the two equal), named here so the codec imports nothing above it (E21-X02, #652).
+HEATMAP_MAX_ROWS: Final = 512
 
 FLAG_ESTIMATED: Final = 0b0001
 FLAG_COALESCED: Final = 0b0010
@@ -340,6 +343,17 @@ def _fits(count: int, stride: int, available: int, what: str) -> None:
         )
 
 
+def _heatmap_bounds(what: str, prefix: list[Any], row_count: int) -> None:
+    """§3.4 (E21-X02): a heatmap column's `row_count` within the grid's rows and its `price_step`
+    positive, else `frame_malformed`; `prefix` is (`ts_offset_ms`, `price_min`, `price_step`)."""
+    if row_count > HEATMAP_MAX_ROWS:
+        raise FrameMalformedError(
+            f"{what}: row_count={row_count} is above the grid's {HEATMAP_MAX_ROWS} rows"
+        )
+    if prefix[2] <= 0:
+        raise FrameMalformedError(f"{what}: price_step={prefix[2]} is not positive")
+
+
 def _rows(view: memoryview, off: int, count: int, part: Part, what: str) -> tuple[Record, ...]:
     end = off + count * part.size
     rows = tuple(_st(part).iter_unpack(view[off:end]))
@@ -379,6 +393,8 @@ def decode(data: bytes | bytearray | memoryview) -> Frame:
         *prefix, row_count = _st(kind.body_prefix).unpack_from(view, off)
         off += kind.body_prefix.size
         _fits(row_count, kind.record.size, n - off, kind.name)
+        if kind.id == HEATMAP_COLUMN:  # E21-X02 (§3.4): the grid's rows and a positive step,
+            _heatmap_bounds(kind.name, prefix, row_count)  # before any row is read
         rows = _rows(view, off, row_count, kind.record, kind.name)
         return Frame(body_kind, rows, flags, p_scale, q_scale, ts_base, prefix=tuple(prefix))
     if kind.group_prefix is not None:
@@ -426,6 +442,7 @@ __all__ = [
     "BOOK_SNAPSHOT",
     "FOOTPRINT",
     "HEATMAP_COLUMN",
+    "HEATMAP_MAX_ROWS",
     "TRADES",
     "Frame",
     "FrameEncodeError",
