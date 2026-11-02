@@ -4420,7 +4420,8 @@ role (§15.9) receives a `system` frame of `kind: "notice"` using only the field
 plus 15 minutes (SR-E27-18); `accounts.key_selfcheck_unavailable`: the stored keys could not be
 checked. They latch until a restart whose start-up check passes, and the notice and its message
 name no key and no account. Two are the KEK rotation's (#2266): `secrets.kek_rotation`: a KEK
-re-wrap run (`rewrapKek`) latched order entry before its first row; `secrets.kek_rows_stranded`:
+re-wrap run (`rewrapKek`) latched order entry before its first row (a run that finds a latch
+already held keeps that latch's reason and sends no new notice); `secrets.kek_rows_stranded`:
 the process started without a KEK version that unrevoked API key rows of its environment are
 still wrapped under. The first latches until the restart that ends the rotation and the second
 until a restart that finds no such row; neither notice names a key or an account. The clear-state
@@ -4883,7 +4884,7 @@ Measured at the client, on the reference workspace (4 panes: 1 m chart, 5 m foot
 | Contract         | Canary: a server that sends `closed` instead of `confirm` fails the suite, naming the member, the `ch` and §14.3.                                                                                     | 30 §5.3 exit criterion 7 (E12-Q04, AC3).                  |
 | Contract         | `indicators.*` frames validate against §14.10; points are keyed by `(key, generation, index)`; an amended point carries `amended: true`; a generation change is a `generation_swap` `snap`.           | §6.1, §8.2, §14.10.                                       |
 | Contract         | A `client_worker` or unknown indicator, a param out of bounds and a `compute` key are `invalid_options`; the 9th instance per user, 33rd per symbol and 129th per server are `subscription_limit`.    | §6.1 (SR-E13-01, SR-E13-03, IR-41).                       |
-| Contract         | A replay `indicators.*` `sub` is refused `unknown_topic` and holds nothing; an instance primed from stored bars sends its `snap` once that read ends.            | §6.1, §7.1.                                               |
+| Contract         | A replay `indicators.*` `sub` is refused `unknown_topic` and holds nothing; an instance primed from stored bars sends its `snap` once that read ends.                                                 | §6.1, §7.1.                                               |
 | Contract         | `snapMeta.reason` is one ordered set in the schema, §7.4's list and `SNAP_REASONS`, `history_repair` among them; a client keeps a reason it does not know (C18).                                      | §7.4, §13, §16.5.                                         |
 | Integration      | Grant revocation mid-stream → `revoked` within 1 s, other topics intact.                                                                                                                              | S7, §9.5.                                                 |
 | Integration      | Token expiry → in-place re-`auth` preserves subscriptions and sequences.                                                                                                                              | §4.1.                                                     |

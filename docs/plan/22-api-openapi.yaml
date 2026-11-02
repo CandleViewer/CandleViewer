@@ -15888,10 +15888,11 @@ paths:
         `503 audit_unavailable` instead, and nothing is latched or moved either.
 
         **Order entry halts.** Before the first row, the call latches order entry read-only (gate
-        reason `secrets.kek_rotation`), and only the restart that ends the rotation clears the
-        latch. The latch refuses position-opening orders only: cancels and stop-loss amendments
-        keep signing (C-2.6), and borrows keep working, because a row still at the previous
-        version opens with the previous KEK.
+        reason `secrets.kek_rotation`, unless a latch is already held, whose reason then stays),
+        and only the restart that ends the rotation clears the latch. The latch refuses
+        position-opening orders only: cancels and stop-loss amendments keep signing (C-2.6), and
+        borrows keep working, because a row still at the previous version opens with the previous
+        KEK.
 
         **Resumable.** A run that stops part-way leaves each row at one version or the other, and
         calling again resumes it. `Idempotency-Key` is not used: every call reads the rows
