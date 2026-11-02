@@ -4,18 +4,20 @@
 Offline and default-deny. The standing gates (git, cites, pins, G-T2, closing keywords, public
 text, R7, G-UNTOUCHED, the runner and the mutation harness) come from `spec_audit_lib.py`; this
 file keeps E21-D05's rows. It reads the cited texts AS TEXT at their pins (the plan and design
-texts at the base; E21-D02 / D03 / D04 at their PR heads) and runs only `relative_luminance()` of
-`docs/design/_tools/contrast_check.py`. It replays the re-centre band and oscillation (section 4),
-the column-width crossover over `23`'s reference displays (section 3.2) and the per-frame
-luminance of a 10x and 100x rescale on every shipped heatmap ramp (section 5.2).
+texts at the base; E21-D02 / D03 / D04 and E47-D08 at their PR heads) and runs only
+`relative_luminance()` of `docs/design/_tools/contrast_check.py`. It replays the re-centre band and
+oscillation (section 4), the column-width crossover over `23`'s reference displays (section 3.2),
+the per-frame luminance of a 10x and 100x rescale on every shipped heatmap ramp (section 5.2) and
+the reduce / canvas-calm steps, FR-6 crossings and the ask ramps' red share (section 5.3).
 
 Gates: see GATES (section 16.2); G-MUTLIST holds section 16.3 equal to MUTATIONS. G-RULED pins each
 BQ bullet's sha256[:16] in `e21_d05_ruled_pins.txt` (`--repin-ruled` is the only writer); the
-BQ list is comment 6582999442 on #505, defaults built, ruling pending (G-RULING).
+BQ list is comment 6582999442 on #505, RULED by comment 6585382345 (G-RULING).
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e21_d05_motion_audit.py --check | --self-test | --repin-ruled
-  python3 -I docs/design/_tools/e21_d05_motion_audit.py --fill   (sections 3.2, 4.2-4.3, 5.2, 16.3)
+  python3 -I docs/design/_tools/e21_d05_motion_audit.py --fill   (sections 3.2, 4.2-4.3, 5.2-5.3,
+  16.3)
 Exit 0 = no FAIL; 1 = at least one FAIL.
 """
 
@@ -34,13 +36,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import spec_audit_lib as L  # the shared helper sits beside this file
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "d23ec8bd7"  # origin/main when the BQ list was written; every plan cite is read here
+BASE = "95a625b09"  # origin/main at the ruling's fold; every plan cite is read here
 HEADS = {
     "D02": ("7e1040260", "#5488"),
     "D03": ("c7b0d2087", "#5518"),
     "D04": ("1a320cde7", "#5519"),
 }
-BQ_LIST = "6582999442"  # the BQ list on #505; ruling pending
+D08_HEAD = ("e60fe7baa", "#5444")  # E47-D08, design-approved, not merged
+BQ_LIST = "6582999442"  # the BQ list on #505
+RULING = "6585382345"  # the orchestrator's ruling of record on it
 
 SPEC_REL = "docs/design/E21/E21-D05.md"
 TOOL_REL = "docs/design/_tools/e21_d05_motion_audit.py"
@@ -48,8 +52,8 @@ PIN_REL = "docs/design/_tools/e21_d05_ruled_pins.txt"
 LIB_REL = "docs/design/_tools/spec_audit_lib.py"
 CAT_REL = "docs/plan/14-screens-catalogue.md"
 DSB_REL = "docs/plan/16-design-system-brief.md"
-OWN = (SPEC_REL, TOOL_REL, PIN_REL, LIB_REL)
-BUDGETS = {CAT_REL: (2, 0), DSB_REL: (18, 0)}  # BQ-2: two pointer lines; the 16 section 7.3 block
+OWN = (SPEC_REL, TOOL_REL, PIN_REL, LIB_REL)  # the helper rides whichever lane's PR 1 opens first
+BUDGETS = {CAT_REL: (2, 0)}  # BQ-2 as ruled: two pointer lines; no `16` edit (an A-row)
 BACKLOG_REL = "docs/plan/backlog/E21.json"
 
 PLAN = {
@@ -65,10 +69,15 @@ PLAN = {
 KEYED = {
     "M": L.DocRef("docs/design/research/e21-dom-heatmap.md", BASE),
     **{k: L.DocRef(f"docs/design/E21/E21-{k}.md", h) for k, (h, _) in HEADS.items()},
+    "D08E47": L.DocRef("docs/design/E47/E47-D08.md", D08_HEAD[0]),
     "D11E08": L.DocRef("docs/design/E08/E08-D11.md", BASE),
     "D04E10": L.DocRef("docs/design/E10/E10-D04.md", BASE),
     "D03E05": L.DocRef("docs/design/E05/E05-D03.md", BASE),
     "D03E17": L.DocRef("docs/design/E17/E17-D03.md", BASE),
+    "D06E11": L.DocRef("docs/design/E11/E11-D06.md", BASE),
+    "D01E25": L.DocRef("docs/design/E25/E25-D01.md", BASE),
+    "D04E42": L.DocRef("docs/design/E42/E42-D04.md", BASE),
+    "MODEL": L.DocRef("apps/web/src/features/a11y-preferences/model.ts", BASE),
     "PRIM": L.DocRef("packages/ui/tokens/primitives.tokens.json", BASE),
     "R32": L.DocRef(".claude/rules/32-design-specs.md", BASE),
     "README": L.DocRef("docs/design/README.md", BASE),
@@ -84,21 +93,33 @@ KEY_PINS = (
     L.KeyCite("26", 312, "re-uploads only the newly exposed rows"),
     L.KeyCite("06", 89, "100ms toward 250ms"),
     L.KeyCite("16", 218, "the latest explicit choice wins over the OS in both directions"),
-    L.KeyCite("05", 233, "a single low-amplitude cross-fade"),
+    L.KeyCite("05", 246, "a single low-amplitude cross-fade"),
+    L.KeyCite("05", 247, "remain functional"),
     L.KeyCite("11", 1982, "without jitter on every tick"),
     L.KeyCite("11", 2028, "rescale is smooth (no flashing)"),
     L.KeyCite("D02", 156, "Pause (WCAG 2.2.2)"),
     L.KeyCite("D11E08", 96, "the `fast` fade starts in that frame"),
     L.KeyCite("D04E10", 149, "banner enter (SCR-153"),
+    L.KeyCite("D04E10", 151, "informational banner dismiss (SCR-153 restored"),
+    L.KeyCite("MODEL", 59, 'motion === "reduce" || p.disable_canvas_animation'),
+    L.KeyCite("D06E11", 83, "`decelerate` puts 41 % of the travel into the first 60 fps frame"),
+    L.KeyCite("D06E11", 97, "a transition in flight jumps to its target, a fade completes"),
+    L.KeyCite("D06E11", 89, "reduce = both instant"),
+    L.KeyCite("D03E05", 77, "no row puts `motion.duration.slow` on a data row"),
+    L.KeyCite("D08E47", 194, "a heatmap live-column cell's crossings of the 0.1 luminance step"),
+    L.KeyCite("D08E47", 267, "Heatmap time advance (SCR-050)"),
 )
 
 # ---------- the spec's own engine constants (PROPOSED; section 9) ---------------------------------
 BAND_FRAC, BAND_MIN, BAND_MAX = 0.20, 3, 10  # heatmap.recentre.band*
 INTERVAL_MS = 1000  # heatmap.recentre.minIntervalMs
-CROSS_PX = 3.0  # continuous only above the 23 section 6.1.1 target column
+CROSS_PX = 3.0  # heatmap.trail.offsetMinColumnPx; `23` section 6.1.1's 3 px is a derivation target
 LUMA_STEP, LUMA_CAP = 0.09, 0.10  # heatmap.rescale.lumaStep; the per-frame cap it serves
 REVERSAL_MS = 1000  # heatmap.rescale.minReversalMs
-ROWS = (4, 6, 8, 10, 12, 20, 40, 60)  # visible ladder rows replayed (zoom and text scale too)
+STEP_MS = 1000  # heatmap.rescale.calmStepMs: reduce / canvas-calm steps at least this far apart
+FR6 = 2  # E47-D08 FR-6: a cell's crossings of the 0.1 luminance step per 1 000 ms
+RED_SHARE = 0.8  # the saturated-red share E05-D03 section 5 measures (R / (R + G + B))
+ROWS = (4, 6, 8, 10, 12, 14, 20, 40, 60)  # visible ladder rows replayed (zoom and text scale too)
 REPLAY_MS, TICK_MS = 10_000, 5
 OSC = ((40, 2, "edge ± 1 row"), (40, 5, "edge ± 1 row"), (40, 20, "edge ± 1 row"),
        (40, 2, "edge to edge"), (40, 5, "edge to edge"), (40, 20, "edge to edge"),
@@ -109,10 +130,18 @@ FRAME_MS = 1000 / 60
 SETS = ("color.heatmap", "color.cvd.heatmap")
 MOTIONS = ("Trail advance", "Re-centre", "Colour-scale rescale", "Resync enter / exit",
            "Depth-shed notice entry")  # fmt: skip
-MOVING = ("translate", "continuous", "fade", "slide", "tween", "scroll offset")
+MOVING = ("translate", "continuous", "fade", "slide", "tween", "scroll offset", "ramp", "eased",
+          "interpolat")  # fmt: skip
+DOM_ONLY = "follows `data-motion` only"  # a DOM row keeps its full-tier motion under canvas calm
 COSTS = ("uniform only", "one column upload per write", "exposed rows only", "none (DOM")
 ADOPT_CITES = ("D11E08:96", "D11E08:97", "D11E08:126", "D11E08:127", "D11E08:359",
-               "D04E10:149", "D04E10:150")  # fmt: skip
+               "D04E10:149")  # fmt: skip
+# The ruling's wording, outside the BQ section: words it retired and words it requires.
+RETIRED = ("nothing translates", "completes on its clock", "motion.easing.decelerate",
+           "from the time axis", "T-18 says", "ruling pending", "§7.3 block")  # fmt: skip
+REQUIRED = ("nothing interpolates", "a transition in flight jumps to its target",
+            "Centre lock is exempt", "canvas calm", "if #5444 merges as is")  # fmt: skip
+ARM_RE = re.compile(r"\barm(?:s|ed|ing)?\b", re.IGNORECASE)
 MOTION_TOKEN_RE = re.compile(L.TOKEN_REF_RE.pattern.replace("|border)", "|border|motion)"))
 
 
@@ -235,9 +264,10 @@ def ease(t: float, p: tuple[float, float, float, float]) -> float:
     return 3 * (1 - s) ** 2 * s * p[1] + 3 * (1 - s) * s * s * p[3] + s**3
 
 
-def lut(theme: str, prefix: str, side: str) -> tuple[float, ...]:
-    """The 256x1 LUT (`26`:305) as relative luminance: zero and stops 1-5 evenly spaced, linear
-    in 8-bit sRGB between them (PROPOSED; G-1)."""
+@functools.cache
+def lut_rgb(theme: str, prefix: str, side: str) -> tuple[tuple[int, int, int], ...]:
+    """The 256x1 LUT (`26`:305) in 8-bit sRGB: zero and stops 1-5 evenly spaced, linear between
+    them (PROPOSED; G-1)."""
     t = L.resolve_theme(repo(), BASE, theme)
     keys = ["color.heatmap.zero"] + [f"{prefix}.{side}.{i}" for i in range(1, 6)]
     stops = [tuple(int(t[k][1 + 2 * j : 3 + 2 * j], 16) for j in range(3)) for k in keys]
@@ -245,9 +275,21 @@ def lut(theme: str, prefix: str, side: str) -> tuple[float, ...]:
     for i in range(256):
         x = i / 255 * 5
         k = min(int(x), 4)
-        c = tuple(round(a + (b - a) * (x - k)) for a, b in zip(stops[k], stops[k + 1]))
-        out.append(float(contrast().relative_luminance(c)))
+        r, g, b = (round(a + (c - a) * (x - k)) for a, c in zip(stops[k], stops[k + 1]))
+        out.append((r, g, b))
     return tuple(out)
+
+
+@functools.cache
+def lut(theme: str, prefix: str, side: str) -> tuple[float, ...]:
+    """The LUT as relative luminance."""
+    rl = contrast().relative_luminance
+    return tuple(float(rl(c)) for c in lut_rgb(theme, prefix, side))
+
+
+def red_share(theme: str, prefix: str) -> float:
+    """The largest R / (R + G + B) on the ask LUT: E05-D03 section 5's saturated-red test."""
+    return max(c[0] / sum(c) for c in lut_rgb(theme, prefix, "ask") if sum(c))
 
 
 VALUES = (0.0, *(10 ** (e / 20) for e in range(-60, 41)))  # resting sizes, 0.001-100 x bound
@@ -258,6 +300,7 @@ def pos(v: float, b: float, scale: str) -> int:
     return round(min(1.0, max(0.0, x)) * 255)
 
 
+@functools.cache
 def max_log_step(lum: tuple[float, ...]) -> float:
     """Derived once per LUT build: the largest per-frame step in ln(bound) that moves no LUT
     position by LUMA_STEP or more (searched on a 1/1024 grid of positions)."""
@@ -278,11 +321,13 @@ def max_log_step(lum: tuple[float, ...]) -> float:
 
 
 def ramp(lum: tuple[float, ...], factor: float, scale: str, dur: float, cap: float | None
-         ) -> tuple[float, float, float]:  # fmt: skip
+         ) -> tuple[float, float, float, int]:  # fmt: skip
     """One rescale by `factor`: (worst per-frame luminance change, share of cells moving by
-    LUMA_CAP or more in one frame, ms to land). `dur` 0 = the instant cut."""
+    LUMA_CAP or more in one frame, ms to land, the most frames in which one cell moves by LUMA_CAP
+    or more: its FR-6 crossings). `dur` 0 = the instant cut."""
     b0, target = 1.0, math.log(factor)
     prev = [lum[pos(v, b0, scale)] for v in VALUES]
+    crossings = [0] * len(VALUES)
     lnb, worst, first, k = 0.0, 0.0, -1.0, 0
     while k < 100_000:
         k += 1
@@ -291,19 +336,37 @@ def ramp(lum: tuple[float, ...], factor: float, scale: str, dur: float, cap: flo
         cur = [lum[pos(v, math.exp(lnb), scale)] for v in VALUES]
         d = [abs(a - c) for a, c in zip(prev, cur)]
         worst, prev = max(worst, *d), cur
+        crossings = [n + (x >= LUMA_CAP) for n, x in zip(crossings, d)]
         first = sum(1 for x in d if x >= LUMA_CAP) / len(d) if first < 0 else first
         if abs(lnb - target) < 1e-12 and k * FRAME_MS >= dur:
-            return worst, first, k * FRAME_MS
+            return worst, first, k * FRAME_MS, max(crossings)
     raise L.AuditError("the ramp never lands")
+
+
+def steps(lum: tuple[float, ...], factor: float, scale: str, cap: float) -> tuple[int, float, int]:
+    """Section 5.3: the reduce / canvas-calm rescale as instant steps of at most `cap` in ln(bound),
+    STEP_MS apart: (steps, worst luminance change in one step, the most steps in which one cell
+    moves by LUMA_CAP or more)."""
+    target, lnb, n, worst = math.log(factor), 0.0, 0, 0.0
+    prev = [lum[pos(v, 1.0, scale)] for v in VALUES]
+    crossings = [0] * len(VALUES)
+    while abs(lnb - target) > 1e-12:
+        n += 1
+        lnb += max(-cap, min(cap, target - lnb))
+        cur = [lum[pos(v, math.exp(lnb), scale)] for v in VALUES]
+        d = [abs(a - c) for a, c in zip(prev, cur)]
+        worst, prev = max(worst, *d), cur
+        crossings = [c + (x >= LUMA_CAP) for c, x in zip(crossings, d)]
+    return n, worst, max(crossings)
 
 
 @functools.cache
 def rescale_rows() -> tuple[tuple[str, ...], ...]:
-    slow = ms("motion.duration.slow")
+    slow, normal = ms("motion.duration.slow"), ms("motion.duration.normal")
     out = []
     for theme in L.THEME_PARTS:
         inst = share = eased = 0.0
-        step, worst, land10, land100 = 9.0, 0.0, 0.0, 0.0
+        step, worst, land10, land100, norm10 = 9.0, 0.0, 0.0, 0.0, 0.0
         for prefix in SETS:
             for side in ("bid", "ask"):
                 lum = lut(theme, prefix, side)
@@ -311,17 +374,50 @@ def rescale_rows() -> tuple[tuple[str, ...], ...]:
                 step = min(step, cap)
                 for scale in ("linear", "log"):
                     for f in (0.1, 10.0, 0.01, 100.0):
-                        w, s, _ = ramp(lum, f, scale, 0, None)
+                        w, s, _, _ = ramp(lum, f, scale, 0, None)
                         inst, share = max(inst, w), max(share, s)
                         eased = max(eased, ramp(lum, f, scale, slow, None)[0])
-                        w, _, land = ramp(lum, f, scale, slow, cap)
+                        w, _, land, _ = ramp(lum, f, scale, slow, cap)
                         worst = max(worst, w)
                         big = abs(math.log10(f)) > 1.5
                         land10, land100 = (
                             (land10, max(land100, land)) if big else (max(land10, land), land100)
                         )
+                        if not big:
+                            norm10 = max(norm10, ramp(lum, f, scale, normal, cap)[2])
         out.append((theme, f"{inst:.3f}", f"{share:.0%}", f"{eased:.3f}", f"{step:.3f}",
-                    f"{worst:.3f}", f"{land10:.0f} ms", f"{land100:.0f} ms"))  # fmt: skip
+                    f"{worst:.3f}", f"{land10:.0f} ms", f"{land100:.0f} ms",
+                    f"{norm10:.0f} ms"))  # fmt: skip
+    return tuple(out)
+
+
+@functools.cache
+def calm_rows() -> tuple[tuple[str, ...], ...]:
+    """Section 5.3: the reduce / canvas-calm steps, FR-6 crossings and the ask ramps' red share.
+    FR-6 bound per 1 000 ms: two safe ramps can share a window (reversals are REVERSAL_MS after
+    the last ramp began, a ramp lasts longer than a frame), calm steps are STEP_MS apart (one)."""
+    slow = ms("motion.duration.slow")
+    out = []
+    for theme in L.THEME_PARTS:
+        n10 = n100 = 0
+        worst, safe_x, calm_x, red = 0.0, 0, 0, 0.0
+        for prefix in SETS:
+            red = max(red, red_share(theme, prefix))
+            for side in ("bid", "ask"):
+                lum = lut(theme, prefix, side)
+                cap = max_log_step(lum)
+                for scale in ("linear", "log"):
+                    for f in (0.1, 10.0, 0.01, 100.0):
+                        n, w, x = steps(lum, f, scale, cap)
+                        worst, calm_x = max(worst, w), max(calm_x, x)
+                        if abs(math.log10(f)) > 1.5:
+                            n100 = max(n100, n)
+                        else:
+                            n10 = max(n10, n)
+                        safe_x = max(safe_x, 2 * ramp(lum, f, scale, slow, cap)[3])
+        out.append((theme, str(n10), f"{(n10 - 1) * STEP_MS} ms", str(n100),
+                    f"{(n100 - 1) * STEP_MS} ms", f"{worst:.3f}", f"{safe_x} / {calm_x}",
+                    f"{red:.3f}"))  # fmt: skip
     return tuple(out)
 
 
@@ -362,7 +458,12 @@ def g_quote(t: L.Tree) -> list[str]:
 
 def g_version(t: L.Tree) -> list[str]:
     v, spec = sec(t, "### 16.1 Version line"), t.text("spec")
-    need = [BASE, "re-pinned to the merge commit", *(x for h in HEADS.values() for x in h)]
+    need = [
+        BASE,
+        "re-pinned to the merge commit",
+        *(x for h in HEADS.values() for x in h),
+        *D08_HEAD,
+    ]
     miss = [n for n in need if n not in v]
     if f"Base `origin/main` `{BASE}`" not in spec:
         miss.append("Inputs pinned base")
@@ -379,17 +480,21 @@ def g_ac(t: L.Tree) -> list[str]:
 
 
 def g_five(t: L.Tree) -> list[str]:
+    """Five motions x full / canvas calm / reduce x carrier (BQ-3 as ruled: the three tiers of
+    MODEL:59-60). No reduce twin and no canvas-calm canvas twin interpolates."""
     got = five(t)
     bad = [] if [r[1] for r in got] == list(MOTIONS) else [f"motions {[r[1] for r in got]}"]
     for r in got:
-        if len(r) < 7 or not all(r[2:5]) or r[4] in ("—", "none"):
-            bad.append(f"{r[1] if len(r) > 1 else '?'}: a safe, reduce or carrier cell")
+        if len(r) < 8 or not all(r[2:6]) or r[5] in ("—", "none"):
+            bad.append(f"{r[1] if len(r) > 1 else '?'}: a full, calm, reduce or carrier cell")
             continue
-        moving = [w for w in MOVING if w in r[3].lower()]
-        if r[1] == "Colour-scale rescale":
-            moving = [] if "luminance" in r[3] and "nothing moves" in r[3] else ["no luminance"]
-        if moving:
-            bad.append(f"{r[1]}: the reduce twin moves ({moving})")
+        for tier, cell in (("reduce", r[4]), ("canvas calm", r[3])):
+            if tier == "canvas calm" and DOM_ONLY in cell:
+                continue
+            text = cell.lower().replace("nothing interpolates", "")
+            moving = [w for w in MOVING if w in text]
+            if moving:
+                bad.append(f"{r[1]}: the {tier} twin moves ({moving})")
     return bad
 
 
@@ -417,6 +522,12 @@ def g_rescale(t: L.Tree) -> list[str]:
     for r in want:
         if float(r[5]) >= LUMA_CAP or r[6] != slow:
             bad.append(f"{r[0]}: worst {r[5]}, 10x lands in {r[6]}")
+    calm = [list(r) for r in calm_rows()]
+    bad += table_gate(t, "### 5.3", calm, "calm steps")
+    for r in calm:
+        safe_x, calm_x = (int(x) for x in r[6].split(" / "))
+        if float(r[5]) >= LUMA_CAP or max(safe_x, calm_x) > FR6 or float(r[7]) >= RED_SHARE:
+            bad.append(f"{r[0]}: step {r[5]}, FR-6 {r[6]}, red share {r[7]}")
     return bad
 
 
@@ -424,12 +535,14 @@ def g_tokens(t: L.Tree) -> list[str]:
     spec = t.text("spec")
     bad = L.check_token_refs(spec, L.token_names(repo(), BASE), MOTION_TOKEN_RE)
     consts = {
+        "heatmap.trail.offsetMinColumnPx": f"{CROSS_PX:.0f}",
         "heatmap.recentre.bandFraction": f"{BAND_FRAC:.2f}",
         "heatmap.recentre.bandMinRows": str(BAND_MIN),
         "heatmap.recentre.bandMaxRows": str(BAND_MAX),
         "heatmap.recentre.minIntervalMs": str(INTERVAL_MS),
         "heatmap.rescale.lumaStep": f"{LUMA_STEP:.2f}",
         "heatmap.rescale.minReversalMs": str(REVERSAL_MS),
+        "heatmap.rescale.calmStepMs": str(STEP_MS),
     }
     seen = set()
     for r in L.table_rows(sec(t, "## 9. Tokens and engine constants")):
@@ -447,7 +560,7 @@ def g_tokens(t: L.Tree) -> list[str]:
 
 
 def g_noupload(t: L.Tree) -> list[str]:
-    bad = [f"{r[1]}: {r[5]}" for r in five(t) if len(r) < 7 or not r[5].startswith(COSTS)]
+    bad = [f"{r[1]}: {r[6]}" for r in five(t) if len(r) < 8 or not r[6].startswith(COSTS)]
     text = t.text("spec").lower()
     return bad + [f"names {w!r}" for w in ("full re-upload per", "whole texture per") if w in text]
 
@@ -486,17 +599,40 @@ def g_penpot(t: L.Tree) -> list[str]:
     )
 
 
+VERDICTS = {
+    2: "**RULED: OVERRIDE (the `16` block only)**",
+    3: "**RULED: OVERRIDE**",
+    7: "**RULED: OVERRIDE**",
+    8: "**RULED: OVERRIDE (the reduce half)**",
+    11: "**RULED: ACCEPT as 11a / 11b**",
+}
+RIDERS = (1, 4, 5, 6, 8, 9, 10, 12, 13)  # the bullets the ruling gives a rider
+
+
+def verdict(n: int) -> str:
+    v = f"{VERDICTS.get(n, '**RULED: ACCEPT**')} ({RULING})"
+    return v + (" Rider" if n in RIDERS else "")
+
+
 def g_ruling(t: L.Tree) -> list[str]:
     return L.check_ruling(
         t.text("spec"),
-        heading_line="## The questions BQ-0 … BQ-13 — defaults built; ruling pending "
-        f"(comment {BQ_LIST})",
+        heading_line=f"## The questions BQ-0 … BQ-13 — RULED (comment {RULING})",
         list_ref=f"comment {BQ_LIST} on #505",
         count=14,
-        verdict=lambda _n: "Default built:",
-        need=("Ruling pending.",),
-        forbid=("RULED",),
+        verdict=verdict,
+        need=("Default built:",),
+        forbid=("Ruling pending.",),
     )
+
+
+def g_words(t: L.Tree) -> list[str]:
+    """The ruling's wording outside the BQ section (whose defaults quote the words it retired)."""
+    spec = t.text("spec")
+    body = spec.replace(L.section(spec, L.BQ_HEADING), "")
+    bad = [f"retired: {w!r}" for w in RETIRED if w in body]
+    bad += [f"missing: {w!r}" for w in REQUIRED if w not in body]
+    return bad + [f"an arm word: {m.group(0)!r}" for m in ARM_RE.finditer(body)]
 
 
 def g_ruled(t: L.Tree) -> list[str]:
@@ -525,8 +661,8 @@ def g_mutlist(t: L.Tree) -> list[str]:
 # fmt: off
 GATES = tuple(L.Gate("G-" + f.__name__[2:].upper(), f) for f in (
     g_cite, g_quote, g_version, g_ac, g_five, g_recentre, g_crossover, g_rescale, g_tokens,
-    g_noupload, g_adopt, g_t2, g_env, g_boards, g_penpot, g_ruling, g_ruled, g_noclose, g_public,
-    g_untouched, g_mutlist,
+    g_noupload, g_adopt, g_t2, g_env, g_boards, g_penpot, g_ruling, g_words, g_ruled, g_noclose,
+    g_public, g_untouched, g_mutlist,
 ))
 # fmt: on
 
@@ -535,68 +671,88 @@ _V = "### 16.1 Version line\n"
 # fmt: off
 MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-1", "G-CITE", "a cite past the end of `23`", "spec",
-       "the `23`:811 target", "the `23`:99999 target"),
-    _M("M-2", "G-QUOTE", "W-16 reworded off its line", "spec",
+       "because `23`:811's 3 px", "because `23`:99999's 3 px"),
+    _M("M-2", "G-QUOTE", "D03 W-16 reworded off its line", "spec",
        '"Re-centres on every book update', '"Re-centres on each book update'),
-    _M("M-3", "G-QUOTE", "W-21 reworded off its line", "spec",
+    _M("M-3", "G-QUOTE", "D03 W-21 reworded off its line", "spec",
        '"Depth 200 → 50 — levels 51–200 hidden · Pin 200"', '"Depth 200 → 50 · Pin 200"'),
     _M("M-4", "G-VERSION", "the version line drops the re-pin", "spec",
-       "each re-pinned to the merge commit when", "each kept when"),
-    _M("M-5", "G-AC", "a scenario name reworded", "spec",
+       "and re-pinned to the merge commit when", "and kept when"),
+    _M("M-5", "G-VERSION", "the E47-D08 head unpinned", "spec",
+       "E47-D08 at #5444's head `e60fe7baa`", "E47-D08 at its PR head"),
+    _M("M-6", "G-AC", "a scenario name reworded", "spec",
        'AC "Rescale never flashes"', 'AC "Rescale is smooth"'),
-    _M("M-6", "G-FIVE", "the re-centre's reduce twin translates", "spec",
+    _M("M-7", "G-FIVE", "the re-centre's reduce twin translates", "spec",
        "a cut to the target row in one frame;", "a short translate to the target row;"),
-    _M("M-7", "G-FIVE", "the resync carrier dropped", "spec",
-       "W-10, the `feed.resyncing` notice and the W-12 tag (D02:226)", "none"),
-    _M("M-8", "G-FIVE", "the rescale twin moves", "spec",
-       "the same luminance-only ramp: nothing moves,", "a short slide of the legend,"),
-    _M("M-9", "G-RECENTRE", "the 20 Hz replay doubles", "spec",
+    _M("M-8", "G-FIVE", "the resync carrier dropped", "spec",
+       "D02 W-10, the `feed.resyncing` notice and the D02 W-12 tag (D02:226)", "none"),
+    _M("M-9", "G-FIVE", "the rescale's reduce twin ramps", "spec",
+       "instant steps, each under 0.10 luminance per cell",
+       "a short ramp, each under 0.10 luminance per cell"),
+    _M("M-10", "G-FIVE", "the canvas-calm re-centre tweens", "spec",
+       "a cut to the target row, the ladder and the pane in the same frame (R-4)",
+       "a `normal` tween of the ladder only (R-4)"),
+    _M("M-11", "G-RECENTRE", "the 20 Hz replay doubles", "spec",
        r"(\| 20 Hz +\| edge to edge +\| 400 +\| )10( +\| )1025 ms", r"\g<1>20\g<2>525 ms",
        regex=True),
-    _M("M-10", "G-RECENTRE", "the band ceiling written as 12", "spec",
+    _M("M-12", "G-RECENTRE", "the band ceiling written as 12", "spec",
        r"\| 60( +)\| 10( +)\| 40 ", r"| 60\1| 12\2| 36 ", regex=True),
-    _M("M-11", "G-CROSSOVER", "1 080 p at 900 s drawn continuous", "spec",
+    _M("M-13", "G-RECENTRE", "the 14-row band written as 4", "spec",
+       r"\| 14( +)\| 3( +)\| 8 ", r"| 14\1| 4\2| 6 ", regex=True),
+    _M("M-14", "G-CROSSOVER", "1 080 p at 900 s drawn continuous", "spec",
        r"(\| 1 920 × 1 080 +\| 1190 +\| 900 s +\| 2269 +\| 1000 +\| 1\.32 +\| )step",
        r"\1continuous", regex=True),
-    _M("M-12", "G-RESCALE", "a worst luminance step drifts", "spec",
+    _M("M-15", "G-RESCALE", "a worst luminance step drifts", "spec",
        r"(\| dark +\| 0\.650 +\| 62% +\| 0\.347 +\| 0\.112 +\| )0\.091", r"\g<1>0.081",
        regex=True),
-    _M("M-13", "G-TOKENS", "the luminance step loosened", "spec",
+    _M("M-16", "G-RESCALE", "FR-6 crossings written as 3", "spec",
+       r"(\| light +\| \d+ +\| \d+ ms +\| \d+ +\| \d+ ms +\| [\d.]+ +\| )0 / 0", r"\g<1>3 / 0",
+       regex=True),
+    _M("M-17", "G-RESCALE", "an ask ramp's red share drifts", "spec",
+       r"(\| dark +\| \d+ +\| \d+ ms +\| \d+ +\| \d+ ms +\| [\d.]+ +\| 0 / 0 +\| )0\.\d+",
+       r"\g<1>0.812", regex=True),
+    _M("M-18", "G-TOKENS", "the luminance step loosened", "spec",
        r"(`heatmap\.rescale\.lumaStep` +\| )0\.09", r"\g<1>0.12", regex=True),
-    _M("M-14", "G-TOKENS", "an unshipped duration token", "spec",
+    _M("M-19", "G-TOKENS", "the calm step spacing halved", "spec",
+       r"(`heatmap\.rescale\.calmStepMs` +\| )1000", r"\g<1>500", regex=True),
+    _M("M-20", "G-TOKENS", "an unshipped duration token", "spec",
        "over `motion.duration.slow`, and each", "over `motion.duration.long`, and each"),
-    _M("M-15", "G-NOUPLOAD", "a full ring upload per frame", "spec",
+    _M("M-21", "G-NOUPLOAD", "a full ring upload per frame", "spec",
        "| uniform only (`26`:305)", "| a full ring upload per frame (`26`:305)"),
-    _M("M-16", "G-ADOPT", "H7's hold misquoted", "spec", '"**3 s** (fixed)"', '"**5 s** (fixed)"'),
-    _M("M-17", "G-T2", "R-3 loses the opacity ban", "spec",
+    _M("M-22", "G-ADOPT", "H7's hold misquoted", "spec", '"**3 s** (fixed)"', '"**5 s** (fixed)"'),
+    _M("M-23", "G-T2", "R-3 loses the opacity ban", "spec",
        "never `color.text.disabled`, never `opacity.disabled` (G-T2.2)",
        "never `color.text.disabled` (G-T2.2)"),
-    _M("M-18", "G-T2", "the no-gate line dropped", "spec",
+    _M("M-24", "G-T2", "the no-gate line dropped", "spec",
        "No control this spec touches is gated", "One control this spec touches is gated"),
-    _M("M-19", "G-ENV", "the badge may fade", "spec",
+    _M("M-25", "G-ENV", "the badge may fade", "spec",
        "never moves, fades or sheds", "rarely moves"),
-    _M("M-20", "G-BOARDS", "a fourth light twin", "spec",
+    _M("M-26", "G-BOARDS", "a fourth light twin", "spec",
        r"(`E21-D05 / 02 trail-step-continuous`[^\n]*\| )dark( +\| PENDING)", r"\1light\2",
        regex=True),
-    _M("M-21", "G-PENPOT", "a Penpot file id", "spec",
+    _M("M-27", "G-PENPOT", "a Penpot file id", "spec",
        "page `E21-D05`, cited", "page `E21-D05` (" + "file" + "-id=0), cited"),
-    _M("M-22", "G-RULING", "the heading claims a ruling", "spec",
-       "BQ-13 — defaults built; ruling pending (comment", "BQ-13 — RULED (comment"),
-    _M("M-23", "G-RULED", "a BQ default edited without a re-pin", "spec",
+    _M("M-28", "G-RULING", "the heading cites another ruling", "spec",
+       "BQ-13 — RULED (comment 6585382345)", "BQ-13 — RULED (comment 6585382346)"),
+    _M("M-29", "G-WORDS", "a retired phrasing returns", "spec",
+       "Under reduce nothing interpolates;", "Under reduce nothing translates;"),
+    _M("M-30", "G-WORDS", "an order-entry word", "spec",
+       "never a control, in place of", "never an armed control, in place of"),
+    _M("M-31", "G-RULED", "a BQ default edited without a re-pin", "spec",
        "10 boards, 3 light twins (01, 03, 07)", "9 boards, 3 light twins (01, 03, 07)"),
-    _M("M-24", "G-NOCLOSE", "a closing keyword", "spec", _V, _V + "\n" + "Clo" + "ses #505.\n"),
-    _M("M-25", "G-NOCLOSE", "a forbidden heading", "spec", "## 13. Heuristic evaluation",
+    _M("M-32", "G-NOCLOSE", "a closing keyword", "spec", _V, _V + "\n" + "Clo" + "ses #505.\n"),
+    _M("M-33", "G-NOCLOSE", "a forbidden heading", "spec", "## 13. Heuristic evaluation",
        "## " + "What" + " this spec " + "fix" + "es\n\n## 13. Heuristic evaluation"),
-    _M("M-26", "G-NOCLOSE", "trailing whitespace", "spec", _V, "### 16.1 Version line \n"),
-    _M("M-27", "G-PUBLIC", "a URL", "spec",
+    _M("M-34", "G-NOCLOSE", "trailing whitespace", "spec", _V, "### 16.1 Version line \n"),
+    _M("M-35", "G-PUBLIC", "a URL", "spec",
        "Penpot: the file", "Penpot (" + "http" + "s://example.org): the file"),
-    _M("M-28", "G-PUBLIC", "an HTML comment", "spec", "## 13. Heuristic evaluation",
+    _M("M-36", "G-PUBLIC", "an HTML comment", "spec", "## 13. Heuristic evaluation",
        "<" + "!-- note --" + ">\n\n## 13. Heuristic evaluation"),
-    _M("M-29", "G-UNTOUCHED", "an owner document edited", "@changed",
+    _M("M-37", "G-UNTOUCHED", "an owner document edited", "@changed",
        "", "docs/plan/05-accessibility-standard.md"),
-    _M("M-30", "G-UNTOUCHED", "a third catalogue line", f"@numstat:{CAT_REL}", "", "3 0"),
-    _M("M-31", "G-UNTOUCHED", "the 16 block grows", f"@numstat:{DSB_REL}", "", "19 0"),
-    _M("M-32", "G-MUTLIST", "the list drifts", "spec", "| M-1  | G-CITE ", "| M-1  | G-AC   "),
+    _M("M-38", "G-UNTOUCHED", "a third catalogue line", f"@numstat:{CAT_REL}", "", "3 0"),
+    _M("M-39", "G-UNTOUCHED", "a `16` edit (BQ-2 as ruled)", "@changed", "", DSB_REL),
+    _M("M-40", "G-MUTLIST", "the list drifts", "spec", "| M-1  | G-CITE ", "| M-1  | G-AC   "),
 )
 # fmt: on
 
@@ -652,20 +808,23 @@ def fill() -> int:
     spec = p.read_text(encoding="utf-8")
     tables = {
         "### 3.2": md(["Display (`23`:825–830)", "Device px", "Window", "`ideal_ms`", "Bucket ms",
-                       "Column px", "Safe mode", "Reduce"], crossover_rows()),
+                       "Column px", "Full tier", "Calm, reduce"], crossover_rows()),
         "### 4.2": md(["Visible rows", "Band rows (each edge)", "Quiet rows"], band_rows()),
         "### 4.3": md(["Visible rows", "Oscillation", "Amplitude", "Band rule alone", "This spec",
                        "Smallest gap"], replay_rows()),
         "### 5.2": md(["Theme", "Cut: worst ΔL", "Cut: cells ≥ 0.10", "`slow` eased, no cap",
-                       "Smallest δ", "This spec: worst ΔL", "10× lands", "100× lands"],
-                      list(rescale_rows())),
+                       "Smallest δ", "This spec: worst ΔL", "10× lands", "100× lands",
+                       "`normal` + cap: 10× lands"], list(rescale_rows())),
+        "### 5.3": md(["Theme", "10× steps", "10× lands", "100× steps", "100× lands",
+                       "Worst ΔL per step", "FR-6 per 1 000 ms (full / calm)",
+                       "Ask ramps: max red share"], list(calm_rows())),
     }  # fmt: skip
     for heading, table in tables.items():
         spec = replace_table(spec, heading, table)
     head_end = spec.index("\n", spec.index("### 16.3")) + 1
     body = spec[:head_end] + "\n" + L.mutation_table(MUTATIONS) + "\n"
     p.write_text(body, encoding="utf-8", newline="\n")
-    print("sections 3.2, 4.2, 4.3, 5.2 and 16.3 written")
+    print("sections 3.2, 4.2, 4.3, 5.2, 5.3 and 16.3 written")
     return 0
 
 

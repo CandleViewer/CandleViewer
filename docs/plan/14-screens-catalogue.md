@@ -3141,9 +3141,9 @@ All `/admin/*` routes require role `owner`; a protected admin action is challeng
 - **Analytics/audit:** `degraded.entered` `{cause, sheddedFeatures}`, `degraded.exited` `{durationMs}` (analytics + incident log).
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.15 (Penpot page `E15-D02`, board 22; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
 - **Hi-fi (E15-D12):** the GPU suggestion and the reduced profile (the rows, Details, the "Reduced" chip, the DOM's callout, the manual control and its device disclosure, the exit) in [E15-D12.md](../design/E15/E15-D12.md) §6 and [e15-responsive-and-degraded.md](../design/specs/e15-responsive-and-degraded.md) §6–§8; the other causes are their owners' (E08, E16, E35, E10) (owner approval pending).
-- **Motion spec (E21-D05):** [E21-D05.md](../design/E21/E21-D05.md) §7 (the depth-shed row and the in-panel notice enter and leave as cuts in both modes; text first, boards pending; a pointer only, it changes no requirement here).
 - **Design sign-off acceptance checklist:** [ ] each degradation cause drawn (backend partial outage, recorder down, cold tier unavailable, GPU budget exceeded, rate-limited) [ ] what still works vs what does not, stated per cause [ ] the automatic feature-shedding is disclosed, never silent [ ] manual 'reduce quality' control [ ] exit/restore state [ ] trading remains possible or is explicitly blocked - never ambiguous
 - **Depth-shed row (E21-D03):** [E21-D03.md](../design/E21/E21-D03.md) §11 (the automatic depth-shed variant, text first, boards pending; a pointer only, it changes no requirement here).
+- **Motion spec (E21-D05):** [E21-D05.md](../design/E21/E21-D05.md) §7 (the depth-shed row and the in-panel notice enter and leave as cuts in both modes; text first, boards pending; a pointer only, it changes no requirement here).
 
 ### SCR-154 — Permission denied (403)
 
