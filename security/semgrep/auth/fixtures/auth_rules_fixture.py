@@ -384,6 +384,11 @@ async def put_workspace_ok(body):
     return await svc.put(body)
 
 
+@router.post("/csp-report/flush")  # ruleid: audit-write-required
+async def csp_report_flush_bad(body):
+    return await svc.flush(body)
+
+
 @router.put("/drawings/{drawingId}/alert")  # ruleid: audit-write-required
 async def put_alert_bad(body):
     return await svc.put(body)
@@ -418,6 +423,11 @@ async def admin_post_drawing_bad(body):
 @admin.put("/drawings/{drawingId}")  # ruleid: audit-write-required-route-scope
 async def admin_put_drawing_bad(body):
     return await svc.put(body)
+
+
+@admin.post("/csp-report")  # ruleid: audit-write-required-route-scope
+async def admin_post_csp_report_bad(body):
+    return await svc.post(body)
 
 
 @admin.delete("/workspaces/{workspaceId}")  # ok: audit-write-required-route-scope

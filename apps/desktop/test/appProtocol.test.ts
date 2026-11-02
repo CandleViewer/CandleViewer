@@ -116,6 +116,14 @@ describe("resolveAppRequest", () => {
     expect(new TextDecoder().decode(res.body as Uint8Array)).toBe("export {};");
   });
 
+  it("adds Reporting-Endpoints (what report-to names) to every response when given", async () => {
+    const endpoints = 'csp-endpoint="http://127.0.0.1:8000/api/v1/csp-report"';
+    for (const url of ["app://candleviewer/assets/index-abc.js", "app://candleviewer/missing.js"]) {
+      const res = await resolveAppRequest(url, ROOT, memoryReader(DIST), CSP, "GET", endpoints);
+      expect(res.headers["reporting-endpoints"]).toBe(endpoints);
+    }
+  });
+
   it("serves index.html for the origin root", async () => {
     const res = await resolveAppRequest(APP_ENTRY_URL, ROOT, memoryReader(DIST), CSP);
     expect(res.status).toBe(200);

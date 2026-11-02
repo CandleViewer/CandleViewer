@@ -12154,6 +12154,61 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /csp-report:
+    post:
+      tags: [admin]
+      operationId: postCspReport
+      summary: Receive a browser CSP violation report
+      description: |
+        The `report-uri` / `report-to` target of the Content-Security-Policy (SR-112, C-12.10,
+        E43-T01). Browsers send reports with no credential and no CSRF token, so the operation is
+        public (`security: []`) and is served ahead of every session and RBAC layer. It only
+        counts and logs: each violation is reduced to a closed `directive` and a closed
+        `blocked_type` (and, for a network resource, the blocked host), never a path, query,
+        source file or sample, into `cv_csp_violations_total` and the `security.csp_violation` log.
+        Bounded: body at most 8 KiB, at most 30 reports per client IP per 60 s, at most 10
+        violations read per body. Accepts the legacy `application/csp-report` body, the
+        Reporting API `application/reports+json` list and a plain `application/json` body of
+        either shape; the answer carries no body on success.
+      security: []
+      x-rbac: { permissions: [], scope: none }
+      requestBody:
+        required: true
+        content:
+          application/csp-report:
+            schema: { type: object, additionalProperties: true }
+          application/reports+json:
+            schema: { type: array, items: { type: object, additionalProperties: true } }
+          application/json:
+            schema:
+              oneOf:
+                - { type: object, additionalProperties: true }
+                - { type: array, items: { type: object, additionalProperties: true } }
+      responses:
+        "204": { description: Report accepted (counted and logged). }
+        "400":
+          description: The body is not JSON.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "413":
+          description: The body is over 8 KiB.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "415":
+          description: Not `application/csp-report`, `application/reports+json` or `application/json`.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "429":
+          description: More than 30 reports from this client IP in the window.
+          headers:
+            Retry-After: { $ref: "#/components/headers/RetryAfter" }
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
   /admin/log-level:
     put:
       tags: [admin]

@@ -4978,6 +4978,32 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "cv_csp_violations_total",
+        "counter",
+        "violations",
+        ("directive", "blocked_type"),
+        "CSP violation reports received, by CSP directive and blocked resource type (E43-T01).",
+        "any script-src or connect-src violation in production (a blocked inline/eval or an "
+        "unexpected network host)",
+        _L,
+        "E43",
+        # 22 closed directive names (21 + `other`) x 9 closed blocked types (`api/csp_report.py`)
+        # = 198; default cap 200 holds it. Past it a series is dropped.
+        max_series=200,
+    ),
+    _s(
+        "cv_csp_reports_refused_total",
+        "counter",
+        "reports",
+        ("reason",),
+        "CSP report requests refused, by closed reason (E43-T01).",
+        "sustained rate_ip or rate_global refusals: a report flood on the public receiver",
+        _L,
+        "E43",
+        # Five closed reasons (`api/csp_report.REFUSAL_REASONS`); nothing else makes a series.
+        max_series=5,
+    ),
+    _s(
         "authz_denied_by_route_total",
         "counter",
         "requests",

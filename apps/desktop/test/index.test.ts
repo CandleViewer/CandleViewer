@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, vi, type Mock } from "vites
 import { pathToFileURL } from "node:url";
 import path from "node:path";
 import { app, BrowserWindow, ipcMain, protocol, session, type IpcMainInvokeEvent } from "electron";
-import { buildCsp } from "../src/main/csp";
+import { buildCsp, buildReportingEndpoints } from "../src/main/csp";
 import { resolveDevServerUrl, type DevServerUrl } from "../src/main/devServer";
 import { logAuditEvent } from "../src/main/logger";
 import { CrashLogRefusedError } from "../src/main/crashLog";
@@ -195,6 +195,7 @@ describe("app:// wiring (#3410)", () => {
     const response = await handler(new Request("app://evil.test/index.html"));
     expect(response.status).toBe(404);
     expect(response.headers.get("content-security-policy")).toBe(buildCsp());
+    expect(response.headers.get("reporting-endpoints")).toBe(buildReportingEndpoints());
     const post = await handler(new Request("app://candleviewer/", { method: "POST" }));
     expect(post.status).toBe(405);
   });
@@ -217,7 +218,11 @@ describe("app:// wiring (#3410)", () => {
     const devCallback = vi.fn();
     listener(details("http://127.0.0.1:5173/"), devCallback);
     expect(devCallback).toHaveBeenCalledWith({
-      responseHeaders: { "x-a": ["b"], "Content-Security-Policy": [buildCsp()] },
+      responseHeaders: {
+        "x-a": ["b"],
+        "Content-Security-Policy": [buildCsp()],
+        "Reporting-Endpoints": [buildReportingEndpoints()],
+      },
     });
   });
 });

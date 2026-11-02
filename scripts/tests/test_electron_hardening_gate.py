@@ -28,10 +28,18 @@ from tools.ci.electron_hardening_checks import (
 from tools.ci.electron_hardening_gate import main as gate_main
 
 GOOD_CSP = (
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "default-src 'self'; script-src 'self'; style-src 'self'; "
     "connect-src 'self' http://127.0.0.1:8000 ws://127.0.0.1:8000; "
     "img-src 'self' data: blob:; worker-src 'self' blob:; object-src 'none'; "
-    "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+    "frame-ancestors 'none'; base-uri 'none'; form-action 'none'; "
+    "report-uri http://127.0.0.1:8000/api/v1/csp-report; report-to csp-endpoint"
+)
+# A <meta> cannot carry frame-ancestors or the report directives (E43-T01).
+GOOD_META_CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self'; "
+    "connect-src 'self' http://127.0.0.1:8000 ws://127.0.0.1:8000; "
+    "img-src 'self' data: blob:; worker-src 'self' blob:; object-src 'none'; "
+    "base-uri 'none'; form-action 'none'"
 )
 GOOD_PRELOAD = """
 const { contextBridge, ipcRenderer } = require("electron");
@@ -128,7 +136,7 @@ class Tree:
             "desktop/preload/allowList.js": GOOD_ALLOW,
             "web/assets/index-abc.js": "var caps={autoUpdate:!1};console.log('hi')",
             "web/index.html": (
-                f'<html><head><meta http-equiv="Content-Security-Policy" content="{GOOD_CSP}" />'
+                f'<html><head><meta http-equiv="Content-Security-Policy" content="{GOOD_META_CSP}" />'
                 "</head></html>"
             ),
             "electron-builder.yml": GOOD_BUILDER + GOOD_WEB_RESOURCES,
@@ -203,7 +211,9 @@ def test_no_windows_collected_fails_closed_in_runtime_mode(tree: Tree) -> None:
     assert srs(tree.violations()) == {"SR-110"}
 
 
-@pytest.mark.parametrize("directive", sorted(SR112_EXACT))
+@pytest.mark.parametrize(
+    "directive", sorted({*SR112_EXACT, "frame-ancestors", "report-to", "report-uri"})
+)
 def test_removing_any_csp_directive_fails_sr112(tree: Tree, directive: str) -> None:
     weak = "; ".join(
         p for p in GOOD_CSP.split("; ") if not p.startswith(directive + " ")
@@ -222,7 +232,7 @@ def test_unsafe_eval_in_csp_fails_sr112(tree: Tree) -> None:
 
 
 def test_frame_ancestors_weakened_in_meta_fails_sr112(tree: Tree) -> None:
-    weak = GOOD_CSP.replace("frame-ancestors 'none'", "frame-ancestors *")
+    weak = GOOD_META_CSP + "; frame-ancestors *"
     tree.files["web/index.html"] = (
         f'<meta http-equiv="Content-Security-Policy" content="{weak}" />'
     )
@@ -1297,3 +1307,158 @@ def test_cli_exit_codes_and_annotation(
     assert gate_main(argv) == 1
     out = capsys.readouterr()
     assert "window 'pop%0Aout%25'" in out.out and "\nout" not in out.out + out.err
+
+
+# --- E43-T01: strict style-src, exact connect-src, header-only directives, bundle host scan ---
+
+TAILNET = "https://box.tail1234.ts.net wss://box.tail1234.ts.net"
+LOOPBACK_CONNECT = "connect-src 'self' http://127.0.0.1:8000 ws://127.0.0.1:8000"
+
+
+def _header_with(replacement: str) -> str:
+    return GOOD_CSP.replace(LOOPBACK_CONNECT, replacement)
+
+
+def test_a_tailnet_https_wss_pair_is_allowed_in_the_header_and_the_meta(
+    tree: Tree,
+) -> None:
+    ok = _header_with(f"{LOOPBACK_CONNECT} {TAILNET}").replace(
+        "report-uri http://127.0.0.1:8000/api/v1/csp-report",
+        "report-uri https://box.tail1234.ts.net/api/v1/csp-report",
+    )
+    tree.facts["cspHeader"] = ok
+    tree.files["web/index.html"] = (
+        '<meta http-equiv="Content-Security-Policy" content="'
+        + GOOD_META_CSP.replace(LOOPBACK_CONNECT, f"{LOOPBACK_CONNECT} {TAILNET}")
+        + '" />'
+    )
+    for probe in tree.probes:
+        probe["csp"] = ok
+    assert tree.violations() == []
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "https://box.ts.net",  # no wss twin
+        "https://box.ts.net wss://other.ts.net",
+        "http://box.ts.net ws://box.ts.net",  # plain http/ws is not allowed for a remote host
+        "https://* wss://*",
+        "https://1.2.3.4 wss://1.2.3.4",
+        "https://box.ts.net wss://box.ts.net https://x.ts.net",
+        "https://api.example.com wss://api.example.com https://b.com wss://b.com",
+    ],
+)
+def test_a_bad_tailnet_entry_in_connect_src_fails_sr112(tree: Tree, tail: str) -> None:
+    tree.facts["cspHeader"] = _header_with(f"{LOOPBACK_CONNECT} {tail}")
+    assert "SR-112" in srs(tree.violations())
+
+
+def test_a_non_loopback_backend_origin_fails_sr112(tree: Tree) -> None:
+    tree.facts["cspHeader"] = _header_with(
+        "connect-src 'self' http://backend.example:8000 ws://backend.example:8000"
+    )
+    assert "SR-112" in srs(tree.violations())
+
+
+@pytest.mark.parametrize("where", ["header", "meta"])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        ("style-src 'self';", "style-src 'self' 'unsafe-inline';"),
+        ("script-src 'self';", "script-src 'self' 'unsafe-inline';"),
+        ("img-src 'self' data: blob:", "img-src 'self' data: blob: 'unsafe-inline'"),
+    ],
+    ids=["style-src", "script-src", "img-src"],
+)
+def test_unsafe_inline_anywhere_fails_sr112(
+    tree: Tree, where: str, bad: tuple[str, str]
+) -> None:
+    old, new = bad
+    if where == "header":
+        tree.facts["cspHeader"] = GOOD_CSP.replace(old, new)
+    else:
+        weak = GOOD_META_CSP.replace(old, new)
+        tree.files["web/index.html"] = (
+            f'<meta http-equiv="Content-Security-Policy" content="{weak}" />'
+        )
+    vs = tree.violations()
+    assert "SR-112" in srs(vs) and any("unsafe-inline" in v.render() for v in vs)
+
+
+def test_an_extra_directive_fails_sr112(tree: Tree) -> None:
+    tree.facts["cspHeader"] = GOOD_CSP + "; font-src *"
+    vs = tree.violations()
+    assert any("unexpected directive 'font-src'" in v.render() for v in vs)
+
+
+@pytest.mark.parametrize(
+    "extra", ["frame-ancestors 'none'", "report-to csp-endpoint", "report-uri /x"]
+)
+def test_a_meta_carrying_a_header_only_directive_fails_sr112(
+    tree: Tree, extra: str
+) -> None:
+    tree.files["web/index.html"] = (
+        f'<meta http-equiv="Content-Security-Policy" content="{GOOD_META_CSP}; {extra}" />'
+    )
+    vs = tree.violations()
+    assert any("belongs in the header only" in v.render() for v in vs)
+
+
+@pytest.mark.parametrize(
+    "report_uri",
+    [
+        "report-uri https://evil.example/api/v1/csp-report",
+        "report-uri http://127.0.0.1:8000/other",
+        "report-uri /api/v1/csp-report",
+    ],
+)
+def test_a_report_uri_off_the_backend_fails_sr112(tree: Tree, report_uri: str) -> None:
+    tree.facts["cspHeader"] = GOOD_CSP.replace(
+        "report-uri http://127.0.0.1:8000/api/v1/csp-report", report_uri
+    )
+    assert "SR-112" in srs(tree.violations())
+
+
+def test_a_header_whose_connect_src_differs_from_the_meta_fails_sr112(
+    tree: Tree,
+) -> None:
+    other = "connect-src 'self' http://localhost:8000 ws://localhost:8000"
+    tree.facts["cspHeader"] = _header_with(other)
+    vs = tree.violations()
+    assert any("header and <meta> differ" in v.render() for v in vs)
+
+
+@pytest.mark.parametrize(
+    "rel",
+    ["web/assets/chunks/vendor-xyz.js", "web/worker.js", "web/assets/workers/w/a.js"],
+)
+def test_a_bybit_host_in_any_web_dist_js_fails_sr119(tree: Tree, rel: str) -> None:
+    tree.files[rel] = 'fetch("https://api.bybit.com/v5/market/time")'
+    vs = tree.violations()
+    assert "SR-119" in srs(vs)
+    assert any(Path(rel).name in v.render() for v in vs if v.sr == "SR-119")
+
+
+def test_report_uri_must_follow_the_tailnet_origin_when_connect_src_has_one(
+    tree: Tree,
+) -> None:
+    # tailnet pair in connect-src but reports still going to the loopback origin: drift.
+    tree.facts["cspHeader"] = _header_with(f"{LOOPBACK_CONNECT} {TAILNET}")
+    vs = tree.violations()
+    assert any(
+        "must be 'https://box.tail1234.ts.net/api/v1/csp-report'" in v.render()
+        for v in vs
+    )
+
+
+def test_report_uri_must_follow_the_backend_origin_without_a_tailnet(
+    tree: Tree,
+) -> None:
+    tree.facts["cspHeader"] = GOOD_CSP.replace(
+        "report-uri http://127.0.0.1:8000", "report-uri http://localhost:8000"
+    )
+    vs = tree.violations()
+    assert any(
+        "must be 'http://127.0.0.1:8000/api/v1/csp-report'" in v.render() for v in vs
+    )

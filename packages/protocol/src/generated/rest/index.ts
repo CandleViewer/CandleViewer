@@ -2240,6 +2240,35 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/csp-report": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Receive a browser CSP violation report
+     * @description The `report-uri` / `report-to` target of the Content-Security-Policy (SR-112, C-12.10,
+     *     E43-T01). Browsers send reports with no credential and no CSRF token, so the operation is
+     *     public (`security: []`) and is served ahead of every session and RBAC layer. It only
+     *     counts and logs: each violation is reduced to a closed `directive` and a closed
+     *     `blocked_type` (and, for a network resource, the blocked host), never a path, query,
+     *     source file or sample, into `cv_csp_violations_total` and the `security.csp_violation` log.
+     *     Bounded: body at most 8 KiB, at most 30 reports per client IP per 60 s, at most 10
+     *     violations read per body. Accepts the legacy `application/csp-report` body, the
+     *     Reporting API `application/reports+json` list and a plain `application/json` body of
+     *     either shape; the answer carries no body on success.
+     */
+    post: operations["postCspReport"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/detectors/config": {
     parameters: {
       query?: never;
@@ -16235,6 +16264,77 @@ export interface operations {
       403: components["responses"]["CsrfTokenInvalid"];
       409: components["responses"]["Conflict"];
       503: components["responses"]["ServiceUnavailable"];
+    };
+  };
+  postCspReport: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/csp-report": {
+          [key: string]: unknown;
+        };
+        "application/json":
+          | {
+              [key: string]: unknown;
+            }
+          | {
+              [key: string]: unknown;
+            }[];
+        "application/reports+json": {
+          [key: string]: unknown;
+        }[];
+      };
+    };
+    responses: {
+      /** @description Report accepted (counted and logged). */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The body is not JSON. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description The body is over 8 KiB. */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Not `application/csp-report`, `application/reports+json` or `application/json`. */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description More than 30 reports from this client IP in the window. */
+      429: {
+        headers: {
+          "Retry-After": components["headers"]["RetryAfter"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
     };
   };
   getDetectorConfig: {

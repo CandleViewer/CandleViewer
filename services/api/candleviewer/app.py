@@ -124,6 +124,15 @@ from candleviewer.api.audit_verify_runner import ChainVerifyRunner
 from candleviewer.api.auth_perf import auth_perf_enabled, make_auth_perf_router
 from candleviewer.api.contract_conformance import load_contract_subset
 from candleviewer.api.cors import CorsGateMiddleware, CorsPolicy
+from candleviewer.api.csp import (
+    backend_origin_for,
+    build_csp_policy,
+    build_reporting_endpoints,
+    tailnet_host_from,
+)
+from candleviewer.api.csp_report import METRIC_NAME as CSP_VIOLATIONS_METRIC
+from candleviewer.api.csp_report import REFUSED_METRIC_NAME as CSP_REFUSED_METRIC
+from candleviewer.api.csp_report import CspReportReceiver, make_csp_report_router
 from candleviewer.api.csrf import CsrfMiddleware, RefusalAuditTracker
 from candleviewer.api.deny_by_default import (
     assert_app_routes_declared,
@@ -180,7 +189,7 @@ from candleviewer.api.recording_retention import make_recording_retention_router
 from candleviewer.api.recording_status import make_recording_status_router
 from candleviewer.api.recording_symbols import make_recording_symbols_router
 from candleviewer.api.recording_writes import make_recording_writes_router
-from candleviewer.api.response_headers import NoSniff
+from candleviewer.api.response_headers import ContentSecurityPolicy, NoSniff
 from candleviewer.api.rules import CHECK_BURST_FACTOR, CHECK_ROUTES
 from candleviewer.api.rules_actor import SessionRulesActorResolver, make_rules_audit
 from candleviewer.api.rules_crud import make_rules_crud_router
@@ -1509,10 +1518,35 @@ class _StampedApp(FastAPI):
     and Starlette's own error middleware, so every answer to the backup fetch's path (its token
     is a credential) is no-store and no-referrer, the guards' refusals and a `500` included. The
     pinned order of the user middleware (#2421, #2295) is untouched. `NoSniff` (#3990) is the
-    outermost layer: `X-Content-Type-Options: nosniff` on every HTTP answer, a `500` included."""
+    outermost layer: `X-Content-Type-Options: nosniff` on every HTTP answer, a `500` included.
+    E43-T01 (SR-112): just inside it, the CSP header on every answer and the `/csp-report`
+    receiver, both read from `app.state.csp` (set by `create_app`; absent on a bare app)."""
 
     def build_middleware_stack(self) -> ASGIApp:
-        return NoSniff(NoStoreNoReferrer(super().build_middleware_stack()))
+        stack = NoStoreNoReferrer(super().build_middleware_stack())
+        csp = getattr(self.state, "csp", None)
+        if csp is None:
+            return NoSniff(stack)
+        report = CspReportReceiver(
+            stack, counter=csp.counter, refused_counter=csp.refused, enabled=csp.report_enabled
+        )
+        return NoSniff(
+            ContentSecurityPolicy(
+                report, policy=csp.policy, reporting_endpoints=csp.reporting_endpoints
+            )
+        )
+
+
+@dataclass(frozen=True)
+class _CspWiring:
+    """What `_StampedApp` needs for SR-112: the header value, its `Reporting-Endpoints` and the
+    violation counter (bound once `create_app` has its metrics facade)."""
+
+    policy: str
+    reporting_endpoints: str
+    report_enabled: bool
+    counter: Any
+    refused: Any
 
 
 def create_app(
@@ -1712,6 +1746,7 @@ def create_app(
     app.state.log_level_overrides = overrides
     # `principal_resolver=None` -> fails closed with 501 until E09-S03 (as /admin/audit).
     app.include_router(make_log_level_router(overrides, _LazyAuditEmitter(ctx.audit)))
+    app.include_router(make_csp_report_router())  # E43-T01: the receiver answers it first
     app.include_router(
         make_health_router(
             resolved,
@@ -3656,6 +3691,15 @@ def create_app(
     app.add_middleware(CorrelationMiddleware)
     # #902: counts each denied request by route and role; inside HttpDuration, outside the trio.
     app.add_middleware(AuthzDenialMiddleware, counter=metrics_facade.get(AUTHZ_DENIALS_METRIC))
+    # E43-T01: the CSP header + report receiver (an invalid `CV_CSP_TAILNET_HOST` refuses boot).
+    csp_tailnet = tailnet_host_from(resolved)
+    app.state.csp = _CspWiring(
+        policy=build_csp_policy(backend_origin_for(resolved), csp_tailnet),
+        reporting_endpoints=build_reporting_endpoints(backend_origin_for(resolved), csp_tailnet),
+        report_enabled=resolved.csp_report_enabled,
+        counter=metrics_facade.get(CSP_VIOLATIONS_METRIC),
+        refused=metrics_facade.get(CSP_REFUSED_METRIC),
+    )
     # #2421: outermost (added last), outside the Correlation -> MeshOnly -> Csrf guard trio, which
     # must stay adjacent and in that order. Times every request, mesh/CSRF refusals included; it
     # neither reads nor needs the correlation id.
