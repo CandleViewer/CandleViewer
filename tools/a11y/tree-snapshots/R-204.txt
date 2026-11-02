@@ -58,23 +58,23 @@
         - text: Every command with its key binding.
       - listitem:
         - button "Trading defaults" [disabled]
-        - text: "Not available yet: this section ships in a later release."
+        - text: This section isn't available yet.
       - listitem:
         - link "Notifications":
           - /url: /settings/notifications
         - text: Channels and quiet hours per event.
       - listitem:
         - button "Data & performance" [disabled]
-        - text: "Not available yet: this section ships in a later release."
+        - text: This section isn't available yet.
       - listitem:
         - link "Accessibility":
           - /url: /settings/appearance#accessibility
         - text: Motion, contrast, focus and announcements.
       - listitem:
         - button "Help & about" [disabled]
-        - text: "Not available yet: this section ships in a later release."
+        - text: This section isn't available yet.
   - button "Reset Notifications…" [disabled]
-  - text: "Not available yet: resetting needs the settings service."
+  - text: Resetting this section isn't available yet.
   - heading "R-204 — owned by E11" [level=1]
   - paragraph: This screen has not shipped yet.
 - complementary "Side panels":
