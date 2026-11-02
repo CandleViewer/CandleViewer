@@ -140,7 +140,7 @@ RULING_TEXT = (
     " under a CMP-028 notice; the cadence and owner written into `05` §8.3 in this PR. BQ-11 "
     "— the copy-template feedback path, no personal fields; the submit endpoint a G-row; the "
     "two analytics events as a `14` A-row. BQ-12 — read-only for all roles, no T2 control. `R"
-    "efs #1311` + `Partial:` while #1301 is open, then `Closes #1311`."
+    "efs #1311` + `Partial:` while #1301 is open, then the closing keyword for this ticket."
 )
 
 DS_SRC_REL = "packages/ui/tokens"

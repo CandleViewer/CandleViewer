@@ -115,7 +115,7 @@ The boards of spec §0, on page `E47-D13 — Conformance statement`; frames name
 
 ## §I Summary for #1311
 
-1. Text-first statement, report and register + hand-off + default-deny audit tool; the 10<!--=COUNT:boards--> boards of spec §0 are pending (pre-stage; BQ-0 … BQ-12 RULED as proposed, comment 6566807313; BQ-13 … BQ-16 defaults built, ruling pending; `Refs #1311` + `Partial:` until #1301 closes, then `Closes #1311`).
+1. Text-first statement, report and register + hand-off + default-deny audit tool; the 10<!--=COUNT:boards--> boards of spec §0 are pending (pre-stage; BQ-0 … BQ-12 RULED as proposed, comment 6566807313; BQ-13 … BQ-16 defaults built, ruling pending; `Refs #1311` + `Partial:` until #1301 closes, then the closing keyword for this ticket).
 2. The report: 55<!--=COUNT:report.rows--> rows, four words, generated from the registers by blob; the dry run committed with its banner.
 3. Supports only with every required artefact on every screen; missing evidence is said; reviewers lower, never raise.
 4. The evidence contract: ten classes, their artefact kinds and producers, carried as rows to the stories.
