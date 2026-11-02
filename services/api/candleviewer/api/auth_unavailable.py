@@ -26,6 +26,7 @@ from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import MfaKeyringUnavailable
 from candleviewer.auth.metrics import auth_audit_outcome_lost_total, normalise_outcome_action
 from candleviewer.auth.mfa_keyring import KEYRING_UNAVAILABLE
+from candleviewer.observability.context import current_request_uuid
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 ACTION: Final = "auth.mfa_unavailable"
@@ -83,12 +84,12 @@ def unavailable_row(
 async def record_unavailable(
     emit: Callable[..., Awaitable[None]], row: Mapping[str, object]
 ) -> None:
-    """Write `row` as `auth.mfa_unavailable` through `emit`, bounded by the audit timeout; a
-    record that fails is counted and logged, never raised (the answer is decided). A cancellation
-    is counted too and propagates."""
+    """Write `row` as `auth.mfa_unavailable` through `emit`, naming the request it answers
+    (#3990), bounded by the audit timeout; a record that fails is counted and logged, never raised
+    (the answer is decided). A cancellation is counted too and propagates."""
     try:
         async with asyncio.timeout(AUDIT_TIMEOUT_S):
-            await emit(ACTION, **row)
+            await emit(ACTION, request_id=current_request_uuid(), **row)
     except (AuditError, RuntimeError, TimeoutError) as exc:  # RuntimeError: audit not started
         _lost(type(exc).__name__)
     except asyncio.CancelledError:

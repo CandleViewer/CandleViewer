@@ -255,7 +255,7 @@ def make_invites_router(
         for the address and the enrolment window keeps running; the `auth.mfa_unavailable` row
         is best effort (BQ-8)."""
         row = unavailable_row(operation, exc, actor_ip=_actor_ip(request))
-        await record_unavailable(emitter.emit, {**row, "request_id": current_request_uuid()})
+        await record_unavailable(emitter.emit, row)
         return auth_unavailable()
 
     async def _json_body(request: Request) -> dict[str, Any] | None:

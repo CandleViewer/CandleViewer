@@ -922,7 +922,7 @@ def make_step_up_router(
             row = unavailable_row(
                 "authStepUp", exc, user_id=record.user_id, actor_ip=source_ip(request.scope)
             )
-            row |= {"session_id": record.id, "request_id": current_request_uuid()}
+            row |= {"session_id": record.id}
             await record_unavailable(emitter.emit, row)
             return auth_unavailable()
         except SessionRevoked:

@@ -2,8 +2,9 @@
 `create_app()` routers and services of `tests/security/auth/_stack.py`, each of the eight MFA
 operations answers `503 auth_unavailable` while the keyring refuses: `Retry-After: 30`, a body that
 conforms to `Problem` and names no cause, and one `auth.mfa_unavailable` record naming the
-operation. A request an invite route answered so stored nothing to replay: sent again, key and
-all, it executes once (BQ-17). A user without a method and an existing session are unaffected."""
+operation and the request (#3990). A request an invite route answered so stored nothing to
+replay: sent again, key and all, it executes once (BQ-17). A user without a method and an existing
+session are unaffected."""
 
 from __future__ import annotations
 
@@ -190,6 +191,8 @@ def test_each_mfa_operation_answers_the_contract_s_503(
     (record,) = stack.audit.of(_ACTION)
     assert record["outcome"] is AuditOutcome.FAILURE
     assert record["after_state"] == {"operation": operation, "reason": "auth_keyring_unavailable"}
+    # #3990: the record names the request the middleware bound, on every route's path.
+    assert str(record["request_id"]) == answer.headers["x-correlation-id"]
 
 
 #: The two second-factor routes, which share one per-address budget of refusals (#4664, SR-015),
