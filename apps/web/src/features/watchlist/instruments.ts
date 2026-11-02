@@ -24,8 +24,9 @@ export type InstrumentSource = Pick<
 /** Lookups a list may ask for at once: a list holds at most 200 symbols, and few of them stop trading. */
 const MAX_LOOKUPS = 20;
 /**
- * Lookups one preview may ask for in all (C-5335-02): its tokens are the user's text, not a list, and each unknown one
- * costs the server an on-demand catalogue read; past it a token reads "Not found" without a request.
+ * Lookups one pane or import control may ask for in all, over every preview it shows (C-5335-02): its tokens are the
+ * user's text, not a list, and each unknown one costs the server an on-demand catalogue read; past it a token reads
+ * "Not found" without a request.
  */
 export const PREVIEW_LOOKUPS = 20;
 
