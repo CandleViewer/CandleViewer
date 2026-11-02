@@ -16,11 +16,18 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from candleviewer.api.market_response import bars_provenance, serialize_bar
-from candleviewer.bars.kline_rows import KLINE_SOURCE
+from candleviewer.bars.kline_rows import KLINE_SOURCE, kline_row
 from candleviewer.bars.models import Bar, BarSpec
-from candleviewer.bars.reader import BarReader, stored_bar
-from candleviewer.bars.rows import _CHECKSUM_FIELDS, FLAG_COLUMNS, bar_row, row_checksum
+from candleviewer.bars.reader import BarReader, StoredBar, stored_bar
+from candleviewer.bars.rows import (
+    _CHECKSUM_FIELDS,
+    BUILD_VERSIONS,
+    FLAG_COLUMNS,
+    bar_row,
+    row_checksum,
+)
 from candleviewer.bars.time_builder import TimeBarBuilder
+from candleviewer.exchange.base.models import KlineEvent
 from candleviewer.ws.bars_wire import bar_item, bars_frames, covering_scales, item_bar
 from candleviewer.ws.binary import decode, encode
 from candleviewer.ws.cvwb_vectors import structured
@@ -212,14 +219,49 @@ def test_bar_flags_provenance_names_the_lowest_build_and_stale(
     assert meta == {"spec_hash": SPEC.spec_hash, **want}
 
 
-def test_bar_flags_provenance_ignores_exchange_klines() -> None:
-    """An exchange kline is no built bar: it neither lowers `build_version` nor marks stale."""
+def _kline(start: int = T0) -> StoredBar:
+    """A stored exchange kline as the reader serves it: `source=kline`, yet a build_version."""
+    event = KlineEvent.model_validate(
+        dict(
+            event_id="00000000-0000-7000-8000-000000000001", ts_event=start, ts_ingest=start,
+            source="backfill", symbol=SYM, interval="1", start=start, end=start + MIN - 1,
+            open="100", high="101", low="99", close="100.5", volume="10", turnover="1000",
+            confirmed=True,
+        )
+    )  # fmt: skip
+    return stored_bar(kline_row(event, SPEC))
 
-    class _Kline:
-        ts_us = T0
 
-    meta = bars_provenance([_Kline(), _stored(2)], spec_hash=SPEC.spec_hash, running=2)
-    assert (meta["build_version"], meta["stale_build"]) == (2, False)
+_RUNNING = BUILD_VERSIONS["time"] + 1
+
+
+def _prov(rows: list[object]) -> dict[str, object]:
+    return bars_provenance(rows, spec_hash=SPEC.spec_hash, running=_RUNNING)
+
+
+def test_bar_flags_provenance_a_klines_only_page_carries_the_running_build() -> None:
+    """22 `BarsMeta`: an exchange kline is no built bar, though its row records a build_version
+    (below `running` here): a klines-only page is `running` and not stale."""
+    rows = [_kline(T0), _kline(T0 + MIN)]
+    assert [r.build_version for r in rows] == [BUILD_VERSIONS["time"]] * 2
+    assert _prov(rows) == {
+        "spec_hash": SPEC.spec_hash, "build_version": _RUNNING, "stale_build": False
+    }  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("built", "want", "stale"),
+    [(_RUNNING, _RUNNING, False), (_RUNNING - 1, _RUNNING - 1, True)],
+    ids=["built-current", "built-old"],
+)
+def test_bar_flags_provenance_a_mixed_page_counts_only_the_built_bars(
+    built: int, want: int, stale: bool
+) -> None:
+    """Kline rows (older build) beside a built row: only the built row sets the provenance."""
+    row = bar_row(_bar(), SPEC, generation=GEN)
+    row["build_version"] = built
+    meta = _prov([_kline(T0), stored_bar(row), _kline(T0 + MIN)])
+    assert (meta["build_version"], meta["stale_build"]) == (want, stale)
 
 
 async def test_bar_flags_a_null_build_version_is_stale_on_the_range_and_tail_reads() -> None:
