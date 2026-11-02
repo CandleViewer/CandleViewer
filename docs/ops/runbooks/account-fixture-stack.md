@@ -151,24 +151,28 @@ account's exposure unreadable, so its revoke answers `409 exposure_unknown`: swi
 python3 $S down --project <project>
 ```
 
-`down` first lists the project's containers, networks and volumes by their compose label and reads each one's
-`cv.lane` label. If any carries another lane's label, or none, `down` refuses: exit 2 and the one fixed line
+Every command checks the run root first, and `down`, `restart-api` and `drive` then check the run directory and its
+`stack.env`, each before any docker call and each refused with exit 2 and one fixed line that shows no path or uid. The
+run root (`$XDG_RUNTIME_DIR` when it is set and absolute, else `/dev/shm`) must be a real directory, never a link, that
+is the invoking user's own with no group or other write bit, or that is sticky. The run directory and `stack.env` must be
+the invoking user's own, mode 0700 and 0600 as `up` makes them (neither a link). `stack.env` must also name this lane:
+the lane `up` wrote into it is matched with theirs, and one that names another lane or none is refused (a line of its
+own, nothing of the file shown). A run directory with no `stack.env` goes on as before.
+
+Then `down` lists the project's containers, networks and volumes by their compose label and reads each one's `cv.lane`
+label. If any carries another lane's label, or none, `down` refuses: exit 2 and the one fixed line
 `account-fixture-stack: refused: the project has an object that carries another lane's label, or none: it is not this
 lane's`, with no compose call and the run directory kept; running it again changes nothing. A lane's `down` never takes
 another lane's project down, and `up`, `restart-api` and `drive` refuse such a project the same way. A project with no
-object listed is not thereby this lane's: `down`, `restart-api` and `drive` also match the lane `up` wrote into the run
-directory's `stack.env` with theirs, before they use or remove the directory, and refuse one that names another lane or
-none (exit 2, a line of its own, nothing of the file shown); a run directory with no `stack.env` goes on as before. The
-run directory and `stack.env` must be the invoking user's own, mode 0700 and 0600 as `up` makes them (neither a link):
-those three commands check that first and refuse anything else with exit 2 and one fixed line that shows no path or
-uid, before any docker call.
+object listed is not thereby this lane's, which is why the match on `stack.env` comes first.
 
 When every listed object carries this lane's label, `down` goes by the project name alone: `docker compose -p
 <project> down -v --remove-orphans`, run from an empty directory, so compose reads no compose file and no env file and
 needs no `-f`, no run directory and no value. Then the project's containers, networks and volumes are listed by their
-compose label, and only when that lists nothing is the run directory unlinked: the line ends `0 containers, 0 networks,
-0 volumes left; run directory removed`. A second `down` finds nothing and ends `; no run directory`. After a reboot
-(the tmpfs run directory gone, the volumes not) `down` works the same way.
+compose label, and only when that lists nothing is the run directory unlinked, after the same owner and mode check on
+the directory it opens: the line ends `0 containers, 0 networks, 0 volumes left; run directory removed`. A second `down`
+finds nothing and ends `; no run directory`. After a reboot (the tmpfs run directory gone, the volumes not) `down`
+works the same way.
 
 `down` removes no image: the api, the schema step and both one-shots are built here, and compose tags each by the
 project's name and the service's. After `down`, list those images by the project's name prefix and remove each by
