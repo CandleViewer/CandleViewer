@@ -1,0 +1,250 @@
+# E27-D05 pins: KEY|line|words that stand on that line at the base (the tool's G10).
+# `--repin` keeps every hand-written pin still cited and adds the line's opening words.
+05|33|4. Destructive/irreversible actions (submit market order, flatten all, c
+05|47|| | Open Watchlist / symbol search | `/` | Only active when focus is not
+05|61|| | Size preset 1–5 | `1`..`5` | Context-scoped to trading views only (d
+05|96|3. **Focus is never silently stolen**: a live price update, a new fill n
+05|97|4. **Modal dialogs** (order confirm, flatten-all confirm, Demo→Live swit
+05|99|6. **Visible focus indicator**: WCAG 2.2 SC 2.4.11 (Focus Not Obscured,
+05|100|7. **Target size**: WCAG 2.2 SC 2.5.8 (Target Size, Minimum, AA) — all c
+05|102|9. **Consistent help mechanism**: WCAG 2.2 SC 3.2.6 (Consistent Help, A)
+05|107|**Rule (non-negotiable, applies everywhere)**: colour is always a _reinf
+05|125|1. **Text contrast (WCAG 1.4.3, AA)**: body text and labels ≥4.5:1 again
+05|126|2. **Non-text/UI component contrast (WCAG 1.4.11, AA)**: buttons, form-f
+05|130|6. **User-adjustable contrast**: a high-contrast theme toggle (`Ctrl+Shi
+05|131|7. **Text resize (WCAG 1.4.4, AA)**: UI must remain usable with 200% bro
+05|151|- `aria-live="polite"` region for ambient updates (best bid/ask, mark pr
+05|152|- `aria-live="assertive"` (or `role="alert"`) reserved for discrete, low
+05|154|- **Region hygiene**: live regions are pre-rendered empty containers on
+05|212|## 7. Reduced motion
+05|218|3. **No content flashes more than 3 times per second** (WCAG 2.3.1, seiz
+05|221|## 8. Screen-reader test protocol
+05|229|| 1 | Windows 11 23H2+ | Electron shell (production build, primary AT su
+05|238|1. **Setup**: fresh profile, default hotkey map, default theme, screen r
+05|248|5. **Defect severity bar**: any task in the script that cannot be comple
+11|504|Then the account row shows green with the last heartbeat age
+11|510|Then the row shows red, order entry is disabled for that account, and th
+11|513|NFR: heartbeat ≤10 s; transition to red within 30 s; states announced to
+14|85|5. **RBAC denies server-side; the UI presents.** A control the session m
+14|427|### SCR-016 — First-run onboarding wizard (owner)
+14|474|- **A11y:** Wizard is a sequence of `<form>` steps with an `aria-current
+14|491|### SCR-019 — Setup checklist card
+14|1834|### SCR-079 — Account detail drawer (trading-side)
+14|1841|- **A11y:** Drawer has a heading naming the account and environment; bal
+14|1844|- **Design sign-off acceptance checklist:** [ ] equity, available balanc
+14|2619|### SCR-125 — Admin: Bybit accounts list
+14|2636|- **States:** ok · key expiring (<14 d) · key invalid · IP whitelist mis
+14|2637|- **A11y:** each state is a text chip; the withdrawal check result is al
+14|2643|- **Design sign-off acceptance checklist:** [ ] columns (label, UID, env
+14|2647|### SCR-126 — Admin: add / edit Bybit account
+14|2666|- **A11y:** secret fields are `type=password` with an explicit "value is
+14|2671|- **Design sign-off acceptance checklist:** [ ] label, environment, API
+14|2675|### SCR-127 — Admin: API key rotation
+14|2680|- **A11y:** A stepper dialog (enter new key -> validate -> switch over -
+14|2684|- **Design sign-off acceptance checklist:** [ ] all rotation stages draw
+14|2688|### SCR-128 — Admin: key health & secrets policy panel
+14|2693|- **A11y:** A table of keys with age, permissions, allowlist state and n
+14|2696|- **Design sign-off acceptance checklist:** [ ] per-key age, permissions
+14|2700|### SCR-129 — Admin: account disable / delete confirmation
+14|2704|- **A11y:** `role="alertdialog"` restating the consequences as a list (o
+14|2708|- **Design sign-off acceptance checklist:** [ ] disable and delete are s
+15|143|### CMP-010 Slider
+15|148|- **A11y**: `role="slider"`, `aria-valuenow/min/max/text`, arrow keys ±s
+15|401|### CMP-034 MaskedValue (
+15|403|masked API key/secret display with
+15|406|- **A11y**: toggle is CMP-002 IconButton with label "Show {label}"/"Hide
+15|410|is a veto only: `false` masks
+15|416|visually (updates every second would
+15|519|- **Props**: `title` · `message` · `role?` (CMP-043's: `alertdialog` for
+15|520|- **States**: standard; typed (Confirm natively disabled until the summa
+15|525|- **As built (E05-S03)**: no `initialFocus` prop: focus always starts on
+15|754|- **A11y**: a `<nav>` with an `aria-label` holding an ordered list; `ari
+15|1170|### CMP-104 LeverageSlider
+15|1174|- **A11y**: extends CMP-010 Slider contract; live liquidation-price prev
+15|1208|### CMP-106 ProfileBadge (account identity chip)
+15|2228|- **A11y**: withdrawal-off state is rendered with an affirmative "Withdr
+15|2254|- **A11y**: `role="region"` labelled by its heading, which is the link;
+15|2632|- **Props**: `value` · `onChange` · `autoComplete: "current-password"|"n
+15|2634|a real `<button aria-pressed>` with
+16|125|Two supported density modes, selectable globally (Settings → Appearance)
+16|129|| **Compact** (default for trading surfaces) | 24px | 24px | `space.2` (
+16|130|| **Comfortable** (default for admin/onboarding/settings) | 32px | 32px
+16|135|> (E05-D01). Compact remains exactly the WCAG 2.2 §2.5.8 minimum (24×24p
+16|167|- **Runtime contract (E05-T02, `packages/ui/src/theme/`).** The runtime
+23|861|| `wallet` | `exchange_account_ids` | Current balances + account health
+23|866|| `system` | — | Current health + flags + kill-switch | 1 000 ms | [`Sys
+23|1316|| `system` | `feature_flags`: per flag key, last-write-wins, a key is ne
+D02|1339|| E27-D05 (#818) a11y review | §9; the 200 % reflow and forced colours;
+D03|38|(E27-D05) · the handoff pack (E27-D06) · design QA (E27-D07) · implement
+D03|150|| [ ] | SCR-079 (`14:1753`) equity, available balance, used margin, unre
+D03|153|| [ ] | SCR-079 (`14:1753`) rate-limit budget usage | the Owner's deploy
+D03|182|CMP-034: permanently masked
+D03|192|## 0. The boards (drawn; ten under the lever-4 cap)
+D03|194|Page **`E27-D03 Accounts and key vault hi-fi`** (36 characters), created
+D03|195|step; page id `2cfb7e8e-8725-806d-8008-daee3d38d63c` (`docs/design/READM
+D03|338|### 2.1 CMP-175 KeyPermissionBadge — the variant set (AC2, AC3)
+D03|491|- Static text: not focusable. The word is its text; the glyph is `aria-h
+D03|508|### 2.2 CMP-176 AccountKeyRow — the row, blocked and disabled
+D03|518|| key and rights | line 1 | the masked id with the rights and withdrawal
+D03|523|| notice | line 2, in place of its three facts | the blocked sentence, t
+D03|657|### 2.3 CMP-034 MaskedValue — permanently masked (AC4)
+D03|702|#### CMP-201 PasswordField — the write-only variant (BQ-8 rider)
+D03|712|| Behaviour | — | `type=password` always, never re-filled; paste allowed
+D03|748|#### CMP-028 — the KEK-unavailable notice (BQ-9; frames 17, 29, 41 and 4
+D03|778|#### CMP-035 — the 900 s rotation overlap (BQ-10; frame 38)
+D03|791|polite once, with focus on stage 5's heading if the wizard is open (`D02
+D03|804|#### CMP-044 — the rungs as E27 uses them (BQ-11; frames 5 and 49–61)
+D03|847|- **A11y.** `role="alertdialog"` described by its first consequence; ini
+D03|851|#### CMP-066 — one stepper, list or nav (BQ-12; frames 18–19, 33–41 and
+D03|887|#### CMP-178 — per-key health, inline (BQ-13; frames 6, 16 and 62–71)
+D03|891|| `healthy` | "Healthy · {n} s", the heartbeat age; "Healthy" alone whil
+D03|904|the last read and never ticks (a refresh on open and every 60 s, `D02:38
+D03|918|### 2.5 The other homes (AC6) — CMP-011, CMP-201, CMP-203, CMP-033 and t
+D03|989|## 3. SCR-125 — Bybit accounts list (`/admin/accounts`; boards 04 and 05
+D03|1115|### 3.4 The hi-fi rows (frames 1 and 6–17)
+D03|1124|| 7 | `SCR-125 / empty` | status | the two header rows over one body row
+D03|1130|| 13 | `SCR-125 / withdrawal permission detected: blocking error` | T2 p
+D03|1131|| 14 | `SCR-125 / IP whitelist missing or mismatched` | status | sub_001
+D03|1168|## 4. SCR-126 — Add or edit a Bybit account, and SCR-016 step 3 (board 0
+D03|1192|| G API key field | CMP-040 (label "API key"; help "value is write-only"
+D03|1193|| H API secret field | as G; label "API secret", help CP-1 verbatim: "Wr
+D03|1229|| 19 | `SCR-126 / paste the key: write-only fields and the allowlist row
+D03|1240|| 30 | `SCR-126 / step-up gate before save` | T1 | SCR-006 over frame 19
+D03|1241|| 31 | `SCR-126 / edit mode: no key field, the key row with Rotate` | ou
+D03|1244|### 4.4 SCR-016 step 3 — the account step as insets (board 06)
+D03|1271|## 5. SCR-127 — Key rotation (board 07)
+D03|1294|| Key fields (stage 2) | two CMP-040 stacked fields holding CMP-201's wr
+D03|1338|| 33 | `SCR-127 / stage 1: create the new key at Bybit` | status | Stepp
+D03|1339|| 34 | `SCR-127 / stage 2: paste and confirm` | status · T1 on the press
+D03|1341|| 36 | `SCR-127 / stage 3 refused: nothing changed, the old key still ac
+D03|1344|| 39 | `SCR-127 / stage 5: old key revoked here, delete it at Bybit` | O
+D03|1348|## 6. SCR-128 — Key health and secrets policy (boards 04 and 05)
+D03|1424|| 42 | `SCR-128 / key table and the secrets-at-rest policy` | status | T
+D03|1425|| 43 | `SCR-128 / overdue rotation` | status (a warning, never an error)
+D03|1428|| 46 | `SCR-128 / mark as compromised: the ordered card` | status | sub_
+D03|1432|## 7. SCR-129 — Disable, delete and the revoke dialog (board 08)
+D03|1451|| Dialog | CMP-044 on CMP-043, `role="alertdialog"`, `aria-modal="true"`
+D03|1453|| Consequences | a list read in order (list semantics): what stops, the
+D03|1455|| Typed label (rung 3) | CMP-040 + a text field: "Type sub_002 to confir
+D03|1457|| Marker | revoke: "Recorded in the audit log · API key revoked (api_key
+D03|1458|| Footer | [Cancel] first and initially focused, then the confirm. The c
+D03|1494|confirm, where it is drawn). The first Tab from Cancel therefore reaches
+D03|1495|an input is unmet, moves focus to the first unmet input. In the group, T
+D03|1524|## 8. SCR-079 — Account detail drawer, and SCR-019's account tasks (boar
+D03|1541|| Header | `h2` "{label} · {ENV} · {kind}" (`e27.scr079.h2`): the enviro
+D03|1542|| Balances | the caption "Balances · as of {hh:mm:ss} UTC" (CMP-036 `fre
+D03|1543|| Positions and leverage | `h3` "Positions and leverage"; one line per p
+D03|1545|| Key and health — the Owner | `h3` "Key and health"; the key line, "API
+D03|1589|| 69 | `SCR-079 / viewing as a manager` | T2 per §10.1 (view-as leg firs
+D03|1590|| 70 | `SCR-079 / disabled or suspended account` | T2 per §10.1 (state l
+D03|1605|| 76 | `SCR-019 / account task pending` | status | both tasks unchecked,
+D03|1609|## 9. Contrast, greyscale and colour vision — the measured matrix
+D03|1805|the built screens is E27-D05's.
+D03|1871|### 10.1 The T2 rule (stated once)
+D03|1905|E27-D02's eight rows (`D02:1016-1025`) carried into hi-fi; the legs in t
+D03|1910|| Verify and save; Add a key… (`createApiKey`) | SCR-126 (frame 29), SCR
+D03|1911|| Rotate key… (`rotateApiKey`) | SCR-125 row menu (frames 13, 17), SCR-1
+D03|1912|| Test key… (`testApiKey`) | SCR-125 row menu (frame 11), SCR-128 (frame
+D03|1913|| Delete (keeps history)… (`deleteExchangeAccount`) | SCR-125 row menu,
+D03|1914|| "Leave positions and orders open" radio (`open_exposure=leave_position
+D03|1915|| Change leverage… (`setPositionLeverage`) | SCR-079 (frames 64, 68–71)
+D03|1916|| Position mode, margin mode (`updateExchangeAccount`) | SCR-079 (frames
+D03|1917|| Tasks `sub_account`, `api_key` (CMP-097 steps) | SCR-019 (frame 78) |
+D03|1921|| Session | `/admin/accounts` (SCR-125..129) | SCR-079 key facts (rights
+D03|1927|| Owner viewing as alex (a Manager) | T3: SCR-155 (every read answers as
+D03|1932|Over-converting is as wrong as under-converting (E09-D09 §2.1; `D02:1027
+D03|1936|`aria-busy="true"`, focusable, the validating copy beside it (D18); a ke
+D03|1945|- **The validity look** — form validity, E42-D03's form for a rung confi
+D03|1958|- **T3** — every admin route for a Manager, a Viewer and a view-as sessi
+D03|1961|## 11. Keyboard, focus and live regions (board 10)
+D03|1974|| SCR-125 (`/admin/accounts`) | landmarks: the band (`role="region"` "Ad
+D03|1975|| SCR-126 add | a page; the CMP-066 `nav` stepper with `aria-current="st
+D03|1976|| SCR-126 edit | a page | Label → Rotate key… (Add a key… when keyless)
+D03|1977|| SCR-016 step 3 | E09's wizard page; the `nav` stepper (`aria-current="
+D03|1978|| Test dialog (SCR-125, SCR-128) | `role="dialog"`; Cancel | Cancel → Ru
+D03|1979|| SCR-127 wizard | `role="dialog"`, `aria-modal="true"`; the stage headi
+D03|1980|| SCR-129 disable, delete, revoke | `role="alertdialog"`, `aria-describe
+D03|1981|| SCR-006 step-up (E09-D06, consumed) | `role="alertdialog"`; the passwo
+D03|1982|| Compromise card (a region of SCR-128) | `role="region"` labelled by it
+D03|1983|| SCR-079 drawer | `role="dialog"`, `aria-modal="true"`, labelled by the
+D03|1984|| SCR-019 account tasks (content) | CMP-097's ordered list; the card's c
+D03|1986|**Text resize at 1280 × 800** (R1; `05:131`; BQ-4 reads the ticket's "20
+D03|1989|| Surface | 125 % zoom (1024 × 640 CSS px) | 200 % zoom (640 × 400 CSS p
+D03|1990|| ------------------------ | -------------------------------------------
+D03|1991|| SCR-125 list | every column kept | one card per account: the label lin
+D03|1994|| Test and SCR-129 dialogs | unchanged | they fill the viewport; the bod
+D03|1995|| SCR-127 wizard | unchanged | it fills the viewport; the stepper collap
+D03|1996|| SCR-079 drawer | 480 CSS px, unchanged | full width at 720 CSS px or l
+D03|1999|A sticky header or footer leaves scroll padding equal to its height, so
+D03|2002|**Targets and the ring.** The admin screens are comfortable: 32 px contr
+D03|2010|**Announcements** (D21; `05:146-150`: discrete, once, never per tick; ev
+D03|2015|| a process read-only notice arrives (`23` §15.9) | CMP-092's blocking r
+D03|2016|| the verdict line turns overdue, failed or unavailable while `/admin/ac
+D03|2017|| the latch clears | the shell announcer, polite | once | `e27.shell.ban
+D03|2018|| a row chip turns BLOCKED, Key refused, IP allowlist: no match or Down
+D03|2019|| a row chip turns Degraded, or recovers | the shell announcer, polite |
+D03|2020|| a refusal on SCR-126 or SCR-016 | CMP-027 `role="alert"` | once | `e27
+D03|2021|| a pass on SCR-126 or SCR-016 | polite | once | `e27.scr126.saved` |
+D03|2022|| the validating state passes about 3 s | polite | once | `e27.scr126.va
+D03|2023|| a Test result | assertive on a fail, polite on a pass | once | `e27.sc
+D03|2024|| a Test refused with `429` | assertive (T4) | once | `e27.scr125.test.t
+D03|2025|| an SCR-127 stage change | no live region: focus moves to the stage hea
+D03|2026|| a refusal at SCR-127 stage 3 | assertive | once | `e27.scr127.stage3.r
+D03|2027|| the overlap at 60 s and at 10 s | CMP-035, `aria-live="off"`, discrete
+D03|2028|| the overlap ends: the server's `completed`, never the timer reaching 0
+D03|2029|| the SCR-129 summary is still loading at 1 s | polite | once | `e27.scr
+D03|2030|| the SCR-129 summary has loaded | polite; focus stays on Cancel | once
+D03|2031|| an SCR-129 exchange error | CMP-027 `role="alert"` | once | `e27.scr12
+D03|2032|| a revoke, a disable or a delete is done | polite | once | `e27.scr129.
+D03|2033|| the egress IP is copied | CMP-033's own, polite | once | `e27.shared.c
+D03|2034|| SCR-079's balances refresh | none | — | silent |
+D03|2035|| an SCR-079 balance turns stale | polite | once | `e27.scr079.announce.
+D03|2036|| SCR-079's key is rejected while the drawer is open | assertive | once
+D03|2037|| the session's access changes mid-session (`permission_change`) | E09-D
+D03|2038|| a keystroke on a T2 control | polite | once per press | the reason sen
+D03|2043|The countdown never speaks per tick, the health chips never speak on a r
+D03|2258|| `e27.scr126.invalid.key_empty` | CMP-040 inline error on press · frame
+D03|2524|A screen never writes its own reason (GATE G-T2.4): every gated control
+D03|2532|| `keys.kek_unavailable` | "Off while the credential key is unavailable.
+D03|2535|| `keys.compromise_path` | "A key that can move funds takes the compromi
+D03|2536|| `accounts.never_keyed` | "An account that never had a key can only be
+D03|2541|| `accounts.no_key` | "No API key yet — trading is off for this account.
+D03|2553|| `frozen` | "Trading frozen by the owner at {hh:mm} UTC — new orders of
+D03|2555|| `arm.locked` | "LOCKED · {account} · {size} {coin}" | E30-D02 §14 (`E3
+D03|2700|| D03-C1 | **"cosy".** The ticket asks for compact, cosy and comfortable
+D03|2707|| D03-C8 | **A distinct critical hue (DS-6)**, BQ-6's OWNER-LEVEL rider.
+D03|2708|| D03-C9 | **The verdict line's own announcement vs `15:935`.** E27-D02
+D03|2710|| D03-C11 | **The unmet rung confirm.** E27-D02 allows a native `disable
+D03|2721|| D03-H2 | **E27-D05 (#818), the a11y review.** §9's matrix and forced-c
+D03|3018|## Appendix A. The `15` and `14` edits, old → new
+D03|3112|| SCR-079 · insert before `14:1756` | — | ``- **Hi-fi (E27-D03):** [E27-
+D04|92|is information, not motion. A text change once a second is a one-shot st
+D04|150|## 4. Reduced motion, focus and announcements
+D04|152|- **The reduce column.** Rows 2a, 2b, 6 and 7 take E05-D03's reduce cell
+D04|155|- **One mechanism.** Reduce is driven by `data-motion` only, never by a
+D04|157|- **No flash anywhere.** No row starts a flash, so HS-1 and HS-1b (`E05-
+D04|158|MR-1 holds with no flash counted. MR-2 holds through rows 6 and 7 as E05
+D04|161|- **Focus moves only on a user action, with the one carve-out below.** D
+D04|163|- **The one server-driven focus move.** The stage 4 to 5 change (M-3) ar
+D04|167|- **Danger from the server never moves focus.** A withdrawal-detected, K
+D04|191|| C-3 | E05-D03's generic row 6 (`E05-D03`:74) puts the shimmer on every
+D04|192|| C-4 | §4's "Focus moves only on a user action" has one carve-out: the
+D04|198|## 7. The board register for PR 2
+D04|206|| 01 | `E27-D04 / 01 verification` | `docs/design/E27/img/E27-D04-01-ver
+D04|212|| 07 | `E27-D04 / 07 compromise-drawer` | `docs/design/E27/img/E27-D04-0
+DS|15|orchestrator's round. A **G-T2 miss is a Major** in the pre-lens; a **Re
+DS|17|## G-T2 — the controls E09-D09 §2.1 routes to T2 are specified as T2
+DS|49|- **G-T2.4** (§3.1–§3.2): every reason is one of §3.1's keys (`{verb}` o
+DS|65|- **R1 Text resize** (`05` §5 item 7, WCAG 1.4.4): for every dialog, dra
+DS|74|- **R5 Live accounts** (`22` `ArmToken`): submits — `placeOrder`, `creat
+DS|79|**R6 Contracts in flight** (this file;
+DS|81|- **R7 Penpot references** (`docs/design/README.md`): page name and page
+E09-D09|40|| 3 | In the **session** (`GET /auth/session` and `GET /me` at bootstrap
+E09-D09|85|Every T2 reason is one of these seven keys, or a key of a registered **s
+E09-D09|95|| `rbac.view_as` | "Read-only while viewing as {user}." | `GET /auth/ses
+E09-D09|238|### 9.3 Keys on a T2 control
+E27.json|419|"key": "E27-D05",
+E27.json|442|"body": "## Context\n`docs/plan/05-accessibility-standard.md` sets WCAG
+E30-D05|72|- **R-1 Severity (RULED BQ-04, confirmed).** **Blocking:** a clause or a
+E30-D05|74|- **R-3 Verdicts.** `compliant` · `at risk` · `non-compliant` · `out of
+E30-D05|500|| F-15 | Info | CMP-104 LeverageSlider and CMP-106 ProfileBadge are in `
