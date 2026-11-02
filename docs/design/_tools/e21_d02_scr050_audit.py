@@ -8,7 +8,7 @@ measuring modules the spec names: `contrast_ratio()` of `docs/design/_tools/cont
 and `simulate()` / `delta_e76()` of `docs/research/_tools/cvd_simulate.py`, loaded by path.
 
 Gates (one PASS or FAIL line each): G-CITE, G-QUOTE, G-VERSION, G-AC, G-CHECKLIST, G-STATES,
-G-AD, G-T2, G-T2LEN, G-TOKENS, G-CONTRAST, G-CVD, G-DOM, G-ENV, G-BOARDS, G-PENDING, G-RULED,
+G-AD, G-T2, G-T2LEN, G-TOKENS, G-COLUMNS, G-CONTRAST, G-CVD, G-DOM, G-ENV, G-BOARDS, G-PENDING, G-RULED,
 G-NOCLOSE, G-PUBLIC, G-UNTOUCHED and G-MUTLIST (the spec's section 16.3 equals this tool's list).
 
 Pins (G-RULED): every bullet of the BQ section is pinned by its sha256 in
@@ -94,6 +94,23 @@ THEMES = {
 DEFICIENCIES = ("deuteranopia", "protanopia", "tritanopia")
 CANVAS = "color.surface.canvas"
 TEXT_TOKENS = ("color.text.primary", "color.text.secondary")
+STOPS = "color.heatmap.*"  # in PAIRS: the lowest of the ten heatmap stops
+# Section 7.3's second table, row by row: (foreground, background, floor).
+PAIRS: tuple[tuple[str, str, float], ...] = (
+    ("color.text.primary", CANVAS, 4.5),
+    ("color.text.secondary", CANVAS, 4.5),
+    ("color.text.tertiary", "color.surface.raised", 4.5),
+    ("color.text.secondary", "color.surface.raised", 4.5),
+    ("color.data-confidence.stale.text", "color.data-confidence.stale.surface", 4.5),
+    ("color.focus.ring", CANVAS, 3.0),
+    ("color.focus.ring", "color.surface.raised", 3.0),
+    ("color.focus.ring", "color.surface.overlay", 3.0),
+    ("color.focus.ring", "color.data-confidence.stale.surface", 3.0),
+    ("color.env.demo", CANVAS, 3.0),
+    ("color.env.live", CANVAS, 3.0),
+    (STOPS, "color.heatmap.zero", 3.0),
+)
+COLUMNS = 6  # section 2.3's ladder columns; the heatmap pane is not one
 T2_LEN_ROWS = ("W-3", "W-20")
 T2_MARKERS = (
     "G-T2.1a",
@@ -518,6 +535,36 @@ def table73(spec: str) -> list[list[str]]:
     return rows(section(spec, "### 7.3"))
 
 
+def pair_label(fg: str, bg: str) -> str:
+    return f"`{fg}` on `{bg}`"
+
+
+def pair_ratio(name: str, fg: str, bg: str) -> float:
+    t = theme(name)
+    if fg == STOPS:
+        return min(ratio(t[k], t[bg]) for k in stops("color.heatmap"))
+    return ratio(t[fg], t[bg])
+
+
+def measured_pair(fg: str, bg: str, floor: float) -> list[str]:
+    return [pair_label(fg, bg), f"{floor:g}", *(f"{pair_ratio(n, fg, bg):.2f}" for n in THEMES)]
+
+
+def closest_level(name: str, deficiency: str) -> int:
+    _, cvd = measurers()
+    t = theme(name)
+
+    def dist(i: int) -> float:
+        return float(
+            cvd.delta_e76(
+                cvd.simulate(t[f"color.heatmap.bid.{i}"], deficiency),
+                cvd.simulate(t[f"color.heatmap.ask.{i}"], deficiency),
+            )
+        )
+
+    return min(range(1, 6), key=dist)
+
+
 def g_contrast(t: Texts) -> list[Finding]:
     bad = []
     got = {r[0]: r for r in table73(t.spec)}
@@ -534,6 +581,19 @@ def g_contrast(t: Texts) -> list[Finding]:
             bad.append(f"{name} focus ring below 3")
         if float(want[2]) < 3.0:
             bad.append(f"{name} heatmap stop below 3")
+    tables = all_tables(section(t.spec, "### 7.3"))
+    written = {r[0]: r for r in tables[1]} if len(tables) > 1 else {}
+    for fg, bg, floor in PAIRS:
+        want_pair = measured_pair(fg, bg, floor)
+        if written.get(want_pair[0], [])[:5] != want_pair:
+            bad.append(f"pair {want_pair[0]}: measured {want_pair[1:]}")
+        if min(float(v) for v in want_pair[2:]) < floor:
+            bad.append(f"pair {want_pair[0]} below {floor:g}")
+    if len(written) != len(PAIRS):
+        bad.append(f"{len(written)} pair rows for {len(PAIRS)} pairs")
+    hc_heat = [k for k in token_file("semantic-hc") if k.startswith("color.heatmap.")]
+    if "`semantic-hc` overrides no heatmap token" in t.spec and hc_heat:
+        bad.append(f"semantic-hc overrides {hc_heat}")
     return [("G-CONTRAST", "; ".join(bad))] if bad else []
 
 
@@ -545,7 +605,21 @@ def g_cvd(t: Texts) -> list[Finding]:
         r = got.get(name, [])
         if len(r) < 9 or [r[3], r[4], r[5], r[8]] != [want[3], want[4], want[5], want[8]]:
             bad.append(f"{name}: measured {want[3:6] + want[8:]}")
+    lvl = closest_level("dark", "deuteranopia")
+    named = re.search(r"closest pair in dark and high-contrast is level (\d) \(`bid\.(\d)`", t.spec)
+    if named is None or {named.group(1), named.group(2)} != {str(lvl)}:
+        bad.append(f"closest deuteranopia level is {lvl}")
     return [("G-CVD", "; ".join(bad))] if bad else []
+
+
+def g_columns(t: Texts) -> list[Finding]:
+    s23 = section(t.spec, "### 2.3")
+    got = rows(s23)
+    bad = [] if len(got) == COLUMNS else [f"{len(got)} rows in section 2.3"]
+    if not re.search(r"^### 2\.3 .*\bsix columns", t.spec, re.MULTILINE):
+        bad.append("section 2.3 heading does not say six columns")
+    bad += [m.group(0) for m in re.finditer(r"\bseven (?:columns|cells)\b", t.spec)]
+    return [("G-COLUMNS", "; ".join(bad))] if bad else []
 
 
 def g_dom(t: Texts) -> list[Finding]:
@@ -761,6 +835,28 @@ MUTATIONS: tuple[Mutation, ...] = (
         "paths",
     ),
     Mutation("M-22", "G-MUTLIST", "the list drifts", "| M-1  | G-CITE ", "| M-1  | G-AC   "),
+    Mutation(
+        "M-23",
+        "G-CONTRAST",
+        "a written pair ratio drifts",
+        r"(`color\.text\.tertiary` on `color\.surface\.raised` *\| 4\.5 *\| )\d+\.\d\d",
+        r"\g<1>9.99",
+        regex=True,
+    ),
+    Mutation(
+        "M-24",
+        "G-CVD",
+        "the named closest level drifts",
+        "is level 3 (`bid.3` / `ask.3`",
+        "is level 2 (`bid.2` / `ask.2`",
+    ),
+    Mutation(
+        "M-25",
+        "G-COLUMNS",
+        "a seventh column claimed",
+        "### 2.3 The ladder (right; six columns",
+        "### 2.3 The ladder (right; seven columns",
+    ),
 )
 
 
@@ -786,6 +882,7 @@ GATES: tuple[Callable[[Texts], list[Finding]], ...] = (
     g_t2,
     g_t2len,
     g_tokens,
+    g_columns,
     g_contrast,
     g_cvd,
     g_dom,
