@@ -5803,8 +5803,9 @@ export interface paths {
      *     The confirmed fire is the same fire, offered again to its rule's lane in the bounded fire
      *     queue: its run, its fire keys, the accounts its actions resolved to when it was queued,
      *     and its original offer time. It meets every check again before anything is sent: the
-     *     blocks that refuse a fire whole, judged against that offer time, so a circuit-breaker trip
-     *     or a kill between the fire and its confirmation refuses it; then checks 1 to 8 per action
+     *     blocks that refuse a fire whole, judged against that offer time, so a trip of the rule's
+     *     circuit breaker, or a kill switch covering any of its accounts engaged since that offer
+     *     time, refuses it; then checks 1 to 8 per action
      *     and account, so a kill switch engaged meanwhile is `kill_switch`; then the OMS's own. A
      *     confirmation never skips a check. The call answers `202` once the fire is offered, never
      *     once it has run: its results ride the run's events (`listRuleRunEvents`, the `rules`
