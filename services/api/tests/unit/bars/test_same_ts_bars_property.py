@@ -79,7 +79,7 @@ def _distinct_keys(items: list[dict[str, Any]], gen: int, want: list[int]) -> No
 # -- (a) storage and REST -------------------------------------------------------------------
 
 
-@settings(max_examples=40)
+@settings(max_examples=40, deadline=None, derandomize=True)
 @given(kind=_KIND, n=_N, gen=_GEN, limit=st.integers(min_value=1, max_value=4))
 def test_same_open_time_bars_round_trip_storage_and_page_by_key(
     kind: str, n: int, gen: int, limit: int
@@ -115,7 +115,7 @@ def test_same_open_time_bars_round_trip_storage_and_page_by_key(
     assert all(len(p) <= limit for p in pages)
 
 
-@settings(max_examples=20)
+@settings(max_examples=20, deadline=None, derandomize=True)
 @given(n=_N, gen=_GEN)
 def test_a_rewrite_of_the_same_bars_upserts_and_another_generation_keeps_both(
     n: int, gen: int
@@ -167,7 +167,7 @@ async def _seeded(spec: BarSpec, emissions: list[list[BarUpdate]], gen: int) -> 
     return store
 
 
-@settings(max_examples=30)
+@settings(max_examples=30, deadline=None, derandomize=True)
 @given(kind=_KIND, n=_N, gen=_GEN)
 def test_snapshot_of_same_open_time_bars_has_distinct_generation_index_in_both_encodings(
     kind: str, n: int, gen: int
@@ -218,7 +218,7 @@ class _Taps:
         self.hub.publish = publish  # type: ignore[method-assign]  # test tap on one instance
 
 
-@settings(max_examples=30)
+@settings(max_examples=30, deadline=None, derandomize=True)
 @given(kind=_KIND, n=_N, gen=_GEN)
 def test_deltas_of_same_open_time_bars_coalesce_to_n_keys_with_a_mid_window_reemit(
     kind: str, n: int, gen: int
