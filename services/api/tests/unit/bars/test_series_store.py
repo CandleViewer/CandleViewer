@@ -244,6 +244,22 @@ async def test_a_released_series_is_kept_current_through_its_grace() -> None:
     assert store.latest(SYM, H, 1) is not None
 
 
+async def test_live_tail_of_a_released_series_ends_with_its_grace() -> None:
+    """`/market/bars?include_open` never serves a forming bar frozen since the release: the
+    sweep runs only on the next `ensure`, so the read itself refuses an expired series."""
+    clock = Clock()
+    store = SeriesStore(clock=clock)
+    hold = await store.ensure(SYM, SPEC)
+    await emit(store, up("close", 0), up("open", 1))
+    tail = store.live_tail(SYM, SPEC, None)
+    assert tail is not None and tail.forming is not None and tail.forming.index == 1
+    hold.release()
+    clock.t += RELEASE_GRACE_S - 0.5
+    assert store.live_tail(SYM, SPEC, None) is not None  # within the grace: still served
+    clock.t += 0.5
+    assert store.live_tail(SYM, SPEC, None) is None  # past it, though no `ensure` swept it yet
+
+
 async def test_an_expired_series_stops_counting_toward_the_cap_at_its_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

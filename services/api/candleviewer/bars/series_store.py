@@ -734,9 +734,14 @@ class SeriesStore:
     def live_tail(self, symbol: str, spec: BarSpec, since_us: int | None) -> LiveTail | None:
         """The series' generation, its closed bars opening at or after `since_us` (none for
         None), oldest first, and its forming bar; None while the store does not keep the series or
-        before a generation is named. O(bars returned): the walk stops at the first older bar."""
+        before a generation is named, or once the series is unheld and its grace is over (it
+        is swept only on the next `ensure`, and no live bar has reached it since its release, so
+        a forming bar read now would be frozen). O(bars returned): the walk stops at the first
+        older bar."""
         s = self._series.get((symbol, spec.spec_hash))
         if s is None or s.generation is None:
+            return None
+        if s.refs == 0 and s.expires_at is not None and s.expires_at <= self._clock():
             return None
         closed: list[tuple[Bar, int | None]] = []
         if since_us is not None:
