@@ -108,6 +108,26 @@ module.exports = {
       to: { path: "^packages/rule-graph/src" },
     },
     {
+      name: "no-deep-imports-dock",
+      severity: "error",
+      comment:
+        "§9 #18 deep-import ban: only `@candleviewer/dock`'s declared entry points may be " +
+        "imported, never `packages/dock/src/**` directly from outside it.",
+      from: { pathNot: "^packages/dock" },
+      to: { path: "^packages/dock/src" },
+    },
+    {
+      name: "dock-framework-free",
+      severity: "error",
+      comment:
+        "E15-T02 (the C-2.16 shape): packages/dock may not import React, the chart engine, the " +
+        "design system or an app, so the layout tree stays testable with no DOM, canvas or network.",
+      from: { path: "^packages/dock/src" },
+      to: {
+        path: "(^|node_modules/)(react|react-dom)($|/)|^packages/(chart-engine|ui)/|^apps/",
+      },
+    },
+    {
       name: "chart-engine-no-react",
       severity: "error",
       comment:
