@@ -23,6 +23,7 @@ import {
   Menu,
   NumericStepperInput,
   PageHeader,
+  Pagination,
   RadioGroup,
   SearchBox,
   SegmentedControl,
@@ -155,6 +156,10 @@ const molecules: [string, () => JSX.Element][] = [
     ),
   ],
   ["CMP-050", () => <Card title="Accounts">Body</Card>],
+  [
+    "CMP-053",
+    () => <Pagination onNewest={noop} onNewer={noop} onOlder={noop} newerReason="At the start." />,
+  ],
   ["CMP-068", () => <CopyableCodeBlock code="{}" language="json" label="Raw record" />],
   ["CMP-088", () => <PageHeader title="Users" meta="All times UTC · as of 14:02:11" />],
   [
