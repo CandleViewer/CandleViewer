@@ -121,7 +121,7 @@ test.describe("SCR-063 Positions (E29-S01)", () => {
       positions: snapshot.positions.filter((p) => p.exchange_account_id === SUB2),
     });
     await expect(
-      page.getByRole("heading", { level: 2, name: "No rows match 1 filters" }),
+      page.getByRole("heading", { level: 2, name: "No rows match 1 filter" }),
     ).toBeVisible();
     await expect(grid(page).getByRole("row", { name: POSITION })).toHaveCount(0);
     await page.getByRole("button", { name: "Clear filters" }).click();
