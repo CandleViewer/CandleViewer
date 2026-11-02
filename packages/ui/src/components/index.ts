@@ -321,6 +321,9 @@ export type { NumericStepperInputProps, StepDirection } from "./NumericStepperIn
 export { PageHeader } from "./PageHeader.js";
 export type { PageHeaderProps } from "./PageHeader.js";
 
+export { PAGINATION_COPY, Pagination } from "./Pagination.js";
+export type { PaginationLabels, PaginationProps } from "./Pagination.js";
+
 export { Popover } from "./Popover.js";
 export type {
   PopoverAnchorProps,

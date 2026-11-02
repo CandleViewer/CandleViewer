@@ -628,6 +628,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `color.action.*`.
 - **Storybook**: Default, CursorMode, CursorKeyset, RateLimited.
 - **Tests**: unit, visual, axe, keyboard.
+- **As built (E42-S04)**: cursor mode only (`mode?: "cursor"`, the default and its one value); page mode (`page`, `pageCount?`, `pageSize?` / `onPageSizeChange`) and the Default story ship with its first consumer. `onNext` / `onPrev` are built as `onNewer` and `onOlder`, beside a required `onNewest`, and there is no `cursor` prop: the host keeps its cursors. Each press asks for its page once; a held key's repeats are dropped (E42-D04 §12). The reasons are per direction: `newerReason?` gates Newest and Newer (`admin.newest` on page 1), `olderReason?` gates Older (`admin.oldest`), and `blockedReason?` gates all three in their place (a `429`'s `admin.rate_limited`); `newerReasonId?`, `olderReasonId?` and `blockedReasonId?` point at a host node that already shows the reason (the `audit.end` line, a panel's one notice), and a reason no host node carries shows once under the buttons (2a), every button it gates pointing at that one line. The buttons are CMP-001 secondary buttons that take T2 through their own `disabledReason` (`aria-disabled`, focusable, the `lock` leading the label), not through a CMP-079 element: the reasons are `admin.*` state keys, outside CMP-079's `rbac.*` vocabulary. `labels?` overrides `PAGINATION_COPY` (E42-D04 §14 `labels.page.*`) and `density?` reaches the buttons.
 
 ### CMP-054 SearchBox
 
