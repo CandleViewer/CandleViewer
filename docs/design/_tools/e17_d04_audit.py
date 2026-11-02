@@ -13,21 +13,26 @@ Post-merge mode: the record ships at the merge-base; every merged table row stan
 
 Gates (each FAIL led by its code):
 
-- [G01-AUDIT] every `<!-- audit:key=value -->` marker is a known key and equals the recomputed value.
-- [G02-CITE] every cited endpoint resolves to a non-blank line at its revision, and its pin matches.
+- [G01-AUDIT] every `<!-- audit:key=value -->` marker is a known key and equals the recomputed
+  value.
+- [G02-CITE] every cited endpoint resolves to a non-blank line at its revision, and its pin
+  matches.
 - [G03-PINS] the pins file and the record's cited endpoints match both ways.
 - [G04-COPY] the CP rows list every chip deck key (E08-D13's `e17d2.A.*`) the built chip strings do
   not hold, once each, and no key they hold; a CP finding is an F row or "no divergence:" a reason.
-- [G05-CONTRAST] the CN rows are the computed pairs; a pair under its bar in any theme names an F row.
+- [G05-CONTRAST] the CN rows are the computed pairs; a pair under its bar in any theme names an F
+  row.
 - [G06-WALK] the W rows are E17-D02 section 2 rows 5, 10-13 and 16, the DL rows the other eighteen,
   each row once; W statuses and DL deltas are from the ruled sets; a "not built" names its register
-  row; no row anywhere reads "not reachable" (AC1).
+  row; every W or DL row a section 3 FS row names walks one of that FS row's matrix rows; no row
+  anywhere reads "not reachable" (AC1).
 - [G07-FINDINGS] every F row has a class, severity, priority, surface, criterion, owner, target and
-  cited evidence from the ruled sets; the priority follows the severity; a Blocking row is an IS row.
+  cited evidence from the ruled sets; the priority follows the severity; a Blocking row is an IS
+  row.
 - [G08-CLASS] every F id named anywhere is a register row, and every row is named outside it.
 - [G09-IDS] the ids of each table family are 1..n in order.
 - [G10-HYGIENE] no local path, URL, host, lane or agent name, closing keyword before an issue
-  number, or "What this ... fixes" heading in the own text files.
+  number, or "What this ... fixes" heading in the own text files or the images' PNG text chunks.
 - [G11-SCOPE] the changed paths are the own files only.
 - [G12-WALKTHROUGH] the owner checklist holds one to ten items.
 - [G13-BQ] section R lists BQ-0..BQ-16 once each, each with a status from the ruled set, and names
@@ -41,9 +46,10 @@ Gates (each FAIL led by its code):
 - [G19-AROW] every A row amends an owner document of the ruled set, through an open owner, and cites
   an F row.
 
-`--json` prints the numbers; `--check` exits 1 on any FAIL; `--self-test` applies one mutation per
-gate to an in-memory copy and passes only when each adds FAILs of its gate's code and the base run is
-clean; `--repin-ruled` rewrites the pins file from the record's cites and is its only writer.
+`--json` prints the numbers; `--check` exits 1 on any FAIL; `--self-test` applies at least one
+mutation per gate (one per hygiene pattern) to an in-memory copy and passes only when each adds
+FAILs of its gate's code and the base run is clean; `--repin-ruled` rewrites the pins file from the
+record's cites and is its only writer.
 
 Usage: python3 -I -B docs/design/_tools/e17_d04_audit.py [--check] [--json] [--self-test]
        [--repin-ruled]
@@ -104,6 +110,10 @@ PIN_KEYS: dict[str, str] = {
     "CST": TEST + "features/app-shell/connection-status.test.tsx",
     "ISOT": TEST + "features/app-shell/status-bar-isolation.test.tsx",
     "E2E": "apps/web/e2e/shell/connection-chip.spec.ts",
+    "TB": SHELL + "TopBar.tsx",
+    "APP": SHELL + "AppShell.tsx",
+    "MOT": SHELL + "motion.ts",
+    "FR": "packages/ui/src/components/focusring.css",
 }
 # The chip's strings for the copy diff: the chip and the container that feeds it.
 COPY_KEYS = ["CS", "SLOT"]
@@ -125,6 +135,14 @@ CN_PAIRS: dict[str, tuple[str, str, str]] = {
     "cn8": ("color.text.primary", "color.status.danger.subtle", "text"),
     "cn9": ("color.status.danger.strong", "color.status.danger.subtle", "non-text"),
     "cn10": ("color.border.default", "color.surface.raised", "decorative"),
+    # The CMP-039 ring sits 2 px outside the pill (`FR`:12-13), on the TopBar's raised surface.
+    "cn11": ("color.focus.ring", "color.surface.raised", "non-text"),
+    # The strong T2 fill against the T1 fill (both on the raised TopBar): it carries the tier.
+    "cn12": ("color.status.warning.subtle", "color.surface.raised", "non-text"),
+    # The Delayed fill: ◐ and the word carry Delayed, so the fill is decoration.
+    "cn13": ("color.status.info.subtle", "color.surface.raised", "decorative"),
+    # The T1 glyph ink against the T2 glyph ink (the same ⚠ both times).
+    "cn14": ("color.data-confidence.stale.indicator", "color.status.warning.strong", "decorative"),
 }
 BARS = {"text": 4.5, "non-text": 3.0, "decorative": 0.0}
 WALKED = (5, 10, 11, 12, 13, 16)
@@ -144,7 +162,10 @@ OWNER_DOCS = re.compile(r"^(`D02` §\d+[A-Z ]*(row \d+(–\d+)?)?|`14` SCR-\d+|`
 T2_VERDICTS = {"not a gated control", "not built", "other surface"}
 T2_OUTCOME = "no in-scope T2 control"
 BQ_IDS = list(range(17))
-BQ_STATUS = re.compile(r"^(default built; ruling pending|ruled as proposed|ruled: .+)$")
+BQ_STATUS = re.compile(
+    r"^(default built; ruling pending|built with the named deviations; ruling pending"
+    r"|ruled as proposed|ruled: .+)$"
+)
 FAMILIES = (
     "BQ", "RN", "FS", "W", "DL", "CN", "CP", "CM", "IX", "AN", "MO", "AX", "T2", "SC", "F", "A",
     "DR", "RT", "IS", "OR",
@@ -321,6 +342,7 @@ class Ctx:
     deck: dict[str, Any]
     tokens: dict[str, dict[str, Any]]
     images: list[str]
+    img_text: dict[str, str]
 
     def text_of(self, key: str) -> str | None:
         if key in PIN_KEYS:
@@ -345,6 +367,20 @@ class Ctx:
             return None
         lines = text.split("\n")
         return lines[n - 1] if 0 < n <= len(lines) else None
+
+
+def png_text(path: Path) -> str:
+    """The keyword and text of a PNG's tEXt / iTXt chunks (zTXt is compressed and not read)."""
+    b = path.read_bytes()
+    out: list[str] = []
+    i = 8
+    while i + 8 <= len(b):
+        n = int.from_bytes(b[i : i + 4], "big")
+        kind = b[i + 4 : i + 8]
+        if kind in (b"tEXt", b"iTXt"):
+            out.append(b[i + 8 : i + 8 + n].replace(b"\x00", b" ").decode("latin-1"))
+        i += 12 + n
+    return "\n".join(out)
 
 
 def build_ctx() -> Ctx:
@@ -377,6 +413,7 @@ def build_ctx() -> Ctx:
         deck=json.loads(show(base, DECK_REL) or "{}").get("strings", {}),
         tokens=tokens,
         images=sorted(p.name for p in img.glob("*.png")) if img.is_dir() else [],
+        img_text={p.name: png_text(p) for p in img.glob("*.png")} if img.is_dir() else {},
     )
 
 
@@ -478,6 +515,7 @@ def compute(ctx: Ctx) -> dict[str, str]:
         v[f"f.{tag}"] = str(sum(1 for r in fs if len(r) > 1 and r[1] == cls))
     v["a"] = str(len(rows(section(ctx.spec, "13."), "A")))
     v["img"] = str(len(ctx.images))
+    v["ring.width"] = hex_of(ctx, "dark", "border.focus")
     return v
 
 
@@ -574,6 +612,13 @@ def g_walk(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
             f.append(f"[G06-WALK] {r[0]}: row {n} is walked in full, not a delta line")
         if not DL_DELTA.match(r[4]):
             f.append(f"[G06-WALK] {r[0]}: delta {r[4][:30]!r} is not holds / changed / still")
+    d02_row = {r[0]: r[1] for fam in ("W", "DL") for r in rows(sec, fam)}
+    for r in rows(section(ctx.spec, "3."), "FS"):
+        named = re.findall(r"(?<![\w`])((?:W|DL)-\d+)\b", r[-1])
+        mine = {f"row {n}" for n in re.findall(r"\d+", r[3])}
+        for x in named:
+            if d02_row.get(x) not in mine:
+                f.append(f"[G06-WALK] {r[0]} names {x}, which walks {d02_row.get(x)}, not {r[3]}")
     if sorted(seen) != list(range(1, MATRIX_ROWS + 1)):
         f.append(f"[G06-WALK] the W and DL rows cover {sorted(seen)}, not rows 1..{MATRIX_ROWS}")
     m = re.search(r"\bnot[ -]reachable\b", ctx.spec.replace('"not reachable"', ""))
@@ -658,7 +703,9 @@ HYGIENE = [
 
 
 def g_hygiene(ctx: Ctx, vals: dict[str, str], f: Findings) -> None:
-    for rel, text in ((SPEC_REL, ctx.spec), (PINS_REL, ctx.pins), (TOOL_REL, ctx.tool)):
+    texts = [(SPEC_REL, ctx.spec), (PINS_REL, ctx.pins), (TOOL_REL, ctx.tool)]
+    texts += [(f"{IMG_DIR}/{n} text chunks", t) for n, t in sorted(ctx.img_text.items())]
+    for rel, text in texts:
         for rx, what in HYGIENE:
             m = rx.search(text)
             if m:
@@ -782,7 +829,7 @@ def run(ctx: Ctx) -> tuple[dict[str, str], Findings]:
 def repin(ctx: Ctx) -> str:
     out = [
         "# E17-D04 pins: one cited endpoint per line, `KEY:line sha1-16` of its words.",
-        "# Plan and design keys at the merge-base, build keys at #5420's pinned head (the tool's PIN).",
+        "# Plan and design keys at the merge-base; build keys at the tool's PIN (#5420's head).",
         "# Written only by `e17_d04_audit.py --repin-ruled`.",
     ]
     for key, n in sorted(endpoints(ctx.spec), key=lambda x: (x[0], x[1])):
@@ -802,28 +849,60 @@ def mutations(ctx: Ctx) -> list[tuple[str, Callable[[Ctx], Ctx]]]:
     def sub(pat: str, rep: str) -> Callable[[Ctx], Ctx]:
         return spec(lambda s: re.sub(pat, rep, s, count=1))
 
-    closing = "fix" + "es #" + "408"
+    def with_(**kw: Any) -> Callable[[Ctx], Ctx]:
+        return lambda c: dataclasses.replace(c, **kw)
+
+    def info_eq_subtle(c: Ctx) -> Ctx:
+        key = "color.status.info.default"
+        tokens = {t: {**v, key: v["color.status.info.subtle"]} for t, v in c.tokens.items()}
+        return dataclasses.replace(c, tokens=tokens)
+
+    # One G10 mutation per HYGIENE pattern, each built from fragments, plus a PNG text chunk.
+    dirty = [
+        "/" + "home/x",
+        "ht" + "tps://x",
+        "h" + "cl-w" + "orker",
+        "fix" + "es #" + "408",
+        "box.lo" + "cal",
+        "\n## What this " + "change fixes\n",
+    ]
+
+    def append(d: str) -> Callable[[Ctx], Ctx]:
+        return spec(lambda s: s + "\n" + d + "\n")
+
+    hygiene: list[tuple[str, Callable[[Ctx], Ctx]]] = [("G10-HYGIENE", append(d)) for d in dirty]
+    hygiene.append(
+        (
+            "G10-HYGIENE",
+            lambda c: dataclasses.replace(c, img_text={**c.img_text, "x.png": dirty[0]}),
+        )
+    )
+    checklist = "**The owner checklist**\n" + "".join(f"\n{i}. x" for i in range(1, 12))
     return [
         ("G01-AUDIT", sub(r"audit:f\.minor=\d+", "audit:f.minor=999")),
-        ("G02-CITE", lambda c: dataclasses.replace(c, pins=re.sub(r"[0-9a-f]{16}", "0" * 16, c.pins, count=1))),
-        ("G03-PINS", lambda c: dataclasses.replace(c, pins=c.pins + "D02:9999 " + "a" * 16 + "\n")),
+        ("G02-CITE", lambda c: with_(pins=re.sub(r"[0-9a-f]{16}", "0" * 16, c.pins, count=1))(c)),
+        ("G03-PINS", lambda c: with_(pins=c.pins + "D02:9999 " + "a" * 16 + "\n")(c)),
         ("G04-COPY", sub(r"(?m)^(\| CP-1\s+\| )", r"\1`e17d2.A.1`, ")),
-        ("G05-CONTRAST", lambda c: dataclasses.replace(c, tokens={t: {**v, "color.status.info.default": v["color.status.info.subtle"]} for t, v in c.tokens.items()})),
+        ("G05-CONTRAST", info_eq_subtle),
         ("G06-WALK", sub(r"(?m)^\| W-1\s+\|.*\n", "")),
+        ("G06-WALK", sub(r"(?m)^(\| FS-7 .*)\(DL-7\)", r"\1(DL-8)")),
         ("G07-FINDINGS", sub(r"(?m)^(\| F-1\s+\|[^|]*\|[^|]*\| )priority/p2", r"\1priority/p0")),
         ("G08-CLASS", spec(lambda s: s + "\nSee F-999.\n")),
         ("G09-IDS", sub(r"(?m)^\| RN-2(\s+)\|", r"| RN-9\1|")),
-        ("G10-HYGIENE", spec(lambda s: s + "\n" + closing + "\n")),
-        ("G11-SCOPE", lambda c: dataclasses.replace(c, changed=[*c.changed, "docs/plan/14-screens-catalogue.md"])),
-        ("G12-WALKTHROUGH", spec(lambda s: s.replace("**The owner checklist**", "**The owner checklist**\n" + "".join(f"\n{i}. x" for i in range(1, 12)), 1))),
+        *hygiene,
+        (
+            "G11-SCOPE",
+            lambda c: with_(changed=[*c.changed, "docs/plan/14-screens-catalogue.md"])(c),
+        ),
+        ("G12-WALKTHROUGH", spec(lambda s: s.replace("**The owner checklist**", checklist, 1))),
         ("G13-BQ", sub(r"(?m)^\| BQ-16\s+\|.*\n", "")),
-        ("G14-IMG", lambda c: dataclasses.replace(c, images=[*c.images, "e17-d04-extra.png"])),
-        ("G15-FREEZE", lambda c: dataclasses.replace(c, merged_spec="| F-1 | a row that changed |\n")),
+        ("G14-IMG", lambda c: with_(images=[*c.images, "e17-d04-extra.png"])(c)),
+        ("G15-FREEZE", with_(merged_spec="| F-1 | a row that changed |\n")),
         ("G16-ROUTE", sub(r"(?m)^\| RT-1\s+\|.*\n", "")),
-        ("G17-PIN", lambda c: dataclasses.replace(c, pin="0" * 40, pin_ok=False)),
+        ("G17-PIN", with_(pin="0" * 40, pin_ok=False)),
         ("G18-T2", spec(lambda s: s.replace(T2_OUTCOME, "no T2 outcome"))),
         ("G19-AROW", sub(r"(?m)^(\| A-1\s+\| )", r"\1`22` ")),
-    ]  # fmt: skip
+    ]
 
 
 def self_test(ctx: Ctx) -> tuple[int, int, list[str]]:
