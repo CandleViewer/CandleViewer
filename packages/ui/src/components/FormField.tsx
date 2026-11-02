@@ -38,6 +38,11 @@ export interface FormFieldProps {
    * glyph in a polite line that is in the DOM at mount; the control takes `aria-invalid`. Never shown while T2.
    */
   readonly error?: string | undefined;
+  /**
+   * `false`: the error line is not a live region, as when the host moves focus to the field, which then carries the
+   * error by `aria-describedby` and is the one voice (a server's `422`; E42-D03 I-2, E42-D04 AL-17). Default `true`.
+   */
+  readonly errorLive?: boolean;
   /** Plain disabled: unavailable to everyone in this state; the child is natively disabled, the field dims. */
   readonly disabled?: boolean;
   /** The visible reason the field is denied (E09-D09 §2.2 T2, rendering 2a): the reason line under the control. */
@@ -69,6 +74,7 @@ export function FormField({
   optional = false,
   help,
   error,
+  errorLive = true,
   disabled,
   disabledReason,
   layout = "stacked",
@@ -159,7 +165,7 @@ export function FormField({
             {reason.reason}
           </div>
         ) : null}
-        <FieldMessage id={errorId} message={message} />
+        <FieldMessage id={errorId} message={message} live={errorLive} />
         {hasHelp ? (
           <div id={helpId} className="cv-formfield__line">
             {help}

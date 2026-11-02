@@ -256,6 +256,20 @@ export type {
   AuditMarker,
 } from "./AuditActionTrigger.js";
 
+export {
+  AUDIT_ACTION_MAX,
+  AUDIT_FILTER_COPY,
+  AuditFilterBar,
+  auditEnvironmentLabel,
+} from "./AuditFilterBar.js";
+export type {
+  AuditActionOption,
+  AuditActorOption,
+  AuditFilterBarProps,
+  AuditFilterField,
+  AuditFilters,
+} from "./AuditFilterBar.js";
+
 export { AUDIT_ACTION_LABELS, AUDIT_ROW_COPY, AuditRow, AuditRowList } from "./AuditRow.js";
 export type { AuditRowListProps, AuditRowProps } from "./AuditRow.js";
 

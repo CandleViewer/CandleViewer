@@ -140,6 +140,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: trigger the CMP-007 well with a `chevron-down` (`size.icon`, `color.text.secondary`); listbox `color.surface.overlay`, `elevation.popover`, `radius.card`, a 1 px `color.border.default` edge, at most 10 rows; options `size.row.height`, `space.inset.sm`, `type.ui.body` + `color.text.primary`, active `color.surface.hover`, `check` glyph `color.text.primary`; an unavailable option's label at `opacity.disabled`, its reason `type.ui.caption` + `color.text.secondary`. (Replaces `elevation.2` and `radius.md`, which are primitives.)
 - **Storybook**: Default, Searchable, Disabled, LongList (virtualized), Open, UnavailableOption, DisabledWithReason, WithSpecimen, Mixed.
 - **Tests**: unit, visual, axe, keyboard (type-ahead, arrow nav, Esc closes, focus returns to trigger).
+- **As built (E42-S04), addition**: a T2 trigger is also `aria-readonly` (E42-D04 §12.1: a T2 picker is read-only, as a T2 text field is `readonly`); an enabled or plainly disabled trigger carries none. CMP-174's gated Environment uses it.
 
 ### CMP-010 Slider
 
@@ -480,6 +481,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Storybook**: Default, WithError, WithHelp, Required, Optional, Inline, ReadOnly, DisabledWithReason.
 - **Tests**: unit, visual, axe.
 - **As built (E05-S03)**: `htmlFor` is optional (generated when absent; a field atom takes it over any id of its own, so the label always points at the control); adds `disabled?` (plain disabled), `labelWidth?` (the inline label column, a CSS length the host sizes) and `density?`. Plain disabled dims the label and the child (natively disabled, `opacity.disabled`); the help line keeps full contrast, unlike `docs/design/E05/E05-D02-form-controls.md`'s "label, field and lines", because it is text that often says why.
+- **As built (E42-S04)**: adds `errorLive?` (default `true`): `false` keeps the error line in the DOM, shown and linked by `aria-describedby`, but out of the live tree, for a host that moves focus to the field instead, which then carries the error (one voice: a server's `422`, E42-D03 I-2, E42-D04 AL-17). The shared field parts' `FieldMessage` takes the same `live?`. CMP-174 uses it.
 
 ### CMP-041 Menu (dropdown/context menu)
 
@@ -2250,6 +2252,7 @@ interface ReplayScrubberProps {
 - **Tokens**: inherits CMP-055 FilterBar; `space.field.gap`, `color.text.secondary` (labels; a disabled control's reason), `color.text.tertiary` (a disabled control's label and `lock`), `color.surface.raised` with a `color.border.default` hairline (a disabled control), `color.text.primary` with the `color.status.danger.strong` octagon (errors).
 - **Storybook**: Default, Applied, OwnView, Invalid, EnvironmentFacet, RateLimited.
 - **Tests**: unit, visual, axe.
+- **As built (E42-S04)**: `filters` is `AuditFilters` (the generated `queryAuditLog` query parameters less `cursor` and `limit`, plus `environment`); `actorOptions: {id, label}[]` (no user list is served, BQ-3), `actionOptions: {code, label?}[]`, `view?: "raw"|"own"` (default `raw`), `environmentScope?: "page"`, `blockedReason?` (the state's sentence, as AL-16's `admin.rate_limited`, not a key) with `blockedReasonId?` (the host's one notice; without it the bar shows one), and `errors?` (a `422`'s field errors by parameter, read by identity: a new object per answer). From and To are CMP-047 with times (UTC, applied as RFC 3339 instants); Actor and Action are CMP-048 (the actions as removable CMP-011 chips, at most 50, added from the list or by exact code or label); Subject type and id, IP and Search are CMP-007 drafts that apply on Enter or on leaving the field, each value once; Outcome, Severity and Environment are CMP-009 (Environment's options name their scope, "LIVE (this page only)"); then Clear filters. The own view gates Actor ("you"), IP, Search and Environment with `rbac.owner_only` and sends none of them; a T2 text field is `readonly`, the T2 picker `aria-readonly`. The bar reaches T2 through each field's `disabledReason`, not a CMP-079 element. A `422`'s errors sit under their fields through CMP-040's `errorLive={false}`, and focus moves to the first unless the user has moved on since the set was sent. The fields fill rows of tracks at least 16rem wide (CMP-047's own basis for a picker with a time), one column at 200 %. The result count is the host's to announce. PROPOSED copy: "Subject type", "Subject id", "From time", "To time" and "Any". Storybook adds FocusVisible and LongText.
 
 ### CMP-175 KeyPermissionBadge
 
