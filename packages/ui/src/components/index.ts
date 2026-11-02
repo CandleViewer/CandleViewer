@@ -8,6 +8,7 @@ export type {
   TableColumn,
   TableError,
   TableHeaderStatus,
+  TableKeptRow,
   TableNumericColumn,
   TableProps,
   TableRowContext,
@@ -16,6 +17,7 @@ export type {
   TableSort,
   TableSortDirection,
   TableTextColumn,
+  TableTreeRow,
 } from "./Table.js";
 
 export { Tabs } from "./Tabs.js";
