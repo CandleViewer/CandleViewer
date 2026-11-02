@@ -20,13 +20,12 @@ import stat
 import threading
 import weakref
 from collections.abc import AsyncIterator, Callable
-from typing import Any, ClassVar, Final, TypeVar
+from typing import Any, ClassVar, Final
 
 from candleviewer.observability.context import thread_future
 
 #: Bytes per read: the digest's chunk (1 MiB) and the most one streamed chunk holds.
 CHUNK_BYTES: Final = 1 << 20
-_T = TypeVar("_T")  # not PEP 695 `[T]`: Semgrep 1.99.0 (CI) would skip the rest of this file
 #: `O_PATH`: a directory is walked, never read, so search permission is enough. With
 #: `O_DIRECTORY|O_NOFOLLOW`, a symbolic link fails (`ENOTDIR`) rather than being opened itself.
 _DIRECTORY: Final = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -120,7 +119,7 @@ class ResolvedArtefact:
         if self._closing and self._reading is reading:
             self._release()
 
-    async def _run(self, read: Callable[..., _T], *args: Any) -> _T:
+    async def _run[T](self, read: Callable[..., T], *args: Any) -> T:
         """`read(fd, *args)` in a worker thread: `thread_future` (#2250), so a cancelled caller
         leaves the read running, and its descriptor open, until it returns."""
         if self._closing or not (self._reading is None or self._reading.done()):

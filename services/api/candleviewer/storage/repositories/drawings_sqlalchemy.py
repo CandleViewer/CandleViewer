@@ -35,7 +35,7 @@ import json
 from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime
-from typing import Any, TypeVar, assert_never
+from typing import Any, assert_never
 
 import sqlalchemy as sa
 import structlog
@@ -401,12 +401,9 @@ def _refusal(
     return query_failure(sqlstate_of(exc), constraint_of(exc))
 
 
-_T = TypeVar("_T")  # not PEP 695 `[T]`: Semgrep 1.99.0 (CI) would skip the rest of this file
-
-
-async def _deadlock_retry(  # noqa: UP047 (see _T)
-    run: Callable[[], Awaitable[_T]], refuse: Callable[[DBAPIError], Exception]
-) -> _T:
+async def _deadlock_retry[T](
+    run: Callable[[], Awaitable[T]], refuse: Callable[[DBAPIError], Exception]
+) -> T:
     """Run one whole transaction; after a `40P01` (rolled back by the unit of work's exit) run
     it once more. A second deadlock is a store outage (503, retryable), never a 500. Any other
     driver error leaves as `refuse` types it, raised after its handler: nothing chains it."""

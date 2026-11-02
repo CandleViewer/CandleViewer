@@ -14,7 +14,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Final, Protocol, TypeVar
+from typing import Final, Protocol
 from uuid import UUID
 
 import structlog
@@ -29,7 +29,6 @@ from candleviewer.storage.repositories.backups import BackupKind, BackupRow, Bac
 
 #: The whole of one read; the store caps each statement at 1 s itself (`STATEMENT_TIMEOUT`).
 READ_BUDGET_S: Final = 2.0
-_T = TypeVar("_T")  # not PEP 695 `[T]`: Semgrep 1.99.0 (CI) would skip the rest of this file
 
 
 class BackupReads(Protocol):
@@ -91,7 +90,7 @@ class BackupCatalogue:
             raise OpsNotWired("backups: no catalogue wired")
         return self._store
 
-    async def _read(self, op: str, pending: Awaitable[_T]) -> _T:
+    async def _read[T](self, op: str, pending: Awaitable[T]) -> T:
         try:
             async with asyncio.timeout(self._budget_s):
                 return await pending

@@ -53,7 +53,7 @@ import math
 import operator
 from collections.abc import Mapping
 from itertools import compress, repeat
-from typing import Any, Final, NoReturn, TypeAlias
+from typing import Any, Final, NoReturn
 
 import msgpack
 
@@ -93,11 +93,7 @@ MAX_MSGPACK_VALUES: Final = 16_384
 #: 36 and 16: this is twice the larger.
 MAX_PREAUTH_MSGPACK_VALUES: Final = 72
 
-# `TypeAlias`, not a PEP 695 `type` statement: Semgrep cannot parse that, and it must scan this
-# security control whole (#2509 round 6).
-JsonValue: TypeAlias = (  # noqa: UP040 - see the comment above (#2483)
-    "dict[str, JsonValue] | list[JsonValue] | str | int | float | bool | None"
-)
+type JsonValue = dict[str, JsonValue] | list[JsonValue] | str | int | float | bool | None
 
 
 class MsgpackFrameError(ValueError):
