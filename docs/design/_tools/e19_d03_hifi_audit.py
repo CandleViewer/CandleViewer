@@ -14,12 +14,14 @@ Usage:
   python3 -I docs/design/_tools/e19_d03_hifi_audit.py --repin-ruled  rewrite the BQ-section pins
 
 The D02 pin (D02_HEAD) re-pins to its PR's merge commit when it merges; the memo pin (MEMO_HEAD) is
-already the E19-D01 memo's merge commit; BASE moves with a rebase. The BQ list (BQ_LIST_ID) is not
-yet ruled (RULING_ID is None): the spec's BQ heading reads "defaults built; ruling pending" and
-every bullet states its ORCH-default; once ruled, set RULING_ID and RULED_OVERRIDES and run
-`--repin-ruled`. BQ-2's default lets this ticket rewrite the CMP-110, CMP-183 and CMP-184 entries of
-`15` in place and add one pointer line under SCR-038 and one under SCR-039 in `14`; G-UNTOUCHED
-checks both diffs line by line against the merge-base with origin/main (BASE when that is absent).
+already the E19-D01 memo's merge commit; BASE moves with a rebase. The BQ list (BQ_LIST_ID) is
+ruled (RULING_ID; RULED_OVERRIDES holds BQ-3, the rest ACCEPT with riders): the spec's BQ heading
+reads "RULED", every bullet opens with its verdict, and `--repin-ruled` rewrites the pins sidecar.
+BQ-2's rider lets this ticket edit the CMP-110, CMP-183 and CMP-184 entries of `15` in place, every
+changed field quoting its Old value verbatim, and add one pointer line under SCR-038 and one under
+SCR-039 in `14`; G-UNTOUCHED checks both diffs line by line against the merge-base with origin/main
+(BASE when that is absent). G-CONTRAST recomputes every ratio from `packages/ui/tokens` and never
+reads an exemption's reason text (BQ-3 ruling).
 """
 
 from __future__ import annotations
@@ -48,15 +50,20 @@ POINTER_LINE = re.compile(
 POINTER_SCREENS = ("### SCR-038 ", "### SCR-039 ")
 CATALOGUE_REL = "docs/plan/15-component-catalogue.md"
 OWNED_ENTRIES = ("### CMP-110 ", "### CMP-183 ", "### CMP-184 ")
-BASE = "9b77e6b83"
+BASE = "7e8f8034e"
 D02_HEAD = "bed73afaa"
 D02_REL = "docs/design/E19/E19-D02.md"
 MEMO_HEAD = "b005ce610"
 MEMO_REL = "docs/design/research/e19-profiles.md"
 TOKENS = "packages/ui/tokens/"
 BQ_LIST_ID = "6579617671"
-RULING_ID: str | None = None
-RULED_OVERRIDES: frozenset[int] = frozenset()
+# BQ-4 rider: one identical sentence wherever buy / sell hue is bound while E18-D03 (#497) is open.
+R6_SENTENCE = (
+    "Buy / sell hue (R6): `color.buy.*` / `color.sell.*`, no hue decided here; E18-D03 (#497) is "
+    "open, so re-bind if #497 decides otherwise."
+)
+RULING_ID: str | None = "6580374205"
+RULED_OVERRIDES: frozenset[int] = frozenset({3})
 BQ_COUNT = 14
 BOARD_CAP = 10
 WALK_CAP = 10
@@ -96,6 +103,7 @@ NAMED_DOCS = {
     "D05E11": ("docs/design/E11/E11-D05.md", BASE),
     "D04E11": ("docs/design/E11/E11-D04.md", BASE),
     "D03E47": ("docs/design/E47/E47-D03.md", BASE),
+    "D04E05": ("docs/design/E05/E05-D04-a11y-cvd-signoff.md", BASE),
     "D09E09": ("docs/design/E09/E09-D09.md", BASE),
     "R32": (".claude/rules/32-design-specs.md", BASE),
     "README": ("docs/design/README.md", BASE),
@@ -111,12 +119,14 @@ NAMED_DOCS = {
 }
 # (document, line, a substring that must be on that line at its pinned revision)
 KEY_CITES: tuple[tuple[str, int, str], ...] = (
-    ("05", 118, "glyph"),
-    ("05", 125, "4.5:1"),
-    ("05", 128, "profile-histogram bars"),
-    ("05", 151, "1 update / 2s"),
-    ("05", 179, "In VA"),
-    ("05", 208, "10 px"),
+    ("05", 135, "glyph"),
+    ("05", 142, "4.5:1"),
+    ("05", 145, "profile-histogram bars"),
+    ("05", 168, "1 update / 2s"),
+    ("05", 196, "In VA"),
+    ("05", 225, "10 px"),
+    ("05", 226, "E06-D01"),
+    ("14", 81, "trading-capable surface"),
     ("11", 1766, "range midpoint"),
     ("11", 1800, "history toggle"),
     ("11", 1803, "count of hidden ones"),
@@ -173,6 +183,9 @@ KEY_CITES: tuple[tuple[str, int, str], ...] = (
     ("D05E11", 342, "+1 draw call per pane"),
     ("D04E11", 196, "0.6 em advance"),
     ("D03E47", 267, "stale"),
+    ("D04E05", 47, "Pass with findings"),
+    ("D04E05", 228, "pass now"),
+    ("D04E05", 257, "F-02"),
     ("D09E09", 90, "Only the owner can {verb}."),
     ("D09E09", 95, "Read-only while viewing as {user}."),
     ("SD", 98, "color.buy.default"),
@@ -521,6 +534,9 @@ def g_version(c: Ctx) -> list[str]:
         f"`{MEMO_HEAD}`",
         "re-pins to its merge commit when it merges",
         "if #416's PR 1 merges as is",
+        "carries `Refs #438` + `Partial:`",
+        "pre-staged on #5487 (E19-D02, #416) at `bed73afaa`",
+        "the boards PR (PR 2) is a separate, later PR and closes the ticket",
     ):
         if need not in c.spec:
             bad.append(f"the spec must state {need!r}")
@@ -803,6 +819,21 @@ def g_contrast(c: Ctx) -> list[str]:
                 bad.append(f"{r[0]} ({theme}): {got} < {want}")
         if r[6] != "pass":
             bad.append(f"{r[0]}: verdict {r[6]!r}")
+    body = section(c.spec, "### 2.2")
+    for need in (
+        "BQ-3 OVERRIDE, comment 6580374205",
+        "recorded and no retune A-row is added",
+        "EX:64–93",
+        "E19-T04's token PR",
+        "`05`:145",
+        "never reads an exemption's reason text",
+    ):
+        if need not in body:
+            bad.append(f"§2.2 lacks {need!r} (BQ-3 ruling)")
+    if any("retune" in " ".join(r) for r in table_rows(section(c.spec, "### 14.3"))):
+        bad.append(
+            "§14.3 carries a retune A-row; the BQ-3 ruling adds none while every pair passes"
+        )
     return bad
 
 
@@ -893,6 +924,16 @@ def g_e18(c: Ctx) -> list[str]:
     for need in ("`24`:812–813", "the same token family", "D03-C4", "segment order", "▲ / ▼"):
         if need not in body:
             bad.append(f"§8 lacks {need!r}")
+    lo, hi = owned_spans(c.catalogue[1]).get(OWNED_ENTRIES[0], (0, 0))
+    cmp110 = "\n".join(c.catalogue[1][lo:hi])
+    for where, text in (
+        ("§2.1", section(c.spec, "### 2.1")),
+        ("§8", body),
+        ("the hand-off", c.handoff),
+        ("CMP-110 in `15`", cmp110),
+    ):
+        if R6_SENTENCE not in text:
+            bad.append(f"{where} lacks the identical R6 sentence (BQ-4 rider)")
     return bad
 
 
@@ -957,6 +998,9 @@ def g_tpo(c: Ctx) -> list[str]:
         bad.append(f"§6.2's block pitch × {TPO_LETTERS} must fit every density's run")
     if "W-7" not in section(c.spec, "### 6.2"):
         bad.append("§6.2 must name the legend note W-7")
+    for phrase in ("24 h / 30 min", "E06-D01", "`05`:226", "a letterless form"):
+        if phrase not in body:
+            bad.append(f"§6 lacks {phrase!r} (BQ-8 rider)")
     return bad
 
 
@@ -1009,6 +1053,8 @@ def g_env(c: Ctx) -> list[str]:
         "no account context",
         "no per-account affordance",
         "synthetic BTCUSDT",
+        "not a trading-capable surface",
+        "`14`:81",
     )
     return [f"R-1 lacks {n!r}" for n in need if n not in body]
 
@@ -1280,7 +1326,31 @@ def catalogue_diff(c: Ctx) -> list[str]:
     for h in OWNED_ENTRIES:
         if h not in touched:
             bad.append(f"{CATALOGUE_REL}: {h.strip()} is not updated (T DoD)")
+    for h in OWNED_ENTRIES:
+        if h not in bspans or h not in cspans:
+            continue
+        was, now = entry_fields(base, bspans[h]), entry_fields(cur, cspans[h])
+        for label, value in was.items():
+            if label not in now:
+                bad.append(f"{CATALOGUE_REL}: {h.strip()} lost its {label} field")
+            elif now[label] != value and f"Old: \u201c{value}\u201d" not in now[label]:
+                bad.append(f"{CATALOGUE_REL}: {h.strip()} {label} changed without its Old quoted")
     return bad
+
+
+FIELD = re.compile(r"\*\*([^*]+)\*\*: ")
+
+
+def entry_fields(lines: list[str], span: tuple[int, int]) -> dict[str, str]:
+    """BQ-2 rider: the fields of one `15` entry, label → value (Old quotes included)."""
+    fields: dict[str, str] = {}
+    for ln in lines[span[0] : span[1]]:
+        if not ln.startswith("- **"):
+            continue
+        parts = FIELD.split(ln)
+        for label, value in zip(parts[1::2], parts[2::2], strict=True):
+            fields[label] = value.strip().removesuffix(" ·")
+    return fields
 
 
 def g_untouched(c: Ctx) -> list[str]:
@@ -1464,6 +1534,21 @@ def stray_catalogue(c: Ctx) -> Ctx:
     return replace(c, catalogue=(base, edited))
 
 
+def drop_old_quote(c: Ctx) -> Ctx:
+    base, cur = c.catalogue
+    i = next(
+        (k for k, ln in enumerate(cur) if ln.startswith("- **Tier**: Chart-primitive (")), None
+    )
+    if i is None or "; Old: \u201c" not in cur[i]:
+        raise ValueError("the CMP-110 Tier field and its Old quote not found")
+    edited = [
+        *cur[:i],
+        re.sub(r"; Old: \u201c[^\u201d]*\u201d", "", cur[i], count=1),
+        *cur[i + 1 :],
+    ]
+    return replace(c, catalogue=(base, edited))
+
+
 def drift_source(c: Ctx) -> Ctx:
     lines = list(c.sources["24"])
     lines[1014] = lines[1014].replace("default 20", "default 30")
@@ -1490,7 +1575,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Ctx], Ctx]], ...] = (
     ("M-3", "G-VERSION", sub_spec(_ANCHOR, _ANCHOR + "ab" * 20 + "\n")),
     ("M-4", "G-CITE", sub_spec("(`24`:1001, :1015 — rays", "(`24`:99999, :1015 — rays")),
     ("M-5", "G-CITE", drift_source),
-    ("M-6", "G-BQ", sub_both("Built as: §6.", "Then §6.")),
+    ("M-6", "G-BQ", sub_both("Built as: §6; D03-A3.", "Then §6; D03-A3.")),
     ("M-7", "G-RULED", set_pins),
     ("M-8", "G-BOARDS", sub_re(r"^(\| 10 .*\| )PENDING \|$", r"\1DRAWN   |")),
     ("M-9", "G-BOARDS", sub_spec("audit:boards=10 ", "audit:boards=11 ")),
@@ -1562,6 +1647,13 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Ctx], Ctx]], ...] = (
     ("M-43", "G-UNTOUCHED", add_changed),
     ("M-44", "G-UNTOUCHED", extra_pointer),
     ("M-45", "G-UNTOUCHED", stray_catalogue),
+    ("M-54", "G-UNTOUCHED", drop_old_quote),
+    ("M-55", "G-E18", sub_spec("(BQ-4 ruling): Buy / sell hue (R6)", "(BQ-4 ruling): Hue (R6)")),
+    ("M-56", "G-E18", sub_handoff("entry. Buy / sell hue (R6)", "entry. Hue (R6)")),
+    ("M-57", "G-CONTRAST", sub_spec("recorded and no retune A-row", "recorded and a retune A-row")),
+    ("M-58", "G-TPO", sub_spec("a letterless form", "a letter form")),
+    ("M-59", "G-ENV", sub_spec("no local badge repeats (`14`:81; ", "no local badge repeats (")),
+    ("M-60", "G-VERSION", sub_spec("is a separate, later PR and closes the ticket", "is later")),
     ("M-46", "G-NOCLOSE", sub_spec(_ANCHOR, _ANCHOR + _CLOSE + "\n")),
     ("M-47", "G-NOCLOSE", sub_spec("\n## 1. Purpose", _HEAD + "\n## 1. Purpose")),
     ("M-48", "G-PUBLIC", sub_spec(_ANCHOR, _ANCHOR + _HOST + "\n")),
