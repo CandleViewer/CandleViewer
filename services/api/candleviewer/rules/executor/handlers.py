@@ -58,10 +58,12 @@ COUNTS_ORDERS: Final = frozenset(
      "reverse_position", "arm_chase_limit", "start_iceberg_slice", "start_twap"}
 )  # fmt: skip
 #: The actions that set, move or cancel a stop, which check 8 asks the stop in force about (24
-#: §11.5; BQ-12): a cancel may select a native stop-loss.
+#: §11.5; BQ-12): a cancel may select a native stop-loss; a take-profit amend sends the order's
+#: stop beside it, and check 8 finds its target as the stop moves' (E35-T12).
 TOUCHES_STOP: Final = frozenset(
-    {"modify_stop_loss", "tighten_stop", "move_to_breakeven", "cancel_order", "cancel_all_orders"}
-)
+    {"modify_stop_loss", "modify_take_profit", "tighten_stop", "move_to_breakeven",
+     "cancel_order", "cancel_all_orders"}
+)  # fmt: skip
 #: How a handler's call ended, which `on_error` reads (24 §11.9): `accepted` and `done` took
 #: effect; `refused` is a definite refusal, never retried (`blocked_by` when a check of the set
 #: maps it); `pre_anchor` a refusal before the OMS anchor existed and `no_answer` a timeout or a

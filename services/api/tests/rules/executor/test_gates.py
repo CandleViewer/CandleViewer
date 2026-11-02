@@ -41,7 +41,7 @@ from candleviewer.rules.executor.handlers import (
     prepared,
 )
 from candleviewer.rules.executor.keys import dedupe_key
-from candleviewer.rules.executor.ports import PrincipalView
+from candleviewer.rules.executor.ports import STOP_ADMITTED, PrincipalView, StopVerdict
 from candleviewer.rules.ir.models import MAX_ACTIONS, Action, ActionType, RuleLimits, RuleScope
 from candleviewer.rules.scope import (
     ActionRequest,
@@ -1042,9 +1042,9 @@ class _Stops:
     def __init__(self, admitted: set[uuid.UUID]) -> None:
         self.admitted, self.asked = admitted, list[str]()
 
-    def admits(self, req: ActionRequest, account_id: uuid.UUID | None) -> bool:
+    async def judge(self, req: ActionRequest, account_id: uuid.UUID | None) -> StopVerdict:
         self.asked.append(req.action_type)
-        return account_id in self.admitted
+        return STOP_ADMITTED if account_id in self.admitted else StopVerdict(refused="native_sl")
 
 
 async def test_an_unbound_stop_check_refuses_as_native_sl() -> None:
@@ -1053,8 +1053,8 @@ async def test_an_unbound_stop_check_refuses_as_native_sl() -> None:
     never clamped; bound, the writer's comparison decides. `rules.blocked` alone is written."""
     stopping = sorted(t for t, spec in HANDLERS.items() if spec.touches_stop)
     assert stopping == [
-        "cancel_all_orders", "cancel_order", "modify_stop_loss", "move_to_breakeven",
-        "tighten_stop",
+        "cancel_all_orders", "cancel_order", "modify_stop_loss", "modify_take_profit",
+        "move_to_breakeven", "tighten_stop",
     ]  # fmt: skip
     reqs = [action(f"a{n}", t, on_error="continue") for n, t in enumerate(stopping)]
     unbound = Gated()
@@ -1067,6 +1067,28 @@ async def test_an_unbound_stop_check_refuses_as_native_sl() -> None:
     refused = Gated(stop=_Stops(set()))
     await refused.run(*reqs)
     assert {(o, r) for _, o, r in refused.results()} == {("blocked", "native_sl")}
+
+
+class _Verdict:
+    """Check 8's port answering one verdict for every stop action."""
+
+    def __init__(self, verdict: StopVerdict) -> None:
+        self.verdict = verdict
+
+    async def judge(self, req: ActionRequest, account_id: uuid.UUID | None) -> StopVerdict:
+        return self.verdict
+
+
+async def test_a_stop_refusal_outside_check_8s_two_is_refused_as_native_sl() -> None:
+    """Fail closed (24 §11.5 check 8; E35-T12): a port answering a refusal other than its two
+    (`native_sl`, `unavailable`) is refused `native_sl`, nothing sent; `unavailable` keeps its
+    own, as check 8 answers a position's stop move."""
+    odd = Gated(stop=_Verdict(StopVerdict(refused="permission")))
+    await odd.run(action("a1", "modify_stop_loss"))
+    assert [(o, r) for _, o, r in odd.results()] == [("blocked", "native_sl")] and odd.sent == []
+    own = Gated(stop=_Verdict(StopVerdict(refused="unavailable")))
+    await own.run(action("a1", "modify_stop_loss"))
+    assert [(o, r) for _, o, r in own.results()] == [("blocked", "unavailable")] and own.sent == []
 
 
 async def test_a_confirmation_required_fire_is_blocked_and_never_executed_later() -> None:

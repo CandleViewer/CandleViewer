@@ -11,29 +11,47 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
+import candleviewer.rules_oms_exits as exits_module
 from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.oms.errors import (
     AccountScopeDenied,
     LotSizeViolation,
+    OmsNotReady,
     OrderEntryRefused,
     RateBudgetExceeded,
     TradingDisabled,
 )
+from candleviewer.oms.exits import ExitOutcome
 from candleviewer.oms.submit import OrderRequest, SubmitContext, SubmitOutcome
 from candleviewer.oms.validator import OrderPlacementRefused
-from candleviewer.rules.executor.params import FlattenParams, ScaleOutParams, reduce_params
-from candleviewer.rules.executor.ports import PrincipalView
-from candleviewer.rules.executor.results import OMS_DETAIL, READ_ONLY
+from candleviewer.rules.executor.params import (
+    CancelParams,
+    FlattenParams,
+    ScaleOutParams,
+    StopMoveParams,
+    exit_params,
+    reduce_params,
+)
+from candleviewer.rules.executor.ports import STOP_ADMITTED, Loosening, PrincipalView
+from candleviewer.rules.executor.results import BLOCKED_DETAIL, OMS_DETAIL, POSITION_STOP, READ_ONLY
+from candleviewer.rules.ir.models import Action
 from candleviewer.rules.scope import ScopeInstanceRef
 from candleviewer.rules_oms_exits import (
     PreparedExit,
+    RuleAmendHandler,
+    RuleBreakerCancels,
+    RuleCancelHandler,
     RuleReduceHandler,
+    RuleStopCheck,
     StoredOpenPositions,
+    exit_answer,
     owner_scope,
+    stop_level,
 )
 from candleviewer.rules_oms_orders import RuleOrders, SubmitCutShort
 from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
@@ -408,3 +426,434 @@ def test_a_rule_principal_shows_nothing_of_its_users() -> None:
     assert isinstance(prepared, PreparedExit) and prepared.principal is not None
     shown = repr(prepared.principal)
     assert str(OWNER) not in shown and str(ARMER) not in shown and "owner" not in shown
+
+
+# --- slice 3e ----------------------------------------------------------------------------------
+
+
+def _move(mode: str, value: str = "100") -> StopMoveParams:
+    return StopMoveParams(mode=mode, value=Decimal(value))  # type: ignore[arg-type]  # the Literal's member, as the model reads it
+
+
+@pytest.mark.parametrize(
+    ("mode", "kind", "side", "snapshot", "level"),
+    [
+        ("absolute", "stop_loss", "Buy", {}, "100"),
+        ("offset_from_entry", "stop_loss", "Buy", {}, "59900"),
+        ("offset_from_entry", "stop_loss", "Sell", {}, "60100"),
+        ("offset_from_entry", "take_profit", "Buy", {}, "60100"),
+        ("offset_from_entry", "take_profit", "Sell", {}, "59900"),
+        ("offset_from_price", "stop_loss", "Buy", {"price": Decimal("61000")}, "60900"),
+        ("atr", "stop_loss", "Buy", {"atr": Decimal("2")}, "59800"),
+        ("atr", "take_profit", "Sell", {"atr": Decimal("2")}, "59800"),
+        ("structure", "stop_loss", "Buy", {"swing_low": Decimal("59000")}, "58900"),
+        ("structure", "stop_loss", "Sell", {"swing_high": Decimal("61000")}, "61100"),
+        ("structure", "take_profit", "Buy", {"swing_high": Decimal("61000")}, "60900"),
+        ("structure", "take_profit", "Sell", {"swing_low": Decimal("59000")}, "59100"),
+    ],
+)
+def test_stop_level_sets_each_mode_on_its_protective_or_profitable_side(
+    mode: str, kind: Any, side: Any, snapshot: dict[str, Any], level: str
+) -> None:
+    """BQ-9 (24 §11.5 "Exits"): each mode's level from the order's price (60000) or the fire's
+    snapshot, a stop on the protective side, a take-profit on the profitable one."""
+    got = stop_level(_move(mode), kind=kind, side=side, price=Decimal("60000"), snapshot=snapshot)
+    assert got == Decimal(level)
+
+
+@pytest.mark.parametrize("mode", ["offset_from_price", "atr", "structure"])
+def test_a_level_the_snapshot_cannot_give_is_none(mode: str) -> None:
+    """A snapshot without the metric, or with one that is no finite decimal, gives no level, so
+    the amend fails `metric_unavailable`; an entry with no price gives no offset from it."""
+    for snapshot in ({}, {"price": None, "atr": "2", "swing_low": Decimal("NaN")}):
+        assert (
+            stop_level(
+                _move(mode), kind="stop_loss", side="Buy", price=Decimal(1), snapshot=snapshot
+            )
+            is None
+        )
+    assert (
+        stop_level(
+            _move("offset_from_entry"), kind="stop_loss", side="Buy", price=None, snapshot={}
+        )
+        is None
+    )
+
+
+def test_exit_answer_maps_the_exit_services_answers() -> None:
+    """24 §11.5, §11.9: taken is `accepted` with its order; not known `in_flight`, never sent
+    again; a refusal that sent nothing `pre_anchor`; a rate limit `rate_limited`; the amend
+    ratchet's `risk_limit_breached`, the writer's refusal of a looser stop, `native_sl`."""
+    order = uuid.UUID(int=0xE1)
+    cases = [
+        (ExitOutcome(kind="accepted", status=202), ("accepted", None, None)),
+        (ExitOutcome(kind="unknown", status=202, unknown_reason="timeout"),
+         ("in_flight", "timeout", None)),
+        (ExitOutcome(kind="refused", status=503, code="store_unavailable"),
+         ("pre_anchor", "store_unavailable", None)),
+        (ExitOutcome(kind="refused", status=429, code="exchange_rate_limited"),
+         ("refused", "exchange_rate_limited", "rate_limited")),
+        (ExitOutcome(kind="refused", status=403, code="risk_limit_breached"),
+         ("refused", "risk_limit_breached", "native_sl")),
+        (ExitOutcome(kind="refused", status=409, code="conflict"), ("refused", "conflict", None)),
+    ]  # fmt: skip
+    for outcome, expected in cases:
+        answer = exit_answer(outcome, order)
+        assert (answer.answer, answer.error_code, answer.blocked_by) == expected
+        assert answer.order_id == order
+
+
+@dataclass
+class Reading:
+    """`RuleEntries` answering fixed rows; each call recorded."""
+
+    rows: tuple[Any, ...] = ()
+    calls: list[tuple[uuid.UUID, Any, Any]] = field(default_factory=list)
+
+    async def rule_resting_entries(
+        self, rule_id: uuid.UUID, environment: Any, *, account_id: Any = None,
+        symbol: Any = None, limit: int,
+    ) -> tuple[Any, ...]:  # fmt: skip
+        self.calls.append((rule_id, account_id, symbol))
+        return self.rows
+
+
+def _entry(**over: Any) -> Any:
+    """A resting limit buy entry as the read returns it, its stop at 58000."""
+    base = replace(
+        cast(Any, cr.new_order(seq=over.pop("seq", 1))), lifecycle_state="submitted",
+        state="accepted",
+    )  # fmt: skip
+    return SimpleNamespace(**{**{f: getattr(base, f) for f in base.__dataclass_fields__}, **over})
+
+
+async def test_the_stop_check_judges_each_exit_as_check_8_says() -> None:
+    """24 §11.5 check 8 (BQ-2, BQ-4): a cancel naming a stop-loss is `native_sl`, any other
+    admitted; a type the port does not know `native_sl`; an amend whose parameters do not parse
+    admitted (the handler fails it); `only_tighten: false` `native_sl` with its loosening; no
+    target `unavailable`, its detail the position's, a partly filled or a market entry being no
+    target (BQ-9: an amend moves a resting limit entry); a take-profit move with a target
+    admitted."""
+    held = Held((stored(),))
+    check = RuleStopCheck(Principals(frozenset({cr.ACCOUNT})), Reading(), held, "demo")
+
+    async def judge(action_type: str, params: dict[str, Any]) -> Any:
+        return await check.judge(exit_request(action_type, params), cr.ACCOUNT)
+
+    assert (await judge("cancel_order", {"purpose": "stop_loss"})).refused == "native_sl"
+    assert await judge("cancel_all_orders", {"purpose": "entry"}) == STOP_ADMITTED
+    assert (await judge("flatten_position", {})).refused == "native_sl"
+    assert await judge("modify_stop_loss", {"mode": "nearest"}) == STOP_ADMITTED
+    loose = await judge("tighten_stop", {"mode": "absolute", "value": 1, "only_tighten": False})
+    assert (loose.refused, loose.loosening) == ("native_sl", Loosening(symbol=cr.SYMBOL))
+    none = await judge("modify_take_profit", {"mode": "absolute", "value": 63000})
+    assert (none.refused, none.detail) == ("unavailable", POSITION_STOP)
+    unmoved = (
+        _entry(lifecycle_state="partially_filled", state="partially_filled"),
+        _entry(seq=2, order_type="Market"),
+    )
+    check = RuleStopCheck(Principals(frozenset({cr.ACCOUNT})), Reading(unmoved), held, "demo")
+    moved = await judge("modify_stop_loss", {"mode": "absolute", "value": 58600})
+    assert (moved.refused, moved.detail) == ("unavailable", POSITION_STOP)
+    check = RuleStopCheck(Principals(frozenset({cr.ACCOUNT})), Reading((_entry(),)), held, "demo")
+    assert await judge("modify_take_profit", {"mode": "absolute", "value": 63000}) == STOP_ADMITTED
+
+
+async def test_the_stop_check_compares_with_the_orders_stop_and_the_positions() -> None:
+    """The amend writer's comparison (`stop_ratchet`): a level looser than the order's own stop,
+    or than its position's stop at the venue on the same side, is `native_sl` with the stop it
+    would loosen and the level asked; a tighter one admitted; a level the snapshot cannot give is
+    left to the handler; a read that raises reaches the executor's bound (fail closed)."""
+    entry = _entry()
+    reading = Reading((entry,))
+    held = Held((stored(stop=Decimal("58500")),))
+    check = RuleStopCheck(Principals(frozenset({cr.ACCOUNT})), reading, held, "demo")
+
+    async def judge(value: str, **params: Any) -> Any:
+        move = {"mode": "absolute", "value": value} | params
+        return await check.judge(exit_request("modify_stop_loss", move), cr.ACCOUNT)
+
+    order_loose = await judge("57000")
+    assert order_loose.loosening == Loosening(
+        order_id=entry.id, symbol=cr.SYMBOL, before=Decimal("58000"), after=Decimal("57000")
+    )
+    position_loose = await judge("58200")  # tighter than the order's, looser than the position's
+    assert (position_loose.refused, position_loose.loosening.before) == (
+        "native_sl", Decimal("58500"),
+    )  # fmt: skip
+    assert await judge("58600") == STOP_ADMITTED
+    assert await judge("100", mode="atr") == STOP_ADMITTED  # no `atr` in the snapshot
+    reading.rows = ()
+    check._entries = None
+    with pytest.raises(LookupError):
+        await judge("58600")
+
+
+@dataclass
+class Exits:
+    """The exit service as the breaker drives it: each cancel answered by `answers` in turn."""
+
+    answers: list[Any] = field(default_factory=list)
+    cancelled: list[tuple[uuid.UUID, str, Any, Any]] = field(default_factory=list)
+
+    async def cancel_admitted(
+        self, row: Any, *, actor: Any, reason: Any, request_id: Any, origin: Any = None
+    ) -> ExitOutcome:
+        self.cancelled.append((row.id, reason, actor, origin))
+        answer = self.answers.pop(0)
+        if isinstance(answer, BaseException):
+            raise answer
+        if isinstance(answer, asyncio.Event):
+            await answer.wait()
+        return cast(ExitOutcome, answer)
+
+
+@dataclass
+class Alerts:
+    counted: list[tuple[str, int, int | None]] = field(default_factory=list)
+
+    async def breaker_cancels(
+        self, rule_id: str, run_id: uuid.UUID, node_id: str, *, sent: int, not_done: int | None
+    ) -> None:
+        self.counted.append((node_id, sent, not_done))
+
+
+class Composed:
+    def __init__(self, exits: Exits) -> None:
+        self.exits = exits
+
+
+async def test_the_breaker_cancels_count_the_ones_not_done(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BQ-10: the tripped rule's resting entries are cancelled, each with the reason
+    `rule_circuit_breaker` as the owner, every account read (no account named); a refusal, a
+    raise and a wait past the bound are each counted not done; a read that fails is reported
+    unread; the origin names the tripped rule, `circuit_breaker` in place of a node id the
+    origin refuses; with no owner view read, the role is `unknown`."""
+    monkeypatch.setattr(exits_module, "BREAKER_CANCEL_TIMEOUT_S", 0.0)
+    rows = tuple(_entry(seq=n) for n in range(4))
+    exits = Exits([
+        ExitOutcome(kind="accepted", status=202), ExitOutcome(kind="refused", status=409),
+        ConnectionError("lost"), asyncio.Event(),
+    ])  # fmt: skip
+    alerts, reading = Alerts(), Reading(rows)
+    principals = Principals(frozenset({cr.ACCOUNT}))
+    breaker = RuleBreakerCancels(
+        lambda: cast(Any, Composed(exits)), principals, reading, "demo", alerts
+    )
+    await breaker.cancel_resting(exit_request("scale_out", node="x9"))
+    assert alerts.counted == [("x9", 4, 3)] and reading.calls[0][1:] == (None, None)
+    assert {reason for _, reason, _, _ in exits.cancelled} == {"rule_circuit_breaker"}
+    _id, _reason, actor, origin = exits.cancelled[0]
+    assert (actor.user_id, actor.role, origin.node_id, origin.version) == (OWNER, "owner", "x9", 1)
+    assert (origin.armed_by, origin.armed_by_role) == (ARMER, "owner")  # the closed role set
+    principals.missing, alerts.counted = {OWNER, ARMER}, []
+    odd = replace(
+        exit_request("scale_out"),
+        payload=Action.model_construct(
+            **(exit_request("scale_out").payload.model_dump() | {"node_id": "no such node"})
+        ),
+    )
+    once = Exits([ExitOutcome(kind="accepted", status=202)])
+    single = RuleBreakerCancels(
+        lambda: cast(Any, Composed(once)), principals, Reading(rows[:1]), "demo", alerts
+    )
+    await single.cancel_resting(odd)
+    [(_, _, actor, origin)] = once.cancelled
+    assert (actor.role, origin.node_id, origin.armed_by) == ("unknown", "circuit_breaker", None)
+    assert alerts.counted == [("no such node", 1, 0)]
+    unread = RuleBreakerCancels(
+        lambda: cast(Any, Composed(Exits())), principals, None, "demo", alerts
+    )
+    await unread.cancel_resting(exit_request("scale_out", node="x8"))
+    assert alerts.counted[-1] == ("x8", 0, None)
+
+
+async def test_a_rule_cancel_tries_every_order_and_answers_the_first_not_taken() -> None:
+    """A cancel tries each selected order, even past one not taken (a cancel adds no exposure),
+    and answers the first that was not; an unread read is `pre_anchor` (`store_unavailable`),
+    which `retry_once` may retry; no runtime is `pre_anchor` (`oms_not_ready`)."""
+    rows = (_entry(seq=1), _entry(seq=2), _entry(seq=3))
+    exits = Exits([
+        ExitOutcome(kind="accepted", status=202),
+        ExitOutcome(kind="refused", status=429, code="exchange_rate_limited"),
+        ExitOutcome(kind="accepted", status=202),
+    ])  # fmt: skip
+    principals = Principals(frozenset({cr.ACCOUNT}))
+    cancel = RuleCancelHandler(
+        "cancel_all_orders", lambda: cast(Any, Composed(exits)), principals, Reading(rows), "demo"
+    )
+    prepared = cancel.prepare(exit_request("cancel_all_orders"), cr.ACCOUNT, max_notional_usd=None)
+    answer = await cancel.send(prepared, client_ref=REF)
+    assert (answer.answer, answer.blocked_by, answer.order_id) == (
+        "refused", "rate_limited", rows[1].id,
+    )  # fmt: skip
+    assert [i for i, *_ in exits.cancelled] == [r.id for r in rows]
+    assert {reason for _, reason, _, _ in exits.cancelled} == {"rule"}
+    unread = RuleCancelHandler("cancel_order", lambda: None, principals, None, "demo")
+    prepared = unread.prepare(exit_request("cancel_order"), cr.ACCOUNT, max_notional_usd=None)
+    assert (await unread.send(prepared, client_ref=REF)).error_code == "store_unavailable"
+    absent = RuleCancelHandler("cancel_order", lambda: None, principals, Reading(rows), "demo")
+    prepared = absent.prepare(exit_request("cancel_order"), cr.ACCOUNT, max_notional_usd=None)
+    assert (await absent.send(prepared, client_ref=REF)).error_code == "oms_not_ready"
+    for wrong, kind in (("tighten_stop", RuleCancelHandler), ("cancel_order", RuleAmendHandler)):
+        with pytest.raises(ValueError, match="is not a rule's"):
+            kind(wrong, lambda: None, principals, None, "demo")
+
+
+async def test_an_armers_role_outside_the_closed_role_set_is_refused_as_permission() -> None:
+    """The origin carries the armer's role as one of the closed role set (`Role`, the `role_name`
+    enum): a view naming any other role names no armer the OMS takes, so the exit is refused
+    `permission` at `prepare`, nothing read or sent, as a view gone since check 5 is."""
+    orders = Orders()
+    principals = Principals(frozenset({cr.ACCOUNT}))
+    principals.facts[ARMER] = (True, "auditor", False, frozenset({cr.ACCOUNT}))
+    exit_ = RuleReduceHandler(
+        "flatten_position", cast(RuleOrders, orders), principals, Held((stored(),))
+    )
+    prepared = exit_.prepare(exit_request("flatten_position"), cr.ACCOUNT, max_notional_usd=None)
+    answer = await exit_.send(prepared, client_ref=REF)
+    assert (answer.answer, answer.blocked_by) == ("refused", "permission") and orders.sent == []
+
+
+def test_exit_params_read_the_cancels_and_the_amends_strictly() -> None:
+    """24 §11.6 (E35-T12): a cancel's `purpose` is one of the intents, an amend's `mode` one of
+    the five, its `value` above zero and `only_tighten` a strict boolean, on unless written off;
+    anything else, or a type that is no exit, reads as nothing (`invalid_params` at `prepare`)."""
+    assert exit_params("cancel_order", {"purpose": "entry"}) == CancelParams(purpose="entry")
+    assert exit_params("cancel_all_orders", {}) == CancelParams()
+    move = exit_params("tighten_stop", {"mode": "atr", "value": "1.5"})
+    assert isinstance(move, StopMoveParams)
+    assert (move.mode, move.value, move.only_tighten) == ("atr", Decimal("1.5"), True)
+    refused: list[tuple[str, dict[str, Any]]] = [
+        ("cancel_order", {"purpose": "hedge"}),
+        ("modify_stop_loss", {"mode": "absolute", "value": "0"}),
+        ("modify_stop_loss", {"mode": "absolute", "value": "1", "only_tighten": "false"}),
+        ("modify_take_profit", {"mode": "nearest", "value": "1"}),
+        ("place_order", {}),
+    ]
+    for action_type, params in refused:
+        assert exit_params(action_type, params) is None, action_type
+
+
+class NotReady:
+    """A composed runtime whose exit service is not open yet."""
+
+    @property
+    def exits(self) -> Any:
+        raise OmsNotReady()
+
+
+@dataclass
+class Amends:
+    """The exit service as a rule's amend drives it: `scope` answers `scoped` (the exit service's
+    refusal) or the order, and `amend` answers or raises `answer`; each amend recorded."""
+
+    scoped: ExitOutcome | None = None
+    answer: Any = None
+    asked: list[Any] = field(default_factory=list)
+
+    async def scope(self, caller: Any, order_id: uuid.UUID) -> Any:
+        return self.scoped if self.scoped is not None else SimpleNamespace(order_id=order_id)
+
+    async def amend(self, scoped: Any, terms: Any, *, caller: Any, expected_seq: Any) -> Any:
+        self.asked.append(terms)
+        if isinstance(self.answer, BaseException):
+            raise self.answer
+        return self.answer
+
+
+async def test_a_rule_cancel_the_exit_service_does_not_take_answers_and_never_raises() -> None:
+    """A cancel whose parameters do not parse is `invalid_params`, nothing read; an exit service
+    not open yet, before the call or at it, is `pre_anchor` (`oms_not_ready`), which `retry_once`
+    may retry; a call that fails is `no_answer`, named by no text of its error."""
+    principals, reading = Principals(frozenset({cr.ACCOUNT})), Reading((_entry(),))
+    odd = RuleCancelHandler("cancel_order", lambda: None, principals, reading, "demo")
+    hedge = exit_request("cancel_order", {"purpose": "hedge"})
+    prepared = odd.prepare(hedge, cr.ACCOUNT, max_notional_usd=None)
+    assert (await odd.send(prepared, client_ref=REF)).error_code == "invalid_params"
+    assert reading.calls == []
+
+    async def send(runtime: Any) -> Any:
+        cancel = RuleCancelHandler("cancel_order", lambda: runtime, principals, reading, "demo")
+        prepared = cancel.prepare(exit_request("cancel_order"), cr.ACCOUNT, max_notional_usd=None)
+        return await cancel.send(prepared, client_ref=REF)
+
+    shut = await send(NotReady())
+    assert (shut.answer, shut.error_code) == ("pre_anchor", "oms_not_ready")
+    closing = await send(Composed(Exits([OmsNotReady()])))
+    assert (closing.answer, closing.error_code) == ("pre_anchor", "oms_not_ready")
+    lost = await send(Composed(Exits([ConnectionError("planted text")])))
+    assert (lost.answer, lost.error_code) == ("no_answer", "internal_error")
+    assert "planted" not in repr(lost)
+
+
+async def test_a_rule_amend_the_exit_service_does_not_take_answers_and_never_raises() -> None:
+    """An amend whose entries are not read is `pre_anchor` (`store_unavailable`); one that finds
+    no resting entry by the time it is sent answers as check 8 does (`unavailable`), nothing
+    sent; an exit service not open yet, before the call or at it, is `pre_anchor`
+    (`oms_not_ready`); the exit service's refusal at its scope is the answer, nothing amended;
+    a call that fails is `no_answer`."""
+    principals, resting = Principals(frozenset({cr.ACCOUNT})), Reading((_entry(),))
+    move = exit_request("modify_stop_loss", {"mode": "absolute", "value": "58600"})
+
+    async def send(entries: Any, runtime: Any) -> Any:
+        amend = RuleAmendHandler("modify_stop_loss", lambda: runtime, principals, entries, "demo")
+        prepared = amend.prepare(move, cr.ACCOUNT, max_notional_usd=None)
+        return await amend.send(prepared, client_ref=REF)
+
+    assert (await send(None, None)).error_code == "store_unavailable"
+    none = await send(Reading(), None)
+    assert (none.answer, none.blocked_by, none.detail) == (
+        "refused", "unavailable", BLOCKED_DETAIL[POSITION_STOP],
+    )  # fmt: skip
+    assert (await send(resting, None)).error_code == "oms_not_ready"
+    assert (await send(resting, NotReady())).error_code == "oms_not_ready"
+    final = Amends(scoped=ExitOutcome(kind="refused", status=409, code="order_not_amendable"))
+    answer = await send(resting, Composed(cast(Any, final)))
+    assert (answer.answer, answer.error_code) == ("refused", "order_not_amendable")
+    assert final.asked == []
+    for raised, expected in (
+        (OmsNotReady(), ("pre_anchor", "oms_not_ready")),
+        (ConnectionError("planted text"), ("no_answer", "internal_error")),
+    ):
+        failing = Amends(answer=raised)
+        answer = await send(resting, Composed(cast(Any, failing)))
+        assert (answer.answer, answer.error_code) == expected and len(failing.asked) == 1
+
+
+async def test_the_stop_check_with_the_positions_stops_unread_raises_to_check_8() -> None:
+    """A stop move's check whose positions' stops cannot be read (no read bound, or the owner's
+    view gone) raises, which check 8's bound refuses `native_sl` (fail closed)."""
+    principals = Principals(frozenset({cr.ACCOUNT}))
+    move = exit_request("modify_stop_loss", {"mode": "absolute", "value": "58600"})
+    unbound = RuleStopCheck(principals, Reading((_entry(),)), None, "demo")
+    with pytest.raises(LookupError):
+        await unbound.judge(move, cr.ACCOUNT)
+    principals.missing = {OWNER}
+    gone = RuleStopCheck(principals, Reading((_entry(),)), Held((stored(),)), "demo")
+    with pytest.raises(LookupError):
+        await gone.judge(move, cr.ACCOUNT)
+
+
+async def test_the_breakers_origin_skips_an_unread_armer_and_refuses_a_bad_version() -> None:
+    """The breaker's origin: an armer id that is no user id names no armer (its cancels still
+    sent, as the owner); a rule version the origin refuses names no origin, so nothing is sent
+    and the error reaches the service's task, which logs it by its class."""
+    principals = Principals(frozenset({cr.ACCOUNT}))
+    once, alerts = Exits([ExitOutcome(kind="accepted", status=202)]), Alerts()
+    breaker = RuleBreakerCancels(
+        lambda: cast(Any, Composed(once)), principals, Reading((_entry(),)), "demo", alerts
+    )
+    await breaker.cancel_resting(replace(exit_request("scale_out"), armed_by="no user id"))
+    [(_, reason, actor, origin)] = once.cancelled
+    assert (reason, actor.user_id, origin.armed_by, origin.armed_by_role) == (
+        "rule_circuit_breaker", OWNER, None, None,
+    )  # fmt: skip
+    assert alerts.counted == [("x1", 1, 0)]
+    never = Exits()
+    refusing = RuleBreakerCancels(
+        lambda: cast(Any, Composed(never)), principals, Reading((_entry(),)), "demo", alerts
+    )
+    with pytest.raises(ValueError, match="names no origin"):
+        await refusing.cancel_resting(replace(exit_request("scale_out"), version=0))
+    assert never.cancelled == [] and alerts.counted == [("x1", 1, 0)]

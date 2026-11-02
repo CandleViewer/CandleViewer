@@ -28,7 +28,15 @@ from decimal import Decimal
 from typing import Annotated, Any, Final, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StrictBool,
+    ValidationError,
+    model_validator,
+)
 
 from candleviewer.domain.primitives import Symbol
 from candleviewer.rules.ir.canonical import IrValueError, dec_str
@@ -176,6 +184,57 @@ def reduce_params(action_type: str, params: Mapping[str, Any]) -> ReduceParams |
     """`params` of a reduce-only exit, typed as `entry_params` types an entry's: `None` when they
     do not parse (a percent above 100 among them) or the type is none of the three."""
     model = _REDUCE.get(action_type)
+    if model is None:
+        return None
+    try:
+        return model.model_validate(dict(params))
+    except ValidationError:
+        return None
+
+
+#: An order's intent (24 §8.1), which a cancel's `purpose` names (E35-T12).
+Purpose = Literal[
+    "entry", "scale_in", "stop_loss", "take_profit", "scale_out", "flatten", "reverse"
+]
+#: What an amend's `value` measures from (24 §11.6, §11.5 "Exits"; BQ-9).
+StopMode = Literal["absolute", "offset_from_entry", "offset_from_price", "atr", "structure"]
+
+
+class CancelParams(BaseModel):
+    """`cancel_order`'s and `cancel_all_orders`' parameters: an optional `purpose`, an order's
+    intent, which narrows the rule's own resting entries a cancel selects; `stop_loss` names a
+    native stop, which check 8 refuses (24 §11.5)."""
+
+    model_config = _STRICT
+    purpose: Purpose | None = None
+
+
+class StopMoveParams(BaseModel):
+    """`modify_stop_loss`'s, `modify_take_profit`'s and `tighten_stop`'s parameters: `mode`,
+    `value` (above 0) and `only_tighten` (default true; `false` asks for a loosening, which check
+    8 refuses as one)."""
+
+    model_config = _STRICT
+    mode: StopMode
+    value: Positive
+    only_tighten: StrictBool = True
+
+
+ExitParams = ReduceParams | CancelParams | StopMoveParams
+_EXITS: Final[Mapping[str, type[CancelParams] | type[StopMoveParams]]] = {
+    "cancel_order": CancelParams, "cancel_all_orders": CancelParams,
+    "modify_stop_loss": StopMoveParams, "modify_take_profit": StopMoveParams,
+    "tighten_stop": StopMoveParams,
+}  # fmt: skip
+
+
+def exit_params(action_type: str, params: Mapping[str, Any]) -> ExitParams | None:
+    """`params` of any exit (E35-T12), typed as `reduce_params` types the reduce-only ones:
+    `None` when they do not parse or the type is no exit."""
+    reduced = reduce_params(action_type, params)
+    if reduced is not None:
+        return reduced
+    model = _EXITS.get(action_type)
     if model is None:
         return None
     try:

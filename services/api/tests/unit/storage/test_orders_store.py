@@ -324,6 +324,8 @@ _STATEMENTS: dict[str, Any] = {
     "list_unfinished_statement": mod.list_unfinished_statement([ACCOUNT], 4097),
     "in_scope_statement": mod.in_scope_statement(_GRANT, ORDER, "demo"),
     "accounts_in_scope_statement": mod.accounts_in_scope_statement(_GRANT, "demo", [ACCOUNT]),
+    # E35-T12: the breaker's read, every account of the environment (`UNSCOPED`).
+    "rule_entries_statement": mod.rule_entries_statement(ORDER, "demo", None, None, 10),
 }
 #: The exit routes' reads (E29-T04 slice 4), scoped by the principal: the grant bound to its user.
 _BY_PRINCIPAL = {"in_scope_statement", "accounts_in_scope_statement"}
@@ -372,9 +374,14 @@ def test_the_exit_reads_hold_the_owner_or_the_grant_predicate_in_sql() -> None:
 
 
 def test_only_the_insert_the_id_check_and_the_hydration_read_are_unscoped() -> None:
-    """E29-T04's hydration read takes an environment (`test_oms_system_reads_callers.py`)."""
+    """E29-T04's hydration read takes an environment (`test_oms_system_reads_callers.py`), and so
+    does E35-T12's read of a rule's resting entries, which its circuit breaker makes on every
+    account (24 Sec.11.7), fenced in the same test; scoped by the account when it names one."""
     hydration = {"environment_accounts_statement", "list_unfinished_statement"}
-    assert mod.UNSCOPED == {"create_statement", "link_taken_statement"} | hydration
+    breaker = {"rule_entries_statement"}
+    assert mod.UNSCOPED == {"create_statement", "link_taken_statement"} | hydration | breaker
+    named = _sql(mod.rule_entries_statement(ORDER, "demo", ACCOUNT, None, 10))
+    assert "orders.exchange_account_id = $" in named
     assert _sql(_STATEMENTS["link_taken_statement"]).startswith("SELECT EXISTS (SELECT")
 
 
@@ -1071,6 +1078,10 @@ _CALLS: dict[str, tuple[Callable[[mod.SqlAlchemyOrderStore], Awaitable[object]],
     "accounts_in_scope": (
         lambda st: st.accounts_in_scope(_GRANT, "demo", ()),
         [_Result([{"id": ACCOUNT}])],
+    ),
+    "rule_resting_entries": (
+        lambda st: st.rule_resting_entries(_GROUP, "demo", account_id=ACCOUNT, limit=10),
+        [_Result([_order_row()])],
     ),
 }
 

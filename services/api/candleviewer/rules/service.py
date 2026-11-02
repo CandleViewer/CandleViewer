@@ -13,6 +13,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from time import monotonic
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final
 from uuid import UUID, uuid4
 
@@ -38,6 +39,7 @@ from candleviewer.rules.executor.metrics import RereadFailure as RereadFailure
 from candleviewer.rules.executor.ports import (
     ActionAudit,
     AlertPort,
+    BreakerCancels,
     NotionalRebuild,
     PrincipalReads,
     PrincipalRefresh,
@@ -79,6 +81,9 @@ REREAD_TIMEOUT_S: Final = 2.0
 OWN_TYPES: Final = frozenset(
     {"emit_signal", "set_variable", "pause_rule", "enable_rule", "log_journal_tag"}
 )
+#: E35-T12 (24 §11.7, BQ-10): the circuit breaker's cancel tasks running at once; a trip past it
+#: is logged and its cancels are not started (C-2.18).
+BREAKER_CANCELS_MAX: Final = 16
 
 
 def _log() -> Any:
@@ -168,6 +173,9 @@ class RulesService:
         self._handlers: dict[str, BoundHandler] = {}
         self._dispatch: FireDispatch | None = None  # the fire queue, while the evaluator runs
         self._audits: AuditDispatch | None = None  # the record-only jobs' queue, beside it
+        #: E35-T12 (BQ-10): the breaker's cancels port, and the tasks running them, drained at stop.
+        self._breaker_cancels: BreakerCancels | None = None
+        self._breaker_tasks: set[asyncio.Task[None]] = set()
 
     def bind(
         self,
@@ -187,6 +195,7 @@ class RulesService:
         budget: OrderBudget | None = None,
         signal_max_depth: int | None = None,
         handlers: Mapping[str, BoundHandler] | None = None,
+        breaker_cancels: BreakerCancels | None = None,
     ) -> None:
         """Composition-root wiring (store / audit / WS fan-out / action executor); before `start`.
         Each option is set only when given, so a later call (E35-S05's simulation sink, the
@@ -206,7 +215,9 @@ class RulesService:
         `signal_max_depth` the signal chain's depth limit (E35-T13), held to its hard cap by the
         composition root; `handlers` the handlers of the types that reach past the engine, each
         checked here against its type's capability (`HandlerTableError`), never one of the
-        engine's own (`OWN_TYPES`), and each call adding to an earlier one's (BQ-2 of #5005)."""
+        engine's own (`OWN_TYPES`), and each call adding to an earlier one's (BQ-2 of #5005);
+        `breaker_cancels` the circuit breaker's cancels of a tripped rule's resting entries
+        (E35-T12, BQ-10), run as a task this service tracks."""
         if action_sink is not None:
             self._action_sink = action_sink
         if simulation_sink is not None:
@@ -229,6 +240,8 @@ class RulesService:
             self._budget = budget
         if signal_max_depth is not None:
             self._signal_depth = signal_max_depth
+        if breaker_cancels is not None:
+            self._breaker_cancels = breaker_cancels
         if handlers is not None:
             if own := sorted(OWN_TYPES & set(handlers)):
                 raise HandlerTableError(f"the engine binds {own} itself")
@@ -449,6 +462,44 @@ class RulesService:
             if self._audits is not None:
                 self._audits.offer(replace(fire, kind="refused_fire", refused_by=reason))
 
+    def _start_breaker_cancels(self, req: ActionRequest) -> None:
+        """The circuit breaker's hook after a trip's move (24 §11.7; E35-T12, BQ-10): the tripped
+        rule's resting entries cancelled by the bound port, as a task this service tracks and
+        drains at its stop, never awaited by the dispatch worker. With no port bound, or with
+        `BREAKER_CANCELS_MAX` running, nothing starts, logged: the rule stays tripped and its
+        order actions refused all the same."""
+        port = self._breaker_cancels
+        if port is None or len(self._breaker_tasks) >= BREAKER_CANCELS_MAX:
+            why = "unbound" if port is None else "full"
+            _log().error("rules.breaker_cancels_not_started", rule_id=req.rule_id, reason=why)
+            return
+        task = spawn(self._breaker_cancel(port, req), name="rule-breaker-cancels")
+        self._breaker_tasks.add(task)
+        task.add_done_callback(self._breaker_tasks.discard)
+
+    @staticmethod
+    async def _breaker_cancel(port: BreakerCancels, req: ActionRequest) -> None:
+        """One trip's cancels; a raise is logged by its class, never re-raised into the loop."""
+        try:
+            await port.cancel_resting(req)
+        except Exception as exc:  # never `CancelledError`, which is no `Exception`
+            _log().error(
+                "rules.breaker_cancels_failed", rule_id=req.rule_id, kind=type(exc).__name__
+            )
+
+    async def _drain_breaker_cancels(self, grace_s: float) -> None:
+        """The breaker's cancel tasks, awaited within `grace_s`, then the rest cancelled and
+        awaited: no task outlives the module (C-2.18). A cancel already sent stays with the OMS's
+        exit service, which settles it."""
+        tasks = set(self._breaker_tasks)
+        if not tasks:
+            return
+        _done, pending = await asyncio.wait(tasks, timeout=max(0.0, grace_s))
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.wait(pending)
+
     def registry(self) -> MetricRegistry | None:
         """Metric registry while the engine module is running; `None` otherwise (-> 503)."""
         return self._registry if self._started else None
@@ -493,7 +544,7 @@ class RulesService:
             stand_in=stand_in, halts=self._halts, budget=self._budget,
             breaker=CircuitBreaker(
                 self._halts, move=manager.trip_breaker, drop=self._drop, alerts=self._alerts,
-                metrics=self._metrics, clock=self._clock,
+                metrics=self._metrics, clock=self._clock, cancels=self._start_breaker_cancels,
             ),
             on_scope=self._scope_outcome,
             handlers=bind_handlers(HANDLERS, self._handlers | self._own(signals, manager)),
@@ -537,6 +588,7 @@ class RulesService:
                 None if acct == "*" else UUID(acct),
             )  # fmt: skip
             run_id = uuid4()  # the fire's id: its actions share it (24 §11.9)
+            snapshot = MappingProxyType(dict(result.metric_values))  # E35-T12: an amend's level
             reqs = tuple(
                 ActionRequest(
                     rule_scope=rule.scope, owner=owner, environment=env, instance=ref,
@@ -544,6 +596,7 @@ class RulesService:
                     rule_id=str(rule.rule_id), version=rule.version, ir_hash=item.ir_hash,
                     run_id=run_id, armed_by=item.armed_by,
                     signal_depth=0 if signal is None else signal.depth,
+                    metric_values=snapshot,
                 )
                 for action in rule.actions
             )  # fmt: skip
@@ -636,6 +689,7 @@ class RulesService:
                 await self._principal.stop()  # before the audits' stop, which reads no principal
             if self._audits is not None:
                 await self._audits.stop(max(0.0, deadline - monotonic()) if drained else 0.0)
+            await self._drain_breaker_cancels(max(0.0, deadline - monotonic()) if drained else 0.0)
             self._dispatch = self._audits = self._executor = None
             if self._signals is not None and (dropped := self._signals.clear()):
                 _log().warning("rules.signals_dropped_at_stop", dropped=dropped)

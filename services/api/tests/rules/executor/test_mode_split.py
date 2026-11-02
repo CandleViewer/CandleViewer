@@ -197,6 +197,13 @@ async def test_an_armed_rules_result_reaches_the_executor_sink(rig: Rig) -> None
     assert (req.environment, req.instance.key) == ("demo", f"BTCUSDT@{ACCOUNT}")
     assert isinstance(req.run_id, uuid.UUID)
     assert rig.simulated == []
+    # E35-T12 (24 §11.9): the request carries the fire's snapshot, which an amend's level reads,
+    # read-only, and its repr never shows it (21 §3.4.3: financial and confidential).
+    assert dict(req.metric_values) == {"price": Decimal("150")}
+    with pytest.raises(TypeError):
+        req.metric_values["price"] = Decimal(1)  # type: ignore[index]  # read-only, as asserted
+    # The snapshot's value as a repr would show it: a bare "150" can sit in a random id or hash.
+    assert "Decimal('150')" not in repr(req) and "metric_values" not in repr(req)
 
 
 @pytest.mark.parametrize("target", ["simulate", "disabled"])

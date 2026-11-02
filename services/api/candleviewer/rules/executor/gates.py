@@ -4,9 +4,10 @@ No check reads an interpreter (C-2.21), and each answers its refusal or `None`, 
 winning in the ruled order. Checks 2 and 3 read memory and never await (C-2.20); they run before
 the routing emitter (check 4), and checks 5 to 8 in its sink, `ActionExecutor.hand_over`, in the
 dispatch worker and never on the evaluation tick, before the records written ahead, so a refusal
-writes `rules.blocked` and never `rules.fired`. Of those, only two reads are awaited, each bounded:
-check 6's day rebuild here, and check 7's in `budget.py`. No switch, flag or setting turns a check
-off (C-4.14): each only refuses, and a port the composition root has not bound refuses too.
+writes `rules.blocked` and never `rules.fired`. Of those, three reads are awaited, each bounded:
+check 6's day rebuild and check 8's stop check here (E35-T12), and check 7's in `budget.py`. No
+switch, flag or setting turns a check off (C-4.14): each only refuses, and a port the composition
+root has not bound refuses too.
 """
 
 from __future__ import annotations
@@ -23,11 +24,13 @@ import structlog
 
 from candleviewer.rules.executor.handlers import ENGINE_INTERNAL, HandlerSpec
 from candleviewer.rules.executor.ports import (
+    STOP_ADMITTED,
     NotionalRebuild,
     PrincipalReads,
     PrincipalView,
     RuleSwitches,
     StopCheck,
+    StopVerdict,
 )
 from candleviewer.rules.executor.results import BlockedBy, RuleLimit
 from candleviewer.rules.ir.models import RuleLimits
@@ -46,6 +49,10 @@ _OWN_REASONS: Final[Mapping[str, BlockedBy]] = {
 }  # fmt: skip
 #: The bound on the day's notional rebuild (24 §11.7), a write ahead's.
 NOTIONAL_REBUILD_TIMEOUT_S: Final = 2.0
+#: The bound on check 8's port (24 §11.5; E35-T12, BQ-2): its store reads, as checks 6 and 7's.
+STOP_CHECK_TIMEOUT_S: Final = 2.0
+#: What check 8's port may answer: anything else is refused as a loosening (fail closed).
+_STOP_REFUSALS: Final = frozenset({"native_sl", "unavailable"})
 #: What an action's `targets` resolved to (24 §11.5): its accounts, in order (`None` alone for an
 #: action that names none; empty for an `all_accounts` intersection that holds none), and whether
 #: they are `all_accounts`'.
@@ -170,7 +177,7 @@ def _user(user_id: object) -> UUID | None:
 class Gates:
     """The checks' ports: the switches (`RuleSwitches`, closed while unbound), the principal
     reads (`PrincipalReads`, unbound until E35-T11, so refusing), the allowance's day rebuild
-    (`NotionalRebuild`, E35-T11's) and the stop check (`StopCheck`, E35-T12's)."""
+    (`NotionalRebuild`, E35-T11's) and the stop check (`StopCheck`, E35-T12's, awaited)."""
 
     def __init__(
         self,
@@ -245,17 +252,30 @@ class Gates:
         """Check 6's first half: `max_actions_per_fire`, by the action's 1-based IR position."""
         return "max_actions_per_fire" if position > limits.max_actions_per_fire else None
 
-    def stop_check(
+    async def stop_check(
         self, spec: HandlerSpec, req: ActionRequest, account_id: UUID | None
-    ) -> BlockedBy | None:
-        """Check 8 (`native_sl`; 24 §11.5, BQ-12): a type refused for good (`widen_stop`) at its
-        own slot; a stop action the recorded-stop writer's comparison does not admit, or that no
-        port judges while it is unbound."""
+    ) -> StopVerdict:
+        """Check 8 (`native_sl`; 24 §11.5, BQ-12; E35-T12, BQ-2): a type refused for good
+        (`widen_stop`) at its own slot; a stop action as the port judges it, awaited under
+        `STOP_CHECK_TIMEOUT_S`: refused (`native_sl`) while the port is unbound, when its read
+        fails or answers late, and when it answers a refusal outside its two (fail closed)."""
         if spec.refused_as is not None:
-            return spec.refused_as
-        if spec.touches_stop and (self._stop is None or not self._stop.admits(req, account_id)):
-            return "native_sl"
-        return None
+            return StopVerdict(refused=spec.refused_as)
+        if not spec.touches_stop:
+            return STOP_ADMITTED
+        if self._stop is None:
+            return StopVerdict(refused="native_sl")
+        try:
+            async with asyncio.timeout(STOP_CHECK_TIMEOUT_S):
+                verdict = await self._stop.judge(req, account_id)
+        except Exception as lost:  # never `CancelledError`, which is no `Exception`
+            _log().warning(
+                "rules.stop_check_unread", rule_id=req.rule_id, error=type(lost).__name__
+            )
+            return StopVerdict(refused="native_sl")
+        if verdict.refused is not None and verdict.refused not in _STOP_REFUSALS:
+            return StopVerdict(refused="native_sl")
+        return verdict
 
     def _read(self, user_id: object) -> PrincipalView | None:
         """A user's snapshot as the port gives it; `None` while unbound or unread."""

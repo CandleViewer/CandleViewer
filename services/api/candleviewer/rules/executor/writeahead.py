@@ -23,6 +23,7 @@ from candleviewer.rules.executor.ports import (
     EventKind,
     EventRow,
     EventSeverity,
+    Loosening,
     RunRecords,
     RunRow,
     RunStatus,
@@ -93,14 +94,20 @@ class FireRecords:
             events.append(("log", result.node_id, dict(journal), "info"))
         await self._events(events)
 
-    async def refused(self, result: ActionResult, fields: ActionAuditFields) -> None:
-        """A refusal (`blocked`, or a `mode_changed` skip): its `action_fail`, then `rules.blocked`
-        with its `blocked_by`, never `rules.fired`."""
+    async def refused(
+        self, result: ActionResult, fields: ActionAuditFields, loosening: Loosening | None = None
+    ) -> None:
+        """A refusal (`blocked`, or a `mode_changed` skip): its `action_fail`, then, for a refused
+        loosening, its `sl.loosen_refused` (E35-T12, 24 §15.5), then `rules.blocked` with its
+        `blocked_by`, never `rules.fired`; each audit record under its own bound."""
         if result.blocked_by is None:
             raise ValueError("a refusal names its blocked_by")
         severity = _SEVERITY[result.outcome]
         await self._event("action_fail", result.node_id, result.model_dump(mode="json"), severity)
         denied = replace(fields, blocked_by=result.blocked_by)
+        if loosening is not None:
+            held = loosening
+            await self._bounded("audit", lambda: self._audit.loosen_refused(denied, held))
         await self._bounded("audit", lambda: self._audit.blocked(denied))
 
     async def closed(self, status: RunStatus, duration_ms: int) -> None:

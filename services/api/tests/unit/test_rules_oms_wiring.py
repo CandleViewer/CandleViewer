@@ -567,6 +567,25 @@ async def test_the_breaker_alert_writes_one_system_event_and_pages() -> None:
     assert len({r.message for r in events.rows}) == 1  # one fixed text
 
 
+async def test_the_breakers_cancels_write_a_row_only_when_one_was_not_done() -> None:
+    """E35-T12, BQ-10: the breaker's cancels ended are logged with their counts; one more
+    `critical` `system_events` row of the trip's incident (`rules`, `circuit_breaker`) counts
+    them only when one was not done, or their selection was not read (`unread`)."""
+    events = _Events()
+    alerts = RuleAlerts(events)
+    ids = {"rule_id": RULE, "run_id": str(RUN), "node_id": "a1"}
+    with capture_logs() as logs:
+        await alerts.breaker_cancels(RULE, RUN, "a1", sent=2, not_done=0)
+        await alerts.breaker_cancels(RULE, RUN, "a1", sent=3, not_done=1)
+        await alerts.breaker_cancels(RULE, RUN, "a1", sent=0, not_done=None)
+    ended = [(e["sent"], e["not_done"]) for e in logs if e["event"].endswith("cancels_ended")]
+    assert ended == [(2, "0"), (3, "1"), (0, "unread")]
+    assert [(r.component, r.kind, r.severity, r.details) for r in events.rows] == [
+        ("rules", "circuit_breaker", "critical", ids | {"cancels": "3", "not_done": "1"}),
+        ("rules", "circuit_breaker", "critical", ids | {"cancels": "0", "not_done": "unread"}),
+    ]
+
+
 class _Writer:
     """`SqlAlchemyRuleNotifyOutbox.enqueue` in memory: each call, and how many rows it reports
     dead-lettered."""

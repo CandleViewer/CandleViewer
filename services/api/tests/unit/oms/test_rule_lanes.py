@@ -183,6 +183,38 @@ async def test_breaker_cancel_reason_is_recorded(rig: SubmitRig, tmp_path: Path)
     assert intent["after_state"]["rule_id"] == str(RULE)
 
 
+async def test_the_breakers_own_records_name_its_reason_and_the_tripped_rule(
+    rig: SubmitRig,
+) -> None:
+    """E35-T12 (the carry of #5003's first change; 24 Sec.15.5): every record of the breaker's
+    cancel names the cancel's reason and the tripped rule in its detail, beside its intent's: its
+    outcome, an `already_final` cancel of an order already ended, and a refusal; a user's cancel's
+    records name neither."""
+    named = {"cancel_reason": "rule_circuit_breaker", "rule_id": str(RULE), "rule_version": "3"}
+    row = await _resting_close(rig)
+    exits = exits_of(rig)
+    for _ in range(2):  # the second meets the order already cancelled: `already_final`
+        await exits.cancel_admitted(
+            row, actor=OWNER_ACTOR, reason="rule_circuit_breaker", request_id=None, origin=ORIGIN
+        )
+    stuck = await rig.port.stored(cr.new_order(seq=7), lifecycle="unknown")
+    refused = await exits.cancel_admitted(
+        stuck, actor=OWNER_ACTOR, reason="rule_circuit_breaker", request_id=None, origin=ORIGIN
+    )
+    assert refused.kind == "refused"
+    records = [r for r in rig.records("orders.cancel") if isinstance(r, RequestRecord)]
+    assert [(r.outcome, r.reason) for r in records] == [
+        ("success", "rule_circuit_breaker"), ("success", "cancelled"),
+        ("success", "already_final"), ("denied", "conflict"),
+    ]  # fmt: skip
+    for record in records[1:]:
+        assert record.detail.items() >= named.items(), record.reason
+    user = await _resting_close(rig)
+    await exits.cancel_admitted(user, actor=OWNER_ACTOR, reason="user", request_id=None)
+    mine = [r for r in rig.records("orders.cancel") if isinstance(r, RequestRecord)][4:]
+    assert mine and all("cancel_reason" not in r.detail for r in mine)
+
+
 async def test_a_rule_cancel_is_recorded_with_its_reason(rig: SubmitRig, tmp_path: Path) -> None:
     """24 Sec.15.5: a rule's own cancel is `orders.cancel` with reason `rule`, its intent and its
     outcome the rule's records, as the runtime's adapter writes them (RE-S1)."""

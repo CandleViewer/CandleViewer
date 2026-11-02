@@ -14,6 +14,8 @@ before it, even after a re-arm; its waiting fires dropped from its lane; the pag
 B9 `KILL_SWITCH` through the manager; the drop again; and one `system_events` row. A move that
 fails keeps the trip: the rule's order actions stay refused, and each sends the move again, which
 is no new trip: the trip time stands, and neither the trip's page nor its count repeats.
+E35-T12 (BQ-10): after the first trip's move, moved or not, its cancels of the rule's resting
+entries start (`cancels`, a task the rules service tracks), once per trip, never awaited here.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from candleviewer.rules.executor.metrics import ExecutorMetrics
 from candleviewer.rules.executor.ports import AlertPort
 from candleviewer.rules.executor.results import BlockedBy
 from candleviewer.rules.limits import ORDER_BUDGET_DEFAULTS
+from candleviewer.rules.scope import ActionRequest
 
 #: The windows, in seconds: an order admitted at `t` is in the minute's while `now - t < MINUTE_S`.
 MINUTE_S: Final = 60.0
@@ -121,9 +124,10 @@ class CircuitBreaker:
         alerts: AlertPort | None = None,
         metrics: ExecutorMetrics | None = None,
         clock: Callable[[], float] = time.monotonic,
+        cancels: Callable[[ActionRequest], None] | None = None,
     ) -> None:
         self._halts, self._move = halts, _unbound_move if move is None else move
-        self._drop, self._alerts = drop, alerts
+        self._drop, self._alerts, self._cancels = drop, alerts, cancels
         self._metrics = ExecutorMetrics() if metrics is None else metrics
         self._clock = clock
         self._unmoved: set[str] = set()  # tripped, and their B9 move not landed yet
@@ -132,12 +136,16 @@ class CircuitBreaker:
         """The rule tripped and its move has not landed: its order actions stay refused."""
         return rule_id in self._unmoved
 
-    async def trip(self, rule_id: str, run_id: UUID, node_id: str) -> None:
+    async def trip(
+        self, rule_id: str, run_id: UUID, node_id: str, *, req: ActionRequest | None = None
+    ) -> None:
         """Stop the rule, in this order: its trip time; its waiting fires dropped; the page and the
         count; B9 `KILL_SWITCH`, under its bound; the drop again, for fires offered during the
-        move; and the `system_events` row saying whether the rule was moved. For a rule whose move
-        has not landed, this sends the move again and is no new trip: its trip time, page and
-        count stay the first trip's, and the row and the not-moved page record the attempt."""
+        move; the `system_events` row saying whether the rule was moved; and, on the first trip,
+        its resting entries' cancels started (`cancels`, E35-T12), `req` the action whose order
+        the budget refused. For a rule whose move has not landed, this sends the move again and is
+        no new trip: its trip time, page and count stay the first trip's, the row and the
+        not-moved page record the attempt, and the cancels are not started again."""
         again = rule_id in self._unmoved
         if not again:
             self._halts.tripped[rule_id] = self._clock()
@@ -159,6 +167,8 @@ class CircuitBreaker:
             self._unmoved.add(rule_id)
         if self._alerts is not None:
             await self._alerts.breaker_moved(rule_id, run_id, node_id, moved=moved)
+        if not again and req is not None and self._cancels is not None:
+            self._cancels(req)
 
     def _dropped(self, rule_id: str) -> None:
         if self._drop is not None:

@@ -31,6 +31,9 @@ ROW_UNREAD: Final = "row_unread"
 #: The detail of an `order_budget` refusal whose counts could not be rebuilt since a start (24
 #: §11.7, BQ-7): not confirmed, which is not the same as spent.
 BUDGET_UNREAD: Final = "budget_unread"
+#: The detail of check 8's `unavailable` for a stop move with no resting order of the rule to
+#: move, so a move of the open position's stop (24 §11.5; E35-T12, BQ-4). PROPOSED, as below.
+POSITION_STOP: Final = "position_stop"
 #: The rule's own limits a `cap` refusal names (24 §11.9; check 6, E35-T10): each its own detail.
 RuleLimit = Literal["max_actions_per_fire", "max_notional_per_fire", "max_daily_notional"]
 RULE_LIMITS: Final[tuple[RuleLimit, ...]] = get_args(RuleLimit)
@@ -64,6 +67,8 @@ BLOCKED_DETAIL: Final[Mapping[str, str]] = MappingProxyType(
             "Not done — the rule's daily notional limit is used up or unconfirmed."
         ),
         BUDGET_UNREAD: "Not done — the rule's recent order count was not confirmed.",
+        # E35-T12: a position's stop waits for its own operation (setPositionTpSl, #915).
+        POSITION_STOP: "Not done — moving an open position's stop is not available yet.",
     }
 )
 

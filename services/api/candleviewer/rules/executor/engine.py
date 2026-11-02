@@ -43,6 +43,7 @@ from candleviewer.rules.executor.ports import (
     ActionAuditFields,
     AlertPort,
     EventRow,
+    Loosening,
     RunRecords,
     RunRow,
     RunStatus,
@@ -113,6 +114,9 @@ class _Unbound:
     async def blocked(self, fields: ActionAuditFields) -> None:
         self._refuse("audit")
 
+    async def loosen_refused(self, fields: ActionAuditFields, loosening: Loosening) -> None:
+        self._refuse("audit")
+
 
 class _Unrecordable(_Unbound):
     """A fire's ports when its snapshot holds a value `input_snapshot` refuses (a non-finite or
@@ -146,6 +150,7 @@ class _Action:
     sent_under: Decimal | None = None  # the allowance its request was built under, once built
     counted: Decimal | None = None  # what the ledger took for it, once: never twice (BQ-5)
     tripped: bool = False  # check 7 refused it as spent: the breaker trips after its result
+    loosening: Loosening | None = None  # check 8 refused a loosening: `sl.loosen_refused` ahead
     send_it: Callable[[], Awaitable[HandlerAnswer]] | None = None
     sent: bool = False
     answer: HandlerAnswer | None = None
@@ -340,8 +345,9 @@ class ActionExecutor:
                 self._metrics.result(result)
                 notional = self._settled(action, result)
                 if writable and not await self._keep(
-                    fire, records, result, action.fields, _journal(action.answer), notional
-                ):
+                    fire, records, result, action.fields, _journal(action.answer), notional,
+                    loosening=action.loosening,
+                ):  # fmt: skip
                     writable = False
                     if stop in (None, "abort"):
                         stop = "write"  # a write after the answer stops the rest the same way
@@ -349,7 +355,8 @@ class ActionExecutor:
                     alerted = True  # AC-14: once per fire, naming the action whose write failed
                     await self._alert_write(fire, req)
                 if action.tripped:  # the budget refused it as spent (BQ-8)
-                    await self._breaker.trip(fire.rule_id, fire.run_id, req.payload.node_id)
+                    node = req.payload.node_id
+                    await self._breaker.trip(fire.rule_id, fire.run_id, node, req=action.req)
         status: RunStatus = _status(results) if writable else "error"  # a failed write: closed too
         await self._close(fire, records, status, max(0, int((self._clock() - started) * 1000)))
         await self._settle(fire, results, troubled=alerted)
@@ -497,7 +504,10 @@ class ActionExecutor:
             budgeted = await (self._tripped(action) if again else self._admitted(action))
             if budgeted is not None:
                 return "order_budget", budgeted or None
-        return self._gates.stop_check(spec, req, action.account), None  # check 8
+        verdict = await self._gates.stop_check(spec, req, action.account)  # check 8, awaited
+        if verdict.refused is not None and not again:  # a refused loosening's record (E35-T12)
+            action.loosening = verdict.loosening
+        return verdict.refused, verdict.detail
 
     async def _admitted(self, action: _Action) -> str | None:
         """Check 7 (24 §11.7): `None` once the budget admits and counts the order; else the
@@ -647,14 +657,17 @@ class ActionExecutor:
         fields: ActionAuditFields,
         journal: Mapping[str, str | None] | None = None,
         notional: Decimal | None = None,
+        *,
+        loosening: Loosening | None = None,
     ) -> bool:
-        """The result's records: a refusal's `action_fail` and `rules.blocked`, any other's event,
-        with the `log` row of an `ok` result whose answer named one (E35-T13) and the notional an
-        accepted entry's answer named (E35-T11). False when a write failed; the caller then writes
-        nothing more for the fire but its close."""
+        """The result's records: a refusal's `action_fail` and `rules.blocked`, with a refused
+        loosening's `sl.loosen_refused` between them (E35-T12), any other's event, with the `log`
+        row of an `ok` result whose answer named one (E35-T13) and the notional an accepted entry's
+        answer named (E35-T11). False when a write failed; the caller then writes nothing more for
+        the fire but its close."""
         try:
             if result.blocked_by is not None:
-                await records.refused(result, fields)
+                await records.refused(result, fields, loosening)
             else:
                 await records.answered(result, journal, notional)
         except WriteAheadFailed as failed:

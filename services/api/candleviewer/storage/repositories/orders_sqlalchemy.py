@@ -151,6 +151,9 @@ _TRADE_GRANT: Final = (
 UNSCOPED: Final = frozenset({
     "create_statement", "link_taken_statement", "environment_accounts_statement",
     "list_unfinished_statement",
+    # E35-T12: a rule's resting entries, its circuit breaker's on every account of the
+    # environment (24 Sec.11.7); the account narrows it when named (`rule_resting_entries`).
+    "rule_entries_statement",
 })  # fmt: skip
 #: The default per-statement cap of the OMS stores, in ms (#845 technical notes): the default of
 #: `CV_OMS_STATEMENT_TIMEOUT_MS`, which the runtime builds each store with (`oms_wiring.pg_stores`).
@@ -230,6 +233,48 @@ def list_open_statement(account_id: UUID, symbol: str | None) -> sa.Select[Any]:
     if symbol is not None:  # compared as text: SQLAlchemy 2.1 has no operator class for DOMAIN
         stmt = stmt.where(sa.type_coerce(_O.symbol, sa.Text) == symbol)
     return stmt.order_by(_O.created_ts, _O.id)
+
+
+#: E35-T12 (24 §11.5 "Exits", §11.7): the B1 states of an entry a rule's cancel or amend, or its
+#: circuit breaker's cancel, may take (the exit service settles the in-flight ones first).
+RULE_ENTRY_STATES: Final = (
+    "validated", "submitting", "submitted", "triggered", "partially_filled", "amend_pending",
+)  # fmt: skip
+
+
+def rule_entries_statement(
+    rule_id: UUID,
+    environment: Environment,
+    account_id: UUID | None,
+    symbol: str | None,
+    limit: int,
+) -> sa.Select[Any]:
+    """E35-T12: a rule's resting entries, found through its groups (`trade_groups.origin_rule_id`,
+    `ix_tg_rule`) of `environment`: `placed`, open, neither reduce-only nor a recorded stop nor an
+    algo's child (a parent order, or a group whose `algo` is not `none`), in a state an exit may
+    take, on `account_id` and `symbol` when named; oldest first, at most `limit`. One static,
+    parameterised statement: no value is spliced into its text."""
+    open_states: sa.BindParameter[Any] = sa.bindparam(
+        "rule_open", sorted(OPEN_STATES), expanding=True, literal_execute=True
+    )
+    legs, groups = trade_group_legs.c, trade_groups.c
+    joined = orders.join(trade_group_legs, _O.trade_group_leg_id == legs.id).join(
+        trade_groups, legs.trade_group_id == groups.id
+    )
+    stmt = (
+        sa.select(*ORDER_COLUMNS)
+        .select_from(joined)
+        .where(
+            groups.origin_rule_id == rule_id, groups.env == environment, groups.algo == "none",
+            _O.provenance == "placed", _O.reduce_only.is_(False), _O.parent_order_id.is_(None),
+            _O.state.in_(open_states), _O.lifecycle_state.in_(RULE_ENTRY_STATES),
+        )
+    )  # fmt: skip
+    if account_id is not None:
+        stmt = stmt.where(_O.exchange_account_id == account_id)
+    if symbol is not None:  # compared as text, as `list_open_statement` compares it
+        stmt = stmt.where(sa.type_coerce(_O.symbol, sa.Text) == symbol)
+    return stmt.order_by(_O.created_ts, _O.id).limit(limit)
 
 
 def environment_accounts_statement(environment: Environment) -> sa.Select[Any]:
@@ -621,6 +666,25 @@ class SqlAlchemyOrderStore(CappedStore):
             result = await uow.session.execute(list_open_statement(account_id, symbol))
             return tuple(order_row(row) for row in result.mappings())
 
+    async def rule_resting_entries(
+        self,
+        rule_id: UUID,
+        environment: Environment,
+        *,
+        account_id: UUID | None = None,
+        symbol: str | None = None,
+        limit: int,
+    ) -> tuple[OrderRow, ...]:
+        """E35-T12: a rule's resting entries (`rule_entries_statement`), for the rule's own cancels
+        and amends on an account its check 5 admitted, and for its circuit breaker's cancels on
+        every account of the environment, which no principal gates (24 §8.10, §11.7). Principal
+        free: its callers are fenced (`test_oms_system_reads_callers.py`)."""
+        require_limit(limit)
+        stmt = rule_entries_statement(rule_id, environment, account_id, symbol, limit)
+        async with self._unit_of_work() as uow:
+            result = await uow.session.execute(stmt)
+            return tuple(order_row(row) for row in result.mappings())
+
     async def list_unfinished(
         self, environment: Environment, *, limit: int
     ) -> tuple[OrderRow, ...]:
@@ -695,12 +759,12 @@ class SqlAlchemyOrderStore(CappedStore):
 
 
 __all__ = [
-    "EVENT_COLUMNS", "OMS_STATEMENT_TIMEOUT_MS", "ORDER_COLUMNS", "UNSCOPED", "CappedStore",
-    "SqlAlchemyOrderStore", "accounts_in_scope_statement", "append_statement", "commit_step",
-    "create_statement", "environment_accounts_statement", "fill_statement",
+    "EVENT_COLUMNS", "OMS_STATEMENT_TIMEOUT_MS", "ORDER_COLUMNS", "RULE_ENTRY_STATES", "UNSCOPED",
+    "CappedStore", "SqlAlchemyOrderStore", "accounts_in_scope_statement", "append_statement",
+    "commit_step", "create_statement", "environment_accounts_statement", "fill_statement",
     "get_by_exchange_statement", "get_by_link_statement", "get_statement", "in_scope_statement",
     "link_taken_statement", "list_events_statement", "list_open_statement",
     "list_unfinished_statement", "lock_entry_stops_statement", "lock_order", "lock_statement",
-    "order_row",
-    "require_audit_bound", "scope_clause", "settle_entry_stops_statement", "transition_statement",
+    "order_row", "require_audit_bound", "rule_entries_statement", "scope_clause",
+    "settle_entry_stops_statement", "transition_statement",
 ]  # fmt: skip

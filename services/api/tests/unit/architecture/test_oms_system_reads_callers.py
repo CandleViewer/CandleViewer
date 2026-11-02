@@ -12,6 +12,11 @@ its own environment, as another's entry may still be sending (Q20, C-2.11, C-2.6
 adds its file to `ALLOWED` and is reviewed as an RBAC bypass first (the
 `test_order_submission_store_callers.py` precedent).
 
+`rule_resting_entries` (E35-T12, #5004) reads a rule's resting entries through its groups with no
+scope: the rule adapter (`rules_oms_exits.py`) calls it for the rule's own cancels and amends on an
+account its check 5 admitted, and for its circuit breaker's cancels on every account of the
+environment, which no principal gates (24 Sec.8.10, Sec.11.7); no route reaches it.
+
 Each pattern names the types, the statements and the calls (`.read_account(` for the account read,
 so an instance handed on by injection is fenced too; `list_unfinished` is a call's own name).
 They are tripwires, not a boundary: they stop an honest regression, not a re-export under another
@@ -40,6 +45,7 @@ UNFINISHED_READ = re.compile(
     r"|environment_accounts_statement)\b"
 )
 EVERY_ACCOUNT = re.compile(r"(?<!\w)EVERY_ACCOUNT\b")
+RULE_ENTRIES_READ = re.compile(r"(?<!\w)(rule_resting_entries|rule_entries_statement)\b")
 ALLOWED = {
     ACCOUNT_READ: frozenset(
         {
@@ -67,11 +73,14 @@ ALLOWED = {
             "storage/repositories/recorded_stops_sqlalchemy.py",
         }
     ),
+    RULE_ENTRIES_READ: frozenset(
+        {"rules_oms_exits.py", "storage/repositories/orders_sqlalchemy.py"}
+    ),
 }
 
 
 @pytest.mark.parametrize(
-    "names", list(ALLOWED), ids=["account_read", "unfinished_read", "every_account"]
+    "names", list(ALLOWED), ids=["account_read", "unfinished_read", "every_account", "rule_entries"]
 )
 def test_each_principal_free_oms_read_is_named_only_where_it_was_reviewed(
     names: re.Pattern[str],
@@ -92,6 +101,8 @@ def test_the_patterns_match_the_names_and_not_their_longer_neighbours() -> None:
     assert UNFINISHED_READ.search("await store.environment_accounts(env)")
     assert EVERY_ACCOUNT.search("await stops.void_orphans(EVERY_ACCOUNT, at=now)")
     assert not EVERY_ACCOUNT.search("NOT_EVERY_ACCOUNT_HERE")
+    assert RULE_ENTRIES_READ.search("await entries.rule_resting_entries(rule, env, limit=n)")
+    assert not RULE_ENTRIES_READ.search("my_rule_resting_entries_count")
 
 
 def test_the_pattern_matches_a_call_of_the_protocol_method_and_not_its_definition() -> None:
