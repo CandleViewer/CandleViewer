@@ -41,17 +41,19 @@ pointed to by a comment on E10 (#37).
 
 ### 3.1 Local legs (2026-11-02, branch head; `packages/ui/src` byte-identical to `67fe8b526`)
 
-| Leg                                   | Command                                            | Result                                                                                                    |
-| ------------------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| (c) unit                              | `pnpm --filter @candleviewer/ui test`              | 209 files, 3,932 tests passed, 0 failed (44 s) at `67fe8b526`; the F-3 test adds 7 (Typography: 35 of 35) |
-| (b) interaction + axe, default cell   | `pnpm --filter @candleviewer/ui storybook:test`    | 84 files, 905 stories passed, 5 skipped (the `perf` stories), 0 failed (62 s)                             |
-| (d) full axe sweep + `merge --strict` | Q02 report §7 step 2                               | SWEEP_RESULT                                                                                              |
-| (d) manual driver                     | Q02 report §7 step 3                               | MANUAL_RESULT                                                                                             |
-| revert tests                          | pack C                                             | 6 of 6 red on revert, 6 of 6 green restored                                                               |
-| lint, typecheck                       | `pnpm --filter @candleviewer/ui lint`, `typecheck` | clean                                                                                                     |
+| Leg                                   | Command                                            | Result                                                                                                                                                                                                                                                                        |
+| ------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| (c) unit                              | `pnpm --filter @candleviewer/ui test`              | 209 files, 3,932 tests passed, 0 failed (44 s) at `67fe8b526`; 3,941 at the head (the F-3 test adds one per Typography story, 9)                                                                                                                                              |
+| (b) interaction + axe, default cell   | `pnpm --filter @candleviewer/ui storybook:test`    | 84 files, 905 stories passed, 5 skipped (the `perf` stories), 0 failed (62 s)                                                                                                                                                                                                 |
+| (d) full axe sweep + `merge --strict` | Q02 report §7 step 2                               | 905 stories (5 `perf` excluded), 10,578 cells (905 x 6 at no-preference, 858 x 6 at reduce), 0 errored, 0 off-site; critical / serious / moderate / minor 0 / 0 / 0 / 0; negative control tripped (`image-alt`, `button-name`); `merge --strict` exit 0 (6 workers, 38.6 min) |
+| (d) manual driver                     | Q02 report §7 step 3                               | 91 of 91 driver tests passed; 10,774 check records, all pass (keyboard 2,814, motion 7,863, zoom 93, controls 4), none n/a (34.0 min)                                                                                                                                         |
+| revert tests                          | pack C                                             | 6 of 6 red on revert, 6 of 6 green restored                                                                                                                                                                                                                                   |
+| lint, typecheck                       | `pnpm --filter @candleviewer/ui lint`, `typecheck` | clean                                                                                                                                                                                                                                                                         |
 
-The driver results are counts only; the per-cell files are not committed, as the v1 sweep's are and this run matches them
-in kind (no finding).
+The driver results are counts only, no per-cell file is committed: the sweep does not differ from v1's in kind (no
+finding at any impact), it only covers the 63 stories added since v1 (842 to 905) and the records the manual driver
+draws from them (10,018 to 10,774). Both drivers ran on the Storybook built from this branch, whose `packages/ui/src` is
+byte-identical to `67fe8b526`.
 
 ### 3.2 VR (CI only)
 
@@ -126,8 +128,8 @@ CV-9 to CV-12 and CV-15 are carried with owners. The verdict is final only when 
 > QA sign-off (proposed) for E05, epic regression pass, 2026-11-02: **PASS_WITH_CARRIES**. Evidence:
 > `docs/qa/e05-signoff.md` and the pack `qa/plans/e05-regression-pack.md`. Pass per story group: S01, S02, S03, S04 pass;
 > foundations pass with carries. All six fixed defects (D1 to D3, F-1 to F-3) map to a test that fails on the pre-fix
-> code (revert test run for each). Local legs green (unit 3,932 tests; Storybook 905 stories; the full axe sweep and the
-> manual driver as recorded). VR: this PR's lane. Accepted deviations and carries with owners: section 7 (nightly VR
+> code (revert test run for each). Local legs green: unit 3,941 tests; Storybook 905 stories; the full axe sweep 10,578
+> cells at 0 / 0 / 0 / 0 with the negative control tripped; the manual driver 10,774 checks, all pass. VR: this PR's lane. Accepted deviations and carries with owners: section 7 (nightly VR
 > pending a ruling; OQ-5; D4; D5; the owner-run OR-1..OR-8; AD-1; FU-5; the high-contrast danger pair; the font-face gap;
 > the X02 expiry on 2026-11-20; #2289, a P1 in the Penpot token file, to be ruled in or out of E05's scope; E05-D03, #162,
 > still open for #30). P2 / P3 deferrals need the owner's acknowledgement (`03` §16).

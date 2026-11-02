@@ -63,7 +63,8 @@ Every defect fixed from the E05-Q01 log (D1 to D3) and the E05-Q02 log (F-1 to F
 pre-fix code. The revert test was run for all six on 2026-11-02 on `67fe8b526` plus this PR's F-3 test: in a scratch
 worktree, the fix's `packages/ui/src` change was reverted, the named tests run with
 `pnpm exec vitest run --project unit <files>` from `packages/ui`, the result recorded, the tree restored, and the same tests
-run again green.
+run again green. The revert is `git show --format= <fix sha> -- <src paths> | git apply -R` (D1: note 1), the restore
+`git checkout -- packages/ui/src && git clean -fd packages/ui/src`.
 
 | Id  | Defect (log)                                                                 | Fix               | Test (file, title)                                                                                                                                                                                                                                                                                                  | Reverted                                                                  | Red on revert                 | Green restored |
 | --- | ---------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ----------------------------- | -------------- |
