@@ -21,7 +21,7 @@ jobs:
         with:
           node-version-file: ".nvmrc"
       - run: npm install -g corepack@latest && corepack enable && corepack prepare pnpm@12.5.1 --activate
-      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: python3 tools/ci/registry_retry.py --registry npm --attempts 2 --timeout 120 -- pnpm install --frozen-lockfile --ignore-scripts
       - run: node tools/ci/run-allowed-postinstall.mjs
       - name: Wall-clock perf budgets (vitest perf project, no coverage)
         run: pnpm --filter @candleviewer/chart-engine test:perf

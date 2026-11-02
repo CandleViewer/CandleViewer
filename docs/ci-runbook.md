@@ -571,7 +571,7 @@ index alone, removing nothing.
   commit the checksum only if the edit was deliberate and reviewed; otherwise
   restore the original fixture.
 
-### CI-INFRA-* — image pre-pull (`tools/ci/prepull_images.sh`, `infra/images/prepull.txt`)
+### CI-INFRA-* — image pre-pull and registry installs (`tools/ci/prepull_images.sh`, `tools/ci/registry_retry.py`)
 
 - **CI-INFRA-001** (image pre-pull failed): the step before the tests could not pull an image
   after its retries (5 attempts on the pinned source, then 3 on the mirror when the image has one),
@@ -587,6 +587,32 @@ index alone, removing nothing.
   the mirror holds only where the daemon records a digest on `docker tag` (the containerd image
   store); on a daemon that does not, the step fails with the code, naming the compose reference
   that does not resolve, and a re-run is the answer.
+- **CI-INFRA-002** (install failed after retries): `tools/ci/registry_retry.py` ran a
+  registry-fetching install (`pnpm install`, `uv sync`, `pip install` / `pip download`) the given
+  number of times and every attempt failed. The message names the registry (PyPI, npm or GHCR),
+  the attempts and the last cause (an exit status, or a timeout). An outage on the registry's or
+  the runner's side is a re-run case; never raise a timeout or the attempt budget for it. A
+  lockfile or resolution error fails the same way on every attempt: read the client's own output
+  above the code and fix the lockfile.
+- **CI-INFRA-003** (attempt timed out): one attempt overran its bound (`--timeout`, default 300 s;
+  `REGISTRY_RETRY_TIMEOUT`), and its whole process group was killed before the next attempt. On
+  its own it is a warning; the step fails only when CI-INFRA-002 follows. A green run that needed
+  a retry carries a `::warning::` and a step-summary line naming the registry.
+- **Retry, not a mirror (#5113, E03-T14 BQ-8).** Registry outages (threat model
+  `docs/plan/threat-models/E03-supply-chain.md` A5, R4) are met by retrying, not by a local
+  registry cache: a cache is more infrastructure to run and secure, and GHCR / Docker Hub images
+  already have the pre-pull mirror path above. Two layers: the clients bound and retry each request
+  (`UV_HTTP_TIMEOUT: "60"` and `UV_HTTP_RETRIES: "5"` in `_job-py.yml` and the `pr.yml` `gates`
+  job; pnpm's `fetchRetries: 4` and `fetchTimeout: 60000` in `pnpm-workspace.yaml`, which every
+  pnpm install reads), and `registry_retry.py` retries the whole install with backoff (default
+  3 attempts, 10 then 30 s apart). The wrapper runs in the four central jobs only
+  (`_job-engine-bench.yml`, `_job-js.yml`, `_job-py.yml`, the `pr.yml` `gates` job), each
+  call site setting a per-attempt bound that fits its job or step timeout; the other workflows'
+  installs are a carry row on the E03 epic. Worst case per install: attempts x timeout plus the
+  waits, e.g. 3 x 120 s + 40 s = 400 s for a `uv sync`. One install stays unwrapped on purpose:
+  the `secret-scan` step's PyYAML, because no PR script may run before gitleaks and trufflehog
+  (SR-142; `test_no_pr_script_runs_before_the_secret_scanners`). A cancel or step timeout that
+  stops the wrapper (SIGINT, SIGTERM) kills the attempt's process group too.
 
 ### CI-E2E-* / CI-A11Y-* — Playwright + accessibility
 
