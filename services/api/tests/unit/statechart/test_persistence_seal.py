@@ -171,6 +171,17 @@ def test_open_sealed_layout_2_tag_is_refused() -> None:
         _open(old, KEY)
 
 
+@pytest.mark.parametrize(
+    "bad",
+    ["\u00e9" * 64, "", "ab", "A" * 64, "g" * 64, _sealed_for(KEY).seal.tag.upper()],
+    ids=["non-ascii", "empty", "wrong length", "uppercase", "non-hex", "uppercased genuine"],
+)
+def test_open_sealed_malformed_tag_is_refused_as_a_value_error(bad: str) -> None:
+    env = dataclasses.replace(_sealed_for(KEY), seal=Seal(key_id="k1", tag=bad))
+    with pytest.raises(ValueError, match=r"malformed HMAC tag \(CV-C53\)"):
+        _open(env, KEY)
+
+
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
 def test_mac_input_refuses_nan_and_infinity(value: float) -> None:
     with pytest.raises(ValueError, match="JSON compliant"):

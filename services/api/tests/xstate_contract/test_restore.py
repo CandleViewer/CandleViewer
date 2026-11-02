@@ -263,6 +263,16 @@ async def test_restore_envelope_persisted_for_another_machine_refused_quarantine
     assert [s for s, _ in pager.pages] == ["P1"]
 
 
+async def test_restore_malformed_seal_tag_quarantined_as_a_seal_error(registry: Registry) -> None:
+    keys, audit, pager = FakeKeys(), FakeAudit(), FakePager()
+    env = await _sealed(registry, keys, InMemoryDrainJournal())
+    env = dataclasses.replace(env, seal=Seal(key_id=env.seal.key_id, tag="\u00e9" * 64))
+    with pytest.raises(RestoreRefusedError, match="malformed HMAC tag"):
+        await _restorer(registry, keys, audit, pager).restore(KEY, env)
+    assert [k for k, _ in audit.quarantined] == [KEY]
+    assert [s for s, _ in pager.pages] == ["P1"]
+
+
 async def test_restore_unsealed_envelope_refused(registry: Registry) -> None:
     keys, audit, pager = FakeKeys(), FakeAudit(), FakePager()
     env = dataclasses.replace(await _sealed(registry, keys, InMemoryDrainJournal()), seal="stub")
