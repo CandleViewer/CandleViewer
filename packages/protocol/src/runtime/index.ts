@@ -359,6 +359,12 @@ export interface DecodedBar {
   delta: string;
   /** bit0 `confirm` — this bar is closed and will not be revised further. */
   confirmed: boolean;
+  /** bit1 `gap_before` — a discontinuity in the series precedes this bar; not data loss. */
+  gapBefore: boolean;
+  /** bit2 `partial` — the bar is not built from a complete tape window. */
+  partial: boolean;
+  /** bit3 `tape_gap` — a recorded-tape gap affects this bar (data loss). Bits 4-7 are ignored. */
+  tapeGap: boolean;
 }
 
 export interface DecodedBars {
@@ -420,6 +426,9 @@ export function decodeBars(buf: ArrayBufferView): DecodedBars {
       trades: tradeCount,
       delta: unscale(delta, header.qtyScale),
       confirmed: (flagsByte & 0b0001) !== 0,
+      gapBefore: (flagsByte & 0b0010) !== 0,
+      partial: (flagsByte & 0b0100) !== 0,
+      tapeGap: (flagsByte & 0b1000) !== 0,
     });
     cursor += BAR_RECORD_BYTES;
   }
@@ -728,6 +737,10 @@ export function toStructured(
           trades: b.trades,
           delta: b.delta,
           confirm: b.confirmed,
+          // §14.3: a flag is named only when set; absent reads false (#5396).
+          ...(b.gapBefore ? { gap_before: true } : {}),
+          ...(b.partial ? { partial: true } : {}),
+          ...(b.tapeGap ? { tape_gap: true } : {}),
         })),
         coalesced: h.flags.coalesced,
       };
