@@ -4,7 +4,7 @@
 Standalone, offline, stdlib only; it runs no repo code and is run with `python3 -I`. It reads the
 review and the pins file from the working tree, and every cited file AS TEXT with `git show`: the
 plan docs, E25-D02, E25-D05, E05-D03, the design-spec rules and the token JSON at the pinned base
-(`BASE`); E25-D03 and E25-D04 at their PR heads (`REF_OF`) until #5404 and #5415 merge (R6).
+(`BASE`); E25-D03 and E25-D04 at the merge commits of #5404 and #5415 (`REF_OF`; R6).
 Default-deny: a gate that cannot read its input FAILs.
 
 Gates (each FAIL led by its name):
@@ -23,8 +23,8 @@ Gates (each FAIL led by its name):
               form) on every screen with a gated row.
   G-CITE      every cite in range and on a non-blank line at its ref, its content equal to the
               pins file's hash; the SHA anchors are the pinned refs; the inputs paragraph and
-              the R6 row carry the "if #5404 / #5415 merge as is" qualifier, the R6 row both
-              parents' SHA anchors (R6).
+              the R6 row name #5404's and #5415's merges, the R6 row both parents' SHA anchors
+              (R6).
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
               public-text deny word in the review; no unknown anchor key.
   G-SCOPE     the diff against `git merge-base HEAD origin/main` touches only the review, this
@@ -56,8 +56,8 @@ TOOL_REL = "docs/design/_tools/e25_d06_a11y_review_audit.py"
 PINS_REL = "docs/design/_tools/e25_d06_ruled_pins.txt"
 OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
 BASE = "e5b286ed50d3a320d80b24df5030fb09dd405a4a"  # origin/main when written
-D03_REF = "5a73e7b9dd24f855b0d02926a85b16a8ccfbd0f4"  # #5404's head (E25-D03 PR 2)
-D04_REF = "35993be7eb18c1466ea6b0e80aa2bf2c99cdb675"  # #5415's head (E25-D04 PR 2)
+D03_REF = "7f76af657ebe500f6c4e4f8155b5c129ca0bbff9"  # #5404's merge (E25-D03 PR 2)
+D04_REF = "4064dcc4e52a54753ad4a7fd404e3b481725d9c5"  # #5415's merge (E25-D04 PR 2)
 TOKENS = "packages/ui/tokens"
 PATHS: dict[str, str] = {
     "05": "docs/plan/05-accessibility-standard.md",
@@ -188,7 +188,7 @@ def at(t: Texts, key: str) -> str:
     ref = REF_OF.get(key, BASE)
     text = show(t, ref, PATHS[key])
     if text is None:
-        raise SystemExit(f"{PATHS[key]} does not resolve at {ref[:10]}; fetch the PR heads first")
+        raise SystemExit(f"{PATHS[key]} does not resolve at {ref[:10]}; fetch origin main first")
     return text
 
 
@@ -495,13 +495,15 @@ def g_cite(t: Texts, vals: dict[str, str]) -> list[str]:
             bad.append(
                 f"cite {label}: the line at its ref is not the pinned content (moved or edited)"
             )
-    qual = "if #5404 / #5415 merge as is"
+    merged = ("#5404's merge", "#5415's merge")
     inputs = next((x for x in t.spec.split("\n") if x.startswith("**Inputs pinned.**")), "")
     r6 = next((x for x in t.spec.split("\n") if x.startswith("| R6 ")), "")
-    if qual not in inputs:
-        bad.append(f"the inputs paragraph lacks {qual!r} (R6)")
-    if qual not in r6 or not all(f"<!--=SHA:{k}-->" in r6 for k in ("D03", "D04")):
-        bad.append("the R6 row does not name both pinned heads with the qualifier (R6)")
+    if not all(m in inputs for m in merged):
+        bad.append("the inputs paragraph does not name both parents' merges (R6)")
+    if not all(m in r6 for m in merged) or not all(
+        f"<!--=SHA:{k}-->" in r6 for k in ("D03", "D04")
+    ):
+        bad.append("the R6 row does not name both merges with their SHA anchors (R6)")
     return bad + anchor_problems(t, vals, "SHA:")
 
 
@@ -667,13 +669,13 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ),
     (
         "G-CITE",
-        "the inputs paragraph's qualifier dropped",
-        sub("every reading of the parents holds if #5404 / #5415 merge as is; ", ""),
+        "the inputs paragraph's #5404 merge read back as a head",
+        sub("E25-D03.md` at #5404's merge", "E25-D03.md` at #5404's head"),
     ),
     (
         "G-CITE",
-        "the R6 row's qualifier dropped",
-        sub('qualified "if #5404 / #5415 merge as is" (§0)', "qualified (§0)"),
+        "the R6 row's #5415 merge read back as a head",
+        sub("and D04 at #5415's merge `", "and D04 at #5415's head `"),
     ),
     (
         "G-CONTRAST",
