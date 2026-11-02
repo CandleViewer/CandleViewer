@@ -29,7 +29,8 @@ form follows the E47-D04 tool (the same modes, anchored values, default-deny pin
    register; no register row copied), G-PAUSE (every §8 row: a pause, an announced state, "the feed
    keeps running"; follow-live never says "Paused"), G-SAFETY (every §11 row: a static carrier and
    "never" flashes), G-T2 (§12 states the T2 paragraph once with its clauses; §8, §9 and §11 cite
-   §12; the hand-off's component line names CMP-079 and CMP-019), G-HEUR, G-WALK (at most ten
+   §12; the arm toggle's W-12 `{verb}` is a §3.2 verb on its D09E09 row and W-12 names it; the
+   hand-off's component line names CMP-079 and CMP-019), G-HEUR, G-WALK (at most ten
    items), G-OWNER (owners are tickets or the owner, never an agent), G-PUBLIC (no URL, host, local
    path), G-KEYWORD (no closing keyword followed by an issue number in either text,
    the pins or this file), G-UNTOUCHED (only this ticket's files and boards differ from the merge
@@ -103,6 +104,8 @@ CITE_FILES = {
     "D09E09": "docs/design/E09/E09-D09.md",
     "E11R": "docs/design/research/e11-chart-navigation-research.md",
     "E17D02": "docs/design/E17/E17-D02.md",
+    "E10D03": "docs/design/E10/E10-D03.md",
+    "E10D04": "docs/design/E10/E10-D04.md",
     "CAT": "docs/plan/a11y/47-audit-catalogue.md",
     "D03": "docs/design/E47/E47-D03.md",
     "D04": "docs/design/E47/E47-D04.md",
@@ -143,6 +146,11 @@ T2_NAMES = (
     "`↑` / `↓`",
 )
 T2_CITERS = ("## 8.", "## 9.", "## 11.")
+# G-T2.4: the arm toggle's `{verb}` is a §3.2 verb, quoted from its row (D09E09)
+T2_VERB_RE = re.compile(
+    r"W-12's `\{verb\}` on the arm toggle is the §3\.2 verb of `([a-z_]+:[a-z_]+)`"
+    r"[^\"]*\"([^\"]+)\" \(D09E09:(\d+)\)"
+)
 FEED = "the feed keeps running"
 AGENT_RE = re.compile(r"worker|orchestrator|\bagent\b|\blane\b", re.IGNORECASE)
 OWNER_OK_RE = re.compile(r"\bE\d\d-[A-Z]+\d\d\b|\bowner")
@@ -804,6 +812,15 @@ MUTATIONS: tuple[Mutation, ...] = (
         "`safety/reduced · dark`, `safety/reduced · hc`",
         "`safety/reduced · hc`",
     ),
+    Mutation(
+        "M-33",
+        "give the arm toggle a verb the §3.2 table lacks",
+        "G-T2",
+        "spec",
+        "## 12.",
+        'click-to-trade it gates (`15`:2954): "place orders"',
+        'click-to-trade it gates (`15`:2954): "arm the chart"',
+    ),
 )
 
 PROBES: tuple[Mutation, ...] = (
@@ -1164,6 +1181,7 @@ def g_t2(t: Texts) -> list[Finding]:
             for n in T2_NAMES
             if n not in para[0]
         ]
+        out += g_t2_verb(t, para[0], region)
     for prefix in T2_CITERS:
         _, _, reg = section(t.spec, prefix)
         if "§12" not in "\n".join(body(t.spec, prefix)):
@@ -1174,6 +1192,25 @@ def g_t2(t: Texts) -> list[Finding]:
         reg = regions[comp[0]] if len(comp) == 1 else ""
         out.append(("G-T2", "the hand-off's component list omits CMP-079 or CMP-019", "hand", reg))
     return out
+
+
+def g_t2_verb(t: Texts, para: str, region: str) -> list[Finding]:
+    """One finding at most: the verb is resolved, on its §3.2 row, and W-12 names it."""
+    m = T2_VERB_RE.search(para)
+    if m is None:
+        return [("G-T2", "§12 does not resolve W-12's {verb} for the arm toggle", "spec", region)]
+    code, verb, n = m.group(1), m.group(2), int(m.group(3))
+    row = (
+        base_lines(CITE_FILES["D09E09"])[n - 1]
+        if n <= len(base_lines(CITE_FILES["D09E09"]))
+        else ""
+    )
+    if not row.startswith("| ") or f'`{code}` → "{verb}"' not in row:
+        return [("G-T2", f'"{verb}" is not the §3.2 verb of {code} on D09E09:{n}', "spec", region)]
+    w12 = [r for r in first_table(t.spec, "## 15.")[1:] if r and r[0] == "W-12"]
+    if len(w12) != 1 or f'"{verb}"' not in w12[0][-1]:
+        return [("G-T2", f'W-12 does not name the verb "{verb}"', "spec", region)]
+    return []
 
 
 def g_heur(t: Texts) -> list[Finding]:
