@@ -12,6 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from candleviewer.api._generated import openapi_models
+from candleviewer.api.alert_deliveries import DenialBudget
 from candleviewer.api.workspaces import make_workspaces_router
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.auth.errors import SessionNotFound
@@ -250,7 +251,7 @@ class Audit:
 class Env:
     """Router-only app with a fake repository; `user` is the caller (None = no session)."""
 
-    def __init__(self, *, wired: bool = True) -> None:
+    def __init__(self, *, wired: bool = True, denials: DenialBudget | None = None) -> None:
         self.repo, self.audit = FakeWorkspaceRepo(), Audit()
         self.user: uuid.UUID | None = USER_A
         env = self
@@ -264,7 +265,9 @@ class Env:
 
         app = FastAPI()
         app.include_router(
-            make_workspaces_router(lambda: self.repo, _Resolver() if wired else None, self.audit)
+            make_workspaces_router(
+                lambda: self.repo, _Resolver() if wired else None, self.audit, denials=denials
+            )
         )
         self.c = TestClient(app)
 
