@@ -97,7 +97,7 @@ CandleViewer/
 │  │  ├─ src/app/             # shell, routing, providers
 │  │  ├─ src/features/        # feature-sliced: chart, dom, ticket, positions, risk,
 │  │  │                       #   rules, journal, alerts, replay, admin, settings
-│  │  ├─ src/state/           # Jotai atoms (high-frequency) + Zustand stores (global UI)
+│  │  ├─ src/state/           # external stores read via `useSyncExternalStore` (ADR-0001 amendment 2026-11-02)
 │  │  ├─ src/transport/       # REST client + WS client (uses packages/protocol)
 │  │  └─ tests/               # vitest unit + RTL component tests
 │  └─ desktop/                # Electron shell ONLY: windows, GPU flags, updater, deep links

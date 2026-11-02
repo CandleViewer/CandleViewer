@@ -1,7 +1,7 @@
 # src/lib/state
 
-Zustand stores (global UI state) and Jotai atoms (high-frequency per-widget
-values). Empty at E02-T04; populated as features land (E10+).
+Plain external stores read through `useSyncExternalStore` (ADR-0001, amendment 2026-11-02 — no Zustand,
+Jotai or RxJS in `apps/web`). Empty at E02-T04; populated as features land (E10+).
 
 | File             | Role                                                                                   |
 | ---------------- | -------------------------------------------------------------------------------------- |

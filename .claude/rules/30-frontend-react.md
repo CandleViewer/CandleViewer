@@ -1,5 +1,5 @@
 ---
-description: Frontend conventions for apps/web and packages/ui (TS strict, React 18, Zustand/Jotai/RxJS, Storybook mandatory for CMP-*, accessibility).
+description: Frontend conventions for apps/web and packages/ui (TS strict, React 18, `useSyncExternalStore` stores per ADR-0001, Storybook mandatory for CMP-*, accessibility).
 ---
 # Frontend (React / TypeScript)
 
@@ -18,9 +18,9 @@ Source: `AGENTS.md` §5.1, `docs/plan/05-accessibility-standard.md`, `15-compone
 - Business rules stay server-side (C-2.12); the UI renders server truth (risk, sizing, RBAC).
 
 ## State
-- Plain external stores read through React's **`useSyncExternalStore`** (ADR-0001, amendment 2026-11-02):
-  small stores, selectors, no stored derived state. No Zustand, Jotai, RxJS or TanStack Query in `apps/web`;
-  adding one needs an ADR-0001 amendment, never a per-feature dependency.
+- Plain external stores read through React's **`useSyncExternalStore`**: small stores, selectors, no stored
+  derived state. Which state / data libraries `apps/web` may use is ADR-0001's (amendment 2026-11-02);
+  read it before adding one.
 - High-frequency values are coalesced by the transport layer before React sees them:
   transport -> coalescer (rAF or a timer batch) -> store publish. Never set state per WS message.
 - Unsubscribe on unmount; every subscription has a teardown test.

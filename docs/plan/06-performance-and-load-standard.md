@@ -97,7 +97,7 @@ Never acceptable: dropping frames below 30fps, silently discarding order-line/po
 
 ### 5.1 WS tick → screen (budget #3)
 
-End-to-end path: Bybit WS message → backend ingestion parse → book/bar-builder update → backend fan-out WS frame → frontend WS client → state store (Jotai per-symbol high-freq state, per frontend research) → React/engine paint.
+End-to-end path: Bybit WS message → backend ingestion parse → book/bar-builder update → backend fan-out WS frame → frontend WS client → state store (the transport-coalesced external stores of ADR-0001's 2026-11-02 amendment) → React/engine paint.
 
 **Stage-by-stage p95 allocation (sums to the 100ms budget at the pessimistic/WAN edge):**
 
@@ -108,13 +108,13 @@ End-to-end path: Bybit WS message → backend ingestion parse → book/bar-build
 | Pre-aggregation ("already bucketed" state prep for subscribers) | ≤5ms | Avoids raw re-computation per subscriber |
 | Backend fan-out (outbound WS frame emitted to all subscribed sessions) | ≤7ms | Completes the ≤20ms backend-internal sub-budget (#6) with 3ms headroom: 3+5+5+7=20ms |
 | Network hop, backend → frontend (Tailscale WAN, worst case) | ≤50ms | Localhost/LAN typically <5ms; this is the uncontrolled, dominant term at the pessimistic edge (§3.1) |
-| Frontend WS client → state store (RxJS batching/throttling window) | ≤16ms | Capped at one frame specifically so it never becomes the dominant controllable term |
+| Frontend WS client → state store (the transport layer's batching / throttling window) | ≤16ms | Capped at one frame specifically so it never becomes the dominant controllable term |
 | React/engine paint (state store → next `requestAnimationFrame`) | ≤16.6ms | One full frame budget per §4.3 in the worst case (update lands just after a paint) |
 | **Total (pessimistic/WAN edge)** | **≈102.6ms → rounds to the p95 <100ms target under realistic conditions** | The four backend-internal stages (20ms) are the only ones CandleViewer fully controls; network (50ms) is bounded but uncontrolled; the two frontend stages (16ms + 16.6ms) are controlled but represent a "worst alignment" double-frame-wait case — in practice frontend stages overlap/pipeline so real p95 comes in under the nominal sum, which is why this is stated as a p95 statistical target, not a worst-case-sum guarantee |
 
 - **Backend-internal portion** (ingestion receipt → outbound fan-out frame emitted): budget #6, ≤20ms p95. Achieved via: async, non-blocking parse (orjson/msgspec-class fast JSON, or the identified binary-framing upgrade path in `23-ws-protocol.md`); per-symbol worker isolation so one symbol's burst doesn't stall another's fan-out; pre-aggregated "already bucketed" state pushed rather than raw re-computation per subscriber.
 - **Network hop** (backend → frontend over Tailscale/localhost): typically <5ms on localhost/LAN, <50ms over Tailscale WAN — not a budget CandleViewer controls beyond choosing Tailscale (locked decision) and co-locating backend/client on the same LAN where practical for the owner's primary usage.
-- **Frontend portion** (WS message received → paint): RxJS batching/throttling at ingestion (per frontend-tech research) intentionally coalesces bursts to protect the frame budget (§4), meaning the "screen" timestamp is the next `requestAnimationFrame` after the batching window closes — batching window is capped at 16ms (one frame) specifically so it never itself becomes the dominant latency term.
+- **Frontend portion** (WS message received → paint): the transport layer's batching / throttling at ingestion (ADR-0001 amendment 2026-11-02) intentionally coalesces bursts to protect the frame budget (§4), meaning the "screen" timestamp is the next `requestAnimationFrame` after the batching window closes — batching window is capped at 16ms (one frame) specifically so it never itself becomes the dominant latency term.
 - **Total p95 <100ms budget** is therefore allocated roughly: ≤20ms backend, ≤50ms network (worst-case Tailscale WAN), ≤16ms frontend batch window, ≤16.6ms to next paint — sums to ~100ms at the pessimistic edges, which is why 100ms is the p95 (not average) target; localhost/LAN operation comfortably beats it.
 
 ### 5.2 Order submit → ack (budget #4)
@@ -136,7 +136,7 @@ Path: user action (click/hotkey) → frontend order-ticket validation → REST/W
 
 ### 6.2 Memory ceilings (budgets #7, #8)
 
-- **Frontend** (≤1.5GB/chart workspace): achieved via windowed/virtualized data structures (only visible+prefetch-margin bars materialized at full fidelity; older bars downsampled/summary-only until scrolled into view), the DOM-mirror's own windowing (`05-accessibility-standard.md` §6.1), and bounded per-symbol high-freq state (Jotai atoms capped to a rolling buffer, not unbounded history) — measured via a 2-hour soak test per §7.3 that specifically checks for monotonic growth (leak detection), not just a snapshot at start.
+- **Frontend** (≤1.5GB/chart workspace): achieved via windowed/virtualized data structures (only visible+prefetch-margin bars materialized at full fidelity; older bars downsampled/summary-only until scrolled into view), the DOM-mirror's own windowing (`05-accessibility-standard.md` §6.1), and bounded per-symbol high-freq state (the external stores of ADR-0001's 2026-11-02 amendment capped to a rolling buffer, not unbounded history) — measured via a 2-hour soak test per §7.3 that specifically checks for monotonic growth (leak detection), not just a snapshot at start.
 - **Backend** (≤300MB/symbol): achieved via bounded rolling buffers per bar-builder/aggregation engine (e.g. footprint/profile aggregation windows are time-boxed and rolled to storage rather than retained unbounded in process memory), with QuestDB/Parquet as the system of record for anything beyond the in-memory working set — this is a direct constraint on `21-database-schema.md`'s hot-tier design (in-memory state is a cache/working-set, not the durable store).
 
 ### 6.3 Storage growth (budget #12)
