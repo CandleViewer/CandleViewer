@@ -10,9 +10,12 @@
   margin-block-start: var(--space-stack-xs);
 }
 
+/* A label breaks between words, never inside one, even in a host that breaks anywhere (CMP-178's
+   body): its min-content stays its longest word, so the value wraps first. */
 .cv-kv__label {
   flex: 0 1 auto;
   margin: 0;
+  overflow-wrap: break-word;
   color: var(--color-text-secondary);
   font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
     var(--type-ui-label-line-height) var(--type-ui-label-font-family);

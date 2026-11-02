@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { json, stubSession } from "../support/api";
+import { stubAdminReads } from "../support/admin";
 import { seriousAxe } from "../support/axe";
 
 // E42-S01 (#1022) admin-shell.spec: every admin route renders inside CMP-087 AdminLayout, whose code loads
@@ -26,6 +27,7 @@ test("E42-S01 an owner enters the admin area: the band on each page, no gate and
 }) => {
   const paths = watchPaths(page);
   await stubSession(page, { role: "owner" });
+  await stubAdminReads(page); // the strip's reads on every admin route, SCR-120's at /admin
   const visit = async (path: string, label: string, h1: string): Promise<void> => {
     await page.goto(path);
     await expect(band(page)).toHaveText(`◆ Admin area · ${label}`);
@@ -33,7 +35,7 @@ test("E42-S01 an owner enters the admin area: the band on each page, no gate and
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(page.getByRole("alertdialog")).toHaveCount(0);
   };
-  await visit("/admin", "Overview", "R-300 — owned by E18");
+  await visit("/admin", "Overview", "Overview");
   await visit("/admin/users", "Users and roles", "R-301 — owned by E18");
   await visit("/admin/audit", "Audit log", "R-360 — owned by E09");
   await visit("/admin/security", "Security centre", "Security centre");
@@ -45,6 +47,7 @@ test("E42-S01 an owner enters the admin area: the band on each page, no gate and
   expect(await seriousAxe(page)).toEqual([]);
   expect(paths().filter((p) => p.endsWith("/auth/step-up"))).toEqual([]);
   expect(paths().some((p) => ADMIN_CHUNK.test(p))).toBe(true); // the watcher sees the chunk
+  expect(paths()).toContain("/api/v1/admin/overview"); // and the owner's admin reads
 });
 
 test("E42-S01 focus moves to the page h1 when the admin area's code arrives", async ({ page }) => {

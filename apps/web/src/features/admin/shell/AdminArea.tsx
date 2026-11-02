@@ -1,8 +1,14 @@
 import { useEffect, type CSSProperties, type JSX, type ReactNode } from "react";
-import { AdminLayout } from "@candleviewer/ui";
+import { ADMIN_COPY, AdminLayout } from "@candleviewer/ui";
 import { AdminInviteScreen } from "../../invites/AdminInviteScreen";
 import { StubRoute } from "../../../routes/StubRoute";
 import { ROUTE_TITLES } from "../../../routes/titles";
+import { useShellSelector } from "../../../shell/useShellSelector";
+import { OverviewPage } from "../overview/OverviewPage";
+import { useAdminHold, useAdminSelector } from "../overview/readStore";
+import { areaEntered, denial, STRIP_READS, stripItems } from "../overview/strip";
+import { routerLink } from "../routerLink";
+import { AdminDenied } from "./AdminDenied";
 import { SecurityCentrePlaceholder } from "./SecurityCentrePlaceholder";
 
 /** SCR-120's page header (E42-D03 §6): R-300's page title, "Admin", would read "Admin area · Admin". */
@@ -24,6 +30,7 @@ export function adminRouteLabel(routeId: string): string {
 
 /** Each admin route's page: the one that ships today, else the stub naming its owner. */
 function pageFor(routeId: string, owner: string | null): ReactNode {
+  if (routeId === "R-300") return <OverviewPage />; // SCR-120 (E42-S01)
   if (routeId === "R-303") return <AdminInviteScreen />; // SCR-123 (E09-S05)
   if (routeId === "R-354") return <SecurityCentrePlaceholder />; // until E43's SCR-137
   return <StubRoute routeId={routeId} owner={owner ?? "E42"} />;
@@ -56,14 +63,36 @@ export interface AdminAreaProps {
 /**
  * The admin area (E42-S01; E42-D03 §4): each `/admin/*` route's page inside CMP-087, its band naming
  * the route. Per-action step-up (D8): no gate at the door, a protected action answers the server's own
- * challenge. No strip until a source feeds it (BQ-6), and no live region or announcement of its own:
- * the shell announces each route once (BQ-8). Later admin pages mount through `pageFor`.
+ * challenge. The strip reads the overview's served sources on every admin route (BQ-6), through the
+ * store SCR-120 shares, and its `/admin/*` reads are what records the entry, so the footer says so
+ * once one was answered (D27). No live region or route announcement of its own: the shell announces
+ * each route once (BQ-8). A `403` on any admin read withdraws the area (SCR-154 N-2), which
+ * `AdminDenied` says once through the shell's announcer. Later admin pages mount through `pageFor`.
  */
 export function AdminArea({ routeId, owner }: AdminAreaProps): JSX.Element {
   useCompleteRouteFocus();
+  const env = useShellSelector((s) => s.environment);
+  const denied = useAdminSelector(denial);
+  useAdminHold(STRIP_READS, denied === null);
+  const strip = useAdminSelector((s) => stripItems(s, env));
+  const entered = useAdminSelector(areaEntered);
+  if (denied !== null) {
+    return (
+      <div style={INSET}>
+        <AdminDenied refId={denied.refId} />
+      </div>
+    );
+  }
   return (
     <div style={INSET}>
-      <AdminLayout routeLabel={adminRouteLabel(routeId)}>{pageFor(routeId, owner)}</AdminLayout>
+      <AdminLayout
+        routeLabel={adminRouteLabel(routeId)}
+        strip={strip}
+        footer={entered ? ADMIN_COPY.footerAreaEntered : undefined}
+        linkAs={routerLink}
+      >
+        {pageFor(routeId, owner)}
+      </AdminLayout>
     </div>
   );
 }

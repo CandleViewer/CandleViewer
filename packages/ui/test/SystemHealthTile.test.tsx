@@ -144,7 +144,8 @@ describe("SystemHealthTile (CMP-178)", () => {
     const host = await show({ ...FULL, valueAsOf: GOOD });
     expect(seen(part(host, "value"))).toBe("probe 210 ms · as of 14:01:40");
     expect(heard(part(host, "value"))).toBe("probe 210 milliseconds · as of 14:01:40");
-    expect(part(host, "meta")).toHaveTextContent(/^last good 14:01:40 · as of 14:02:11$/);
+    const times = [...host.querySelectorAll(".cv-health-tile__meta")].map((p) => p.textContent);
+    expect(times).toEqual(["last good 14:01:40", "as of 14:02:11"]);
     const stale = await show({
       tone: "stale",
       staleSince: AS_OF,
@@ -165,7 +166,9 @@ describe("SystemHealthTile (CMP-178)", () => {
     },
   );
 
-  it("orders the parts: word, value, the host's lines, times, stops, still safe, hint, Runbook, Retry", async () => {
+  it("orders the parts: word, value, host lines, last good, stops, still safe, hint, Runbook, as of, Retry", async () => {
+    // CR-5287-02: E42-D03 board 09's Warning specimen draws "last good" over what stops working
+    // and "as of" last, each on its own line.
     const host = await show(FULL, <p>host line</p>);
     const tile = within(host);
     const runbook = tile.getByRole("link", { name: COPY.runbook });
@@ -174,9 +177,10 @@ describe("SystemHealthTile (CMP-178)", () => {
     const parts = [
       ...["state", "value"].map((name) => part(host, name)),
       tile.getByText("host line"),
-      part(host, "meta"),
+      tile.getByText("last good 14:01:40"),
       ...["updates may lag.", COPY.stillSafe, "Check the link."].map((t) => tile.getByText(t)),
       runbook,
+      tile.getByText("as of 14:02:11"),
       tile.getByRole("button", { name: COPY.retry }),
     ];
     parts.slice(1).forEach((el, i) => {
@@ -230,6 +234,47 @@ describe("SystemHealthTile (CMP-178)", () => {
     await render({ state: "error", onRetry: noop });
     act(() => outside.blur());
     await render({ state: "ready" });
+    expect(document.activeElement).toBe(document.body);
+    await act(async () => root.unmount());
+  });
+
+  it("gives the heading link the focus of any line a re-render takes out; a blur on purpose stays", async () => {
+    const host = document.body.appendChild(document.createElement("div"));
+    const root = createRoot(host);
+    const render = (lines?: ReactNode, props: Partial<SystemHealthTileProps> = {}): Promise<void> =>
+      act(async () =>
+        root.render(
+          <SystemHealthTile {...BASE} {...props}>
+            {lines}
+          </SystemHealthTile>,
+        ),
+      );
+    const heading = (): HTMLElement => within(host).getByRole("link", { name: "Users" });
+    const row = (id: number): JSX.Element => (
+      <a key={id} href={`#entry-${id}`}>
+        {`Entry ${id}`}
+      </a>
+    );
+    // A host row a re-read replaced (A-5330-02): focus lands on the heading link, never <body>.
+    await render([row(1), row(2)]);
+    act(() => within(host).getByRole("link", { name: "Entry 2" }).focus());
+    await render([row(3), row(4)]);
+    expect(document.activeElement).toBe(heading());
+    // A Runbook link a recovery took out, the same way.
+    await render(undefined, { tone: "danger", runbookHref: "#runbook" });
+    act(() =>
+      within(host)
+        .getByRole("link", { name: /Runbook/ })
+        .focus(),
+    );
+    await render();
+    expect(document.activeElement).toBe(heading());
+    // Focus the user put on the page itself stays there when the line it left goes.
+    await render([row(5)]);
+    const entry = within(host).getByRole("link", { name: "Entry 5" });
+    act(() => entry.focus());
+    await act(async () => entry.blur());
+    await render([row(6)]);
     expect(document.activeElement).toBe(document.body);
     await act(async () => root.unmount());
   });

@@ -1,17 +1,21 @@
 /**
  * E42-S01 (#1022): the admin area module (the lazy chunk): CMP-087 around each admin route's page, the
- * band's route words, the Security centre placeholder, and the route focus it completes on arrival.
+ * band's route words, the strip and its footer on every admin route, the area withdrawn on a `403`,
+ * the Security centre placeholder, and the route focus it completes on arrival.
  */
 import { createRequire } from "node:module";
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isAdminRoute } from "../../../../src/features/admin/AdminRouteElement";
+import { adminReads } from "../../../../src/features/admin/overview/readStore";
 import { AdminArea, adminRouteLabel } from "../../../../src/features/admin/shell/AdminArea";
 import { SecurityCentrePlaceholder } from "../../../../src/features/admin/shell/SecurityCentrePlaceholder";
+import { clearAnnouncements, ShellAnnouncer } from "../../../../src/features/app-shell/announcer";
 import { InShellProvider } from "../../../../src/features/app-shell/ScreenRoot";
 import { ROUTE_MANIFEST } from "../../../../src/routes/manifest";
 import { ROUTE_TITLES } from "../../../../src/routes/titles";
+import { resetShellState, setShellState } from "../../../../src/shell/bootstrap/store";
 
 // axe-core is a transitive dependency of @axe-core/playwright (as in test/features/invites.test.tsx).
 const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/playwright"))(
@@ -28,15 +32,24 @@ const ADMIN_IDS = ROUTE_MANIFEST.filter(
   (e) => e.path === "/admin" || e.path.startsWith("/admin/"),
 ).map((e) => e.id);
 
-// The invite screen lists the pending invites on mount: answered here, never by the network.
+// The invite screen lists the pending invites on mount, and the strip reads the overview: answered
+// here, never by the network. `{ items: [] }` serves no slice, so the strip has no source to show.
+const answer = (status: number, body: unknown): Response =>
+  new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 beforeEach(() => {
-  const body = JSON.stringify({ items: [] });
+  adminReads.reset();
+  clearAnnouncements();
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => new Response(body, { headers: { "Content-Type": "application/json" } })),
+    vi.fn(async () => answer(200, { items: [] })),
   );
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  adminReads.reset();
+  clearAnnouncements();
+  resetShellState();
+  vi.unstubAllGlobals();
+});
 
 /** The area as the shell holds it: inside its `main`, a router around it. */
 function Shell({
@@ -88,7 +101,7 @@ describe("AdminArea: CMP-087 around the route's page", () => {
     expect(root.firstElementChild).toBe(band);
     expect(within(main).getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByRole("heading", { level: 1 })).toHaveAccessibleName("R-301 — owned by E18");
-    // no strip without a source (BQ-6), no live region of its own, nothing focusable in the band
+    // no strip while no source is served (BQ-6), no live region of its own, nothing focusable in the band
     expect(screen.queryByRole("region", { name: "Needs your action" })).toBeNull();
     expect(main.querySelector("[aria-live], [role='status'], [role='alert']")).toBeNull();
     expect(band.querySelector("a, button, input, [tabindex]")).toBeNull();
@@ -112,6 +125,72 @@ describe("AdminArea: CMP-087 around the route's page", () => {
     const band = screen.getByRole("region", { name: "Admin area" });
     expect(band.textContent).toBe("◆ Admin area · Security centre");
     expect(screen.getByRole("heading", { level: 1 })).toHaveAccessibleName("Security centre");
+  });
+
+  it("draws the strip from the served counts on any admin route, then the footer (BQ-6, D27)", async () => {
+    const at = "2026-10-22T14:02:11Z";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input).endsWith("/admin/overview")
+          ? answer(200, {
+              users: { status: "ok", generated_at: at, without_mfa: 0 },
+              accounts: { status: "ok", generated_at: at, keys_expiring_30d: 2, keys_invalid: 0 },
+            })
+          : answer(200, { subaccounts: { status: "ok", tier_source: "recorded", used: 1 } }),
+      ),
+    );
+    setShellState({ environment: "demo" }); // the accounts' items carry the session's environment
+    render(<Shell routeId="R-301" />);
+    const strip = await screen.findByRole("region", { name: "Needs your action" });
+    const item = within(strip).getByRole("link");
+    expect(item).toHaveAccessibleName(
+      "Attention: 2 keys expire within 30 days → Accounts and keys DEMO",
+    );
+    expect(item).toHaveAttribute("href", "/admin/accounts"); // the route table's, never the data's
+    const paths = vi.mocked(fetch).mock.calls.map(([input]) => String(input));
+    expect(paths.sort()).toEqual(["/api/v1/admin/capacity", "/api/v1/admin/overview"]);
+    expect(
+      screen.getByText("Entering this area was recorded — Area entered (admin.area_entered)"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no footer while no admin read was answered, nor after a 503", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => answer(503, { code: "audit_unavailable" })),
+    );
+    render(<Shell routeId="R-301" />);
+    await waitFor(() => expect(adminReads.getState().overview.phase).toBe("failed"));
+    expect(screen.queryByText(/Entering this area was recorded/)).toBeNull();
+    expect(screen.queryByRole("region", { name: "Needs your action" })).toBeNull();
+  });
+
+  it("withdraws the area when a read answers 403: CMP-089's withdrawn page, no band (BQ-8)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => answer(403, { code: "forbidden" })),
+    );
+    render(<ShellAnnouncer />);
+    const view = render(<Shell routeId="R-310" />);
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Your access changed" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Admin area" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Back to your workspace" })).toHaveAttribute(
+      "href",
+      "/terminal",
+    );
+    // D09 §4.4 row 4: one assertive announcement through the shell's announcer (A-5330-03), and
+    // only one: the withdrawn page shown again (the area stays withdrawn) says nothing new.
+    const said = (): Element | null => document.querySelector('[aria-live="assertive"] p');
+    expect(said()).toHaveTextContent(/^Your access changed\.$/);
+    const seq = said()?.getAttribute("data-seq");
+    view.unmount();
+    render(<Shell routeId="R-301" />);
+    await screen.findByRole("heading", { level: 1, name: "Your access changed" });
+    expect(said()?.getAttribute("data-seq")).toBe(seq);
+    expect(document.querySelector('[aria-live="polite"] p')).toBeNull();
   });
 
   it("names a stub with no owner as E42's", () => {

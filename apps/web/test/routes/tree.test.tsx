@@ -90,21 +90,27 @@ describe("route tree x RBAC matrix", () => {
     );
   });
 
-  it("renders /admin for an owner with no step-up dialog and no step-up request (#2725)", async () => {
-    const f = vi.fn();
-    vi.stubGlobal("fetch", f);
-    claimsFor("owner");
-    const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/admin?tab=x"] });
-    render(<RouterProvider router={router} />);
-    // the admin area's code arrives lazily, after the guard (E42-S01 BQ-7)
-    expect(
-      await screen.findByRole("heading", { name: /R-300 — owned by E18/ }, ROUTE_WAIT),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-    expect(router.state.location.search).toBe("?tab=x");
-    expect(f.mock.calls.filter(([u]) => String(u).includes("/auth/step-up"))).toEqual([]);
-  });
+  // The first admin render in this file loads the admin area's code, SCR-120 included: its own budget.
+  it(
+    "renders /admin for an owner with no step-up dialog and no step-up request (#2725)",
+    { timeout: 30_000 },
+    async () => {
+      const f = vi.fn();
+      vi.stubGlobal("fetch", f);
+      claimsFor("owner");
+      const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/admin?tab=x"] });
+      render(<RouterProvider router={router} />);
+      // the admin area's code arrives lazily, after the guard (E42-S01 BQ-7), with SCR-120 at R-300
+      const first = { timeout: 20_000 }; // a busy host transforms the chunk's modules first
+      expect(
+        await screen.findByRole("heading", { name: "Overview", level: 1 }, first),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      expect(router.state.location.search).toBe("?tab=x");
+      expect(f.mock.calls.filter(([u]) => String(u).includes("/auth/step-up"))).toEqual([]);
+    },
+  );
 
   // The walk mounts every manifest route in turn, so its time grows with the manifest: its own budget.
   it(
@@ -216,6 +222,7 @@ const concrete = (path: string): string => path.replace(/:[a-zA-Z]+/g, "x");
 const bandLabel = (id: string): string => (id === "R-300" ? "Overview" : (ROUTE_TITLES[id] ?? id));
 /** The page each admin route shows today when it is not a stub. */
 const PAGE_H1: Readonly<Record<string, string>> = {
+  "R-300": "Overview", // SCR-120 (E42-S01)
   "R-303": "Invite user",
   "R-354": "Security centre",
   "R-360": "R-360 — owned by E09",

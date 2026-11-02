@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { stubAdminReads } from "../support/admin";
 import { stubSession, stubSessionsList } from "../support/api";
 import { REFRESH_INVALID } from "../support/contexts";
 import type { A11yScreen } from "./screens";
@@ -18,6 +19,7 @@ const PACE_SAMPLE = 5;
 /** Per-screen data stubs, so the collectors audit the populated state, not an error. */
 const SCREEN_STUBS: Readonly<Record<string, (page: Page) => Promise<void>>> = {
   "R-201": stubSessionsList, // SCR-112 sessions: the table with the current session marked
+  "R-300": async (page) => void (await stubAdminReads(page)), // SCR-120: every tile answered
 };
 
 /**
@@ -57,6 +59,12 @@ export async function openScreen(page: Page, s: A11yScreen): Promise<void> {
   if (s.id === "R-201") {
     const table = page.getByRole("table"); // the list state, not loading
     await expect(table, `${s.id}: its table did not render`).toBeVisible({
+      timeout: STEP_TIMEOUT_MS,
+    });
+  }
+  if (s.id === "R-300") {
+    const loading = page.locator('[data-cmp="CMP-178"][aria-busy="true"]'); // every tile answered
+    await expect(loading, `${s.id}: a tile is still loading`).toHaveCount(0, {
       timeout: STEP_TIMEOUT_MS,
     });
   }

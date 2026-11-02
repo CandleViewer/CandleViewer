@@ -121,24 +121,32 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("test_client_never_posts_step_up_without_a_server_challenge", () => {
-  it("admin routes: no route-level step-up dialog and no step-up post", async () => {
-    const admin = ROUTE_MANIFEST.filter((e) => e.path === "/admin" || e.path.startsWith("/admin/"));
-    expect(admin.length).toBeGreaterThan(10);
-    for (const entry of admin) {
-      const router = createMemoryRouter(buildRoutes(), {
-        initialEntries: [entry.path.replace(/:[a-zA-Z]+/g, "x")],
-      });
-      const view = mountRouter(router);
-      await act(async () => undefined);
-      expectNoRouteError(router, entry.id);
-      expect(screen.queryByRole("alertdialog"), entry.id).not.toBeInTheDocument();
-      expect(screen.queryByRole("dialog"), entry.id).not.toBeInTheDocument();
-      expect(screen.queryByLabelText("Authenticator code"), entry.id).not.toBeInTheDocument();
-      view.unmount();
-      router.dispose();
-    }
-    expect(wire.stepUps).toEqual([]);
-  });
+  // The walk mounts every admin route in turn, each with the admin area's reads (and SCR-120's at
+  // /admin, E42-S01): its time grows with the area, so it has its own budget, as the tree's walk does.
+  it(
+    "admin routes: no route-level step-up dialog and no step-up post",
+    { timeout: 30_000 },
+    async () => {
+      const admin = ROUTE_MANIFEST.filter(
+        (e) => e.path === "/admin" || e.path.startsWith("/admin/"),
+      );
+      expect(admin.length).toBeGreaterThan(10);
+      for (const entry of admin) {
+        const router = createMemoryRouter(buildRoutes(), {
+          initialEntries: [entry.path.replace(/:[a-zA-Z]+/g, "x")],
+        });
+        const view = mountRouter(router);
+        await act(async () => undefined);
+        expectNoRouteError(router, entry.id);
+        expect(screen.queryByRole("alertdialog"), entry.id).not.toBeInTheDocument();
+        expect(screen.queryByRole("dialog"), entry.id).not.toBeInTheDocument();
+        expect(screen.queryByLabelText("Authenticator code"), entry.id).not.toBeInTheDocument();
+        view.unmount();
+        router.dispose();
+      }
+      expect(wire.stepUps).toEqual([]);
+    },
+  );
 
   it(
     "invite flow: the one step-up names the challenge the server issued",
