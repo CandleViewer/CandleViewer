@@ -18,9 +18,11 @@ the facade and before the private-stream consumer, which takes its driver as its
   instances the stream consumer takes, so a finding pages once whichever caller meets it;
 * the adoption's audit (`order.adopted_untracked`) and the report's (`oms.reconcile`,
   `stage: finished`), written ahead through the lane's own audit writer as `system:oms` (C-2.9);
-* the notices (`ReconcileNoticesBinding`, 23 Sec.15.9's closed table, offered to the gateway's
-  `system` topic on the serving loop: no new bus topic, BQ-6), the pager, and the five metrics of
-  20 Sec.12.1 with no account label (`ReconcileMetrics`; `oms_stale_accounts` is the driver's);
+* the notices (`ReconcileNoticesBinding`, 23 Sec.15.9's closed table, each stamped with its
+  transition time on the OMS's clock and offered to the gateway's `system` topic on the serving
+  loop: no new bus topic, BQ-6; kept for the replay at connect, E29-S07), the pager, and the five
+  metrics of 20 Sec.12.1 with no account label (`ReconcileMetrics`; `oms_stale_accounts` is the
+  driver's);
 * the stream's last message per account (`LastMessages`), the other half of `gap_from`;
 * the requests the startup sweep resumed (`SweptRequests`), which the sweep records and each
   account's next fetch waits for, bounded, so the first pass never races them (24 Sec.8.5).
@@ -77,6 +79,7 @@ from candleviewer.oms_stream_wiring import (
     SystemBroadcast,
     account_notice,
     checked_notice,
+    wall_ms,
 )
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
 from candleviewer.statechart.factory import restore as restore_chart
@@ -351,17 +354,23 @@ class AdoptionRecords:
 
 
 class ReconcileNoticesBinding:
-    """`reconcile_phases.ReconcileNotices`: 23 Sec.15.9's row for the notice, checked against the
-    closed table, offered to the gateway's `system` topic on the serving loop, never awaited.
-    Raises nothing but `CancelledError`: a notice that is refused is logged by its class."""
+    """`reconcile_phases.ReconcileNotices`: 23 Sec.15.9's row for the notice, stamped with its
+    transition time (`changed_at_ms`, `now_ms`), checked against the closed table, offered to the
+    gateway's `system` topic on the serving loop, never awaited: one notified call,
+    `hub.broadcast_system` (the runtime's `StatesBroadcast`, E29-S07). Raises nothing but
+    `CancelledError`: a notice that is refused is logged by its class."""
 
-    def __init__(self, hub: SystemBroadcast, serving: Notify) -> None:
-        self._hub, self._serving = hub, serving
+    def __init__(
+        self, hub: SystemBroadcast, serving: Notify, *, now_ms: Callable[[], int] = wall_ms
+    ) -> None:
+        self._hub, self._serving, self._now_ms = hub, serving, now_ms
 
     def publish(self, account_id: AccountId, notice: Notice) -> None:
         try:
-            body = checked_notice(account_notice(account_id, notice.reason, notice.severity))
-            self._serving.notify(self._hub.broadcast_system, body)
+            body = account_notice(
+                account_id, notice.reason, notice.severity, changed_at_ms=self._now_ms()
+            )
+            self._serving.notify(self._hub.broadcast_system, checked_notice(body))
         except Exception as exc:
             _log().error(
                 "reconcile_notice_refused", account_id=str(account_id), error=type(exc).__name__
@@ -545,7 +554,8 @@ def build_reconciliation(
         reconciler, standing=standing, tracker=FailureTracker(window_s=stale_after_s),
         marks=marks, watermarks=AccountWatermarks(reads),
         records=ReconcileRecords(emitter, environment=environment),
-        notices=ReconcileNoticesBinding(hub, serving), retries=hop, metrics=counted,
+        notices=ReconcileNoticesBinding(hub, serving, now_ms=lambda: now_us() // 1_000),
+        retries=hop, metrics=counted,
         pager=pager, now_us=now_us, resumed=resumed,
     )  # fmt: skip
     jobs = ReconcileJobs(

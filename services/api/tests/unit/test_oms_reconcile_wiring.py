@@ -253,6 +253,22 @@ def test_each_notice_is_its_closed_rows_frame_on_the_system_topic(
     assert frame["exchange_account_ids"] == [str(ACCOUNT)]
 
 
+def test_each_notice_carries_its_bindings_clock_in_ms_as_changed_at_ms() -> None:
+    """23 Sec.15.9 (E29-S07): the time the account entered the state, on the clock the binding is
+    given; `build_reconciliation` gives it the OMS's (`now_us`), in ms."""
+    hub = Hub()
+    rw.ReconcileNoticesBinding(hub, Serving(), now_ms=lambda: 1_789_132_262_000).publish(
+        ACCOUNT, Notice("oms.account_stale", "critical")
+    )
+    built_hub = Hub()
+    built = _build(hub=built_hub, now_us=lambda: 1_789_132_381_999_999)
+    built.phases._notices.publish(ACCOUNT, Notice("oms.account_desync", "warning"))
+    assert [f["changed_at_ms"] for f in (*hub.frames, *built_hub.frames)] == [
+        1_789_132_262_000,
+        1_789_132_381_999,
+    ]
+
+
 def test_a_notice_off_the_closed_table_is_logged_never_sent() -> None:
     hub = Hub()
     with capture_logs() as logs:

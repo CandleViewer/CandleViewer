@@ -25,10 +25,14 @@ foreign order or fill").
 **Across to the serving loop.** Account health's evidence (`ws_heartbeat`, `ws_dropped`,
 `wallet_pushed`) and the account notices are notified there (`oms_lane.Serving.notify`), never
 awaited, so one account task's calls land in their order. A notice is the closed table's row for its
-`reason` (`NOTICES`, 23 Sec.15.9), checked before it leaves (`checked_notice`: an `account_notice`
+`reason` (`NOTICES`, 23 Sec.15.9), stamped with the time of its transition (`changed_at_ms`, the
+OMS's clock in ms, E29-S07) and checked before it leaves (`checked_notice`: an `account_notice`
 whose `exchange_account_ids` is a non-empty list of canonical lowercase UUID strings, whose
-`message` names no account), then offered through `GatewayHub.broadcast_system`. The credential
-report is the runtime's `CredentialRejections` (its `ServedStandings` hop), guarded.
+`message` names no account), then offered through `GatewayHub.broadcast_system`. The composition
+root hands the runtime that broadcast behind `StatesBroadcast`, so each notice is kept in
+`AccountNoticeStates` in the same call, which the gateway replays after a first `auth_ok`
+(23 Sec.15.9, #1028). The credential report is the runtime's `CredentialRejections` (its
+`ServedStandings` hop), guarded.
 
 **Every wrapper here raises nothing but `CancelledError`** (the S8 carry L-2): a hop, a notice or a
 report that fails is logged by its class and the account id, and the report's failure pages.
@@ -168,6 +172,20 @@ ALSO_SEVERE: Final[Mapping[AccountNoticeReason, frozenset[Severity]]] = MappingP
     {"oms.account_desync": frozenset({"critical"})}
 )
 _NOTICE_KEYS: Final = frozenset({"kind", "severity", "reason", "message", "exchange_account_ids"})
+#: 23 Sec.15.9 (E29-S07): the `oms.` family's one key past the five, when the account entered the
+#: state its `reason` names, in epoch ms: an `int` of the schema's `epochMs` range, never a `bool`.
+#: No other family carries it.
+CHANGED_AT: Final = "changed_at_ms"
+MAX_EPOCH_MS: Final = 2**53 - 1
+#: The family whose notices are an account's state (23 Sec.15.9); a notice of any other is an event.
+OMS_FAMILY: Final = "oms."
+#: The accounts `AccountNoticeStates` keeps a notice for, the oldest forgotten past it (C-2.18).
+MAX_NOTICE_ACCOUNTS: Final = 4096
+_SYNCED: Final[AccountNoticeReason] = "oms.account_synced"
+_STALE: Final[AccountNoticeReason] = "oms.account_stale"
+_DESYNC: Final[AccountNoticeReason] = "oms.account_desync"
+_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
+_MS: Final = timedelta(milliseconds=1)
 _TOPICS: Final[frozenset[str]] = frozenset(get_args(PrivateKind.__value__))
 
 
@@ -233,11 +251,27 @@ class Ports(Protocol):
 # --- account notices (23 Sec.15.9) --------------------------------------------------------------
 
 
+def wall_ms() -> int:
+    """The host's wall clock in epoch ms: a notice binding's transition clock unless it is given
+    one (the runtime gives each the OMS's own)."""
+    return time.time_ns() // 1_000_000
+
+
+def _ms_of(at: datetime) -> int:
+    """`at`, an aware time, in epoch ms."""
+    return (at - _EPOCH) // _MS
+
+
 def account_notice(
-    account_id: UUID, reason: AccountNoticeReason, severity: Severity | None = None
+    account_id: UUID,
+    reason: AccountNoticeReason,
+    severity: Severity | None = None,
+    *,
+    changed_at_ms: int | None = None,
 ) -> dict[str, Any]:
     """The frame `body` of one notice: the table's row for `reason` (its severity, or one the
-    table allows the producer to choose), the account only in `exchange_account_ids`; a
+    table allows the producer to choose), the account only in `exchange_account_ids`, and
+    `changed_at_ms` only when given (a lock the standing restored has none, 23 Sec.15.9); a
     `ValueError` for a `reason` the table has no row for, or a severity it does not allow."""
     row = NOTICES.get(reason)
     if row is None:
@@ -247,21 +281,28 @@ def account_notice(
         severity = fixed
     elif severity != fixed and severity not in ALSO_SEVERE.get(reason, frozenset()):
         raise ValueError("a severity the closed table does not allow for the reason")
-    return {
+    body: dict[str, Any] = {
         "kind": "account_notice",
         "severity": severity,
         "reason": reason,
         "message": message,
         "exchange_account_ids": [str(account_id)],
     }
+    if changed_at_ms is not None:
+        body[CHANGED_AT] = changed_at_ms
+    return body
 
 
 def checked_notice(body: Mapping[str, Any]) -> dict[str, Any]:
     """The producer's own check (SEC-1, SEC-5): `body` is an `account_notice` with exactly its five
-    keys, its `reason`'s row of the closed table, and a non-empty `list` (never a set, a tuple or a
-    `UUID`) of canonical lowercase UUID strings; else a `ValueError` naming no value."""
-    if body.get("kind") != "account_notice" or set(body) != _NOTICE_KEYS:
+    keys, or six with the `oms.` family's `changed_at_ms` (an `int` from 0 to `MAX_EPOCH_MS`, never
+    a `bool`; 23 Sec.15.9), its `reason`'s row of the closed table, and a non-empty `list` (never a
+    set, a tuple or a `UUID`) of canonical lowercase UUID strings; else a `ValueError` naming no
+    value."""
+    if body.get("kind") != "account_notice" or set(body) - {CHANGED_AT} != _NOTICE_KEYS:
         raise ValueError("not an account_notice of the five keys")
+    if CHANGED_AT in body and not (_is_state(body["reason"]) and _is_epoch_ms(body[CHANGED_AT])):
+        raise ValueError("a changed_at_ms off the oms. family or not an epoch-ms integer")
     row = NOTICES.get(body["reason"])
     allowed = (row[0], *ALSO_SEVERE.get(body["reason"], ())) if row is not None else ()
     if row is None or body["message"] != row[1] or body["severity"] not in allowed:
@@ -282,17 +323,120 @@ def _canonical(value: str) -> bool:
         return False
 
 
-class StreamNotices:
-    """`AccountNotices` (24 Sec.8.12): the notice built from the closed table and checked, then
-    offered to the gateway on the serving loop. Raises nothing but `CancelledError`."""
+def _is_state(reason: object) -> bool:
+    """Whether `reason` is of the `oms.` family, whose notices are an account's state."""
+    return isinstance(reason, str) and reason.startswith(OMS_FAMILY)
 
-    def __init__(self, hub: SystemBroadcast, serving: Notify) -> None:
-        self._hub, self._serving = hub, serving
+
+def _is_epoch_ms(value: object) -> bool:
+    return type(value) is int and 0 <= value <= MAX_EPOCH_MS
+
+
+class StaleAccounts(Protocol):
+    """The reconciliation standing's `stale_accounts` (`oms/reconcile_standing.py`): one copy of
+    the accounts it holds locked."""
+
+    def stale_accounts(self) -> frozenset[AccountId]: ...
+
+
+class AccountNoticeStates:
+    """23 Sec.15.9's replay (E29-S07, #1028), for the gateway's `system_notices` port after a first
+    `auth_ok`. A lock is the reconciliation standing's, which B19's restored state rebuilds after a
+    restart, never a notice's alone: each account the standing holds is answered as
+    `oms.account_stale`, with the time of the lock's notice when this process sent it and with
+    none otherwise (never a restart's time). Any other state is the account's latest notice of the
+    `oms.` family as checked and broadcast (`StatesBroadcast`), until `oms.account_synced` drops
+    the account; a lock's notice the standing no longer holds is not answered. A notice of another
+    family is an event and is never kept, nor is a body `checked_notice` refuses (it raises). Each
+    state is keyed by its account id and names that account alone (C-2.11). Bounded at
+    `max_accounts` (C-2.18): past it the least recently changed account goes, logged once (one
+    instance per process) with the count and no id. Read and written on the serving loop only."""
+
+    def __init__(self, *, max_accounts: int = MAX_NOTICE_ACCOUNTS) -> None:
+        self._max = max_accounts
+        self._kept: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        #: The time of each lock's notice this process sent, until a pass (`oms.account_desync`)
+        #: or `oms.account_synced` ends the lock: a resync during the lock keeps it.
+        self._locked_at: dict[str, int] = {}
+        self._standing: StaleAccounts | None = None
+        self._overflowed = False
+
+    def bind_standing(self, standing: StaleAccounts) -> None:
+        """The reconciliation standing, read at each `notices()`; until it is bound, no lock."""
+        self._standing = standing
+
+    def offer(self, body: Mapping[str, Any]) -> None:
+        """`body` becomes the latest state of each account it names, or `oms.account_synced`
+        drops them; an event is kept for nothing."""
+        event = body.get("reason")
+        if body.get("kind") == "account_notice" and isinstance(event, str) and not _is_state(event):
+            return
+        checked = checked_notice(body)
+        reason, at = checked["reason"], checked.get(CHANGED_AT)
+        for account in checked["exchange_account_ids"]:
+            self._kept.pop(account, None)
+            if reason == _STALE and at is not None:
+                self._locked_at[account] = at
+            elif reason in (_SYNCED, _DESYNC, _STALE):  # a pass ran, the episode ended, or no time
+                self._locked_at.pop(account, None)
+            if reason != _SYNCED:
+                self._kept[account] = dict(checked, exchange_account_ids=[account])
+        while len(self._kept) > self._max:
+            gone, _ = self._kept.popitem(last=False)
+            self._locked_at.pop(gone, None)
+            if not self._overflowed:
+                self._overflowed = True
+                _log().warning("account_notice_states_full", accounts=len(self._kept))
+
+    def notices(self) -> list[dict[str, Any]]:
+        """The kept states of the accounts the standing does not hold, a lock's notice left out;
+        then each lock the standing holds, in id order. Each a fresh `dict`, so no caller changes
+        what is kept."""
+        locked: frozenset[AccountId] = (
+            frozenset() if self._standing is None else self._standing.stale_accounts()
+        )
+        held = {str(account) for account in locked}
+        out = [
+            dict(body, exchange_account_ids=[account])
+            for account, body in self._kept.items()
+            if account not in held and body["reason"] != _STALE
+        ]
+        out += [
+            account_notice(account, _STALE, changed_at_ms=self._locked_at.get(str(account)))
+            for account in sorted(locked, key=str)
+        ]
+        return out
+
+
+class StatesBroadcast:
+    """The OMS runtime's `SystemBroadcast` (E29-S07): each notice its two bindings publish is
+    offered to the states, then to the gateway's `broadcast_system`, in the one call the serving
+    loop runs, so what a later socket is replayed and what every live socket is sent never part.
+    A body the states refuse raises there, before the broadcast (`Serving.notify` logs it)."""
+
+    def __init__(self, states: AccountNoticeStates, hub: SystemBroadcast) -> None:
+        self._states, self._hub = states, hub
+
+    def broadcast_system(self, body: dict[str, Any]) -> int:
+        self._states.offer(body)
+        return self._hub.broadcast_system(body)
+
+
+class StreamNotices:
+    """`AccountNotices` (24 Sec.8.12): the notice built from the closed table, stamped with its
+    transition time (`now_ms`, the OMS's clock in the runtime) and checked, then offered to the
+    gateway on the serving loop: one notified call, `hub.broadcast_system` (`StatesBroadcast` in
+    the runtime). Raises nothing but `CancelledError`."""
+
+    def __init__(
+        self, hub: SystemBroadcast, serving: Notify, *, now_ms: Callable[[], int] = wall_ms
+    ) -> None:
+        self._hub, self._serving, self._now_ms = hub, serving, now_ms
 
     def publish(self, account_id: AccountId, *, reason: AccountNoticeReason) -> None:
         try:
-            body = checked_notice(account_notice(account_id, reason))
-            self._serving.notify(self._hub.broadcast_system, body)
+            body = account_notice(account_id, reason, changed_at_ms=self._now_ms())
+            self._serving.notify(self._hub.broadcast_system, checked_notice(body))
         except Exception as exc:
             _log().error(
                 "stream_notice_refused", account_id=str(account_id), error=type(exc).__name__
@@ -795,7 +939,7 @@ def build_stream_consumer(
     0. `no_intent` and `lockout`, when given, are the instances reconciliation takes too (E29-T06),
     so a finding pages once whichever caller meets it; `evidence`, when given, is the consumer's
     evidence as it stands (reconciliation's mark over the hop to the serving loop), else the hop
-    over `health` is built here."""
+    over `health` is built here. `now` stamps each notice's `changed_at_ms` too (23 Sec.15.9)."""
     writer = NoIntentWriter(emitter, environment=environment.value)
     reconciliation = NoReconciliation() if reconciliation is None else reconciliation
     handovers = NoHandoverStore() if handovers is None else handovers
@@ -834,7 +978,8 @@ def build_stream_consumer(
     consumer = StreamConsumer(
         accounts=accounts, trading=trading, streams=PortStreams(ports),
         health=evidence, reconciliation=reconciliation,
-        notices=StreamNotices(hub, serving), credentials=GuardedRejections(credentials, pager),
+        notices=StreamNotices(hub, serving, now_ms=lambda: _ms_of(now())),
+        credentials=GuardedRejections(credentials, pager),
         positions=projection, pushes=pushes, counts=counts.consumer, pager=pager,
         now_us=clock.now_us, lags=counts, host_us=clock.host_us, epochs=ClockEpoch(clock_health),
     )  # fmt: skip

@@ -14,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import MappingProxyType
 from typing import Any, Final, cast, get_args
 from uuid import UUID
 
@@ -84,6 +85,7 @@ from candleviewer.oms_wiring import (
     OwnedAudit,
     TradingAccountsBinding,
 )
+from candleviewer.profile_notices_wiring import profiles_notice
 from candleviewer.settings import Environment as ProcessEnvironment
 from candleviewer.storage.repositories.positions import MAX_FUTURE_SKEW
 from candleviewer.ws.gateway import GatewayHub
@@ -94,6 +96,7 @@ from tests.unit.oms.test_stream_push import event
 A = ACCOUNT
 SENTINEL = "sentinel-6b0d2e"  # a value that must never reach a log, a page or a frame
 WALL = datetime(2026, 10, 26, 12, tzinfo=UTC)
+WALL_MS = 1_793_016_000_000  # WALL in epoch ms: a notice's `changed_at_ms` on the OMS's clock
 RESYNCING: Final[AccountNoticeReason] = "oms.account_resyncing"
 
 
@@ -459,6 +462,57 @@ def test_only_the_desync_notice_takes_a_severity_its_producer_chooses() -> None:
         checked_notice(account_notice(A, "oms.account_synced") | {"severity": "critical"})
 
 
+def test_account_notice_stamps_changed_at_ms() -> None:
+    """23 Sec.15.9 (E29-S07): the stream's notice carries the time it was published, the OMS's
+    clock (`now`) in epoch ms; the builder puts the field in only when given one."""
+    world = World()
+    world.build().consumer._notices.publish(A, reason=RESYNCING)
+    [frame] = world.frames
+    assert frame == account_notice(A, RESYNCING) | {"changed_at_ms": WALL_MS}
+    assert checked_notice(frame) == frame
+    assert account_notice(A, "oms.account_stale", changed_at_ms=0)["changed_at_ms"] == 0
+
+
+def test_account_notice_without_time_has_five_keys() -> None:
+    body = account_notice(A, "oms.account_stale")
+    assert set(body) == {"kind", "severity", "reason", "message", "exchange_account_ids"}
+    assert checked_notice(body) == body
+
+
+def test_a_stream_notice_whose_clock_raises_is_logged_never_sent() -> None:
+    def broken() -> int:
+        raise RuntimeError(SENTINEL)
+
+    world = World()
+    notices = wiring.StreamNotices(world, world, now_ms=broken)
+    with capture_logs() as logs:
+        notices.publish(A, reason=RESYNCING)
+    assert world.frames == [] and [log["event"] for log in logs] == ["stream_notice_refused"]
+    assert SENTINEL not in repr(logs)
+
+
+def test_checked_notice_takes_changed_at_ms_on_oms_family_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Six keys only with the `oms.` family's `changed_at_ms`, an `int` of the schema's `epochMs`
+    range; never on a `profiles.changed` frame, even one a closed table held a row for."""
+    stale = account_notice(A, "oms.account_stale")
+    for good in (0, WALL_MS, wiring.MAX_EPOCH_MS):
+        assert checked_notice(stale | {"changed_at_ms": good})["changed_at_ms"] == good
+    for bad in (True, False, -1, wiring.MAX_EPOCH_MS + 1, 1.5, str(WALL_MS), None):
+        with pytest.raises(ValueError, match="changed_at_ms") as refused:
+            checked_notice(stale | {"changed_at_ms": bad})
+        assert str(A) not in str(refused.value)
+    event = profiles_notice(A)
+    with pytest.raises(ValueError, match="changed_at_ms"):
+        checked_notice(event | {"changed_at_ms": WALL_MS})
+    row = ("info", event["message"])
+    monkeypatch.setattr(wiring, "NOTICES", MappingProxyType({**NOTICES, event["reason"]: row}))
+    assert checked_notice(event) == event  # its five keys pass such a table ...
+    with pytest.raises(ValueError, match="changed_at_ms"):
+        checked_notice(event | {"changed_at_ms": WALL_MS})  # ... and never the time
+
+
 def test_notice_ids_are_a_list_of_canonical_lowercase_strings() -> None:
     world = World()
     world.build().consumer._notices.publish(A, reason=RESYNCING)
@@ -495,7 +549,7 @@ def test_notice_whose_check_refuses_it_is_never_offered_and_never_raised(
 ) -> None:
     world = World()
     w = world.build()
-    monkeypatch.setattr(wiring, "account_notice", lambda a, r: {"kind": "account_notice"})
+    monkeypatch.setattr(wiring, "account_notice", lambda a, r, **_: {"kind": "account_notice"})
     with capture_logs() as logs:
         w.consumer._notices.publish(A, reason=RESYNCING)
     assert world.frames == [] and world.notified == []

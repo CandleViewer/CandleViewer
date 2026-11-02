@@ -294,6 +294,20 @@ def test_the_schema_has_the_accounts_of_a_notice_as_an_optional_list_of_at_least
     assert _LIST not in _SCHEMA["required"]
 
 
+@pytest.mark.parametrize("who", [MANAGER, VIEWER], ids=["manager", "viewer"])
+def test_system_filter_keeps_changed_at_ms_for_a_manager(who: PrincipalSnapshot) -> None:
+    """E29-S07 (§15.9): the `oms.` family's transition time names no account and counts nothing,
+    so a Manager or Viewer receives it with the rest of its cut; the schema takes it, optional."""
+    timed = {"changed_at_ms": 1789133000000}
+    body = _ACCOUNT | _BOTH | timed
+    view = system_view(body, who)
+    assert view == _ACCOUNT | {"exchange_account_ids": [str(ACC_A)]} | timed
+    assert system_view(body, OWNER) is body
+    validate(_frame(body))
+    validate(_frame(view))
+    assert "changed_at_ms" not in _SCHEMA["required"]
+
+
 def test_a_health_frame_drops_a_kill_switch_that_is_not_an_object() -> None:
     body = {"kind": "health", "health": "healthy", "kill_switch": ["engaged"]}
     assert system_view(body, VIEWER) == {"kind": "health", "health": "healthy"}

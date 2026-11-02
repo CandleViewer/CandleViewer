@@ -78,6 +78,19 @@ def test_the_standing_is_rebuilt_from_the_restored_state(state: str, stale: bool
     assert standing.is_stale(ACCOUNT) is stale
 
 
+def test_stale_accounts_is_one_copy_of_the_locks_held_now() -> None:
+    """E29-S07 (23 Sec.15.9): the replay reads the locks as one frozen copy, which a later lock or
+    unlock on the order lane leaves as it was."""
+    standing = ReconcileStanding()
+    assert standing.stale_accounts() == frozenset()
+    standing.restored(ACCOUNT, "stale_lockout")
+    standing.mark_stale(OTHER)
+    held = standing.stale_accounts()
+    standing.clear(ACCOUNT)
+    assert held == frozenset({ACCOUNT, OTHER}) and type(held) is frozenset
+    assert standing.stale_accounts() == frozenset({OTHER})
+
+
 def test_protective_paths_never_consult_the_standing() -> None:
     """C-2.6, BQ-5: only the order-entry gate reads the standing; the stop writers, the cancel
     and close paths and the exits never name it. Its writers are the pass's own modules (the
