@@ -41,7 +41,7 @@ from tests._account_fixtures import PACK
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
-        not (os.environ.get("GITHUB_ACTIONS") or os.environ.get("CV_CHAOS_STACK") == "1"),
+        not (os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get("CV_CHAOS_STACK") == "1"),
         reason="starts its own Postgres container: CI's integration job, or CV_CHAOS_STACK=1",
     ),
 ]

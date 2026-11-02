@@ -6,9 +6,9 @@ records each call's arguments, the names of the environment it got (and its `DOC
 the directory it ran in, answers the label listings from the test's scenario (with nothing once a
 `down` is logged, when the scenario says `clear_after_down`), and exits as the scenario says. A
 listing is answered as docker answers it: the stub fills the call's `--format` (a name, or an
-object's `cv.lane` label) and fails on a field docker has not, so the lane label shows only when
-the script asks for it. No Docker, no network: the only socket is a loopback bind the script makes
-to find free ports.
+object's `cv.lane` label, bare or as `printf "%q"` prints it) and fails on a field docker has not,
+so the lane label shows only when the script asks for it. No Docker, no network: the only socket
+is a loopback bind the script makes to find free ports.
 """
 
 from __future__ import annotations
@@ -40,12 +40,14 @@ PROJECT: Final = "cv-acctfix-0a1b2c"
 LABEL: Final = f"label=com.docker.compose.project={PROJECT}"
 LANE: Final = "lane-a"
 OTHER_LANE: Final = "lane-b"
-#: The three listings that keep `up` and `down` to the project's own objects, whole: each prints
-#: the object's name, a tab and its `cv.lane` label (empty when it has none).
+#: What each listing prints after the object's name and a tab: its `cv.lane` label, quoted (`""`
+#: when it has none), so an object is one line whatever its value holds.
+QUOTED_LABEL: Final = '{{printf "%q" (.Label "cv.lane")}}'
+#: The three listings that keep a command to the project's own objects, whole.
 LISTINGS: Final = [
-    ["ps", "-a", "--filter", LABEL, "--format", '{{.Names}}\t{{.Label "cv.lane"}}'],
-    ["network", "ls", "--filter", LABEL, "--format", '{{.Name}}\t{{.Label "cv.lane"}}'],
-    ["volume", "ls", "--filter", LABEL, "--format", '{{.Name}}\t{{.Label "cv.lane"}}'],
+    ["ps", "-a", "--filter", LABEL, "--format", "{{.Names}}\t" + QUOTED_LABEL],
+    ["network", "ls", "--filter", LABEL, "--format", "{{.Name}}\t" + QUOTED_LABEL],
+    ["volume", "ls", "--filter", LABEL, "--format", "{{.Name}}\t" + QUOTED_LABEL],
 ]
 #: One object of the project in each listing, as a scenario gives them (a bare name carries the
 #: test's lane; `[name, lane]` carries that lane, and `""` no label at all).
@@ -62,12 +64,32 @@ OTHER_LINE: Final = (
     "the project has an object that carries another lane's label, or none: it is not this lane's"
 )
 #: A lane label that is not the caller's: another lane's, a name that starts with the caller's, the
-#: caller's in capitals, none.
+#: caller's in capitals, the caller's padded with a space, with a newline or a tab, none.
 OTHER_OWNERS: Final = {
     "another-lane": OTHER_LANE,
     "a-longer-name": f"{LANE}2",
     "capitals": LANE.upper(),
+    "padded": f" {LANE}",
+    "a-newline": f"{LANE}\n",
+    "a-tab": f"{LANE}\t",
     "no-label": "",
+}
+#: One object that is not this lane's, in a kind each, as the subprocess runs list it: another
+#: lane's, none, a longer name, capitals, padded, and a value that holds a newline.
+REFUSED_LISTINGS: Final = {
+    "a-container-of-another-lane": ("containers", OTHER_LANE),
+    "an-unlabelled-network": ("networks", ""),
+    "a-volume-of-a-longer-name": ("volumes", f"{LANE}2"),
+    "a-container-in-capitals": ("containers", LANE.upper()),
+    "a-network-padded-with-a-space": ("networks", f" {LANE}"),
+    "a-volume-whose-value-holds-a-newline": ("volumes", f"{LANE}\n "),
+}
+#: Each command's arguments, for the project `PROJECT`.
+COMMANDS: Final = {
+    "up": ["up", "--project", PROJECT],
+    "restart-api": ["restart-api", "--project", PROJECT, "--default", "compliant"],
+    "drive": ["drive", "--project", PROJECT, "--", "signin", "qa-owner-1"],
+    "down": ["down", "--project", PROJECT],
 }
 #: A `CV_ACCTFIX_LANE` the script refuses.
 MALFORMED_LANES: Final = {
@@ -118,10 +140,13 @@ if kind and "--filter" in args:
         def fill(match):
             word = match.group(1).strip()
             asked = re.fullmatch('[.]Label "([^"]+)"', word)
+            quoted = re.fullmatch('printf "%q" [(][.]Label "([^"]+)"[)]', word)
             if word == "." + field:
                 return name
             if asked:
                 return labels.get(asked.group(1), "")
+            if quoted:
+                return json.dumps(labels.get(quoted.group(1), ""), ensure_ascii=False)
             sys.exit("template: cannot evaluate " + word)
         lines.append(re.sub("[{][{](.*?)[}][}]", fill, shown))
     print("\\n".join(lines))
@@ -443,6 +468,11 @@ def test_a_listing_docker_does_not_answer_stops_up_and_down(
     assert host.compose_calls() == [] and list(host.runtime.iterdir()) == []
 
 
+def _printed(label: str) -> str:
+    """A label value as `printf "%q"` prints it, which for these values is JSON's quoting."""
+    return json.dumps(label, ensure_ascii=False)
+
+
 def _listed(kind: str, owner: str) -> dict[str, Any]:
     """Every kind lists one object of this lane, but `kind`'s, which carries `owner` as its lane
     label (`""`: no label at all)."""
@@ -460,7 +490,7 @@ def test_the_listings_ask_for_each_objects_lane_label(tmp_path: Path) -> None:
     listed = [call["args"] for call in host.calls() if call["args"][:1] != ["compose"]]
 
     assert listed == LISTINGS * 3
-    assert all(args[-1].endswith('\t{{.Label "cv.lane"}}') for args in listed)
+    assert all(args[-1].endswith("\t" + QUOTED_LABEL) for args in listed)
 
 
 @pytest.mark.parametrize("command", ["up", "restart-api", "drive", "down"])
@@ -471,14 +501,8 @@ def test_every_command_refuses_a_lane_that_is_unset_or_malformed(
     """The script takes the lane from `CV_ACCTFIX_LANE` and refuses a command without a lane:
     exit 2, one fixed line that never shows the value, no docker call, no run directory."""
     host = Host(tmp_path)
-    commands = {
-        "up": ["up", "--project", PROJECT],
-        "restart-api": ["restart-api", "--project", PROJECT, "--default", "compliant"],
-        "drive": ["drive", "--project", PROJECT, "--", "signin", "qa-owner-1"],
-        "down": ["down", "--project", PROJECT],
-    }
 
-    done = host.run(*commands[command], lane=lane)
+    done = host.run(*COMMANDS[command], lane=lane)
 
     assert (done.returncode, done.stdout) == (2, "")
     assert done.stderr == f"account-fixture-stack: refused: {LANE_LINE}\n"
@@ -521,9 +545,9 @@ def test_a_listed_object_of_another_lane_or_none_is_refused(kind: str, owner: st
     """Any one object, of any kind, with a lane label that is not this lane's exactly (another
     lane's, a longer name, the capitals, none) refuses the whole project; this lane's alone pass."""
     stack = _stack()
-    found = {k: [(names[0], LANE)] for k, names in OWN.items()}
+    found = {k: [(names[0], _printed(LANE))] for k, names in OWN.items()}
     stack.lane_only(found, LANE)
-    found[kind].append((f"{kind}-2", owner))
+    found[kind].append((f"{kind}-2", _printed(owner)))
 
     with pytest.raises(stack.Refused) as refused:
         stack.lane_only(found, LANE)
@@ -531,19 +555,25 @@ def test_a_listed_object_of_another_lane_or_none_is_refused(kind: str, owner: st
     assert str(refused.value) == OTHER_LINE
 
 
-@pytest.mark.parametrize(
-    ("kind", "owner"),
-    [("containers", OTHER_LANE), ("networks", ""), ("volumes", f"{LANE}2")],
-    ids=["a-container-of-another-lane", "an-unlabelled-network", "a-volume-of-a-longer-name"],
-)
+def test_a_label_docker_did_not_quote_is_not_this_lanes() -> None:
+    """The listings ask for the label quoted, so this lane's is its name in double quotes: a bare
+    name is output docker should not have printed, and fails closed."""
+    stack = _stack()
+
+    stack.lane_only({"volumes": [("v", f'"{LANE}"')]}, LANE)
+    with pytest.raises(stack.Refused, match="another lane's label, or none"):
+        stack.lane_only({"volumes": [("v", LANE)]}, LANE)
+
+
+@pytest.mark.parametrize("case", REFUSED_LISTINGS)
 def test_down_refuses_a_project_that_is_not_wholly_this_lanes_and_changes_nothing(
-    tmp_path: Path, kind: str, owner: str
+    tmp_path: Path, case: str
 ) -> None:
     """Exit 2 and one fixed line, before any compose call, the run directory kept as it was;
     running `down` again changes nothing (the listings are the only calls it makes)."""
     host = Host(tmp_path)
     assert host.run("up", "--project", PROJECT).returncode == 0
-    host.scenario(**_listed(kind, owner))
+    host.scenario(**_listed(*REFUSED_LISTINGS[case]))
     run_dir = host.runtime / PROJECT
     kept = sorted(path.name for path in run_dir.iterdir())
     compose_before = len(host.compose_calls())
@@ -573,17 +603,13 @@ def test_down_takes_a_project_down_when_every_object_of_it_carries_this_lane(
     assert host.compose_calls()[-1] == TEARDOWN and not os.path.lexists(host.runtime / PROJECT)
 
 
-@pytest.mark.parametrize(
-    ("kind", "owner"),
-    [("containers", OTHER_LANE), ("networks", ""), ("volumes", f"{LANE}2")],
-    ids=["a-container-of-another-lane", "an-unlabelled-network", "a-volume-of-a-longer-name"],
-)
+@pytest.mark.parametrize("case", REFUSED_LISTINGS)
 def test_up_refuses_a_project_whose_leftovers_carry_another_lane_or_none(
-    tmp_path: Path, kind: str, owner: str
+    tmp_path: Path, case: str
 ) -> None:
     """The same line as `down`'s, not the one for this lane's own leftovers (`take it down first`),
     with no compose call and no run directory."""
-    host = Host(tmp_path, **_listed(kind, owner))
+    host = Host(tmp_path, **_listed(*REFUSED_LISTINGS[case]))
 
     done = host.run("up", "--project", PROJECT)
 
@@ -591,6 +617,26 @@ def test_up_refuses_a_project_whose_leftovers_carry_another_lane_or_none(
     assert (done.returncode, done.stdout, done.stderr) == (2, "", refused)
     assert [call["args"] for call in host.calls()] == LISTINGS
     assert list(host.runtime.iterdir()) == []
+
+
+@pytest.mark.parametrize("command", ["restart-api", "drive"])
+@pytest.mark.parametrize("case", ["a-container-of-another-lane", "an-unlabelled-network"])
+def test_restart_api_and_drive_refuse_a_project_that_is_not_wholly_this_lanes(
+    tmp_path: Path, command: str, case: str
+) -> None:
+    """`restart-api` would force-recreate another lane's api and `drive` would run in its network:
+    each lists the project first and refuses it as `down` does, exit 2 and one fixed line, and
+    never reaches compose (the three listings are all it runs)."""
+    host = Host(tmp_path)
+    assert host.run("up", "--project", PROJECT).returncode == 0
+    host.scenario(**_listed(*REFUSED_LISTINGS[case]))
+    calls_before = len(host.calls())
+
+    done = host.run(*COMMANDS[command])
+
+    refused = f"account-fixture-stack: refused: {OTHER_LINE}\n"
+    assert (done.returncode, done.stdout, done.stderr) == (2, "", refused)
+    assert [call["args"] for call in host.calls()[calls_before:]] == LISTINGS
 
 
 #: `up`'s refusals before any docker call: the arguments after `up --project P`, the case's
@@ -708,10 +754,12 @@ def test_docker_runs_with_the_env_file_alone_never_the_shells_variables(tmp_path
 def test_restart_api_recreates_the_api_alone_with_the_new_default(tmp_path: Path) -> None:
     host = Host(tmp_path)
     assert host.run("up", "--project", PROJECT).returncode == 0
+    host.scenario(**OWN)  # this lane's container, network and volume: taken, after the listings
 
     done = host.run("restart-api", "--project", PROJECT, "--default", "demo_ws_unreachable")
 
     assert done.returncode == 0, done.stderr
+    assert [call["args"] for call in host.calls()[-4:-1]] == LISTINGS
     last = host.calls()[-1]
     base = _compose(PROJECT, str(host.runtime / PROJECT / "stack.env"))
     tail = ["--profile", "core", "up", "-d", "--no-deps", "--force-recreate", "--wait", "api"]
@@ -723,10 +771,11 @@ def test_restart_api_recreates_the_api_alone_with_the_new_default(tmp_path: Path
 def test_drive_runs_the_driver_in_its_one_shot_and_returns_its_status(tmp_path: Path) -> None:
     host = Host(tmp_path)
     assert host.run("up", "--project", PROJECT).returncode == 0
-    host.scenario(exit={"fixture-drive": 3})
+    host.scenario(**OWN, exit={"fixture-drive": 3})  # this lane's objects, listed, then taken
 
     done = host.run("drive", "--project", PROJECT, "--", "call", "qa-owner-1", "GET", "/me")
 
+    assert [call["args"] for call in host.calls()[-4:-1]] == LISTINGS
     base = _compose(PROJECT, str(host.runtime / PROJECT / "stack.env"))
     run = ["--profile", "fixture-drive", "run", "--rm", "--no-deps", "-T", "fixture-drive"]
     assert host.compose_calls()[-1] == [*base, *run, "call", "qa-owner-1", "GET", "/me"]

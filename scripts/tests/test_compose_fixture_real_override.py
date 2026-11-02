@@ -321,6 +321,7 @@ _DRIVE_MOUNTS: Final[list[str]] = SERVICES["fixture-drive"]["volumes"]
         ((*_API, "labels"), {"cv.lane": "lane-x"}, "service 'api': labels is not exactly"),
         ((*_API, "labels"), {"cv.lane": "${CV_OTHER:?x}"}, "service 'api': labels is not exactly"),
         ((*_API, "labels"), {**LANE, "com.example": "x"}, "service 'api': labels is not exactly"),
+        ((*_API, "labels"), {"cv.lane": "${CV_ACCTFIX_LANE:-x}"}, "'api': labels is not exactly"),
         ((*_INIT, "labels"), None, "service 'fixture-init': labels is not exactly"),
         ((*_DRIVE, "labels"), {"cv.lan": "${CV_ACCTFIX_LANE:?x}"}, "-drive': labels is not"),
         ((*_POSTGRES, "labels"), None, "service 'postgres': labels is not exactly"),
@@ -329,6 +330,7 @@ _DRIVE_MOUNTS: Final[list[str]] = SERVICES["fixture-drive"]["volumes"]
         ((*_MIGRATE, _ENV), {"CV_ENVIRONMENT": "live"}, "'migrate': the real-backend fixture"),
         ((*_POSTGRES, "ports"), ["127.0.0.1:9:9"], "sets only labels on it, not ports"),
         (("volumes", "cv-postgres-data"), {}, "top-level volumes: cv-postgres-data is not"),
+        (("volumes", "cv-audit-data", "labels"), {"cv.lane": "${CV_ACCTFIX_LANE}"}, "data is not"),
         (("volumes", "cv-audit-data", "driver_opts"), {"o": "bind"}, "volumes: cv-audit-data is"),
         (("volumes", "cv-api-data"), {"labels": LANE, "driver": "local"}, "volumes: cv-api-data"),
         (("volumes", "cv-acctfix-session"), {"labels": {"cv.lane": "lane-x"}}, "-session is not"),
@@ -346,7 +348,7 @@ def test_rule_8_refuses(path: tuple[str, ...], value: object, why: str) -> None:
     errors = lint_compose.check_account_fixture_real_overlay(_mutated(path, value))
     assert any(why in error for error in errors), errors
     shown = "\n".join(errors)  # a value is never repeated
-    values = ("inline-pepper", "198.51.100.7", "CV_BYBIT_API_KEY:-", "lane-x")
+    values = ("inline-pepper", "198.51.100.7", "CV_BYBIT_API_KEY:-", "lane-x", "LANE:-x")
     assert all(v not in shown for v in values)
 
 

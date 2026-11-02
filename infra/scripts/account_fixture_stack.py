@@ -22,10 +22,11 @@ runs that step once more, which changes nothing on a migrated database).
 Every command takes the lane from one environment variable, `CV_ACCTFIX_LANE` (1 to 63 of a-z, 0-9
 and `-`, the first not a `-`), and refuses it unset or malformed with exit 2 and one fixed line that
 never shows the value. The overlay labels each service of the project, and each network and volume
-compose creates for it, `cv.lane=<lane>`, and `up` writes the lane into `stack.env` for it. `up` and
-`down` read that label on every object the project's compose label lists, and refuse, before any
-compose call, a project holding an object that carries another lane's label or none: `down` takes
-down a project only when every object of it is this lane's.
+compose creates for it, `cv.lane=<lane>`, and `up` writes the lane into `stack.env` for it. `up`,
+`restart-api`, `drive` and `down` read that label on every object the project's compose label lists
+(`printf "%q"` prints a value on one line, whatever it holds), and refuse, before any compose call,
+a project holding an object that carries another lane's label or none: `down` takes down a project,
+and `restart-api` and `drive` act on one, only when every object of it is this lane's.
 
 `down` goes by the project name alone (`docker compose -p <project> down -v --remove-orphans`, run
 from an empty directory) and takes no `-f`: compose then reads no compose file and no env file, so
@@ -137,8 +138,11 @@ def checked_lane(environ: Mapping[str, str]) -> str:
 
 
 def lane_only(found: Mapping[str, Sequence[tuple[str, str]]], lane: str) -> None:
-    """Refuse a project with a listed object whose lane label is another lane's, or missing."""
-    if any(owner != lane for objects in found.values() for _, owner in objects):
+    """Refuse a project with a listed object whose lane label is another lane's, or missing. The
+    labels are as `printf "%q"` printed them, so this lane's is its name in double quotes (a lane
+    holds nothing `%q` escapes), and a value with an escape in it equals no lane."""
+    quoted = f'"{lane}"'
+    if any(label != quoted for objects in found.values() for _, label in objects):
         raise Refused("the project has an object that carries another lane's label, or none: "
                       "it is not this lane's")  # fmt: skip
 
@@ -235,10 +239,12 @@ def call(argv: Sequence[str], env: Mapping[str, str], cwd: str | None = None) ->
 
 def leftovers(project: str, env: Mapping[str, str]) -> dict[str, list[tuple[str, str]]]:
     """The project's containers, networks and volumes, by its compose label: each one's name and
-    its `cv.lane` label (empty when it has none), never any other value."""
+    its `cv.lane` label as `printf "%q"` prints it (`""` when it has none), never any other value.
+    The label is quoted, so an object is one line whatever its value holds (a newline in it cannot
+    pass for a second object, or for this lane)."""
     found: dict[str, list[tuple[str, str]]] = {}
     for kind, command, field in _LISTS:
-        shown = "{{." + field + '}}\t{{.Label "' + LANE_LABEL + '"}}'
+        shown = "{{." + field + '}}\t{{printf "%q" (.Label "' + LANE_LABEL + '")}}'
         argv = ["docker", *command, "--filter", _LABEL.format(project), "--format", shown]
         done = subprocess.run(  # noqa: S603 - docker, an argument list built here
             argv, env=dict(env), capture_output=True, text=True, check=False
@@ -246,7 +252,7 @@ def leftovers(project: str, env: Mapping[str, str]) -> dict[str, list[tuple[str,
         if done.returncode != 0:
             raise Refused(f"docker did not list the project's {kind}")
         lines = [line for line in done.stdout.splitlines() if line.strip()]
-        found[kind] = [(name, owner) for name, _, owner in (line.partition("\t") for line in lines)]
+        found[kind] = [(name, label) for name, _, label in (line.partition("\t") for line in lines)]
     return found
 
 
@@ -294,7 +300,7 @@ def restart_api(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
     project = checked_project(args.project)
     if args.default is None or SCENARIO.fullmatch(args.default) is None:
         raise Refused("restart-api takes --default <scenario>, a scenario name")
-    env_file = _env_file(project, environ)
+    env_file = _own_env_file(project, args, environ)
     argv = [*compose(project, env_file, args.file), "--profile", "core", "up", "-d", "--no-deps"]
     status = call([*argv, "--force-recreate", "--wait", "api"],
                   docker_env(environ, CV_ACCOUNT_FIXTURE=args.default))  # fmt: skip
@@ -307,7 +313,7 @@ def restart_api(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
 def drive(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
     """`python -m cvdev.account_fixture.drive` in the project's `fixture-drive` one-shot."""
     project = checked_project(args.project)
-    env_file = _env_file(project, environ)
+    env_file = _own_env_file(project, args, environ)
     argv = [*compose(project, env_file, args.file), "--profile", "fixture-drive", "run", "--rm"]
     return call([*argv, "--no-deps", "-T", "fixture-drive", *args.rest], docker_env(environ))
 
@@ -348,6 +354,13 @@ def remove_run_dir(run_dir: Path) -> str:
         os.unlink(run_dir / name)
     os.rmdir(run_dir)
     return "run directory removed"
+
+
+def _own_env_file(project: str, args: argparse.Namespace, environ: Mapping[str, str]) -> Path:
+    """The run's env file of a project whose every object carries this lane's label: any other is
+    refused before `restart-api` or `drive` reaches compose, as `up` and `down` refuse it."""
+    lane_only(leftovers(project, docker_env(environ)), args.lane)
+    return _env_file(project, environ)
 
 
 def _env_file(project: str, environ: Mapping[str, str]) -> Path:

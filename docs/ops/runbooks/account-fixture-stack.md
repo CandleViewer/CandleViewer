@@ -23,8 +23,8 @@ export CV_ACCTFIX_LANE=<this lane's name>
 `CV_ACCTFIX_LANE` is 1 to 63 of `a-z`, `0-9` and `-`, the first not `-`. Every command takes the lane from it and
 refuses, with exit 2 and one fixed line that never shows the value, when it is unset or malformed. The overlay puts it
 on every container, network and volume of the project as the label `cv.lane` (`up` writes it into `stack.env` for
-that), so two lanes' projects tell apart on one host, and `up` and `down` act only on a project that is wholly this
-lane's.
+that), so two lanes' projects tell apart on one host, and `up`, `restart-api`, `drive` and `down` act only on a
+project that is wholly this lane's.
 
 ## What `up` does
 
@@ -155,7 +155,7 @@ python3 $S down --project <project>
 `cv.lane` label. If any carries another lane's label, or none, `down` refuses: exit 2 and the one fixed line
 `account-fixture-stack: refused: the project has an object that carries another lane's label, or none: it is not this
 lane's`, with no compose call and the run directory kept; running it again changes nothing. A lane's `down` never takes
-another lane's project down, and `up` refuses such a project the same way.
+another lane's project down, and `up`, `restart-api` and `drive` refuse such a project the same way.
 
 When every listed object carries this lane's label, `down` goes by the project name alone: `docker compose -p
 <project> down -v --remove-orphans`, run from an empty directory, so compose reads no compose file and no env file and
@@ -187,6 +187,7 @@ projects you started.
   counts only.
 - **Touch only your project.** Stop, remove or prune nothing that is not `cv-acctfix-*` and yours; never
   `docker system prune`. `down` refuses a project that holds another lane's object or an unlabelled one: leave it, and
-  never remove such an object by hand.
+  never remove such an object by hand, unless it is a project of yours from before the label: then the name-only compose
+  teardown by hand, once.
 - **No real key, ever.** The pack's keys are fabricated public constants (`fixture-<scenario>-NNNN`, secret
   `fixture-<scenario>-secret-not-real`); the transport answers nothing else.
