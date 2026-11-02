@@ -8,6 +8,7 @@ describe("isValidBranchName", () => {
     "chore/bump-playwright",
     "design/of-50-heatmap-tokens",
     "spike/webgl-footprint-bench",
+    "docs/adr-0007-ws-framing",
     "hotfix/oms-77-fanout-race",
     "release/1.4.0",
     "train/20261019-1",

@@ -10,13 +10,16 @@
 
 import { execFileSync } from "node:child_process";
 
-// Keep in sync with docs/plan/01-sdlc-and-branching.md §6.1. `main` and
+// Keep in sync with CONSTITUTION.md C-4.4 (type table) and
+// docs/plan/01-sdlc-and-branching.md §6.1 (adds `hotfix/`, which the
+// Constitution table omits). scripts/tests/test_check_branch_name.py pins the
+// Constitution types so the two cannot drift. `main` and
 // `release/*` are protected/automation-only branches and are always allowed
 // through this check (nobody pushes directly to them via a dev workstation
 // hook in the first place; CI branch-protection is the real gate there).
 // `train/*` is the orchestrator's merge train (§7, #3783): pushed only to be
 // validated by one dispatched `pr.yml` run, never a PR head.
-const ALLOWED_PREFIXES = ["feat/", "fix/", "chore/", "design/", "spike/", "hotfix/"];
+const ALLOWED_PREFIXES = ["feat/", "fix/", "chore/", "design/", "spike/", "docs/", "hotfix/"];
 const ALWAYS_ALLOWED = new Set(["main"]);
 const ALWAYS_ALLOWED_PREFIXES = ["release/", "train/"];
 
