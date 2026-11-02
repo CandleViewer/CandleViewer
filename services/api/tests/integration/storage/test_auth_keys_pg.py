@@ -368,21 +368,28 @@ async def test_two_concurrent_boots_converge_on_the_first_keyring(store: Store, 
 
 
 @pytest.mark.parametrize(
-    ("change", "counted"),
+    ("change", "imported_in", "counted"),
     [
-        ("SELECT 1", 3),  # one TOTP method and two unused codes
-        ("UPDATE mfa_methods SET revoked_at = now()", 2),  # a revoked method is left out
-        ("UPDATE recovery_codes SET used_at = now()", 1),  # used codes are left out
-        ("UPDATE mfa_methods SET confirmed_at = NULL", 3),  # a pending enrolment's seed counts
+        ("SELECT 1", "demo", 3),  # the old method and both codes, made before the import
+        ("UPDATE mfa_methods SET revoked_at = now()", "demo", 2),
+        ("UPDATE mfa_methods SET secret_key_ref = 'akey:' || gen_random_uuid()", "demo", 2),
+        ("UPDATE recovery_codes SET used_at = now()", "demo", 1),
+        ("UPDATE recovery_codes SET created_at = now() + interval '1 day'", "demo", 1),
+        ("SELECT 1", "testnet", 1),  # another environment's import bounds no code of this one
     ],
-    ids=["all_counted", "revoked_method", "used_codes", "pending_method"],
+    ids=["all_old", "revoked_method", "held_key_method", "used_codes", "new_codes", "other_env"],
 )
-async def test_the_probe_counts_live_totp_methods_and_unused_codes(
-    pg: str, store: Store, change: str, counted: int
+async def test_the_exit_test_counts_what_the_old_formats_still_serve(
+    pg: str, store: Store, change: str, imported_in: str, counted: int
 ) -> None:
+    """#2152 BQ-3: unrevoked `local-dev-v1` methods, and unused codes made before the
+    environment's keyring was imported (a code's age, since both digests are 64 hex digits)."""
     _seed_mfa(pg)
+    _exec(pg, "UPDATE recovery_codes SET created_at = now() - interval '1 day'")
+    for purpose in ("totp_seal", "recovery_hmac"):
+        _insert(pg, env=imported_in, purpose=purpose, origin="imported_env")
     _exec(pg, change)
-    assert await store.count_mfa_material() == counted
+    assert await store.count_legacy_material("demo") == counted
 
 
 _MOVE: dict[str, Any] = {

@@ -23,7 +23,9 @@ from typing import Any
 
 import sqlalchemy as sa
 
+from candleviewer.domain.primitives import Environment
 from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
+from candleviewer.storage.repositories.auth_keys_sqlalchemy import SqlAlchemyAuthKeyRows
 from candleviewer.storage.repositories.bootstrap_owner_sqlalchemy import (
     SqlAlchemyBootstrapOwnerRepository,
 )
@@ -89,11 +91,13 @@ class _CliDatabase:
 
 
 class SqlAlchemyBreakGlassDatabase(_CliDatabase):
-    """The stores of one CLI run on one pool named for the run (`application_name`)."""
+    """The stores of one CLI run on one pool named for the run (`application_name`), with the
+    read of the environment's auth keyring rows its live digest session opens (#2152 S6)."""
 
-    def __init__(self, dsn: str) -> None:
+    def __init__(self, dsn: str, *, env: Environment) -> None:
         super().__init__(dsn, "breakglass")
         self.owners = SqlAlchemyBreakGlassRepository(self._relational)
+        self.auth_keys = SqlAlchemyAuthKeyRows(self._relational, env=env)
 
 
 class SqlAlchemyBootstrapOwnerDatabase(_CliDatabase):

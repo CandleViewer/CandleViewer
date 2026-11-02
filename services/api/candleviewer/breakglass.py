@@ -7,7 +7,9 @@ first, with the redaction filter, from the settings (which log nothing); then th
 (`admin.breakglass`) runs over real ports. This module imports neither `secrets` (C-3.2) nor
 `audit` (C-3.3): `admin.breakglass_wiring` builds the journal, `audit_log` and KEK ports from the
 CLI's Postgres side (`SqlAlchemyBreakGlassDatabase`, one pool, so the R2c probe can tell its
-sessions from cv-api's). Nothing is mounted on cv-api (S8).
+sessions from cv-api's). Nothing is mounted on cv-api (S8). It reads no key: in live the KEK
+proof opens M2's digest session of the recovery key (#2152 S6), and live refuses the old env
+setting before any check (`auth_key_env_forbidden`, an invalid-settings exit 2).
 
 Exit status: the flow's `BreakGlassExit` (0 only after a reset whose records were all written),
 2 for a usage or settings error (before any record or check), 130 after a second Ctrl-C.
@@ -42,7 +44,6 @@ EXIT_INTERRUPTED = 130
 #: Bound on releasing the pool once the run has ended.
 DISPOSE_TIMEOUT_S = 10.0
 _LINE_MAX = 4096  # one terminal line (the canonical-mode input buffer)
-_KEY_BYTES = 32
 _INTERRUPTED = (
     "Break-glass interrupted: its outcome is unknown. Read the auth.break_glass_* rows in "
     "audit_log (and any unresolved break_glass_used event) before running it again."
@@ -68,14 +69,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except RuntimeError:  # an unknown `~user` in a path setting; its text names the path
         sys.stderr.write(f"break-glass: {UNKNOWN_HOME_REFUSAL}; nothing ran\n")
         return EXIT_INVALID
-    key = recovery_code_key(settings)
-    if key is None:
-        _log().critical("breakglass.recovery_code_key_unusable")
-        sys.stderr.write("break-glass: the recovery-code key setting is unusable; nothing ran\n")
-        return EXIT_INVALID
     terminal = _Tty(sys.stdin, sys.stdout)
     try:
-        return asyncio.run(_exit_status(settings, args, key, terminal))
+        return asyncio.run(_exit_status(settings, args, terminal))
     except KeyboardInterrupt:  # `asyncio.run` cancelled every task: no summary may have shown
         _log().critical("breakglass.interrupted")
         terminal.write(_INTERRUPTED)
@@ -95,26 +91,11 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def recovery_code_key(settings: Settings) -> bytes | None:
-    """cv-api's recovery-code HMAC key (`CV_AUTH_RECOVERY_HMAC_KEY_HEX`, SR-022), which the live
-    rule checks a code with: its 32 bytes, else None. Never logged."""
-    configured = settings.auth_recovery_hmac_key_hex
-    try:
-        key = b"" if configured is None else bytes.fromhex(configured.get_secret_value())
-    except ValueError:
-        return None
-    return key if len(key) == _KEY_BYTES else None
-
-
-async def _exit_status(
-    settings: Settings, args: argparse.Namespace, key: bytes, terminal: Terminal
-) -> int:
+async def _exit_status(settings: Settings, args: argparse.Namespace, terminal: Terminal) -> int:
     """The run's exit status. A cancelled run's too: `RunCancelled` must not escape
     `asyncio.run`, which turns it into `KeyboardInterrupt` and loses its status."""
     try:
-        status: int = await run(
-            settings, args.owner, live_flag=args.live, recovery_code_key=key, terminal=terminal
-        )
+        status: int = await run(settings, args.owner, live_flag=args.live, terminal=terminal)
     except RunCancelled as cut:
         status = cut.exit
     return int(status)
@@ -125,7 +106,6 @@ async def run(
     owner: str,
     *,
     live_flag: bool,
-    recovery_code_key: bytes,
     terminal: Terminal,
     stores: BreakGlassStores | None = None,
 ) -> BreakGlassExit:
@@ -133,11 +113,10 @@ async def run(
     does. The pool is released once the run has ended, its trail closed."""
     database = None
     if stores is None:
-        stores = database = SqlAlchemyBreakGlassDatabase(settings.pg_dsn.get_secret_value())
+        dsn = settings.pg_dsn.get_secret_value()
+        stores = database = SqlAlchemyBreakGlassDatabase(dsn, env=settings.environment.value)
     try:
-        ports = build_break_glass_ports(
-            settings, stores, terminal, recovery_code_key=recovery_code_key
-        )
+        ports = build_break_glass_ports(settings, stores, terminal)
         return await BreakGlassFlow(ports).run(owner, live_flag=live_flag)
     finally:
         if database is not None:

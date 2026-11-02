@@ -1,5 +1,6 @@
 """The break-glass CLI's Postgres side without a database (E09-S11 #2119 slice 5): every
-session of its pool is named for the run (R2c), and its KCV store cannot enrol a KEK (O1).
+session of its pool is named for the run (R2c), its KCV store cannot enrol a KEK (O1), and its
+keyring read (#2152 S6) is its environment's rows alone, with no writer.
 The probe itself runs on Postgres in `tests/integration/auth/test_breakglass_cli_pg.py`."""
 
 from __future__ import annotations
@@ -10,6 +11,10 @@ import pytest
 
 from candleviewer.storage.errors import KcvEnrolmentNotAudited
 from candleviewer.storage.repositories import bootstrap_owner_sqlalchemy as mint
+from candleviewer.storage.repositories.auth_keys_sqlalchemy import (
+    AuthKeyEnvironmentError,
+    SqlAlchemyAuthKeyRows,
+)
 from candleviewer.storage.repositories.bootstrap_owner_sqlalchemy import (
     SqlAlchemyBootstrapOwnerRepository,
 )
@@ -26,7 +31,10 @@ _DSN = "postgresql+asyncpg://cv@127.0.0.1:1/candleviewer"  # never connected to
 
 
 async def test_every_session_is_named_for_the_run() -> None:
-    first, second = SqlAlchemyBreakGlassDatabase(_DSN), SqlAlchemyBreakGlassDatabase(_DSN)
+    first, second = (
+        SqlAlchemyBreakGlassDatabase(_DSN, env="demo"),
+        SqlAlchemyBreakGlassDatabase(_DSN, env="demo"),
+    )
     try:
         assert first.application_name.startswith("candleviewer:breakglass:")
         assert first.application_name != second.application_name
@@ -41,8 +49,22 @@ async def test_every_session_is_named_for_the_run() -> None:
         await second.dispose()
 
 
+async def test_the_keyring_read_is_its_environment_s_rows_and_no_writer() -> None:
+    """#2152 S6 (BQ-11): the live digest session reads the environment's `auth_keys` rows; the
+    CLI holds no object that can write a key, and the read refuses another environment."""
+    database = SqlAlchemyBreakGlassDatabase(_DSN, env="live")
+    try:
+        assert isinstance(database.auth_keys, SqlAlchemyAuthKeyRows)
+        for write in ("insert_keyring", "rewrap", "count_mfa_material"):
+            assert not hasattr(database.auth_keys, write)
+        with pytest.raises(AuthKeyEnvironmentError):
+            await database.auth_keys.rows_for("demo")
+    finally:
+        await database.dispose()
+
+
 async def test_kcv_store_cannot_enrol_a_kek() -> None:
-    database = SqlAlchemyBreakGlassDatabase(_DSN)
+    database = SqlAlchemyBreakGlassDatabase(_DSN, env="demo")
     try:
         with pytest.raises(KcvEnrolmentNotAudited):
             await database.kcv.record_kcv("demo", 1, bytes(32), audit=("unused", {}))
@@ -53,7 +75,10 @@ async def test_kcv_store_cannot_enrol_a_kek() -> None:
 async def test_each_cli_composes_only_its_own_writer() -> None:
     """DC-4479-17 (C1): a break-glass run holds no Owner-invite mint, a bootstrap run no reset
     store; both share the journal's stores and the probe, each under its own session name."""
-    glass, boot = SqlAlchemyBreakGlassDatabase(_DSN), SqlAlchemyBootstrapOwnerDatabase(_DSN)
+    glass, boot = (
+        SqlAlchemyBreakGlassDatabase(_DSN, env="demo"),
+        SqlAlchemyBootstrapOwnerDatabase(_DSN),
+    )
     try:
         held = [{type(value) for value in vars(db).values()} for db in (glass, boot)]
         assert SqlAlchemyBreakGlassRepository in held[0] - held[1]  # the reset store

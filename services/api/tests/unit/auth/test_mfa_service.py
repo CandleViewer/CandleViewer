@@ -28,10 +28,10 @@ from candleviewer.auth.models import (
     MfaRecoveryCheck,
     MfaVerifyRequest,
 )
-from candleviewer.auth.recovery_codes import generate_recovery_codes, hash_recovery_code
+from candleviewer.auth.recovery_codes import generate_recovery_codes
 from candleviewer.auth.totp import generate_code, time_step_for
 from tests.unit.auth.auth_fakes import no_wait
-from tests.unit.auth.mfa_fakes import FakeMfaKeyring
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, recovery_digest
 
 from .mfa_fakes import FakeMfaRepository
 
@@ -262,7 +262,7 @@ async def _with_recovery_codes(
 ) -> list[str]:
     codes = generate_recovery_codes(count=count)
     await repo.replace_recovery_codes(
-        str(user_id), code_hashes=tuple(hash_recovery_code(c, key=_RC_KEY) for c in codes)
+        str(user_id), code_hashes=tuple(recovery_digest(c, _RC_KEY) for c in codes)
     )
     return codes
 

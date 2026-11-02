@@ -1,7 +1,9 @@
 """Integration e2e (QA #1658): the REAL app (`create_app`, storage_backend=real)
 against Postgres 16 — Alembic head, seeded owner + TOTP, password login, TOTP
 step, session cookie, `/auth/session`, logout/revoke, owner floor, and the
-C-2.9 audit rows written by the real WAL-backed `AuditWriter`.
+C-2.9 audit rows written by the real WAL-backed `AuditWriter`. #2152: M2 boots
+with a file KEK, so MFA runs on the testnet keyring its first boot imports from
+the two env keys the seeded method and codes were made under.
 
 Deterministic: fixed auth clock (TOTP codes computed for it), no sleeps, no
 network beyond the local testcontainer. Integration tests run in CI only (no
@@ -27,10 +29,10 @@ from testcontainers.postgres import PostgresContainer
 
 from candleviewer.app import create_app
 from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER
-from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.models import MfaChallengeRecord, MfaMethodRecord
 from candleviewer.auth.totp import generate_code, generate_secret, time_step_for
 from candleviewer.auth.totp_skew import SKEW_HOLD_S
+from candleviewer.secrets import SecretsService
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.mfa_sqlalchemy import SqlAlchemyMfaRepository
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -38,9 +40,11 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     constraint_of,
     sqlstate_of,
 )
-from scripts.seed_fixture_user import seed
+from scripts.seed_fixture_user import LegacyTotpSealer, seed
 
 pytestmark = pytest.mark.integration
+#: `SecretsService`'s keyword defaults, where `create_app` takes its hardening from.
+_SECRETS_DEFAULTS: dict[str, object] = SecretsService.__init__.__kwdefaults__ or {}
 
 _ROOT = Path(__file__).resolve().parents[3]
 # Track real time: rows carry DB-stamped `created_at` (now()) and CHECKs such as
@@ -80,7 +84,7 @@ async def _seed_owner_with_totp(dsn: str, username: str) -> tuple[str, bytes]:
         lambda **f: MfaChallengeRecord.model_validate(f),
     )
     try:
-        enc = TotpEncryptor(_TOTP_KEY)
+        enc = LegacyTotpSealer(_TOTP_KEY)  # the env key's old seal, which the import reads
         method = await mfa.create_pending_method(
             user_id, secret_enc=enc.encrypt(secret), secret_key_ref=enc.key_ref, label="it"
         )
@@ -108,12 +112,26 @@ def lane_key(tmp_path_factory: pytest.TempPathFactory) -> str:
     return str(key)
 
 
+@pytest.fixture(scope="module")
+def kek_file(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """#2152: the module's file KEK (32 raw bytes, mode 0400), one for every boot of the module:
+    the first boot enrols it and imports the env keys, the later ones open that keyring."""
+    kek = tmp_path_factory.mktemp("kek").resolve() / "kek"
+    kek.write_bytes(os.urandom(32))
+    kek.chmod(0o400)
+    return str(kek)
+
+
 @pytest.fixture
-async def client(pg_dsn: str, tmp_path: Path, lane_key: str) -> AsyncIterator[httpx.AsyncClient]:
+async def client(
+    pg_dsn: str, tmp_path: Path, lane_key: str, kek_file: str
+) -> AsyncIterator[httpx.AsyncClient]:
     settings = Settings(
         environment=Environment.TESTNET,
         storage_backend="real",
         pg_dsn=SecretStr(pg_dsn),
+        kek_source="file",
+        kek_handle=kek_file,
         auth_totp_key_hex=SecretStr(_TOTP_KEY.hex()),
         auth_recovery_hmac_key_hex=SecretStr("22" * 32),
         auth_csrf_key_hex=SecretStr("33" * 32),
@@ -121,11 +139,16 @@ async def client(pg_dsn: str, tmp_path: Path, lane_key: str) -> AsyncIterator[ht
         audit_wal_path=str(tmp_path / "audit.wal"),
         CV_AUDIT_LANE_KEY_FILE=lane_key,
     )
-    app = create_app(settings, auth_clock=lambda: _NOW)
+    with (
+        pytest.MonkeyPatch.context() as patch
+    ):  # M2 without SR-009 hardening, which must not reach pytest
+        patch.setitem(_SECRETS_DEFAULTS, "harden", lambda: True)
+        app = create_app(settings, auth_clock=lambda: _NOW)
     ctx = app.state.app_context
     # Only the modules under test: StorageService(real) would also need QuestDB and a
-    # cold-tier root (#3874), and auth/audit own their own engines.
+    # cold-tier root (#3874), and auth/audit own their own engines. M2 serves MFA its keyring.
     await ctx.audit.start(ctx)
+    await ctx.secrets.start(ctx)
     await ctx.auth.start(ctx)
     transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 50000))
     try:
@@ -135,6 +158,7 @@ async def client(pg_dsn: str, tmp_path: Path, lane_key: str) -> AsyncIterator[ht
     finally:
         await ctx.audit.writer.flush(10.0)
         await ctx.auth.stop(1.0)
+        await ctx.secrets.stop(1.0)
         await ctx.audit.stop(1.0)
 
 

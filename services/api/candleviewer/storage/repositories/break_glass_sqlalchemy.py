@@ -13,7 +13,8 @@ every unrevoked method and live session, insert the critical event and upsert
 its incident (E42-T05, `21-database-schema.md` 3.10.2a), commit once.
 A refusal or any error rolls back and changes zero rows. In M10 so `auth` imports
 no storage driver (ADR-0003). Static, parameterised statements; the recovery code
-arrives as its keyed hash, never in clear, and only the consume statement binds it.
+arrives as its candidate keyed hashes (#2152 S6: `= ANY`), never in clear, and only the
+consume statement binds them; it consumes exactly one code, or refuses.
 The offline CLI (slice 5) also names its target through `find_active_owner`, read only;
 `SqlAlchemyActiveOwners` is that read alone, for the audit-chain break acknowledgement CLI (#2904),
 which holds no reset.
@@ -22,6 +23,7 @@ which holds no reset.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Literal, NamedTuple
 
@@ -41,7 +43,7 @@ _LOCK_OWNER = sa.text(
 )
 _CONSUME_CODE = sa.text(
     "UPDATE recovery_codes SET used_at = :now WHERE user_id = CAST(:u AS uuid) "
-    "AND code_hash = :h AND used_at IS NULL RETURNING id"
+    "AND code_hash = ANY(CAST(:hs AS text[])) AND used_at IS NULL RETURNING id"
 )
 _REVOKE_METHODS = sa.text(
     "UPDATE mfa_methods SET revoked_at = :now WHERE user_id = CAST(:u AS uuid) "
@@ -106,21 +108,22 @@ class SqlAlchemyBreakGlassRepository:
         target_user_id: str,
         *,
         now: datetime,
-        recovery_code_hash: str | None,
+        recovery_code_hashes: Sequence[str] | None,
         correlation_id: str,
     ) -> BreakGlassResetRow | BreakGlassStoreRefusal:
-        """`not_owner` / `recovery_code_invalid` after rolling back, else the counts."""
+        """`not_owner` / `recovery_code_invalid` after rolling back, else the counts. Given
+        hashes consume exactly one unused code of the target: none, or two (two codes matching
+        candidates of one), is `recovery_code_invalid`, rolled back."""
         params = {"u": target_user_id, "now": now}  # the lock and revokes: no hash bind
         async with self._relational.unit_of_work() as uow:
             run = uow.session.execute
             refusal: BreakGlassStoreRefusal | None = None
             if (await run(_LOCK_OWNER, params)).first() is None:
                 refusal = "not_owner"
-            elif (
-                recovery_code_hash is not None
-                and not (await run(_CONSUME_CODE, {**params, "h": recovery_code_hash})).all()
-            ):
-                refusal = "recovery_code_invalid"
+            elif recovery_code_hashes is not None:
+                hashes = {**params, "hs": list(recovery_code_hashes)}
+                if len((await run(_CONSUME_CODE, hashes)).all()) != 1:
+                    refusal = "recovery_code_invalid"
             if refusal is not None:
                 await uow.rollback()
                 return refusal
@@ -131,7 +134,7 @@ class SqlAlchemyBreakGlassRepository:
                 "target_user_id": target_user_id,
                 "methods_revoked": methods,
                 "sessions_revoked": sessions,
-                "codes_consumed": recovery_code_hash is not None,
+                "codes_consumed": recovery_code_hashes is not None,
             }
             event = await run(
                 _INSERT_EVENT,

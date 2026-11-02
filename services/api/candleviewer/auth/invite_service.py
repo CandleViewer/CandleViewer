@@ -125,6 +125,8 @@ def check_password_policy(password: str, *, username: str, email: str) -> None:
 
 
 class _MfaLike(Protocol):
+    async def require_keyring(self, *, user_id: uuid.UUID | None = None) -> None: ...
+
     async def enroll(
         self, user_id: str, request: MfaEnrollRequest, *, account_name: str
     ) -> MfaEnrollResult: ...
@@ -260,10 +262,14 @@ class InviteService:
     async def begin_redemption(
         self, token: str, *, password: str, source_ip: str
     ) -> EnrollmentStart:
-        """Consume the token, park the password, start TOTP enrolment."""
+        """Consume the token, park the password, start TOTP enrolment. #2152: while the
+        keyring cannot serve, `MfaKeyringUnavailable` after the token and the password policy,
+        before the password is hashed or the token consumed: the invite stays open and no
+        failed attempt is recorded for the address (22 `AuthUnavailable`)."""
         record = await self._find_open_or_reject(token, source_ip)
         await self._offered_role(record, source_ip)  # a stale bootstrap invite parks nothing
         check_password_policy(password, username=record.username, email=record.email)
+        await self._mfa.require_keyring(user_id=record.user_id)
         pending_hash = await self._hasher.hash(password, DEFAULT_ARGON2_PARAMS)
         consumed = await self._repo.consume(
             hash_token(token), now=self._clock(), pending_password_hash=pending_hash
@@ -294,7 +300,9 @@ class InviteService:
     ) -> tuple[InviteRecord, tuple[str, ...]]:
         """Verify the first TOTP code and activate the account. Returns the
         invite (role) and the one-time recovery codes. An `owner` invite first tries the
-        bootstrap activation, written ahead by `audit_bootstrap` (#4479)."""
+        bootstrap activation, written ahead by `audit_bootstrap` (#4479). #2152: the confirm's
+        `MfaKeyringUnavailable` (after the pending method lookup, before the code) passes
+        through uncounted: the enrolment window keeps running."""
         record = await self._repo.find_by_token_hash(hash_token(token))
         now = self._clock()
         if record is None:

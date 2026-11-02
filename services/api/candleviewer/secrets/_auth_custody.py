@@ -23,7 +23,8 @@ keyring, else why MFA is unavailable; the caller degrades `secrets`, pages and l
    Material left: `auth_keyring_missing`, and nothing is generated (AC7).
 A boot that lost its insert to another boot opens that boot's rows. Each key is zeroed after use
 and a failure's frames cleared (`scrub_frames`); a log names a failure's class and a count, never
-a value (C-12.6). Never deletes MFA material (BQ-9).
+a value (C-12.6). Never deletes MFA material (BQ-9). Each boot of an imported keyring logs the
+dual-read window's exit test (BQ-3): what the old formats still serve, zero once none is left.
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ from candleviewer.secrets import _envelope as env
 from candleviewer.secrets import _metrics as m
 from candleviewer.secrets._auth_keyring import (
     IMPORT_ENVIRONMENTS,
+    IMPORTED,
     RECOVERY,
     TOTP,
     LoadedAuthKeyring,
@@ -249,6 +251,8 @@ async def open_at_boot(
         if not rows:
             made = await _provision(store, kek, keys)
             if made is not None:
+                if keys[0] is not None:  # imported: both settings were set (`_provision`)
+                    await _closed_on_cancel(made, _legacy_window(store, kek.env_name))
                 return made, None
             rows = await _io(store.rows_for(kek.env_name))  # the boot that won
         elif any(k is not None for k in keys):  # AC3: a later boot warns and ignores them
@@ -264,9 +268,35 @@ async def open_at_boot(
     try:
         # One origin (`load_keyring` checked); the rows' own KEK versions, as they opened.
         await audit(LOADED, _keyring_fields(rows, rows[0]["origin"]))
+        if rows[0]["origin"] == IMPORTED:
+            await _legacy_window(store, kek.env_name)
     except BaseException as exc:
         ring.close()  # a keyring is never used unrecorded
         if not isinstance(exc, Exception):
             raise
         return None, AUDIT_DOWN
     return ring, None
+
+
+async def _closed_on_cancel(ring: LoadedAuthKeyring, step: Awaitable[None]) -> None:
+    """`step` for an opened keyring: a cancellation zeroes the keyring before it propagates."""
+    try:
+        await step
+    except BaseException:
+        ring.close()
+        raise
+
+
+async def _legacy_window(store: AuthKeyStore, env_name: str) -> None:
+    """BQ-3: the dual-read window's exit test, logged at each boot of an imported keyring: the
+    TOTP methods and unused recovery codes the old formats still serve (a count, never a row).
+    Zero: the window may close (#2152's follow-up retires the old reads). A failed count is
+    logged by its class and never stops the boot."""
+    try:
+        async with asyncio.timeout(_IO_TIMEOUT_S):
+            left = await store.count_legacy_material(env_name)
+    except Exception as exc:
+        _log().warning("secrets.auth_keyring_legacy_window_unknown", error=type(exc).__name__)
+        return
+    log = _log().warning if left else _log().info
+    log("secrets.auth_keyring_legacy_window", material=left, exit_test_passed=not left)

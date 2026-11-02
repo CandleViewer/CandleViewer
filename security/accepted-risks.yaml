@@ -92,8 +92,9 @@ entries:
   # from 94 to 106 (the failed sign-in floor's imports and constant above it), then to 108 (the
   # floor's default now read from settings), then to 126 (#4663: the sign-in verification bound's
   # imports and constants above it), then to 123 (#4664: the minimum-time hold moved to its own
-  # module); the hashed value and its token source are unchanged, so the triage stands.
-  - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/login_service.py:123"
+  # module), then to 126 (#2152 S5b: the keyring note in the module docstring and its import above
+  # it); the hashed value and its token source are unchanged, so the triage stands.
+  - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/login_service.py:126"
     tool: codeql
     severity: HIGH
     reason: "False positive by construction: the SHA-256 digest is the lookup key for an opaque 256-bit random MFA challenge token (secrets.token_urlsafe(32)), not a password, so a slow KDF adds nothing. Re-check if the token source or the hashed value changes"
@@ -103,8 +104,9 @@ entries:
   # #4664 re-keyed it from line 72 to 91 (the minimum-time hold's imports and refusal lists above
   # it), then to 93 (the module docstring above it); #2152 S5a to 99 (the keyring port's note in
   # the module docstring and its imports above it); #2695 to 114 (the account lockout's note and
-  # imports above it); the hashed value and its token source are unchanged, so the triage stands.
-  - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/mfa_service.py:114"
+  # imports above it), and S5b to 119 (the 503 note in the module docstring and its import
+  # above it); the hashed value and its token source are unchanged, so the triage stands.
+  - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/mfa_service.py:119"
     tool: codeql
     severity: HIGH
     reason: "Random 256-bit bearer mfa_token hashed with SHA-256 as a storage lookup key (high-entropy input, not a password; slow KDFs are inappropriate); CodeQL's password-hashing heuristic keys on the token name. Standing owner-delegated acceptance (run log 2026-09-25, #1778)"

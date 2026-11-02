@@ -22,7 +22,6 @@ from fastapi.testclient import TestClient
 from candleviewer import app as app_module
 from candleviewer.app import create_app
 from candleviewer.auth.csrf import CsrfCodec
-from candleviewer.auth.env_keyring import EnvMfaKeyring
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.invite_service import INVITE_TTL
@@ -33,7 +32,7 @@ from candleviewer.auth.totp import generate_code, time_step_for
 from tests.csrf_helpers import csrf_headers
 from tests.unit.api.test_step_up_router import _T0, _Clock
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
-from tests.unit.auth.mfa_fakes import FakeMfaRepository
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 from tests.unit.auth.test_invite_service import GOOD_PW, FakeRepo
 
@@ -129,7 +128,7 @@ async def world(monkeypatch: pytest.MonkeyPatch) -> _World:
     w.auth = AuthService(
         w.users,
         mfa_repository=FakeMfaRepository(),
-        mfa_keyring=EnvMfaKeyring(os.urandom(32), os.urandom(32)),
+        mfa_keyring=FakeMfaKeyring(os.urandom(32), os.urandom(32)),
         session_repository=FakeSessionRepository(),
         invite_repository=w.invites,
         pepper="test-pepper",

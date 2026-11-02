@@ -13,12 +13,11 @@ from dataclasses import dataclass
 
 import pytest
 
-from candleviewer.auth.env_keyring import EnvMfaKeyring
 from candleviewer.auth.service import AuthService
 from candleviewer.observability.health import HealthStatus
 from candleviewer.settings import Environment
 from tests.unit.auth.auth_fakes import FakeUserRepository
-from tests.unit.auth.mfa_fakes import FakeMfaRepository
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
 
@@ -88,7 +87,7 @@ async def test_auth_service_start_without_mfa_repository_stays_scaffold() -> Non
 
 async def test_auth_service_start_with_mfa_repository_wires_mfa_service() -> None:
     service = AuthService(
-        mfa_repository=FakeMfaRepository(), mfa_keyring=EnvMfaKeyring(b"0" * 32, b"1" * 32)
+        mfa_repository=FakeMfaRepository(), mfa_keyring=FakeMfaKeyring(b"0" * 32, b"1" * 32)
     )
 
     await service.start(ctx=None)  # type: ignore[arg-type]
@@ -99,7 +98,7 @@ async def test_auth_service_start_with_mfa_repository_wires_mfa_service() -> Non
 
 async def test_auth_service_stop_clears_mfa_and_marks_inactive() -> None:
     service = AuthService(
-        mfa_repository=FakeMfaRepository(), mfa_keyring=EnvMfaKeyring(b"0" * 32, b"1" * 32)
+        mfa_repository=FakeMfaRepository(), mfa_keyring=FakeMfaKeyring(b"0" * 32, b"1" * 32)
     )
     await service.start(ctx=None)  # type: ignore[arg-type]
 
@@ -108,26 +107,16 @@ async def test_auth_service_stop_clears_mfa_and_marks_inactive() -> None:
     assert service.mfa_is_active is False
 
 
-async def test_auth_service_start_without_key_falls_back_in_demo() -> None:
-    """PR #1618 review finding 3: the process-local fallback key is fine
-    outside `live` (dev/demo/testnet) — it just wo not survive a restart."""
+@pytest.mark.parametrize("environment", list(Environment))
+async def test_auth_service_without_a_keyring_wires_no_mfa_in_any_environment(
+    environment: Environment,
+) -> None:
+    """#2152 (ADR-0009 Amendment 4, "Dev, demo and CI"): there is no process-local fallback key
+    left, so without M2's keyring MFA is not wired anywhere, and the start never fails over it."""
     service = AuthService(mfa_repository=FakeMfaRepository())
-    ctx = _FakeAppContext(settings=_FakeSettings(environment=Environment.DEMO))
+    ctx = _FakeAppContext(settings=_FakeSettings(environment=environment))
 
     await service.start(ctx=ctx)  # type: ignore[arg-type]
-
-    assert service.mfa_is_active is True
-
-
-async def test_auth_service_start_without_key_refuses_live_environment() -> None:
-    """PR #1618 review finding 3: a `live`-configured process must never
-    silently run with an ephemeral, non-persisted TOTP encryption key —
-    seeds would become undecryptable after any restart."""
-    service = AuthService(mfa_repository=FakeMfaRepository())
-    ctx = _FakeAppContext(settings=_FakeSettings(environment=Environment.LIVE))
-
-    with pytest.raises(RuntimeError, match="no MFA keyring"):
-        await service.start(ctx=ctx)  # type: ignore[arg-type]
 
     assert service.mfa_is_active is False
 
@@ -135,7 +124,7 @@ async def test_auth_service_start_without_key_refuses_live_environment() -> None
 async def test_auth_service_hands_mfa_the_injected_keyring_and_holds_no_key() -> None:
     """#2152 S5a: both keys sit behind the one keyring the composition root injects (PR #1618
     security review, blocking 1: the recovery-code HMAC key follows the TOTP key's custody)."""
-    keyring = EnvMfaKeyring(b"0" * 32, b"1" * 32)
+    keyring = FakeMfaKeyring(b"0" * 32, b"1" * 32)
     service = AuthService(mfa_repository=FakeMfaRepository(), mfa_keyring=keyring)
     live = _FakeAppContext(settings=_FakeSettings(environment=Environment.LIVE))
     await service.start(ctx=live)  # type: ignore[arg-type]
@@ -147,7 +136,7 @@ async def test_auth_service_hands_mfa_the_injected_keyring_and_holds_no_key() ->
 async def test_auth_service_start_with_explicit_key_allows_live_environment() -> None:
     service = AuthService(
         mfa_repository=FakeMfaRepository(),
-        mfa_keyring=EnvMfaKeyring(b"0" * 32, b"1" * 32),
+        mfa_keyring=FakeMfaKeyring(b"0" * 32, b"1" * 32),
     )
     ctx = _FakeAppContext(settings=_FakeSettings(environment=Environment.LIVE))
 

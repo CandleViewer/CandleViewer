@@ -13,19 +13,24 @@ typed phrase are only the operator's confirmation in the CLI (slice 4). `auth` m
 import a storage driver (ADR-0003), so the transaction sits behind the
 `BreakGlassResetStore` port (R4), implemented by
 `storage/repositories/break_glass_sqlalchemy.py`.
+
+#2152 (S6, BQ-11): the digests come from M2's digest-only session of the live recovery
+key, which the KEK proof opens in its own custody pass and the CLI flow closes
+(`close`). This module never holds a key (C-3.2); it digests the code for the target
+Owner, whose user the stored digest binds.
 """
 
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Literal, Protocol
 
 from candleviewer.auth.errors import BreakGlassRefused
-from candleviewer.auth.recovery_codes import hash_recovery_code, normalize_recovery_code
+from candleviewer.auth.recovery_codes import normalize_recovery_code
 from candleviewer.settings import Environment
 
 #: `sessions.revoked_reason` of every session the reset revokes (decision R3).
@@ -45,19 +50,29 @@ class BreakGlassRefusal(StrEnum):
 BreakGlassStoreRefusal = Literal["not_owner", "recovery_code_invalid"]
 
 
+class RecoveryCodeDigests(Protocol):
+    """M2's digest-only session of the live recovery key, as break-glass holds it (#2152 BQ-11):
+    a code's candidate digests for a user, never the key; `close()` zeroes the key."""
+
+    def recovery_code_digests(self, code: str, user_id: uuid.UUID) -> tuple[str, ...]: ...
+
+    def close(self) -> None: ...
+
+
 class BreakGlassResetStore(Protocol):
     async def reset_owner_mfa(
         self,
         target_user_id: str,
         *,
         now: datetime,
-        recovery_code_hash: str | None,
+        recovery_code_hashes: Sequence[str] | None,
         correlation_id: str,
     ) -> tuple[int, int, int] | BreakGlassStoreRefusal:
         """One transaction. Returns (methods revoked, sessions revoked, event id)
         after commit, or a `BreakGlassStoreRefusal` after rolling back: the target
-        must be an active, undeleted user with an unexpired `owner` role, and a
-        given `recovery_code_hash` must match an unused code of that user."""
+        must be an active, undeleted user with an unexpired `owner` role, and given
+        `recovery_code_hashes` must match exactly one unused code of that user
+        (`= ANY`), which it consumes."""
         ...
 
 
@@ -72,28 +87,37 @@ class BreakGlassResetResult:
     system_event_id: int
 
 
-def _keyed_hash(code: str | None, *, key: bytes) -> str | None:
-    """The SR-022 keyed hash of `code`; None when no code is given or it is blank
-    once normalised (only whitespace or dashes)."""
+def _candidate_digests(
+    code: str | None, user_id: uuid.UUID, digests: RecoveryCodeDigests | None
+) -> tuple[str, ...] | None:
+    """`code`'s candidate digests for the Owner (SR-022); None when no code is given or it is
+    blank once normalised (only whitespace or dashes). A code with no session to digest it, or
+    one longer than any code, matches none: `()`."""
     if code is None or not normalize_recovery_code(code):
         return None
-    return hash_recovery_code(code, key=key)
+    if digests is None:
+        return ()
+    try:
+        return digests.recovery_code_digests(code, user_id)
+    except ValueError:
+        return ()
 
 
 class BreakGlassResetService:
-    """`recovery_code_key` is the server-side `recovery_code_hmac_key` (SR-022);
-    `environment` is the configured one, so no caller can choose the live rule."""
+    """`digests` is M2's digest session of the live recovery key (SR-022, #2152 S6), None outside
+    live, where no code is asked for; `environment` is the configured one, so no caller can
+    choose the live rule."""
 
     def __init__(
         self,
         store: BreakGlassResetStore,
         *,
-        recovery_code_key: bytes,
+        digests: RecoveryCodeDigests | None,
         environment: Environment,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._store = store
-        self._key = recovery_code_key
+        self._digests = digests
         self._environment = environment
         self._clock = clock or (lambda: datetime.now(UTC))
 
@@ -110,22 +134,31 @@ class BreakGlassResetService:
         correlation_id: uuid.UUID,
     ) -> BreakGlassResetResult:
         """Raises `BreakGlassRefused` with zero rows changed. A supplied code is
-        verified and consumed in every environment; `live` requires one, and a
-        blank code counts as none."""
-        code_hash = _keyed_hash(recovery_code, key=self._key)
-        del recovery_code  # hashed: no frame holds the plaintext across the store await
+        verified and consumed wherever a digest session exists; `live` requires one,
+        and a blank code counts as none. One that matches nothing it could digest is
+        refused before the store is reached."""
+        hashes = _candidate_digests(recovery_code, target_user_id, self._digests)
+        del recovery_code  # digested: no frame holds the plaintext across the store await
         live = self._environment is Environment.LIVE
-        if live and code_hash is None:
+        if live and hashes is None:
             raise BreakGlassRefused(BreakGlassRefusal.RECOVERY_CODE_REQUIRED)
+        if hashes == ():
+            raise BreakGlassRefused(BreakGlassRefusal.RECOVERY_CODE_INVALID)
         outcome = await self._store.reset_owner_mfa(
             str(target_user_id),
             now=self._clock(),
-            recovery_code_hash=code_hash,
+            recovery_code_hashes=hashes,
             correlation_id=str(correlation_id),
         )
         if isinstance(outcome, str):
             raise BreakGlassRefused(BreakGlassRefusal(outcome))
         methods, sessions, event_id = outcome
         return BreakGlassResetResult(
-            target_user_id, methods, sessions, code_hash is not None, event_id
+            target_user_id, methods, sessions, hashes is not None, event_id
         )
+
+    def close(self) -> None:
+        """Zero the digest session's key: the flow calls it once its run has ended, a cancelled
+        one included (#2152 BQ-11)."""
+        if self._digests is not None:
+            self._digests.close()

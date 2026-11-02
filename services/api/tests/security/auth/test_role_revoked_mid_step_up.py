@@ -45,7 +45,6 @@ from fastapi import Request
 import candleviewer.app as appmod
 import candleviewer.auth as auth_pkg
 from candleviewer.audit.actions import validate_action
-from candleviewer.auth.env_keyring import EnvMfaKeyring
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind, MfaMethodRecord
@@ -55,7 +54,7 @@ from candleviewer.auth.totp import generate_code, time_step_for
 from tests.contract.rbac.rbac_harness import UserStore
 from tests.csrf_helpers import csrf_headers
 from tests.unit.auth.auth_fakes import FakeUserRepository, InMemoryOwnerReset, make_user
-from tests.unit.auth.mfa_fakes import FakeMfaRepository
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
 PW = "pw-canary-2100"
@@ -245,7 +244,7 @@ class World:
         self.auth = AuthService(
             self.users,
             mfa_repository=self.mfa_repo,
-            mfa_keyring=EnvMfaKeyring(os.urandom(32), os.urandom(32)),
+            mfa_keyring=FakeMfaKeyring(os.urandom(32), os.urandom(32)),
             session_repository=self.sessions_repo,
             pepper=_PEPPER,
             clock=_Clock(),

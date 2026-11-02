@@ -1,8 +1,8 @@
-"""Frozen format vectors for the auth keyring (#2152 BQ-16, AGENTS.md §6.9): today's formats,
-which the env-backed keyring keeps and an imported keyring still reads, and the new ones M2 writes.
-Integer-built synthetic inputs only, never a key (C-13.5); each vector is checked here against the
-live code that makes it, so they survive the switch-over's removal of `TotpEncryptor` and
-`hash_recovery_code`, and a format can only change with them (S3 Deviation 6)."""
+"""Frozen format vectors for the auth keyring (#2152 BQ-16, AGENTS.md §6.9): the env keys' old
+formats, which an imported keyring still reads and the fixture seeders still make, and the new
+ones M2 writes. Integer-built synthetic inputs only, never a key (C-13.5). Each vector is checked
+against the code that makes or reads it today; the env-backed keyring and `TotpEncryptor` that
+made the old ones are gone since the switch-over, so the bytes are frozen here (S3 Deviation 6)."""
 
 from __future__ import annotations
 
@@ -13,14 +13,11 @@ import pytest
 from cryptography.exceptions import InvalidTag
 from pydantic import SecretStr
 
-from candleviewer.auth import envelope
-from candleviewer.auth.env_keyring import EnvMfaKeyring
-from candleviewer.auth.envelope import TotpEncryptor
-from candleviewer.auth.recovery_codes import hash_recovery_code
 from candleviewer.auth.totp import generate_code, verify_code
 from candleviewer.secrets import _auth_keyring as ak
 from candleviewer.secrets import _envelope as env
 from candleviewer.secrets.errors import AuthSealInvalid
+from scripts import seed_fixture_user as seeder
 from tests.unit.credentials_m2._vectors import kek
 
 AK_T, AK_R = bytes(range(140, 172)), bytes(range(172, 204))
@@ -53,7 +50,7 @@ RFC6238 = {59: "287082", 1111111109: "081804", 1234567890: "005924", 2000000000:
 def zero_nonce(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every seal and wrap drawn here takes a zero nonce, so its bytes are fixed."""
     monkeypatch.setattr(env, "new_nonce", lambda: bytes(12))
-    monkeypatch.setattr(envelope, "os", SimpleNamespace(urandom=lambda n: bytes(n)))
+    monkeypatch.setattr(seeder, "os", SimpleNamespace(urandom=lambda n: bytes(n)))
 
 
 @pytest.fixture
@@ -63,15 +60,11 @@ def known_keys(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.usefixtures("zero_nonce")
-async def test_today_s_formats_are_the_frozen_vectors() -> None:
-    """The env-backed keyring keeps them (#2152 S5a): its seal, open and digest, and the live code
-    it wraps (`TotpEncryptor`, `hash_recovery_code`), give the frozen bytes."""
-    keyring = EnvMfaKeyring(AK_T, AK_R)
-    assert await keyring.seal_totp_seed(SEED, ALICE) == (LEGACY_SEAL, "local-dev-v1")
-    assert TotpEncryptor(AK_T).encrypt(SEED) == LEGACY_SEAL
-    assert await keyring.open_totp_seed(LEGACY_SEAL, "local-dev-v1", BOB) == SEED  # no user bound
-    assert await keyring.recovery_code_digests(CODE, ALICE) == (LEGACY_DIGEST,)
-    assert hash_recovery_code(CODE.lower(), key=AK_R) == LEGACY_DIGEST
+def test_the_old_seal_is_the_frozen_vector_the_seeders_still_make() -> None:
+    """The fixture seeders' sealer (#2152 BQ-12) makes the env key's old seal, user-free."""
+    sealer = seeder.LegacyTotpSealer(AK_T)
+    assert (sealer.encrypt(SEED), sealer.key_ref) == (LEGACY_SEAL, "local-dev-v1")
+    assert sealer.decrypt(LEGACY_SEAL) == SEED
 
 
 def test_an_imported_keyring_reads_today_s_formats_and_writes_the_new_ones() -> None:
@@ -79,7 +72,9 @@ def test_an_imported_keyring_reads_today_s_formats_and_writes_the_new_ones() -> 
     code stores the user-bound digest first."""
     _, ring = ak.import_keyring(kek(), SecretStr(AK_T.hex()), SecretStr(AK_R.hex()))
     assert ring.open_totp_seed(LEGACY_SEAL, "local-dev-v1", ALICE) == SEED
+    assert ring.open_totp_seed(LEGACY_SEAL, "local-dev-v1", BOB) == SEED  # no user bound
     assert ring.recovery_code_digests(CODE, ALICE) == (RC_V2_DIGEST, LEGACY_DIGEST)
+    assert ring.recovery_code_digests(CODE.lower(), BOB)[1] == LEGACY_DIGEST  # nor here
 
 
 @pytest.mark.usefixtures("zero_nonce", "known_keys")

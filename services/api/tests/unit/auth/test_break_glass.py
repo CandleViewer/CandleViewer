@@ -4,6 +4,8 @@ tests/integration/auth/test_break_glass_reset_pg.py (CI only, needs docker)."""
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import inspect
 import json
 import traceback
@@ -24,7 +26,7 @@ from candleviewer.auth.break_glass import (
     BreakGlassStoreRefusal,
 )
 from candleviewer.auth.errors import BreakGlassRefused
-from candleviewer.auth.recovery_codes import hash_recovery_code, normalize_recovery_code
+from candleviewer.auth.recovery_codes import normalize_recovery_code
 from candleviewer.settings import Environment
 from candleviewer.storage.repositories.break_glass_sqlalchemy import (
     BreakGlassStoreRefusal as RepositoryRefusal,
@@ -51,6 +53,30 @@ _BLANK = [
     pytest.param(" \t\n", id="whitespace"),
     pytest.param("- -", id="separators"),
 ]
+
+
+class _Digests:
+    """M2's live digest session as the reset holds it (#2152 BQ-11): the code's one candidate
+    digest, for the user it is asked for; over the cap, `ValueError`; `closed` once closed."""
+
+    def __init__(self) -> None:
+        self.users: list[uuid.UUID] = []
+        self.closed = False
+
+    def recovery_code_digests(self, code: str, user_id: uuid.UUID) -> tuple[str, ...]:
+        self.users.append(user_id)
+        norm = normalize_recovery_code(code).encode()
+        if len(norm) > 512:
+            raise ValueError("recovery code too long")
+        return (_digest(code),)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _digest(code: str) -> str:
+    norm = normalize_recovery_code(code).encode()
+    return hmac.new(_KEY, norm, hashlib.sha256).hexdigest()
 
 
 class _Rel:
@@ -89,11 +115,15 @@ class _Rel:
         )
 
 
-def _service(rel: _Rel, environment: Environment) -> BreakGlassResetService:
+def _service(
+    rel: _Rel, environment: Environment, digests: _Digests | None = None
+) -> BreakGlassResetService:
     # cast: `_Rel` is a structural fake of the one method the store calls.
     store = SqlAlchemyBreakGlassRepository(cast(SqlAlchemyRelationalRepository, rel))
+    live = environment is Environment.LIVE
+    session = digests if digests is not None else _Digests() if live else None
     return BreakGlassResetService(
-        store, recovery_code_key=_KEY, environment=environment, clock=lambda: _NOW
+        store, digests=session, environment=environment, clock=lambda: _NOW
     )
 
 
@@ -108,9 +138,10 @@ async def test_reset_runs_in_one_unit_of_work_committed_once() -> None:
     assert all(t in s for t, s in zip(tables, rel.sql, strict=True))
     assert "FOR UPDATE OF u" in rel.sql[0] and "revoked_reason = 'break_glass'" in rel.sql[3]
     assert "'auth', 'break_glass_used', 'critical'" in rel.sql[4]
-    assert rel.params[1]["h"] == hash_recovery_code(_CODE, key=_KEY)
+    assert rel.params[1]["hs"] == [_digest(_CODE)]  # #2152: one statement, `= ANY`
+    assert "code_hash = ANY(CAST(:hs AS text[]))" in rel.sql[1]
     # The keyed hash is bound to the consume statement only, never to the event.
-    assert ["h" in p for p in rel.params] == [False, True, False, False, False, False]
+    assert ["hs" in p for p in rel.params] == [False, True, False, False, False, False]
     assert set(rel.params[4]) == {"message", "details", "corr", "now"}
     assert not any(_CODE in str(p) for p in rel.params)  # the plaintext never reaches SQL
     details = json.loads(rel.params[4]["details"])
@@ -190,6 +221,42 @@ async def test_live_rule_follows_the_configured_environment_not_a_caller_flag() 
         await _service(live, Environment.LIVE).reset(_UID, recovery_code=None, correlation_id=_CORR)
     await _service(demo, Environment.DEMO).reset(_UID, recovery_code=None, correlation_id=_CORR)
     assert (live.units, demo.units) == (0, 1)
+
+
+async def test_the_code_is_digested_for_the_target_owner_and_the_session_closes() -> None:
+    """#2152 BQ-11: the stored digest binds the user, so the code is digested for the Owner the
+    run resets; `close()` closes the session (the flow calls it when the run ends)."""
+    digests = _Digests()
+    svc = _service(_Rel([1], [1], [], [], [5], []), Environment.LIVE, digests)
+    await svc.reset(_UID, recovery_code=_CODE, correlation_id=_CORR)
+    assert digests.users == [_UID] and not digests.closed
+    svc.close()
+    assert digests.closed
+
+
+@pytest.mark.parametrize(
+    ("environment", "code"),
+    [
+        (Environment.LIVE, "A" * 600),  # longer than any code: it matches none
+        (Environment.DEMO, _CODE),  # no session outside live: nothing could match it
+    ],
+)
+async def test_a_code_nothing_could_match_is_refused_before_any_statement(
+    environment: Environment, code: str
+) -> None:
+    rel = _Rel()
+    with pytest.raises(BreakGlassRefused) as refused:
+        await _service(rel, environment).reset(_UID, recovery_code=code, correlation_id=_CORR)
+    assert refused.value.reason == BreakGlassRefusal.RECOVERY_CODE_INVALID and rel.units == 0
+
+
+async def test_two_codes_matching_the_candidates_consume_none() -> None:
+    """The reset consumes exactly one code (AC10); two rows matching is refused, rolled back."""
+    rel = _Rel([1], [1, 2])
+    with pytest.raises(BreakGlassRefused) as refused:
+        await _service(rel, Environment.LIVE).reset(_UID, recovery_code=_CODE, correlation_id=_CORR)
+    assert refused.value.reason == BreakGlassRefusal.RECOVERY_CODE_INVALID
+    assert rel.ended == ["rollback"]
 
 
 async def test_store_failure_leaves_no_plaintext_code_in_the_traceback() -> None:

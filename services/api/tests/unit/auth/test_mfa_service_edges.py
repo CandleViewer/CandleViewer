@@ -18,10 +18,10 @@ from candleviewer.auth.errors import (
 )
 from candleviewer.auth.mfa_service import CHALLENGE_ATTEMPT_CAP, MfaService, _hash_token
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind, MfaVerifyRequest
-from candleviewer.auth.recovery_codes import generate_recovery_codes, hash_recovery_code
+from candleviewer.auth.recovery_codes import generate_recovery_codes
 from candleviewer.auth.totp import generate_code, time_step_for
 from tests.unit.auth.auth_fakes import no_wait
-from tests.unit.auth.mfa_fakes import FakeMfaKeyring
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, recovery_digest
 
 from .mfa_fakes import FakeMfaRepository
 from .totp_code_cases import ARABIC_INDIC_CODE
@@ -191,7 +191,7 @@ async def test_confirm_replaces_existing_recovery_codes_with_ten_new_ones() -> N
     assert await repo.find_unused_recovery_code(uid, code_hashes=("x" * 64,)) is None
     for code in codes:
         assert await repo.find_unused_recovery_code(
-            uid, code_hashes=(hash_recovery_code(code, key=_RC_KEY),)
+            uid, code_hashes=(recovery_digest(code, _RC_KEY),)
         )
 
 
@@ -277,7 +277,7 @@ async def test_verify_counts_a_non_ascii_digit_code_as_a_failed_attempt() -> Non
 async def _with_codes(repo: FakeMfaRepository, uid: uuid.UUID) -> list[str]:
     codes = generate_recovery_codes()
     await repo.replace_recovery_codes(
-        str(uid), code_hashes=tuple(hash_recovery_code(c, key=_RC_KEY) for c in codes)
+        str(uid), code_hashes=tuple(recovery_digest(c, _RC_KEY) for c in codes)
     )
     return codes
 

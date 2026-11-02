@@ -60,6 +60,13 @@ When the session step fails after that transaction, the 401 tells the client to
 sign in again with the password, which is enrolment-only with no method left
 (error log `auth.recovery.completed_unminted`; runbook `auth-rbac.md` section 1).
 
+**The keyring cannot serve (#2152, `22-api-openapi.yaml` `AuthUnavailable`):** while M2's
+auth keyring cannot serve the user, the five operations here answer `503 auth_unavailable`
+(`api/auth_unavailable.py`) where the contract's "Order of checks" puts it: at sign-in only for a
+user with a confirmed method and only after the password, in place of the challenge. Nothing is
+counted, consumed, minted or spent from the second-factor budget, and the `auth.mfa_unavailable`
+row goes through the lane like the other outcome rows.
+
 Audit `actor_ip`, the SR-015 per-address sign-in throttle key and the minted
 session's `ip` are `api.csrf.source_ip`: the address `MeshOnlyMiddleware`
 admitted (trusted-proxy aware), else the socket peer, the same value the
@@ -84,6 +91,8 @@ import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from candleviewer.api.auth_unavailable import ACTION as MFA_UNAVAILABLE
+from candleviewer.api.auth_unavailable import auth_unavailable, unavailable_row
 from candleviewer.api.csrf import AUDIT_TIMEOUT_S, set_csrf_cookie
 from candleviewer.api.csrf import source_ip as admitted_source_ip
 from candleviewer.api.query_allowlist import undeclared_query_refusal
@@ -111,6 +120,7 @@ from candleviewer.auth.errors import (
     MfaCodeInvalid,
     MfaCodeReused,
     MfaEnrollmentNotFound,
+    MfaKeyringUnavailable,
     MfaNotRequired,
     RecoveryCodeInvalid,
     RecoveryCodesExhausted,
@@ -196,6 +206,8 @@ class MfaServiceLike(Protocol):
     async def enroll(
         self, user_id: str, request: MfaEnrollRequest, *, account_name: str
     ) -> MfaEnrollResult: ...
+
+    async def require_keyring(self, *, user_id: uuid.UUID | None = None) -> None: ...
 
     async def check_enrollment(self, user_id: str, *, method_id: str, code: str) -> int: ...
 
@@ -537,6 +549,19 @@ def make_auth_router(
         if exc.locked_user_id is not None:
             await _audit_second_factor_lock(request, exc.locked_user_id, reason=_LOCK_SET)
 
+    async def _mfa_unavailable(
+        request: Request,
+        operation: str,
+        exc: MfaKeyringUnavailable,
+        user_id: uuid.UUID | None = None,
+    ) -> JSONResponse:
+        """#2152 (22 `AuthUnavailable`): the `503 auth_unavailable`, decided before anything was
+        counted, consumed or minted, and its `auth.mfa_unavailable` row through the lane (BQ-8:
+        best effort, a lost one counted). Not a refusal of the caller: no budget is spent."""
+        row = unavailable_row(operation, exc, user_id=user_id, actor_ip=_client_ip(request))
+        await _audit_outcome(MFA_UNAVAILABLE, **row)
+        return auth_unavailable()
+
     def _enrolment_ready(
         *, mfa: bool, status: int = 503, title: str = "Service unavailable"
     ) -> tuple[AuditWriterLike, IdentityProvider] | JSONResponse:
@@ -708,6 +733,10 @@ def make_auth_router(
                 reason="mfa_not_required",
             )
             return _sign_in_refused()
+        except MfaKeyringUnavailable as exc:
+            # #2152 (ruling D4): only after the password verified, in place of the challenge;
+            # nothing was written, rehashed or reset.
+            return await _mfa_unavailable(request, "authLogin", exc)
         except SignInBusy as exc:
             # #4663: refused before the identifier was looked up or the password checked, so
             # only the attempt itself is recorded; counted by `LoginService`.
@@ -756,6 +785,8 @@ def make_auth_router(
             return over
         try:
             result = await auth_service.mfa.verify(body)
+        except MfaKeyringUnavailable as exc:  # #2152: after the token check, before the code
+            return await _mfa_unavailable(request, "authMfaVerify", exc)
         except MfaAccountLocked as exc:  # #2695: the same answer as a wrong code (SR-014)
             _mfa_refused(request)
             await _audit_second_factor_lock(request, exc.user_id, reason=_WHILE_LOCKED)
@@ -929,6 +960,8 @@ def make_auth_router(
 
         try:
             check = await mfa.check_recovery(body.mfa_token, body.recovery_code)
+        except MfaKeyringUnavailable as exc:  # #2152: before the pool and the code
+            return await _mfa_unavailable(request, "authMfaRecovery", exc)
         except RecoveryCodesExhausted as exc:
             exhausted = {"actor_label": "(mfa_token)", "severity": Severity.ERROR}
             await failed("auth.recovery_codes_exhausted", AuditOutcome.DENIED, **exhausted)
@@ -1079,6 +1112,10 @@ def make_auth_router(
             return _problem(
                 422, _INVALID, "only method=totp can be enrolled", code="validation_failed"
             )
+        try:  # #2152: after every refusal that needs no key, before the record and the seed
+            await auth_service.mfa.require_keyring(user_id=user.id)
+        except MfaKeyringUnavailable as exc:
+            return await _mfa_unavailable(request, "authMfaEnroll", exc)
         try:
             await writer.emit(
                 "auth.mfa_enroll",
@@ -1091,7 +1128,10 @@ def make_auth_router(
             )
         except AuditError:
             return _problem(503, "Service unavailable", "audit sink not active")
-        result = await auth_service.mfa.enroll(str(user.id), body, account_name=user.username)
+        try:
+            result = await auth_service.mfa.enroll(str(user.id), body, account_name=user.username)
+        except MfaKeyringUnavailable as exc:  # it went down since the check: no method created
+            return await _mfa_unavailable(request, "authMfaEnroll", exc)
         content = {
             "method_id": str(result.method_id),
             "method": result.method.value,
@@ -1152,6 +1192,8 @@ def make_auth_router(
                 )
         except AuditError:
             return _problem(503, "Service unavailable", "audit sink not active")
+        except MfaKeyringUnavailable as exc:  # #2152: after the method lookup, before the code
+            return await _mfa_unavailable(request, "authMfaEnrollConfirm", exc, user.id)
         except (MfaEnrollmentNotFound, MfaCodeInvalid):  # wrong code, no such pending method
             auth_enrolments_total.labels(result="refused").inc()
             await _audit_outcome("auth.mfa_failed", actor_label=uid, actor_ip=ip, outcome=_FAILED)
@@ -1193,6 +1235,9 @@ def make_auth_router(
             auth_enrolments_total.labels(result="refused").inc()
             await uncommitted(exc, "lost_race")
             return invalid
+        except MfaKeyringUnavailable as exc:  # #2152: down since the check; nothing written
+            await uncommitted(exc, "auth_unavailable")
+            return await _mfa_unavailable(request, "authMfaEnrollConfirm", exc, user.id)
         except Exception as exc:  # a store failure (a timeout, a deadlock): still the 500
             await uncommitted(exc, "store_error")
             raise

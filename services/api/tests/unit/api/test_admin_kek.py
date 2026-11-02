@@ -23,13 +23,12 @@ from candleviewer.admin.wiring import secrets_bundle
 from candleviewer.api.admin_kek import MAX_BODY_BYTES, make_admin_kek_router
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
-from candleviewer.auth.env_keyring import EnvMfaKeyring
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.service import AuthService
 from candleviewer.secrets import SecretsService
 from candleviewer.secrets.store import InMemoryCredentialStore
 from tests.unit.api.test_invites_create_app_e2e import _h, _login, _World
-from tests.unit.auth.mfa_fakes import FakeMfaRepository
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 from tests.unit.credentials_m2._service_fakes import _boot, _counted, _Src, _store_one, _svc
 from tests.unit.credentials_m2._vectors import KEK_V1, KEK_V2, AuditLog
@@ -48,7 +47,7 @@ def deploy(monkeypatch: pytest.MonkeyPatch, svc: SecretsService) -> tuple[_World
     w.auth = AuthService(
         w.users,
         mfa_repository=FakeMfaRepository(),
-        mfa_keyring=EnvMfaKeyring(os.urandom(32), os.urandom(32)),
+        mfa_keyring=FakeMfaKeyring(os.urandom(32), os.urandom(32)),
         session_repository=FakeSessionRepository(),
         pepper="test-pepper",
         clock=w.clock,

@@ -39,12 +39,12 @@ from candleviewer.auth.models import (
     MfaVerifyRequest,
     SessionRecord,
 )
-from candleviewer.auth.recovery_codes import generate_recovery_codes, hash_recovery_code
+from candleviewer.auth.recovery_codes import generate_recovery_codes
 from candleviewer.auth.session_repository import StepUpChange
 from candleviewer.auth.step_up import FAILURE_CAP, StepUpService
 from candleviewer.auth.totp import generate_code, generate_secret, time_step_for
 from candleviewer.settings import AUTH_LOGIN_FAILURE_FLOOR_MIN_MS
-from tests.unit.auth.mfa_fakes import FakeMfaKeyring
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, recovery_digest
 
 from .auth_fakes import FakeUserRepository, make_user
 from .mfa_fakes import FakeMfaRepository
@@ -155,7 +155,7 @@ class _MfaWorld:
     async def add_recovery_codes(self, count: int = 10) -> list[str]:
         codes = generate_recovery_codes(count=count)
         await self.repo.replace_recovery_codes(
-            str(self.user), code_hashes=tuple(hash_recovery_code(c, key=_RC_KEY) for c in codes)
+            str(self.user), code_hashes=tuple(recovery_digest(c, _RC_KEY) for c in codes)
         )
         return codes
 

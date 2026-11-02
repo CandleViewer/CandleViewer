@@ -118,6 +118,14 @@ class AuthKeyStore(Protocol):
         A new keyring would strand them, so none is generated while any exists (AC7)."""
         ...
 
+    async def count_legacy_material(self, env: str) -> int:
+        """The dual-read window's exit test (#2152 BQ-3), counts only: unrevoked TOTP methods
+        sealed under the old env key (`secret_key_ref = 'local-dev-v1'`) plus unused recovery
+        codes made before `env`'s imported keyring was stored (both digest formats are 64 hex
+        digits, so a code's age tells them apart), in every environment. Zero: nothing still
+        needs the old formats, and the window may close."""
+        ...
+
     async def rewrap(
         self,
         key_id: UUID,
@@ -134,6 +142,15 @@ class AuthKeyStore(Protocol):
 
     async def count_at_kek_version(self, version: int, env: str) -> int:
         """The rows of `env`, the process's environment, wrapped under KEK `version`."""
+        ...
+
+
+class AuthKeyRows(Protocol):
+    """The one read of `AuthKeyStore` break-glass's digest session needs (#2152 BQ-11): the
+    offline CLI reads its environment's keyring rows and writes none."""
+
+    async def rows_for(self, env: str) -> list[dict[str, Any]]:
+        """Every row of `env`, by purpose then key version."""
         ...
 
 
@@ -346,13 +363,15 @@ class InMemoryCredentialStore:
 class InMemoryAuthKeyStore:
     """Test fake for `AuthKeyStore`: `rows` holds `auth_keys` records of any environment (a count
     needs only `env` and `kek_version`), `audit` each record committed with a write, and
-    `mfa_material` what the probe counts. Bound to one environment, as the M10 adapter is, it
-    refuses what the adapter and the table refuse (#3505; 21 Sec.3.1.5a). While `audit_fails`
-    is set a record fails, and so does the write it records."""
+    `mfa_material` and `legacy_material` what the two probes count. Bound to one environment, as
+    the M10 adapter is, it refuses what the adapter and the table refuse (#3505; 21 Sec.3.1.5a).
+    While `audit_fails` is set a record fails, and so does the write it records."""
 
-    def __init__(self, env: str = "demo", *, mfa_material: int = 0) -> None:
+    def __init__(
+        self, env: str = "demo", *, mfa_material: int = 0, legacy_material: int = 0
+    ) -> None:
         self.rows: list[dict[str, Any]] = []
-        self.env, self.mfa_material = env, mfa_material
+        self.env, self.mfa_material, self.legacy_material = env, mfa_material, legacy_material
         self.audit: list[tuple[str, dict[str, str]]] = []
         self.audit_fails = False
 
@@ -391,6 +410,10 @@ class InMemoryAuthKeyStore:
 
     async def count_mfa_material(self) -> int:
         return self.mfa_material
+
+    async def count_legacy_material(self, env: str) -> int:
+        self._own(env)
+        return self.legacy_material
 
     async def rewrap(
         self,

@@ -39,6 +39,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette._utils import get_route_path
 
 from candleviewer.admin.flags.store import FlagWrite, StoreUnavailableError
+from candleviewer.api.auth_unavailable import auth_unavailable, record_unavailable, unavailable_row
 from candleviewer.api.csrf import (
     ANON_REFUSAL_WINDOW_S,
     AUDIT_TIMEOUT_S,
@@ -55,6 +56,7 @@ from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import (
     AuthError,
     AuthServiceUnavailable,
+    MfaKeyringUnavailable,
     ResetTargetNotFound,
     SelfResetRefused,
     SessionReadOnly,
@@ -916,6 +918,13 @@ def make_step_up_router(
             except AuditRefused:
                 return _audit_unavailable()
             return _challenge_refused(exc.field, exc.rule)
+        except MfaKeyringUnavailable as exc:  # #2152: after validation, before either factor
+            row = unavailable_row(
+                "authStepUp", exc, user_id=record.user_id, actor_ip=source_ip(request.scope)
+            )
+            row |= {"session_id": record.id, "request_id": current_request_uuid()}
+            await record_unavailable(emitter.emit, row)
+            return auth_unavailable()
         except SessionRevoked:
             return _unauthenticated()
         except UnknownActionClass:

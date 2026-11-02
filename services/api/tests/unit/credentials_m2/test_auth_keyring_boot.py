@@ -12,15 +12,17 @@ import gc
 import pickle
 import types
 from base64 import b32encode, b64encode
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from pydantic import SecretStr, ValidationError
 from structlog.testing import capture_logs
 
 from candleviewer.admin.wiring import secrets_audit_row, secrets_bundle
 from candleviewer.auth.errors import MfaKeyringUnavailable, MfaSealInvalid
+from candleviewer.net.read_only_gate import ReadOnlyGate
 from candleviewer.observability.health import HealthStatus
 from candleviewer.secrets import _auth_custody as custody
 from candleviewer.secrets import _auth_keyring as ak
@@ -36,6 +38,7 @@ from candleviewer.secrets.store import (
     InMemoryCredentialStore,
     InMemoryExportKeyStore,
 )
+from candleviewer.settings import Environment
 from tests.unit.credentials_m2._service_fakes import KEK_V3, _bound_sources, _ctx, _Src
 from tests.unit.credentials_m2._vectors import KEK_V1, KEK_V2, AuditLog, kek
 
@@ -105,14 +108,14 @@ def _actions(keyring: InMemoryAuthKeyStore, audit: AuditLog) -> list[str]:
 
 
 async def test_without_the_seam_the_keyring_is_dormant(monkeypatch: pytest.MonkeyPatch) -> None:
-    """As `main` wires M2 today: no keyring row is read or written, live still boots with both env
-    keys set (today's required config), health and the gauge are unchanged, and the capability
-    refuses every call."""
+    """A service built without the seam (the fake backend's wiring, or a test's own): no keyring
+    row is read or written even with both env keys set, health and the gauge are unchanged, and
+    the capability refuses every call."""
 
     async def unread(*_: object, **__: object) -> Any:
         raise AssertionError("the dormant keyring's store was read")
 
-    counted = InMemoryAuthKeyStore("live")
+    counted = InMemoryAuthKeyStore("demo")
     for name in ("rows_for", "insert_keyring", "count_mfa_material", "rewrap"):
         monkeypatch.setattr(counted, name, unread)
     m.auth_keyring_unavailable_state.set(0)
@@ -121,7 +124,7 @@ async def test_without_the_seam_the_keyring_is_dormant(monkeypatch: pytest.Monke
         sources=_bound_sources(_Src(KEK_V1, 1)), harden=lambda: True, auth_keys=counted,
     )  # fmt: skip
     cap = mint_auth_keyring(svc)
-    await svc.start(ctx := _ctx(environment="live", **_ENV_KEYS))
+    await svc.start(ctx := _ctx(environment="demo", **_ENV_KEYS))
     assert _down(svc, ctx) == ("", HealthStatus.OK, False, 0) and counted.rows == []
     assert not [a for a in audit.actions() if a.startswith("security.auth_keyring_")]
     assert not await cap.available()
@@ -226,11 +229,16 @@ async def test_material_without_a_keyring_is_never_generated_over() -> None:
 
 @pytest.mark.parametrize("keys", [{TOTP_HEX: AK_T.hex()}, {RC_HEX: AK_R.hex()}, _ENV_KEYS])
 async def test_live_refuses_either_env_setting_before_any_kek_loads(keys: dict[str, Any]) -> None:
-    """AC2's backstop in M2 (`Settings` refuses first, #2152's switch-over): fatal, as a refused
-    KEK source is, and no KEK was ever loaded."""
+    """AC2: `Settings` refuses it before any module starts; M2's backstop, for settings built
+    without that check, is fatal too, as a refused KEK source is, and loads no KEK."""
+    with pytest.raises(ValidationError, match="auth_key_env_forbidden"):
+        _ctx(environment="live", **keys)
     src, keyring = _Src(KEK_V1, 1), InMemoryAuthKeyStore("live")
+    unchecked = {TOTP_HEX: None, RC_HEX: None} | {k: SecretStr(v) for k, v in keys.items()}
+    settings = types.SimpleNamespace(environment=Environment.LIVE, **unchecked)
+    ctx = types.SimpleNamespace(settings=settings, oms_read_only_gate=ReadOnlyGate())
     with pytest.raises(AuthKeyEnvForbidden):
-        await _booted(keyring, src, environment="live", **keys)
+        await _service(src, keyring=keyring).start(cast(Any, ctx))  # the context's two fields
     assert src.handed == [] and keyring.rows == []
 
 

@@ -24,10 +24,14 @@ As with `LoginService`, audit emission is the router's job (`auth` may not
 import `audit` — `forbidden-M18` import-linter contract); this module
 raises typed errors and returns typed results only.
 
-#2152 S5a: seeds are sealed and opened, and recovery codes digested, through the injected
-`MfaKeyring`; this module holds no key. An opened seed is a `bytearray` zeroed once the code is
-checked; a recovery code is looked up by every candidate digest in one query, and a new code
-stores the first (BQ-3).
+#2152: seeds are sealed and opened, and recovery codes digested, through the injected
+`MfaKeyring`, M2's auth keyring; this module holds no key. An opened seed is a `bytearray` zeroed
+once the code is checked; a recovery code is looked up by every candidate digest in one query,
+and a new code stores the first (BQ-3). While the keyring cannot serve the user, each operation
+raises `MfaKeyringUnavailable` (the edge's `503 auth_unavailable`) at the point
+`22-api-openapi.yaml` `AuthUnavailable` names, before any seed is generated, opened or sealed and
+before any code is examined, so nothing is counted or consumed. A seal under a held key that does
+not open (`MfaSealInvalid`, AC9) and a code longer than any contract body are wrong codes.
 
 #2695 (SR-015 / SR-016): with the user repository wired, every refused second-factor or
 recovery code also counts on the account (`record_login_failure`, the login's
@@ -56,6 +60,7 @@ from candleviewer.auth.errors import (
     MfaCodeInvalid,
     MfaCodeReused,
     MfaEnrollmentNotFound,
+    MfaSealInvalid,
     RecoveryCodeInvalid,
     RecoveryCodesExhausted,
     SecondFactorRefused,
@@ -64,7 +69,7 @@ from candleviewer.auth.errors import (
 from candleviewer.auth.failure_hold import FAILURE_MINIMUM, FailureHold, MonotonicClock, Sleep
 from candleviewer.auth.login_service import LOCKOUT_DURATION, LOCKOUT_THRESHOLD
 from candleviewer.auth.metrics import auth_lockouts_total
-from candleviewer.auth.mfa_keyring import MfaKeyring, zero_seeds
+from candleviewer.auth.mfa_keyring import MfaKeyring, require_available, zero_seeds
 from candleviewer.auth.mfa_repository import MfaRepository
 from candleviewer.auth.models import (
     MfaChallengeRecord,
@@ -169,6 +174,9 @@ class MfaService:
 
         challenge = await self._open_challenge_or_raise(request.mfa_token, purpose="login")
         methods = await self._repository.find_active_totp_methods(str(challenge.user_id))
+        # #2152: after the token check, before the code; the challenge keeps its count and expiry.
+        refs = (m.secret_key_ref or "" for m in methods)
+        await require_available(self._keyring, *refs, user_id=challenge.user_id)
         if not methods:
             raise MfaCodeInvalid("no active TOTP method enrolled")
 
@@ -181,9 +189,12 @@ class MfaService:
             for method in methods:
                 if method.secret_enc is None:
                     continue  # mfa_totp_shape CHECK should prevent this; defend anyway
-                seed = await self._keyring.open_totp_seed(
-                    method.secret_enc, method.secret_key_ref or "", challenge.user_id
-                )
+                try:
+                    seed = await self._keyring.open_totp_seed(
+                        method.secret_enc, method.secret_key_ref or "", challenge.user_id
+                    )
+                except MfaSealInvalid:
+                    continue  # #2152 AC9: moved or tampered, so this method matches no code
                 seeds.append(seed)
                 refused.append((seed, method.last_accepted_time_step))
                 step = verify_code(seed, request.code, unix_time=now.timestamp())
@@ -283,6 +294,8 @@ class MfaService:
         scope") — only `method=totp` is implemented."""
         if request.method is not MfaMethodKind.TOTP:
             raise MfaCodeInvalid("only method=totp enrolment is implemented")
+        # #2152: before a seed is generated; no method is created.
+        await self.require_keyring(user_id=UUID(user_id))
 
         seed = generate_secret()
         secret_enc, key_ref = await self._keyring.seal_totp_seed(seed, UUID(user_id))
@@ -330,10 +343,18 @@ class MfaService:
             raise MfaEnrollmentNotFound("no pending enrolment for this method_id")
         if method.secret_enc is None:  # mfa_totp_shape CHECK should prevent this
             raise MfaEnrollmentNotFound("pending method has no TOTP secret")
-
-        seed = await self._keyring.open_totp_seed(
-            method.secret_enc, method.secret_key_ref or "", UUID(user_id)
-        )
+        # #2152: after the pending method lookup, before the code. Completing it digests the new
+        # recovery codes, so the method's TOTP key and the recovery key are both needed, and an
+        # open keyring holds both; without either the method stays pending.
+        await require_available(self._keyring, method.secret_key_ref or "", user_id=UUID(user_id))
+        try:
+            seed = await self._keyring.open_totp_seed(
+                method.secret_enc, method.secret_key_ref or "", UUID(user_id)
+            )
+        except MfaSealInvalid:
+            seed = None  # #2152 AC9: moved or tampered, so it matches no code
+        if seed is None:
+            raise MfaCodeInvalid("invalid TOTP code")
         now = self._clock()
         try:
             accepted_step = verify_code(seed, code, unix_time=now.timestamp())
@@ -367,6 +388,12 @@ class MfaService:
         if confirmed is None:
             raise MfaEnrollmentNotFound("the pending method is no longer confirmable")
         return confirmed, tuple(plaintext_codes)
+
+    async def require_keyring(self, *, user_id: UUID | None = None) -> None:
+        """#2152: `MfaKeyringUnavailable` naming `user_id` unless the keyring is open (metadata
+        only), for an operation that must decide its `503` before it changes anything (an invite
+        redemption, before the password is hashed or the token consumed)."""
+        await require_available(self._keyring, user_id=user_id)
 
     async def _digests_to_store(self, user_id: str, codes: list[str]) -> tuple[str, ...]:
         """Each new code's digest to store: the first candidate, bound to the user (BQ-3)."""
@@ -408,6 +435,9 @@ class MfaService:
 
     async def _check_recovery(self, mfa_token: str, recovery_code: str) -> MfaRecoveryCheck:
         challenge = await self._open_challenge_or_raise(mfa_token, purpose="login")
+        # #2152: after the token check, before the pool and the code: a `503` says nothing of
+        # how many codes are left.
+        await self.require_keyring(user_id=challenge.user_id)
         if await self._repository.count_unused_recovery_codes(str(challenge.user_id)) == 0:
             # Ticket "Recovery codes exhausted": "I am told to contact the
             # owner and no session is created" — distinct from a merely
@@ -422,10 +452,15 @@ class MfaService:
                 challenge, RecoveryCodesExhausted("all recovery codes have been used")
             )
 
-        digests = await self._keyring.recovery_code_digests(recovery_code, challenge.user_id)
-        code_id = await self._repository.find_unused_recovery_code(
-            str(challenge.user_id), code_hashes=digests
-        )
+        try:
+            digests = await self._keyring.recovery_code_digests(recovery_code, challenge.user_id)
+        except ValueError:  # #2152: longer than any contract body carries, so no stored code
+            digests = ()
+        code_id = None
+        if digests:
+            code_id = await self._repository.find_unused_recovery_code(
+                str(challenge.user_id), code_hashes=digests
+            )
         if code_id is None:
             await self._refuse(
                 challenge, RecoveryCodeInvalid("invalid or already-used recovery code")
@@ -466,6 +501,8 @@ class MfaService:
     async def regenerate_recovery_codes(self, user_id: str) -> RecoveryCodesRegenerated:
         """`POST /auth/mfa/recovery`'s SCR-112 regeneration sibling (ticket
         "Scope / Deliverables": "regenerates codes, hard-deleting unused
-        ones")."""
+        ones"). #2152 (BQ-17): `MfaKeyringUnavailable` while the keyring cannot serve, before
+        any code is made or replaced."""
+        await self.require_keyring(user_id=UUID(user_id))
         codes = await self._issue_recovery_codes(user_id)
         return RecoveryCodesRegenerated(recovery_codes=codes)

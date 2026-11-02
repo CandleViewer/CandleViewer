@@ -322,6 +322,9 @@ class _Mfa:
     `test_enrolment_only_matrix.py` gets this far. It stores nothing: an enrolment returns a
     method id and no secret, and every confirmation is refused as not found (422)."""
 
+    async def require_keyring(self, **_kwargs: Any) -> None:
+        """The keyring is up (#2152): the enrolment goes on."""
+
     async def enroll(self, user_id: str, *_args: Any, **_kwargs: Any) -> MfaEnrollResult:
         method_id = uuid.uuid5(uuid.UUID(user_id), "enrol")
         return MfaEnrollResult(method_id=method_id, method=MfaMethodKind.TOTP)

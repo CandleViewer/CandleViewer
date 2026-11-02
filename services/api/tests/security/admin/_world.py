@@ -42,7 +42,6 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 import candleviewer.app as appmod
 from candleviewer.admin.backups.catalogue import BackupCatalogue
 from candleviewer.audit.actions import validate_action
-from candleviewer.auth.env_keyring import EnvMfaKeyring
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.metrics import normalise_permission
@@ -55,7 +54,7 @@ from tests.csrf_helpers import csrf_headers
 from tests.security.auth._stack import Clock, RegistryAudit
 from tests.unit.api._purge_anchors import InMemoryPurgeAnchors
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
-from tests.unit.auth.mfa_fakes import FakeMfaRepository
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 from tests.unit.auth.test_invite_service import FakeRepo as FakeInviteRepository
 
@@ -281,7 +280,7 @@ def open_admin_world(mp: pytest.MonkeyPatch) -> Iterator[AdminWorld]:
     auth = AuthService(
         users,
         mfa_repository=FakeMfaRepository(),
-        mfa_keyring=EnvMfaKeyring(bytes(range(32)), bytes(range(32, 64))),  # fixed test keys
+        mfa_keyring=FakeMfaKeyring(bytes(range(32)), bytes(range(32, 64))),  # fixed test keys
         session_repository=FakeSessionRepository(),
         invite_repository=FakeInviteRepository(),
         pepper=_PEPPER,

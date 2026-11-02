@@ -19,7 +19,6 @@ from typing import Any
 
 import pytest
 import structlog
-from pydantic import SecretStr
 from structlog.testing import capture_logs
 
 from candleviewer import breakglass
@@ -31,11 +30,10 @@ from candleviewer.audit.actions import UnknownAuditAction
 from candleviewer.audit.journal import RunLockHeld, hold_run_lock, journal_dir
 from candleviewer.audit.wal import AuditWal
 from candleviewer.audit.writer import AuditWriter
-from candleviewer.auth.recovery_codes import hash_recovery_code
 from candleviewer.observability.logging import configure_logging, reset_logging
-from candleviewer.secrets import KekCheckResult, prove_kek_possession
+from candleviewer.secrets import KekCheckResult, open_recovery_digests, prove_kek_possession
 from candleviewer.secrets._kek import LoadedKek
-from candleviewer.secrets.store import InMemoryCredentialStore
+from candleviewer.secrets.store import InMemoryAuthKeyStore, InMemoryCredentialStore
 from candleviewer.settings import Environment, Settings
 from tests.unit.audit.audit_fakes import FakeAuditRepository
 
@@ -45,8 +43,8 @@ ATTEMPT, REFUSED, RESET = (
     "auth.break_glass_reset",
 )
 _OWNER_ID = uuid.UUID(int=7)
-_KEY = bytes(range(32))  # test-only HMAC key, not a credential
 _CODE = "TEST-ONLY-CODE-0001"  # not a real recovery code
+_DIGEST = "d1" * 32  # what the live digest session answers for `_CODE`: not a real digest
 _AUDITED = "Audit: every record reached audit_log."
 _HELD = "held"  # cv-api holds the run lock, shared
 #: A record's fields as the flow emits them (`AuditTrail.emit`).
@@ -71,10 +69,10 @@ class _Owners:
         target_user_id: str,
         *,
         now: datetime,
-        recovery_code_hash: str | None,
+        recovery_code_hashes: Sequence[str] | None,
         correlation_id: str,
     ) -> tuple[int, int, int]:
-        self.hashes.append(recovery_code_hash)
+        self.hashes.append(None if recovery_code_hashes is None else recovery_code_hashes[0])
         return 1, 2, 41
 
 
@@ -85,6 +83,10 @@ class _Stores:
     audit_log: FakeAuditRepository = dataclasses.field(default_factory=FakeAuditRepository)
     kcv: InMemoryCredentialStore = dataclasses.field(default_factory=InMemoryCredentialStore)
     owners: _Owners = dataclasses.field(default_factory=_Owners)
+    #: The live keyring rows the digest session reads (#2152 S6); none outside live.
+    auth_keys: InMemoryAuthKeyStore = dataclasses.field(
+        default_factory=lambda: InMemoryAuthKeyStore("live")
+    )
     up: bool = True
     others: bool = False
     stuck: bool = False  # `dispose` fails
@@ -123,9 +125,11 @@ class _Operator:
 
 @pytest.fixture(autouse=True)
 def _unhardened(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The real KEK proof, minus SR-009 hardening, which must not reach the pytest process."""
+    """The real KEK proofs, minus SR-009 hardening, which must not reach the pytest process."""
     proof = functools.partial(prove_kek_possession, harden=lambda: True)
     monkeypatch.setattr(breakglass_wiring, "prove_kek_possession", proof)
+    digests = functools.partial(open_recovery_digests, harden=lambda: True)
+    monkeypatch.setattr(breakglass_wiring, "open_recovery_digests", digests)
 
 
 @pytest.fixture
@@ -153,7 +157,6 @@ async def _run(settings: Settings, stores: _Stores, owner: str = "alice") -> tup
         settings,
         owner,
         live_flag=settings.environment is Environment.LIVE,
-        recovery_code_key=_KEY,
         terminal=operator,
         stores=stores,
     )
@@ -326,19 +329,54 @@ async def test_journal_lock_outlives_the_writer_stop(
     hold_run_lock(journal_dir(wal), exclusive=True).close()  # released once close returned
 
 
-async def test_live_rule_checks_the_code_with_the_configured_key(
+class _Session:
+    """M2's live digest session as the proof hands it over: `_DIGEST` for `_CODE`."""
+
+    def __init__(self) -> None:
+        self.users: list[uuid.UUID] = []
+        self.closed = False
+
+    def recovery_code_digests(self, code: str, user_id: uuid.UUID) -> tuple[str, ...]:
+        self.users.append(user_id)
+        return (_DIGEST,) if code == _CODE else ("00" * 32,)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+async def test_live_rule_checks_the_code_with_the_live_digest_session(
     tmp_path: Path, stores: _Stores, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # In live the reset hashes the operator's code with cv-api's recovery-code key (O3, the
-    # ratified rule). `file` KEKs are refused in live, so the proof's answer is given here.
-    async def proven(*_: Any) -> KekCheckResult:
-        return KekCheckResult(1, True, None)
+    """In live the reset digests the operator's code in the session the KEK proof opened in its
+    custody pass (#2152 S6, BQ-11; O3, the ratified rule), for the Owner it resets, and the run
+    closes the session when it ends. `file` KEKs are refused in live, so the proof is given."""
+    session, seen = _Session(), []
 
-    monkeypatch.setattr(breakglass_wiring, "prove_kek_possession", proven)
+    async def proven(settings: Settings, kcv: Any, auth_keys: Any) -> Any:
+        seen.append(auth_keys)
+        return KekCheckResult(1, True, None), session
+
+    monkeypatch.setattr(breakglass_wiring, "open_recovery_digests", proven)
     settings = _settings(tmp_path).model_copy(update={"environment": Environment.LIVE})
     status, _ = await _run(settings, stores)
-    assert status is X.RESET
-    assert stores.owners.hashes == [hash_recovery_code(_CODE, key=_KEY)]
+    assert status is X.RESET and seen == [stores.auth_keys]
+    assert stores.owners.hashes == [_DIGEST] and session.users == [_OWNER_ID]
+    assert session.closed
+
+
+async def test_a_live_keyring_problem_refuses_as_an_unproven_kek_before_the_code(
+    tmp_path: Path, stores: _Stores, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2152 BQ-11: `KEK_UNPROVEN` (status 9) with the keyring's reason; no code is asked for."""
+
+    async def missing(*_: Any) -> Any:
+        return KekCheckResult(None, False, "auth_keyring_missing"), None
+
+    monkeypatch.setattr(breakglass_wiring, "open_recovery_digests", missing)
+    settings = _settings(tmp_path).model_copy(update={"environment": Environment.LIVE})
+    status, operator = await _run(settings, stores)
+    assert status is X.KEK_UNPROVEN and stores.owners.hashes == []
+    assert any("kek_unproven: auth_keyring_missing" in line for line in operator.lines)
 
 
 @pytest.mark.parametrize("stuck", [False, True], ids=["released", "release-fails"])
@@ -349,19 +387,17 @@ async def test_run_builds_and_releases_its_own_pool(
     # it has ended; a pool that will not close is logged, and the run's status stands.
     dsns: list[str] = []
 
-    def database(dsn: str) -> _Stores:
-        dsns.append(dsn)
+    def database(dsn: str, *, env: str) -> _Stores:
+        dsns.append(f"{env}:{dsn}")
         stores.stuck = stuck
         return stores
 
     monkeypatch.setattr(breakglass, "SqlAlchemyBreakGlassDatabase", database)
     settings = _settings(tmp_path)
     with capture_logs() as logs:
-        status = await breakglass.run(
-            settings, "nobody", live_flag=False, recovery_code_key=_KEY, terminal=_Operator()
-        )
+        status = await breakglass.run(settings, "nobody", live_flag=False, terminal=_Operator())
     assert status is X.NOT_OWNER
-    assert dsns == [settings.pg_dsn.get_secret_value()] and stores.disposed == 1
+    assert dsns == [f"demo:{settings.pg_dsn.get_secret_value()}"] and stores.disposed == 1
     unreleased = [e for e in logs if e["event"] == "breakglass.pool_not_released"]
     assert unreleased == ([{"event": "breakglass.pool_not_released", "error": "OSError",
                            "log_level": "warning"}] if stuck else [])  # fmt: skip
@@ -371,7 +407,6 @@ async def test_run_builds_and_releases_its_own_pool(
 def cli_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
     monkeypatch.chdir(tmp_path)  # no stray `.env` file is read
     monkeypatch.setenv("CV_ENVIRONMENT", "demo")
-    monkeypatch.setenv("CV_AUTH_RECOVERY_HMAC_KEY_HEX", _KEY.hex())
     yield
     reset_logging()
 
@@ -401,22 +436,16 @@ def test_logging_configured_first(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     calls: list[str] = []
-    key = breakglass.recovery_code_key
 
     def logging_first(**kw: Any) -> None:
         calls.append("logging")
         configure_logging(**kw)
 
-    def key_second(settings: Settings) -> bytes | None:
-        calls.append("key")
-        return key(settings)
-
     monkeypatch.setattr(breakglass, "configure_logging", logging_first)
-    monkeypatch.setattr(breakglass, "recovery_code_key", key_second)
     monkeypatch.setattr(breakglass, "run", _fake_run(calls, X.RESET))
     assert _main(["--owner", "alice"]) == 0
     [line] = [json.loads(out) for out in capsys.readouterr().out.splitlines() if "probe" in out]
-    assert calls == ["logging", "key", "run"]
+    assert calls == ["logging", "run"]
     assert (line["recovery_code"], line["env"]) == ("[redacted:key-name]", "demo")
 
 
@@ -443,9 +472,6 @@ def test_main_exits_with_the_runs_status(
 @pytest.mark.parametrize(("variable", "value", "message"), [
     P("CV_ENVIRONMENT", "nowhere", "invalid settings (ValidationError)", id="settings"),
     P("CV_LOG_FORMAT", "console", "invalid settings (ValueError)", id="logging"),
-    P("CV_AUTH_RECOVERY_HMAC_KEY_HEX", None, "recovery-code key", id="no-key"),
-    P("CV_AUTH_RECOVERY_HMAC_KEY_HEX", "zz" * 32, "recovery-code key", id="not-hex"),
-    P("CV_AUTH_RECOVERY_HMAC_KEY_HEX", "ab" * 16, "recovery-code key", id="short-key"),
 ])  # fmt: skip
 def test_unusable_settings_exit_2_before_any_record(
     monkeypatch: pytest.MonkeyPatch,
@@ -464,6 +490,22 @@ def test_unusable_settings_exit_2_before_any_record(
     captured = capsys.readouterr()
     assert message in captured.err and "nothing ran" in captured.err and calls == []
     assert value is None or value not in captured.err + captured.out
+
+
+@pytest.mark.usefixtures("cli_env")
+def test_live_with_an_old_env_auth_key_exits_2_naming_only_the_variable(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#2152 BQ-11 (AC2): the CLI reads no key, and live refuses the old setting before any
+    check or record."""
+    calls: list[str] = []
+    monkeypatch.setattr(breakglass, "run", _fake_run(calls, X.RESET))
+    monkeypatch.setenv("CV_ENVIRONMENT", "live")
+    monkeypatch.setenv("CV_AUTH_RECOVERY_HMAC_KEY_HEX", "ab" * 32)
+    assert _main(["--owner", "alice", "--live"]) == breakglass.EXIT_INVALID
+    captured = capsys.readouterr()
+    assert "auth_key_env_forbidden: CV_AUTH_RECOVERY_HMAC_KEY_HEX" in captured.err
+    assert "ab" * 32 not in captured.err + captured.out and calls == []
 
 
 def test_owner_is_required() -> None:
@@ -517,13 +559,3 @@ def test_tty_is_not_interactive_on_a_pipe() -> None:
     read, write = os.pipe()
     with open(read) as stdin, open(write, "w") as stdout:
         assert not breakglass._Tty(stdin, stdout).is_interactive()
-
-
-@pytest.mark.parametrize(("configured", "key"), [
-    P(_KEY.hex(), _KEY, id="hex"), P(None, None, id="unset"), P("ab", None, id="short"),
-])  # fmt: skip
-def test_recovery_code_key_is_32_bytes_of_hex(configured: str | None, key: bytes | None) -> None:
-    settings = Settings(
-        auth_recovery_hmac_key_hex=None if configured is None else SecretStr(configured)
-    )
-    assert breakglass.recovery_code_key(settings) == key

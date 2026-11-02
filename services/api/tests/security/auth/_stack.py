@@ -23,7 +23,6 @@ from prometheus_client import REGISTRY
 
 import candleviewer.app as appmod
 from candleviewer.audit.actions import validate_action
-from candleviewer.auth.env_keyring import EnvMfaKeyring
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind
@@ -33,7 +32,7 @@ from candleviewer.auth.totp import generate_code, time_step_for
 from candleviewer.ws.gateway import make_ws_router
 from tests.csrf_helpers import csrf_headers
 from tests.unit.auth.auth_fakes import FakeUserRepository, InMemoryOwnerReset, make_user
-from tests.unit.auth.mfa_fakes import FakeMfaRepository
+from tests.unit.auth.mfa_fakes import FakeMfaKeyring, FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 from tests.unit.auth.test_invite_service import FakeRepo as FakeInviteRepository
 
@@ -110,9 +109,12 @@ class Stack:
         users: FakeUserRepository,
         clock: Clock,
         resolver: Resolver,
+        keyring: FakeMfaKeyring,
     ) -> None:
         self.client = client
         self.auth = auth
+        #: The MFA keyring the stack's auth uses (#2152): `keyring.down` makes it refuse.
+        self.keyring = keyring
         self.users = users
         self.clock = clock
         self.resolver = resolver
@@ -201,6 +203,7 @@ def open_stack(
     listed: tuple[str, ...] = (),
     backend_connection: bool = False,
     gateway_clock: bool = True,
+    keyring: FakeMfaKeyring | None = None,
     **create_app_kwargs: Any,
 ) -> Iterator[Stack]:
     """*listed* origins join `ORIGIN` in the SR-042 allow-list (the shell's `app://candleviewer`,
@@ -212,11 +215,12 @@ def open_stack(
     clock = Clock()
     monkeypatch.setenv("CV_ALLOWED_ORIGINS", ",".join((ORIGIN, *listed)))
     users, mfa, sessions = FakeUserRepository(), FakeMfaRepository(), FakeSessionRepository()
+    keyring = keyring or FakeMfaKeyring()  # fixed test keys (C-13.5)
     auth = AuthService(
         users,
         pepper=_PEPPER,
         mfa_repository=mfa,
-        mfa_keyring=EnvMfaKeyring(bytes(range(32)), bytes(range(32, 64))),  # fixed test keys
+        mfa_keyring=keyring,
         session_repository=sessions,
         invite_repository=FakeInviteRepository(),
         clock=clock,
@@ -244,7 +248,7 @@ def open_stack(
         app, base_url=ORIGIN, client=("127.0.0.1", 50000), raise_server_exceptions=False
     )
     with client:
-        stack = Stack(client, auth, users, clock, resolver)
+        stack = Stack(client, auth, users, clock, resolver, keyring)
         stack.call(auth.start, stack.state.app_context)
         try:
             yield stack

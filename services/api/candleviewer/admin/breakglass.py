@@ -3,8 +3,9 @@ model U10 and Sec.3.6.1, KV-E08, ADR-0009 Amendment 1). `admin.breakglass_wiring
 ports and `python -m candleviewer.breakglass` runs the flow (slice 5).
 
 Fixed order: the host journal under the run lock; the write-ahead `auth.break_glass_attempt`;
-`--live` against the configured environment; the KEK proof; the cv-api probe; the Owner; a TTY
-and a retyped phrase; in `live` one Owner recovery code (echo off); the one-transaction reset;
+`--live` against the configured environment; the KEK proof (in `live`, with M2's digest session of
+the recovery key, #2152 S6); the cv-api probe; the Owner; a TTY and a retyped phrase; in `live` one
+Owner recovery code (echo off); the one-transaction reset;
 `auth.break_glass_refused` or `auth.break_glass_reset`; a bounded close (what Postgres did not
 take stays in the journal for cv-api's boot fold-in). Without a journal nothing else runs: the
 attempt and the refusal go straight to `audit_log` if it is reachable (else: a pre-audit
@@ -195,7 +196,8 @@ class BreakGlassPorts:
     open_journal: Callable[[], Awaitable[AuditTrail]]
     #: Straight to `audit_log` (scenario S3), or None while Postgres is unreachable.
     open_direct: Callable[[], Awaitable[AuditTrail | None]]
-    #: `secrets.prove_kek_possession`: metadata only, never enrols (decision O1).
+    #: `secrets.prove_kek_possession`, never enrols (decision O1); in live
+    #: `secrets.open_recovery_digests`, which also opens the reset's digest session (#2152 S6).
     prove_kek: Callable[[], Awaitable[KekCheckResult]]
     #: True while another session of the CLI's database role is connected (R2c): the
     #: `pg_stat_activity` probe of `SqlAlchemyBreakGlassDatabase.others_connected`.
@@ -663,8 +665,13 @@ class BreakGlassFlow(HostGatedFlow[uuid.UUID]):
     async def run(self, owner: str, *, live_flag: bool) -> BreakGlassExit:
         """Reset the MFA of the Owner named `owner` (username or email); `live_flag` is
         `--live`. Returns the exit status; no secret reaches the terminal or the log. A cancel
-        is recorded and summarised first, then re-raised as `RunCancelled` with the status."""
-        return _X(await self._run(owner, live_flag=live_flag))
+        is recorded and summarised first, then re-raised as `RunCancelled` with the status.
+        Whatever the end, a cancel included, the live digest session the KEK proof opened is
+        closed, its key zeroed (#2152 BQ-11)."""
+        try:
+            return _X(await self._run(owner, live_flag=live_flag))
+        finally:
+            self._ports.reset.close()
 
     async def _target(self, records: _Records, owner: str) -> _Verdict | uuid.UUID:
         target = await self._step("owner_lookup", lambda: self._ports.resolve_owner(owner))
