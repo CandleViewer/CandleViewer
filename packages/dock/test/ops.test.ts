@@ -158,6 +158,22 @@ describe("operations", () => {
     expect(code(() => activateTab(three, "nope", 0, ctx()))).toBe("unknown_target");
   });
 
+  it("activateTab clamps an out-of-range or non-integer index into the group (pinned, not refused)", () => {
+    // A UI op, not the import boundary: `22`'s active_out_of_range applies to a stored spec, which
+    // fromLayout refuses; a stale index from the UI lands on the nearest tab instead.
+    const two = tabify(preset("2x1", ["a", "b"]), "a", "b", ctx());
+    expect(shape(two.root)).toMatchObject({ tabs: [{ pane: "b" }, { pane: "a" }], active: 1 });
+    const active = (index: number): unknown => {
+      const node = activateTab(two, two.root?.id as string, index, ctx()).root;
+      return node?.type === "tabset" ? node.active : "not a tab group";
+    };
+    expect(active(99)).toBe(1);
+    expect(active(-3)).toBe(0);
+    expect(active(Number.NaN)).toBe(0);
+    expect(active(Number.POSITIVE_INFINITY)).toBe(1);
+    expect(active(1.7)).toBe(1);
+  });
+
   it("close removes a docked, floating or minimised pane", () => {
     expect(shape(close(grid(), "a", ctx()).root)).toMatchObject({
       column: [{ pane: "b" }, { row: [{ pane: "c" }, { pane: "d" }] }],
@@ -176,6 +192,11 @@ describe("operations", () => {
     const far = asSplit(resize(tree, sep, 5, ctx(false)).root);
     expect(far.sizes[1]).toBeCloseTo(0.01);
     expect(resize(tree, sep, Number.NaN, ctx(false)).root).toMatchObject({ sizes: [0.5, 0.5] });
+    // Pinned clamps: a delta past either floor stops at the floor; a non-finite delta is no move.
+    const back = asSplit(resize(tree, sep, -5, ctx(false)).root);
+    expect(back.sizes[0]).toBeCloseTo(0.01);
+    const inf = resize(tree, sep, Number.NEGATIVE_INFINITY, ctx(false)).root;
+    expect(inf).toMatchObject({ sizes: [0.5, 0.5] });
     expect(code(() => resize(tree, `${tree.root?.id}/1`, 0.1, ctx()))).toBe("unknown_target");
     expect(code(() => resize(tree, "nope/0", 0.1, ctx()))).toBe("unknown_target");
     const moved = resize(tree, sep, 0.2, ctx(false));

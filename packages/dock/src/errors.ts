@@ -21,6 +21,8 @@ export const DOCK_ERROR_CODES = Object.freeze([
   "unknown_target",
   /** An operation that cannot apply (a tab into a split, a preset with the wrong pane count). */
   "invalid_operation",
+  /** A stored `grid_preset` that is neither `custom` nor a named preset (refused, never guessed). */
+  "unknown_preset",
 ] as const);
 
 export type DockErrorCode = (typeof DOCK_ERROR_CODES)[number];

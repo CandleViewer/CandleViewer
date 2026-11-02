@@ -93,7 +93,7 @@ describe("serialisation (Gherkin: Serialisation matches the stored schema)", () 
     expect(back.minimised).toHaveLength(2);
   });
 
-  it("reads a named grid short of panes as one row, and an unknown or empty grid as nothing docked", () => {
+  it("reads a named grid short of panes as one row, and an empty grid as nothing docked", () => {
     const pane = (slot: number) => ({
       slot_index: slot,
       pane_kind: "chart" as const,
@@ -108,15 +108,26 @@ describe("serialisation (Gherkin: Serialisation matches the stored schema)", () 
           .root,
       ),
     ).toMatchObject({ row: [{}, {}] });
-    const odd = {
-      grid_preset: "4x4",
-      grid_spec: null,
-      panes: [pane(0)],
-    } as unknown as StoredArrangement;
-    expect(fromLayout(odd, read).tree.minimised).toHaveLength(1);
     expect(
       fromLayout({ grid_preset: "1x1", grid_spec: null, panes: [] }, read).tree.root,
     ).toBeNull();
+  });
+
+  it("fromLayout_unknownPreset_rejects: a preset neither custom nor named is refused, not minimised", () => {
+    const pane = {
+      slot_index: 0,
+      pane_kind: "chart" as const,
+      symbol: null,
+      interval_code: null,
+      chart_template_id: null,
+      scale_mode: "auto" as const,
+    };
+    for (const grid_preset of ["4x4", "", "CUSTOM", null, 7]) {
+      const odd = { grid_preset, grid_spec: null, panes: [pane] } as unknown as StoredArrangement;
+      expect(() => fromLayout(odd, read)).toThrow(
+        expect.objectContaining({ code: "unknown_preset", path: "grid_preset" }),
+      );
+    }
   });
 
   it("refuses more than 16 panes on write", () => {

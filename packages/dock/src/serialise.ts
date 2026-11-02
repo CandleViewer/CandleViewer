@@ -210,7 +210,8 @@ function build(node: GridNode, leafOf: (slot: number) => DockLeaf, mint: IdMinte
 
 /**
  * The tree and the per-pane fields of a stored layout, with fresh ids. Panes no leaf names are
- * minimised; a named grid with fewer panes than cells lays them out as one row. Throws `DockError`.
+ * minimised; a named grid with fewer panes than cells lays them out as one row. A `grid_preset`
+ * that is neither `custom` nor a named preset is refused (`unknown_preset`). Throws `DockError`.
  */
 export function fromLayout(
   layout: StoredArrangement,
@@ -238,13 +239,21 @@ export function fromLayout(
     return bySlot.get(slot) as DockLeaf; // validated: every leaf names a known slot
   };
   let root: DockNode | null = null;
+  if (
+    layout.grid_preset !== "custom" &&
+    !NAMED_PRESETS.includes(layout.grid_preset as NamedPreset)
+  ) {
+    // A tampered or garbled preset is refused at the boundary, never read as "nothing docked".
+    // The stored value is not echoed: it is untrusted and unbounded.
+    throw new DockError("unknown_preset", "grid_preset is not a known preset", "grid_preset");
+  }
   if (layout.grid_preset === "custom") {
     const issue = validateGridSpec(layout.grid_spec, new Set(slots));
     if (issue !== null) {
       throw new DockError(issue.rule, `grid_spec breaks rule ${issue.rule}`, issue.path);
     }
     root = build((layout.grid_spec as GridSpec).root, leafOf, ctx.mint);
-  } else if (NAMED_PRESETS.includes(layout.grid_preset as NamedPreset) && slots.length > 0) {
+  } else if (slots.length > 0) {
     const preset = layout.grid_preset as NamedPreset;
     const cells = slots.slice(0, PRESET_CELLS[preset]);
     root =
