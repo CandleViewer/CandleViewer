@@ -1,0 +1,17 @@
+# E19-D04 ruled pins: sha256[:16] of each BQ bullet; written by --repin-ruled only
+BQ-0 bcc2f1219c1a6b97
+BQ-1 798feeff941e894b
+BQ-2 a32b7a74d7980932
+BQ-3 1d5e6269a2ef49ae
+BQ-4 86083b209c9e0a72
+BQ-5 f00968207cb249be
+BQ-6 8d2e31d29b11bade
+BQ-7 1baf81282d5e7025
+BQ-8 4f070057bf8e6c57
+BQ-9 c431e83bb2653c05
+BQ-10 b16adc40902cef5a
+BQ-11 394d9faf746a9270
+BQ-12 d407e896d8a94dc3
+BQ-13 2d07b5ddfe15b12f
+BQ-14 ebcb56e0dc71cc0b
+BQ-15 1ed404607553dcfa
