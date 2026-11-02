@@ -65,6 +65,7 @@ from candleviewer.storage.repositories.trade_groups import (
     NewTradeGroupLeg,
     TradeGroupRecord,
     TradeGroupStoreConflictError,
+    TradeGroupStoreDecodeError,
     TradeGroupStoreRefusedError,
     TradeGroupStoreRuleError,
     TradeGroupStoreScopeDeniedError,
@@ -1066,8 +1067,55 @@ async def test_load_leg_decodes_the_snapshot_exactly() -> None:
 
 async def test_a_stored_float_is_refused_on_read() -> None:
     rel = _Rel(_Result([_group_mapping(algo_params='{"tp": 1.5}')]), _Result([]))
-    with pytest.raises(ValueError, match="fraction"):
+    with pytest.raises(TradeGroupStoreDecodeError) as ei:
         await _store(rel).load_group(_GROUP)
+    assert ei.value.error == "ValueError" and ei.value.__cause__ is None
+    assert "1.5" not in str(ei.value) and ei.value.__suppress_context__
+
+
+_BAD_DATA: list[tuple[Any, dict[str, Any]]] = [
+    (mod.group_row, _group_mapping() | {"algo_params": "{not json"}),
+    (mod.group_row, _group_mapping() | {"created_by": "not-a-uuid"}),
+    (mod.leg_row, _leg_mapping() | {"id": "not-a-uuid"}),
+    (mod._snapshot, {"profile_snapshot": "[1, 2]"}),
+    (mod._anchor, {"id": "not-a-uuid", "body_matches": True}),
+]
+
+
+@pytest.mark.parametrize(
+    ("decode", "row"),
+    _BAD_DATA,
+    ids=["algo-json", "group-uuid", "leg-uuid", "snapshot-shape", "anchor-uuid"],
+)
+def test_a_decoder_raises_the_typed_error_for_malformed_stored_data(
+    decode: Any, row: dict[str, Any]
+) -> None:
+    """Malformed stored DATA (bad JSON, a bad UUID, a non-object snapshot) is the one typed
+    `TradeGroupStoreDecodeError`, unchained, naming the error class only."""
+    with pytest.raises(TradeGroupStoreDecodeError) as ei:
+        decode(row)
+    assert ei.value.error in {"ValueError", "JSONDecodeError"} and ei.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("decode", "row", "column"),
+    [
+        (mod.group_row, _group_mapping(), "symbol"),
+        (mod.leg_row, _leg_mapping(), "status"),
+        (mod._snapshot, {"profile_snapshot": "{}"}, "profile_snapshot"),
+        (mod._anchor, {"id": str(_GROUP), "body_matches": True}, "id"),
+        (mod._anchor, {"id": str(_GROUP), "body_matches": True}, "body_matches"),
+    ],
+    ids=["group", "leg", "snapshot", "anchor-id", "anchor-body"],
+)
+def test_a_missing_column_is_a_loud_key_error_never_a_decode_error(
+    decode: Any, row: dict[str, Any], column: str
+) -> None:
+    """A missing column is a schema or programming error: it propagates as a `KeyError`, so the
+    facade never reads it as an unreadable stored row."""
+    row = {k: v for k, v in row.items() if k != column}
+    with pytest.raises(KeyError):
+        decode(row)
 
 
 @pytest.mark.parametrize(
@@ -1121,3 +1169,24 @@ async def test_list_unprotected_legs_carries_what_the_alarm_needs() -> None:
     assert (row.symbol, row.side, row.env, row.is_paper) == ("BTCUSDT", "Buy", "live", False)
     assert row.leg.status == "filled" and not row.leg.native_sl_confirmed
     assert rel.commits == 0 and _sql(rel.calls[0]) == _sql(mod.unprotected_legs_statement())
+
+
+def test_a_deeply_nested_stored_blob_is_a_decode_error() -> None:
+    """Deep nesting overflows the JSON parser's stack: malformed data, the typed error."""
+    deep = "[" * 100_000 + "]" * 100_000
+    with pytest.raises(TradeGroupStoreDecodeError) as ei:
+        mod.group_row(_group_mapping() | {"algo_params": '{"a": ' + deep + "}"})
+    assert ei.value.error == "RecursionError" and ei.value.__cause__ is None
+
+
+@pytest.mark.parametrize("build", [mod.group_row, mod.leg_row], ids=["group", "leg"])
+def test_a_row_constructor_field_mismatch_propagates_and_is_not_a_decode_error(
+    build: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A field-name drift is a programming error: the constructor's `TypeError` stays loud."""
+    name = "GROUP_FIELDS" if build is mod.group_row else "LEG_FIELDS"
+    monkeypatch.setattr(mod, name, (*getattr(mod, name), "drifted"))
+    row = (_group_mapping() if build is mod.group_row else _leg_mapping()) | {"drifted": 1}
+    with pytest.raises(TypeError) as ei:
+        build(row)
+    assert not isinstance(ei.value, TradeGroupStoreDecodeError)

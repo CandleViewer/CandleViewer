@@ -113,6 +113,7 @@ from candleviewer.storage.repositories.trade_groups import (
     TradeGroupRow,
     TradeGroupStatus,
     TradeGroupStoreConflictError,
+    TradeGroupStoreDecodeError,
     TradeGroupStoreRefusedError,
     TradeGroupStoreRuleError,
     TradeGroupStoreScopeDeniedError,
@@ -443,6 +444,20 @@ def scoped_leg_orders_statement(scope: AccountScope, leg_ids: Iterable[UUID]) ->
 # -- rows ----------------------------------------------------------------------------------------
 
 
+@contextmanager
+def _decoding() -> Iterator[None]:
+    """Malformed stored DATA (bad JSON, a bad UUID, decimal or enum: a `ValueError`, `TypeError`
+    or `ArithmeticError`, or a `RecursionError` from deeply nested JSON) raised as
+    `TradeGroupStoreDecodeError`, unchained (the text of a decoder error can carry a value). A
+    missing column (`KeyError`) or a row constructor given a wrong field name (`TypeError`) is a
+    schema or programming error, so callers read the columns and build the row OUTSIDE this
+    block and it propagates, loud."""
+    try:
+        yield
+    except (ValueError, TypeError, ArithmeticError, RecursionError) as exc:
+        raise TradeGroupStoreDecodeError(type(exc).__name__) from None
+
+
 def _uuid(value: object) -> UUID:
     return UUID(str(value))
 
@@ -452,19 +467,27 @@ def _opt_uuid(value: object) -> UUID | None:
 
 
 def group_row(m: Mapping[Any, Any]) -> TradeGroupRow:
-    values: dict[str, Any] = {name: m[name] for name in GROUP_FIELDS}
-    for name in _GROUP_UUIDS:
-        values[name] = _opt_uuid(values[name])
-    params = values["algo_params"]
-    values["algo_params"] = None if params is None else parse_json(str(params))
-    return TradeGroupRow(**values)
+    values: dict[str, Any] = {name: m[name] for name in GROUP_FIELDS}  # a missing column: loud
+    with _decoding():
+        for name in _GROUP_UUIDS:
+            values[name] = _opt_uuid(values[name])
+        params = values["algo_params"]
+        values["algo_params"] = None if params is None else parse_json(str(params))
+    return TradeGroupRow(**values)  # a field-name drift (TypeError): loud
 
 
 def leg_row(m: Mapping[Any, Any]) -> TradeGroupLegRow:
-    values: dict[str, Any] = {name: m[name] for name in LEG_FIELDS}
-    for name in _LEG_UUIDS:
-        values[name] = _opt_uuid(values[name])
-    return TradeGroupLegRow(**values)
+    values: dict[str, Any] = {name: m[name] for name in LEG_FIELDS}  # a missing column: loud
+    with _decoding():
+        for name in _LEG_UUIDS:
+            values[name] = _opt_uuid(values[name])
+    return TradeGroupLegRow(**values)  # a field-name drift (TypeError): loud
+
+
+def _snapshot(m: Mapping[Any, Any]) -> JsonObject:
+    text = m["profile_snapshot"]  # a missing column: loud
+    with _decoding():
+        return parse_json(str(text))
 
 
 def in_order(legs: Iterable[TradeGroupLegRow]) -> tuple[TradeGroupLegRow, ...]:
@@ -484,7 +507,9 @@ def _records(
 
 
 def _anchor(m: Mapping[Any, Any]) -> GroupAnchor:
-    return GroupAnchor(group_id=_uuid(m["id"]), body_matches=bool(m["body_matches"]))
+    group_id, body_matches = m["id"], m["body_matches"]  # a missing column: loud
+    with _decoding():
+        return GroupAnchor(group_id=_uuid(group_id), body_matches=bool(body_matches))
 
 
 # -- the share-locked re-check ---------------------------------------------------------------------
@@ -700,7 +725,7 @@ class SqlAlchemyTradeGroupStore:
             m = (await uow.session.execute(leg_statement(leg_id))).mappings().first()
         if m is None:
             return None
-        return LegSnapshotRow(leg_row(m), parse_json(str(m["profile_snapshot"])))
+        return LegSnapshotRow(leg_row(m), _snapshot(m))
 
     async def list_open_groups(self) -> tuple[TradeGroupRecord, ...]:
         async with self._unit_of_work() as uow:

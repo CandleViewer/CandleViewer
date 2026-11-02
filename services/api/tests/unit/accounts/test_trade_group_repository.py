@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -67,6 +67,7 @@ from candleviewer.storage.repositories.trade_groups import (
     TradeGroupRow,
     TradeGroupStatus,
     TradeGroupStoreConflictError,
+    TradeGroupStoreDecodeError,
     TradeGroupStoreError,
     TradeGroupStoreRefusedError,
     TradeGroupStoreRuleError,
@@ -633,29 +634,42 @@ _CALL_IDS: dict[str, dict[str, str]] = {
 }
 
 
+@pytest.mark.parametrize("error", ["ValueError", "JSONDecodeError", "TypeError"])
+@pytest.mark.parametrize("call", list(_CALLS))
+async def test_a_row_the_store_cannot_decode_fails_closed_on_every_call(
+    call: str, error: str
+) -> None:
+    """The store's typed `TradeGroupStoreDecodeError` (`parse_json` refusing a stored
+    `algo_params` or snapshot, a bad UUID) fails closed as a row a model refuses does: one
+    `AccountsError`, unchained, and a log of the ids and the error class, never a value."""
+    raised = TradeGroupStoreDecodeError(error)
+    repo, store = _repo(raised)
+    with structlog.testing.capture_logs() as logs, pytest.raises(AccountsError) as exc:
+        await _CALLS[call](repo)
+    assert type(exc.value) is AccountsError and str(exc.value) == "stored trade group unreadable"
+    assert exc.value.__cause__ is None and exc.value.__suppress_context__
+    assert logs == [
+        {"event": "trade_group.read_failed_closed", "error": error, "log_level": "warning"}
+        | _CALL_IDS[call]
+    ]
+    assert len(store.calls) == 1
+
+
 @pytest.mark.parametrize(
     "raised",
     [ValueError(f"{_MARK} fraction"), TypeError(_MARK), KeyError(_MARK), ArithmeticError(_MARK)],
     ids=["value", "type", "key", "arithmetic"],
 )
 @pytest.mark.parametrize("call", list(_CALLS))
-async def test_a_row_the_store_cannot_decode_fails_closed_on_every_call(
+async def test_a_programming_error_in_the_store_propagates_and_is_never_unreadable(
     call: str, raised: Exception
 ) -> None:
-    """`parse_json` refusing a stored `algo_params` or snapshot, or any other decode error the
-    store raises, fails closed as a row a model refuses does: one `AccountsError`, unchained,
-    and a log of the ids and the error class, never a value."""
+    """A `ValueError`, `TypeError`, `KeyError` (a missing column) or `ArithmeticError` the store
+    raises is not malformed stored data: it stays loud as it is, unwrapped and unlogged."""
     repo, store = _repo(raised)
-    with structlog.testing.capture_logs() as logs, pytest.raises(AccountsError) as exc:
+    with structlog.testing.capture_logs() as logs, pytest.raises(type(raised)) as exc:
         await _CALLS[call](repo)
-    assert type(exc.value) is AccountsError and str(exc.value) == "stored trade group unreadable"
-    assert exc.value.__cause__ is None and exc.value.__suppress_context__
-    error = type(raised).__name__
-    assert logs == [
-        {"event": "trade_group.read_failed_closed", "error": error, "log_level": "warning"}
-        | _CALL_IDS[call]
-    ]
-    assert _MARK not in repr(logs) and len(store.calls) == 1
+    assert exc.value is raised and logs == [] and len(store.calls) == 1
 
 
 # -- the scoped read (SR-E28-21) -------------------------------------------------------------------
@@ -689,6 +703,33 @@ async def test_a_scoped_miss_is_not_found_and_a_false_owner_is_denied() -> None:
     assert denied.value.__cause__ is None and denied.value.__suppress_context__
 
 
+_WITHOUT_LEGS_LOG: dict[str, Any] = {
+    "event": "trade_group.scoped_read_without_legs",
+    "log_level": "warning",
+}
+
+
+@dataclass(frozen=True)
+class _ThirdScope:
+    """A scope no store knows: a future `AccountScope` member."""
+
+    user_id: UUID
+
+
+async def test_a_third_scope_is_denied_by_default_a_leg_less_group_is_never_served() -> None:
+    """Deny by default (SEC-2B2-R3-01): only an `OwnerScope` may see a group without legs, so
+    any other scope, a future member of `AccountScope` included, is refused and logged."""
+    bare = TradeGroupRecord(group=_GROUP_ROW, legs=())
+    third = cast(AccountScope, _ThirdScope(_USER))
+    with structlog.testing.capture_logs() as logs, pytest.raises(AccountNotFoundError):
+        await TradeGroupReader(_Store(bare)).get(third, GroupId(_GROUP))
+    assert logs == [_WITHOUT_LEGS_LOG | {"group_id": str(_GROUP)}]
+    with structlog.testing.capture_logs() as logs:
+        page = await TradeGroupReader(_Store((bare, _RECORD))).list(third, **_PAGE)
+    assert [s.record.group.group_id for s in page] == [_GROUP]
+    assert logs == [_WITHOUT_LEGS_LOG | {"group_id": str(_GROUP)}]
+
+
 async def test_a_grant_scoped_read_never_serves_a_group_without_legs() -> None:
     """SR-E28-21: a grant sees a group through its legs, and the store's legs read is all or
     none, so a group answered without legs (a store that regressed) reads as a miss, as an
@@ -697,7 +738,9 @@ async def test_a_grant_scoped_read_never_serves_a_group_without_legs() -> None:
     grant = GrantScope(_USER, frozenset({_P.account_id}))
     with structlog.testing.capture_logs() as logs, pytest.raises(AccountNotFoundError) as missing:
         await TradeGroupReader(_Store(bare)).get(grant, GroupId(_GROUP))
-    assert missing.value.entity == "trade_group" and logs == []
+    assert missing.value.entity == "trade_group"
+    assert logs == [_WITHOUT_LEGS_LOG | {"group_id": str(_GROUP)}]  # ids only, never a value
+    assert _MARK not in repr(logs)
     owner = await TradeGroupReader(_Store(bare)).get(_OWNER, GroupId(_GROUP))
     assert owner.record.legs == () and owner.shows_private_fields
 
@@ -710,7 +753,7 @@ async def test_a_scoped_read_passes_storage_errors_and_fails_closed_on_a_bad_row
     bad = TradeGroupRecord(group=replace(_GROUP_ROW, **_LONG), legs=())
     with pytest.raises(AccountsError, match="stored trade group unreadable"):
         await TradeGroupReader(_Store(bad)).get(_OWNER, GroupId(_GROUP))
-    undecodable = TradeGroupReader(_Store(ValueError(f"{_MARK} fraction")))
+    undecodable = TradeGroupReader(_Store(TradeGroupStoreDecodeError("ValueError")))
     with structlog.testing.capture_logs() as logs, pytest.raises(AccountsError) as failed:
         await undecodable.get(_OWNER, GroupId(_GROUP))
     assert str(failed.value) == "stored trade group unreadable" and failed.value.__cause__ is None

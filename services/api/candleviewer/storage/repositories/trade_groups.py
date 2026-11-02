@@ -69,10 +69,10 @@ __all__ = [
     "JsonObject", "JsonValue", "LegFailurePolicy", "LegPatch", "LegSnapshotRow", "LegStatus",
     "NewTradeGroup", "NewTradeGroupLeg", "OrderSide", "RequestedQtyMode", "TradeGroupLegRow",
     "TradeGroupReads", "TradeGroupRecord", "TradeGroupRefusal", "TradeGroupRow",
-    "TradeGroupStatus", "TradeGroupStore", "TradeGroupStoreConflictError", "TradeGroupStoreError",
-    "TradeGroupStoreRefusedError", "TradeGroupStoreRuleError", "TradeGroupStoreScopeDeniedError",
-    "TradeGroupStoreStaleError", "TriggerBy", "UnprotectedLegRow", "check_page", "parse_json",
-    "render_json",
+    "TradeGroupStatus", "TradeGroupStore", "TradeGroupStoreConflictError",
+    "TradeGroupStoreDecodeError", "TradeGroupStoreError", "TradeGroupStoreRefusedError",
+    "TradeGroupStoreRuleError", "TradeGroupStoreScopeDeniedError", "TradeGroupStoreStaleError",
+    "TriggerBy", "UnprotectedLegRow", "check_page", "parse_json", "render_json",
 ]  # fmt: skip
 
 #: A `jsonb` value as this store writes and reads it: no float anywhere (C2).
@@ -586,6 +586,16 @@ class TradeGroupStoreRefusedError(TradeGroupStoreError):
     def __init__(self, reason: TradeGroupRefusal) -> None:
         super().__init__(reason)
         self.reason: TradeGroupRefusal = reason
+
+
+class TradeGroupStoreDecodeError(TradeGroupStoreError):
+    """A stored row the store cannot decode: malformed stored DATA (bad JSON, a bad UUID, decimal
+    or enum), never a missing column or any other programming error, which stays loud.
+    `error` is the class name of what refused; no value is carried."""
+
+    def __init__(self, error: str) -> None:
+        super().__init__(error)
+        self.error = error
 
 
 class TradeGroupStoreStaleError(TradeGroupStoreError):

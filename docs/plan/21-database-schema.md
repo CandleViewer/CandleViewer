@@ -1770,7 +1770,7 @@ ALTER TABLE account_profile_revisions ENABLE ALWAYS TRIGGER trg_apr_no_truncate;
 
 #### 3.3.2 `trade_groups`
 
-A single ticket that fans out to N accounts. `client_group_ref` is the replay anchor: the request's `Idempotency-Key` (24 §8.3 rule 1), unique per creator (`UNIQUE (created_by, client_group_ref)`), never across users, so another user's key reads as a missing one; `client_body_sha256` is the request fingerprint the 24 h idempotency record keeps (24 §8.3 rule 1): the sha256 of the method, path and body (`request_fingerprint` in `api/idempotency.py`, the record's `digest`), so the same key on another request is told apart after that record has gone (G-6(b), #2876; SR-E29-07). A re-submitted ticket with the same key and body never creates a second group.
+A single ticket that fans out to N accounts. `client_group_ref` is the replay anchor: the request's `Idempotency-Key` (24 §8.3 rule 1), unique per creator (`UNIQUE (created_by, client_group_ref)`), never across users, so another user's key reads as a missing one; `client_body_sha256` is the request fingerprint the 24 h idempotency record keeps (`22-api-openapi.yaml` "### Idempotency"): the sha256 of the method, path and body (`request_fingerprint` in `api/idempotency.py`, the record's `digest`), so the same key on another request is told apart after that record has gone (G-6(b), #2876; SR-E29-07). A re-submitted ticket with the same key and body never creates a second group.
 
 | Column                    | Type               | Null | Default        | Constraints / notes                                                   |
 | ------------------------- | ------------------ | ---- | -------------- | --------------------------------------------------------------------- |
