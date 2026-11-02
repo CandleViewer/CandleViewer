@@ -13,7 +13,8 @@
         "announce_prices": "always",
         "verbosity": "normal",
         "cadence_ms": 2000,
-        "reduce": false
+        "reduce": false,
+        "whale": false
       },
       "duration_ms": 30000,
       "streams": [
@@ -99,18 +100,18 @@
       ],
       "expected": [
         {
-          "t": 1000,
+          "t": 3000,
           "channel": "polite",
           "class": "ambient-polite",
-          "rows": "T-35",
-          "text": "Tape: 1 trade, net buy, last 63,999.9"
+          "rows": "T-30",
+          "text": "Bid 63,999.9, ask 64,000.0"
         },
         {
-          "t": 5934,
+          "t": 6468,
           "channel": "polite",
           "class": "ambient-polite",
-          "rows": "T-30 T-31 T-35",
-          "text": "Bid 63,999.9, ask 64,000.0. Mark 64,000.2. Tape: 4 trades, net sell, last 64,000.0"
+          "rows": "T-30 T-31",
+          "text": "Bid 64,000.0, ask 64,000.1. Mark 64,000.2"
         },
         {
           "t": 10000,
@@ -130,22 +131,29 @@
           "t": 17134,
           "channel": "polite",
           "class": "ambient-polite",
-          "rows": "T-30 T-31 T-35",
-          "text": "Bid 63,999.9, ask 64,000.0. Mark 64,000.4. Tape: 6 trades, net buy, last 63,999.6"
+          "rows": "T-30 T-31",
+          "text": "Bid 63,999.9, ask 64,000.0. Mark 64,000.4"
         },
         {
-          "t": 27934,
+          "t": 22602,
           "channel": "polite",
           "class": "ambient-polite",
-          "rows": "T-30 T-35",
-          "text": "Bid 63,999.7, ask 63,999.8. Tape: 10 trades, net even, last 64,000.2"
+          "rows": "T-31",
+          "text": "Mark 64,000.3"
         },
         {
-          "t": 37002,
+          "t": 25602,
           "channel": "polite",
           "class": "ambient-polite",
-          "rows": "T-35",
-          "text": "Tape: 2 trades, net sell, last 64,000.2"
+          "rows": "T-30 T-31",
+          "text": "Bid 63,999.8, ask 63,999.9. Mark 64,000.4"
+        },
+        {
+          "t": 31070,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30",
+          "text": "Bid 63,999.7, ask 63,999.8"
         }
       ]
     },
@@ -156,7 +164,8 @@
         "announce_prices": "always",
         "verbosity": "normal",
         "cadence_ms": 2000,
-        "reduce": false
+        "reduce": false,
+        "whale": false
       },
       "duration_ms": 60000,
       "streams": [
@@ -248,25 +257,32 @@
       ],
       "expected": [
         {
-          "t": 25,
+          "t": 100,
           "channel": "polite",
           "class": "ambient-polite",
-          "rows": "T-35",
-          "text": "Tape: 1 trade, net buy, last 63,999.9"
+          "rows": "T-30 T-31",
+          "text": "Bid 63,999.9, ask 64,000.0. Mark 64,000.4"
         },
         {
-          "t": 4959,
+          "t": 5568,
           "channel": "polite",
           "class": "ambient-polite",
-          "rows": "T-30 T-31 T-35",
-          "text": "Bid 64,000.4, ask 64,000.5. Mark 64,001.6. Tape: 197 trades, net sell, last 63,997.9"
+          "rows": "T-30 T-31",
+          "text": "Bid 64,000.4, ask 64,000.5. Mark 64,001.7"
         },
         {
-          "t": 16159,
+          "t": 11036,
           "channel": "polite",
           "class": "ambient-polite",
-          "rows": "T-30 T-31 T-35",
-          "text": "Bid 63,999.5, ask 63,999.6. Mark 64,001.7. Tape: 448 trades, net sell, last 63,993.9"
+          "rows": "T-30 T-31",
+          "text": "Bid 64,000.3, ask 64,000.4. Mark 64,001.4"
+        },
+        {
+          "t": 16504,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31",
+          "text": "Bid 63,999.5, ask 63,999.6. Mark 64,001.8"
         },
         {
           "t": 20000,
@@ -276,18 +292,32 @@
           "text": "Filled. Market sell 0.2 BTCUSDT at 64,010.0."
         },
         {
-          "t": 27359,
+          "t": 22934,
           "channel": "polite",
           "class": "ambient-polite",
-          "rows": "T-30 T-31 T-35",
-          "text": "Bid 63,999.7, ask 63,999.8. Mark 64,001.1. Tape: 294 trades, net sell, last 63,992.3"
+          "rows": "T-30 T-31",
+          "text": "Bid 63,999.8, ask 63,999.9. Mark 64,001.6"
         },
         {
-          "t": 38559,
+          "t": 28402,
           "channel": "polite",
           "class": "ambient-polite",
-          "rows": "T-30 T-31 T-35",
-          "text": "Bid 63,999.5, ask 63,999.6. Mark 64,001.3. Tape: 448 trades, net sell, last 63,993.9"
+          "rows": "T-30 T-31",
+          "text": "Bid 63,999.3, ask 63,999.4. Mark 64,001.2"
+        },
+        {
+          "t": 33870,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31",
+          "text": "Bid 64,000.2, ask 64,000.3. Mark 64,000.5"
+        },
+        {
+          "t": 39338,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31",
+          "text": "Bid 63,999.4, ask 63,999.5. Mark 64,000.9"
         },
         {
           "t": 40000,
@@ -297,18 +327,32 @@
           "text": "Rejected. Limit buy 0.5 BTCUSDT at 64,000.0. Reason: insufficient margin."
         },
         {
-          "t": 49759,
+          "t": 44867,
           "channel": "polite",
           "class": "ambient-polite",
-          "rows": "T-30 T-31 T-35",
-          "text": "Bid 63,999.5, ask 63,999.6. Mark 63,999.5. Tape: 390 trades, net sell, last 63,992.6"
+          "rows": "T-30 T-31",
+          "text": "Bid 63,999.2, ask 63,999.3. Mark 64,000.4"
         },
         {
-          "t": 60959,
+          "t": 50335,
           "channel": "polite",
           "class": "ambient-polite",
-          "rows": "T-30 T-31 T-35",
-          "text": "Bid 64,000.9, ask 64,001.0. Mark 63,999.4. Tape: 409 trades, net buy, last 63,993.2"
+          "rows": "T-30 T-31",
+          "text": "Bid 63,999.8, ask 63,999.9. Mark 63,999.7"
+        },
+        {
+          "t": 55803,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31",
+          "text": "Bid 64,000.1, ask 64,000.2. Mark 63,999.9"
+        },
+        {
+          "t": 61271,
+          "channel": "polite",
+          "class": "ambient-polite",
+          "rows": "T-30 T-31",
+          "text": "Bid 64,000.9, ask 64,001.0. Mark 63,999.4"
         }
       ]
     },
@@ -319,7 +363,8 @@
         "announce_prices": "always",
         "verbosity": "normal",
         "cadence_ms": 2000,
-        "reduce": false
+        "reduce": false,
+        "whale": false
       },
       "duration_ms": 25000,
       "streams": [
@@ -384,11 +429,11 @@
       ],
       "expected": [
         {
-          "t": 25,
+          "t": 100,
           "channel": "polite",
           "class": "ambient-polite",
-          "rows": "T-35",
-          "text": "Tape: 1 trade, net buy, last 63,999.9"
+          "rows": "T-30 T-31",
+          "text": "Bid 63,999.9, ask 64,000.0. Mark 64,000.4"
         },
         {
           "t": 1000,

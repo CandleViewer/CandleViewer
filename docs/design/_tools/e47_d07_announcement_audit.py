@@ -21,19 +21,21 @@ and mutations).
    commit holds its file; a merge pin is on origin/main; an in-flight branch that moved past its
    pin FAILs), G-CLASSES (one class per taxonomy row from the five of §3.1, ranks only on assertive
    rows; §3.2 opens with `05`:152's six verbatim, each with an assertive T-row, the rest PROPOSED;
-   every announced row in exactly one panel class whose default matches its class), G-COPY (closed
+   the fixed panel class is the safety group plus the auto-flatten (BQ-2); every announced row
+   in exactly one panel class whose default matches its class), G-COPY (closed
    slots, no glyph sign, no secret slot, every Words id in the deck, the reason map covering `24`'s
    closed sets, W-36 the BQ-11 sentence), G-SIM (the replay of every script equals its expected
    lines; per field at most one write per cadence, the latest value; every assertive input spoken
    once or collapsed into its own order's later state; ranks hold; assertive lines identical in
    every setting cell; §10's tables equal the transcripts), G-LABELS (every handed label once,
-   verbatim at its source, worded), G-FIND (§11 holds exactly CAT's E47-D07 rows, each at its CAT
+   verbatim at its source, worded; an unpinned sibling's label names no source), G-FIND (§11 holds exactly CAT's E47-D07 rows, each at its CAT
    line, with a disposition; CAT:48's count equals the screen-mapped rows), G-T2 (the T2 paragraph
    once in §8.2 with every standing-gate element; every §0 / §4 / §8 line naming T2 cites §8.2; the
    hand-off's component line names CMP-079 and CMP-019), G-COMP, G-PUBLIC (no URL, host, local
-   path, worker name or secret-shaped string), G-PENDING (the heading names the BQ list; BQ-0 …
-   BQ-16 once each, "ruling pending; default built", none RULED), G-BOARDS, G-HEUR, G-WALK,
-   G-OWNER, G-UNTOUCHED, G-BUDGET, G-MUTLIST.
+   path, worker name or secret-shaped string), G-RULED (the heading names the ruling of record,
+   comment 6570054100; BQ-0 … BQ-16 once each, "RULED, OVERRIDE" for BQ-2, BQ-7, BQ-8 and BQ-9,
+   "RULED, ACCEPT" for the rest; no line reads as pending), G-BOARDS, G-HEUR, G-WALK, G-OWNER,
+   G-UNTOUCHED, G-BUDGET, G-MUTLIST.
 4. **Pins (G-RULED-PIN).** A whole-document default-deny pin set over every unit of both documents
    (heading, table row by lead cell, prose line, by heading path and occurrence, plus a line-shape
    unit per region) in `e47_d07_ruled_pins.txt`. Anchored values are cut out (G-ANCHOR owns them).
@@ -144,6 +146,9 @@ CITE_FILES = {
     "D02E40": "docs/design/E40/E40-D02.md",
     "D03E06": "docs/design/E06/E06-D03.md",
     "D09E09": "docs/design/E09/E09-D09.md",
+    "D03E05": "docs/design/E05/E05-D03.md",
+    "D07E11": "docs/design/E11/E11-D07.md",
+    "DS": ".claude/rules/32-design-specs.md",
     "CAT": "docs/plan/a11y/47-audit-catalogue.md",
     "README": "docs/design/README.md",
     "D03": PINS[0].rel,
@@ -153,10 +158,11 @@ CITE_FILES = {
 }
 FILE_BASE = {p.rel: p.sha for p in PINS}
 
-BQ_COMMENT = "6569517412"  # the BQ list on #1306; no ruling of record yet
-BQ_HEAD = f"defaults built; ruling pending (comment {BQ_COMMENT})"
+BQ_COMMENT = "6569517412"  # the BQ list on #1306
+RULING = "6570054100"  # the ruling of record on that list (2026-11-02 05:45Z)
+BQ_HEAD = f"RULED (comment {RULING})"
 BQ_IDS = tuple(f"BQ-{n}" for n in range(17))
-BQ_LEAD = "ruling pending; default built:"
+OVERRIDDEN = frozenset({"BQ-2", "BQ-7", "BQ-8", "BQ-9"})  # the rest are accepted
 PENDING_CELL = "pending: drawn later in this PR"
 THEMES = ("dark", "light", "hc")
 
@@ -205,7 +211,7 @@ SLOTS = frozenset(
 )
 SECRET_RE = re.compile(r"key|secret|token|totp|otp|code|password|passphrase", re.IGNORECASE)
 SIGN_RE = re.compile(r"[+−±]|(?<![\w])-\s*[{0-9]")
-UNKNOWN_SENTENCE = "Reason not recognised. See the order log."
+UNKNOWN_SENTENCE = "Reason not recognised. See Notifications."  # BQ-11 rider: CMP-060's label
 OMS_PICK = ("NATIVE_STOP_REQUIRED", "EXPIRED_UNSENT")
 REASON_SPANS = {  # `24` lines holding the closed sets the reason map covers
     "oms": (2205, 2225),
@@ -228,6 +234,8 @@ HANDED = (
     ("D09 W-15", "D09:320"),
     ("D09 W-21", "D09:326"),
     ("D09 W-22", "D09:327"),
+    ("D06 W-3", ""),  # E47-D06 has no PR yet: "—" until it is pinned at its PR head
+    ("D08 BQ-9", "D03E05:232–233"),  # the words E05-D03 ruled, handed by E47-D08's BQ-9
 )
 CAT_COUNT_LINE = 48  # CAT:48, "| E47-D07 | 34 |"
 T2_LEAD = "**The T2 paragraph"
@@ -479,9 +487,9 @@ def estimate(text: str, chars_per_s: int, floor_ms: int) -> int:
     return max(floor_ms, math.ceil(len(text) * 1000 / chars_per_s))
 
 
-FIELD_ORDER = ("quote", "mark", "pnl", "cvd", "tape", "big")
-FIELD_ROW = {"quote": "T-30", "mark": "T-31", "pnl": "T-32", "cvd": "T-33", "tape": "T-35"}
-FIELD_ROW["big"] = "T-36"
+# BQ-7 RULED: the tape is never narrated (prints are silent inputs); whale prints are opt-in
+FIELD_ORDER = ("quote", "mark", "pnl", "cvd", "big")
+FIELD_ROW = {"quote": "T-30", "mark": "T-31", "pnl": "T-32", "cvd": "T-33", "big": "T-36"}
 POLITE_SHARE = 2  # a composite waits >= this many times the previous one's speech estimate (§6.1)
 DIALOG_ROW = "T-17"  # its `alertdialog` is the event's one speaker, on focus (§9)
 
@@ -600,7 +608,7 @@ def expand(spec: str, script: dict[str, object], seed: int) -> list[Item]:
 def eligible(fld: str, s: dict[str, object]) -> bool:
     if s.get("reduce") or s.get("announce_prices") != "always" or s.get("verbosity") == "low":
         return False
-    return fld != "big" or s.get("verbosity") == "high"
+    return fld != "big" or s.get("whale") is True  # Normal = High until the owner splits them
 
 
 def replay(
@@ -616,7 +624,6 @@ def replay(
     never = -(10**9)
     latest: dict[str, str | None] = {f: None for f in FIELD_ORDER}
     spoken: dict[str, str | None] = {f: None for f in FIELD_ORDER}
-    tape = {"n": 0, "buy": 0, "sell": 0, "last": 0}
     last_own, busy_until, gap = never, never, cadence
     due: int | None = None
     queue: list[Queued] = []
@@ -636,14 +643,9 @@ def replay(
             k += 1
             if it.kind == "field" and eligible(it.fld, s):
                 latest[it.fld] = None if it.text == spoken[it.fld] else it.text
-            elif it.kind == "print" and eligible("tape", s):
-                tape["n"] += 1
-                tape["buy" if it.side == "buy" else "sell"] += 1
-                tape["last"] = it.ticks
             elif it.kind == "event":
                 for f in FIELD_ORDER:
                     latest[f], spoken[f] = None, None
-                tape.update(n=0, buy=0, sell=0)
                 due = None
                 rank = rank_of(tax, it.tid)
                 waiting = [q for q in queue if q.entity and q.entity == it.entity]
@@ -673,24 +675,16 @@ def replay(
             busy_until = now + estimate(text, cps, floor_ms)
             if q.tid == "T-2":
                 last_partial[q.entity] = now
-        pending = any(latest[f] is not None for f in FIELD_ORDER) or tape["n"] > 0
+        pending = any(latest[f] is not None for f in FIELD_ORDER)
         if pending and due is None:
             due = max(last_own + gap, now)
         if due is not None and due <= now and busy_until <= now:
             parts: list[tuple[str, str]] = []
             for f in FIELD_ORDER:
-                if f == "tape" and tape["n"] > 0:
-                    net = "even"
-                    if tape["buy"] != tape["sell"]:
-                        net = "buy" if tape["buy"] > tape["sell"] else "sell"
-                    count = f"{tape['n']} trade" + ("" if tape["n"] == 1 else "s")
-                    slots = {"trades": count, "net": net, "price": price(tape["last"])}
-                    parts.append((f, render(spec, "W-32", slots)))
-                elif latest[f] is not None:
+                if latest[f] is not None:
                     parts.append((f, str(latest[f])))
                     spoken[f] = latest[f]
                 latest[f] = None
-            tape.update(n=0, buy=0, sell=0)
             due = None
             if parts:
                 tids = " ".join(FIELD_ROW[f] for f, _ in parts)
@@ -707,6 +701,7 @@ CELLS: dict[str, dict[str, object]] = {
     "always-low": {"announce_prices": "always", "verbosity": "low"},
     "always-normal": {"announce_prices": "always", "verbosity": "normal"},
     "always-high": {"announce_prices": "always", "verbosity": "high"},
+    "always-whale": {"announce_prices": "always", "verbosity": "normal", "whale": True},
     "reduce": {"announce_prices": "always", "verbosity": "normal", "reduce": True},
 }
 
@@ -966,12 +961,12 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     _m(
         "M-17",
-        "mark BQ-4 ruled",
-        "G-PENDING",
+        "mark BQ-4 overridden",
+        "G-RULED",
         "spec",
         "## The questions",
-        "- **BQ-4** ruling pending; default built:",
-        "- **BQ-4** RULED; default built:",
+        "- **BQ-4** RULED, ACCEPT:",
+        "- **BQ-4** RULED, OVERRIDE:",
     ),
     _m(
         "M-18",
@@ -1288,6 +1283,10 @@ def g_classes(t: Texts) -> list[Finding]:
                 bad.append((f"{x} is under {name!r} but its row says otherwise", r81))
             elif (row.cls == CLASSES[0]) != (r[2] == "Assertive"):
                 bad.append((f"{name!r}'s default does not fit {x}'s class", r81))
+    safety = {x for r in aset if "fixed safety group" in r[3] for x in re.findall(r"T-\d+", r[2])}
+    fixed = [r for r in panel.values() if r[3].startswith("fixed")]
+    if len(fixed) != 1 or set(re.findall(r"T-\d+", fixed[0][1])) != safety | {DIALOG_ROW}:
+        bad.append(("the fixed panel class is not the safety group plus the auto-flatten", r81))
     for tr in tax.values():
         announced = tr.cls != "silent" and tr.rank != "local"
         if announced and tr.tid not in seen:
@@ -1452,10 +1451,13 @@ def g_labels(t: Texts) -> list[Finding]:
         r = got.get(label)
         if r is None:
             continue
-        src = base_lines(CITE_FILES[cite.split(":")[0]])[int(cite.split(":")[1]) - 1]
-        src = src.replace("\\|", "|")
-        if r[2] != cite or not quoted(r[1]) or any(q not in src for q in quoted(r[1])):
-            bad.append(f"{label} is not verbatim at {cite}")
+        if not cite:  # an unpinned sibling: no line to check until its PR opens
+            if r[2] != "—" or not quoted(r[1]):
+                bad.append(f"{label} is unpinned but names a source")
+        else:
+            src = " ".join(cited_text(cite).split("\n")).replace("\\|", "|")
+            if r[2] != cite or not quoted(r[1]) or any(q not in src for q in quoted(r[1])):
+                bad.append(f"{label} is not verbatim at {cite}")
         if not r[3] or r[4] not in CLASSES:
             bad.append(f"{label} is not worded with a class")
     return [("G-LABELS", b, "spec", region) for b in bad]
@@ -1548,22 +1550,25 @@ def g_comp(t: Texts) -> list[Finding]:
     return out
 
 
-def g_pending(t: Texts) -> list[Finding]:
+def g_ruled(t: Texts) -> list[Finding]:
     s, e, region = section(t.spec, "## The questions")
     head = t.spec.split("\n")[s - 1] if s else ""
     lines = t.spec.split("\n")[s:e]
     bad: list[str] = []
     if BQ_HEAD not in head:
-        bad.append("the heading does not name the BQ list and the pending ruling")
+        bad.append("the heading does not name the ruling of record")
+    if not any(BQ_COMMENT in ln and RULING in ln for ln in lines):
+        bad.append("the lead does not name the BQ list and the ruling")
     for bq in BQ_IDS:
         found = [ln for ln in lines if ln.startswith(f"- **{bq}**")]
+        verdict = "OVERRIDE" if bq in OVERRIDDEN else "ACCEPT"
         if len(found) != 1:
             bad.append(f"{bq} appears {len(found)} times")
-        elif not found[0].startswith(f"- **{bq}** {BQ_LEAD}"):
-            bad.append(f"{bq} is not marked '{BQ_LEAD}'")
-    if any(re.search(r"\bRULED\b", ln) for ln in lines):
-        bad.append("a row is marked RULED before any ruling")
-    return [("G-PENDING", b, "spec", region) for b in bad]
+        elif not found[0].startswith(f"- **{bq}** RULED, {verdict}"):
+            bad.append(f"{bq} is not marked 'RULED, {verdict}'")
+    if any("ruling pending" in ln or "default built" in ln for ln in t.spec.split("\n")):
+        bad.append("a line still reads as pending")
+    return [("G-RULED", b, "spec", region) for b in bad]
 
 
 def g_boards(t: Texts) -> list[Finding]:
@@ -1748,7 +1753,7 @@ def findings(t: Texts, values: Values) -> list[Finding]:
     out += g_anchor(t, values) + g_marker(t) + g_cite(t) + g_quote(t) + g_arow(t) + g_pin(t)
     out += g_classes(t) + g_copy(t) + g_sim(t) + g_labels(t) + g_find(t) + g_t2(t) + g_comp(t)
     out += g_lines(t, "G-PUBLIC", lambda ln: bool(PUBLIC_RE.search(ln)), "a host, path or name")
-    out += g_pending(t) + g_boards(t) + g_heur(t) + g_walk(t) + g_owner(t)
+    out += g_ruled(t) + g_boards(t) + g_heur(t) + g_walk(t) + g_owner(t)
     out += g_untouched(t) + g_budget(t) + g_mutlist(t) + g_pins(t)
     return out
 
@@ -1903,7 +1908,7 @@ def self_test() -> int:
             "G-T2",
             "G-COMP",
             "G-PUBLIC",
-            "G-PENDING",
+            "G-RULED",
             "G-BOARDS",
             "G-HEUR",
             "G-WALK",
