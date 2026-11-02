@@ -108,6 +108,8 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       "IndicatorPlugin",
       "LineOptions",
       "LineStyle",
+      "LodLevels",
+      "LodState",
       "LutId",
       "Modifiers",
       "OrderLine",

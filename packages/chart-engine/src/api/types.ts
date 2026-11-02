@@ -188,6 +188,17 @@ export interface FrameStats {
   renderProfile: "full" | "reduced" | "degraded-2d";
 }
 
+// E11-S12 (§3.6, §6): the tiers a pin sets, and the state the `viewport` message carries. Declared
+// with the §8 contract (#5386); the engine wires them in E11-S12's code PR.
+export interface LodLevels {
+  candles: 0 | 1 | 2;
+  footprint: 0 | 1 | 2 | 3;
+}
+export interface LodState extends LodLevels {
+  barsPerColumn: number;
+  aggregated: boolean;
+}
+
 // ---- Plugin API ----------------------------------------------------------
 
 export interface RenderContext {

@@ -28,6 +28,8 @@ export type {
   IndicatorPlugin,
   LineOptions,
   LineStyle,
+  LodLevels,
+  LodState,
   LutId,
   Modifiers,
   OrderLine,
