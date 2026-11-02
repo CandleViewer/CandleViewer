@@ -53,6 +53,7 @@ export function SettingsLayout({ children, reset }: SettingsLayoutProps): JSX.El
 
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-inset-lg, 16px)" }}>
+      {/* 16rem / 20rem: pane basis; packages/ui tokens define no layout sizes yet. */}
       <div style={{ flex: "0 1 16rem", minWidth: 0 }}>
         <label htmlFor={searchId}>Search settings</label>
         <SearchBox
