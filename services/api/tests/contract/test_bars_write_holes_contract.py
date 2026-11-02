@@ -4,7 +4,7 @@ bar is served there; a page lists only the holes inside its own span.
 
 The stored rows, reader fake and route wiring are `test_market_bars_contract`'s (the recorded
 BTCUSDT tape through the real builders) and `test_market_klines_contract`'s (the recorded 1m
-klines). The hole comes from the real write path: a `BarWriter` whose sink refuses every row.
+klines). The hole comes from the real write path: a `BarWriter` whose sink stores no row.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ _MIN = 60_000_000
 
 class _Refusing:
     async def write_rows(self, table: str, rows: list[dict[str, object]], ts_us_key: str) -> None:
-        raise ValueError("refused row")
+        raise ValueError("not stored")
 
 
 async def _lose(ledger: WriteHoleLedger, spec: BarSpec, bar: Bar) -> None:

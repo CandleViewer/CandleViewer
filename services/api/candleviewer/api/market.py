@@ -542,7 +542,9 @@ def _write_holes(
     end_us: int, bars: BarSegments,
 ) -> list[tuple[int, int]]:  # fmt: skip
     """The time series' closed bars not stored inside `[start_us, end_us)` where `bars` serves no
-    bar at that open time; none for an interval with no tape-built series."""
+    bar at that open time; none for an interval with no tape-built series. A cold-tier page
+    (emitted JSON) exposes no open times, so a hole under it is listed even when that page serves
+    a bar there: an over-report, never a range left out."""
     if ledger is None:
         return []
     try:

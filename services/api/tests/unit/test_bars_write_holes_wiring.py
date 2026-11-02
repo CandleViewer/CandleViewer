@@ -19,7 +19,7 @@ T0 = 1_700_000_000_000_000
 
 class _Refusing:
     async def write_rows(self, table: str, rows: list[dict[str, object]], ts_us_key: str) -> None:
-        raise ValueError("refused row")  # a permanent outcome
+        raise ValueError("not stored")  # a permanent outcome
 
 
 def test_no_ledger_without_a_real_row_sink(tmp_path: Path) -> None:
