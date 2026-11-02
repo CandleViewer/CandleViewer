@@ -42,7 +42,16 @@ the working tree.
    lead cell), rule line and prose sentence, by region (the heading path plus occurrence) and
    location, NFKC and whitespace normalised, anchored values cut out. `--repin-ruled` is the only
    writer. When any other gate FAILs, the pin finding prints as a NOTE (the exit status stays 1).
-5. **--self-test** applies, in memory with the values frozen at the baseline, one M-n mutation
+5. **The boards mode (G-BOARDS, G-UNTOUCHED; RULED, orchestrator, 2026-11-02 02:14Z).** §0's Status
+   column is either every row PENDING ("to draw (PR 2)", PR 1 and the boards PR before the draw) or
+   every row drawn: "drawn (rN[, light | high contrast]): board id `<uuid>`, `<export>` (W × H, sha256
+   `<64 hex>`)", each export the row's own path, present in the working tree, its PNG header W × H and
+   its sha256 as written, the ids distinct, §0 naming the page id, and the greyscale, deuteranopia and
+   protanopia renders of boards 01, 05 and 07 present; a mix FAILs. The scope gate (G-UNTOUCHED)
+   allows the exports, the renders and `docs/design/_tools/sheets/e12-d08/` in the drawn mode only.
+   The Status cells are not pinned (G-RULED-PIN reads them as `<status>`); a closing keyword stays
+   out of the text in both modes (G-CLOSE: PR 2's body carries it).
+6. **--self-test** applies, in memory with the values frozen at the baseline, one M-n mutation
    per gate, the X-n contradiction and paraphrase probes, one P-n probe per pin class (only the
    pins catch it) and N-n probes (legitimate rewordings that, re-pinned, must trip nothing). Each
    M, X and P must produce exactly one FAIL, from the gate it names; the text is restored and
@@ -72,7 +81,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "b1df4b74173ce00b4109abc08bc64b3239ff1189"  # #4938's merge: every cite was re-read here
+BASE = "8cb96b187570c825eb77e5d616976e5a43f0b80a"  # re-based at origin/main (RULED, orchestrator, 2026-11-02 02:14Z): every cite re-read here
 HEAD_REF = "origin/main"  # a cited line that differs here FAILs (G-VERSION)
 SPEC_REL = "docs/design/E12/E12-D08.md"
 TOOL_REL = "docs/design/_tools/e12_d08_audit.py"
@@ -111,11 +120,28 @@ REASONS = (
     "not_recorded",
     "no_data_in_range",
     "symbol_delisted",
-)  # `14`:1100, kept at three
+)  # `14`:1145, kept at three
 KINDS = ("engine", "data-feed", "backend")  # E11-D04:406, closed
 CONSUMERS = ("E12-S06", "E12-S11", "E12-S12", "E12-Q03", "E12-Q07", "E12-D13")
 CARRIED = ("E11-D04 G-1", "G-2", "G-10", "D02 OQ-14", "D05-G1")
 TWINS = {"08": ("01", "light"), "09": ("06", "light"), "10": ("05", "hc")}  # RULED BQ-6
+STATUS_PENDING = "to draw (PR 2)"  # §0's Status cell before the draw
+STATUS_THEME = {
+    "08": "light",
+    "09": "light",
+    "10": "high contrast",
+}  # the drawn cell's theme word
+DRAWN = re.compile(
+    r"drawn \((r\d+)(?:, (light|high contrast))?\): board id `([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+    r"[0-9a-f]{4}-[0-9a-f]{12})`, `(docs/design/E12/img/E12-D08-(\d\d)-([a-z0-9-]+)\.png)` "
+    r"\((\d+) × (\d+), sha256 `([0-9a-f]{64})`\)"
+)
+PAGE_ID = re.compile(
+    r"page id `([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})`"
+)
+CVD_BOARDS = ("01", "05", "07")  # RULED BQ-27: greyscale, deuteranopia, protanopia
+CVD_KINDS = ("greyscale", "deuteranopia", "protanopia")
+SHEETS_DIR = "docs/design/_tools/sheets/e12-d08/"  # a committed board script, the drawn mode only
 
 RULED_VALUES = {
     "RULED:cancel.ms": "600",  # BQ-21: Cancel from the strip's first moment
@@ -135,8 +161,8 @@ CITE_VALUES: dict[str, tuple[str, str]] = {
     "frame.w": ("E11-D04:854", r"(\d+) × \d+ window"),
     "frame.h": ("E11-D04:854", r"\d+ × (\d+) window"),
     "block.w": ("E16-D05:163", r"at most (\d+) <!--"),
-    "ladder.cap": ("14:1111", r"capped (\d+)s\)"),
-    "stop.context": ("14:1107", r"auto-retry ×(\d+)"),
+    "ladder.cap": ("14:1159", r"capped (\d+)s\)"),
+    "stop.context": ("14:1155", r"auto-retry ×(\d+)"),
     "stop.feed": ("E11-D04:381", r"sequences stop at (\w+) \(O-9\)"),
     "countdown.hz": ("E11-D04:381", r"updated at (\d+) Hz"),
     "strip.ms": ("D02:29", r"nothing for (\d+) ms"),
@@ -144,8 +170,8 @@ CITE_VALUES: dict[str, tuple[str, str]] = {
     "budget.s": ("11:935", r"in ≤(\d+) s\."),
     "d09.hz": ("D09:117", r"at most (\d+) Hz"),
     "rf.hz": ("RF:181", r"≤(\d+) Hz"),
-    "cmp038.slow": ("15:444", r"from the (\d+) s slow path"),
-    "cmp028.s": ("15:338", r"after (\d+) s CMP-023 determinate"),
+    "cmp038.slow": ("15:452", r"from the (\d+) s slow path"),
+    "cmp028.s": ("15:346", r"after (\d+) s CMP-023 determinate"),
     "min.text": ("05:125", r"≥(\d+(?:\.\d+)?):1"),
     "min.nontext": ("05:126", r"≥(\d+):1"),
 }
@@ -751,10 +777,20 @@ def units(spec: str, prefix: str = "") -> list[Unit]:
                 counters["rule"] = counters.get("rule", 0) + 1
                 out.append(Unit(region, f"rule {counters['rule']}", "rule"))
             else:
-                lead = pin_text(split_row(line)[0])
-                out.append(
-                    Unit(region, f"row {lead}", pin_text(" | ".join(split_row(line))))
-                )
+                cells = split_row(line)
+                lead = pin_text(cells[0])
+                if (
+                    region.startswith("E12-D08")
+                    and "› 0. Status" in region
+                    and re.fullmatch(r"\d\d", cells[0])
+                    and len(cells) > 5
+                ):
+                    cells = [
+                        *cells[:5],
+                        "<status>",
+                        *cells[6:],
+                    ]  # the boards mode's record, not ruled text
+                out.append(Unit(region, f"row {lead}", pin_text(" | ".join(cells))))
             continue
         for s in sentences(pin_text(line)):
             counters["s"] = counters.get("s", 0) + 1
@@ -921,10 +957,99 @@ def g_ruled(spec: str, env: Env, vals: dict[str, str]) -> list[str]:
     return bad
 
 
+def board_rows(spec: str) -> list[list[str]]:
+    return [
+        r for r in table(visible(section(spec, "0. "))) if re.fullmatch(r"\d\d", r[0])
+    ]
+
+
+def board_mode(spec: str) -> str:
+    """'pending' when every §0 Status cell is PENDING, else 'drawn' (a mix FAILs G-BOARDS)."""
+    rows = board_rows(spec)
+    return (
+        "pending"
+        if all(len(r) > 5 and r[5] == STATUS_PENDING for r in rows)
+        else "drawn"
+    )
+
+
+def png_size(path: Path) -> tuple[int, int] | None:
+    """The width and height from a PNG's IHDR chunk; None when the file is not a PNG."""
+    try:
+        head = path.read_bytes()[:24]
+    except OSError:
+        return None
+    if head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+        return None
+    return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+
+
+def board_exports(spec: str) -> list[str]:
+    """Every path the drawn mode commits: the ten exports and the renders of 01, 05 and 07."""
+    out: list[str] = []
+    for r in board_rows(spec):
+        m = DRAWN.fullmatch(r[5]) if len(r) > 5 else None
+        if m:
+            out.append(m[4])
+            if r[0] in CVD_BOARDS:
+                out += [m[4][: -len(".png")] + f"-{k}.png" for k in CVD_KINDS]
+    return out
+
+
+def g_boards_drawn(spec: str) -> list[str]:
+    bad: list[str] = []
+    rows = board_rows(spec)
+    statuses = [r[5] if len(r) > 5 else "" for r in rows]
+    if any(st == STATUS_PENDING for st in statuses):
+        return [
+            f"§0 mixes PENDING and drawn rows ({statuses.count(STATUS_PENDING)} PENDING)"
+        ]
+    if not PAGE_ID.search(visible(section(spec, "0. "))):
+        bad.append("§0 does not name the page id")
+    ids: list[str] = []
+    for r in rows:
+        m = DRAWN.fullmatch(r[5]) if len(r) > 5 else None
+        if not m:
+            bad.append(f"board {r[0]}: the Status cell is not the drawn form")
+            continue
+        _, theme, bid, rel, nn, slug, w, h, sha = m.groups()
+        ids.append(bid)
+        want_slug = r[1].strip("`").split(" ", 3)[-1]
+        if nn != r[0] or slug != want_slug:
+            bad.append(
+                f"board {r[0]}: the export {rel} is not E12-D08-{r[0]}-{want_slug}.png"
+            )
+        if (theme or None) != STATUS_THEME.get(r[0]):
+            bad.append(
+                f"board {r[0]}: the theme word {theme!r} is not {STATUS_THEME.get(r[0])!r}"
+            )
+        path = ROOT / rel
+        size = png_size(path)
+        if size is None:
+            bad.append(f"board {r[0]}: {rel} is missing or not a PNG")
+            continue
+        if size != (int(w), int(h)):
+            bad.append(
+                f"board {r[0]}: {rel} is {size[0]} × {size[1]}, the cell says {w} × {h}"
+            )
+        if hashlib.sha256(path.read_bytes()).hexdigest() != sha:
+            bad.append(f"board {r[0]}: {rel}'s sha256 is not the cell's")
+        if r[0] in CVD_BOARDS:
+            for k in CVD_KINDS:
+                rr = rel[: -len(".png")] + f"-{k}.png"
+                if png_size(ROOT / rr) is None:
+                    bad.append(f"board {r[0]}: the {k} render {rr} is missing")
+    if len(set(ids)) != len(ids):
+        bad.append("two boards share an id")
+    return bad
+
+
 def g_boards(spec: str, env: Env, vals: dict[str, str]) -> list[str]:
     sec = visible(section(spec, "0. "))
     rows = table(sec)
     bad: list[str] = []
+    if board_mode(spec) == "drawn":
+        bad += g_boards_drawn(spec)
     if len(rows) != 10:
         bad.append(f"{len(rows)} boards, ruled ten")
     dark = [r for r in rows if len(r) > 4 and r[3] == "dark" and r[4] == "—"]
@@ -949,7 +1074,7 @@ def g_scr047(spec: str, env: Env, vals: dict[str, str]) -> list[str]:
         bad.append(f"{len(rows)} SCR-047 frames, ruled five")
     reasons = [r[2].strip("`") for r in rows if len(r) > 3]
     if any(x not in REASONS for x in reasons) or set(reasons) != set(REASONS):
-        bad.append(f"the `reason` values {reasons} are not the three of `14`:1100")
+        bad.append(f"the `reason` values {reasons} are not the three of `14`:1145")
     heads = [tuple(quotes(r[3])) for r in rows if len(r) > 3]
     for i, a in enumerate(heads):
         for b in heads[i + 1 :]:
@@ -1609,19 +1734,19 @@ def g_matrix(spec: str, env: Env, vals: dict[str, str]) -> list[str]:
             bad.append(f"the four-way row names {named} as primary, ruled exactly one")
     for r in rows:
         refs = [int(n) for d, n in cites(r[3]) if d == "14"] if len(r) > 3 else []
-        if len(refs) != 1 or not 743 <= refs[0] <= 762:
-            bad.append(f"{r[0]!r} cites {refs}, not one `14` line of 743-762 (BQ-22)")
+        if len(refs) != 1 or not 766 <= refs[0] <= 785:
+            bad.append(f"{r[0]!r} cites {refs}, not one `14` line of 766-785 (BQ-22)")
             continue
         n, wins, other = refs[0], nfkc(r[1]).lower(), nfkc(r[2]).lower()
         line = nfkc(base_line(env, "14", n) or "").lower()
-        if 748 <= n <= 758 and wins != wins_of(env, n):
+        if 771 <= n <= 781 and wins != wins_of(env, n):
             bad.append(f"{r[0]!r} wins {r[1]!r}, `14`:{n} says {wins_of(env, n)!r}")
-        elif n == 760 and wins != "both shown":
-            bad.append(f"{r[0]!r} must read 'both shown' (`14`:760)")
-        elif n == 743 and not wins.startswith(line.split("shows one line: ")[-1][:10]):
-            bad.append(f"{r[0]!r}: `14`:743's first strip state is not its primary")
-        elif n == 762:
-            # `14`:762, the E08 line: disconnected wins and cancels the build; stale marks text
+        elif n == 783 and wins != "both shown":
+            bad.append(f"{r[0]!r} must read 'both shown' (`14`:783)")
+        elif n == 766 and not wins.startswith(line.split("shows one line: ")[-1][:10]):
+            bad.append(f"{r[0]!r}: `14`:766's first strip state is not its primary")
+        elif n == 785:
+            # `14`:785, the E08 line: disconnected wins and cancels the build; stale marks text
             if "disconnected" in r[0]:
                 ok = (
                     "disconnected and reconnecting win" in line
@@ -1636,7 +1761,7 @@ def g_matrix(spec: str, env: Env, vals: dict[str, str]) -> list[str]:
             else:
                 ok = False
             if not ok:
-                bad.append(f"{r[0]!r} does not carry `14`:762's reading")
+                bad.append(f"{r[0]!r} does not carry `14`:785's reading")
     return bad
 
 
@@ -1680,7 +1805,7 @@ def g_ledger(spec: str, env: Env, vals: dict[str, str]) -> list[str]:
         if re.search(r"\bagent\b", r[2], re.IGNORECASE):
             bad.append(f"{r[0]}'s owner lane names an agent")
         consumer = re.search(r"E12-[A-Z]\d\d", r[3])
-        if not consumer or vals.get(f"DATE:{consumer[0]}") not in r[4]:
+        if not consumer or (vals.get(f"DATE:{consumer[0]}") or "?") not in r[4]:
             bad.append(f"{r[0]}'s due date is not its consumer's sprint start")
     bad += need(sec, tuple(f"{c}" for c in CARRIED), "§15.3 carried")
     return bad
@@ -2324,17 +2449,27 @@ def g_close(spec: str, env: Env, vals: dict[str, str]) -> list[str]:
     rx = re.compile(
         r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE
     )
+    where = (
+        "PR 1 is Refs only"
+        if board_mode(spec) == "pending"
+        else "PR 2's body carries it"
+    )
     return [
-        f"a closing keyword {m[0]!r} (PR 1 is Refs only)"
+        f"a closing keyword {m[0]!r} in the text ({where})"
         for m in rx.finditer(both(spec, env))
     ]
 
 
 def g_untouched(spec: str, env: Env, vals: dict[str, str]) -> list[str]:
+    """The scope gate: the four owned paths; in the drawn mode also the exports, the renders and
+    the committed board script."""
+    drawn = board_mode(spec) == "drawn"
+    allowed = set(OWN_PATHS) | (set(board_exports(spec)) if drawn else set())
     return [
-        f"{p} is touched; this ticket owns only {OWN_PATHS}"
+        f"{p} is touched; this ticket owns {OWN_PATHS}"
+        + ("" if drawn else " (exports and renders only in the drawn mode)")
         for p in env.changed()
-        if p not in OWN_PATHS
+        if p not in allowed and not (drawn and p.startswith(SHEETS_DIR))
     ]
 
 
@@ -2491,7 +2626,7 @@ def say_in(prefix: str, sentence: str) -> Callable[[str], str]:
 def drift_14(env: Env) -> None:
     rel = plan_rel(env, "14") or ""
     lines = env.base(rel).split("\n")
-    lines[1110] = lines[1110] + " (moved)"
+    lines[1158] = lines[1158] + " (moved)"
     env.head_override[rel] = "\n".join(lines)
 
 
@@ -2511,6 +2646,29 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "G-BOARDS", "make board 10 the twin of 04", row_cell("0. ", "10", 4, "04")
+    ),
+    Mutation(
+        "G-BOARDS",
+        "record board 01 as drawn while the rest stay PENDING",
+        row_cell(
+            "0. ",
+            "01",
+            5,
+            "drawn (r1): board id `00000000-0000-4000-8000-000000000001`, "
+            "`docs/design/E12/img/E12-D08-01-scr-047-reasons-owner.png` (2032 × 4960, sha256 `"
+            + "0" * 64
+            + "`)",
+        ),
+    ),
+    Mutation(
+        "G-UNTOUCHED",
+        "commit an export while every board is PENDING",
+        lambda s: s,
+        lambda env: setattr(
+            env,
+            "changed_override",
+            [*OWN_PATHS, "docs/design/E12/img/E12-D08-01-scr-047-reasons-owner.png"],
+        ),
     ),
     Mutation(
         "G-SCR047",
@@ -2615,8 +2773,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "G-CONTRAST",
-        "hold the card's rule to the text floor",
-        row_cell("12.1 ", "card-rule", 3, "text"),
+        "hold the progress fill to the text floor (the card rule clears it since #5140)",
+        row_cell("12.1 ", "progress-fill", 3, "text"),
     ),
     Mutation(
         "G-ANCHOR",
@@ -2636,7 +2794,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "G-CITE", "point a cite past the end of D06", swap("D06:289", "D06:99999")
     ),
-    Mutation("G-VERSION", "move `14`:1111 at origin/main", lambda s: s, drift_14),
+    Mutation("G-VERSION", "move `14`:1159 at origin/main", lambda s: s, drift_14),
     Mutation(
         "G-MARKER",
         "hide an ungated sentence in a comment",
@@ -3730,7 +3888,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "G-MATRIX",
-        "drop `14`:762's stale reading from its row",
+        "drop `14`:785's stale reading from its row",
         row_cell("9.1 ", "rebuilding + stale", 2, "the strip line only"),
         tag="X",
     ),
