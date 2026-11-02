@@ -12,7 +12,7 @@
  * silently empty shell; preferences/keymap failures are non-fatal (a broken
  * keymap must not block login).
  */
-import { setMeClaims } from "../../lib/auth/meCache.js";
+import { setMeClaims, setMeClaimsReader } from "../../lib/auth/meCache.js";
 import type { MeClaims, Role } from "../../routes/rbac.js";
 import { HttpError, HttpTimeoutError, fetchJson } from "./httpClient.js";
 import {
@@ -85,6 +85,14 @@ export async function runBootstrap(deps: BootstrapDeps = {}): Promise<void> {
 
   const me = meResult.value;
   setMeClaims(meToClaims(me));
+  // #5405: a later navigation re-reads `/me` past the claims' staleness bound, so a role or grant
+  // the server changed applies without a reload; the shell's `me` and environment follow the
+  // same answer, so the environment badge never disagrees with `me`.
+  setMeClaimsReader(async () => {
+    const next = await fetchJson<Me>("/api/v1/me", { timeoutMs: BOOTSTRAP_TIMEOUT_MS, fetchImpl });
+    setShellState({ me: next, environment: next.session?.environment ?? "unknown" });
+    return meToClaims(next);
+  });
   setShellState({
     me,
     // Environment comes from `/me` (`session.environment`) or the WS

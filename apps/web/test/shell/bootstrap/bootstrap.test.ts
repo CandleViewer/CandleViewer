@@ -6,7 +6,12 @@ import {
   runBootstrap,
 } from "../../../src/shell/bootstrap/bootstrap.js";
 import { getShellState, resetShellState } from "../../../src/shell/bootstrap/store.js";
-import { getMeClaims, resetMeClaims } from "../../../src/lib/auth/meCache.js";
+import {
+  CLAIMS_MAX_AGE_MS,
+  getMeClaims,
+  refreshMeClaims,
+  resetMeClaims,
+} from "../../../src/lib/auth/meCache.js";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -60,6 +65,34 @@ describe("runBootstrap", () => {
     });
     await runBootstrap({ fetchImpl });
     expect(getMeClaims()).toMatchObject({ authenticated: true, role: "owner" });
+  });
+
+  // #5405: the registered reader re-reads `/me` past the bound and keeps the shell in step.
+  it("registers a /me reader that updates the claims, the shell's me and its environment", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-02T00:00:00Z"));
+      let body: unknown = ME_BODY;
+      const fetchImpl = vi.fn().mockImplementation((path: string) => {
+        if (path === "/api/v1/me") return Promise.resolve(jsonResponse(body));
+        return Promise.resolve(jsonResponse({}));
+      });
+      await runBootstrap({ fetchImpl });
+      body = {
+        ...ME_BODY,
+        role: "viewer",
+        user: { ...ME_BODY.user, roles: ["viewer"] },
+        session: { ...ME_BODY.session, environment: "live" },
+      };
+      vi.setSystemTime(Date.now() + CLAIMS_MAX_AGE_MS);
+      await refreshMeClaims();
+      expect(fetchImpl.mock.calls.filter(([p]) => p === "/api/v1/me")).toHaveLength(2);
+      expect(getMeClaims()).toMatchObject({ authenticated: true, role: "viewer" });
+      expect(getShellState().me).toMatchObject({ role: "viewer" });
+      expect(getShellState().environment).toBe("live");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("sets bootstrap to failed with http_error reason on a /me 500", async () => {
