@@ -26,7 +26,13 @@ compose creates for it, `cv.lane=<lane>`, and `up` writes the lane into `stack.e
 `restart-api`, `drive` and `down` read that label on every object the project's compose label lists
 (`printf "%q"` prints a value on one line, whatever it holds), and refuse, before any compose call,
 a project holding an object that carries another lane's label or none: `down` takes down a project,
-and `restart-api` and `drive` act on one, only when every object of it is this lane's.
+and `restart-api` and `drive` act on one, only when every object of it is this lane's. A project
+with no object listed is not thereby this lane's, so `down`, `restart-api` and `drive` also match
+the run directory's `stack.env` (`names_lane`: a yes or a no, never a value) with the caller's lane
+before anything uses or removes the directory, and refuse one that names another lane or none. A run
+directory with no `stack.env` goes on as before: `down` removes it once nothing of the project is
+left, `restart-api` and `drive` say to bring the project up first. `up` uses and removes no
+existing run directory (it refuses one), so it reads none.
 
 `down` goes by the project name alone (`docker compose -p <project> down -v --remove-orphans`, run
 from an empty directory) and takes no `-f`: compose then reads no compose file and no env file, so
@@ -71,6 +77,8 @@ LANE_VARIABLE: Final = "CV_ACCTFIX_LANE"
 LANE: Final = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")  # `fullmatch`: a trailing newline is no lane
 #: The label the overlay puts on every container, network and volume of the project.
 LANE_LABEL: Final = "cv.lane"
+#: How much of `stack.env` `names_lane` reads: `up` writes about a kilobyte.
+ENV_READ_BOUND: Final = 65536
 SCENARIO: Final = re.compile(r"[a-z0-9_]{1,64}")
 PORT_NAMES: Final = (
     "POSTGRES_PORT",
@@ -145,6 +153,21 @@ def lane_only(found: Mapping[str, Sequence[tuple[str, str]]], lane: str) -> None
     if any(label != quoted for objects in found.values() for _, label in objects):
         raise Refused("the project has an object that carries another lane's label, or none: "
                       "it is not this lane's")  # fmt: skip
+
+
+def names_lane(env_file: Path, lane: str) -> bool:
+    """Whether `stack.env` has exactly one `CV_ACCTFIX_LANE=` line, and it names `lane`. Only a
+    yes or a no leaves here: the file is opened without following a link, read up to
+    ENV_READ_BOUND bytes and matched line by line, and nothing of it is returned, printed or
+    logged."""
+    prefix = f"{LANE_VARIABLE}=".encode("ascii")
+    descriptor = os.open(env_file, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        data = os.read(descriptor, ENV_READ_BOUND)
+    finally:
+        os.close(descriptor)
+    named = [line for line in data.splitlines() if line.startswith(prefix)]
+    return named == [prefix + lane.encode("ascii")]
 
 
 def free_port() -> int:
@@ -320,9 +343,11 @@ def drive(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
 
 def down(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
     """Everything of the project, by its name alone, then the run directory; idempotent. Only a
-    project whose every object carries this lane's label: any other is refused, as it stands."""
+    project whose every object carries this lane's label, and whose run directory (when it has a
+    `stack.env`) names this lane: any other is refused, as it stands."""
     project = checked_project(args.project)
     run_dir = run_root(environ) / project
+    _checked_stack_env(project, args, environ)  # before anything uses or removes the directory
     env = docker_env(environ)
     status = 0
     found = leftovers(project, env)
@@ -356,16 +381,31 @@ def remove_run_dir(run_dir: Path) -> str:
     return "run directory removed"
 
 
-def _own_env_file(project: str, args: argparse.Namespace, environ: Mapping[str, str]) -> Path:
-    """The run's env file of a project whose every object carries this lane's label: any other is
-    refused before `restart-api` or `drive` reaches compose, as `up` and `down` refuse it."""
-    lane_only(leftovers(project, docker_env(environ)), args.lane)
-    return _env_file(project, environ)
-
-
-def _env_file(project: str, environ: Mapping[str, str]) -> Path:
+def _checked_stack_env(
+    project: str, args: argparse.Namespace, environ: Mapping[str, str]
+) -> Path | None:
+    """The run's env file, or None when the run directory has none (then each command goes on as
+    before). A file that is there must name this lane, whoever made the directory: `up` writes the
+    lane into it, so another lane's name, or none, is not this lane's run, and the project is
+    refused before anything uses or removes the directory."""
     env_file = run_root(environ) / project / ENV_FILE
     if not os.path.isfile(env_file):
+        return None
+    if not names_lane(env_file, args.lane):
+        raise Refused(
+            "the run directory's stack.env names another lane, or none: it is not this lane's"
+        )
+    return env_file
+
+
+def _own_env_file(project: str, args: argparse.Namespace, environ: Mapping[str, str]) -> Path:
+    """The run's env file of a project this lane owns, for `restart-api` and `drive`: the run
+    directory's `stack.env` names this lane and every object of the project carries its label
+    (any other is refused before compose is reached, as `down` refuses it), and the directory is
+    there."""
+    env_file = _checked_stack_env(project, args, environ)
+    lane_only(leftovers(project, docker_env(environ)), args.lane)
+    if env_file is None:
         raise Refused("the project has no run directory here: bring it up first")
     return env_file
 

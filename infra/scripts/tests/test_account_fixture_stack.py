@@ -91,6 +91,23 @@ COMMANDS: Final = {
     "drive": ["drive", "--project", PROJECT, "--", "signin", "qa-owner-1"],
     "down": ["down", "--project", PROJECT],
 }
+#: The lines of a synthetic `stack.env` that does not name this lane, as a run directory made by
+#: hand holds them: another lane's name, no lane line, an empty one, a longer name, the name
+#: padded, two lane lines (this lane's and another's).
+OTHER_ENVS: Final = {
+    "another-lane": [f"CV_ACCTFIX_LANE={OTHER_LANE}"],
+    "no-lane-line": [f"COMPOSE_PROJECT_NAME={PROJECT}", "CV_ACCOUNT_FIXTURE=compliant"],
+    "an-empty-lane": ["CV_ACCTFIX_LANE="],
+    "a-longer-name": [f"CV_ACCTFIX_LANE={LANE}2"],
+    "padded": [f"CV_ACCTFIX_LANE= {LANE}"],
+    "two-lane-lines": [f"CV_ACCTFIX_LANE={LANE}", f"CV_ACCTFIX_LANE={OTHER_LANE}"],
+}
+#: What the script prints for a file, socket or process call that fails (then the class's name).
+FAILED_LINE: Final = "a file, socket or process call failed"
+#: The refusal for a run directory whose `stack.env` is not this lane's: one fixed line.
+RUN_DIR_LINE: Final = (
+    "the run directory's stack.env names another lane, or none: it is not this lane's"
+)
 #: A `CV_ACCTFIX_LANE` the script refuses.
 MALFORMED_LANES: Final = {
     "empty": "",
@@ -468,6 +485,15 @@ def test_a_listing_docker_does_not_answer_stops_up_and_down(
     assert host.compose_calls() == [] and list(host.runtime.iterdir()) == []
 
 
+def _hand_made_run_dir(host: Host, *lines: str) -> Path:
+    """A run directory made by hand under the host's run root, with a synthetic `stack.env` of
+    these lines (never a real file's): no `up` ran, so no Docker object exists for it."""
+    run_dir = host.runtime / PROJECT
+    run_dir.mkdir(mode=0o700)
+    (run_dir / "stack.env").write_text("".join(f"{line}\n" for line in lines), encoding="ascii")
+    return run_dir
+
+
 def _printed(label: str) -> str:
     """A label value as `printf "%q"` prints it, which for these values is JSON's quoting."""
     return json.dumps(label, ensure_ascii=False)
@@ -637,6 +663,137 @@ def test_restart_api_and_drive_refuse_a_project_that_is_not_wholly_this_lanes(
     refused = f"account-fixture-stack: refused: {OTHER_LINE}\n"
     assert (done.returncode, done.stdout, done.stderr) == (2, "", refused)
     assert [call["args"] for call in host.calls()[calls_before:]] == LISTINGS
+
+
+@pytest.mark.parametrize("command", ["down", "restart-api", "drive"])
+@pytest.mark.parametrize("case", OTHER_ENVS)
+def test_a_run_dir_whose_stack_env_names_another_lane_or_none_is_refused(
+    tmp_path: Path, command: str, case: str
+) -> None:
+    """No Docker object is listed, so the check on the objects passes: the run directory's own
+    `stack.env` says whose it is. Exit 2 and one fixed line that shows neither the file's value nor
+    this lane's name, no docker call at all (the directory is judged first), the directory as it
+    was; run again, the same."""
+    host = Host(tmp_path)
+    run_dir = _hand_made_run_dir(host, *OTHER_ENVS[case])
+    before = {path.name: path.read_bytes() for path in run_dir.iterdir()}
+
+    first = host.run(*COMMANDS[command])
+    second = host.run(*COMMANDS[command])
+
+    refused = f"account-fixture-stack: refused: {RUN_DIR_LINE}\n"
+    assert [(d.returncode, d.stdout, d.stderr) for d in (first, second)] == [(2, "", refused)] * 2
+    assert host.calls() == []
+    assert {path.name: path.read_bytes() for path in run_dir.iterdir()} == before
+    assert LANE not in first.stderr and OTHER_LANE not in first.stderr
+
+
+@pytest.mark.parametrize("command", ["down", "restart-api", "drive"])
+def test_a_run_dir_whose_stack_env_names_this_lane_is_used_as_before(
+    tmp_path: Path, command: str
+) -> None:
+    host = Host(tmp_path)
+    lines = (f"COMPOSE_PROJECT_NAME={PROJECT}", f"CV_ACCTFIX_LANE={LANE}", "CV_ACCOUNT_FIXTURE=x")
+    run_dir = _hand_made_run_dir(host, *lines)
+
+    done = host.run(*COMMANDS[command])
+
+    assert done.returncode == 0, done.stderr
+    if command == "down":  # nothing is listed: no teardown, and the directory goes
+        assert host.compose_calls() == [] and not os.path.lexists(run_dir)
+    else:  # the three listings, then the one compose call
+        assert [call["args"] for call in host.calls()[:3]] == LISTINGS
+        assert len(host.compose_calls()) == 1
+
+
+def test_a_run_dir_with_no_stack_env_is_treated_as_before(tmp_path: Path) -> None:
+    """There is no lane to compare: `restart-api` and `drive` say to bring the project up first
+    (exit 2, no compose call), and `down`, with nothing of the project listed, removes it."""
+    host = Host(tmp_path)
+    run_dir = host.runtime / PROJECT
+    run_dir.mkdir(mode=0o700)
+    (run_dir / "left-behind").write_text("synthetic", encoding="ascii")
+
+    said = (
+        "account-fixture-stack: refused: the project has no run directory here: bring it up first"
+    )
+    for command in ("restart-api", "drive"):
+        done = host.run(*COMMANDS[command])
+        assert (done.returncode, done.stdout, done.stderr) == (2, "", said + "\n")
+    assert host.compose_calls() == [] and (run_dir / "left-behind").exists()
+    down = host.run(*COMMANDS["down"])
+
+    assert down.returncode == 0 and not os.path.lexists(run_dir)
+
+
+@pytest.mark.parametrize("command", ["down", "restart-api", "drive"])
+def test_a_stack_env_that_is_a_link_is_not_followed(tmp_path: Path, command: str) -> None:
+    """The file is opened without following a link: one fixed line naming the exception's class,
+    nothing of the file read, no docker call, the directory as it was."""
+    host = Host(tmp_path)
+    run_dir = host.runtime / PROJECT
+    run_dir.mkdir(mode=0o700)
+    target = tmp_path / "elsewhere"
+    target.write_text(f"CV_ACCTFIX_LANE={LANE}\n", encoding="ascii")  # this lane, behind a link
+    (run_dir / "stack.env").symlink_to(target)
+
+    done = host.run(*COMMANDS[command])
+
+    said = f"account-fixture-stack: refused: {FAILED_LINE} (OSError)\n"
+    assert (done.returncode, done.stdout, done.stderr) == (2, "", said)
+    assert host.calls() == [] and (run_dir / "stack.env").is_symlink()
+
+
+def test_up_refuses_an_existing_run_dir_without_reading_it(tmp_path: Path) -> None:
+    """`up` makes a run directory only where there is none and refuses one that is there, so it
+    neither uses nor removes it: another lane's directory is refused as any other is, untouched."""
+    host = Host(tmp_path)
+    run_dir = _hand_made_run_dir(host, *OTHER_ENVS["another-lane"])
+
+    done = host.run(*COMMANDS["up"])
+
+    assert (done.returncode, done.stdout) == (2, "")
+    assert done.stderr.startswith(
+        "account-fixture-stack: refused: the run directory already exists"
+    )
+    assert host.calls() == [] and sorted(path.name for path in run_dir.iterdir()) == ["stack.env"]
+
+
+@pytest.mark.parametrize(
+    ("content", "named"),
+    [
+        (b"CV_ACCTFIX_LANE=lane-a\n", True),
+        (b"A=1\nCV_ACCTFIX_LANE=lane-a\nB=2\n", True),
+        (b"CV_ACCTFIX_LANE=lane-a", True),
+        (b"CV_ACCTFIX_LANE=lane-a\r\nB=2\r\n", True),
+        (b"", False),
+        (b"B=2\n", False),
+        (b"CV_ACCTFIX_LANE=\n", False),
+        (b"CV_ACCTFIX_LANE=lane-b\n", False),
+        (b"CV_ACCTFIX_LANE=lane-a2\n", False),
+        (b"CV_ACCTFIX_LANE=lane-\n", False),
+        (b"CV_ACCTFIX_LANE= lane-a\n", False),
+        (b"CV_ACCTFIX_LANE=lane-a \n", False),
+        (b"CV_ACCTFIX_LANE=lane-a\xff\n", False),
+        (b'CV_ACCTFIX_LANE="lane-a"\n', False),
+        (b" CV_ACCTFIX_LANE=lane-a\n", False),
+        (b"\xff\xfeCV_ACCTFIX_LANE=lane-a\n", False),
+        (b"CV_ACCTFIX_LANE=lane-a\nCV_ACCTFIX_LANE=lane-a\n", False),
+        (b"CV_ACCTFIX_LANE=lane-a\nCV_ACCTFIX_LANE=lane-b\n", False),
+        (b"CV_ACCTFIX_LANE=lane-b\nCV_ACCTFIX_LANE=lane-a\n", False),
+        (b"x" * 65536 + b"\nCV_ACCTFIX_LANE=lane-a\n", False),
+    ],
+    ids=lambda value: value[:26].decode("ascii", "replace") if isinstance(value, bytes) else None,
+)
+def test_names_lane_is_yes_only_when_the_one_lane_line_names_it(
+    tmp_path: Path, content: bytes, named: bool
+) -> None:
+    """The reader's whole answer is a boolean: exactly one line starting `CV_ACCTFIX_LANE=`, equal
+    to this lane's, in the first 64 KiB (a name past the bound is not read, so it is not a yes)."""
+    env_file = tmp_path / "stack.env"
+    env_file.write_bytes(content)
+
+    assert _stack().names_lane(env_file, LANE) is named
 
 
 #: `up`'s refusals before any docker call: the arguments after `up --project P`, the case's

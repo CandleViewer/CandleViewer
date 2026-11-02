@@ -155,7 +155,10 @@ python3 $S down --project <project>
 `cv.lane` label. If any carries another lane's label, or none, `down` refuses: exit 2 and the one fixed line
 `account-fixture-stack: refused: the project has an object that carries another lane's label, or none: it is not this
 lane's`, with no compose call and the run directory kept; running it again changes nothing. A lane's `down` never takes
-another lane's project down, and `up`, `restart-api` and `drive` refuse such a project the same way.
+another lane's project down, and `up`, `restart-api` and `drive` refuse such a project the same way. A project with no
+object listed is not thereby this lane's: `down`, `restart-api` and `drive` also match the lane `up` wrote into the run
+directory's `stack.env` with theirs, before they use or remove the directory, and refuse one that names another lane or
+none (exit 2, a line of its own, nothing of the file shown); a run directory with no `stack.env` goes on as before.
 
 When every listed object carries this lane's label, `down` goes by the project name alone: `docker compose -p
 <project> down -v --remove-orphans`, run from an empty directory, so compose reads no compose file and no env file and
