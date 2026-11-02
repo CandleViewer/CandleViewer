@@ -60,8 +60,10 @@ from candleviewer.accounts.trade_groups import (
 from candleviewer.db import models
 from candleviewer.domain.primitives import GroupId, Side
 from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
+from candleviewer.storage.repositories.exchange_payload import MAX_PAYLOAD_CHARS
 from candleviewer.storage.repositories.trade_groups import (
     NO_STOP_LEG_STATUSES,
+    PROFILE_SNAPSHOT_MAX_CHARS,
     UNPROTECTED_LEG_STATUSES,
     AlgoKind,
     GroupOrigin,
@@ -1204,3 +1206,38 @@ def test_group_replay_is_a_frozen_id() -> None:
     assert replay.group_id == _GROUP
     with pytest.raises(AttributeError):
         replay.group_id = GroupId(_OTHER)  # type: ignore[misc]  # frozen on purpose
+
+
+# -- the largest valid profile snapshots (#3969) -----------------------------------------------
+
+
+def _largest_valid_profile() -> AccountProfile:
+    """Every list at its cap, every entry at its longest, every ladder value at full width."""
+    symbols = tuple(f"*{chr(65 + i // 26)}{chr(65 + i % 26)}" + "9" * 17 for i in range(500))
+    denied = tuple(f"*{chr(65 + i // 26)}{chr(66 + i % 25)}" + "8" * 17 for i in range(500))
+    rung = {"qty_pct": "0.1", "r": "1." + "1" * 36}
+    return _leg_draft().profile.model_copy(
+        update={
+            "name": "n" * 80,
+            "all_symbols": False,
+            "allowed_symbols": symbols,
+            "denied_symbols": denied,
+            "tp_ladder": tuple(TakeProfitRung.model_validate(rung) for _ in range(10)),
+        }
+    )
+
+
+def test_leg_snapshot_of_the_largest_valid_profile_renders() -> None:
+    profile = AccountProfile.model_validate(_largest_valid_profile().model_dump(mode="json"))
+    assert len(profile.allowed_symbols) == len(profile.denied_symbols) == 500
+    draft = _leg_draft().model_copy(update={"profile": profile})
+    values = leg_values(draft)  # renders the snapshot under its own bound
+    size = len(json.dumps(values.profile_snapshot, separators=(",", ":")))
+    assert MAX_PAYLOAD_CHARS < size <= PROFILE_SNAPSHOT_MAX_CHARS
+    LegDraft.model_validate(draft.model_dump())
+
+
+def test_render_json_over_the_snapshot_bound_raises() -> None:
+    oversize = {"k": "x" * PROFILE_SNAPSHOT_MAX_CHARS}
+    with pytest.raises(ValueError):
+        render_json(oversize, max_chars=PROFILE_SNAPSHOT_MAX_CHARS)
