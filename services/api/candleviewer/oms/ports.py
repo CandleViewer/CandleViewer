@@ -78,6 +78,7 @@ Verdicts are B1's gate values (`statechart/bindings/b01_order.py`).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -516,14 +517,19 @@ class SubmitActor:
     ip: str | None = field(default=None, repr=False)
 
 
+#: The rule origin's node id is bounded to a short identifier.
+_NODE_ID: Final = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RuleOrigin:
     """The rule a request comes from (24 Sec.8.4 "Rule-originated orders"): ids only, built by the
     composition root's rule adapter from the fire it serves, never from request data, so no route
     and no body sets one (`SubmitContext.origin`, `ExitCaller.origin`). `rule_id` and `version`
-    name the rule, `run_id` its fire's `rule_runs` row, `node_id` the action's node in the IR, and
-    `armed_by` and `armed_by_role` the user who armed it, both or neither, as its records name them
-    beside the owner, the request's `SubmitActor` (24 Sec.15.5; the E35 threat model's RE-S1)."""
+    name the rule, `run_id` its fire's `rule_runs` row, `node_id` the action's node in the IR,
+    bounded to a short identifier, and `armed_by` and `armed_by_role` the user who armed it, both
+    or neither, as its records name them beside the owner, the request's `SubmitActor` (24
+    Sec.15.5; the E35 threat model's RE-S1)."""
 
     rule_id: UUID
     version: int
@@ -535,8 +541,8 @@ class RuleOrigin:
     def __post_init__(self) -> None:
         if not isinstance(self.version, int) or isinstance(self.version, bool) or self.version < 1:
             raise ValueError("a rule's version is a whole number from 1")
-        if not isinstance(self.node_id, str) or not self.node_id:
-            raise ValueError("a rule action names its node")
+        if not isinstance(self.node_id, str) or _NODE_ID.fullmatch(self.node_id) is None:
+            raise ValueError("a rule origin's node id is not a short identifier")
         if (self.armed_by is None) != (self.armed_by_role is None):
             raise ValueError("an armer is named with its role, or not at all")
 

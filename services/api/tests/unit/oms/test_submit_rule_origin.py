@@ -282,6 +282,39 @@ def test_a_rule_origin_names_its_version_its_node_and_its_armer(over: dict[str, 
     assert replace(ORIGIN, armed_by=None, armed_by_role=None).armed_by is None
 
 
+#: The rule origin's node id is bounded to a short identifier: `[A-Za-z0-9_-]{1,64}`, whole.
+_NODE_REFUSED: list[Any] = [
+    "x" * 65, "a1\nb2", "a1\n", "n\u0153ud", "", "a 1", 7,
+]  # fmt: skip
+_NODE_REFUSED_IDS = [
+    "65-characters", "embedded-newline", "trailing-newline", "non-ascii", "empty", "space",
+    "not-text",
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("node", _NODE_REFUSED, ids=_NODE_REFUSED_IDS)
+def test_a_rule_origins_node_id_is_bounded_to_a_short_identifier(node: Any) -> None:
+    """The rule origin's node id is bounded to a short identifier, matched whole: 65 characters, a
+    newline inside, a newline at the end, a character outside ASCII, no character, a space and a
+    value that is not text are each refused at construction, with one fixed message that holds
+    none of the input."""
+    with pytest.raises(ValueError) as refused:
+        replace(ORIGIN, node_id=node)
+    assert str(refused.value) == "a rule origin's node id is not a short identifier"
+    assert node == "" or str(node) not in str(refused.value)  # "" is in every text
+
+
+@pytest.mark.parametrize(
+    "node",
+    ["a1", "c0", "n" * 64, "node_1-b"],
+    ids=["a1", "c0", "64-characters", "underscore-hyphen"],
+)
+def test_a_rule_origin_admits_a_short_identifier_as_its_node(node: str) -> None:
+    """The contract's node ids (`a1`, `c0`), the longest id the bound admits, and one with `_`
+    and `-`."""
+    assert replace(ORIGIN, node_id=node).node_id == node
+
+
 def test_a_rules_request_never_takes_the_protective_carve_out() -> None:
     """The close routes' C-2.6 carve-out (`protective`) is theirs alone: a context naming both it
     and a rule origin is refused, so no rule's request passes the switches at step 6."""
