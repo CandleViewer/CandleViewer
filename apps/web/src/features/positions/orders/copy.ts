@@ -230,8 +230,8 @@ export const PROPOSED = {
     "LIVE's typed word for a bulk cancel (D02 §8.3: copy D03).",
   ),
   "blotter.ui.result.failed_partial": proposed(
-    "Sub-4 · LIVE: cancelled 1, then Bybit stopped answering — the rest are still open",
-    "An account that failed after cancelling some: the deck's line says nothing was cancelled.",
+    "Sub-4 · LIVE: cancelled 1, then Bybit stopped answering — try again",
+    "A cancel-all account cut short by `timeout` (retryable) after cancelling some: the deck's line says nothing was cancelled, and a cancel already sent may still land, so the rest are never called open.",
     { "Sub-4": "account label", LIVE: "environment", "1": "count" },
   ),
   "blotter.ui.result.failed_store": proposed(
@@ -241,7 +241,22 @@ export const PROPOSED = {
   ),
   "blotter.ui.result.failed_other": proposed(
     "Sub-2 · LIVE: not all cancelled — try again",
-    "Any other `LegError.code`; never its `message` or `exchange_ret_code`.",
+    "Any other retryable failure (`LegError.retryable`, a `429`, a store read before the send); never its `message` or `exchange_ret_code`.",
+    { "Sub-2": "account label", LIVE: "environment" },
+  ),
+  "blotter.ui.result.unconfirmed": proposed(
+    "Sub-2 · LIVE: not confirmed — check its orders on Bybit",
+    'An outcome not known, never retried: `exchange_unavailable` (that order `unknown`, `22`), an account the answer leaves out, a `202` that left an order `unknown`, or a send nobody answered. Never "nothing cancelled": it may have landed.',
+    { "Sub-2": "account label", LIVE: "environment" },
+  ),
+  "blotter.ui.result.refused": proposed(
+    "Sub-2 · LIVE: not all cancelled — check its orders on Bybit",
+    "A refusal a retry would meet again (`LegError.retryable` false: `conflict`, `account_unavailable`, `exchange_error`; a row's `403`, `404` or `409`), so Retry failed leaves it.",
+    { "Sub-2": "account label", LIVE: "environment" },
+  ),
+  "blotter.ui.result.not_sent": proposed(
+    "Sub-2 · LIVE: nothing cancelled — the request was refused",
+    "A whole cancel-all refused before anything was sent (`403`, `400`, `404`, `409`; `22`: nothing cancelled, no exchange call).",
     { "Sub-2": "account label", LIVE: "environment" },
   ),
   "blotter.quarantined": proposed(
@@ -258,8 +273,8 @@ export const PROPOSED = {
   ),
   // E29-S02 PR2: the cancel and the bulk cancel (S-36's orders half).
   "blotter.recorded_tp": proposed(
-    "Paired with its stop; it can't be cancelled on its own.",
-    "A recorded take-profit's Cancel (T2): it goes through `setPositionTpSl`, not mounted (BQ-5); owner E29-D03 with E32-D01.",
+    "This take-profit is managed with its stop.",
+    "A recorded take-profit's Cancel (T2), present tense, one reason for the row and the bulk dialog: it is cancelled through `setPositionTpSl` with its stop re-sent (D02 §8.2), which this tab does not mount (BQ-5); owner E29-D03 with E32-D01.",
   ),
   "blotter.ui.cancel.failed": proposed(
     "Not cancelled: BTCUSDT Sell 0.250 on Main.",
@@ -293,18 +308,21 @@ export const PROPOSED = {
     "Cancel 1 order",
     "`blotter.ui.bulk.cancel_confirm` for one order.",
   ),
-  "blotter.ui.bulk.excluded#2": proposed(
-    "2 native-stop orders are not included: every position keeps a native stop.",
-    'The deck\'s `blotter.ui.bulk.excluded` reads "2 native-stop order is not included" for two.',
-    { "2": "count" },
-  ),
+  "blotter.ui.bulk.excluded#2": {
+    ...proposed(
+      "2 native-stop orders are not included: every position keeps a native stop.",
+      'The deck\'s `blotter.ui.bulk.excluded` reads "2 native-stop order is not included" for two.',
+      { "2": "count" },
+    ),
+    safety: true, // as the deck's own `blotter.ui.bulk.excluded`
+  },
   "blotter.ui.bulk.recorded_tp_excluded": proposed(
-    "1 take-profit is not included: it is cleared with its stop.",
-    "A recorded take-profit left out of a bulk cancel while `setPositionTpSl` is not mounted (BQ-5): `blotter.ui.bulk.tp_excluded`'s reason would be false.",
+    "1 take-profit is not included: it is managed with its stop.",
+    "A recorded take-profit left out of a bulk cancel while `setPositionTpSl` is not mounted (BQ-5), in `blotter.recorded_tp`'s words: `blotter.ui.bulk.tp_excluded`'s reason would be false.",
     { "1": "count" },
   ),
   "blotter.ui.bulk.recorded_tp_excluded#2": proposed(
-    "2 take-profits are not included: each is cleared with its stop.",
+    "2 take-profits are not included: each is managed with its stop.",
     "The same line for two or more.",
     { "2": "count" },
   ),

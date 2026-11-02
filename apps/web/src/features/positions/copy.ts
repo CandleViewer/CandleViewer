@@ -479,6 +479,16 @@ export const DECK = {
     source: "D04:466",
     safety: true,
   },
+  // E29-S02 (#912): offline with REST unreachable, every cancel T2 behind this notice (D02:397).
+  "blotter.ui.unreachable": {
+    string: "Cannot reach server",
+    screen: "SCR-063",
+    owner: "E17-D01",
+    status: "registered",
+    announce: "none",
+    source: "D04:459",
+    key_status: "PROPOSED name",
+  },
   "blotter.ui.cancel.split": {
     string: "Cancel ▾",
     screen: "SCR-063",

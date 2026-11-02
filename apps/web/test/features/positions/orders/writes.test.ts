@@ -4,12 +4,13 @@
  * failure, a `409 idempotency_in_flight` or a `429` (BQ-8); never an arm token (R5, C-2.6); every
  * answer a fixed kind, no server message, `detail` or `exchange_ret_code` passed on (BQ-2).
  */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createOrdersWrites,
   MAX_RESEND_WAIT_MS,
   MAX_RESENDS,
   RESEND_WAIT_MS,
+  retryAfterMs,
   type CancelAllRequest,
 } from "../../../../src/features/positions/orders/api";
 import { ETH, golden, MAIN, STOP, SUB1 } from "./support/orders";
@@ -98,8 +99,10 @@ describe("cancelOrder", () => {
 
   it.each([
     ["native_stop", problem(403, "risk_limit_breached")],
-    ["forbidden", problem(403, "account_scope_denied")],
-    ["forbidden", problem(403, "view_as_read_only")],
+    ["account_scope", problem(403, "account_scope_denied")],
+    ["view_as", problem(403, "view_as_read_only")],
+    ["forbidden", problem(403, "insufficient_permission")],
+    ["forbidden", problem(403, "constructor")],
     ["conflict", problem(409, "conflict")],
     ["conflict", problem(409, "account_unavailable")],
     ["conflict", problem(409, "idempotency_key_reuse")],
@@ -142,6 +145,37 @@ describe("one Idempotency-Key per request body (BQ-8)", () => {
     expect(waits).toEqual([1_000, RESEND_WAIT_MS]);
   });
 
+  it("a 429 that stays one, every send answered, sent nothing: busy, never unconfirmed (code m1)", async () => {
+    const { writes } = writesWith([
+      problem(429, "rate_limited", { "Retry-After": "1" }),
+      problem(429, "rate_limited", { "Retry-After": "1" }),
+      problem(429, "rate_limited", { "Retry-After": "1" }),
+    ]);
+    expect(await writes.cancelOrder(ETH)).toEqual({ kind: "busy" });
+  });
+
+  it("a 409 in flight still so after the re-sends leaves the outcome unknown: unavailable", async () => {
+    const inFlight = (): Response => problem(409, "idempotency_in_flight", { "Retry-After": "1" });
+    const { writes, sent } = writesWith([inFlight(), inFlight(), inFlight()]);
+    expect(await writes.cancelOrder(ETH)).toEqual({ kind: "unavailable" });
+    expect(sent).toHaveLength(MAX_RESENDS + 1);
+  });
+
+  it("a 429 after a send nobody answered leaves the outcome unknown: unavailable, not busy", async () => {
+    const { writes } = writesWith([
+      drop,
+      problem(429, "rate_limited", { "Retry-After": "1" }),
+      problem(429, "rate_limited", { "Retry-After": "1" }),
+    ]);
+    expect(await writes.cancelOrder(ETH)).toEqual({ kind: "unavailable" });
+    const all = writesWith([
+      drop,
+      problem(429, "rate_limited", { "Retry-After": "1" }),
+      problem(429, "rate_limited", { "Retry-After": "1" }),
+    ]);
+    expect(await all.writes.cancelAllOrders(CANCEL_ALL)).toEqual({ kind: "unavailable" });
+  });
+
   it(`stops after ${MAX_RESENDS} re-sends: busy, or unavailable when nothing answered`, async () => {
     const busy = writesWith([
       problem(429, "exchange_rate_limited", { "Retry-After": "60" }),
@@ -179,6 +213,57 @@ describe("one Idempotency-Key per request body (BQ-8)", () => {
   });
 });
 
+describe("Retry-After (code m4)", () => {
+  const after = (value?: string): Response =>
+    reply(429, {}, value === undefined ? {} : { "Retry-After": value });
+  it.each([
+    ["absent", undefined, RESEND_WAIT_MS],
+    ["an HTTP date", "Wed, 21 Oct 2026 07:28:00 GMT", RESEND_WAIT_MS],
+    ["a fraction", "1.5", RESEND_WAIT_MS],
+    ["0, now", "0", 0],
+    ["1", "1", 1_000],
+    ["4", " 4 ", 4_000],
+    ["5", "5", MAX_RESEND_WAIT_MS],
+    ["6, cut to the cap", "6", MAX_RESEND_WAIT_MS],
+    ["00005, its zeros read", "00005", MAX_RESEND_WAIT_MS],
+    ["10000, five digits", "10000", MAX_RESEND_WAIT_MS],
+    ["86400, a day", "86400", MAX_RESEND_WAIT_MS],
+    ["a 40-digit number", "9".repeat(40), MAX_RESEND_WAIT_MS],
+  ])("%s waits its ms, capped", (_, value, ms) => {
+    expect(retryAfterMs(after(value))).toBe(ms);
+  });
+
+  it("a re-send waits the answer's Retry-After: 0 at once", async () => {
+    const { writes, waits } = writesWith([
+      problem(429, "rate_limited", { "Retry-After": "0" }),
+      reply(202, { id: ETH, lifecycle_state: "cancel_pending" }),
+    ]);
+    expect((await writes.cancelOrder(ETH)).kind).toBe("accepted");
+    expect(waits).toEqual([0]);
+  });
+});
+
+describe("the platform's wait (code n3)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("lets go of its abort listener once it has waited", async () => {
+    vi.useFakeTimers();
+    const abort = new AbortController();
+    const remove = vi.spyOn(abort.signal, "removeEventListener");
+    const queue = [problem(429, "rate_limited", { "Retry-After": "1" }), reply(202, {})];
+    const writes = createOrdersWrites({
+      fetch: async () => queue.shift() ?? reply(500),
+      newKey: () => "00000000-0000-4000-8000-000000000001",
+    });
+    const done = writes.cancelOrder(ETH, abort.signal);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await done).toEqual({ kind: "accepted", lifecycle: null });
+    expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
+  });
+});
+
 describe("cancelAllOrders", () => {
   it("posts the CancelAllRequest as sent, its own key, no arm token", async () => {
     const answer = golden("rest_cancel_all_partial.json");
@@ -209,7 +294,7 @@ describe("cancelAllOrders", () => {
 
   it("a whole-request refusal is one fixed kind; a 409 in flight is re-sent with its key", async () => {
     const refused = writesWith([problem(403, "account_scope_denied")]);
-    expect(await refused.writes.cancelAllOrders(CANCEL_ALL)).toEqual({ kind: "forbidden" });
+    expect(await refused.writes.cancelAllOrders(CANCEL_ALL)).toEqual({ kind: "account_scope" });
     const inFlight = writesWith([
       problem(409, "idempotency_in_flight", { "Retry-After": "1" }),
       reply(200, { results: [], requested: 0, succeeded: 0 }),

@@ -13,10 +13,16 @@
  *   is: no Side or Trade-group chip, one Symbol chip at most, and every target a placed order in
  *   `submitted`, `triggered` or `partially_filled` that is not reduce-only (`22`'s selection with
  *   its default `exclude_reduce_only: true`, which is never sent `false`).
+ * - **Confirm re-gates** (C-2.6, BQ-4; `regate`): the targets are read again as they are when
+ *   Confirm is pressed, so a stop whose position opened while the dialog was up is dropped, counted
+ *   with the rows left out and never sent.
  * - **The result** is one line per account, every target counted in it, so nothing is silently
  *   dropped (the "Cancel-all partial failure" scenario): `BulkAccountResult` for `cancelAllOrders`,
- *   the targets' outcomes for one `cancelOrder` each, with the rows a failure left. "Retry failed"
- *   is a new request for the failed targets only, with a new key (BQ-8).
+ *   the targets' outcomes for one `cancelOrder` each, with the rows a failure left. A line never
+ *   claims more than the answer says: an order a `110001` parks in `unknown`, or a send nobody
+ *   answered, is "not confirmed", never "cancelled" or "nothing cancelled". "Retry failed" is a new
+ *   request, with a new key (BQ-8), for the retryable failures only (`LegError.retryable`; a `429` or
+ *   a store read that failed before anything was sent); the rest say to check the orders on Bybit.
  */
 import { MAX_ACCOUNT_IDS } from "../../api";
 import { bindDeck } from "../../copy";
@@ -27,6 +33,7 @@ import type {
   CancelAllRequest,
   CancelOutcome,
   OrdersWrites,
+  WriteFailure,
 } from "../api";
 import { bindProposed } from "../copy";
 import type { CancelGate } from "./gates";
@@ -128,8 +135,43 @@ export function planAllInView(
   return { scope: "all_in_view", ...parts, route: routeFor(parts.targets, chips) };
 }
 
-/** A result line's kind: done, or the failure the deck or a PROPOSED line words. */
-export type LineKind = "done" | "no_answer" | "partial" | "store" | "other";
+/**
+ * The plan as Confirm sends it (C-2.6, BQ-4): each target looked up by id in the rows in view now
+ * and gated again. A row that turned native stop (its position opened while the dialog was up), that
+ * can no longer be cancelled, or that has left the view is dropped and counted with the rows left
+ * out; the rest are sent. A cancel-all that lost a target goes one row at a time instead, so its
+ * request names no more than the targets left; one that lost none is routed again on the rows as
+ * they are now.
+ */
+export function regate(
+  plan: BulkPlan,
+  rows: readonly OrderRowModel[],
+  chips: readonly FilterChip[],
+  gateOf: (row: OrderRowModel) => CancelGate,
+): BulkPlan {
+  const live = new Map(rows.map((r) => [r.id, r]));
+  const targets: OrderRowModel[] = [];
+  const excluded: Record<Exclusion, number> = { ...plan.excluded };
+  for (const target of plan.targets) {
+    const row = live.get(target.id);
+    const why = row === undefined ? "other" : exclusionOf(row, gateOf(row));
+    if (row !== undefined && why === null) targets.push(row);
+    else excluded[why ?? "other"] += 1;
+  }
+  const dropped = targets.length < plan.targets.length;
+  const route: BulkRoute =
+    plan.route.kind === "per_row" || dropped ? { kind: "per_row" } : routeFor(targets, chips);
+  return { ...plan, targets, excluded, route };
+}
+
+/**
+ * A result line's kind: done, or the failure the deck or a PROPOSED line words. `no_answer`,
+ * `partial`, `store` and `other` are retryable ("try again"); `unconfirmed` (the outcome is not
+ * known) and `refused` (a refusal a retry would meet again) are not, and say to check on Bybit;
+ * `not_sent` is a whole cancel-all the server refused before it sent anything.
+ */
+export type LineKind =
+  "done" | "no_answer" | "partial" | "store" | "other" | "unconfirmed" | "refused" | "not_sent";
 
 export interface ResultLine {
   readonly accountId: string;
@@ -143,7 +185,7 @@ export interface BulkResult {
   readonly plan: BulkPlan;
   /** One per account with a target, in the targets' order. */
   readonly lines: readonly ResultLine[];
-  /** What "Retry failed" sends, or `null` when nothing failed. */
+  /** What "Retry failed" sends: the retryable failures only; `null` when there are none. */
   readonly retry:
     | { readonly kind: "cancel_all"; readonly accounts: readonly string[] }
     | { readonly kind: "per_row"; readonly rowIds: readonly string[] }
@@ -155,56 +197,117 @@ const accountsOf = (plan: BulkPlan): readonly string[] => [
   ...new Set(plan.targets.map((r) => r.accountId)),
 ];
 
-/** `BulkAccountResult`'s codes for an outcome Bybit never gave (`22` `cancelAllOrders`). */
-const NO_ANSWER: ReadonlySet<string> = new Set(["exchange_unavailable", "timeout"]);
-
-function failureKind(code: string | null, cancelled: number): LineKind {
-  if (code === "store_unavailable") return "store";
-  if (code !== null && NO_ANSWER.has(code)) return cancelled > 0 ? "partial" : "no_answer";
-  return "other";
+/** A line and whether "Retry failed" sends its account again. */
+interface Judged {
+  readonly kind: LineKind;
+  readonly retryable: boolean;
 }
 
-/** The partial-failure reducer for `cancelAllOrders`: an account missing from `results` failed. */
+/**
+ * A whole cancel-all refused (`22`: nothing cancelled, nothing sent): a `429` or a store read that
+ * failed is retryable, a scope, a role, a body or a conflict refusal is not. Any other answer, or
+ * none, leaves every account's outcome unknown.
+ */
+const NOT_SENT: Judged = { kind: "not_sent", retryable: false };
+const WHOLE: Readonly<Partial<Record<WriteFailure, Judged>>> = {
+  busy: { kind: "other", retryable: true },
+  store_unavailable: { kind: "store", retryable: true },
+  forbidden: NOT_SENT,
+  account_scope: NOT_SENT,
+  view_as: NOT_SENT,
+  invalid: NOT_SENT,
+  not_found: NOT_SENT,
+  conflict: NOT_SENT,
+};
+const UNCONFIRMED: Judged = { kind: "unconfirmed", retryable: false };
+
+/**
+ * One account of a `BulkAccountResult` (`22` `cancelAllOrders`): its `retryable` decides Retry
+ * failed; a retryable failure is worded by its code, any other says to check on Bybit, "not
+ * confirmed" where the outcome is not known (`exchange_unavailable`: that order `unknown`, never
+ * re-sent) and "not all cancelled" for a refusal.
+ */
+function judgeAccount(result: AccountCancelResult | undefined): Judged {
+  if (result === undefined) return UNCONFIRMED; // the answer leaves it out: not known
+  if (result.ok) return { kind: "done", retryable: false };
+  if (!result.retryable) {
+    const unknown = result.code === "exchange_unavailable" || result.code === "timeout";
+    return { kind: unknown ? "unconfirmed" : "refused", retryable: false };
+  }
+  if (result.code === "timeout")
+    return { kind: result.affected > 0 ? "partial" : "no_answer", retryable: true };
+  if (result.code === "store_unavailable" && result.affected === 0)
+    return { kind: "store", retryable: true };
+  return { kind: "other", retryable: true };
+}
+
+/** The partial-failure reducer for `cancelAllOrders`: an account missing from `results` is not known. */
 export function fromCancelAll(plan: BulkPlan, outcome: CancelAllOutcome): BulkResult {
   const byAccount = new Map<string, AccountCancelResult>(
     outcome.kind === "ok" ? outcome.results.map((r) => [r.accountId, r]) : [],
   );
-  const lines = accountsOf(plan).map((accountId): ResultLine => {
+  const judged = accountsOf(plan).map((accountId) => {
     const result = byAccount.get(accountId);
-    if (outcome.kind !== "ok") {
-      const code = outcome.kind === "store_unavailable" ? "store_unavailable" : null;
-      return { accountId, kind: failureKind(code, 0), cancelled: 0, failedRows: [] };
-    }
-    if (result === undefined) return { accountId, kind: "no_answer", cancelled: 0, failedRows: [] };
-    const kind = result.ok ? "done" : failureKind(result.code, result.affected);
-    return { accountId, kind, cancelled: result.affected, failedRows: [] };
+    const verdict =
+      outcome.kind === "ok" ? judgeAccount(result) : (WHOLE[outcome.kind] ?? UNCONFIRMED);
+    const line: ResultLine = {
+      accountId,
+      kind: verdict.kind,
+      cancelled: result?.affected ?? 0,
+      failedRows: [],
+    };
+    return { line, retryable: verdict.retryable };
   });
-  const failed = lines.filter((l) => l.kind !== "done").map((l) => l.accountId);
+  const again = judged.filter((j) => j.retryable).map((j) => j.line.accountId);
   return {
     plan,
-    lines,
-    retry: failed.length === 0 ? null : { kind: "cancel_all", accounts: failed },
+    lines: judged.map((j) => j.line),
+    retry: again.length === 0 ? null : { kind: "cancel_all", accounts: again },
   };
 }
 
-/** The partial-failure reducer for one `cancelOrder` per target, grouped by account. */
+/** A `cancelOrder` that sent nothing and may be sent again: a `429`, or a store read that failed. */
+const RETRYABLE_ROW: ReadonlySet<CancelOutcome["kind"]> = new Set(["busy", "store_unavailable"]);
+
+/** A row whose cancel is not known to have landed: no answer, or a `202` that left it `unknown`. */
+const unknownOf = (outcome: CancelOutcome | undefined): boolean =>
+  outcome === undefined ||
+  outcome.kind === "unavailable" ||
+  (outcome.kind === "accepted" && outcome.lifecycle === "unknown");
+
+/**
+ * The partial-failure reducer for one `cancelOrder` per target, grouped by account: a row counts as
+ * cancelled only on a `202` that did not leave it `unknown` (`22`'s `affected` leaves those out
+ * too). An account's line is "not confirmed" while any of its rows is not known, else "not all
+ * cancelled" for a refusal, else "try again"; Retry failed sends the retryable rows alone.
+ */
 export function fromRows(plan: BulkPlan, outcomes: ReadonlyMap<string, CancelOutcome>): BulkResult {
+  const retryable: string[] = [];
   const lines = accountsOf(plan).map((accountId): ResultLine => {
     const mine = plan.targets.filter((r) => r.accountId === accountId);
-    const failedRows = mine.filter((r) => outcomes.get(r.id)?.kind !== "accepted");
+    const failedRows = mine.filter((r) => {
+      const outcome = outcomes.get(r.id);
+      return outcome?.kind !== "accepted" || unknownOf(outcome);
+    });
     const cancelled = mine.length - failedRows.length;
-    const first = failedRows[0] === undefined ? undefined : outcomes.get(failedRows[0].id);
     if (failedRows.length === 0) return { accountId, kind: "done", cancelled, failedRows };
-    const code =
-      first === undefined || first.kind === "unavailable"
-        ? "exchange_unavailable"
-        : first.kind === "store_unavailable"
-          ? "store_unavailable"
-          : first.kind;
-    return { accountId, kind: failureKind(code, cancelled), cancelled, failedRows };
+    const kinds = failedRows.map((r) => outcomes.get(r.id));
+    for (const row of failedRows) {
+      const kind = outcomes.get(row.id)?.kind;
+      if (kind !== undefined && RETRYABLE_ROW.has(kind)) retryable.push(row.id);
+    }
+    const kind: LineKind = kinds.some(unknownOf)
+      ? "unconfirmed"
+      : kinds.every((o) => o !== undefined && RETRYABLE_ROW.has(o.kind))
+        ? "other"
+        : "refused";
+    return { accountId, kind, cancelled, failedRows };
   });
-  const rowIds = lines.flatMap((l) => l.failedRows.map((r) => r.id));
-  return { plan, lines, retry: rowIds.length === 0 ? null : { kind: "per_row", rowIds } };
+  return {
+    plan,
+    lines,
+    retry: retryable.length === 0 ? null : { kind: "per_row", rowIds: retryable },
+  };
 }
 
 /** Sends a plan: no request for an empty one, `MAX_IN_FLIGHT` at once on the per-row route. */
@@ -290,6 +393,21 @@ export function lineText(line: ResultLine, words: AccountWords): string {
       });
     case "other":
       return bindProposed("blotter.ui.result.failed_other", {
+        "Sub-2": who.label,
+        LIVE: who.environment,
+      });
+    case "unconfirmed":
+      return bindProposed("blotter.ui.result.unconfirmed", {
+        "Sub-2": who.label,
+        LIVE: who.environment,
+      });
+    case "refused":
+      return bindProposed("blotter.ui.result.refused", {
+        "Sub-2": who.label,
+        LIVE: who.environment,
+      });
+    case "not_sent":
+      return bindProposed("blotter.ui.result.not_sent", {
         "Sub-2": who.label,
         LIVE: who.environment,
       });

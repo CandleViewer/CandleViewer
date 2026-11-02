@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { DECK } from "../../../../src/features/positions/copy";
 import { PROPOSED } from "../../../../src/features/positions/orders/copy";
 import {
+  bulkGate,
   cancelGate,
   scopeGate,
   type CancelContext,
@@ -21,6 +22,7 @@ import {
   directory,
   ENTRY,
   ETH,
+  MAIN,
   snapshotBody,
   STOP,
   SUB1,
@@ -136,22 +138,61 @@ describe("the legs, in E09-D09 §2.1's order", () => {
     );
   });
 
-  it("then offline with REST unreachable: E17-D01's notice (D02:397)", () => {
+  it("then offline with REST unreachable: the deck's blotter.ui.unreachable (D02:397)", () => {
     expect(cancelGate(order, { ...CONTEXT, restReachable: false })).toEqual({
       kind: "gated",
       leg: "offline",
-      reason: "Cannot reach server",
+      reason: DECK["blotter.ui.unreachable"].string,
       scope: "panel",
     });
+    expect(DECK["blotter.ui.unreachable"].string).toBe("Cannot reach server");
   });
 
-  it("the bulk buttons take the same legs, the account's when one is named", () => {
+  it("an account a cancel was refused on (403 account_scope_denied) stays T2, rbac.account (S-22)", () => {
+    const denied = { ...CONTEXT, deniedAccounts: new Set([SUB1]) };
+    expect(cancelGate(order, denied)).toEqual({
+      kind: "gated",
+      leg: "account",
+      reason: "This account isn't assigned to you.",
+      scope: "account",
+    });
+    // ahead of a read-only grant, after the permission; another account's rows stay cancellable
+    expect(cancelGate(order, { ...denied, readOnlyAccounts: new Set([SUB1]) })).toMatchObject({
+      leg: "account",
+    });
+    expect(cancelGate(order, { ...denied, permissions: [] })).toMatchObject({ leg: "permission" });
+    expect(cancelGate(row(ETH), denied).kind).toBe("allowed");
+  });
+
+  it("scopeGate takes the account's legs only when one is named", () => {
     expect(scopeGate(CONTEXT)).toBeNull();
     expect(scopeGate({ ...CONTEXT, permissions: [] })?.kind).toBe("gated");
     expect(scopeGate({ ...CONTEXT, readOnlyAccounts: new Set([SUB2]) })).toBeNull();
     expect(scopeGate({ ...CONTEXT, readOnlyAccounts: new Set([SUB2]) }, SUB2)).toMatchObject({
       leg: "account_read_only",
     });
+  });
+});
+
+describe("the bulk buttons' gate (D02 §8.3, D04 §4.1; design m3)", () => {
+  it("the panel's legs first, whatever the accounts", () => {
+    expect(bulkGate({ ...CONTEXT, permissions: [] }, [SUB1])).toMatchObject({ leg: "permission" });
+    expect(bulkGate({ ...CONTEXT, restReachable: false }, [SUB1])).toMatchObject({
+      leg: "offline",
+    });
+  });
+
+  it("rbac.account_read_only once every account it would act on is read-only", () => {
+    const readOnly = { ...CONTEXT, readOnlyAccounts: new Set([SUB1, SUB2]) };
+    expect(bulkGate(readOnly, [SUB1, SUB2])).toEqual({
+      kind: "gated",
+      leg: "account_read_only",
+      reason: "You can view this account, not trade it.",
+      scope: "account",
+    });
+    // one tradable account among them: enabled, each read-only row left out on its own line
+    expect(bulkGate(readOnly, [SUB1, MAIN])).toBeNull();
+    expect(bulkGate(readOnly, [])).toBeNull();
   });
 });
 
@@ -172,7 +213,7 @@ describe("the order's own kind (2b, the row's reason)", () => {
     expect(cancelGate(tp, CONTEXT)).toEqual({
       kind: "gated",
       leg: "recorded_take_profit",
-      reason: "Paired with its stop; it can't be cancelled on its own.",
+      reason: "This take-profit is managed with its stop.",
       scope: "row",
     });
     // a take-profit placed as an order of its own is cancelled as any order (D02 §7's first route)

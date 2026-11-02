@@ -129,11 +129,18 @@ export type { CancelAllRequest };
 export type WriteFailure =
   /** `403 risk_limit_breached`: a native stop's row while its position is open (C-2.6). */
   | "native_stop"
-  /** Any other `403`: scope, a view-only grant, a read-only or view-as session, CSRF. */
+  /** `403 account_scope_denied`: the account is outside the caller's grants (S-22, `rbac.account`). */
+  | "account_scope"
+  /** `403 view_as_read_only`: a view-as session writes nothing (S-22, `rbac.view_as`). */
+  | "view_as"
+  /** Any other `403`: a view-only grant, a read-only role, CSRF. */
   | "forbidden"
   /** `409` but in flight: `conflict`, `account_unavailable`, `idempotency_key_reuse`; nothing sent. */
   | "conflict"
-  /** `409 idempotency_in_flight` or a `429`, still so after the re-sends. */
+  /**
+   * A `429` still so after the re-sends, none of which went unanswered: the server took nothing.
+   * A `429` after an unanswered send, or a `409 idempotency_in_flight`, is `unavailable` instead.
+   */
   | "busy"
   /** `502 exchange_error`: Bybit refused it and the order stays live. */
   | "exchange_refused"
@@ -141,7 +148,11 @@ export type WriteFailure =
   | "store_unavailable"
   | "not_found"
   | "invalid"
-  /** No answer after the re-sends, or one this client cannot read: the outcome is not known. */
+  /**
+   * The outcome is not known: no answer after the re-sends, an answer this client cannot read, a
+   * `409 idempotency_in_flight` (an earlier send of the key is still running), or a `429` after a
+   * send that went unanswered (that send may have arrived).
+   */
   | "unavailable";
 
 export type CancelOutcome =
@@ -197,26 +208,32 @@ export interface WritesDeps {
 
 const UUID_PATH = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** A wait that an abort ends early; it lets go of its abort listener either way. */
 const platformSleep = (ms: number, signal?: AbortSignal): Promise<void> =>
   new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener("abort", () => {
+    const done = (): void => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
       resolve();
-    });
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done, { once: true });
   });
 
 /**
- * `Retry-After` as ms: its whole-seconds form (`22` sends `1`), within the cap; the default when it
- * is absent, zero or another form. Read digit by digit: no positions module parses through
- * `Number` (`decimal.test.ts`'s guard), though a wait is no money.
+ * `Retry-After` as ms: its whole-seconds form (`22` sends `1`), `0` now, at most the cap however
+ * long the number; the default when it is absent or another form (an HTTP date). Read digit by
+ * digit, capped as it accumulates: no positions module parses through `Number`
+ * (`decimal.test.ts`'s guard), though a wait is no money.
  */
-function retryAfterMs(res: Response): number {
+export function retryAfterMs(res: Response): number {
   const text = res.headers.get("Retry-After")?.trim() ?? "";
-  if (!/^[0-9]{1,4}$/.test(text)) return RESEND_WAIT_MS;
-  let seconds = 0;
-  for (const digit of text) seconds = seconds * 10 + (digit.charCodeAt(0) - 48);
-  return seconds === 0 ? RESEND_WAIT_MS : Math.min(seconds * 1_000, MAX_RESEND_WAIT_MS);
+  if (!/^[0-9]+$/.test(text)) return RESEND_WAIT_MS;
+  let ms = 0;
+  for (const digit of text) {
+    ms = Math.min(ms * 10 + (digit.charCodeAt(0) - 48) * 1_000, MAX_RESEND_WAIT_MS);
+  }
+  return ms;
 }
 
 async function codeOf(res: Response): Promise<string | null> {
@@ -228,20 +245,33 @@ async function codeOf(res: Response): Promise<string | null> {
   }
 }
 
-/** A refused answer's fixed kind, by status and `code` alone. */
-async function failureOf(res: Response): Promise<WriteFailure> {
+/** `403`'s codes that name their own reason (S-22); any other is `forbidden`. */
+const FORBIDDEN: Readonly<Record<string, WriteFailure>> = {
+  risk_limit_breached: "native_stop",
+  account_scope_denied: "account_scope",
+  view_as_read_only: "view_as",
+};
+
+/**
+ * A refused answer's fixed kind, by status and `code` alone. `answered` is false when an earlier send
+ * of the same key went unanswered: a `429` then leaves the outcome unknown, as an in-flight `409` does.
+ */
+async function failureOf(res: Response, answered = true): Promise<WriteFailure> {
   const code = await codeOf(res);
   switch (res.status) {
     case 400:
       return "invalid";
     case 403:
-      return code === "risk_limit_breached" ? "native_stop" : "forbidden";
+      return (
+        (code !== null && Object.hasOwn(FORBIDDEN, code) ? FORBIDDEN[code] : undefined) ??
+        "forbidden"
+      );
     case 404:
       return "not_found";
     case 409:
-      return code === "idempotency_in_flight" ? "busy" : "conflict";
+      return code === "idempotency_in_flight" ? "unavailable" : "conflict";
     case 429:
-      return "busy";
+      return answered ? "busy" : "unavailable";
     case 502:
       return "exchange_refused";
     case 503:
@@ -251,12 +281,20 @@ async function failureOf(res: Response): Promise<WriteFailure> {
   }
 }
 
+/** The last answer of a held request (`null`: none), and whether every send before it was settled. */
+interface HeldAnswer {
+  readonly res: Response | null;
+  /** False once a send of the key went unanswered or answered `409 idempotency_in_flight`. */
+  readonly answered: boolean;
+}
+
 /** The answer of a held request, re-sent with its own key while the rule above allows. */
 async function sendHeldWrite(
   held: HeldWrite,
   deps: Required<WritesDeps>,
   signal: AbortSignal | undefined,
-): Promise<Response | null> {
+): Promise<HeldAnswer> {
+  let answered = true;
   for (let attempt = 0; ; attempt += 1) {
     const headers: Record<string, string> = { "Idempotency-Key": held.key };
     if (held.body !== null) headers["Content-Type"] = "application/json";
@@ -269,12 +307,14 @@ async function sendHeldWrite(
     } catch {
       res = null; // no answer: it may have arrived, so only the same key may follow it
     }
-    if (signal?.aborted === true) return res;
-    const again =
-      res === null ||
-      res.status === 429 ||
-      (res.status === 409 && (await codeOf(res)) === "idempotency_in_flight");
-    if (!again || attempt >= MAX_RESENDS) return res;
+    if (signal?.aborted === true) return { res, answered: answered && res !== null };
+    const inFlight =
+      res !== null && res.status === 409 && (await codeOf(res)) === "idempotency_in_flight";
+    if (!(res === null || res.status === 429 || inFlight) || attempt >= MAX_RESENDS)
+      return { res, answered };
+    // an unanswered send may have arrived, and an in-flight one is still running: from here on the
+    // key's outcome is not known whatever a later send of it is refused with
+    if (res === null || inFlight) answered = false;
     await deps.sleep(res === null ? RESEND_WAIT_MS : retryAfterMs(res), signal);
   }
 }
@@ -311,9 +351,9 @@ export function createOrdersWrites(options: WritesDeps = {}): OrdersWrites {
         key: deps.newKey(),
         body: null,
       });
-      const res = await sendHeldWrite(held, deps, signal);
+      const { res, answered } = await sendHeldWrite(held, deps, signal);
       if (res === null) return { kind: "unavailable" };
-      if (res.status !== 202) return { kind: await failureOf(res) };
+      if (res.status !== 202) return { kind: await failureOf(res, answered) };
       try {
         const order = (await res.json()) as { lifecycle_state?: unknown };
         const lifecycle = typeof order.lifecycle_state === "string" ? order.lifecycle_state : null;
@@ -329,9 +369,9 @@ export function createOrdersWrites(options: WritesDeps = {}): OrdersWrites {
         key: deps.newKey(),
         body: JSON.stringify(body),
       });
-      const res = await sendHeldWrite(held, deps, signal);
+      const { res, answered } = await sendHeldWrite(held, deps, signal);
       if (res === null) return { kind: "unavailable" };
-      if (res.status !== 200) return { kind: await failureOf(res) };
+      if (res.status !== 200) return { kind: await failureOf(res, answered) };
       try {
         const answer = (await res.json()) as { results?: unknown };
         if (!Array.isArray(answer.results)) return { kind: "unavailable" };
