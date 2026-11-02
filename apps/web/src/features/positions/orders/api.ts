@@ -19,7 +19,7 @@ import {
   type AccountsOutcome,
   type ReadFailure,
 } from "../api";
-import { amendBody, type AmendField } from "./model/amend";
+import { amendBody, provenanceBar, type AmendField } from "./model/amend";
 import type { OrderRowModel } from "./model/orderRow";
 
 export type Order = generated.rest.components["schemas"]["Order"];
@@ -126,8 +126,12 @@ export const ordersApi: OrdersApi = {
  * The amend (PR3a; `22` `amendOrder`, `PATCH /orders/{orderId}`):
  *
  * - **One field, never a stop** (P3-BQ-1, D-13): the body is `model/amend.ts`'s, exactly one of
- *   `price`, `trigger_price` and `qty`; a native stop's or a recorded take-profit's row is refused
- *   here before any request (`protected`), and no body carries `stop_loss` or `take_profit`.
+ *   `price`, `trigger_price` and `qty`, and no body carries `stop_loss` or `take_profit`. A native
+ *   stop's row (D01 D7's rule, from WS fields alone) is refused here before any request
+ *   (`protected`); a recorded take-profit's, and any provenance but `placed` (`not_amendable`), are
+ *   refused before any request when the row's provenance is known, and the server enforces them
+ *   always (`422 order_not_amendable`). A reduce-only take-profit whose provenance no read has
+ *   given is refused too (`protected`, fail closed): `23` §15.1 carries none.
  * - **The arm** (P3-BQ-5): `X-Arm-Token` goes only on a write the caller held a token for, which
  *   `amendStore` does for a risk-increasing amend on a live account alone; never logged (C-12.6).
  * - **One more re-send** (P3-BQ-6): a `409 conflict` with `Retry-After` (an order that took a
@@ -171,9 +175,15 @@ export type WriteFailure =
   | "trading_disabled"
   /** An amend's `403 risk_limit_breached`: the amended order's risk check (SR-E29-04). */
   | "risk"
-  /** An amend's `422 order_not_amendable`: the order does not rest at the exchange now. */
+  /**
+   * An amend's `422 order_not_amendable`: the order does not rest at the exchange now; or, refused
+   * before any request, a row whose read provenance is not `placed`, as the server refuses it.
+   */
   | "not_amendable"
-  /** A native stop's or a recorded take-profit's row: never amended, refused before any request. */
+  /**
+   * A native stop's or a recorded take-profit's row, or a reduce-only take-profit's whose
+   * provenance no read has given (fail closed): never amended, refused before any request.
+   */
   | "protected"
   /**
    * The outcome is not known: no answer after the re-sends, an answer this client cannot read, a
@@ -214,8 +224,14 @@ export interface OrdersWrites {
 /** An amend's answer: `202` with the order's B1 state (`unknown` when the venue's word is not known). */
 export type AmendOutcome = CancelOutcome;
 
-/** The row an amend is for: its id, and whether it is a native stop or a recorded take-profit. */
-export type AmendTarget = Pick<OrderRowModel, "id" | "protective">;
+/**
+ * The row an amend is for: its id, whether it is a native stop or a recorded take-profit, and its
+ * provenance, judged with its intent and `reduce_only` while no read has given it.
+ */
+export type AmendTarget = Pick<
+  OrderRowModel,
+  "id" | "protective" | "provenance" | "intent" | "reduceOnly"
+>;
 
 export interface AmendWrites {
   /** `PATCH /orders/{orderId}` with one field: one request per press, its own key (BQ-8). */
@@ -476,6 +492,9 @@ export function createOrdersWrites(options: WritesDeps = {}): OrdersWrites & Ame
     async amendOrder(target, field, requested, { arm = null, signal } = {}) {
       // D-13 (P3-BQ-1): a native stop and a recorded take-profit move through `setPositionTpSl`
       if (target.protective.kind !== null) return { kind: "protected" };
+      // `exits.py` refuses any provenance but `placed`; an unread one may be a recorded take-profit
+      const bar = provenanceBar(target);
+      if (bar !== null) return { kind: bar === "unread" ? "protected" : "not_amendable" };
       const body = amendBody(field, requested);
       if (!UUID_PATH.test(target.id) || body === null) return { kind: "invalid" };
       const held: HeldWrite = Object.freeze({
@@ -484,7 +503,8 @@ export function createOrdersWrites(options: WritesDeps = {}): OrdersWrites & Ame
         path: `/api/v1/orders/${target.id.toLowerCase()}`,
         key: deps.newKey(),
         body: JSON.stringify(body),
-        ...(arm === null ? {} : { arm }),
+        // never an empty `X-Arm-Token` (N5): no token, no header
+        ...(arm !== null && arm.length > 0 ? { arm } : {}),
       });
       const { res, answered } = await sendHeldWrite(held, deps, signal);
       if (res === null) return { kind: "unavailable" };

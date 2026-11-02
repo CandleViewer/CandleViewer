@@ -1,8 +1,10 @@
 /**
- * E29-S02 PR3a (#912) the amend store (`amendStore.ts`): a press's last guards (D-13, the arm read
- * again at the commit, M13), one `amendOrder` per press with the token only where it is needed
- * (P3-BQ-5), the entry kept until the venue answers (P3-BQ-7), each resolution said once (RT-14,
- * RT-06), the age measured once (G-W2), the stale bound, Dismiss and prune, from the goldens.
+ * E29-S02 PR3a (#912) the amend store (`amendStore.ts`): a press's last guards (D-13 and the
+ * provenance `exits.py` refuses, the arm read again at each commit, M13), judged on the orders
+ * store's row (N1), one `amendOrder` per press with the token only where it is needed (P3-BQ-5),
+ * the entry kept until the venue answers (P3-BQ-7), each resolution said once after it is stored
+ * (RT-14, RT-06, N2), the age measured once (G-W2), the stale bound, Dismiss and prune, from the
+ * goldens.
  */
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
@@ -37,6 +39,8 @@ import {
 } from "./support/orders";
 
 const NONE: OrderConstants = { createdAtMs: null, provenance: null, tradeGroupId: null };
+/** The constants a REST read gives a placed order (`rest_list_orders_open.json`). */
+const PLACED: OrderConstants = { ...NONE, provenance: "placed" };
 
 function row(id: string, wire: Record<string, unknown> = {}, constants = NONE): OrderRowModel {
   const mapped = mapOrder(
@@ -118,6 +122,48 @@ describe("a press: the commit's last guards, then one amend (P3-BQ-1, P3-BQ-5)",
     expect(h.amendOrder).not.toHaveBeenCalled();
   });
 
+  it("a read provenance other than placed is refused before any request, as exits.py refuses it (M1b)", () => {
+    const h = harness();
+    const adopted = row(ETH, {}, { ...NONE, provenance: "reconciliation" });
+    expect(h.store.press(adopted, "price", "2495.00")).toEqual({
+      kind: "refused",
+      why: "not_amendable",
+    });
+    // a recorded stop the book no longer counts as a native stop (D01 D7's last clause)
+    const recorded = row(STOP, {}, { ...NONE, provenance: "recorded_stop" });
+    const uncovered = { ...recorded, protective: { kind: null, via: null } } as const;
+    expect(h.store.press(uncovered, "trigger_price", "63980.0")).toMatchObject({
+      why: "not_amendable",
+    });
+    expect(h.amendOrder).not.toHaveBeenCalled();
+  });
+
+  it("a reduce-only take-profit whose provenance no read has given is refused until one does (M1c)", () => {
+    const h = harness();
+    expect(h.store.press(row(TP), "price", "64850.0")).toEqual({
+      kind: "refused",
+      why: "provenance_unread",
+    });
+    expect(h.amendOrder).not.toHaveBeenCalled();
+    expect(h.store.press(row(TP, {}, PLACED), "price", "64850.0").kind).toBe("sent");
+  });
+
+  it("judges the orders store's row at the commit, never the caller's stale object (N1)", () => {
+    const shown = row(ETH);
+    const h = harness({ current: (id) => (id === ETH ? shown : undefined) });
+    expect(h.store.press({ ...shown, price: "2400" }, "price", "2495.00").kind).toBe("sent");
+    expect(h.entry()).toMatchObject({ prior: "2500" });
+    expect(h.amendOrder.mock.calls[0]?.[0]).toBe(shown);
+  });
+
+  it("the store's word wins: an order it shows triggered, or no longer shows, sends nothing (N1)", () => {
+    const triggered = row(COND, { lifecycle_state: "triggered" });
+    const h = harness({ current: (id) => (id === COND ? triggered : undefined) });
+    expect(h.store.press(row(COND), "price", "64530.0")).toMatchObject({ why: "not_amendable" });
+    expect(h.store.press(row(ETH), "price", "2495.00")).toMatchObject({ why: "not_amendable" });
+    expect(h.amendOrder).not.toHaveBeenCalled();
+  });
+
   it("never sends for an order that does not rest, one with an amend in flight, or a request it cannot send", () => {
     const h = harness();
     expect(
@@ -168,7 +214,7 @@ describe("a press: the commit's last guards, then one amend (P3-BQ-1, P3-BQ-5)",
   it("a cut and a take-profit's price go without the token, whatever the session holds (M7, M8, M11)", () => {
     const h = harness();
     h.store.press(row(ENTRY), "qty", "0.100");
-    h.store.press(row(TP), "price", "64850.0");
+    h.store.press(row(TP, {}, PLACED), "price", "64850.0");
     expect(h.amendOrder.mock.calls.map((call) => call[3])).toEqual([{ arm: null }, { arm: null }]);
   });
 
@@ -184,7 +230,7 @@ describe("resolved on the venue's word, each resolution said once", () => {
     const h = harness();
     h.store.press(row(ETH), "price", "2495.00");
     h.store.observe(step("amend_request"), "delta");
-    await h.answer(0, { kind: "accepted", lifecycle: "amend_pending" });
+    await h.answer(0, { kind: "accepted", lifecycle: "submitted" });
     expect(h.entry()).toMatchObject({ phase: "pending", sawPending: true, http: "accepted" });
     expect(h.announce).not.toHaveBeenCalled();
     h.tick(1_200);
@@ -287,6 +333,25 @@ describe("Dismiss, a new press, prune and the sinks", () => {
     h.store.observe({ orders: [] }, "delta");
     expect(listener).not.toHaveBeenCalled();
     expect(h.store.getSnapshot().version).toBe(0);
+  });
+
+  it("an announcer that throws costs no step: stored and published first, its error reported (N2)", () => {
+    const boom = new Error("region gone");
+    const report = vi.fn();
+    const h = harness({
+      announce: () => {
+        throw boom;
+      },
+      report,
+    });
+    h.store.press(row(ETH), "price", "2495.00");
+    h.store.observe(step("amend_request"), "delta");
+    const listener = vi.fn();
+    h.store.subscribe(listener);
+    h.store.observe(step("amend_rejected"), "delta");
+    expect(h.entry()).toMatchObject({ phase: "rejected", said: "rejected" });
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(report).toHaveBeenCalledExactlyOnceWith(boom);
   });
 
   it("a measure that throws never harms the amend; past the cap the measures are cleared", () => {

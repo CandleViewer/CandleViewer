@@ -3,7 +3,8 @@
  * (SCR-063) with the real orders feed and writes behind a fake `fetch` and fake topic handles: an
  * amend pressed while the Working-orders tab shows, the Positions tab chosen, the venue's `502` and
  * its rejection step arriving meanwhile. The session's feed and amend store run on, the rejection is
- * said once (RT-06), and the tab's return finds it with the same subscription.
+ * said once (RT-06), and the tab's return finds it with the same subscription. A press is judged on
+ * the session's orders store row, never the caller's object (N1).
  */
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
@@ -173,7 +174,9 @@ describe("P3-BQ-8: the amends run for the session, not the tab", () => {
       const amends = await openOrders();
       const handle = ws.live("orders")[0];
       const eth = mapOrder(wsItem(snapshotBody(), ETH), "ws", directory());
-      expect(eth === null ? null : amends.press(eth, "price", "2495.00")).toEqual({
+      // N1: the caller's object is stale (2,400); the press judges the session store's row (2,500)
+      const stale = eth === null ? null : { ...eth, price: "2400" };
+      expect(stale === null ? null : amends.press(stale, "price", "2495.00")).toEqual({
         kind: "sent",
         seq: 1,
       });
@@ -193,7 +196,10 @@ describe("P3-BQ-8: the amends run for the session, not the tab", () => {
       expect(amendLines()).toEqual([
         "Amend rejected. Your order is unchanged: the price is still 2,500.",
       ]);
-      expect(amends.getSnapshot().mutations.get(ETH)).toMatchObject({ phase: "rejected" });
+      expect(amends.getSnapshot().mutations.get(ETH)).toMatchObject({
+        phase: "rejected",
+        prior: "2500",
+      });
       fireEvent.click(screen.getByRole("tab", { name: "Working orders" }));
       await settle(REGION_BUDGET_MS + TICK);
       expect(ws.live("orders")).toEqual([handle]);

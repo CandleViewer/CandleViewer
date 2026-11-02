@@ -1,7 +1,8 @@
 /**
  * E29-S02 PR3a (#912) the amend's write (`amendOrder`) against a fake `fetch` (no network): one
- * field, the golden specimen's body, never a stop (P3-BQ-1, D-13); `X-Arm-Token` only when the
- * caller holds one for the write (P3-BQ-5); one `Idempotency-Key` per amend, re-sent only with the
+ * field, the golden specimen's body, never a stop, nor a provenance but `placed`, nor a take-profit
+ * whose provenance is unread (P3-BQ-1, D-13); `X-Arm-Token` only when the caller holds a non-empty
+ * one for the write (P3-BQ-5, N5); one `Idempotency-Key` per amend, re-sent only with the
  * identical request (BQ-8), and a `409 conflict` with `Retry-After` re-sent once on its own count
  * (P3-BQ-6, C-2.10); and the amend's own kinds (`failureOf(res, op)`), the cancel's unchanged.
  */
@@ -60,7 +61,23 @@ function writesWith(answers: readonly (Response | (() => never))[]) {
 const drop = (): never => {
   throw new TypeError("Failed to fetch");
 };
-const ordinary = (id = ETH): AmendTarget => ({ id, protective: { kind: null, via: null } });
+const NOT_PROTECTIVE = { kind: null, via: null } as const;
+/** A placed entry: no stop, no recorded take-profit. */
+const ordinary = (id = ETH): AmendTarget => ({
+  id,
+  protective: NOT_PROTECTIVE,
+  provenance: "placed",
+  intent: "entry",
+  reduceOnly: false,
+});
+/** A reduce-only take-profit on WS alone: no read has given its provenance yet (`23` §15.1). */
+const unreadTp = (): AmendTarget => ({
+  id: TP,
+  protective: NOT_PROTECTIVE,
+  provenance: null,
+  intent: "take_profit",
+  reduceOnly: true,
+});
 const accepted = (lifecycle: string): Response =>
   reply(202, { id: ETH, lifecycle_state: lifecycle, price: "2495.00" });
 const conflictOnce = (): Response => problem(409, "conflict", { "Retry-After": "1" });
@@ -90,16 +107,50 @@ describe("amendOrder: one field, the golden specimen, never a stop (P3-BQ-1)", (
 
   it("a native stop's or a recorded take-profit's row is refused before any request (D-13, M19)", async () => {
     const { writes, fetch } = writesWith([]);
-    const stop: AmendTarget = { id: STOP, protective: { kind: "native_stop", via: "rule" } };
+    const stop: AmendTarget = {
+      ...ordinary(STOP),
+      protective: { kind: "native_stop", via: "rule" },
+      intent: "stop_loss",
+      reduceOnly: true,
+    };
     const tp: AmendTarget = {
-      id: TP,
+      ...unreadTp(),
       protective: { kind: "recorded_take_profit", via: "provenance" },
+      provenance: "recorded_stop",
     };
     expect(await writes.amendOrder(stop, "trigger_price", "63980.0")).toEqual({
       kind: "protected",
     });
     expect(await writes.amendOrder(tp, "price", "64850.0")).toEqual({ kind: "protected" });
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("a read provenance other than placed is refused before any request, as exits.py refuses it (M1b)", async () => {
+    const { writes, fetch } = writesWith([]);
+    const adopted: AmendTarget = { ...ordinary(), provenance: "reconciliation" };
+    // a recorded stop the book says has no position: no longer a native stop, still not placed
+    const recorded: AmendTarget = {
+      ...ordinary(STOP),
+      provenance: "recorded_stop",
+      intent: "stop_loss",
+      reduceOnly: true,
+    };
+    expect(await writes.amendOrder(adopted, "price", "2495.00")).toEqual({
+      kind: "not_amendable",
+    });
+    expect(await writes.amendOrder(recorded, "trigger_price", "63980.0")).toEqual({
+      kind: "not_amendable",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("a reduce-only take-profit whose provenance is unread is refused, fail closed; once read, sent", async () => {
+    const { writes, sent } = writesWith([accepted("submitted"), accepted("submitted")]);
+    expect(await writes.amendOrder(unreadTp(), "price", "64850.0")).toEqual({ kind: "protected" });
+    expect(sent).toHaveLength(0);
+    await writes.amendOrder({ ...unreadTp(), provenance: "placed" }, "price", "64850.0");
+    await writes.amendOrder({ ...ordinary(), provenance: null }, "price", "2495.00");
+    expect(sent.map((s) => s.path)).toEqual([`/api/v1/orders/${TP}`, `/api/v1/orders/${ETH}`]);
   });
 
   it("an id that is not a UUID, or a value that is no positive decimal, sends nothing", async () => {
@@ -123,6 +174,13 @@ describe("the arm: X-Arm-Token only on the write the caller held one for (P3-BQ-
   it("sends none without one (M11)", async () => {
     const { writes, sent } = writesWith([accepted("amend_pending")]);
     await writes.amendOrder(ordinary(), "qty", "0.100", { arm: null });
+    expect(sent[0]?.headers.has("X-Arm-Token")).toBe(false);
+  });
+
+  it("never an empty X-Arm-Token: an empty string is no token (N5)", async () => {
+    const { writes, sent } = writesWith([accepted("amend_pending")]);
+    await writes.amendOrder(ordinary(), "price", "2495.00", { arm: "" });
+    expect(sent).toHaveLength(1);
     expect(sent[0]?.headers.has("X-Arm-Token")).toBe(false);
   });
 });

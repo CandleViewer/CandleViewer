@@ -1,12 +1,14 @@
 /**
  * E29-S02 PR3a (#912) the amend engine end to end, without a screen: the real feed
  * (`startOrdersFeed`), orders store, amend store and writes (`createOrdersWrites`) behind a fake
- * `fetch` and a fake topic handle, fed the goldens' steps (`ws_orders_deltas.json`). The ticket's
- * integration plan: amend-ack, amend-reject, the unknown amend reconciled, an untracked adoption, a
- * missed accept frame, and the stale bound (P3-BQ-7: confirmed or rejected only on the venue's word).
+ * `fetch` and a fake topic handle, fed the goldens' steps (`ws_orders_deltas.json`), the amend
+ * store judging the orders store's row as the positions session wires it (N1). The ticket's
+ * integration plan: amend-ack, amend-reject, the unknown amend reconciled, an untracked adoption,
+ * a missed accept frame, and the stale bound (P3-BQ-7: confirmed or rejected only on the venue's
+ * word); and a take-profit whose provenance no read has given (D-13, fail closed).
  *
- * Two frames are goldens re-stamped as PR2's tests re-stamp them: the accepted ETH step read again by
- * reconciliation (`change: "reconcile"`) and by a snapshot (no `change` key, as `ws_topics.py`
+ * Some frames are goldens re-stamped as PR2's tests re-stamp them: an ETH amend step read again by
+ * reconciliation (`change: "reconcile"`) or by a snapshot (no `change` key, as `ws_topics.py`
  * builds one).
  */
 import { act } from "@testing-library/react";
@@ -26,8 +28,8 @@ import {
   NO_ARM,
   type ArmTokenSource,
 } from "../../../../src/features/positions/orders/model/amend";
-import { editGate } from "../../../../src/features/positions/orders/model/gates";
-import type { WsOrder } from "../../../../src/features/positions/orders/model/orderRow";
+import { editGate, type AmendContext } from "../../../../src/features/positions/orders/model/gates";
+import type { RestOrder, WsOrder } from "../../../../src/features/positions/orders/model/orderRow";
 import {
   createOrdersStore,
   type OrdersStore,
@@ -59,6 +61,19 @@ import {
 
 const FRAME = 16;
 const ARMED: ArmTokenSource = { token: () => "arm-token-1" };
+/** The Edit gate's context: every scope leg open, the steps known, the session armed. */
+const EDIT: AmendContext = {
+  viewAs: null,
+  permissions: ["orders:write"],
+  readOnlyAccounts: new Set(),
+  restReachable: true,
+  cancelling: new Set(),
+  amends: new Map(),
+  hasSteps: () => true,
+  arm: ARMED,
+  armKey: "Ctrl+Shift+T",
+  role: "owner",
+};
 
 interface Patch {
   readonly path: string;
@@ -104,19 +119,26 @@ function press(id: string, field: "price" | "trigger_price" | "qty", requested: 
   return amends.press(row, field, requested);
 }
 /**
- * The golden's accepted ETH step as a later read gives it: a reconcile step, or a snapshot's item,
- * which carries no `change` key at all (`ws_topics.py` omits it).
+ * The golden's ETH step `name` as a later read gives it, `later` ms after it: a reconcile step, or
+ * a snapshot's item, which carries no `change` key at all (`ws_topics.py` omits it).
  */
-function reread(change: "reconcile" | null): WsOrder {
-  const item = { ...wsItem(deltaBody("amend_accepted"), ETH) };
-  item.updated_at_ms += 4_000;
+function reread(
+  change: "reconcile" | null,
+  name: "amend_accepted" | "amend_rejected" = "amend_accepted",
+  later = 4_000,
+): WsOrder {
+  const item = { ...wsItem(deltaBody(name), ETH) };
+  item.updated_at_ms += later;
   if (change === null) delete item.change;
   else item.change = change;
   return item;
 }
 
 /** The live view: the feed, its stores, the snapshot; the session's arm is `arm`. */
-async function open(arm: ArmTokenSource = ARMED): Promise<void> {
+async function open(
+  arm: ArmTokenSource = ARMED,
+  listed: () => RestOrder[] = restOpen,
+): Promise<void> {
   patches = [];
   replies = [];
   announce = vi.fn();
@@ -136,12 +158,14 @@ async function open(arm: ArmTokenSource = ARMED): Promise<void> {
     announce,
     now: () => Date.now(),
     performance: null,
+    // as the positions session wires it (N1): a press judges the orders store's row at the commit
+    current: (id) => store.getSnapshot().rows.find((r) => r.id === id),
   });
   store = createOrdersStore({ onItem: (item, via) => amends.observe(item, via) });
   const api: OrdersApi = {
     listOrders: async (): Promise<OrdersOutcome> => ({
       kind: "ok",
-      items: restOpen(),
+      items: listed(),
       truncated: false,
     }),
     listExchangeAccounts: async (): Promise<AccountsOutcome> => ({
@@ -199,13 +223,36 @@ describe("Optimistic amend is clearly pending (amend-ack)", () => {
     await open();
     press(ETH, "price", "2495.00");
     await push(step("amend_request"));
-    await reply(0, json(202, { id: ETH, lifecycle_state: "amend_pending" }));
+    // no answer within the bound (a `202` whose order does not rest reads Unconfirmed at once)
     await settle(AMEND_STALE_MS + 2 * FRAME);
-    expect(entry()?.phase).toBe("unconfirmed");
+    expect(entry()).toMatchObject({ phase: "unconfirmed", http: "none" });
     expect(announce).not.toHaveBeenCalled();
     await push(step("amend_accepted"));
     expect(entry()).toBeUndefined();
     expect(announce.mock.calls).toEqual([["polite", "Amend confirmed: price 2,495."]]);
+  });
+
+  it("a 202 still amend_pending at 11 s, the rejection lost in a gap: the reads settle it not applied (D01:229)", async () => {
+    await open();
+    press(ETH, "price", "2495.00");
+    await push(step("amend_request"));
+    await settle(11_000);
+    await reply(0, json(202, { id: ETH, lifecycle_state: "amend_pending" }));
+    expect(entry()).toMatchObject({ phase: "unconfirmed", http: "unknown" });
+    await settle(AMEND_STALE_MS + 2 * FRAME); // past the stale bound, from the press and the answer
+    await push(reset("gap")); // the venue's rejection step is lost in it
+    const orders = snapshotBody().orders.map((o) =>
+      o.id === ETH ? reread(null, "amend_rejected") : o,
+    );
+    await push(snap({ orders }));
+    expect(rowOf(ETH)).toMatchObject({ price: "2500", state: { word: "Working" } });
+    expect(entry()?.phase).toBe("not_applied");
+    await push(delta({ orders: [reread("reconcile", "amend_rejected", 5_000)] }));
+    expect(entry()?.phase).toBe("not_applied");
+    expect(announce.mock.calls).toEqual([["assertive", "Amend not applied — still 2,500."]]);
+    amends.dismiss(ETH);
+    expect(entry()).toBeUndefined();
+    expect(press(ETH, "price", "2490.00")).toMatchObject({ kind: "sent" }); // never stuck in flight
   });
 
   it("a missed accept frame: after a reset, the snapshot read after the 202 confirms it", async () => {
@@ -299,18 +346,7 @@ describe("untracked adoption and a hold (S9, INV-B1-n)", () => {
     expect(adopted?.state.lifecycle).toBe("untracked");
     expect(press(ADOPTED, "price", "60010")).toEqual({ kind: "refused", why: "not_amendable" });
     expect(patches).toEqual([]);
-    const gate = editGate(adopted as NonNullable<typeof adopted>, "price", {
-      viewAs: null,
-      permissions: ["orders:write"],
-      readOnlyAccounts: new Set(),
-      restReachable: true,
-      cancelling: new Set(),
-      amends: new Map(),
-      hasSteps: () => true,
-      arm: ARMED,
-      armKey: "Ctrl+Shift+T",
-      role: "owner",
-    });
+    const gate = editGate(adopted as NonNullable<typeof adopted>, "price", EDIT);
     expect(gate).toMatchObject({ kind: "gated", leg: "untracked" });
   });
 
@@ -321,5 +357,26 @@ describe("untracked adoption and a hold (S9, INV-B1-n)", () => {
     expect(rowOf(COND)?.state.lifecycle).toBe("held");
     expect(entry(COND)).toBeUndefined();
     expect(announce).not.toHaveBeenCalled();
+  });
+});
+
+describe("a take-profit whose provenance no read has given (D-13, fail closed)", () => {
+  it("is T2 and never sent until the open_only read after a snapshot lists it placed", async () => {
+    let listed = restOpen().filter((o) => o.id !== TP); // materialised after the reads: unlisted
+    await open(NO_ARM, () => listed);
+    const unread = rowOf(TP);
+    expect(unread?.provenance).toBeNull();
+    expect(unread === undefined ? null : editGate(unread, "price", EDIT)).toMatchObject({
+      kind: "gated",
+      leg: "provenance_unread",
+    });
+    expect(press(TP, "price", "64850.0")).toEqual({ kind: "refused", why: "provenance_unread" });
+    expect(patches).toEqual([]);
+    listed = restOpen();
+    await push(snap(snapshotBody())); // the feed's `open_only` read follows each snapshot
+    await settle(2 * FRAME);
+    expect(rowOf(TP)?.provenance).toBe("placed");
+    expect(press(TP, "price", "64850.0")).toMatchObject({ kind: "sent" });
+    expect(patches.map((p) => [p.path, p.arm])).toEqual([[`/api/v1/orders/${TP}`, null]]);
   });
 });

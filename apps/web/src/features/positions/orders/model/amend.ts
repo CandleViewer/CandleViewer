@@ -3,11 +3,17 @@
  * whether the change raises exposure, the one-field body, and the reducers that resolve a pending
  * amend on the venue's word alone. Pure: no DOM, no clock, no I/O (`../amendStore.ts` runs it).
  *
- * - **Risk** (`24` §8.10's one definition; P3-BQ-5): any edit of a reduce-only order and a
- *   take-profit's change are none; a change of another order's price or trigger is
- *   risk-increasing (a resting entry repriced to a marketable price fills at once); its quantity
- *   raised is risk-increasing, cut is none. A quantity this client cannot read is
- *   risk-increasing (fail closed).
+ * - **Risk** (`24` §8.10's one definition; P3-BQ-5): any edit of a reduce-only order is none, read
+ *   from `reduce_only` alone as the server reads it (`exits.py` `risk_increasing`; `24`'s
+ *   "take-profit change" is the amend's `take_profit` component, which no body here carries); a
+ *   change of another order's price or trigger is risk-increasing (a resting entry repriced to a
+ *   marketable price fills at once); its quantity raised is risk-increasing, cut is none. A
+ *   quantity this client cannot read is risk-increasing (fail closed).
+ * - **Provenance** (D-13; `exits.py`'s admission refuses any `provenance` but `placed` with `422
+ *   order_not_amendable`): a row whose provenance a read gave is refused before any request unless
+ *   it is `placed`; one no read has given (`23` §15.1 carries none: a WS-only row) is refused when
+ *   it is a reduce-only take-profit, which may be a recorded one (fail closed), until the feed's
+ *   next `open_only` read, after a snapshot, lists it.
  * - **The arm** (`22` `ArmToken`, SR-043): a risk-increasing amend on a live account carries the
  *   session's token; nothing else ever does (a cut, a reduce-only edit: C-2.6, R5). Live is
  *   `environment === "live"`, and an environment this client does not know is live (fail
@@ -20,10 +26,11 @@
  *   request frame (`amend_pending`) or the HTTP answer came, as no frame carries a correlation id;
  *   a frame that came before either is held and judged at the answer. An `amend` frame with the
  *   requested value confirms, with the prior one rejects; a read (a snapshot item, a `reconcile`
- *   step) confirms a pending amend only after the `202`, and never rejects it. Unknown (the order
- *   `unknown`, a `202` that says so, no answer, or `AMEND_STALE_MS` with no word) is Unconfirmed,
- *   which a later read settles in D01:228–229's words. An ended, held or adopted order, a third
- *   value, or a refusal (nothing sent) ends the overlay.
+ *   step) confirms a pending amend only after a `202` whose order rests, and never rejects it.
+ *   Unknown (the order `unknown`; a `202` whose order does not rest, `amend_pending` or `unknown`
+ *   among them, or that names no state; no answer; or `AMEND_STALE_MS` with no word) is
+ *   Unconfirmed, which a later read settles in D01:228–229's words. An ended, held or adopted
+ *   order, a third value, or a refusal (nothing sent) ends the overlay.
  */
 import type { generated } from "@candleviewer/protocol";
 import { bindDeck, bindText, DECK } from "../../copy";
@@ -51,13 +58,16 @@ export function valueOf(row: Amendable, field: AmendField): string | null {
   return row.qty;
 }
 
-/** `24` §8.10's class of setting `field` to `requested` (`null`: not typed yet, a price's any). */
+/**
+ * `24` §8.10's class of setting `field` to `requested` (`null`: not typed yet, a price's any), by
+ * `reduce_only` alone, as `exits.py`'s `risk_increasing` reads it: never by the intent.
+ */
 export function riskClass(
-  row: Pick<OrderRowModel, "reduceOnly" | "intent" | "qty">,
+  row: Pick<OrderRowModel, "reduceOnly" | "qty">,
   field: AmendField,
   requested: string | null,
 ): RiskClass {
-  if (row.reduceOnly || row.intent === "take_profit") return "none";
+  if (row.reduceOnly) return "none";
   if (field !== "qty") return "increasing";
   const next = parseDecimal(requested);
   const held = parseDecimal(row.qty);
@@ -70,12 +80,28 @@ const ARM_FREE: ReadonlySet<string> = new Set(["demo", "testnet"]);
 
 /** Whether this amend needs the session's arm token (`22` `ArmToken`). */
 export function needsArm(
-  row: Pick<OrderRowModel, "reduceOnly" | "intent" | "qty" | "environment">,
+  row: Pick<OrderRowModel, "reduceOnly" | "qty" | "environment">,
   field: AmendField,
   requested: string | null,
 ): boolean {
   if (riskClass(row, field, requested) === "none") return false;
   return row.environment === null || !ARM_FREE.has(row.environment);
+}
+
+/** Why a row's provenance bars its amend before any request (P3-BQ-1, D-13). */
+export type ProvenanceBar = "not_placed" | "unread";
+
+/**
+ * `not_placed`: a read gave a provenance other than `placed`, which `exits.py`'s admission refuses
+ * (`422 order_not_amendable`). `unread`: no read has given one (`23` §15.1 carries none) and the
+ * row is a reduce-only take-profit, which may be a recorded one: refused, fail closed, until the
+ * feed's next `open_only` read, which follows a snapshot, lists it. Any other row: `null`.
+ */
+export function provenanceBar(
+  row: Pick<OrderRowModel, "provenance" | "intent" | "reduceOnly">,
+): ProvenanceBar | null {
+  if (row.provenance !== null) return row.provenance === "placed" ? null : "not_placed";
+  return row.reduceOnly && row.intent === "take_profit" ? "unread" : null;
 }
 
 /** The session's arm token for an account (E30-S04's), or `null` while it is not armed. */
@@ -249,7 +275,7 @@ function judge(m: PendingMutation, held: HeldItem, answer: boolean): AmendStep {
   return leave("dropped"); // a third value: another write moved the order
 }
 
-/** The answer's class: `202` (`unknown` in it, or none at all, is unknown), `502`, or a refusal. */
+/** The answer's class: a `202` whose order rests, unknown, a `502`, or a refusal (`answerOf`). */
 export type AnswerClass = "accepted" | "unknown" | "rejected" | "not_sent";
 
 /** `amendOrder`'s outcome as the reducer reads it (`api.ts` makes it; no import, no cycle). */
@@ -258,8 +284,18 @@ export interface AnswerLike {
   readonly lifecycle?: string | null;
 }
 
+/**
+ * The answer's class (P3-BQ-7). A `202` comes once B1's step settles, else after
+ * `CV_COMMAND_TIMEOUT` + 1 s "as the order then stands" (`24` §8.4 rule 11): one whose order rests
+ * again (`submitted`, `partially_filled`) took the amend; one whose order does not rest
+ * (`amend_pending`, `unknown`, any other) or names no state is unknown, so a later read settles it
+ * in D01:228–229's words. A `502` is rejected; any other refusal sent nothing.
+ */
 export function answerOf(outcome: AnswerLike): AnswerClass {
-  if (outcome.kind === "accepted") return outcome.lifecycle === "unknown" ? "unknown" : "accepted";
+  if (outcome.kind === "accepted") {
+    const { lifecycle } = outcome;
+    return typeof lifecycle === "string" && RESTING.has(lifecycle) ? "accepted" : "unknown";
+  }
   if (outcome.kind === "unavailable") return "unknown";
   return outcome.kind === "exchange_refused" ? "rejected" : "not_sent";
 }
@@ -348,6 +384,8 @@ export function announcementOf(
               : bindProposed("blotter.ui.amend.confirmed.qty", { "0.200": requested }),
       };
     case "reconciled":
+      // PROPOSED for E29-D05 (no RT row words D01:228–229's lines): polite, as RT-14's
+      // confirmation; "not applied" below assertive, as RT-06's rejection
       return { politeness: "polite", text: AMEND_TEXT.reconciled.string };
     case "rejected":
       return {
@@ -360,6 +398,7 @@ export function announcementOf(
               : bindProposed("blotter.ui.amend.rejected_desc.qty", { "0.150": prior }),
       };
     case "not_applied":
+      // PROPOSED for E29-D05, with "reconciled" above: D01:229's line is said assertively
       return { politeness: "assertive", text: momentLine({ ...m, phase: "not_applied" }, figure) };
     default:
       return null;

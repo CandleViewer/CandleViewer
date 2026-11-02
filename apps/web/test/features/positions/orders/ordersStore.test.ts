@@ -378,17 +378,44 @@ describe("the amend observer (PR3a, P3-BQ-7): every accepted item, in arrival or
     expect(seen).toEqual([TP]);
   });
 
-  it("an observer that throws never costs the mirror a frame (23 §6.2)", () => {
+  it("an observer that throws never costs the mirror a frame (23 §6.2); each error is reported (N3)", () => {
+    const boom = new Error("overlay");
+    const report = vi.fn();
     const store = live(
       createOrdersStore({
         onItem: () => {
-          throw new Error("overlay");
+          throw boom;
         },
+        report,
       }),
     );
     apply(store, [d("amend_request", TS + 1_000), d("cancel_lost_race", TS + 2_000)]);
     expect(rowOf(store, ETH)?.state.word).toBe("Amending");
     expect(rowOf(store, TP)?.state.word).toBe("Filled");
+    expect(report).toHaveBeenCalledTimes(snapshotBody().orders.length + 2);
+    expect(new Set(report.mock.calls.map((call) => call[0]))).toEqual(new Set([boom]));
+  });
+
+  it("by default its error is raised on its own, as lib/ws raises one, after the frame (N3)", () => {
+    const boom = new Error("overlay");
+    const queued: (() => void)[] = [];
+    const spy = vi.spyOn(globalThis, "queueMicrotask").mockImplementation((callback) => {
+      queued.push(callback);
+    });
+    const store = createOrdersStore({
+      onItem: () => {
+        throw boom;
+      },
+    });
+    try {
+      live(store);
+      apply(store, [d("amend_request", TS + 1_000)]);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(rowOf(store, ETH)?.state.word).toBe("Amending");
+    expect(queued).toHaveLength(snapshotBody().orders.length + 1);
+    for (const raise of queued) expect(raise).toThrow(boom);
   });
 });
 

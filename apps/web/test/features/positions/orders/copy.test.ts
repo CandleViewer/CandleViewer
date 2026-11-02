@@ -150,6 +150,7 @@ describe("PROPOSED keys (BQ-9), routed to E29-D03's copy owner", () => {
       "blotter.recorded_tp",
       "blotter.ui.amend.no_step",
       "blotter.ui.amend.native_stop",
+      "blotter.ui.amend.provenance_unread",
     ] as const) {
       const reason = PROPOSED[key].string;
       expect(reason.length).toBeLessThanOrEqual(60);

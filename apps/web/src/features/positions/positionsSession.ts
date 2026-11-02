@@ -73,6 +73,8 @@ function useOrdersSession(
       announce: (politeness, text) => announcer?.say(politeness, text),
       now: deps?.feed?.now,
       performance: deps?.feed?.performance,
+      // N1: a press judges the orders store's row at the commit (`store` exists before any press)
+      current: (orderId) => store.getSnapshot().rows.find((row) => row.id === orderId),
     }),
   );
   const [store] = useState(() =>

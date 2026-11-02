@@ -18,6 +18,7 @@ import {
   onItem,
   onTick,
   overlayOf,
+  provenanceBar,
   qtyFloor,
   requestFault,
   riskClass,
@@ -52,6 +53,12 @@ const NONE: OrderConstants = { createdAtMs: null, provenance: null, tradeGroupId
 /** A golden snapshot order as a row, its wire fields overridden. */
 function row(id: string, wire: Record<string, unknown> = {}, dir = directory()): OrderRowModel {
   const mapped = mapOrder({ ...wsItem(snapshotBody(), id), ...wire } as WsOrder, "ws", dir, NONE);
+  if (mapped === null) throw new Error(`no row for ${id}`);
+  return mapped;
+}
+/** A golden snapshot order as a row, with the creation constants a REST read gave it. */
+function rowWith(id: string, constants: OrderConstants): OrderRowModel {
+  const mapped = mapOrder(wsItem(snapshotBody(), id), "ws", directory(), constants);
   if (mapped === null) throw new Error(`no row for ${id}`);
   return mapped;
 }
@@ -108,11 +115,12 @@ describe("risk-increasing amends: 24 §8.10's one definition (P3-BQ-5)", () => {
     expect(riskClass(row(ENTRY), "qty", "0.150")).toBe("none");
   });
 
-  it("any edit of a reduce-only order, and a take-profit's change, is none (M8)", () => {
+  it("any edit of a reduce-only order is none; a take-profit intent alone exempts nothing (M8, exits.py)", () => {
     expect(riskClass(row(TP), "price", "64850.0")).toBe("none");
     expect(riskClass(row(TP), "qty", "0.300")).toBe("none");
     expect(riskClass(row(STOP), "trigger_price", "63980.0")).toBe("none");
-    expect(riskClass(row(ETH, { intent: "take_profit" }), "price", "2495.00")).toBe("none");
+    expect(riskClass(row(ETH, { intent: "take_profit" }), "price", "2495.00")).toBe("increasing");
+    expect(needsArm(row(ETH, { intent: "take_profit" }), "price", "2495.00")).toBe(true);
   });
 
   it("a quantity this client cannot read is risk-increasing (fail closed)", () => {
@@ -149,6 +157,28 @@ describe("risk-increasing amends: 24 §8.10's one definition (P3-BQ-5)", () => {
       },
     };
     expect(armToken(throwing, ETH)).toBeNull();
+  });
+});
+
+describe("provenance: exits.py's admission, mirrored before any request (P3-BQ-1, D-13)", () => {
+  const read = (provenance: OrderConstants["provenance"]): OrderConstants => ({
+    ...NONE,
+    provenance,
+  });
+
+  it("a read provenance other than placed bars the amend (M1b)", () => {
+    expect(provenanceBar(rowWith(ETH, read("placed")))).toBeNull();
+    expect(provenanceBar(rowWith(ETH, read("reconciliation")))).toBe("not_placed");
+    expect(provenanceBar(rowWith(STOP, read("recorded_stop")))).toBe("not_placed");
+    expect(provenanceBar(rowWith(TP, read("recorded_stop")))).toBe("not_placed");
+  });
+
+  it("an unread one bars a reduce-only take-profit alone, fail closed (M1c)", () => {
+    expect(provenanceBar(row(TP))).toBe("unread");
+    expect(provenanceBar(rowWith(TP, read("placed")))).toBeNull();
+    expect(provenanceBar(row(ETH))).toBeNull();
+    expect(provenanceBar(row(STOP))).toBeNull(); // D01 D7's rule names it from WS fields alone
+    expect(provenanceBar(row(ETH, { intent: "take_profit" }))).toBeNull();
   });
 });
 
@@ -330,6 +360,35 @@ describe("Unknown, reconciliation and the stale bound (D01 D4 × Unknown)", () =
     expect(onAnswer(pending(), { kind: "unavailable" }, 5).next?.phase).toBe("unconfirmed");
   });
 
+  it("a 202 took the amend only when its order rests; one that does not, or names no state, is unknown (M3a)", () => {
+    expect(answerOf({ kind: "accepted", lifecycle: "submitted" })).toBe("accepted");
+    expect(answerOf({ kind: "accepted", lifecycle: "partially_filled" })).toBe("accepted");
+    for (const lifecycle of ["amend_pending", "triggered", "filled", "Submitted", null])
+      expect(answerOf({ kind: "accepted", lifecycle })).toBe("unknown");
+    expect(answerOf({ kind: "accepted" })).toBe("unknown");
+  });
+
+  it("a 202 still amend_pending reads Unconfirmed; a read at the prior value then says not applied (D01:229)", () => {
+    const answered = onAnswer(
+      pending({ sawPending: true }),
+      { kind: "accepted", lifecycle: "amend_pending" },
+      11_000,
+    );
+    expect(answered).toMatchObject({
+      resolution: "unconfirmed",
+      next: { phase: "unconfirmed", http: "unknown", httpAt: 11_000 },
+    });
+    const settled = onItem(
+      answered.next as PendingMutation,
+      asRead(step("amend_rejected")),
+      "snap",
+    );
+    expect(settled.resolution).toBe("not_applied");
+    expect(momentLine(settled.next as PendingMutation, figure)).toBe(
+      "Amend not applied — still 2,500.",
+    );
+  });
+
   it("reconciliation finding the requested value confirms it in D01:228's words", () => {
     const unknown = pending({ phase: "unconfirmed", sawPending: true });
     const after = onItem(unknown, reconciled("amend_accepted"), "delta");
@@ -365,7 +424,7 @@ describe("Unknown, reconciliation and the stale bound (D01 D4 × Unknown)", () =
     expect(early.next?.held?.via).toBe("snap");
     const answered = onAnswer(
       early.next as PendingMutation,
-      { kind: "accepted", lifecycle: null },
+      { kind: "accepted", lifecycle: "submitted" },
       9,
     );
     expect(answered).toEqual({ next: null, resolution: "confirmed" });

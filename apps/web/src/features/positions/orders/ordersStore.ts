@@ -28,7 +28,8 @@
  *   animation frame, publishes one snapshot. The default order is kept between commits and sorted
  *   again only when the set of rows or a sort key changes, so a frame of updates is O(rows).
  * - **The amend observer** (PR3a): each item the store accepts goes to `onItem` in arrival order,
- *   never one it dropped, so the amend engine judges the frames themselves, not a commit's sum.
+ *   never one it dropped, so the amend engine judges the frames themselves, not a commit's sum. An
+ *   observer that throws is reported (`raiseApart`) and the frame still applies whole.
  */
 import { useSyncExternalStore } from "react";
 import type { TopicFrame } from "../../../lib/ws/api";
@@ -171,9 +172,22 @@ export interface OrdersStoreOptions {
    * P3-BQ-7). `via` says whether a snapshot (a read) or a delta (one step) carried it.
    */
   readonly onItem?: ((item: WsOrder, via: "snap" | "delta") => void) | undefined;
+  /** Where the observer's error goes (N3); `raiseApart` by default. */
+  readonly report?: ((error: unknown) => void) | undefined;
+}
+
+/**
+ * An app callback's error, raised on its own as `lib/ws` raises one: it reaches the page's error
+ * report as the feed's drain's throw does, while the caller goes on with its frame.
+ */
+export function raiseApart(error: unknown): void {
+  queueMicrotask(() => {
+    throw error;
+  });
 }
 
 export function createOrdersStore(options: OrdersStoreOptions = {}): OrdersStore {
+  const report = options.report ?? raiseApart;
   let snapshot = EMPTY;
   const listeners = new Set<() => void>();
   let dirty = false;
@@ -306,8 +320,10 @@ export function createOrdersStore(options: OrdersStoreOptions = {}): OrdersStore
     else if (lingers.delete(id)) touch(true);
     try {
       options.onItem?.(item as WsOrder, via);
-    } catch {
-      // the amend overlay never costs the mirror a frame (`23` §6.2: `orders` drops none)
+    } catch (error) {
+      // the amend overlay never costs the mirror a frame (`23` §6.2: `orders` drops none): its
+      // error is reported, raised on its own, and the frame goes on
+      report(error);
     }
   }
 

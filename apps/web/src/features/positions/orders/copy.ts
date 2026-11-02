@@ -320,7 +320,7 @@ export const PROPOSED = {
   ),
   "blotter.not_amendable": proposed(
     "This order can't be amended in its current state.",
-    "Edit price, trigger or qty while Sending, Cancelling, Triggered or final (BQ-9: T2).",
+    "Edit price, trigger or qty while Sending, Cancelling, Triggered or final (BQ-9: T2), or of a resting order whose provenance is not `placed` (`22`'s `422 order_not_amendable`).",
   ),
   "blotter.ui.amend.not_sent": proposed(
     "Amend not sent — your order is unchanged",
@@ -358,6 +358,10 @@ export const PROPOSED = {
   "blotter.ui.amend.native_stop": proposed(
     "A native stop is managed with its position.",
     "A native-stop row's Edit price, trigger or qty (T2, D-13): it moves through `setPositionTpSl`, which this tab does not mount (BQ-16), never `amendOrder`, which refuses it; owner E29-D03 with E32-D01.",
+  ),
+  "blotter.ui.amend.provenance_unread": proposed(
+    "Editing waits until we know if it's managed with its stop.",
+    "A reduce-only take-profit's Edit while no read has given its provenance (T2, fail closed, D-13): `23` §15.1 carries none, so a recorded take-profit, which `amendOrder` refuses, cannot be told from a placed one until the feed's next `open_only` read, which follows a snapshot, lists it.",
   ),
   // E29-S02 PR2: the cancel and the bulk cancel (S-36's orders half).
   "blotter.recorded_tp": proposed(

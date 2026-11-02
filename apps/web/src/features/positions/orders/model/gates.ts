@@ -23,10 +23,14 @@
  * - **The amend's legs** (PR3a; D02 §7, §10.3–§10.4, D01 D12, D04 §4.1): the same scope legs, then
  *   the order's kind (a native stop and a recorded take-profit are never amended, D-13), this
  *   client's amend (pending: `blotter.amend_in_flight`; unconfirmed: `blotter.unknown`), the order's
- *   state, the instrument's steps (never guessed), and, for a risk-increasing edit only (`24`
- *   §8.10), E09-D09 §2.1 step 4's states: the kill switch, the account's reconcile lock, the arm. A
- *   price or trigger edit meets them before its editor opens; a quantity at its commit, where a
- *   cut never does (C-2.6, R5). The arm is read on every call, never kept (`ArmTokenSource`).
+ *   state, and for a resting order its provenance (`model/amend.ts` `provenanceBar`: any but
+ *   `placed` is `22`'s `422`, PROPOSED `blotter.not_amendable`; a reduce-only take-profit's unread
+ *   one fails closed, PROPOSED `blotter.ui.amend.provenance_unread`, until the feed's next
+ *   `open_only` read lists it), the instrument's steps (never guessed), and, for a risk-increasing
+ *   edit only (`24` §8.10), E09-D09 §2.1 step 4's states: the kill switch, the account's reconcile
+ *   lock, the arm. A price or trigger edit meets them before its editor opens; a quantity at its
+ *   commit, where a cut never does (C-2.6, R5). The arm is read on every call, never kept
+ *   (`ArmTokenSource`).
  */
 import type { KillSwitchView } from "../../../../lib/ws/state/types";
 import { killSwitchCovers, type AccountSignal, type Role } from "../../accountSignals";
@@ -35,6 +39,7 @@ import { AMEND_TEXT, bindProposed } from "../copy";
 import {
   armToken,
   needsArm,
+  provenanceBar,
   riskClass,
   valueOf,
   type AmendField,
@@ -157,7 +162,14 @@ export function cancelGate(row: OrderRowModel, context: CancelContext): CancelGa
 }
 
 export type AmendLeg =
-  CancelLeg | "amend_in_flight" | "not_amendable" | "no_step" | "frozen" | "recon" | "arm";
+  | CancelLeg
+  | "amend_in_flight"
+  | "not_amendable"
+  | "provenance_unread"
+  | "no_step"
+  | "frozen"
+  | "recon"
+  | "arm";
 
 export type AmendGate =
   | { readonly kind: "allowed" }
@@ -196,6 +208,15 @@ function reconKey(oms: NonNullable<AccountSignal["oms"]>): DeckKey {
 const hhmm = (ms: number | null): string =>
   ms === null || !Number.isFinite(ms) ? "—" : new Date(ms).toISOString().slice(11, 16);
 
+/** A resting order's provenance (D-13): not `placed` is `22`'s `422`; unread may fail closed. */
+function provenanceGate(row: OrderRowModel): AmendGate | null {
+  const bar = provenanceBar(row);
+  if (bar === null) return null;
+  return bar === "unread"
+    ? gated("provenance_unread", bindProposed("blotter.ui.amend.provenance_unread"), "row")
+    : gated("not_amendable", bindProposed("blotter.not_amendable"), "row");
+}
+
 /** The order's own legs (D01 D12: not editable while Amending, Cancelling, Unknown, … or final). */
 function kindGate(row: OrderRowModel, context: AmendContext): AmendGate | null {
   if (row.protective.kind === "native_stop")
@@ -209,7 +230,7 @@ function kindGate(row: OrderRowModel, context: AmendContext): AmendGate | null {
   switch (row.state.lifecycle) {
     case "submitted":
     case "partially_filled":
-      return null;
+      return provenanceGate(row);
     case "amend_pending":
       return gated("amend_in_flight", DECK["blotter.amend_in_flight"].string, "row");
     case "untracked":

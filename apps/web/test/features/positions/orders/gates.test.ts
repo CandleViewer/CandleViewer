@@ -295,6 +295,8 @@ describe("the amend's legs (PR3a; D02 §7, §10.3–§10.4, D01 D12, D04 §4.1)"
     role: "owner",
   };
   const ARMED: AmendContext = { ...AMEND, arm: { token: () => "arm-token-1" } };
+  /** The take-profit as REST lists it: provenance `placed` (`rest_list_orders_open.json`). */
+  const placedTp = (): OrderRowModel => row(TP, {}, { provenance: "placed" });
   const ARM_LOCKED = {
     kind: "gated",
     leg: "arm",
@@ -320,6 +322,34 @@ describe("the amend's legs (PR3a; D02 §7, §10.3–§10.4, D01 D12, D04 §4.1)"
       leg: "recorded_take_profit",
       reason: PROPOSED["blotter.recorded_tp"].string,
     });
+  });
+
+  it("a resting order's read provenance other than placed is T2, as exits.py refuses it (M1b)", () => {
+    expect(editGate(row(ETH, {}, { provenance: "reconciliation" }), "price", ARMED)).toEqual({
+      kind: "gated",
+      leg: "not_amendable",
+      reason: PROPOSED["blotter.not_amendable"].string,
+      scope: "row",
+    });
+    // a recorded stop the book no longer counts as a native stop (D01 D7's last clause)
+    const recorded = row(STOP, {}, { provenance: "recorded_stop" });
+    const uncovered = { ...recorded, protective: { kind: null, via: null } } as const;
+    expect(editGate(uncovered, "trigger_price", ARMED)).toMatchObject({ leg: "not_amendable" });
+    // an order that does not rest keeps its state's own reason
+    const adopted = row(ETH, { lifecycle_state: "untracked" }, { provenance: "reconciliation" });
+    expect(editGate(adopted, "price", ARMED)).toMatchObject({ leg: "untracked" });
+  });
+
+  it("a reduce-only take-profit whose provenance no read has given is T2 until one does (M1c)", () => {
+    expect(editGate(row(TP), "price", ARMED)).toEqual({
+      kind: "gated",
+      leg: "provenance_unread",
+      reason: PROPOSED["blotter.ui.amend.provenance_unread"].string,
+      scope: "row",
+    });
+    expect(commitGate(row(TP), "qty", "0.100", ARMED)).toMatchObject({ leg: "provenance_unread" });
+    expect(editGate(placedTp(), "price", ARMED)).toEqual({ kind: "allowed" });
+    expect(editGate(row(ETH), "price", ARMED)).toEqual({ kind: "allowed" }); // an entry: never
   });
 
   it("the scope legs come first, as a cancel's", () => {
@@ -384,7 +414,7 @@ describe("the amend's legs (PR3a; D02 §7, §10.3–§10.4, D01 D12, D04 §4.1)"
 
   it("never the arm: a quantity cut, a take-profit's price, a demo entry (M7, M8, M10)", () => {
     expect(commitGate(row(ENTRY), "qty", "0.100", AMEND)).toEqual({ kind: "allowed" });
-    expect(editGate(row(TP), "price", AMEND)).toEqual({ kind: "allowed" });
+    expect(editGate(placedTp(), "price", AMEND)).toEqual({ kind: "allowed" });
     expect(editGate(row(ETH, { environment: "demo" }), "price", AMEND)).toEqual({
       kind: "allowed",
     });
@@ -438,7 +468,7 @@ describe("the amend's legs (PR3a; D02 §7, §10.3–§10.4, D01 D12, D04 §4.1)"
     ] as const);
     const locked: AmendContext = { ...AMEND, killSwitch, accountStates: stale };
     expect(commitGate(row(ENTRY), "qty", "0.100", locked)).toEqual({ kind: "allowed" });
-    expect(editGate(row(TP), "price", locked)).toEqual({ kind: "allowed" });
+    expect(editGate(placedTp(), "price", locked)).toEqual({ kind: "allowed" });
   });
 
   it("an account reconciling, being verified or locked gates its new exposure (D04:460)", () => {
