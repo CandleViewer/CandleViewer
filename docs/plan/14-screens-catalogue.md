@@ -1785,6 +1785,7 @@ Drag preview                Drop zones
 - **Components:** CMP-027 ErrorState / InlineError, CMP-043 Dialog, CMP-044 ConfirmDialog, CMP-074 EnvBanner, CMP-075 EnvBadgeLocal, CMP-093 AuditActionTrigger, CMP-139 EnvironmentAwareOrderGuard.
 - **Stories:** US-PAPER-002, US-PAPER-003, US-PAPER-007, US-ADMIN-012, US-PAPER-001, US-PAPER-006, US-PAPER-008.
 - **Design sign-off acceptance checklist:** [ ] the switch is a deliberate, confirmed action, never a toggle that can be hit accidentally [ ] switching to LIVE requires typed confirmation and step-up [ ] open DEMO positions/orders are listed with a statement that they remain in DEMO [ ] transition state drawn (order entry blocked) [ ] chrome, badges and all trading surfaces are shown updating together [ ] switching is blocked while any algo or trade group is running, with the reason listed
+- **Hi-fi (E38-D02):** [E38-D02.md](../design/E38/E38-D02.md) (E38-D02; owner approval pending; the switcher's entry through the env popover only, the typed `LIVE` gate then E09's step-up, every state S74-01 … S74-08 with its reason, focus and announcement, the state diagram; no hotkey opens it).
 
 ### SCR-075 — Demo / Live banner & per-panel badges
 
@@ -1795,6 +1796,7 @@ Drag preview                Drop zones
 - **Performance:** The band is part of the app shell and never remounts on route change; badge state comes from one shared store subscription.
 - **Analytics/audit:** None of its own (presentational); the environment value is included in every trading audit record.
 - **Design sign-off acceptance checklist:** [ ] DEMO and LIVE bands drawn and distinguishable in greyscale and in all three colour-vision simulations [ ] per-panel badge placement drawn for ticket, group ticket, ladder, positions grid, algo monitor and chart trading overlay [ ] floating windows repeat the band [ ] the band is never scrolled away or covered by a modal
+- **Hi-fi (E38-D02):** [E38-D02.md](../design/E38/E38-D02.md) (E38-D02; owner approval pending; the band as the TopBar row with the CMP-074 pill, the per-panel placements by owner, the band above every scrim, the demo statement in the env popover, the measured contrast and CVD).
 
 ### SCR-076 — Order confirmation modal
 

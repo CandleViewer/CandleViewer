@@ -839,6 +839,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `color.env.demo` (blue), `color.env.live` (red), `font.weight.bold`.
 - **Storybook**: Demo, Live, SwitchConfirmFlow.
 - **Tests**: unit, visual, axe, interaction test (typed-confirm gate), visual-regression snapshot both states at every theme.
+- **Hi-fi (E38-D02)**: E10-D03 §1.2's pill — word, weight (LIVE bold, DEMO medium), glyph, 2 px border, hue last; a button inside the `role="status"` slot (`aria-haspopup="dialog"`, `aria-expanded`, `aria-controls`; E38-D05 F-01), whose press opens the env popover (§3.4), the only entry to SCR-074; where the switch is T2 (S74-07, S74-08) CMP-079 RbacGate wraps the popover's action and the CMP-019 `lock` leads its label (E38-D02 §4.3); the word never underlined.
 
 ### CMP-075 EnvBadgeLocal
 
@@ -849,6 +850,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Storybook**: Demo, Live.
 - **Tests**: unit, visual, axe.
 - **As built (E10-S01, #304)**: also the TopBar's environment badge in place of CMP-074 (no switch flow): `role="img"` named "Trading environment: Live", word + glyph + weight + a 2 px env border. It takes no prop, class or style that could hide it. TESTNET and ENV UNKNOWN looks are PROPOSED; an unknown environment shows a dashed warning "ENV UNKNOWN", never a defaulted DEMO (the show-or-omit ruling is pending). The status bar repeats the environment in words.
+- **Hi-fi (E38-D02)**: the same grammar as CMP-074 (2 px border on every host, and LIVE's `border.thick` rule on panel badges; a denser row variant is R-1, PROPOSED to the E10-D03 owner), `role="img"` with a static label; the placements per host are E38-D02 §3.2 (PROPOSED).
 
 ### CMP-076 ConnectionStatus
 
