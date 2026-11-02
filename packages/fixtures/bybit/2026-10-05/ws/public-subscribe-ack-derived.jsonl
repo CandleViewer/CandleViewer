@@ -1,0 +1,2 @@
+{"success":true,"ret_msg":"","conn_id":"cv-derived-conn-1","req_id":"cv-1","op":"subscribe"}
+{"success":false,"ret_msg":"error:handler not found,args:[publicTrade.BTCUSDT,publicTrade.ETHUSDT,publicTrade.SOLUSDT,publicTrade.XRPUSDT,publicTrade.DOGEUSDT,publicTrade.ADAUSDT,publicTrade.LTCUSDT,publicTrade.LINKUSDT,publicTrade.AVAXUSDT,publicTrade.DOTUSDT]","conn_id":"cv-derived-conn-1","req_id":"cv-2","op":"subscribe"}

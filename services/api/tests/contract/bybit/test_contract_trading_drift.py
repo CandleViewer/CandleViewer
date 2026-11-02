@@ -30,6 +30,7 @@ from typing import Any
 from tests._corpus import CORPUS_ROOT, rest
 
 TRANSCRIBED = "docs-transcribed"
+DERIVED = "derived"  # #1955: built from a recording plus a documented field; never evidence
 #: A REST route in a stream label: an optional method, then the `/v5/` path.
 _ROUTE = re.compile(r"(?:\b(GET|POST)\s+)?(/v5/[A-Za-z0-9/_-]+)")
 
@@ -106,7 +107,7 @@ def _recordings(entries: list[tuple[Path, dict[str, Any]]]) -> list[tuple[Path, 
     out = []
     for path, entry in entries:
         source = str(entry.get("source", ""))
-        transcribed = source == TRANSCRIBED or source.startswith("documented-shape")
+        transcribed = source in (TRANSCRIBED, DERIVED) or source.startswith("documented-shape")
         if not transcribed and path.suffix == ".json" and path.parent.name == "rest":
             out.append((path, entry))
     return out
@@ -207,7 +208,8 @@ def _ws_recordings(
     out = []
     for path, entry in entries:
         source = str(entry.get("source", ""))
-        if _ws(path) and source != TRANSCRIBED and not source.startswith("documented-shape"):
+        built = source in (TRANSCRIBED, DERIVED) or source.startswith("documented-shape")
+        if _ws(path) and not built:
             out.append((path, entry))
     return out
 
