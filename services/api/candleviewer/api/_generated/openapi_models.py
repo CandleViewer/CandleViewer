@@ -4229,6 +4229,49 @@ class RuleEvent(BaseModel):
     payload: dict[str, Any] | None = None
 
 
+class RuleFireConfirmation(BaseModel):
+    id: UUID
+    rule_id: UUID
+    rule_version_id: Annotated[UUID, Field(description="The version the fire was evaluated under.")]
+    run_id: Annotated[
+        UUID,
+        Field(
+            description="The fire's `rule_runs` id (`RuleRun.id`), written when the fire was queued."
+        ),
+    ]
+    status: Annotated[
+        Literal["pending", "confirmed", "rejected"],
+        Field(
+            description="`pending` while the fire waits (`listRuleConfirmations`), `confirmed` on the answer of `confirmRuleFire`, `rejected` on the answer of `rejectRuleFire`. A fire whose time ran out, or that a restart, its rule's circuit breaker or the kill switch ended, is no longer listed and is never served here.\n"
+        ),
+    ]
+    symbol: Annotated[
+        Symbol | None,
+        Field(description="The symbol of the scope instance that fired, when it names one."),
+    ]
+    exchange_account_ids: Annotated[
+        list[UUID],
+        Field(
+            description="The accounts the fire's actions resolved to when it was queued, sorted; the confirmed fire acts on no other. Empty when no action names an account.\n"
+        ),
+    ]
+    created_at: Annotated[
+        AwareDatetime, Field(description="When the fire was queued, on the database's clock.")
+    ]
+    expires_at: Annotated[
+        AwareDatetime,
+        Field(description="`created_at` plus 60 s: past it the fire can no longer be confirmed."),
+    ]
+    ended_at: Annotated[
+        AwareDatetime | None,
+        Field(description="When the fire stopped waiting; null while it is `pending`."),
+    ]
+    decided_by: Annotated[
+        UUID | None,
+        Field(description="The user who confirmed or rejected it; null while it is `pending`."),
+    ]
+
+
 class AlertDelivery(BaseModel):
     id: JsonInt | None = None
     alert_id: UUID | None = None

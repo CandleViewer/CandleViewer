@@ -3101,7 +3101,9 @@
                   "action_result",
                   "error",
                   "started",
-                  "finished"
+                  "finished",
+                  "confirmation_pending",
+                  "confirmation_expired"
                 ]
               },
               "ts_ms": {
@@ -3112,7 +3114,61 @@
                 "additionalProperties": true
               }
             },
-            "additionalProperties": false
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "confirmation_pending"
+                    }
+                  }
+                },
+                "then": {
+                  "required": ["payload"],
+                  "properties": {
+                    "payload": {
+                      "required": ["confirmation_id", "expires_at_ms"],
+                      "properties": {
+                        "confirmation_id": {
+                          "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid"
+                        },
+                        "expires_at_ms": {
+                          "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "confirmation_expired"
+                    }
+                  }
+                },
+                "then": {
+                  "required": ["payload"],
+                  "properties": {
+                    "payload": {
+                      "required": ["confirmation_id", "reason"],
+                      "properties": {
+                        "confirmation_id": {
+                          "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid"
+                        },
+                        "reason": {
+                          "enum": ["ttl", "restart"]
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              }
+            ]
           }
         }
       },

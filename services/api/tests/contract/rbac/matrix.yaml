@@ -1307,6 +1307,27 @@ operations:
     public: false
     state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
+  GET /rules/confirmations:
+    permissions: ['rules:write']
+    scope: granted_accounts
+    public: false
+    state: not_mounted
+    reason: declared in 22-api-openapi.yaml; E35-T14's queue PR (#5006) mounts it
+    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
+  POST /rules/confirmations/{confirmationId}/confirm:
+    permissions: ['rules:write']
+    scope: granted_accounts
+    public: false
+    state: not_mounted
+    reason: declared in 22-api-openapi.yaml; E35-T14's queue PR (#5006) mounts it
+    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
+  POST /rules/confirmations/{confirmationId}/reject:
+    permissions: ['rules:write']
+    scope: granted_accounts
+    public: false
+    state: not_mounted
+    reason: declared in 22-api-openapi.yaml; E35-T14's queue PR (#5006) mounts it
+    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
   GET /rules/runs/{runId}/events:
     permissions: ['rules:read']
     scope: granted_accounts

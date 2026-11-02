@@ -55,6 +55,8 @@ E09-S03-F1's implementation PR (#4743) serves `authLock`: 79.
 E29-T06 PR 1 (#914) adds the contract-first reconciliation pass and its `resolve`: 75.
 E02-T13 (#5181) serves the frozen `getSettings` and `updateSettings`: 73, frozen 70.
 E21-T03 (#606) serves the frozen `getHeatmap`: 72, frozen 69.
+E35-T14's contract PR (#5006) adds the contract-first `listRuleConfirmations`, `confirmRuleFire`
+and `rejectRuleFire`, three entries within the cap of 72: no raise.
 Keep both caps tight: a contract PR that
 adds an operation raises ``PENDING_BASELINE`` by exactly its overflow, measured against current
 ``main`` with CI re-run there (two parallel raises merge cleanly yet both under-count); a PR that

@@ -98,7 +98,7 @@ The server echoes exactly one. A client offering no recognised subprotocol is cl
 
 The version is negotiated by the subprotocol (`cv.v1.*`, §2.2) and carried by `protocol: "cv.v1"` in `hello` and `welcome` (§4.2); a breaking change is `cv.v2`, served in parallel (C-6.3). The envelope has no `v` member, because one would repeat the subprotocol on every frame, and none is added.
 
-**Open enums.** The server-to-client enumerations `snapMeta.reason` (§7.4), `bye.reason` (§4.4, §13.6), `revoked.reason` (§9.5) and `system.kind` (§15.9, §16.5) are open: a new value is additive, and a client keeps an unknown one as a tag. Every other server-to-client enumeration is closed, and so is the set of frame types `t` (§3.1): a new frame type is breaking, because a client treats an unknown `t` as a decode failure.
+**Open enums.** The server-to-client enumerations `snapMeta.reason` (§7.4), `bye.reason` (§4.4, §13.6), `revoked.reason` (§9.5), `system.kind` (§15.9, §16.5) and the `kind` of a `rules` frame's `events` (§15.6) are open: a new value is additive, and a client keeps an unknown one as a tag. Every other server-to-client enumeration is closed, and so is the set of frame types `t` (§3.1): a new frame type is breaking, because a client treats an unknown `t` as a decode failure.
 
 **Freeze (E17-T07, #572, 2026-10-20).** `cv.v1` is frozen. `packages/protocol/wire-contract.v1.golden.json`, generated from the implementation by `tools/contracts/wire_contract.py` and never edited by hand, pins:
 
@@ -4062,19 +4062,57 @@ behind a `positions` window open when it arrives (§16.1 S5).
               "action_result",
               "error",
               "started",
-              "finished"
+              "finished",
+              "confirmation_pending",
+              "confirmation_expired"
             ]
           },
           "ts_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
           "payload": { "type": "object", "additionalProperties": true }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": { "properties": { "kind": { "const": "confirmation_pending" } } },
+            "then": {
+              "required": ["payload"],
+              "properties": {
+                "payload": {
+                  "required": ["confirmation_id", "expires_at_ms"],
+                  "properties": {
+                    "confirmation_id": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" },
+                    "expires_at_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "kind": { "const": "confirmation_expired" } } },
+            "then": {
+              "required": ["payload"],
+              "properties": {
+                "payload": {
+                  "required": ["confirmation_id", "reason"],
+                  "properties": {
+                    "confirmation_id": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" },
+                    "reason": { "enum": ["ttl", "restart"] }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        ]
       }
     }
   },
   "additionalProperties": false
 }
 ```
+
+**Confirmation events (E35-T14, #5006).** A fire of a rule with `limits.require_confirmation: true` that waits for a human (`24-internal-schemas.md` §11.5, "The confirmation queue") is announced by one `confirmation_pending` event, sent as the fire is queued: its `rule_id` and `run_id` name the rule and the fire, and its `payload` the confirmation's id (`22-api-openapi.yaml` `RuleFireConfirmation.id`, the id `confirmRuleFire` and `rejectRuleFire` take) and `expires_at_ms`, when its time runs out on the database's clock. A fire whose time runs out, or that a restart ends, is announced by one `confirmation_expired` event: `reason` `ttl` when its 60 s ran out, `restart` when a restart ended it. Neither payload carries a figure, an account or a parameter, and the schema above closes both. A confirmed, rejected or dropped fire sends no `confirmation_expired`: its outcome is the run's own `action_result` and `finished` events. The two kinds are announcements on the `rules` topic and are never `listRuleRunEvents` rows: `22-api-openapi.yaml`'s `RuleEvent.kind` keeps its seven kinds. They are additive (C-6.3), the `kind` of a `rules` frame's `events` being an open enum (§2.3, §16.5), and like every kind here they reach a subscription only with `include_events: true`; serving the topic's `events` to clients is E35-S06's (#865), so until it lands E35-T14 publishes them on the bus's `rules` domain only.
 
 **Who receives a rule (#3488).** A `rules` frame, a `snap` or a `d`, reaches a connection only for a rule its principal may read over REST at that moment (`24-internal-schemas.md` §15.2, `04-security-program.md` §7.2.2 rows 24 and 25): the Owner role reads every rule; anyone else only a rule they own whose every version's accounts are all still among their view grants; a deleted rule is no one's. Another user's rule, whether it names accounts or none, is not theirs whatever their grants (C-12.4). One predicate decides it for both transports, `RulesManager._visible`, the check behind `GET /rules` and `GET /rules/{ruleId}`, applied per rule when the hub publishes the frame, to the principal as it is then (`ConnectionAuthz.apply_snapshot` swaps it in before the §9.5 re-evaluation), so a revoked grant ends the delivery of every rule that named it with no frame of its own. A frame already waiting in a pacing window (§8.1: the subscription's effective `throttle_ms` times the §8.3 class multiplier, 250 ms by default) leaves as it was judged, and a grants change that alters what a user may read re-snapshots their `rules` subscriptions (E35-S06). The family's account scope and the `exchange_account_ids` and `rule_ids` options only narrow it further, never widen it. The topic name holds no rule id (§6), so no `sub` is refused for the rules it names: its `sub_ok` is the same for a rule the caller may read, one they may not and one that does not exist, and `effective` echoes `rule_ids` as sent. The hub refuses a `rules` publish that names no such check (`SequencingHub.publish(viewer=)`), so no producer can leave it out.
 
@@ -4883,7 +4921,7 @@ Measured at the client, on the reference workspace (4 panes: 1 m chart, 5 m foot
 | Contract         | Canary: a server that sends `closed` instead of `confirm` fails the suite, naming the member, the `ch` and §14.3.                                                                                     | 30 §5.3 exit criterion 7 (E12-Q04, AC3).                  |
 | Contract         | `indicators.*` frames validate against §14.10; points are keyed by `(key, generation, index)`; an amended point carries `amended: true`; a generation change is a `generation_swap` `snap`.           | §6.1, §8.2, §14.10.                                       |
 | Contract         | A `client_worker` or unknown indicator, a param out of bounds and a `compute` key are `invalid_options`; the 9th instance per user, 33rd per symbol and 129th per server are `subscription_limit`.    | §6.1 (SR-E13-01, SR-E13-03, IR-41).                       |
-| Contract         | A replay `indicators.*` `sub` is refused `unknown_topic` and holds nothing; an instance primed from stored bars sends its `snap` once that read ends.            | §6.1, §7.1.                                               |
+| Contract         | A replay `indicators.*` `sub` is refused `unknown_topic` and holds nothing; an instance primed from stored bars sends its `snap` once that read ends.                                                 | §6.1, §7.1.                                               |
 | Contract         | `snapMeta.reason` is one ordered set in the schema, §7.4's list and `SNAP_REASONS`, `history_repair` among them; a client keeps a reason it does not know (C18).                                      | §7.4, §13, §16.5.                                         |
 | Integration      | Grant revocation mid-stream → `revoked` within 1 s, other topics intact.                                                                                                                              | S7, §9.5.                                                 |
 | Integration      | Token expiry → in-place re-`auth` preserves subscriptions and sequences.                                                                                                                              | §4.1.                                                     |
@@ -4930,7 +4968,7 @@ Both this document and `22-api-openapi.yaml` are too large for manual review to 
 
 **Extraction step.** `tools/contracts/extract_ws_schemas.py` parses every fenced ```json block in §13–§15, keyed by its `$id`, and bundles them into `ws-schemas.json` — the single artefact consumed by the server (runtime response validation in dev/test), the TypeScript client codegen, and the `ws_message_schemas` gate. The Markdown is the source of truth; the bundle is always regenerated, never hand-edited.
 
-**Open enums.** A server-to-client `enum` that clients must not reject, such as `snapMeta.reason` (§7.4, C18) and `system.kind` (§15.9), is the server's closed set: the contract tests (§16.4) and a unit test hold the server to it. A client validates such a field as a string and never uses the `enum`, or the generated TypeScript union, as a decode check, so adding a member stays additive (C-6.3).
+**Open enums.** A server-to-client `enum` that clients must not reject, such as `snapMeta.reason` (§7.4, C18), `system.kind` (§15.9) and the `kind` of a `rules` frame's `events` (§15.6), is the server's closed set: the contract tests (§16.4) and a unit test hold the server to it. A client validates such a field as a string and never uses the `enum`, or the generated TypeScript union, as a decode check, so adding a member stays additive (C-6.3).
 
 **WS wire gates (E17-T07, #572).** `wire_contract` (`tools/contracts/wire_contract.py`, tested by `services/api/tests/contract/ws/test_ws_wire_contract.py`) compares the wire the implementation speaks with `packages/protocol/wire-contract.v1.golden.json` and fails on a change `cv.v1` cannot take (§2.3); `runtime_spec_parity` for the WS surface (`services/api/tests/contract/ws/test_ws_spec_parity.py`, and the topic catalogue test beside it) compares the running gateway with this document: `welcome.limits` against §4.2, §16.2 row by row against the constants that enforce it, the §3.6 JSON and MessagePack bounds (SR-184, SR-185) against `ws/limits.py` and `ws/codec.py`, the §10.2 columns, the §4.4 codes, the §3.1 frame types, the §3.4 layout, the §4.3 settings, the §2.1 URL (against `WS_SERVER_BASE` and `WS_PATH` of `ws/gateway.py`) and the §2.2 subprotocols. Both run in the `contract` job and in the `py` job's contract lane; `make contracts` runs the first.
 
