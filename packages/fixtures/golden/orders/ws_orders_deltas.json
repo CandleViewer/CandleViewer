@@ -1,0 +1,585 @@
+[
+  {
+    "case": "created",
+    "body": {
+      "orders": [
+        {
+          "id": "0e000000-0000-4000-8000-000000000008",
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000001",
+          "trade_group_leg_id": null,
+          "parent_order_id": null,
+          "order_link_id": "cvl-0E29S02xOrder000000008-Fx12-00en",
+          "exchange_order_id": null,
+          "symbol": "ETHUSDT",
+          "side": "buy",
+          "order_type": "limit",
+          "intent": "entry",
+          "state": "pending_submit",
+          "lifecycle_state": "validated",
+          "qty": "0.5",
+          "filled_qty": "0",
+          "remaining_qty": "0.5",
+          "price": "2480",
+          "avg_fill_price": null,
+          "time_in_force": "GTC",
+          "reduce_only": false,
+          "close_on_trigger": false,
+          "position_idx": 0,
+          "trigger_price": null,
+          "trigger_by": null,
+          "trigger_direction": null,
+          "take_profit": null,
+          "stop_loss": null,
+          "tpsl_mode": "Full",
+          "environment": "live",
+          "is_paper": false,
+          "rejected_reason": null,
+          "updated_at_ms": 1793455331500,
+          "change": "created"
+        }
+      ]
+    }
+  },
+  {
+    "case": "submitted",
+    "body": {
+      "orders": [
+        {
+          "id": "0e000000-0000-4000-8000-000000000008",
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000001",
+          "trade_group_leg_id": null,
+          "parent_order_id": null,
+          "order_link_id": "cvl-0E29S02xOrder000000008-Fx12-00en",
+          "exchange_order_id": null,
+          "symbol": "ETHUSDT",
+          "side": "buy",
+          "order_type": "limit",
+          "intent": "entry",
+          "state": "submitted",
+          "lifecycle_state": "submitting",
+          "qty": "0.5",
+          "filled_qty": "0",
+          "remaining_qty": "0.5",
+          "price": "2480",
+          "avg_fill_price": null,
+          "time_in_force": "GTC",
+          "reduce_only": false,
+          "close_on_trigger": false,
+          "position_idx": 0,
+          "trigger_price": null,
+          "trigger_by": null,
+          "trigger_direction": null,
+          "take_profit": null,
+          "stop_loss": null,
+          "tpsl_mode": "Full",
+          "environment": "live",
+          "is_paper": false,
+          "rejected_reason": null,
+          "updated_at_ms": 1793455331600,
+          "change": "submitted"
+        }
+      ]
+    }
+  },
+  {
+    "case": "acked",
+    "body": {
+      "orders": [
+        {
+          "id": "0e000000-0000-4000-8000-000000000008",
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000001",
+          "trade_group_leg_id": null,
+          "parent_order_id": null,
+          "order_link_id": "cvl-0E29S02xOrder000000008-Fx12-00en",
+          "exchange_order_id": "8a1f0f9c-3d2e-4b11-9f77-000000000008",
+          "symbol": "ETHUSDT",
+          "side": "buy",
+          "order_type": "limit",
+          "intent": "entry",
+          "state": "accepted",
+          "lifecycle_state": "submitted",
+          "qty": "0.5",
+          "filled_qty": "0",
+          "remaining_qty": "0.5",
+          "price": "2480",
+          "avg_fill_price": null,
+          "time_in_force": "GTC",
+          "reduce_only": false,
+          "close_on_trigger": false,
+          "position_idx": 0,
+          "trigger_price": null,
+          "trigger_by": null,
+          "trigger_direction": null,
+          "take_profit": null,
+          "stop_loss": null,
+          "tpsl_mode": "Full",
+          "environment": "live",
+          "is_paper": false,
+          "rejected_reason": null,
+          "updated_at_ms": 1793455331700,
+          "change": "ack"
+        }
+      ]
+    }
+  },
+  {
+    "case": "amend_request",
+    "body": {
+      "orders": [
+        {
+          "id": "0e000000-0000-4000-8000-000000000003",
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000003",
+          "trade_group_leg_id": null,
+          "parent_order_id": null,
+          "order_link_id": "cvl-0E29S02xOrder000000003-Fx12-00en",
+          "exchange_order_id": "8a1f0f9c-3d2e-4b11-9f77-000000000003",
+          "symbol": "ETHUSDT",
+          "side": "buy",
+          "order_type": "limit",
+          "intent": "entry",
+          "state": "pending_amend",
+          "lifecycle_state": "amend_pending",
+          "qty": "1",
+          "filled_qty": "0",
+          "remaining_qty": "1",
+          "price": "2500",
+          "avg_fill_price": null,
+          "time_in_force": "PostOnly",
+          "reduce_only": false,
+          "close_on_trigger": false,
+          "position_idx": 1,
+          "trigger_price": null,
+          "trigger_by": null,
+          "trigger_direction": null,
+          "take_profit": null,
+          "stop_loss": null,
+          "tpsl_mode": "Full",
+          "environment": "live",
+          "is_paper": false,
+          "rejected_reason": null,
+          "updated_at_ms": 1793455332000,
+          "change": "amend"
+        }
+      ]
+    }
+  },
+  {
+    "case": "amend_accepted",
+    "body": {
+      "orders": [
+        {
+          "id": "0e000000-0000-4000-8000-000000000003",
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000003",
+          "trade_group_leg_id": null,
+          "parent_order_id": null,
+          "order_link_id": "cvl-0E29S02xOrder000000003-Fx12-00en",
+          "exchange_order_id": "8a1f0f9c-3d2e-4b11-9f77-000000000003",
+          "symbol": "ETHUSDT",
+          "side": "buy",
+          "order_type": "limit",
+          "intent": "entry",
+          "state": "accepted",
+          "lifecycle_state": "submitted",
+          "qty": "1",
+          "filled_qty": "0",
+          "remaining_qty": "1",
+          "price": "2495",
+          "avg_fill_price": null,
+          "time_in_force": "PostOnly",
+          "reduce_only": false,
+          "close_on_trigger": false,
+          "position_idx": 1,
+          "trigger_price": null,
+          "trigger_by": null,
+          "trigger_direction": null,
+          "take_profit": null,
+          "stop_loss": null,
+          "tpsl_mode": "Full",
+          "environment": "live",
+          "is_paper": false,
+          "rejected_reason": null,
+          "updated_at_ms": 1793455333000,
+          "change": "amend"
+        }
+      ]
+    }
+  },
+  {
+    "case": "amend_rejected",
+    "body": {
+      "orders": [
+        {
+          "id": "0e000000-0000-4000-8000-000000000003",
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000003",
+          "trade_group_leg_id": null,
+          "parent_order_id": null,
+          "order_link_id": "cvl-0E29S02xOrder000000003-Fx12-00en",
+          "exchange_order_id": "8a1f0f9c-3d2e-4b11-9f77-000000000003",
+          "symbol": "ETHUSDT",
+          "side": "buy",
+          "order_type": "limit",
+          "intent": "entry",
+          "state": "accepted",
+          "lifecycle_state": "submitted",
+          "qty": "1",
+          "filled_qty": "0",
+          "remaining_qty": "1",
+          "price": "2500",
+          "avg_fill_price": null,
+          "time_in_force": "PostOnly",
+          "reduce_only": false,
+          "close_on_trigger": false,
+          "position_idx": 1,
+          "trigger_price": null,
+          "trigger_by": null,
+          "trigger_direction": null,
+          "take_profit": null,
+          "stop_loss": null,
+          "tpsl_mode": "Full",
+          "environment": "live",
+          "is_paper": false,
+          "rejected_reason": null,
+          "updated_at_ms": 1793455333000,
+          "change": "amend"
+        }
+      ]
+    }
+  },
+  {
+    "case": "amend_unknown",
+    "body": {
+      "orders": [
+        {
+          "id": "0e000000-0000-4000-8000-000000000003",
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000003",
+          "trade_group_leg_id": null,
+          "parent_order_id": null,
+          "order_link_id": "cvl-0E29S02xOrder000000003-Fx12-00en",
+          "exchange_order_id": "8a1f0f9c-3d2e-4b11-9f77-000000000003",
+          "symbol": "ETHUSDT",
+          "side": "buy",
+          "order_type": "limit",
+          "intent": "entry",
+          "state": "unknown",
+          "lifecycle_state": "unknown",
+          "qty": "1",
+          "filled_qty": "0",
+          "remaining_qty": "1",
+          "price": "2500",
+          "avg_fill_price": null,
+          "time_in_force": "PostOnly",
+          "reduce_only": false,
+          "close_on_trigger": false,
+          "position_idx": 1,
+          "trigger_price": null,
+          "trigger_by": null,
+          "trigger_direction": null,
+          "take_profit": null,
+          "stop_loss": null,
+          "tpsl_mode": "Full",
+          "environment": "live",
+          "is_paper": false,
+          "rejected_reason": null,
+          "updated_at_ms": 1793455333000
+        }
+      ]
+    }
+  },
+  {
+    "case": "cancel_request",
+    "body": {
+      "orders": [
+        {
+          "id": "0e000000-0000-4000-8000-000000000001",
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000001",
+          "trade_group_leg_id": null,
+          "parent_order_id": null,
+          "order_link_id": "cvl-0E29S02xOrder000000001-Fx12-00tp",
+          "exchange_order_id": "8a1f0f9c-3d2e-4b11-9f77-000000000001",
+          "symbol": "BTCUSDT",
+          "side": "sell",
+          "order_type": "limit",
+          "intent": "take_profit",
+          "state": "pending_cancel",
+          "lifecycle_state": "cancel_pending",
+          "qty": "0.25",
+          "filled_qty": "0",
+          "remaining_qty": "0.25",
+          "price": "64800",
+          "avg_fill_price": null,
+          "time_in_force": "GTC",
+          "reduce_only": true,
+          "close_on_trigger": false,
+          "position_idx": 0,
+          "trigger_price": null,
+          "trigger_by": null,
+          "trigger_direction": null,
+          "take_profit": null,
+          "stop_loss": null,
+          "tpsl_mode": "Full",
+          "environment": "live",
+          "is_paper": false,
+          "rejected_reason": null,
+          "updated_at_ms": 1793455334000,
+          "change": "cancel"
+        }
+      ]
+    }
+  },
+  {
+    "case": "cancel_lost_race",
+    "body": {
+      "orders": [
+        {
+          "id": "0e000000-0000-4000-8000-000000000001",
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000001",
+          "trade_group_leg_id": null,
+          "parent_order_id": null,
+          "order_link_id": "cvl-0E29S02xOrder000000001-Fx12-00tp",
+          "exchange_order_id": "8a1f0f9c-3d2e-4b11-9f77-000000000001",
+          "symbol": "BTCUSDT",
+          "side": "sell",
+          "order_type": "limit",
+          "intent": "take_profit",
+          "state": "filled",
+          "lifecycle_state": "filled",
+          "qty": "0.25",
+          "filled_qty": "0.25",
+          "remaining_qty": "0",
+          "price": "64800",
+          "avg_fill_price": "64800",
+          "time_in_force": "GTC",
+          "reduce_only": true,
+          "close_on_trigger": false,
+          "position_idx": 0,
+          "trigger_price": null,
+          "trigger_by": null,
+          "trigger_direction": null,
+          "take_profit": null,
+          "stop_loss": null,
+          "tpsl_mode": "Full",
+          "environment": "live",
+          "is_paper": false,
+          "rejected_reason": null,
+          "updated_at_ms": 1793455335000,
+          "change": "fill"
+        }
+      ],
+      "removed": [
+        "0e000000-0000-4000-8000-000000000001"
+      ]
+    }
+  },
+  {
+    "case": "cancel_110001",
+    "body": {
+      "orders": [
+        {
+          "id": "0e000000-0000-4000-8000-000000000001",
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000001",
+          "trade_group_leg_id": null,
+          "parent_order_id": null,
+          "order_link_id": "cvl-0E29S02xOrder000000001-Fx12-00tp",
+          "exchange_order_id": "8a1f0f9c-3d2e-4b11-9f77-000000000001",
+          "symbol": "BTCUSDT",
+          "side": "sell",
+          "order_type": "limit",
+          "intent": "take_profit",
+          "state": "unknown",
+          "lifecycle_state": "unknown",
+          "qty": "0.25",
+          "filled_qty": "0",
+          "remaining_qty": "0.25",
+          "price": "64800",
+          "avg_fill_price": null,
+          "time_in_force": "GTC",
+          "reduce_only": true,
+          "close_on_trigger": false,
+          "position_idx": 0,
+          "trigger_price": null,
+          "trigger_by": null,
+          "trigger_direction": null,
+          "take_profit": null,
+          "stop_loss": null,
+          "tpsl_mode": "Full",
+          "environment": "live",
+          "is_paper": false,
+          "rejected_reason": null,
+          "updated_at_ms": 1793455335000
+        }
+      ]
+    }
+  },
+  {
+    "case": "reconcile_filled",
+    "body": {
+      "orders": [
+        {
+          "id": "0e000000-0000-4000-8000-000000000001",
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000001",
+          "trade_group_leg_id": null,
+          "parent_order_id": null,
+          "order_link_id": "cvl-0E29S02xOrder000000001-Fx12-00tp",
+          "exchange_order_id": "8a1f0f9c-3d2e-4b11-9f77-000000000001",
+          "symbol": "BTCUSDT",
+          "side": "sell",
+          "order_type": "limit",
+          "intent": "take_profit",
+          "state": "filled",
+          "lifecycle_state": "filled",
+          "qty": "0.25",
+          "filled_qty": "0.25",
+          "remaining_qty": "0",
+          "price": "64800",
+          "avg_fill_price": "64800",
+          "time_in_force": "GTC",
+          "reduce_only": true,
+          "close_on_trigger": false,
+          "position_idx": 0,
+          "trigger_price": null,
+          "trigger_by": null,
+          "trigger_direction": null,
+          "take_profit": null,
+          "stop_loss": null,
+          "tpsl_mode": "Full",
+          "environment": "live",
+          "is_paper": false,
+          "rejected_reason": null,
+          "updated_at_ms": 1793455337000,
+          "change": "reconcile"
+        }
+      ],
+      "removed": [
+        "0e000000-0000-4000-8000-000000000001"
+      ]
+    }
+  },
+  {
+    "case": "untracked_adopted",
+    "body": {
+      "orders": [
+        {
+          "id": "0e000000-0000-4000-8000-000000000009",
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000003",
+          "trade_group_leg_id": null,
+          "parent_order_id": null,
+          "order_link_id": "ext-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "exchange_order_id": "8a1f0f9c-3d2e-4b11-9f77-000000000009",
+          "symbol": "BTCUSDT",
+          "side": "buy",
+          "order_type": "limit",
+          "intent": "entry",
+          "state": "untracked",
+          "lifecycle_state": "untracked",
+          "qty": "0.01",
+          "filled_qty": "0",
+          "remaining_qty": "0.01",
+          "price": "60000",
+          "avg_fill_price": null,
+          "time_in_force": "GTC",
+          "reduce_only": false,
+          "close_on_trigger": false,
+          "position_idx": 0,
+          "trigger_price": null,
+          "trigger_by": null,
+          "trigger_direction": null,
+          "take_profit": null,
+          "stop_loss": null,
+          "tpsl_mode": "Full",
+          "environment": "live",
+          "is_paper": false,
+          "rejected_reason": null,
+          "updated_at_ms": 1793455338000,
+          "change": "reconcile"
+        }
+      ],
+      "removed": [
+        "0e000000-0000-4000-8000-000000000009"
+      ]
+    }
+  },
+  {
+    "case": "held",
+    "body": {
+      "orders": [
+        {
+          "id": "0e000000-0000-4000-8000-000000000004",
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000002",
+          "trade_group_leg_id": null,
+          "parent_order_id": null,
+          "order_link_id": "cvl-0E29S02xOrder000000004-Fx12-00en",
+          "exchange_order_id": "8a1f0f9c-3d2e-4b11-9f77-000000000004",
+          "symbol": "BTCUSDT",
+          "side": "buy",
+          "order_type": "limit",
+          "intent": "entry",
+          "state": "held",
+          "lifecycle_state": "held",
+          "qty": "0.1",
+          "filled_qty": "0",
+          "remaining_qty": "0.1",
+          "price": "64520",
+          "avg_fill_price": null,
+          "time_in_force": "GTC",
+          "reduce_only": false,
+          "close_on_trigger": false,
+          "position_idx": 0,
+          "trigger_price": "64500",
+          "trigger_by": "LastPrice",
+          "trigger_direction": "rise",
+          "take_profit": null,
+          "stop_loss": null,
+          "tpsl_mode": "Full",
+          "environment": "live",
+          "is_paper": false,
+          "rejected_reason": null,
+          "updated_at_ms": 1793455339000,
+          "change": "reconcile"
+        }
+      ],
+      "removed": [
+        "0e000000-0000-4000-8000-000000000004"
+      ]
+    }
+  },
+  {
+    "case": "late",
+    "body": {
+      "orders": [
+        {
+          "id": "0e000000-0000-4000-8000-000000000002",
+          "exchange_account_id": "a1000000-0000-4000-8000-000000000002",
+          "trade_group_leg_id": "0b000000-0000-4000-8000-000000000001",
+          "parent_order_id": "7c1e0000-0000-4000-8000-000000000001",
+          "order_link_id": "cvl-0E29S02xOrder000000002-Fx12-00en",
+          "exchange_order_id": "8a1f0f9c-3d2e-4b11-9f77-000000000002",
+          "symbol": "BTCUSDT",
+          "side": "buy",
+          "order_type": "limit",
+          "intent": "entry",
+          "state": "partially_filled",
+          "lifecycle_state": "partially_filled",
+          "qty": "0.15",
+          "filled_qty": "0.02",
+          "remaining_qty": "0.13",
+          "price": "63950",
+          "avg_fill_price": "63950",
+          "time_in_force": "GTC",
+          "reduce_only": false,
+          "close_on_trigger": false,
+          "position_idx": 0,
+          "trigger_price": null,
+          "trigger_by": null,
+          "trigger_direction": null,
+          "take_profit": null,
+          "stop_loss": null,
+          "tpsl_mode": "Full",
+          "environment": "live",
+          "is_paper": false,
+          "rejected_reason": null,
+          "updated_at_ms": 1793455330000
+        }
+      ]
+    }
+  }
+]

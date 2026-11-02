@@ -1,0 +1,91 @@
+{
+  "note": "GENERATED - do not hand-edit. Regenerate from services/api with `CV_REGEN_GOLDEN=1 uv run pytest tests/unit/oms/test_orders_web_golden.py` and review the diff.",
+  "story": "E29-S02 (#912), BQ-1, BQ-3, BQ-4, BQ-6, BQ-7, BQ-17",
+  "sources": {
+    "rows": "OMS rows (24 §8.1) holding docs/design/E29/E29-D02.md §6.2's fixture values; no exchange capture: an order row is the OMS's own",
+    "steps": "each delta is a committed step (`CommittedOrderStep`) framed as the topic frames it: `change_of`, `order_item`, and `removed` beside a step that closes it",
+    "unowned": "the held and the untracked order of rest_list_orders_open.json: open on `listOrders?open_only=true`, never in the snapshot (23 §6.2.3; BQ-6)",
+    "contract_fields": "ws_orders_contract_fields.json adds trade_group_id and algo_kind: 23 §15.1 allows them and no producer sends them (23 §6.2.3)",
+    "requests": "rest_amend_order_request.json and rest_cancel_all_request.json are the client's bodies, read by the routes' own readers (`_terms`, `_request`)"
+  },
+  "accounts": {
+    "a1000000-0000-4000-8000-000000000001": "Main",
+    "a1000000-0000-4000-8000-000000000002": "Sub-1",
+    "a1000000-0000-4000-8000-000000000003": "Sub-2",
+    "a1000000-0000-4000-8000-000000000004": "Sub-3",
+    "a1000000-0000-4000-8000-000000000005": "Sub-4"
+  },
+  "environment": "live",
+  "mappers": [
+    {
+      "function": "candleviewer.oms.ws_topics.order_item",
+      "path": "services/api/candleviewer/oms/ws_topics.py",
+      "commit": "cd0f0497029848804057a7c889ae7b21c3f3e195"
+    },
+    {
+      "function": "candleviewer.oms.ws_topics.change_of",
+      "path": "services/api/candleviewer/oms/ws_topics.py",
+      "commit": "cd0f0497029848804057a7c889ae7b21c3f3e195"
+    },
+    {
+      "function": "candleviewer.storage.repositories.orders.OPEN_STATES",
+      "path": "services/api/candleviewer/storage/repositories/orders.py",
+      "commit": "08239b0b05c98b852e1e616feada6eb462aa714c"
+    },
+    {
+      "function": "candleviewer.api.oms_reads.order_document",
+      "path": "services/api/candleviewer/api/oms_reads.py",
+      "commit": "56f3a4c3be6a44605290e2ec407fc15156c8ed36"
+    },
+    {
+      "function": "candleviewer.api.order_acceptance.order_body",
+      "path": "services/api/candleviewer/api/order_acceptance.py",
+      "commit": "79b713a0f3c99cb8e72104e02673c4b101f77de2"
+    },
+    {
+      "function": "candleviewer.api.order_cancel_all._result",
+      "path": "services/api/candleviewer/api/order_cancel_all.py",
+      "commit": "d11b8327d5b6e35daf8efb4706b8142170fd20db"
+    },
+    {
+      "function": "candleviewer.api.order_cancel_all._request",
+      "path": "services/api/candleviewer/api/order_cancel_all.py",
+      "commit": "d11b8327d5b6e35daf8efb4706b8142170fd20db"
+    },
+    {
+      "function": "candleviewer.api.order_exits._terms",
+      "path": "services/api/candleviewer/api/order_exits.py",
+      "commit": "2e4760f65653c8f24524f88e217bf6df42cb981a"
+    }
+  ],
+  "files": [
+    {
+      "name": "rest_amend_order_request.json",
+      "sha256": "5944672b0ca2fe627cbe63b903a525ad39577b49b6a2b3cad4341c6032f8d53f"
+    },
+    {
+      "name": "rest_cancel_all_partial.json",
+      "sha256": "e0fd391b48b0cc002ae042e99219025a002678c130ab574fee9c47de6790dbf3"
+    },
+    {
+      "name": "rest_cancel_all_request.json",
+      "sha256": "963e4fa1bfe2e360d1f40a72cd04d5efdfc267f18356e278cf7ca1e25c5d6f37"
+    },
+    {
+      "name": "rest_list_orders_open.json",
+      "sha256": "329f257f0f5cbf5f2562b521f73090d44816034fa27b463009eda2a59fb9cc43"
+    },
+    {
+      "name": "ws_orders_contract_fields.json",
+      "sha256": "28ef9285332835c51279856c558b9c3acbff8043055248dd2565a0fd17d650f6"
+    },
+    {
+      "name": "ws_orders_deltas.json",
+      "sha256": "af42aad53cfc5de476d2cc1c834e0f0250aecb2e6a60e2eb524444144e10f0d3"
+    },
+    {
+      "name": "ws_orders_snapshot.json",
+      "sha256": "41cb985d2c8500ec921910d9af938e6e690d723ecbd7e726449ef2cd03a4b178"
+    }
+  ]
+}
