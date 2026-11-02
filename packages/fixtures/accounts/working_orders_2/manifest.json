@@ -20,7 +20,18 @@
               "qty": "0.001",
               "timeInForce": "PostOnly",
               "orderStatus": "New",
-              "reduceOnly": false
+              "reduceOnly": false,
+              "positionIdx": 0,
+              "avgPrice": "0",
+              "leavesQty": "0.001",
+              "cumExecQty": "0",
+              "stopOrderType": "UNKNOWN",
+              "triggerPrice": "0",
+              "takeProfit": "0",
+              "stopLoss": "56769.00",
+              "tpslMode": "Full",
+              "createdTime": "1792140600000",
+              "updatedTime": "1792140600002"
             },
             {
               "orderId": "00000000-0000-4000-8000-0000000000f3",
@@ -32,7 +43,18 @@
               "qty": "0.001",
               "timeInForce": "PostOnly",
               "orderStatus": "New",
-              "reduceOnly": false
+              "reduceOnly": false,
+              "positionIdx": 0,
+              "avgPrice": "0",
+              "leavesQty": "0.001",
+              "cumExecQty": "0",
+              "stopOrderType": "UNKNOWN",
+              "triggerPrice": "0",
+              "takeProfit": "0",
+              "stopLoss": "56760.00",
+              "tpslMode": "Full",
+              "createdTime": "1792140900000",
+              "updatedTime": "1792140900002"
             }
           ]
         }
