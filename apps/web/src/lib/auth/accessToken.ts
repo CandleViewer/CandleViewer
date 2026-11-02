@@ -349,14 +349,27 @@ export function createAccessTokenHolder(
   const endListeners = new Set<() => void>();
   const channel = openChannel();
 
-  /** Tells `listeners`; one that throws neither stops the others nor fails the call. */
+  /** The sets being told now: a listener that ends the session itself must not set off its own telling again. */
+  const telling = new Set<ReadonlySet<() => void>>();
+
+  /**
+   * Tells `listeners`; one that throws neither stops the others nor fails the call. A listener that calls `clear` or
+   * `endSession` is not told again from inside its own telling, which the others still finish: the guard is per set,
+   * so an `onLocked` listener that ends the session still tells the `onEnded` ones.
+   */
   function tell(listeners: ReadonlySet<() => void>): void {
-    for (const listener of listeners) {
-      try {
-        listener();
-      } catch {
-        // a listener's own failure: the news still reaches the rest
+    if (telling.has(listeners)) return;
+    telling.add(listeners);
+    try {
+      for (const listener of listeners) {
+        try {
+          listener();
+        } catch {
+          // a listener's own failure: the news still reaches the rest
+        }
       }
+    } finally {
+      telling.delete(listeners);
     }
   }
   const reportLocked = (): void => tell(lockListeners);

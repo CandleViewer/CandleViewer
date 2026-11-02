@@ -1145,6 +1145,33 @@ describe("onEnded: what holds requests made under the session hears of its end (
       1, 0, 1,
     ]);
   });
+
+  it.each<[string, () => void]>([
+    ["endSession", () => holder.endSession()],
+    ["clear", () => holder.clear()],
+  ])(
+    "a listener that calls %s itself is told once, never from inside its own telling, and the listeners after it still hear the end",
+    (_what, again) => {
+      let told = 0;
+      const after = vi.fn();
+      holder.onEnded(() => {
+        told += 1;
+        again(); // a cleanup of its own that ends the session once more
+      });
+      holder.onEnded(after);
+      expect(() => holder.endSession()).not.toThrow();
+      expect([told, after.mock.calls.length]).toEqual([1, 1]);
+    },
+  );
+
+  it("an idle lock's listener that ends the session still tells the end listeners: the guard is per set of listeners", async () => {
+    const ended = vi.fn();
+    holder.onEnded(ended);
+    holder.onLocked(() => holder.endSession());
+    transport.mockResolvedValueOnce(refused("session_idle_locked"));
+    await holder.send("/api/v1/x", {}, transport);
+    expect(ended).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("the calls allowed while locked fall back to the cookie (#1640)", () => {
