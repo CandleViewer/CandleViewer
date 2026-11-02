@@ -20,6 +20,9 @@
 //   --out-dir <dir>      default <repo>/reports/matrix
 //   --dry-run            no browser: validate B5 composition + B7 logic, emit the manifest
 //   --headed             chromium only: show the window
+//   --page engine        E11-T06: the REAL engine (dist/bench-engine.js; run `pnpm build` first)
+//                        on bench/engine/page: B1,B2,B5,B6,B9 x 5 by default (B10 nightly, on
+//                        request), B3/B4/B7/B8 recorded as stubs. Same server, launch and report.
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -47,11 +50,21 @@ import {
   cellsComplete,
   summariseCell,
 } from "./matrix-lib.mjs";
+import {
+  ENGINE_CHROMIUM_FLAGS,
+  ENGINE_REPS,
+  ENGINE_SCENARIO_IDS,
+  PER_PR_SCENARIOS,
+  STUB_SCENARIOS,
+  stubCell,
+  summariseEngineCell,
+} from "../engine/engine-lib.mjs";
 import { ELECTRON_FLAGSETS } from "./electron/flagsets.cjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BENCH = resolve(HERE, "..");
 const REPO = resolve(BENCH, "../../..");
+const DIST = resolve(BENCH, "../dist");
 
 export function parseArgs(argv) {
   const out = {};
@@ -95,14 +108,17 @@ function startServer(state) {
       return;
     }
     let file;
-    if (url.pathname === "/matrix/page/matrix.html") state.onPageRequest(url.searchParams);
-    if (url.pathname.startsWith("/tokens/")) {
+    if (/^\/(matrix|engine)\/page\/\w+\.html$/.test(url.pathname))
+      state.onPageRequest(url.searchParams);
+    if (url.pathname.startsWith("/dist/")) {
+      file = join(DIST, url.pathname.slice("/dist/".length));
+    } else if (url.pathname.startsWith("/tokens/")) {
       file = join(REPO, "packages/ui/tokens", url.pathname.slice("/tokens/".length));
     } else {
       file = join(BENCH, url.pathname);
     }
     file = normalize(file);
-    const allowed = [BENCH + sep, join(REPO, "packages/ui/tokens") + sep];
+    const allowed = [BENCH + sep, DIST + sep, join(REPO, "packages/ui/tokens") + sep];
     if (!allowed.some((r) => file.startsWith(r)) || !existsSync(file)) {
       res.writeHead(404).end("not found");
       return;
@@ -202,11 +218,17 @@ export async function dryRunChecks({ seed, bars }) {
   };
 }
 
+/** The pinned set, plus precise heap readings for the engine page (its memory metric, M3). */
+const chromiumFlags = (args) => [
+  ...PINNED_CHROMIUM_FLAGS,
+  ...(args.page === "engine" ? ENGINE_CHROMIUM_FLAGS : []),
+];
+
 async function launchChromium(url, args) {
   const { chromium } = desktopRequire("playwright");
   const browser = await chromium.launch({
     headless: args.headed !== "true",
-    args: [...PINNED_CHROMIUM_FLAGS],
+    args: chromiumFlags(args),
   });
   const page = await browser.newPage({ viewport: { width: 1700, height: 1000 } });
   page.on("pageerror", (e) => console.error("[page]", e.message));
@@ -218,7 +240,7 @@ async function launchChromium(url, args) {
     },
     flagSet: {
       name: "pinned-K01 (software GL; override with a real-GPU set on the reference machine, see README)",
-      flags: [...PINNED_CHROMIUM_FLAGS],
+      flags: chromiumFlags(args),
     },
     memNames: ["chrome", "headless_shell", "chrome-headless-shell"],
     close: () => browser.close(),
@@ -265,6 +287,13 @@ function launchTauri(url) {
   };
 }
 
+/** The engine page's driver identity: the page and its scenario lib, never the engine build. */
+function engineDriverHash() {
+  return createHash("sha256")
+    .update(readFileSync(join(BENCH, "engine/page/engine-page.mjs")))
+    .update(readFileSync(join(BENCH, "engine/engine-lib.mjs")));
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const runtime = args.runtime;
@@ -272,18 +301,25 @@ async function main() {
     console.error(`--runtime must be one of ${RUNTIMES.join("|")}`);
     process.exit(2);
   }
-  const scenarios = (args.scenarios ?? MATRIX_SCENARIOS.join(",")).split(",");
-  const bad = scenarios.filter((s) => !MATRIX_SCENARIOS.includes(s));
+  const engine = args.page === "engine";
+  const known = engine ? ENGINE_SCENARIO_IDS : MATRIX_SCENARIOS;
+  const requested = (
+    args.scenarios ?? (engine ? PER_PR_SCENARIOS : MATRIX_SCENARIOS).join(",")
+  ).split(",");
+  // Engine stubs never reach the page: they are recorded "not implemented" below.
+  const scenarios = requested.filter((s) => !(engine && STUB_SCENARIOS.includes(s)));
+  const bad = requested.filter((s) => !known.includes(s));
   if (bad.length) {
     console.error(`unknown scenario(s): ${bad.join(",")}`);
     process.exit(2);
   }
   const cfg = {
-    reps: Number(args.reps ?? 3),
+    reps: Number(args.reps ?? (engine ? ENGINE_REPS : 3)),
     seed: args.seed ?? "20260928",
     bars: Number(args.bars ?? 100_000),
     durationMs: Number(args["duration-ms"] ?? 20_000),
     soakMs: Number(args["soak-ms"] ?? 30 * 60_000),
+    ...(engine && { page: "engine" }),
   };
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const outDir = resolve(args["out-dir"] ?? join(REPO, "reports/matrix"));
@@ -351,8 +387,11 @@ async function main() {
     barCount: String(cfg.bars),
     durationMs: String(cfg.durationMs),
     soakMs: String(cfg.soakMs),
+    // Only the Chromium launch adds `--enable-precise-memory-info`; elsewhere memory is imprecise.
+    ...(engine && runtime === "chromium" && { preciseMemory: "1" }),
   });
-  const url = `http://127.0.0.1:${port}/matrix/page/matrix.html?${params}`;
+  const page = engine ? "engine/page/engine.html" : "matrix/page/matrix.html";
+  const url = `http://127.0.0.1:${port}/${page}?${params}`;
   console.log(
     `[matrix] runtime=${runtime} reps=${cfg.reps} scenarios=${scenarios} bars=${cfg.bars}`,
   );
@@ -419,7 +458,10 @@ async function main() {
   }
   incomplete.push(...missingManifestFields(manifest).map((f) => `missing version: ${f}`));
 
-  const cells = state.results.filter((r) => r.kind === "cell").map(summariseCell);
+  const cells = state.results
+    .filter((r) => r.kind === "cell")
+    .map(engine ? summariseEngineCell : summariseCell);
+  if (engine) cells.push(...STUB_SCENARIOS.map(stubCell));
   const fixture = state.preamble?.fixture ?? null;
   const report = {
     schema: REPORT_SCHEMA,
@@ -432,7 +474,7 @@ async function main() {
     seed: fixture?.seed ?? cfg.seed,
     seed32: fixture?.seed32 ?? null,
     fixture,
-    driverScriptSha256: createHash("sha256")
+    driverScriptSha256: (engine ? engineDriverHash() : createHash("sha256"))
       .update(readFileSync(join(BENCH, "driver.mjs")))
       .update(readFileSync(join(HERE, "page/page-main.mjs")))
       .update(readFileSync(join(HERE, "scenes/b5-combined.mjs")))

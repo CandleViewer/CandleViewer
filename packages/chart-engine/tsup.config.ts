@@ -9,6 +9,8 @@ export default defineConfig({
     // host loads it as `new URL("./render-worker.js", import.meta.url)`.
     "render-worker": "src/worker/render-worker.ts",
     bench: "bench/harness.ts",
+    // E11-T06: the real-engine bench page's entry (bench mode on); never imported by the app.
+    "bench-engine": "src/api/bench.ts",
   },
   format: ["esm"],
   // tsconfig.json is solution-style; build against the no-DOM program (C-2.16 guard for

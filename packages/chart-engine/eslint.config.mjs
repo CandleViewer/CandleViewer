@@ -201,6 +201,11 @@ export default tseslint.config(
     },
   },
   {
+    // E11-T06: the real-engine bench page runs in Chromium only (its pure parts are bench/engine/*.mjs).
+    files: ["bench/engine/page/**/*.mjs"],
+    languageOptions: { globals: { ...globals.browser } },
+  },
+  {
     files: ["bench/matrix/**/*.cjs"],
     rules: { "@typescript-eslint/no-require-imports": "off" },
   },

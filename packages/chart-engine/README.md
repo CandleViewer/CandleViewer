@@ -121,7 +121,7 @@ shipped in each case.
 | BQ-15 | Crash recovery               | The host keeps no copy of transferred data, so the "snapshot request" is `visibleRangeNeedsData` for the last viewport once the restarted worker is `ready`; the host replays the theme, the last size (`init` carries its dpr, then a `resize`), the viewport, the LOD, series options and drawings; transient commands (`pickAt`, `export`) are not replayed. A transferred canvas cannot be transferred again, so a fresh canvas, sized to the container as it is then, replaces it in the DOM. The correlation id is in the `error` message (§8's event has no field). The restart budget resets only when a worker dies 10 s or more after its `ready` (`HEALTHY_RESET_MS`), so one that crashes right after `ready` still runs out. Once the budget is spent, a pending `takeScreenshot` rejects instead of hanging. A worker that cannot be created at all, or a canvas that will not transfer, runs the chart inline instead of throwing from `createChart`. |
 | BQ-16 | Backpressure bound           | Held-back batches per store are capped at 4: a batch merges into the queue's tail only when op and layout shape match (`append` / `prepend` concatenate, `patch` last-wins, `replace` clears the queue); past the cap the oldest is dropped and counted, and the chart emits `visibleRangeNeedsData` for the last viewport (once per overload episode, re-armed when the queue drains) so the data layer re-sends the store. Batches a restart discards are counted in `messages_dropped` too.                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | BQ-17 | Browser-only criteria        | The repo has no real-browser harness for the engine yet, so "a 2 s main-thread block keeps panning" and the heap-snapshot check are covered by the `bench/matrix` worker run (B7, `storm-worker.mjs`) and the unit transfer proof; the Playwright / Electron run is E11-Q01 / E11-T06. The a11y throttle (≤ 2 announcements/s) is the live-region layer's (E11-S13); the `Performance.mark()` transport slice for SCR-046 is E11-T07. Per-frame allocation is not yet zero: each `input` batch is a fresh `Float32Array` (the transfer detaches it; a pool fed by returned buffers needs a reply message), `captureInput` builds a row per event, the crosshair summary is a new string and `frame` a new object; the zero-allocation frame test of 26 §3.2 rule 4 is E11-S02's with the GL path.                                                                                                                                                                    |
-| BQ-18 | Bench mode and the LOD trace | The switch is `ChartHostOptions.bench` (`src/worker/host.ts`, internal): it makes the runtime post `frame` every frame, which is the C-Q02-1 LOD trace hook, and the parity test drives it. §8's `ChartOptions` has no internal or test option, so `createChart` always passes `false`; exposing it to the bench harness is E11-T06's.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| BQ-18 | Bench mode and the LOD trace | The switch is `ChartHostOptions.bench` (`src/worker/host.ts`, internal): it makes the runtime post `frame` every frame, which is the C-Q02-1 LOD trace hook, and the parity test drives it. §8's `ChartOptions` has no internal or test option, so `createChart` always passes `false`; E11-T06 exposes it to the bench page only, through `src/api/bench.ts` (`dist/bench-engine.js`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | BQ-19 | §6 payloads                  | `ready` carries `{ runMode, renderProfile }`: the selected `RenderProfile` is the whole capability report until E11-T05 owns detection. `frame` adds `renderProfile` and `runMode` (the ticket's observability). `pick` has no `cell`: there is no footprint hit index before E11-S08 / E12, so the field is left out rather than always empty. Every message carries the chart `id` (`null` on a worker-wide `error`), because one worker serves every chart on the page.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 ## Scene graph (E11-S01)
@@ -919,3 +919,41 @@ the first source a node is attached to, so a second ring would mean remounting t
 switch, and the scene graph cannot remove the old ones. `HaRing` therefore holds only the float64
 state and writes into the series' existing ring; switching back rewrites the real bars from the
 store.
+
+## Real-engine bench scenarios (E11-T06 PR-1)
+
+`node bench/matrix/run-matrix.mjs --runtime chromium --page engine` (after `pnpm build`) runs the
+**real engine** (`dist/bench-engine.js`, `src/api/bench.ts`: `createChart` in bench mode) on
+`bench/engine/page/`, with the matrix runner's loopback server, launch, manifest and report. The
+scenarios are 26 §13's: B1, B2, B5, B6 and B9 per run, five repetitions (C-9.1 #16); B10 (the
+30-minute soak) only on request (nightly); B3 (E18), B4 (E21), B7 (E17) and B8 (E14) are recorded as
+`status: "stub"` cells naming the Epic whose layer they wait for. Single-chart scenarios run inline,
+so 06 §4.3's stage marks (`cv.frame.start`, `cv.stage.<stage>`, `cv.stage.layout`) land on the
+page's timeline and give the per-stage p95 and the worst stage; B6's four charts share the render
+worker. The input is scripted per frame through `timeScale.setVisibleRange`. The marks exist only in
+bench mode: `createChart` never opens a bench chart and a production frame's scheduler has
+`marks === null`. The pure parts (`bench/engine/engine-lib.mjs`) are unit-tested.
+
+B5 and B6 are **partial**: overlays and indicators are no-op stubs and the footprint and heatmap
+series get no data until E18, E21 and E12 land, so both measure candles only; the cells and their
+gate rows say so. Frame time is the CPU span of the frame (it ends at submit, so GPU execution and
+present are not in it); B6's figure is the per-rAF sum of its four charts' frame times, not
+stage-comparable. Memory is read only with `--enable-precise-memory-info` (the engine launch adds
+it) as the peak heap above a pre-mount reading (the fixture excluded); otherwise it is recorded
+"imprecise" and never compared. B6's render-worker heap is not counted. **Memory limit:**
+`performance.memory.usedJSHeapSize` is the V8 heap, and typed-array (ArrayBuffer) backing stores are
+V8 external memory, not counted in it, so the memory gate does not see typed-array growth; each cell
+carries this as `memoryLimit` next to `memoryScope`. A rep that records no frame (non-B9) makes the
+cell not-runnable, never a p95 of 0 ms, and the page fails a rep with no frame 10 s after mount.
+
+`ci-compare.mjs` reads a real-engine report (`config.page: "engine"`) as follows: frame time, draw
+calls and memory each fail above 5 % (`--enforce` only) on the median of the per-rep p95s; the 0.2 ms
+floor is PROPOSED and binds only on a baseline under 4 ms; 26 §13's absolute gates are reported per
+gate ("not measured" where the page has no figure yet, as B9's atlas); the per-rep p95 spread is
+published and never fails. Under `--enforce`, a metric the baseline has that this run lacks or reads
+as non-finite (a not-runnable cell, a NaN, a 0 ms frame time) fails, a 0 ms frame-time baseline
+fails ("ZERO BASELINE"; a zero counter or memory baseline is reported, not compared), any
+not-runnable scenario fails with or without a like-for-like baseline ("NOT RUN (enforced)"), and an
+engine report needs five reps. Without `--enforce` all of these are recorded only. The page has not
+yet run in CI: no workflow invokes `--page engine` in PR-1, and `--enforce` stays off for it until
+one recorded run exists. Wiring it into `_job-engine-bench.yml` is E11-T06 PR-2.

@@ -11,6 +11,7 @@ export { createPickPool, ObjectPool, PooledBatchSink } from "./pool.js";
 export type { BatchEntry, BatchSink, PickSlot } from "./pool.js";
 export type * from "./frame-clock.js";
 export * from "./frame-scheduler.js"; // FrameScheduler, its timings, the step-down notice
+export * from "./stage-marks.js"; // bench-mode performance marks (E11-T06)
 export * from "./mutation-queue.js";
 export * from "./batch-builder.js"; // BatchBuilder, RetainedBatch, UploadSink
 export * from "./layout-engine.js"; // LayoutEngine, PaneLayout, Rect
