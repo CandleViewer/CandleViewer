@@ -26,3 +26,8 @@ export function boundedInt(
   }
   return value;
 }
+
+/** `memory.viewportWindowMultiplier` default: the eviction window is 3 visible spans (26 §7, §8). */
+export const VIEWPORT_WINDOW_MULTIPLIER = 3;
+/** Its accepted range at `createChart`, [1, 16] (BQ-P2-08, 26 §7 internal constants). */
+export const VIEWPORT_WINDOW_MULTIPLIER_MAX = 16;

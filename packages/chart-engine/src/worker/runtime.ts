@@ -49,6 +49,7 @@ import { plotWidthOf } from "../interaction/wheel.js";
 import * as scene from "../scene/index.js";
 import { performanceStageMarker, type PerformanceTimeline } from "../scene/stage-marks.js";
 import { AtlasService, type AtlasCounters, type AtlasDetails } from "../text/atlas.js";
+import { MAX_BARS_CEILING, MEMORY_BUDGET_CEILING_MB } from "../memory/config.js";
 import { MemoryAccount } from "../memory/MemoryAccount.js";
 import { MemorySampler } from "../memory/MemorySampler.js";
 import type { ChartFont, TextPlatform } from "../text/platform.js";
@@ -301,6 +302,37 @@ const describe = (n: scene.FrameNotice): string => {
   const head = `${lod}frame ${n.totalMs.toFixed(2)} ms, worst stage ${n.stage}`;
   return `${head}; ms: ${ms} layout=${n.layoutMs.toFixed(2)}`;
 };
+
+/**
+ * The F-08 ingest check (26 §7 "When", E11-S15 AC6): why a `data` batch breaks the chart's
+ * `memoryBudgetMb` (its buffer alone exceeds the budget) or `maxBars` (a bars batch's own count
+ * exceeds the cap), or null. Runs before the batch is applied, so a refused batch allocates nothing
+ * and leaves the scene as it was. The cap is per batch, not on the length held after it: the
+ * BarStore rings and front-evicts at maxBars (26 §3.2), so a chart at the cap keeps taking live
+ * appends. The budget is per batch too; the held total is the governor's (26 §7 "State").
+ */
+export function ceilingBreach(
+  config: ChartConfig,
+  store: StoreId,
+  count: number,
+  byteLength: number,
+): string | null {
+  if (
+    !Number.isSafeInteger(count) ||
+    count < 0 ||
+    !Number.isSafeInteger(byteLength) ||
+    byteLength < 0
+  ) {
+    return "data batch with a malformed count or length"; // fail closed (the validator ran first)
+  }
+  const budgetMb = config.memoryBudgetMb ?? MEMORY_BUDGET_CEILING_MB;
+  if (byteLength > budgetMb * 2 ** 20) {
+    return `data batch of ${byteLength} bytes exceeds memoryBudgetMb ${budgetMb}`;
+  }
+  if (store !== "bars") return null;
+  const maxBars = config.maxBars ?? MAX_BARS_CEILING;
+  return count > maxBars ? `bars batch of ${count} exceeds maxBars ${maxBars}` : null;
+}
 
 export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   const charts = new Map<ChartId, Instance>();
@@ -1091,6 +1123,19 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         return;
       case "data": {
         if (msg.series !== undefined) {
+          // E11-S15 AC6: the series path is an ingest point too; a breach refuses the batch
+          // before the decode allocates, the slot released and the store untouched (F-08).
+          const over = ceilingBreach(
+            inst.config,
+            msg.store,
+            msg.layout.count,
+            msg.buffer.byteLength,
+          );
+          if (over !== null) {
+            fail(inst.id, over);
+            deps.post({ t: "ack", id: inst.id, store: msg.store, series: msg.series });
+            return;
+          }
           storeBars(inst, msg.series, msg.op, msg.layout, msg.buffer);
           deps.post({ t: "ack", id: inst.id, store: msg.store, series: msg.series });
           touch(inst);
@@ -1105,8 +1150,28 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         }
         // Without a series id a batch only moves the element count (pre-E12-S06 callers).
         const n = msg.layout.count;
+        const breach = ceilingBreach(inst.config, msg.store, n, msg.buffer.byteLength);
+        if (breach !== null) {
+          // Fail closed for the batch, not the chart: the code, the backpressure slot released,
+          // nothing applied and the loop not woken (E11-S15 AC6, F-08).
+          fail(inst.id, breach);
+          deps.post({ t: "ack", id: inst.id, store: msg.store });
+          return;
+        }
+        // The BarStore refuses a prepend past maxBars (26 §3.2, reason "ceiling"); the count mirrors it.
+        const cap = inst.config.maxBars ?? MAX_BARS_CEILING;
+        if (msg.store === "bars" && msg.op === "prepend" && inst.elements.bars + n > cap) {
+          inst.dataRejected["ceiling"] = (inst.dataRejected["ceiling"] ?? 0) + 1;
+          fail(inst.id, "prepend would pass maxBars");
+          deps.post({ t: "ack", id: inst.id, store: msg.store });
+          return;
+        }
         if (msg.op === "replace") inst.elements[msg.store] = n;
         else if (msg.op !== "patch") inst.elements[msg.store] += n;
+        // An append front-evicts at maxBars (26 §3.2): the held count never passes the cap.
+        if (msg.store === "bars" && msg.op === "append") {
+          inst.elements.bars = Math.min(inst.elements.bars, cap);
+        }
         // BQ-115: a bars batch's params are [priceOrigin, tickSize], the main series' (pane 0).
         const [origin, tick] = msg.layout.params;
         if (msg.store === "bars" && origin !== undefined && tick !== undefined) {

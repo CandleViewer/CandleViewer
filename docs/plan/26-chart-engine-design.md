@@ -530,7 +530,10 @@ overrides of BQ-S15-03 and BQ-S15-12 and its riders), implemented by its code PR
 - **When** (BQ-S15-12): the account is sampled every `memory.sampleIntervalMs` (5000, §8) on the
   existing 1 s tick, and on resize (a change of `backingStorePx`), never per frame. A synchronous check
   of the `maxBars` and `memoryBudgetMb` ceilings also runs on every `data` batch before it is applied:
-  the ticket enforces them "at every ingest point" (`backlog/E11.json` E11-S15). No timer: the 1 s tick
+  the ticket enforces them "at every ingest point" (`backlog/E11.json` E11-S15). Both are per batch:
+  a bars batch whose own count exceeds `maxBars`, or any batch whose buffer alone exceeds
+  `memoryBudgetMb`, is refused; the held bar count is bounded by the BarStore's front eviction (§3.2),
+  so a chart at `maxBars` keeps taking live appends, and the held total is the governor's. No timer: the 1 s tick
   is the `frame` sample (§6), which a parked loop (§3.2) does not emit, so a parked chart is not woken,
   and memory cannot grow without a `data` message or a resize. A sample costs ≤ 0.2 ms (a `budget(0.2)`
   perf test with the bench scene as baseline) and allocates nothing.
@@ -563,7 +566,8 @@ memory.viewportWindowMultiplier (3, §8), bar boundaries }` to the GPU-drop rang
 
 **Internal constants** (E11-S15, cross-BQ ruling 3): every figure of this contract that no owner doc
 fixes, in one place; none touches a safety invariant. The 70 % pressure threshold is the eviction-policy
-paragraph's above. `memory.sampleIntervalMs` (5000) and `memory.viewportWindowMultiplier` (3) are not
+paragraph's above; the ticket's `memory.stepDownPct` (70) key is not read yet, so 70 % is fixed
+until PR-2b (E11-S15) wires it. `memory.sampleIntervalMs` (5000) and `memory.viewportWindowMultiplier` (3) are not
 here: they are the ticket's config keys, `ChartOptions.memory` (§8).
 
 | Name                       | Value                                      | Used in                   | Status                                                                 |
@@ -572,7 +576,10 @@ here: they are the ticket's config keys, `ChartOptions.memory` (§8).
 | Over threshold             | 100 % of the budget                        | §7 State, §11             | internal constant — no owner doc fixes it                              |
 | Paging distance            | 1× visible span from the loaded edge       | §9 paging trigger         | internal constant — no owner doc fixes it                              |
 | Paging debounce            | 250 ms on the viewport stream              | §9 paging trigger         | internal constant — no owner doc fixes it                              |
-| Sample cost budget         | ≤ 0.2 ms, zero allocation                  | §7 When                   | internal constant — no owner doc fixes it                              |
+| Sample cost budget         | ≤ 0.2 ms, zero allocation                  | §7 When                   | fixed by the ticket (`backlog/E11.json` E11-S15 budget: ≤ 0.2 ms)      |
+| Window multiplier range    | integer in [1, 16], default 3              | §8 `ChartOptions.memory`  | internal constant — no owner doc fixes it (BQ-P2-08)                   |
+| Canvas2D side cap          | 32,767 px per axis                         | §6 F-12 cap               | internal constant — Chromium figure, unverified in Electron (BQ-P2-06) |
+| Canvas2D area cap          | 268,435,456 px (16,384²)                   | §6 F-12 cap               | internal constant — Chromium figure, unverified in Electron (BQ-P2-06) |
 | `MAX_BARS_CEILING`         | 2^21 bars                                  | §8 `ChartOptions.maxBars` | internal constant — no owner doc fixes it                              |
 | `MEMORY_BUDGET_CEILING_MB` | 4096 MiB                                   | §8 `memoryBudgetMb`       | internal constant — no owner doc fixes it                              |
 | `MEMORY_BUDGET_FLOOR_MB`   | 64 MiB                                     | §8 `memoryBudgetMb`       | internal constant — no owner doc fixes it                              |
@@ -597,7 +604,7 @@ export interface ChartOptions {
   syncGroup?: string;
   maxBars?: number; // default 200_000; integer in [1, MAX_BARS_CEILING] (E11-S15, F-08)
   memoryBudgetMb?: number; // default 600 (MiB); integer in [MEMORY_BUDGET_FLOOR_MB, MEMORY_BUDGET_CEILING_MB]
-  memory?: { sampleIntervalMs?: number; viewportWindowMultiplier?: number }; // E11-S15 (§7): 5000, 3
+  memory?: { sampleIntervalMs?: number; viewportWindowMultiplier?: number }; // E11-S15 (§7): 5000, 3 (an integer in [1, 16])
   fonts?: readonly { family: string; weight: number; bytes: ArrayBuffer; version?: string }[]; // SDF atlas (E11-S11 BQ-258)
 }
 

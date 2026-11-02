@@ -11,6 +11,10 @@ import type {
   OverlayPlugin,
   ThemeTokens,
 } from "../../src/index.js";
+import {
+  VIEWPORT_WINDOW_MULTIPLIER,
+  VIEWPORT_WINDOW_MULTIPLIER_MAX,
+} from "../../src/memory/config.js";
 import { asHtml, canvasIn, fakeContainer, type FakeElement } from "./fake-dom.js";
 
 const theme: ThemeTokens = {
@@ -150,6 +154,20 @@ describe("createChart facade", () => {
     expect(container.children).toHaveLength(0);
     const ok = { sampleIntervalMs: 1, viewportWindowMultiplier: 3 };
     expect(() => mount({ memory: ok }).dispose()).not.toThrow();
+  });
+
+  it("validates memory.viewportWindowMultiplier as an integer in [1, 16], default 3 (BQ-P2-08)", () => {
+    for (const bad of [0, -1, 17, 2.5, Number.NaN, Infinity]) {
+      expect(() => mount({ memory: { viewportWindowMultiplier: bad } })).toThrow(
+        /memory\.viewportWindowMultiplier must be an integer in \[1, 16\]/,
+      );
+    }
+    expect(container.children).toHaveLength(0);
+    expect([VIEWPORT_WINDOW_MULTIPLIER, VIEWPORT_WINDOW_MULTIPLIER_MAX]).toEqual([3, 16]);
+    for (const m of [1, 16]) {
+      expect(() => mount({ memory: { viewportWindowMultiplier: m } }).dispose()).not.toThrow();
+    }
+    expect(() => mount({ memory: {} }).dispose()).not.toThrow();
   });
 
   it("mounts a DOM mirror root in the container for keyboard focus", () => {
