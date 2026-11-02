@@ -13,31 +13,37 @@ working tree and never re-implements them. Default-deny: a gate that cannot read
 input FAILs.
 
 Gates (each FAIL led by its name):
-  G-FINDING   §9's F rows in order; each severity from R-1's set; each closing "fix:
-              A-n" with §10 carrying A-n, "routed: ..." or "accepted: ..."; every
-              Blocking and Major closes by an A-row (R-2); the heading's counts equal
-              the rows; every F id the review names is a §9 row.
+  G-FINDING   §9's F rows in order; each severity equal to RULED_SEVERITY, which pins
+              it with its R-1 basis; each closing "fix: A-n" with §10 carrying A-n,
+              "applied: " with a parent cite, "routed: ..." or "accepted: ..."; every
+              Blocking and Major closes by an A-row or as applied (R-2); every count
+              anchor (heading, AC trace, summary) equals the rows; every F id the
+              review names is a §9 row.
   G-NAMES     the six screen sections of §3 exist, each with its N rows in order, and
-              every N row names its element with a non-empty accessible name (AC 1).
+              every N row names its element with an accessible name that is neither
+              empty nor a placeholder (AC 1).
   G-PATH      §4's W rows are in order and cover the pill, the popover, the typed
               confirmation, the step-up and the completion; each has a focus target and
               a visible-focus note (AC 4).
-  G-T2        every §5 row is T2 or V; a T2 reason is an E09-D09 §3.1 key's string at
-              the base (its slot filled), another key's text on its cited line, or
-              PROPOSED with its owner; a typed gate is V and carries no key.
+  G-T2        V_ROWS are V and every other §5 row T2; a V row carries no key and no
+              rendering; a T2 reason is an E09-D09 §3.1 key's string at the base (its
+              slot filled), or another key's or a PROPOSED (named owner) text on its
+              cited line; every T2 row names its rendering (2a, 2b, the sentence form
+              or its owner's) and its `lock`, with a cite; no §3 or §5 row outside a V
+              gate carries the `disabled` attribute.
   G-CONTRAST  every §6.1 row recomputed per theme (dark, light, high-contrast as
               verify_tokens merges them) equals the review to two decimals; `text` rows
-              are at least 4.5:1 and `ui` rows at least 3:1 in every theme; the verdict
-              matches.
+              are at least 4.5:1 and `ui` rows at least 3:1 in every theme; each row's
+              role equals ROLE_OF; the verdict matches.
   G-CVD       every §6.2 row's four ΔE76 figures and its JND column equal the tool's;
               DEMO vs LIVE stays above the JND in every simulation.
-  G-AROW      every A-row's Old text or anchor stands exactly once in its parent at its
-              ref.
+  G-AROW      every quoted Old, After or Before phrase of an A-row parses, and each
+              stands exactly once in its parent at its ref.
   G-CITE      every cite in range and on a non-blank line at its ref, its content equal
               to the pins file's hash; the SHA anchors are the pinned refs.
-  G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot
-              or public-text deny word in the review, this tool or the pins file; no
-              unknown anchor.
+  G-HYGIENE   no closing keyword, URL or host, agent name or double-brace slot in the
+              review; no local or temporary path and no public-text deny word in the
+              review, this tool or the pins file; no unknown anchor.
   G-SCOPE     the diff against `git merge-base HEAD origin/main` touches only the
               review, this tool and the pins file.
 
@@ -64,14 +70,16 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+sys.dont_write_bytecode = True  # the loaded helpers never leave a __pycache__ behind
+
 ROOT = Path(__file__).resolve().parents[3]
 SPEC_REL = "docs/design/E38/E38-D05.md"
 TOOL_REL = "docs/design/_tools/e38_d05_a11y_review_audit.py"
 PINS_REL = "docs/design/_tools/e38_d05_ruled_pins.txt"
 OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
 BASE = "1c4f51bb5dbeb167627749a04d6ad426e26bf5e6"  # origin/main; re-pinned (BQ-04)
-D02_REF = "17e0086b76bc048b47193a85c2650fd157adb6cd"  # #5494's head (E38-D02)
-D03_REF = "133a45628ebca6b5955aa89d0208b92efb64d52a"  # #5493's head (E38-D03)
+D02_REF = "292ce7953775deabf4ffde139db2a887be9592e8"  # #5494's head (E38-D02)
+D03_REF = "75c776d82236961a8af1fbafa47d217bb82f6720"  # #5493's head (E38-D03)
 D04_REF = "2c47253340e130e6b88d25ed209fd1666e01418d"  # #5490's head (E38-D04)
 TOKENS = ROOT / "packages" / "ui" / "tokens"
 CVD_PATH = ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py"
@@ -91,6 +99,70 @@ REF_OF = {"D02": D02_REF, "D03": D03_REF, "D04": D04_REF}
 # the A-row headers name their parents in these words
 PARENT_WORDS = {"E38-D02": "D02", "E38-D03": "D03", "E38-D04": "D04"}
 SEVERITIES = ("Blocking", "Major", "Minor", "Info")
+# R-1's criteria per severity: Blocking "operate" (not discoverable or operable) or
+# "colour" (the environment by colour alone); Major "wcag" (an A / AA failure on the
+# path), "name", "focus" or "error" (left unspecified by the parent) or "g-t2" (`DS`:15);
+# Minor "gap" (a working path); Info "info"
+BASES = {
+    "Blocking": ("operate", "colour"),
+    "Major": ("wcag", "name", "focus", "error", "g-t2"),
+    "Minor": ("gap",),
+    "Info": ("info",),
+}
+# each finding's severity and its R-1 basis, ruled here so a swap that keeps the
+# heading's counts still fails
+RULED_SEVERITY: dict[str, tuple[str, str]] = {
+    "F-01": ("Blocking", "operate"),
+    "F-02": ("Major", "error"),
+    "F-03": ("Major", "focus"),
+    "F-04": ("Major", "name"),
+    "F-05": ("Major", "name"),
+    "F-06": ("Major", "error"),
+    "F-07": ("Major", "name"),
+    "F-08": ("Major", "focus"),
+    "F-09": ("Major", "name"),
+    "F-10": ("Major", "error"),
+    "F-11": ("Major", "name"),
+    "F-12": ("Minor", "gap"),
+    "F-13": ("Minor", "gap"),
+    "F-14": ("Minor", "gap"),
+    "F-15": ("Minor", "gap"),
+    "F-16": ("Minor", "gap"),
+    "F-17": ("Major", "error"),
+    "F-18": ("Major", "name"),
+    "F-19": ("Minor", "gap"),
+    "F-20": ("Minor", "gap"),
+    "F-21": ("Minor", "gap"),
+    "F-22": ("Minor", "gap"),
+    "F-23": ("Minor", "gap"),
+    "F-24": ("Info", "info"),
+    "F-25": ("Info", "info"),
+    "F-26": ("Info", "info"),
+    "F-27": ("Info", "info"),
+    "F-28": ("Info", "info"),
+    "F-29": ("Info", "info"),
+    "F-30": ("Info", "info"),
+    "F-31": ("Info", "info"),
+    "F-32": ("Major", "g-t2"),
+    "F-33": ("Major", "g-t2"),
+    "F-34": ("Major", "g-t2"),
+    "F-35": ("Minor", "gap"),
+}
+# the form-validity gates of §5, outside the T2 grammar (`E09D09`:230)
+V_ROWS = ("T-04", "T-08")
+# the `disabled` attribute, never `aria-disabled` (G-T2.1b)
+DISABLED_ATTR = re.compile(r"`disabled`|\bnative(?:ly)? disabled\b|\bdisabled attribute\b")
+RENDERING = re.compile(r"\b2a\b|\b2b\b|sentence form|owner's")
+PLACEHOLDER = re.compile(r"\b(?:TBD|TODO|XXX|FIXME)\b|^\?+$|^…$", re.IGNORECASE)
+# each §6.1 pair's role, ruled here so a role turned to `structure` loses no floor quietly
+ROLE_OF = {
+    **{f"P-{i:02d}": "ui" for i in range(1, 17)},
+    "P-01": "text",
+    "P-10": "text",
+    "P-12": "structure",
+    "P-13": "structure",
+    "P-16": "text",
+}
 # the six screens of the ticket's Scope, each a §3 subsection with its row prefix
 SCREENS = (
     ("### 3.1 SCR-074", "N74"),
@@ -107,12 +179,10 @@ DASH = "–"  # the en dash of a cited range
 KEYS = r"\d\d|D0[234]|DS|E09D09|E10D04"
 CITE = re.compile(rf"`({KEYS})`:(\d+(?:{DASH}\d+)?(?:, :\d+(?:{DASH}\d+)?)*)")
 ANCHOR = re.compile(r"`?([^\s<|(`]+)`?<!--=([A-Z]+:[A-Za-z0-9.]+)-->")
-CLOSING = re.compile(
-    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE
-)
+CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE)
 LOCAL_PATH = re.compile(
-    "/" + "home/|/Users/|[A-Za-z]:\\\\|\\bwt-" + "notes\\b"
-)  # assembled
+    "/" + "home/|/" + "Users/|/" + "tmp/|[A-Za-z]:\\\\|\\bwt-" + "notes\\b|\\bnot" + "es/"
+)  # assembled, so the tool never matches its own text
 AGENT_NAME = re.compile(r"\b[a-z]{2,4}-worker-\d\b")
 URL_OR_HOST = re.compile(r"https?://|penpot\.[a-z]|team-id=|file-id=", re.IGNORECASE)
 # assembled with an explicit +, so the formatter keeps the split and the tool
@@ -152,9 +222,7 @@ class Texts:
 def git(*args: str) -> str | None:
     try:
         # git with fixed arguments and no shell; the only external program it runs
-        r = subprocess.run(
-            ["git", "-C", str(ROOT), *args], capture_output=True, check=False
-        )
+        r = subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, check=False)
     except OSError:
         return None
     return r.stdout.decode("utf-8", "surrogateescape") if r.returncode == 0 else None
@@ -171,9 +239,7 @@ def at(t: Texts, key: str) -> str:
     ref = REF_OF.get(key, BASE)
     text = show(t, ref, PATHS[key])
     if text is None:
-        raise SystemExit(
-            f"{PATHS[key]} does not resolve at {ref[:10]}; fetch the parents' heads"
-        )
+        raise SystemExit(f"{PATHS[key]} does not resolve at {ref[:10]}; fetch the parents' heads")
     return text
 
 
@@ -286,8 +352,7 @@ def cvd_values(row: list[str]) -> tuple[str, str]:
     th = {"hc": "high-contrast"}.get(row[3], row[3])
     ha, hb = color(th, tok(row[1])), color(th, tok(row[2]))
     ds = [float(cv.delta_e76(ha, hb))] + [
-        float(cv.delta_e76(cv.simulate(ha, d), cv.simulate(hb, d)))
-        for d in DEFICIENCIES
+        float(cv.delta_e76(cv.simulate(ha, d), cv.simulate(hb, d))) for d in DEFICIENCIES
     ]
     jnd = float(cv.JND_FLOOR)
     under = [n for n, d in zip(("normal", *DEFICIENCIES), ds, strict=True) if d < jnd]
@@ -306,8 +371,12 @@ def compute(t: Texts) -> dict[str, str]:
     }
     fs = rows(section(t.spec, "## 9."), "F")
     v["F:total"] = str(len(fs))
+    applied = [r for r in fs if len(r) == 6 and r[4].startswith("applied: ")]
+    v["F:applied"] = str(len(applied))
+    v["F:open"] = str(len(fs) - len(applied))
     for s in SEVERITIES:
         v[f"F:{s.lower()}"] = str(sum(r[1] == s for r in fs if len(r) > 1))
+        v[f"F:open{s.lower()}"] = str(sum(r[1] == s for r in fs if len(r) > 1 and r not in applied))
     return v
 
 
@@ -334,10 +403,12 @@ def cites(text: str) -> list[tuple[str, int, int]]:
 def cite_hashes(t: Texts) -> tuple[dict[str, str], list[str]]:
     hashes: dict[str, str] = {}
     bad: list[str] = []
+    seen: set[str] = set()
     for key, a, b in cites(t.spec):
         label = f"{key}:{a}" if a == b else f"{key}:{a}{DASH}{b}"
-        if label in hashes:
+        if label in seen:  # each label is checked and reported once
             continue
+        seen.add(label)
         ls = at(t, key).split("\n")
         if not 0 < a <= b <= len(ls):
             bad.append(f"{label} is past the end of {PATHS[key]} ({len(ls)} lines)")
@@ -377,16 +448,32 @@ def g_finding(t: Texts, vals: dict[str, str]) -> list[str]:
         fid, sev, _, text, closing, owner = r
         if sev not in SEVERITIES:
             bad.append(f"{fid}: severity {sev!r} is not one of {', '.join(SEVERITIES)}")
+        ruled = RULED_SEVERITY.get(fid)
+        if ruled is None:
+            bad.append(f"{fid}: no ruled severity and R-1 basis in the tool")
+        elif sev != ruled[0]:
+            bad.append(f"{fid}: reads {sev}, ruled {ruled[0]} on R-1's {ruled[1]!r}")
         fix = re.fullmatch(r"fix: (A-\d+)", closing)
+        applied = closing.startswith("applied: ")
         if fix and fix[1] not in arows:
             bad.append(f"{fid}: closes by {fix[1]}, which §10 does not carry")
-        if not fix and not re.match(r"(accepted|routed): \S", closing):
+        if applied and not any(k in REF_OF for k, _, _ in cites(closing)):
+            bad.append(f"{fid}: applied with no cite into a parent at its ref")
+        if not fix and not applied and not re.match(r"(accepted|routed): \S", closing):
             bad.append(f"{fid}: the closing {closing!r} is no fix, route or acceptance")
-        if sev in ("Blocking", "Major") and not fix:
+        if sev in ("Blocking", "Major") and not fix and not applied:
             bad.append(f"{fid}: a {sev} finding that no A-row closes (R-2)")
         if not owner or not text:
             bad.append(f"{fid}: no finding text or no owner")
     known = {r[0] for r in fs}
+    bad += [
+        f"{fid}: its ruled severity has no §9 row" for fid in RULED_SEVERITY if fid not in known
+    ]
+    bad += [
+        f"{fid}: basis {basis!r} is not one of R-1's for {sev}"
+        for fid, (sev, basis) in RULED_SEVERITY.items()
+        if basis not in BASES.get(sev, ())
+    ]
     bad += [
         f"{fid} is named but §9 has no such row"
         for fid in sorted(set(re.findall(r"\bF-\d\d\b", t.spec)))
@@ -412,7 +499,7 @@ def g_names(t: Texts, vals: dict[str, str]) -> list[str]:
             if len(r) != 7:
                 bad.append(f"{r[0]}: {len(r)} cells, not 7")
                 continue
-            if not r[1] or r[3] in ("", "—"):
+            if not r[1] or r[3] in ("", "—") or PLACEHOLDER.search(r[3]):
                 bad.append(f"{r[0]}: no element or no accessible name (AC 1)")
     return bad
 
@@ -444,34 +531,55 @@ def e09_keys(t: Texts) -> dict[str, str]:
     return out
 
 
+def on_cited_line(t: Texts, quote: str, source: str) -> bool:
+    src = CITE.search(source)
+    if not src:
+        return False
+    ls = at(t, src[1]).split("\n")
+    n = int(src[2].split(DASH)[0].split(",")[0])
+    return 0 < n <= len(ls) and quote in ls[n - 1]
+
+
 def g_t2(t: Texts, vals: dict[str, str]) -> list[str]:
     keys = e09_keys(t)
     bad = []
+    for ns in (rows(section(t.spec, "## 3."), lead) for _, lead in SCREENS):
+        bad += [
+            f"{r[0]}: the `disabled` attribute outside a V gate (G-T2.1b)"
+            for r in ns
+            if DISABLED_ATTR.search(" ".join(r)) and "(V" not in " ".join(r)
+        ]
     ts = rows(section(t.spec, "## 5."), "T")
     if not ts:
         return ["§5 has no T rows"]
     for r in ts:
-        if len(r) != 7:
-            bad.append(f"{r[0]}: {len(r)} cells, not 7")
+        if len(r) != 8:
+            bad.append(f"{r[0]}: {len(r)} cells, not 8")
             continue
-        tid, _, control, cls, key, text, source = r
-        typed = "typed" in control
-        if cls not in ("T2", "V"):
-            bad.append(f"{tid}: class {cls!r} is neither T2 nor V")
-        if typed and cls != "V":
-            bad.append(f"{tid}: a typed gate is form validity (V), not {cls}")
+        tid, _, _, cls, key, text, rend, source = r
+        want = "V" if tid in V_ROWS else "T2"
+        if cls != want:
+            bad.append(f"{tid}: class {cls!r}; this row is {want}")
         if cls == "V":
-            if key != "—":
-                bad.append(f"{tid}: a V row carries a reason key")
+            if key != "—" or rend != "—":
+                bad.append(f"{tid}: a V row carries a reason key or a rendering")
             continue
+        if DISABLED_ATTR.search(" ".join(r)):
+            bad.append(f"{tid}: the `disabled` attribute on a T2 control (G-T2.1b)")
+        if not (RENDERING.search(rend) and "`lock`" in rend and CITE.search(rend)):
+            bad.append(f"{tid}: no rendering, `lock` or cite in {rend!r} (G-T2.1c, d)")
         quote = re.fullmatch(r'"(.+)"', text)
         if not quote:
             bad.append(f"{tid}: the reason is not one quoted sentence")
             continue
         km = re.fullmatch(r"`([a-z_.]+)`(?: .*)?", key)
-        if key.startswith("PROPOSED (") and key.endswith(")"):
-            continue
-        if not km:
+        proposed = re.fullmatch(r"PROPOSED \((.*)\)", key)
+        if proposed:
+            if not proposed[1].strip():
+                bad.append(f"{tid}: PROPOSED names no owner")
+            elif not on_cited_line(t, quote[1], source):
+                bad.append(f"{tid}: {quote[1][:40]!r} is not on its cited line")
+        elif not km:
             bad.append(f"{tid}: the key {key!r} is neither a key nor PROPOSED (owner)")
         elif km[1] in keys:
             pat = re.sub(r"\\\{\w+\\\}", ".+", re.escape(keys[km[1]]))
@@ -479,12 +587,8 @@ def g_t2(t: Texts, vals: dict[str, str]) -> list[str]:
                 bad.append(f"{tid}: {quote[1]!r} is not {km[1]}'s {keys[km[1]]!r}")
         elif km[1].startswith("rbac."):
             bad.append(f"{tid}: {km[1]} is not an E09-D09 §3.1 key at the base")
-        else:
-            src = CITE.search(source)
-            ls = at(t, src[1]).split("\n") if src else []
-            n = int(src[2].split(DASH)[0].split(",")[0]) if src else 0
-            if not (0 < n <= len(ls) and quote[1] in ls[n - 1]):
-                bad.append(f"{tid}: {quote[1][:40]!r} is not on its cited line")
+        elif not on_cited_line(t, quote[1], source):
+            bad.append(f"{tid}: {quote[1][:40]!r} is not on its cited line")
     return bad
 
 
@@ -497,6 +601,8 @@ def g_contrast(t: Texts, vals: dict[str, str]) -> list[str]:
         if len(r) != 8:
             bad.append(f"{r[0]}: {len(r)} cells, not 8")
             continue
+        if ROLE_OF.get(r[0]) != r[3]:
+            bad.append(f"{r[0]}: role {r[3]!r}, ruled {ROLE_OF.get(r[0])!r}")
         want = contrast_values(r)
         if r[4:7] != want:
             bad.append(f"{r[0]}: reads {r[4:7]}, the tokens give {want}")
@@ -541,14 +647,15 @@ def g_arow(t: Texts, vals: dict[str, str]) -> list[str]:
         body = ln[m.end() :]
         anchors = re.findall(r'Old: "(.+?)"\. New:', body)
         anchors += re.findall(r'(?:[Aa]fter|[Bb]efore) "(.+?)" add', body)
+        quoted = len(re.findall(r'Old: "|(?:[Aa]fter|[Bb]efore) "', body))
         if not anchors:
             bad.append(f"{aid}: names neither an Old text nor an anchor")
+        if quoted != len(anchors):
+            bad.append(f"{aid}: {quoted} quoted phrases, {len(anchors)} parse as anchors")
         for a in anchors:
             n = sum(at(t, p).count(a) for p in parents)
             if n != 1:
-                bad.append(
-                    f"{aid}: {a[:40]!r} stands {n} times in {', '.join(parents)}"
-                )
+                bad.append(f"{aid}: {a[:40]!r} stands {n} times in {', '.join(parents)}")
     return bad
 
 
@@ -567,7 +674,6 @@ def g_hygiene(t: Texts, vals: dict[str, str]) -> list[str]:
     bad = []
     checks = (
         (CLOSING, "a closing keyword (the closing line waits for the A-row PR)"),
-        (LOCAL_PATH, "a local path"),
         (AGENT_NAME, "an agent name"),
         (URL_OR_HOST, "a URL or a host"),
     )
@@ -581,6 +687,8 @@ def g_hygiene(t: Texts, vals: dict[str, str]) -> list[str]:
         for i, ln in enumerate(text.split("\n"), 1):
             if any(d in ln.lower() for d in DENY):
                 bad.append(f"{name}:{i} carries a public-text deny word")
+            if LOCAL_PATH.search(ln):
+                bad.append(f"{name}:{i} carries a local or temporary path")
     for _, key in ANCHOR.findall(t.spec):
         if key not in vals:
             bad.append(f"an anchor `{key}` the tool does not compute")
@@ -687,6 +795,15 @@ def set_cell(row: str, col: int, value: str) -> Callable[[Texts], Texts]:
     return f
 
 
+def chain(*fs: Callable[[Texts], Texts]) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        for g in fs:
+            t = g(t)
+        return t
+
+    return f
+
+
 def drop_row(row: str) -> Callable[[Texts], Texts]:
     def f(t: Texts) -> Texts:
         kept = [x for x in t.spec.split("\n") if not x.startswith(f"| {row} ")]
@@ -700,12 +817,37 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     (
         "G-FINDING",
         "a count typed by hand in §9's heading",
-        sub("Major 11<!--=F:major-->", "Major 10<!--=F:major-->"),
+        sub("Major 15<!--=F:major-->", "Major 14<!--=F:major-->"),
+    ),
+    (
+        "G-FINDING",
+        "two severities swapped, the counts kept",
+        chain(set_cell("F-02", 1, "Minor"), set_cell("F-12", 1, "Major")),
+    ),
+    (
+        "G-FINDING",
+        "a count typed by hand in §16",
+        sub("15<!--=F:major--> Major,", "14<!--=F:major--> Major,"),
+    ),
+    (
+        "G-FINDING",
+        "a count typed by hand in the AC trace",
+        sub("13<!--=F:openmajor-->", "12<!--=F:openmajor-->"),
+    ),
+    (
+        "G-FINDING",
+        "an applied closing with no cite",
+        set_cell("F-15", 4, "applied: D02"),
     ),
     ("G-FINDING", "the Blocking routed", set_cell("F-01", 4, "routed: E38-S0x")),
     ("G-NAMES", "the reset Confirm's name emptied", set_cell("N79-07", 3, "")),
     ("G-NAMES", "the SCR-099 section renamed", sub("### 3.4 SCR-099", "### 3.4 SCR")),
     ("G-NAMES", "an SCR-122 row dropped", drop_row("N122-04")),
+    (
+        "G-NAMES",
+        "the reset Confirm named by a placeholder",
+        set_cell("N79-07", 3, "TBD"),
+    ),
     ("G-PATH", "W-04's focus target emptied", set_cell("W-04", 3, "—")),
     ("G-PATH", "the completion step renamed", set_cell("W-08", 1, "the end")),
     (
@@ -715,8 +857,39 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ),
     ("G-T2", "the typed LIVE gate classed T2", set_cell("T-04", 3, "T2")),
     ("G-T2", "an unknown rbac key", set_cell("T-06", 4, "`rbac.read_write`")),
+    (
+        "G-T2",
+        "T-06's control carries the `disabled` attribute",
+        set_cell("T-06", 2, "Reset paper balance, the `disabled` attribute"),
+    ),
+    (
+        "G-T2",
+        "N122-11's role natively disabled",
+        set_cell("N122-11", 2, "its own role, natively `disabled`"),
+    ),
+    ("G-T2", "PROPOSED with no owner", set_cell("T-07", 4, "PROPOSED ()")),
+    (
+        "G-T2",
+        "a PROPOSED text reworded",
+        set_cell("T-07", 5, '"Paper reset is not available in LIVE."'),
+    ),
+    (
+        "G-T2",
+        "T-04 reworded without the word and classed T2",
+        chain(
+            set_cell("T-04", 2, "Continue, until the field reads `LIVE`"),
+            set_cell("T-04", 3, "T2"),
+            set_cell("T-04", 4, "PROPOSED (E09-D09 §3.1's owner)"),
+        ),
+    ),
+    ("G-T2", "T-03's rendering emptied", set_cell("T-03", 6, "—")),
     ("G-CONTRAST", "P-03's dark figure typed by hand", set_cell("P-03", 4, "3.65")),
     ("G-CONTRAST", "P-14's verdict changed", set_cell("P-14", 7, "structure")),
+    (
+        "G-CONTRAST",
+        "P-16's role and verdict turned to structure",
+        chain(set_cell("P-16", 3, "structure"), set_cell("P-16", 7, "structure")),
+    ),
     ("G-CVD", "V-02's JND column typed by hand", set_cell("V-02", 5, "protanopia")),
     (
         "G-AROW",
@@ -726,7 +899,15 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
             'Old: "CMP-027 inline error in the dialog with Retry: nothing changed"',
         ),
     ),
-    ("G-CITE", "a `D03` cite one line off", sub("`D03`:250", "`D03`:251")),
+    (
+        "G-AROW",
+        "an anchor's verb reworded",
+        sub(
+            'After "with "I understand", which is audited" add:',
+            'After "with "I understand", which is audited" append:',
+        ),
+    ),
+    ("G-CITE", "a `D03` cite one line off", sub("`D03`:259", "`D03`:258")),
     (
         "G-HYGIENE",
         "a closing keyword against #1076",
@@ -736,6 +917,16 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "G-HYGIENE",
         "a deny word in the tool's own text",
         lambda t: replace(t, tool=t.tool + "\n# " + "fl" + "ood\n"),
+    ),
+    (
+        "G-HYGIENE",
+        "a temporary path in the review",
+        sub("nothing here claims it.", "nothing here claims it. See /" + "tmp/r.md."),
+    ),
+    (
+        "G-HYGIENE",
+        "a local path in the pins file",
+        lambda t: replace(t, pins=t.pins + "/" + "home/x\n"),
     ),
     (
         "G-SCOPE",
@@ -765,8 +956,7 @@ def selftest() -> tuple[bool, list[str]]:
     restored = load().spec == before
     ok &= restored
     out.append(
-        f"self-test: {len(MUTATIONS)} mutations, text restored: "
-        + ("yes" if restored else "NO")
+        f"self-test: {len(MUTATIONS)} mutations, text restored: " + ("yes" if restored else "NO")
     )
     out.append(f"self-test: {'PASS' if ok else 'FAIL'}")
     return ok, out
