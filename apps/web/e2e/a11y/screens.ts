@@ -23,6 +23,7 @@ const SIGNED_IN = new Map<string, NonNullable<A11yScreen["signedIn"]>>([
   ["R-201", { role: "owner", heading: "Security settings" }],
   ["R-202", { role: "owner", heading: "Hotkeys" }],
   ["R-203", { role: "owner", heading: "Appearance" }],
+  ["R-340", { role: "owner", heading: "Recorder" }], // SCR-140 (E16-S01), its API stubbed in open.ts
 ]);
 
 export const FULL = process.env["A11Y_SWEEP"] === "full";

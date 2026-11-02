@@ -49,6 +49,8 @@ export interface RecorderData {
   readonly retry: () => Promise<boolean>;
   /** Asks for the list again (after a write, or a step-up's lost answer), through the topic's 5 s gap (BQ-7). */
   readonly rereadList: () => void;
+  /** Reads the storage report again now (a purge's end, or its lost answer: #484 PR 3, C-5347-03, S-5347-03). */
+  readonly rereadStorage: () => void;
   /** An add's answer, in the list by symbol until the list is read again. */
   readonly merge: (row: RecordedSymbol) => void;
 }
@@ -276,6 +278,7 @@ export function useRecorderData(options: RecorderDataOptions = {}): RecorderData
     if (topic === null) void readList();
     else topic.requestRows();
   }, [topic, readList]);
+  const rereadStorage = useCallback((): void => void readStorage(), [readStorage]);
   const merge = useCallback((row: RecordedSymbol): void => {
     sequence.current += 1;
     merged.current.set(row.symbol, { row, at: sequence.current });
@@ -283,5 +286,16 @@ export function useRecorderData(options: RecorderDataOptions = {}): RecorderData
   }, []);
 
   const allGaps = [...gaps.values()].flat().sort((a, b) => b.fromMs - a.fromMs);
-  return { list, status, storage, view, stoppedAtMs, gaps: allGaps, retry, rereadList, merge };
+  return {
+    list,
+    status,
+    storage,
+    view,
+    stoppedAtMs,
+    gaps: allGaps,
+    retry,
+    rereadList,
+    rereadStorage,
+    merge,
+  };
 }

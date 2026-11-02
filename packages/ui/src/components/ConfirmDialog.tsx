@@ -15,6 +15,7 @@ import { Dialog, type DialogCloseReason, type DialogRole, type DialogSize } from
 import { ErrorState, type ErrorStateAction } from "./ErrorState.js";
 import { FormField } from "./FormField.js";
 import { TextInput } from "./TextInput.js";
+import { cx } from "./internal/cx.js";
 import { clampHold, PRESS_WINDOW_MS, useHoldGate, type HoldGate } from "./internal/holdGate.js";
 
 /**
@@ -37,6 +38,11 @@ export interface ConfirmMeta {
   readonly gate: ConfirmGate;
   /** Milliseconds from the dialog opening to the confirm. */
   readonly elapsedMs: number;
+  /**
+   * The typed field's text exactly as typed, set when the confirm asks for the token (`typed`, or a `hold` with it): a
+   * host whose server checks an echo sends this, never its own copy of the token (E16-D06 §20.3 (ii)).
+   */
+  readonly typedValue?: string;
 }
 
 /** A partial failure: CMP-027's inline error above the footer, with its Retry. */
@@ -66,6 +72,8 @@ export interface ConfirmDialogProps {
   size?: DialogSize | undefined;
   /** The host's name over the title (SCR-076's "Confirm order - BTCUSDT - LIVE - Main"). */
   "aria-label"?: string | undefined;
+  /** Ids of the host's body nodes that describe the dialog, after the restatement (E16-D02 §6.5's consequence). */
+  "aria-describedby"?: string | undefined;
   /** What the confirm does: the dialog's description, in a "What this does" box. */
   restatement?: ReactNode | undefined;
   /** The restatement's visible group label; `""` renders the restatement as plain text (an order confirm). */
@@ -74,6 +82,8 @@ export interface ConfirmDialogProps {
   legs?: ReactNode | undefined;
   /** The host's lines above the footer (a step-up line, an audit marker). */
   children?: ReactNode | undefined;
+  /** The host's closing lines after the typed field (the step-up sentence, the audit marker; E16-D02 §6.5). */
+  notes?: ReactNode | undefined;
   /** Names the effect ("Freeze sub_001 — cancel 3 working orders"), never "Confirm". */
   confirmLabel: string;
   /** Default "Cancel". */
@@ -89,6 +99,17 @@ export interface ConfirmDialogProps {
   typedConfirmValue?: string | undefined;
   /** `typed`: the field's visible label and Confirm's description; default "Type {token} to confirm". */
   typedInstruction?: string | undefined;
+  /**
+   * `typed`: the validity look instead of native `disabled` while the field differs from the token (E16-D06 KB-07,
+   * KB-12): Confirm stays a Tab stop, `aria-disabled`, its fill and label dimmed, and this reason sits under the
+   * footer as its description; a press says it once, politely, and confirms nothing.
+   */
+  typedReason?: string | undefined;
+  /**
+   * The host's own form validity (its fields in `children`): while set, Confirm takes the same validity look with
+   * this reason, after the typed token's (E16-D04 §1.3: the first unmet rule, form validity, never T2).
+   */
+  validityReason?: string | undefined;
   /** `hold`: the press length, ms; default 800, clamped to 300–2,000 (H2, the user's setting). */
   holdDurationMs?: number | undefined;
   /** `hold`: Confirm's name once the first key press armed it; default "Press again to {effect}". */
@@ -241,7 +262,9 @@ function HoldRing({ label, progress, percent, windowEndsAt, now }: HoldRingProps
  * on Cancel and Tab runs in DOM order from there: Confirm, the close button (a `dialog`), the body. Confirm
  * ignores any press (Enter, Space or a pointer) that begins in the first `confirmDelayMs` after opening (or
  * after it rearms), the click that ends such a press however late, and every key repeat; it fires once. `typed`: Confirm stays natively disabled until the summary has loaded and the field matches
- * the token exactly (form validity, not T2); `Enter` in the field never confirms. A reason given mid-dialog
+ * the token exactly (form validity, not T2), or, with `typedReason` (and the host's `validityReason`), takes the
+ * validity look: a Tab stop, `aria-disabled`, its reason under the footer; `Enter` in the field never confirms.
+ * The host's `notes` follow the field. A reason given mid-dialog
  * turns Confirm into CMP-001's T2 form in place, with one assertive announcement when it held focus.
  * `hold` (H25): Confirm never reads a click; a pointer held for `holdDurationMs`, `Enter` held as long, or two
  * non-repeat `Enter` / `Space` presses 250 ms – 5 s apart confirm, the guard applying to each press's start.
@@ -256,16 +279,20 @@ export function ConfirmDialog({
   role = "alertdialog",
   size = "md",
   "aria-label": label,
+  "aria-describedby": describedBy,
   restatement,
   restatementLabel = "What this does",
   legs,
   children,
+  notes,
   confirmLabel,
   cancelLabel = "Cancel",
   confirmVariant = "danger",
   variant = "standard",
   typedConfirmValue,
   typedInstruction,
+  typedReason,
+  validityReason,
   holdDurationMs,
   armedLabel,
   autoCancelMs,
@@ -282,6 +309,7 @@ export function ConfirmDialog({
   const restatementId = `${id}-restatement`;
   const restatementLabelId = `${id}-restatement-label`;
   const instructionId = `${id}-instruction`;
+  const validityId = `${id}-validity`;
   const cancelRef = useRef<HTMLSpanElement | null>(null);
   /** When the dialog opened, by `now`; null while closed. */
   const openedAt = useRef<number | null>(null);
@@ -318,7 +346,12 @@ export function ConfirmDialog({
   const isTyped = variant === "typed" || (isHold && typedConfirmValue !== undefined);
   const token = typedConfirmValue ?? "";
   const matched = !isTyped || (token !== "" && typed === token);
-  const ready = !summaryLoading && matched;
+  const hostRule = validityReason?.trim() || undefined;
+  // The validity look's reason: the typed token's first while it differs, else the host's rule.
+  const validity = matched ? hostRule : typedReason?.trim() || undefined;
+  const ready = !summaryLoading && matched && hostRule === undefined;
+  /** Native `disabled`: availability (the summary loading), or a typed mismatch with no look asked for. */
+  const nativelyDisabled = summaryLoading || (!matched && validity === undefined);
   const instruction = typedInstruction ?? `Type ${token} to confirm`;
   const available = ready && reason === undefined;
   const delayMs = Number.isFinite(confirmDelayMs)
@@ -442,7 +475,7 @@ export function ConfirmDialog({
     sentOnce.current = true;
     setSent(true);
     setStopped(true);
-    onConfirm({ variant, gate, elapsedMs: at - opened });
+    onConfirm({ variant, gate, elapsedMs: at - opened, ...(isTyped ? { typedValue: typed } : {}) });
   };
 
   const armedName = armedLabel ?? `Press again to ${lowerFirst(confirmLabel)}`;
@@ -487,17 +520,20 @@ export function ConfirmDialog({
       <Button
         id={confirmId}
         variant={confirmVariant}
-        disabled={!ready}
+        disabled={nativelyDisabled}
         {...(reason === undefined ? {} : { disabledReason: reason })}
-        {...(isTyped ? { "aria-describedby": instructionId } : {})}
+        {...(validity === undefined ? {} : { unavailableReasonId: validityId })}
+        {...(isTyped && validity === undefined ? { "aria-describedby": instructionId } : {})}
         loading={busy}
         {...(isHold ? hold.handlers : { ...confirmKeys, onPointerDown: startPress })}
         data-hold={isHold ? "" : undefined}
         data-holding={hold.holding ? "" : undefined}
         data-armed={hold.armedAt === null ? undefined : ""}
         onClickCapture={() => {
-          // T2: Enter, Space or a press re-shows the reason with one polite announcement (D09 §9.3).
-          if (reason !== undefined) setPolite((s) => ({ n: s.n + 1, text: reason }));
+          // T2: Enter, Space or a press re-shows the reason with one polite announcement (D09 §9.3); the validity
+          // look's press says its reason the same way, once (form validity, the host's call: E16-D04 §1.3).
+          const said = reason ?? (nativelyDisabled ? undefined : validity);
+          if (said !== undefined) setPolite((s) => ({ n: s.n + 1, text: said }));
         }}
         onClick={confirm}
       >
@@ -519,6 +555,12 @@ export function ConfirmDialog({
           {reason}
         </p>
       )}
+      {reason !== undefined || validity === undefined ? null : (
+        // The validity look's reason, at full opacity under the footer: Confirm's description.
+        <p id={validityId} className="cv-confirm__reason" data-validity="">
+          {validity}
+        </p>
+      )}
     </>
   );
 
@@ -536,7 +578,9 @@ export function ConfirmDialog({
       size={size}
       role={role}
       {...(label === undefined ? {} : { "aria-label": label })}
-      {...(hasRestatement ? { "aria-describedby": restatementId } : {})}
+      {...(hasRestatement || describedBy !== undefined
+        ? { "aria-describedby": cx(hasRestatement && restatementId, describedBy) }
+        : {})}
       initialFocusRef={cancelRef}
       {...(fallbackFocusRef === undefined ? {} : { fallbackFocusRef })}
       busy={busy}
@@ -582,6 +626,7 @@ export function ConfirmDialog({
             />
           </FormField>
         ) : null}
+        {notes}
         {failure === undefined ? null : (
           <ErrorState
             form="inline"

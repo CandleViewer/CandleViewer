@@ -114,6 +114,13 @@ describe("AdminArea: CMP-087 around the route's page", () => {
     expect(screen.getByRole("heading", { level: 1 })).toHaveAccessibleName("Security centre");
   });
 
+  it("holds SCR-140 on R-340, its band naming the route (E16-S01)", () => {
+    render(<Shell routeId="R-340" />);
+    const band = screen.getByRole("region", { name: "Admin area" });
+    expect(band.textContent).toBe("◆ Admin area · Recorder and retention");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveAccessibleName("Recorder");
+  });
+
   it("names a stub with no owner as E42's", () => {
     render(<Shell routeId="R-310" owner={null} />);
     expect(screen.getByRole("heading", { level: 1 })).toHaveAccessibleName("R-310 — owned by E42");

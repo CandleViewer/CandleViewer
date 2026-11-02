@@ -12,7 +12,7 @@
  * changed, joined with the bar's own sentence; with none shown, CMP-026 `filtered-empty` offers Clear
  * filters.
  */
-import { useCallback, useEffect, useRef, useState, type JSX, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type RefObject } from "react";
 import {
   EmptyState,
   FilterBar,
@@ -26,6 +26,7 @@ import {
   type TableRowContext,
 } from "@candleviewer/ui";
 import { reportRecorder } from "./analytics";
+import { CUSTOM, changeRefusal, rowHealth, type RowActionKind } from "./detail";
 import {
   DEFAULT_DEPTH,
   DEFAULT_RETENTION_DAYS,
@@ -34,12 +35,13 @@ import {
   nextOrder,
   rowData,
   rowMatches,
+  type Depth,
   type GridOrder,
   type GridSort,
   type RowContext,
 } from "./grid";
 import type { RecorderRow } from "./model";
-import type { RecordedSymbol } from "./model/types";
+import type { RecordedSymbol, RecorderFrame, RecordingStatus } from "./model/types";
 import { fill } from "./copy";
 import { PAGE_TEXT } from "./pageCopy";
 import {
@@ -49,8 +51,12 @@ import {
   type ApiResult,
 } from "./recorderApi";
 import { refusalText } from "./refusal";
+import { detailHeading } from "./RecorderChrome";
+import { RetentionConfirmDialog, type RetentionChange } from "./RetentionConfirmDialog";
+import { RowDetailDrawer, type DetailPurge } from "./RowDetailDrawer";
 import { StopDialog } from "./StopDialog";
 import { useStepUpHost } from "./stepUpHost";
+import type { Gap } from "./useRecorderData";
 
 const COLUMNS = recorderStatusColumns();
 const NARROW_COLUMNS = recorderStatusColumns({ narrow: true });
@@ -123,6 +129,7 @@ const EM_PROBE = {
 /** What a write changed, for the page to merge or read again. */
 export type GridWrite =
   | { readonly kind: "added"; readonly row: AddedRecordedSymbol }
+  | { readonly kind: "updated"; readonly row: RecordedSymbol }
   | { readonly kind: "stopped"; readonly symbol: string };
 
 export interface RecorderGridProps {
@@ -148,9 +155,27 @@ export interface RecorderGridProps {
   readonly onOpenDetail?: ((symbol: string) => void) | undefined;
   /** Reads the list again (a step-up's re-send got no answer). */
   readonly readBack: () => unknown;
+  /** The page's H1: focus lands there when a dialog's opener and the grid's Tab stop are gone (A-5347-03). */
+  readonly fallbackFocusRef?: RefObject<HTMLElement | null> | undefined;
+  /** The row detail's symbol (D02 §6.7), the page's; null while closed. */
+  readonly detail?: string | null;
+  readonly onDetailClose?: () => void;
+  /** The newest frame and the status: the detail's health figures. */
+  readonly frame?: RecorderFrame | null;
+  readonly status?: RecordingStatus | null;
+  /** The gaps of the last 24 h: the detail lists its symbol's. */
+  readonly gaps?: readonly Gap[];
+  /** SCR-141, once registered: the detail's retention select offers "Custom…" (BQ-11). */
+  readonly onCustomRetention?: (() => void) | undefined;
+  /** The page's purge: the detail's Purge…, busy while this client's purge runs (D02 §6.5, §6.7). */
+  readonly purge?: DetailPurge | undefined;
 }
 
-/** A re-add keeps the row's own settings, so it changes no kept data's retention (`22`: no step-up). */
+/**
+ * A re-add keeps the row's own settings, so it changes no kept data's retention. It names `pinned` and
+ * `retention_days`, as `22` asks of a re-add, so the server challenges it as it does any add that names them
+ * (A-5347-d01): a row's on the grid's step-up host, the row detail's on the drawer's.
+ */
 function againBody(row: RecorderRow, listed: RecordedSymbol | undefined): AddRecordedSymbolBody {
   return {
     symbol: row.symbol,
@@ -186,6 +211,14 @@ export function RecorderGrid({
   onWritten,
   onOpenDetail,
   readBack,
+  fallbackFocusRef,
+  detail = null,
+  onDetailClose,
+  frame = null,
+  status = null,
+  gaps = [],
+  onCustomRetention,
+  purge,
 }: RecorderGridProps): JSX.Element {
   const order = useRef<GridOrder | null>(null);
   order.current = nextOrder(order.current, rows, sort);
@@ -236,7 +269,10 @@ export function RecorderGrid({
     const changed =
       was !== null &&
       was.selection !== selection &&
-      now.rows.filter((row) => rowMatches(row, was.filters, was.query)).length !== now.shown;
+      // Only rows the grid can show (a reason), as `shown` and `total` count them: a reason-less refused entry from
+      // the status, before the first frame, is never part of a count (#5309's re-check (a)).
+      now.rows.filter((row) => row.reason !== null && rowMatches(row, was.filters, was.query))
+        .length !== now.shown;
     const words = [sentence, changed ? shownLine(now.shown, now.total) : null].filter(Boolean);
     if (words.length > 0) now.say(words.join(" "));
   }, [selection]);
@@ -250,23 +286,86 @@ export function RecorderGrid({
   const filtering = filters.length > 0 || query.trim() !== "";
 
   const [stopFor, setStopFor] = useState<RecorderRow | null>(null);
+  // The detail keeps its row while it is open, should a frame drop it (its controls still reach the server).
+  const detailRow = useRef<RecorderRow | null>(null);
+  detailRow.current =
+    detail === null
+      ? null
+      : (bySymbol.get(detail) ?? (detailRow.current?.symbol === detail ? detailRow.current : null));
+  const [detailRefusal, setDetailRefusal] = useState<string | null>(null);
+  /** Keep forever or a retention change awaiting its confirmation (D02 §6.4). */
+  const [retentionFor, setRetentionFor] = useState<RetentionChange | null>(null);
+  const [depth, setDepth] = useState<{ readonly symbol: string; readonly depth: Depth } | null>(
+    null,
+  );
+  /** A depth write on the wire: one at a time, whatever render a second choice comes from (C-5347-08). */
+  const depthSending = useRef(false);
+  const [depthRefusal, setDepthRefusal] = useState<{
+    readonly symbol: string;
+    readonly text: string;
+  } | null>(null);
   const stopRow = stopFor === null ? null : (bySymbol.get(stopFor.symbol) ?? stopFor);
   const adding = useRef(new Set<string>());
   /** The rows whose add is in flight: their action is busy (C-5309-13), a second press sends nothing. */
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const stepUp = useStepUpHost(readBack, PAGE_TEXT.grid);
+  // The row detail's own writes (its action and Depth) run on a host of their own, whose SCR-006 is drawn inside the
+  // drawer: the modal drawer makes the page inert, so the grid's gate would be out of reach (A-5347-d01).
+  const detailStepUp = useStepUpHost(readBack, PAGE_TEXT.grid);
 
-  /** Keep recording and Record again: `addRecordedSymbol`, which gains `manual` (22), one at a time per row. */
-  async function addAgain(symbol: string, refuse: (text: string) => void): Promise<void> {
+  // A-5347-03 (FM-02, FM-04, FM-07): where focus lands when a dialog's or the drawer's opener is gone (its row left):
+  // the grid's Tab stop, which CMP-049 clamps to the next row when its row left (FM-02), else the page's H1. A
+  // confirm opened over the drawer lands on the drawer's heading while the drawer is open.
+  const pageFallback = useRef(fallbackFocusRef);
+  pageFallback.current = fallbackFocusRef;
+  const gridFallback = useMemo(
+    () => ({
+      get current(): HTMLElement | null {
+        const stop = host.current?.querySelector<HTMLElement>('table [tabindex="0"]') ?? null;
+        return stop ?? pageFallback.current?.current ?? null;
+      },
+    }),
+    [],
+  );
+  const confirmFallback = useMemo(
+    () => ({
+      get current(): HTMLElement | null {
+        return detailHeading() ?? gridFallback.current;
+      },
+    }),
+    [gridFallback],
+  );
+  // A detail with no row to show (an `openRowDetail` for a symbol not listed) closes: it never opens later by itself
+  // when that symbol arrives (C-5347-08). A row that leaves while its detail is open stays shown (its controls still
+  // reach the server) until the drawer closes.
+  const orphanDetail = detail !== null && detailRow.current === null;
+  useEffect(() => {
+    if (orphanDetail) onDetailClose?.();
+  }, [orphanDetail, onDetailClose]);
+  // Each opening of the detail, and its close, clears the detail's host: no challenge outlives the drawer it was for.
+  const { clear: clearDetailHost } = detailStepUp;
+  useEffect(() => {
+    clearDetailHost();
+  }, [detail, clearDetailHost]);
+
+  /**
+   * Keep recording and Record again: `addRecordedSymbol`, which gains `manual` (22), one at a time per row, on the
+   * grid's step-up host or the row detail's (`host`).
+   */
+  async function addAgain(
+    symbol: string,
+    refuse: (text: string) => void,
+    host = stepUp,
+  ): Promise<void> {
     const row = bySymbol.get(symbol);
     if (row === undefined || adding.current.has(symbol)) return;
     adding.current.add(symbol);
     setBusy(new Set(adding.current));
-    await stepUp.start(async () => {
+    await host.start(async (route) => {
       const res = await recorderApi.add(againBody(row, listed.get(symbol)));
       adding.current.delete(symbol);
       setBusy(new Set(adding.current));
-      stepUp.route("addRecordedSymbol", res, (answer) => {
+      route("addRecordedSymbol", res, (answer) => {
         if (answer.ok && answer.data !== null) onWritten?.({ kind: "added", row: answer.data });
         else if (answer.route !== null) refuse(refusalText(answer.route, "add"));
       });
@@ -285,6 +384,67 @@ export function RecorderGrid({
     return recorderApi.remove(id);
   }
 
+  /** A row's id: REST's, else read again from the whole list (a frame can name a row REST has not yet). */
+  async function idOf(row: RecorderRow): Promise<string | null> {
+    const known = row.id ?? listed.get(row.symbol)?.id ?? null;
+    if (known !== null) return known;
+    const page = await recorderApi.listAll();
+    const items: readonly RecordedSymbol[] = page.data?.items ?? [];
+    return items.find((item) => item.symbol === row.symbol)?.id ?? null;
+  }
+
+  /**
+   * The detail's Depth (D02 §6.7): `updateRecordedSymbol` with `depth` alone, which needs no step-up (`22`). Run
+   * through the detail host's `start` all the same, so a renewal after a challenge re-sends this write, never an
+   * earlier action (C-5347-08), and a challenge opens inside the drawer (A-5347-d01).
+   */
+  async function changeDepth(row: RecorderRow, next: Depth): Promise<void> {
+    if (depthSending.current) return;
+    depthSending.current = true;
+    setDepth({ symbol: row.symbol, depth: next });
+    setDepthRefusal(null);
+    await detailStepUp.start(async (route) => {
+      const id = await idOf(row);
+      const res: ApiResult<RecordedSymbol | null> =
+        id === null ? notListed(404) : await recorderApi.update(id, { depth: next });
+      depthSending.current = false;
+      setDepth(null);
+      route("updateRecordedSymbol", res, (answer) => {
+        if (answer.ok && answer.data !== null) onWritten?.({ kind: "updated", row: answer.data });
+        else if (answer.route !== null) {
+          setDepthRefusal({ symbol: row.symbol, text: changeRefusal(answer.route) });
+        }
+      });
+    });
+  }
+
+  /** Keep forever asked for its other value: its confirmation (on, or off back to the default retention). */
+  function togglePin(symbol: string, pinned: boolean): void {
+    const row = bySymbol.get(symbol) ?? detailRow.current;
+    if (row === undefined || row === null) return;
+    setRetentionFor(
+      pinned ? { kind: "pin", row } : { kind: "unpin", row, days: DEFAULT_RETENTION_DAYS },
+    );
+  }
+
+  /** The detail's Retention: "Custom…" opens SCR-141; a pinned row's choice unpins to it; else the change. */
+  function chooseRetention(row: RecorderRow, value: string): void {
+    if (value === CUSTOM) {
+      onCustomRetention?.();
+      return;
+    }
+    const days = Number(value);
+    if (!Number.isInteger(days) || days <= 0) return;
+    setRetentionFor(row.pinned ? { kind: "unpin", row, days } : { kind: "retention", row, days });
+  }
+
+  /** The detail's action: Stop opens its confirmation over the drawer; Keep recording and Record again add. */
+  function detailAction(row: RecorderRow, kind: RowActionKind): void {
+    setDetailRefusal(null);
+    if (kind === "stop") setStopFor(row);
+    else void addAgain(row.symbol, setDetailRefusal, detailStepUp);
+  }
+
   const actions = (symbol: string, grid: TableRowContext): Partial<RecorderStatusRowData> => ({
     onStop: () => {
       const row = bySymbol.get(symbol);
@@ -292,6 +452,7 @@ export function RecorderGrid({
     },
     onKeepRecording: () => void addAgain(symbol, grid.refuse),
     onRecordAgain: () => void addAgain(symbol, grid.refuse),
+    onTogglePin: (pinned: boolean) => togglePin(symbol, pinned),
     // D02 §12: a Why? opening is a review of what auto-record added.
     onWhyOpen: () => reportRecorder({ name: "recorder.auto_review_opened", source: "why" }),
     ...(onOpenDetail === undefined ? {} : { onOpenDetail: () => onOpenDetail(symbol) }),
@@ -358,6 +519,48 @@ export function RecorderGrid({
         />
       </div>
       {stepUp.gate}
+      <RowDetailDrawer
+        row={detailRow.current}
+        context={context}
+        gate={detailStepUp.gate}
+        actionBusy={detail !== null && busy.has(detail)}
+        fallbackFocusRef={gridFallback}
+        listed={detail === null ? undefined : listed.get(detail)}
+        health={detail === null ? null : rowHealth(detail, frame, status)}
+        gaps={detail === null ? [] : gaps.filter((gap) => gap.symbol === detail)}
+        onClose={() => {
+          setDetailRefusal(null);
+          setDepthRefusal(null);
+          onDetailClose?.();
+        }}
+        onAction={(kind) => {
+          if (detailRow.current !== null) detailAction(detailRow.current, kind);
+        }}
+        actionRefusal={detailRefusal}
+        onTogglePin={(pinned) => {
+          if (detail !== null) togglePin(detail, pinned);
+        }}
+        onRetention={(value) => {
+          if (detailRow.current !== null) chooseRetention(detailRow.current, value);
+        }}
+        customRetention={onCustomRetention !== undefined}
+        purge={purge}
+        onDepth={(next) => {
+          if (detailRow.current !== null) void changeDepth(detailRow.current, next);
+        }}
+        depthPending={depth !== null && depth.symbol === detail ? depth.depth : null}
+        depthRefusal={
+          depthRefusal !== null && depthRefusal.symbol === detail ? depthRefusal.text : null
+        }
+      />
+      <RetentionConfirmDialog
+        change={retentionFor}
+        idOf={idOf}
+        onChanged={(row) => onWritten?.({ kind: "updated", row })}
+        onClose={() => setRetentionFor(null)}
+        readBack={readBack}
+        fallbackFocusRef={confirmFallback}
+      />
       <StopDialog
         row={stopRow}
         policy={context.policy}

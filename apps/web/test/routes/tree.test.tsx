@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
@@ -21,8 +21,17 @@ function renderAt(path: string) {
   return render(<RouterProvider router={router} />);
 }
 
-/** A route's render with the admin area's lazy chunk: a busy host can take seconds over it. */
+/** A route's render, a lazy chunk's included: a busy host can take seconds over it. */
 const ROUTE_WAIT = { timeout: 5_000 } as const;
+/** A test that waits for a route's render: a budget above its waits, which vitest's 5 s default would cut. */
+const ROUTE_BUDGET = { timeout: 30_000 } as const;
+
+// The admin area's lazy chunk carries SCR-140 since #484 PR 3: its first import transforms that whole module graph,
+// which on a busy host outlasts a route's wait. Imported once here, before any test, every owner mount below finds
+// it in the module cache, so no test's first mount pays for it (C-9.3: no day-one flake).
+beforeAll(async () => {
+  await import("../../src/features/admin/shell/AdminArea");
+}, 120_000);
 
 function claimsFor(role: Role | null) {
   setMeClaims({
@@ -32,7 +41,7 @@ function claimsFor(role: Role | null) {
   });
 }
 
-describe("route tree x RBAC matrix", () => {
+describe("route tree x RBAC matrix", ROUTE_BUDGET, () => {
   beforeEach(() => {
     resetMeClaims();
   });
@@ -45,7 +54,7 @@ describe("route tree x RBAC matrix", () => {
     claimsFor(null);
     const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/terminal/abc?tf=15"] });
     render(<RouterProvider router={router} />);
-    await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/login"), ROUTE_WAIT);
     expect(router.state.location.search).toBe("?next=%2Fterminal%2Fabc%3Ftf%3D15");
   });
 
@@ -53,40 +62,52 @@ describe("route tree x RBAC matrix", () => {
     claimsFor("viewer");
     const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/locked"] });
     render(<RouterProvider router={router} />);
-    await waitFor(() => expect(router.state.location.pathname).toBe("/terminal/last"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/terminal/last"), ROUTE_WAIT);
   });
 
   it("renders the owner-owned stub for R-150 /risk when signed in as owner", async () => {
     claimsFor("owner");
     renderAt("/risk");
-    await waitFor(() =>
-      expect(screen.getByRole("heading", { name: /R-150 — owned by E12/ })).toBeInTheDocument(),
+    await waitFor(
+      () =>
+        expect(screen.getByRole("heading", { name: /R-150 — owned by E12/ })).toBeInTheDocument(),
+      ROUTE_WAIT,
     );
   });
 
   it("renders 403 for a viewer hitting an owner-only non-admin route", async () => {
     claimsFor("viewer");
     renderAt("/risk");
-    await waitFor(() =>
-      expect(
-        screen.getByRole("heading", { name: "You don't have access to this", level: 1 }),
-      ).toBeInTheDocument(),
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole("heading", { name: "You don't have access to this", level: 1 }),
+        ).toBeInTheDocument(),
+      ROUTE_WAIT,
     );
   });
 
   it("renders 404, not 403, for a viewer hitting an admin route", async () => {
     claimsFor("viewer");
     renderAt("/admin/users");
-    await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "Page not found", level: 1 })).toBeInTheDocument(),
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole("heading", { name: "Page not found", level: 1 }),
+        ).toBeInTheDocument(),
+      ROUTE_WAIT,
     );
   });
 
   it("renders 404, not 403, for a manager hitting an admin route", async () => {
     claimsFor("manager");
     renderAt("/admin");
-    await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "Page not found", level: 1 })).toBeInTheDocument(),
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole("heading", { name: "Page not found", level: 1 }),
+        ).toBeInTheDocument(),
+      ROUTE_WAIT,
     );
   });
 
@@ -106,10 +127,12 @@ describe("route tree x RBAC matrix", () => {
     expect(f.mock.calls.filter(([u]) => String(u).includes("/auth/step-up"))).toEqual([]);
   });
 
-  // The walk mounts every manifest route in turn, so its time grows with the manifest: its own budget.
+  // The walk mounts every manifest route in turn, so its time grows with the manifest: its own budget. Each route
+  // waits ROUTE_WAIT, not waitFor's 1 s default: on a busy host a lazy route can take longer to paint its main
+  // landmark (up to 1.6 s at a load of ~30 on 8 cores, the walk 19 s with R-340's SCR-140 in it; C-9.3).
   it(
     "every manifest route is reachable by at least one role without crashing",
-    { timeout: 15_000 },
+    { timeout: 60_000 },
     async () => {
       claimsFor("owner");
       for (const entry of ROUTE_MANIFEST) {
@@ -118,20 +141,21 @@ describe("route tree x RBAC matrix", () => {
         const concretePath = entry.path.replace(/:[a-zA-Z]+/g, "x");
         const router = createMemoryRouter(buildRoutes(), { initialEntries: [concretePath] });
         const { unmount } = render(<RouterProvider router={router} />);
-        await waitFor(() => expect(screen.getByRole("main")).toBeInTheDocument());
+        await waitFor(() => expect(screen.getByRole("main")).toBeInTheDocument(), ROUTE_WAIT);
         unmount();
       }
     },
   );
 });
 
-describe("E49-S07 reachability through the real route tree", () => {
+describe("E49-S07 reachability through the real route tree", ROUTE_BUDGET, () => {
   beforeEach(() => resetMeClaims());
   it("mounts SCR-113 HotkeyEditor at /settings/hotkeys", async () => {
     claimsFor("owner");
     renderAt("/settings/hotkeys");
-    await waitFor(() =>
-      expect(screen.getByRole("heading", { name: /hotkeys|keyboard/i })).toBeInTheDocument(),
+    await waitFor(
+      () => expect(screen.getByRole("heading", { name: /hotkeys|keyboard/i })).toBeInTheDocument(),
+      ROUTE_WAIT,
     );
   });
 });
@@ -156,7 +180,7 @@ describe("route ranking: a static path outranks its dynamic sibling", () => {
   });
 });
 
-describe("page titles (D-01, WCAG 2.4.2)", () => {
+describe("page titles (D-01, WCAG 2.4.2)", ROUTE_BUDGET, () => {
   beforeEach(() => {
     resetMeClaims();
     document.title = "CandleViewer";
@@ -167,7 +191,7 @@ describe("page titles (D-01, WCAG 2.4.2)", () => {
     const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/login"] });
     const stop = syncDocumentTitle(router);
     render(<RouterProvider router={router} />);
-    await waitFor(() => expect(document.title).toBe("Login - CandleViewer"));
+    await waitFor(() => expect(document.title).toBe("Login - CandleViewer"), ROUTE_WAIT);
     await act(() => router.navigate("/login/change-password"));
     expect(document.title).toBe("Forced password change - CandleViewer");
     await act(() => router.navigate("/admin/users/new")); // a viewer: hidden as 404
@@ -186,7 +210,7 @@ describe("page titles (D-01, WCAG 2.4.2)", () => {
     const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/risk"] });
     const stop = syncDocumentTitle(router);
     render(<RouterProvider router={router} />);
-    await waitFor(() => expect(document.title).toBe("Forbidden - CandleViewer"));
+    await waitFor(() => expect(document.title).toBe("Forbidden - CandleViewer"), ROUTE_WAIT);
     stop();
   });
 
@@ -217,6 +241,7 @@ const bandLabel = (id: string): string => (id === "R-300" ? "Overview" : (ROUTE_
 /** The page each admin route shows today when it is not a stub. */
 const PAGE_H1: Readonly<Record<string, string>> = {
   "R-303": "Invite user",
+  "R-340": "Recorder",
   "R-354": "Security centre",
   "R-360": "R-360 — owned by E09",
 };
@@ -230,7 +255,7 @@ function sessionFor(role: Role): void {
 
 const requested = (): string[] => vi.mocked(fetch).mock.calls.map(([input]) => String(input));
 
-describe("E42-S01: the admin routes inside CMP-087 AdminLayout", () => {
+describe("E42-S01: the admin routes inside CMP-087 AdminLayout", ROUTE_BUDGET, () => {
   beforeEach(() => {
     resetMeClaims();
     resetShellState();
@@ -316,6 +341,35 @@ describe("E42-S01: the admin routes inside CMP-087 AdminLayout", () => {
         () => expect(requested().some((u) => u.endsWith("/users/invites"))).toBe(true),
         ROUTE_WAIT,
       );
+    },
+  );
+
+  it(
+    "E16-S01: a deep link to /admin/recorder mounts SCR-140 for an owner; a manager and a viewer get the 404, unread",
+    { timeout: 60_000 },
+    async () => {
+      sessionFor("owner");
+      const owner = renderAt("/admin/recorder");
+      const band = await screen.findByRole("region", { name: "Admin area" }, ROUTE_WAIT);
+      expect(band.textContent).toBe("◆ Admin area · Recorder and retention");
+      const main = screen.getByRole("main");
+      expect(
+        await within(main).findByRole("heading", { level: 1, name: "Recorder" }, ROUTE_WAIT),
+      ).toBeInTheDocument();
+      await waitFor(
+        () => expect(requested().some((u) => u.endsWith("/api/v1/recording/status"))).toBe(true),
+        ROUTE_WAIT,
+      );
+      owner.unmount();
+      vi.mocked(fetch).mockClear();
+      for (const role of ["manager", "viewer"] as const) {
+        sessionFor(role);
+        const view = renderAt("/admin/recorder");
+        await screen.findByRole("heading", { name: "Page not found", level: 1 }, ROUTE_WAIT);
+        expect(screen.queryByRole("region", { name: "Admin area" }), role).toBeNull();
+        view.unmount();
+      }
+      expect(requested().filter((u) => u.includes("/api/v1/recording"))).toEqual([]);
     },
   );
 

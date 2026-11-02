@@ -12,15 +12,26 @@ const { apiFetch } = vi.hoisted(() => ({
   apiFetch: vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(),
 }));
 vi.mock("../../../src/lib/http/csrfFetch", () => ({ apiFetch }));
+// The shell announcer as it is, its `announce` observed: the page speaks through it (#484 PR 3).
+vi.mock("../../../src/features/app-shell/announcer", async (importOriginal) => {
+  const real = await importOriginal<typeof ShellAnnouncerModule>();
+  return { ...real, announce: vi.fn(real.announce) };
+});
 
 import { GatedAnnounceProvider } from "@candleviewer/ui";
-import { ShellAnnouncer, clearAnnouncements } from "../../../src/features/app-shell/announcer";
+import type * as ShellAnnouncerModule from "../../../src/features/app-shell/announcer";
+import {
+  ShellAnnouncer,
+  announce,
+  clearAnnouncements,
+} from "../../../src/features/app-shell/announcer";
 import {
   registerRecorderExtensions,
   type RetentionEditorProps,
   type StoragePanelProps,
 } from "../../../src/features/recorder/extensions";
 import type { RecorderFrame } from "../../../src/features/recorder/model";
+import { sayPolitely } from "../../../src/features/recorder/pageAnnouncer";
 import { RECORDER_H1_ID, RecorderScreen } from "../../../src/features/recorder/RecorderScreen";
 import { useRecorderData } from "../../../src/features/recorder/useRecorderData";
 import { NOW } from "./gridFixtures";
@@ -63,31 +74,28 @@ async function mountPage({ route, frame }: MountOptions = {}) {
   return { ...view, socket };
 }
 
-/** RG-10: the page's one polite region (the summary's), its words now. */
-const region = (): HTMLElement =>
-  document.querySelector('.cv-visually-hidden[role="status"][aria-live="polite"]') as HTMLElement;
-/** Each utterance re-keys the region's node: the words of every batch said so far. */
-function batches(): () => string[] {
-  const said: string[] = [];
-  const observer = new MutationObserver(() => {
-    const text = region().textContent ?? "";
-    if (text !== "" && said.at(-1) !== text) said.push(text);
-  });
-  observer.observe(region(), { childList: true, subtree: true, characterData: true });
-  return () => said;
+/**
+ * What the page writes through the shell announcer on one of its two channels from now on (RG-10's batch on
+ * `recorder:summary`, RG-11's alerts on `recorder:alert`), each write's words: the page keeps no live region of its
+ * own (#484 PR 3), so the shell's regions, exempt from a modal's `inert`, say both.
+ */
+function writesOn(channel: "recorder:summary" | "recorder:alert"): () => string[] {
+  const from = vi.mocked(announce).mock.calls.length;
+  return () =>
+    vi
+      .mocked(announce)
+      .mock.calls.slice(from)
+      .filter(([, , key]) => key === channel)
+      .map(([, text]) => text);
 }
-/** The page's one assertive node (RG-11's `alert`): the words of each write said so far. */
-function alerts(): () => string[] {
-  const node = document.querySelector('[role="alert"]') as HTMLElement;
-  const said: string[] = [];
-  const observer = new MutationObserver(() => {
-    const text = node.textContent ?? "";
-    if (text !== "") said.push(text);
-  });
-  observer.observe(node, { childList: true, subtree: true, characterData: true });
-  return () => said;
-}
-/** The shell announcer's polite region (RG-17), not the page's own `role="status"` one, which is exempt too. */
+/** RG-10: the summary's batches said from now on. */
+const batches = (): (() => string[]) => writesOn("recorder:summary");
+/** RG-11: the assertive banners' writes from now on. */
+const alerts = (): (() => string[]) => writesOn("recorder:alert");
+/** The shell announcer's assertive region (RG-11 now): its words now. */
+const shellAssertive = (): HTMLElement =>
+  document.querySelector('[aria-live="assertive"][data-cv-inert-exempt]') as HTMLElement;
+/** The shell announcer's polite region (RG-17). */
 const SHELL_POLITE = '[aria-live="polite"][data-cv-inert-exempt]:not([role])';
 /** The shell announcer's polite region (RG-17): its words now. */
 const shellPolite = (): string => document.querySelector(SHELL_POLITE)?.textContent ?? "";
@@ -162,7 +170,7 @@ describe("SCR-140's states (E16-D06 §18; D02 §3, §3.1)", CASE, () => {
     );
     expect(container).toHaveTextContent("Recording 4 symbols · 2 auto-recorded · Recorder healthy");
     expect(container).toHaveTextContent("updated 10:31:02 UTC");
-    expect(screen.getByRole("alert")).toBeEmptyDOMElement(); // the page's one assertive region, silent
+    expect(shellAssertive()).toBeEmptyDOMElement(); // no banner said
     expect(await seriousAxe(container)).toEqual([]);
   });
 
@@ -189,8 +197,7 @@ describe("SCR-140's states (E16-D06 §18; D02 §3, §3.1)", CASE, () => {
         overall: "degraded",
       },
     });
-    const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent(
+    expect(shellAssertive()).toHaveTextContent(
       "Incident: 1 204 messages were dropped on ETHUSDT between 10:14:03 and 10:14:41 UTC.",
     );
     expect(container).toHaveTextContent("Degraded · stream unhealthy · 1 gap in 24 h");
@@ -221,7 +228,7 @@ describe("SCR-140's states (E16-D06 §18; D02 §3, §3.1)", CASE, () => {
     );
     expect(container).toHaveTextContent("34.8 GB · 0.71/d · 17 % of budget");
     expect(screen.getByRole("button", { name: "Unpin" })).toBeVisible();
-    expect(screen.getByRole("alert")).toBeEmptyDOMElement(); // the page's one assertive region, silent
+    expect(shellAssertive()).toBeEmptyDOMElement(); // no banner said
     expect(await seriousAxe(container)).toEqual([]);
   });
 
@@ -248,7 +255,7 @@ describe("SCR-140's states (E16-D06 §18; D02 §3, §3.1)", CASE, () => {
         { level: 3, used_bytes: 190.4e9, write_gate: "closed", write_gate_reason: "disk_halt" },
       ),
     });
-    expect(screen.getByRole("alert")).toHaveTextContent(
+    expect(shellAssertive()).toHaveTextContent(
       "Recording stopped: the recording budget is 95 % used (190.4 GB of 200 GB).",
     );
     expect(screen.getAllByText("Gated · data dropped")).toHaveLength(3);
@@ -322,7 +329,7 @@ describe("SCR-140's states (E16-D06 §18; D02 §3, §3.1)", CASE, () => {
       /Recorder status could not be loaded\.\s*This page cannot show what is being recorded right now\./,
     );
     expect(container).not.toHaveTextContent("server detail");
-    expect(screen.getByRole("alert")).toBeEmptyDOMElement(); // the page's one assertive region, silent
+    expect(shellAssertive()).toBeEmptyDOMElement(); // no banner said
     expect(await seriousAxe(container)).toEqual([]);
     vi.useFakeTimers({
       toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
@@ -615,7 +622,7 @@ describe(
       await step(socket, 1_000); // ... and ends before the batch is spoken
       await advance(10_000);
       expect(said()).toEqual([]);
-      expect(screen.getByRole("alert")).toBeEmptyDOMElement(); // no words outlive the condition
+      expect(shellAssertive()).toBeEmptyDOMElement(); // no words outlive the condition
     });
   },
 );
@@ -749,31 +756,103 @@ describe(
   },
 );
 
-describe("the page's live regions under a modal (A-5309-d02)", CASE, () => {
+describe("the shell's region budget (E17-D02 §11; A-5347-d05)", CASE, () => {
+  const OTHER = "Connection lost. Retrying.";
+
+  it("a level-3 alert within 5 s of another writer's assertive line waits its turn, never cutting it", async () => {
+    const { socket } = await mountPage({ frame: null });
+    const said = alerts();
+    act(() => void announce("assertive", OTHER, "test:other"));
+    socket.push(level3(190.4e9));
+    await step(socket, 1_000);
+    expect(said()).toEqual([]);
+    expect(shellAssertive()).toHaveTextContent(OTHER);
+    await advance(4_999);
+    expect(said()).toEqual([]);
+    await advance(1);
+    expect(said()).toEqual([expect.stringMatching(/^Recording stopped: the recording budget/)]);
+  });
+
+  it("an alert still waiting its turn goes with the page: an unmount drops it", async () => {
+    const page = await mountPage({ frame: null });
+    const said = alerts();
+    act(() => void announce("assertive", OTHER, "test:other"));
+    page.socket.push(level3(190.4e9));
+    await step(page.socket, 1_000);
+    page.unmount();
+    await advance(20_000);
+    expect(said()).toEqual([]);
+  });
+});
+
+describe("the page's words under a modal (A-5309-d02; #484 PR 3)", CASE, () => {
   /** What a modal does to the page under it: `inert`, or `aria-hidden` where the engine has none (E05-D02 H23). */
   const outOfTheTree = (element: Element): boolean =>
     element.closest('[inert], [aria-hidden="true"]') !== null;
 
-  it("the Stop confirmation leaves the alert and the summary's region exposed, as the shell's are", async () => {
+  it("with the Stop confirmation open, a level-3 alert is one assertive write, in the shell's exposed region", async () => {
     const { socket } = await mountPage();
+    const said = alerts();
+    const from = vi.mocked(announce).mock.calls.length;
     const stop = screen.getByRole("button", { name: "Stop recording ETHUSDT" });
     act(() => stop.focus());
     fireEvent.click(stop);
     screen.getByRole("alertdialog", { name: "Stop recording ETHUSDT?" });
-    const alert = document.querySelector('[role="alert"]') as HTMLElement;
-    for (const live of [alert, region()]) {
-      expect(live).toHaveAttribute("data-cv-inert-exempt");
-      expect(outOfTheTree(live)).toBe(false);
-    }
-    // The rest of the page is under the modal's inert, as it was.
+    // The page under the modal is inert, as it was; the shell's region is not.
     const h1 = screen.getByRole("heading", { level: 1, name: "Recorder", hidden: true });
-    const grid = screen.getByRole("grid", { name: "Recorded symbols", hidden: true });
-    expect([outOfTheTree(h1), outOfTheTree(grid)]).toEqual([true, true]);
-    // So a level-3 alert written while it is open is in the accessibility tree, where it can be read out.
+    expect(outOfTheTree(h1)).toBe(true);
     socket.push(level3(190.4e9));
     await step(socket, 1_000);
-    expect(screen.getAllByRole("alert")).toContain(alert);
-    expect(alert).toHaveTextContent("Recording stopped: the recording budget");
+    expect(said()).toEqual([expect.stringMatching(/^Recording stopped: the recording budget/)]);
+    const assertive = vi
+      .mocked(announce)
+      .mock.calls.slice(from)
+      .filter(([politeness]) => politeness === "assertive");
+    expect(assertive).toHaveLength(1); // one write: nothing else spoke assertively meanwhile
+    expect(outOfTheTree(shellAssertive())).toBe(false);
+    expect(shellAssertive()).toHaveTextContent("Recording stopped: the recording budget");
+  });
+
+  it("with the row detail open, the shell's scroll container is inert: nothing in the page is exempt", async () => {
+    apiFetch.mockImplementation(router());
+    const socket = fakeSocket(clock);
+    render(
+      <>
+        <div data-shell-canvas="" style={{ height: "100%", overflow: "auto" }}>
+          <RecorderScreen data={socket.options} instruments={["SOLUSDT", "DOGEUSDT"]} />
+        </div>
+        <ShellAnnouncer />
+      </>,
+    );
+    await flush();
+    socket.push(frameOf());
+    await step(socket, 0);
+    const symbol = screen.getByRole("button", { name: "ETHUSDT" });
+    act(() => symbol.focus());
+    fireEvent.click(symbol);
+    screen.getByRole("dialog", { name: "ETHUSDT recording" });
+    const canvas = document.querySelector("[data-shell-canvas]") as HTMLElement;
+    // An exempt node inside it would keep the whole path down to it live, this scrolling box included (axe's
+    // `scrollable-region-focusable` under the modal): the page's words go through the shell's regions instead.
+    expect(canvas.querySelectorAll("[data-cv-inert-exempt]")).toHaveLength(0);
+    expect(outOfTheTree(canvas)).toBe(true);
+    expect(outOfTheTree(shellAssertive())).toBe(false);
+  });
+
+  it("the page's words leave the shell's regions with it: none outlives an unmount", async () => {
+    const { rerender } = await mountPage({ frame: level3(190.4e9) });
+    expect(shellAssertive()).toHaveTextContent("Recording stopped: the recording budget");
+    act(() => sayPolitely("Stop recording is not available while the page is stale."));
+    expect(shellPolite()).toBe("Stop recording is not available while the page is stale.");
+    // The page leaves; the shell, and its regions, stay.
+    rerender(
+      <>
+        {null}
+        <ShellAnnouncer />
+      </>,
+    );
+    expect(shellAssertive().textContent).toBe("");
+    expect(shellPolite()).toBe("");
   });
 });
 

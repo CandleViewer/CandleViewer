@@ -40,6 +40,7 @@ CandleViewer is a single-page app (SPA) inside Electron. "Routes" below are Reac
 
 Legend for RBAC column: `O`=Owner, `M`=Manager, `V`=Viewer, `A`=Admin-hat (Owner only), `RA`=Rule-author mode (Owner or Manager with `rules:author`). `◑` = scoped to own/assigned accounts. `⓪` = read-only rendering, all mutating actions blocked server-side even if UI is reached.
 
+<!-- prettier-ignore -->
 | Route ID | Path | Screen | RBAC | Notes |
 |---|---|---|---|---|
 | **Auth & session** |
@@ -108,7 +109,7 @@ Legend for RBAC column: `O`=Owner, `M`=Manager, `V`=Viewer, `A`=Admin-hat (Owner
 | R-322 | `/admin/keys/:keyId/rotate` | Key rotation wizard | A | See `13-user-flows.md` §18. |
 | R-330 | `/admin/profiles` | Per-account profiles list | A | |
 | R-331 | `/admin/profiles/:profileId` | Per-account profile editor (leverage, sizing rule, SL/TP offsets, risk caps, allowed symbols) | A | |
-| R-340 | `/admin/recorder` | Recorder & retention config | A | Recorded-symbol list, auto-record toggle, retention days, pin management, disk budget display. |
+| R-340 | `/admin/recorder` | Recorder & retention config | A | Recorded-symbol list, auto-record toggle, retention days, pin management, disk budget display. As built (E16-S01, #484): renders SCR-140 inside CMP-087; auto-record on chart open is stated as text, a server setting with no API (E16-D02 D-10); SCR-141 opens over it and SCR-142 is a section of it once E16-S03 / E16-S04 register them. |
 | R-350 | `/admin/health` | System health (ingestion lag, WS status, queue depth, DB size) | A | |
 | R-351 | `/admin/flags` | Feature flags | A | |
 | R-352 | `/admin/trade-groups` | Trade-group administration (all groups, all owners, force-cancel) | A | Renders SCR-062 in its admin variant. Distinct from R-140 `/trade-groups`, which is the trading-side list scoped to the caller. |
@@ -200,6 +201,7 @@ graph TD
 
 Modals block interaction with the underlying screen; drawers slide in from the right and allow the underlying screen to remain visible/scrollable. Both are enumerated because they are frequently deep-linkable (query param) or triggered from multiple routes.
 
+<!-- prettier-ignore -->
 | ID | Type | Name | Triggered from | Deep-linkable? | RBAC |
 |---|---|---|---|---|---|
 | M-001 | Drawer | Order ticket | Terminal (hotkey, click DOM, click chart), Positions | `?panel=order-ticket&symbol=&side=` | O, M(◑) |
@@ -272,6 +274,7 @@ graph TD
 
 ## 7. Deep-link parameter contracts (canonical)
 
+<!-- prettier-ignore -->
 | Param | Used on routes | Type | Example | Behavior |
 |---|---|---|---|---|
 | `symbol` | R-101, R-171, M-001, M-022, M-023 | string (Bybit symbol) | `BTCUSDT` | Sets the active symbol for the pane/panel; invalid symbol → toast + fallback to last symbol. |

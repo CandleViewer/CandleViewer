@@ -148,6 +148,36 @@ export const DisabledWithReasonInline: Story = {
   },
 };
 
+/**
+ * The validity look (`unavailableReasonId`; E09-D09 §9.1, E16-D04 §1.3): form validity, never T2. A Tab stop,
+ * `aria-disabled`, the fill and the label dimmed, no lock; the host's reason under it at full opacity is its
+ * description, and a press does nothing (the host answers it).
+ */
+export const ValidityLook: Story = {
+  args: {
+    variant: "danger",
+    children: "Purge ETHUSDT data",
+    unavailableReasonId: "button-validity",
+  },
+  render: (args) => (
+    <div style={{ ...col, gap: "var(--space-stack-xs)" }}>
+      <Button {...args} />
+      <span id="button-validity" style={caption}>
+        Type ETHUSDT exactly to confirm.
+      </span>
+    </div>
+  ),
+  play: async ({ canvasElement, args }) => {
+    const button = within(canvasElement).getByRole("button", { name: "Purge ETHUSDT data" });
+    await userEvent.tab();
+    await expect(button).toHaveFocus();
+    await expect(button).toHaveAttribute("aria-disabled", "true");
+    await expect(button).toHaveAccessibleDescription("Type ETHUSDT exactly to confirm.");
+    await userEvent.keyboard("{Enter}");
+    await expect(args.onClick).not.toHaveBeenCalled();
+  },
+};
+
 export const FullWidth: Story = { args: { fullWidth: true } };
 
 /** A label wider than its box truncates with an ellipsis; the accessible name stays the full text. */

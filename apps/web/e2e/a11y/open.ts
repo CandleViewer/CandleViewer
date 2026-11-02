@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { stubSession, stubSessionsList } from "../support/api";
+import { stubRecorder } from "../support/recorder";
 import { REFRESH_INVALID } from "../support/contexts";
 import type { A11yScreen } from "./screens";
 
@@ -18,6 +19,7 @@ const PACE_SAMPLE = 5;
 /** Per-screen data stubs, so the collectors audit the populated state, not an error. */
 const SCREEN_STUBS: Readonly<Record<string, (page: Page) => Promise<void>>> = {
   "R-201": stubSessionsList, // SCR-112 sessions: the table with the current session marked
+  "R-340": async (page) => void (await stubRecorder(page)), // SCR-140: a fresh install's empty state
 };
 
 /**
