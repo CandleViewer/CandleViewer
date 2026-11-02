@@ -247,6 +247,7 @@ jobs:
         run: |
           docker rm -f zap-manager-scan zap-viewer-scan > /dev/null 2>&1 || true
           docker compose -f infra/compose/docker-compose.yml --profile core down -v || true
+          rm -rf "$RUNNER_TEMP/cv-kek" || true
 
   report:
     needs: zap-admin

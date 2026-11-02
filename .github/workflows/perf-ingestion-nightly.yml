@@ -378,7 +378,9 @@ jobs:
           if-no-files-found: ignore
       - name: Tear down
         if: always()
-        run: docker compose -f infra/compose/docker-compose.yml --profile core down -v || true
+        run: |
+          docker compose -f infra/compose/docker-compose.yml --profile core down -v || true
+          rm -rf "$RUNNER_TEMP/cv-kek" || true
 
   ingestion-soak-issue:
     needs: ingestion-soak

@@ -51,3 +51,15 @@ def test_no_step_prints_the_kek(name: str) -> None:
     text = (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
     assert text.count("cv-kek/kek") == 2  # made once, read once by the API (CV_KEK_HANDLE)
     assert not re.search(r"(cat|base64|xxd|od|hexdump|add-mask)\b[^\n]*cv-kek", text)
+
+
+@pytest.mark.parametrize("name", WORKFLOWS)
+def test_the_job_that_mints_the_kek_removes_it_whatever_the_run_did(name: str) -> None:
+    """Its teardown, which always runs, removes the KEK's directory: a failed or cancelled run
+    leaves no KEK file on the runner (as `e2e-auth-real.yml` did first)."""
+    doc = yaml.safe_load((ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8"))
+    jobs = [job.get("steps", []) for job in doc["jobs"].values()]
+    (steps,) = [s for s in jobs if any(KEK in str(step.get("run", "")) for step in s)]
+    (teardown,) = [step for step in steps if str(step.get("name", "")).startswith("Tear down")]
+    assert teardown["if"] == "always()"
+    assert re.search(r'^rm -rf [^\n]*"\$RUNNER_TEMP/cv-kek"', teardown["run"], re.MULTILINE)
