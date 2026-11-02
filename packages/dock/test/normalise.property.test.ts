@@ -104,43 +104,55 @@ function belowMinimum(tree: DockTree): string[] {
 }
 
 describe("every operation returns a normalised tree (property)", () => {
-  it("1000 random split/move/close/resize operations keep every invariant", () => {
-    fc.assert(
-      fc.property(fc.array(arbCommand, { minLength: 1000, maxLength: 1000 }), (commands) => {
-        // One minter per run, as in the app: node ids stay unique across operations.
-        const c = ctx();
-        let tree = preset("2x2", ["a", "b", "c", "d"]);
-        commands.forEach((command, serial) => {
-          const before = new Map(leavesOf(tree.root).map((l) => [l.paneId, l]));
-          const next = apply(tree, command, serial, c);
-          expect(invariantViolations(next)).toEqual([]);
-          expect(belowMinimum(next)).toEqual([]);
-          // Exactly one pane is added by an applied split and removed by an applied close; every
-          // other pane survives with its leaf object (a move is a re-parent, never a new panel),
-          // and a resize keeps every container id.
-          const after = paneIds(next);
-          const kept = after.filter((id) => before.has(id));
-          expect(kept.length).toBe(
-            after.length - (command.op === "split" && next !== tree ? 1 : 0),
-          );
-          if (command.op === "close" && next !== tree) expect(kept.length).toBe(before.size - 1);
-          else expect(kept.length).toBe(before.size);
-          for (const l of leavesOf(next.root))
-            if (before.has(l.paneId)) expect(l).toBe(before.get(l.paneId));
-          if (command.op === "resize")
-            expect(splits(next.root).map((n) => n.id)).toEqual(splits(tree.root).map((n) => n.id));
-          if (next.root === null) {
-            // The last docked pane closed: the empty dock stores, and the run starts over.
-            expect(toLayoutInput(next, new Map()).panes).toEqual([]);
-            tree = preset("2x2", [`a${serial}`, `b${serial}`, `c${serial}`, `d${serial}`]);
-          } else tree = next;
-        });
-      }),
-      // 10 runs of 1000 operations each; a failure reports unshrunk (shrinking 1000-long runs takes
-      // minutes): the shrinking test below holds the shrinker itself.
-      { numRuns: 10, seed: 403, endOnFailure: true },
-    );
-  });
+  // 10 × 1,000 operations took 5.5 s under coverage on a loaded CI runner (the 5 s default timed
+  // out): a 60 s bound keeps the assertions while the runner's load varies.
+  it(
+    "1000 random split/move/close/resize operations keep every invariant",
+    { timeout: 60_000 },
+    () => {
+      let emptied = 0;
+      fc.assert(
+        fc.property(fc.array(arbCommand, { minLength: 1000, maxLength: 1000 }), (commands) => {
+          // One minter per run, as in the app: node ids stay unique across operations.
+          const c = ctx();
+          let tree = preset("2x2", ["a", "b", "c", "d"]);
+          commands.forEach((command, serial) => {
+            const before = new Map(leavesOf(tree.root).map((l) => [l.paneId, l]));
+            const next = apply(tree, command, serial, c);
+            expect(invariantViolations(next)).toEqual([]);
+            expect(belowMinimum(next)).toEqual([]);
+            // Exactly one pane is added by an applied split and removed by an applied close; every
+            // other pane survives with its leaf object (a move is a re-parent, never a new panel),
+            // and a resize keeps every container id.
+            const after = paneIds(next);
+            const kept = after.filter((id) => before.has(id));
+            expect(kept.length).toBe(
+              after.length - (command.op === "split" && next !== tree ? 1 : 0),
+            );
+            if (command.op === "close" && next !== tree) expect(kept.length).toBe(before.size - 1);
+            else expect(kept.length).toBe(before.size);
+            for (const l of leavesOf(next.root))
+              if (before.has(l.paneId)) expect(l).toBe(before.get(l.paneId));
+            if (command.op === "resize")
+              expect(splits(next.root).map((n) => n.id)).toEqual(
+                splits(tree.root).map((n) => n.id),
+              );
+            if (next.root === null) {
+              // The last docked pane closed: the empty dock stores, and the run starts over.
+              expect(toLayoutInput(next, new Map()).panes).toEqual([]);
+              emptied += 1;
+              tree = preset("2x2", [`a${serial}`, `b${serial}`, `c${serial}`, `d${serial}`]);
+            } else tree = next;
+          });
+        }),
+        // 10 runs of 1000 operations each; a failure reports unshrunk (shrinking 1000-long runs takes
+        // minutes): the shrinking test below holds the shrinker itself.
+        { numRuns: 10, seed: 403, endOnFailure: true },
+      );
+      // The walk does reach the empty dock (50 times at seed 403), so its stored form is exercised.
+      expect(emptied).toBeGreaterThan(0);
+    },
+  );
 
   it("reports a violating sequence minimally (shrinking)", () => {
     // A deliberately false property, "never more than 3 panes": from one pane the shortest
