@@ -132,7 +132,7 @@ bars_series_read_waits_total = Counter(
 bars_series_gap_rereads_total = Counter(
     "bars_series_gap_rereads_total",
     "WS series store tail reads that found a series gapped and left it gapped (its re-read"
-    " interval doubles, up to a cap).",
+    " interval doubles, up to a cap), not a read during which a live restart or swap landed.",
 )
 #: The heal driver's view (#2787 D2-H1): held series that are not complete, counted at scrape
 #: time (`SeriesStore.incomplete_count`); repairs not sent as counted, by reason.

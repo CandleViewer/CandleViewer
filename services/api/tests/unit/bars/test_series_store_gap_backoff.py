@@ -12,11 +12,20 @@ import pytest
 from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
+from candleviewer.bars.limits import MAX_CONCURRENT_TAIL_READS as SLOTS
 from candleviewer.bars.metrics import EXPORTED_NAMES
 from candleviewer.bars.reader import BarTail
 from candleviewer.bars.series_store import RECENT_CLOSES, RETRY_AFTER_S, Hold, SeriesStore
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from tests.unit.bars.test_series_store import SPEC, SYM, Clock, H, Tail, counted, emit, rows, up
+from tests.unit.bars.test_series_store_read_bound import (
+    WAITS,
+    Tails,
+    ensure_all,
+    finish,
+    symbols,
+    until,
+)
 
 REREADS = "bars_series_gap_rereads_total"
 #: A live restart (a later run's bar 0 opens or closes) or a generation swap.
@@ -170,6 +179,113 @@ async def test_a_read_in_flight_never_undoes_a_live_reset_or_swap(
     tail.tail = BarTail(rows(*range(4), gen=generation, shift=shift))
     await reread(store, clock, 1)
     assert (tail.calls, store.gapped(SYM, H), counted(REREADS)) == (4, False, before)
+
+
+async def _wait_for_a_slot(
+    store: SeriesStore, blockers: Tails
+) -> tuple[asyncio.Task[Hold], list[asyncio.Task[Hold]]]:
+    """Take every read slot with other series' reads, then start the store's read of `SYM`: it
+    waits for a slot, and the wait counts (`bars_series_read_waits_total`)."""
+    before = int(counted(WAITS))
+    holders = ensure_all(SeriesStore(blockers, timeout_s=60.0), symbols(SLOTS))
+    await until(lambda: len(blockers.started) == SLOTS, "every slot taken")
+    task = asyncio.create_task(store.ensure(SYM, SPEC))
+    await until(lambda: int(counted(WAITS)) == before + 1, "the read waits for a slot")
+    return task, holders
+
+
+@RESETS
+async def test_a_live_reset_or_swap_during_the_wait_for_a_slot_is_not_undone_by_the_read(
+    generation: int, shift: int, first: str
+) -> None:
+    """The wait for a slot is part of the read in flight: the series is backed off to 10 s, its
+    read waits for a slot, and a live restart or swap lands meanwhile. The read counts nothing
+    and keeps the interval the reset set: the next read comes `retry_after_s` after it.
+    Kills: `resets_at_start = s.resets` taken after the slot (10 s, a count, no read at 5 s)."""
+    clock = Clock()
+    tail = Tail(rows(*range(10)), now=True)
+    store = SeriesStore(tail, clock=clock, timeout_s=60.0)
+    _held = await store.ensure(SYM, SPEC)
+    await emit(store, up("close", 11))
+    await reread(store, clock, 1)  # R1 leaves it gapped: R2 is due 10 s later
+    before = counted(REREADS)
+    clock.t += 2 * RETRY_AFTER_S
+    blockers = Tails()
+    task, holders = await _wait_for_a_slot(store, blockers)
+    after = (up("close", i, shift=shift) for i in (0, 1, 3))
+    await emit(store, up(first, 0, shift=shift), *after, generation=generation)
+    blockers.open_all()
+    await finish([*holders, task])
+    assert (tail.calls, store.gapped(SYM, H), counted(REREADS)) == (3, True, before)
+    await reread(store, clock, 1)
+    assert tail.calls == 4
+
+
+async def test_a_hole_seen_live_during_the_wait_for_a_slot_is_no_re_read() -> None:
+    """A degraded read leaves the series neither hydrated nor gapped. Its next read waits for a
+    slot, and a live close leaves a hole meanwhile: the read counts nothing and the interval
+    stays 5 s. Kills: `gapped = s.gapped` taken after the slot (it counts and doubles)."""
+    clock = Clock()
+    tail = Tail(now=True)
+    tail.tail = BarTail(rows(*range(10)), dropped=1)
+    store = SeriesStore(tail, clock=clock, timeout_s=60.0)
+    _held = await store.ensure(SYM, SPEC)
+    assert not store.gapped(SYM, H)
+    tail.tail = BarTail(rows(*range(10)))  # clean from here: no miss streak
+    before = counted(REREADS)
+    clock.t += RETRY_AFTER_S
+    blockers = Tails()
+    task, holders = await _wait_for_a_slot(store, blockers)
+    await emit(store, up("close", 11))
+    blockers.open_all()
+    await finish([*holders, task])
+    assert (tail.calls, store.gapped(SYM, H), counted(REREADS)) == (2, True, before)
+    await reread(store, clock, 1)
+    assert (tail.calls, counted(REREADS)) == (3, before + 1)
+    await reread(store, clock, 1)  # it backed off once: 10 s now
+    assert tail.calls == 3
+
+
+async def test_a_live_hole_during_a_re_read_doubles_once_from_5_s_and_the_new_hole_waits_10_s() -> (
+    None
+):
+    """A live close sets the interval to 5 s but is no reset: a re-read in flight that ends still
+    gapped doubles from 5 s (not from the 40 s it began with) and counts, once.
+    Kills: doubling from the interval the read began with (the new hole waits 80 s), and the live
+    gap moving the reset epoch (no count)."""
+    clock = Clock()
+    store, tail, _held = await gapped(clock)
+    for wait in (1, 2, 4):
+        await reread(store, clock, wait)  # backed off to 40 s
+    before = counted(REREADS)
+    tail.gate.clear()
+    tail.started.clear()
+    clock.t += 8 * RETRY_AFTER_S
+    task = asyncio.create_task(store.ensure(SYM, SPEC))
+    await tail.started.wait()
+    await emit(store, up("close", 14))
+    tail.gate.set()
+    await task
+    assert (tail.calls, counted(REREADS)) == (5, before + 1)
+    await reread(store, clock, 1)  # 5 s: not due
+    assert tail.calls == 5
+    await reread(store, clock, 1)  # 10 s
+    assert tail.calls == 6
+
+
+async def test_a_range_a_read_finds_does_not_reset_the_interval() -> None:
+    """Nine holes at once: each read logs them again (the log keeps eight, oldest forgotten
+    first) yet the interval still doubles: 5, 10, then 20 s.
+    Kills: `s.backoff = 1` where a range is appended to `s.logged` (read every 10 s)."""
+    clock = Clock()
+    tail = Tail(rows(*range(10)), now=True)
+    store = SeriesStore(tail, clock=clock)
+    _held = await store.ensure(SYM, SPEC)
+    await emit(store, *(up("close", i) for i in range(11, 28, 2)))  # nine holes
+    await reread(store, clock, 1)  # R1
+    await reread(store, clock, 2)  # R2
+    await reread(store, clock, 2)  # 10 s after R2: not due, the interval is 20 s
+    assert tail.calls == 3
 
 
 async def test_a_re_read_over_two_stored_runs_logs_its_gap_once() -> None:
