@@ -59,7 +59,12 @@ def _emit_request(depth: int = 0, **params: Any) -> Any:
 
 
 def _truncations(logs: list[Any]) -> list[int]:
-    return [e["depth"] for e in logs if e["event"] == "rules.signal_chain_truncated"]
+    """The depth of each cut signal, as its error-level log names it (24 §11.5)."""
+    return [
+        e["depth"]
+        for e in logs
+        if e["event"] == "rules.signal_chain_truncated" and e["log_level"] == "error"
+    ]
 
 
 async def test_signal_chains_are_bounded(engine: EngineRig) -> None:
@@ -123,6 +128,21 @@ async def test_signal_depth_increments_per_hop(engine: EngineRig) -> None:
             "signal"
         ]
         assert signal.depth == depth + 1 and signal.owner == OWNER
+
+
+@pytest.mark.parametrize("engine", [{"signal_max_depth": 1}], indirect=True, ids=["depth-1"])
+async def test_a_depth_setting_below_the_default_cuts_the_chain_there(engine: EngineRig) -> None:
+    """BQ-5: the depth setting reaches the bus. Bound at 1 before the start, the market rule's
+    signal (depth 1) runs and its relay (depth 2) is cut: one signal run, one cut."""
+    assert engine.bus.max_depth == 1
+    await engine.add(actions=[emit("s1")])
+    relay = await engine.add(actions=[emit("r1")], trigger="on_signal")
+    with capture_logs() as logs:
+        await engine.fire()
+        assert await engine.drain() == [1]
+    assert _truncations(logs) == [2]
+    assert engine.results(relay) == [("emit_signal", "failed", "signal_chain_truncated")]
+    assert engine.counted.of("rule_signal_chain_truncated_total") == {(): 1.0}
 
 
 async def test_emit_signal_never_awaits_on_the_tick(engine: EngineRig) -> None:
@@ -192,7 +212,8 @@ async def test_an_emit_signal_with_mistyped_params_fails(params: dict[str, Any])
 
 async def test_the_runner_takes_signals_and_market_ticks_in_turn() -> None:
     """24 §11.5: a waiting signal and a market tick in turn, so neither queue starves the other;
-    one alone is taken whenever the other is empty, and a signal wakes the runner's task."""
+    one alone is taken whenever the other is empty, and a signal wakes the runner's task once it
+    waits with nothing to take: no market tick comes to move it."""
     bus = SignalBus()
     runner = _Runner(bus)
     for symbol in ("A", "B"):
@@ -201,8 +222,11 @@ async def test_the_runner_takes_signals_and_market_ticks_in_turn() -> None:
         bus.offer(_signal(key=key))
     taken = [runner._pick() for _ in range(6)]
     assert [_named(t) for t in taken] == ["k1", "A", "k2", "B", "k3", None]
+    runner.parked.clear()
     runner.start()
     try:
+        async with asyncio.timeout(GUARD_S):
+            await runner.parked.wait()  # the task found nothing to take, and waits
         bus.offer(_signal(key="k4"))
         async with asyncio.timeout(GUARD_S):
             await runner.processed_one.wait()
@@ -219,13 +243,20 @@ def _named(tick: EvalTick | None) -> str | None:
 
 
 class _Runner(RuleEvaluationRunner):
-    """The runner with `process` recorded: no rule is evaluated."""
+    """The runner with `process` recorded, no rule evaluated, and `parked` set whenever it finds
+    nothing to take, as its task does just before it waits."""
 
     def __init__(self, bus: SignalBus) -> None:
         super().__init__(_no_rules, SnapshotBuilder(PushedMetricSource()), _never, _discard,
                          signals=bus)  # fmt: skip
         self.seen: list[EvalTick] = []
-        self.processed_one = asyncio.Event()
+        self.processed_one, self.parked = asyncio.Event(), asyncio.Event()
+
+    def _pick(self) -> EvalTick | None:
+        tick = super()._pick()
+        if tick is None:
+            self.parked.set()
+        return tick
 
     async def process(self, tick: EvalTick) -> None:
         self.seen.append(tick)
@@ -275,3 +306,34 @@ async def test_a_stop_drops_the_waiting_signals(engine: EngineRig) -> None:
         await engine.svc.stop(1.0)
     assert bus.waiting == 0 and engine.svc._signals is None
     assert [e["dropped"] for e in logs if e["event"] == "rules.signals_dropped_at_stop"] == [1]
+
+
+async def test_a_stop_cancelled_mid_drain_still_drops_the_signals_and_the_variables(
+    engine: EngineRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cleanup sits in `stop()`'s `finally`: a stop cancelled while the fire queue drains goes
+    on to the caller, and still drops the waiting signals and clears the variable store."""
+    rid = await engine.add(actions=[emit("s1"), set_var("v1", "held")])
+    await engine.fire()
+    await engine.settle()
+    bus, variables, fires = engine.bus, engine.svc._variables, engine.svc._dispatch
+    assert bus.waiting == 1 and variables.get(rid, "held") == '"1"'
+    assert fires is not None
+    draining, stop = asyncio.Event(), fires.stop
+
+    async def drain(grace_s: float) -> None:
+        if grace_s > 0:  # the drain never ends: the caller's cancel ends it
+            draining.set()
+            await asyncio.Event().wait()
+        await stop(grace_s)  # the `finally`'s own stop, at once
+
+    monkeypatch.setattr(fires, "stop", drain)
+    stopping = asyncio.create_task(engine.svc.stop(GUARD_S))
+    async with asyncio.timeout(GUARD_S):
+        await draining.wait()
+    stopping.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        async with asyncio.timeout(GUARD_S):
+            await stopping
+    assert bus.waiting == 0 and engine.svc._signals is None
+    assert variables.get(rid, "held") is None

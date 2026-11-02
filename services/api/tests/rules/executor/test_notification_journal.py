@@ -104,7 +104,7 @@ async def test_a_notification_write_that_does_not_end_is_unknown(
 @pytest.mark.parametrize(
     "params",
     [{**NOTE, "channel": ""}, {**NOTE, "template": 7}, {**NOTE, "vars": [1]},
-     {"channel": "ui", "severity": "info"}],
+     {**NOTE, "severity": ""}, {**NOTE, "severity": 3}, {"channel": "ui", "severity": "info"}],
     ids=str,
 )  # fmt: skip
 async def test_a_mistyped_notification_fails(params: dict[str, Any]) -> None:

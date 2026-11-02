@@ -101,12 +101,24 @@ async def test_a_value_over_its_size_bound_is_refused() -> None:
 
 
 def test_a_value_is_held_as_canonical_json() -> None:
-    """Keys sorted, no whitespace, every number its plain decimal (`1.0` and `1.00` are one)."""
+    """Keys sorted, no whitespace, every number its plain decimal (`1.0` and `1` are one)."""
     assert canonical_json({"b": [1.0, True, None], "a": "x"}) == '{"a":"x","b":["1",true,null]}'
-    assert canonical_json(1.0) == canonical_json(1.00) and canonical_json(10) == '"10"'
+    assert canonical_json(1.0) == canonical_json(1) and canonical_json(10) == '"10"'
     for bad in (float("nan"), {1: "x"}, object()):
         with pytest.raises(ValueError):
             canonical_json(bad)
+
+
+async def test_a_float_is_held_as_its_shortest_decimal() -> None:
+    """The IR's rule for a float: its shortest decimal text, never its binary expansion, and in
+    plain notation, never an exponent; `0.1` set through the handler is held as "0.1" too."""
+    assert canonical_json(0.1) == '"0.1"'
+    assert (canonical_json(1e22), canonical_json(1e-7)) == (
+        '"10000000000000000000000"', '"0.0000001"',
+    )  # fmt: skip
+    store = VariableStore(Seconds())
+    assert (await _set(store, "step", 0.1)).answer == "done"
+    assert store.get(RULE, "step") == '"0.1"'
 
 
 @pytest.mark.parametrize(
