@@ -24,7 +24,12 @@ from candleviewer.api.view_as_guard import (
     _refused_read,
     make_view_as_guard,
 )
-from candleviewer.api.view_as_policy import REFUSED_READ_OPERATIONS, REFUSED_READS
+from candleviewer.api.view_as_policy import (
+    OWN_OPERATIONS,
+    PROTECTIVE_WRITES,
+    REFUSED_READ_OPERATIONS,
+    REFUSED_READS,
+)
 from candleviewer.api.view_as_refusals import VIEW_AS_REFUSED
 from candleviewer.api.workspaces import make_workspaces_router
 from candleviewer.auth.models import SessionRecord
@@ -143,8 +148,30 @@ def test_workspaces_write_routes_each_have_a_view_as_refusal_test() -> None:
         if method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
     }
     assert mounted == declared == set(_WRITES)
-    reads = {op for op in REFUSED_READ_OPERATIONS if re.match(r"/workspaces(/|$)", op[1])}
-    assert reads == {_EXPORT}  # a new refused `/workspaces*` read needs its own test here too
+    # The whole refused set: a new refused read, in any path, fails here until it has its own test.
+    assert dict(REFUSED_READS) == {"exportWorkspace": (_EXPORT, "E15-S07")}
+    assert REFUSED_READ_OPERATIONS == {_EXPORT}
+
+
+def _shared_operations(refused: set[tuple[str, str]]) -> set[tuple[str, str]]:
+    """The refused reads that are also the viewer's own or a protective write: the guard decides
+    those first, so such a refusal would never be reached."""
+    protective = {operation for operation, _ in PROTECTIVE_WRITES.values()}
+    return refused & (OWN_OPERATIONS | protective)
+
+
+def test_refused_reads_share_no_operation_with_own_or_protective_operations() -> None:
+    assert _shared_operations(set(REFUSED_READ_OPERATIONS)) == set()
+
+
+@pytest.mark.parametrize(
+    "injected",
+    [("GET", "/auth/session"), ("DELETE", "/orders/{orderId}")],
+)
+def test_an_injected_overlap_with_own_or_protective_operations_is_caught(
+    injected: tuple[str, str],
+) -> None:
+    assert _shared_operations({*REFUSED_READ_OPERATIONS, injected}) == {injected}
 
 
 def test_export_workspace_is_a_refused_read_of_the_contract() -> None:
