@@ -36,6 +36,7 @@ from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.reader import bars_checksum_mismatch_total
 from candleviewer.bars.state_store import StateStore
 from candleviewer.domain.sql_names import ts_us_from_row
+from candleviewer.exchange.base.trade_print import TradePrint
 from candleviewer.exchange.bybit.trades import parse_trade_frame, trade_topic
 from candleviewer.ingestion import metrics as im
 from candleviewer.ingestion.rejection import EventWindow
@@ -97,15 +98,24 @@ class TamperedServed(AssertionError):
     """The page of the tampered store is not the clean page less the edited row."""
 
 
-def _stream(rig: Rig, *, window: bool) -> TradeStream:
-    """The Rig's trade stream as `create_app` builds it: with the event window (#1892) the Rig
-    leaves out, on the Rig's bus and clock. `window=False` is the negative control's removal."""
+def _stream(rig: Rig, fed: list[str], *, window: bool) -> TradeStream:
+    """The Rig's trade stream as `create_app` builds it: with the event window (#1892) and the REST
+    backfill the Rig leaves out, on the Rig's bus and clock. `window=False` is the negative
+    control's removal. The backfill answers, as Bybit's recent-trade page would, with the last
+    1000 recorded prints fed so far (`fed`), so the gap a rejected frame opens heals recovered and
+    no bar is marked `gap_before` (E12-Q06 marks only an unrecovered gap)."""
+
+    async def fetch_recent(symbol: str) -> list[TradePrint]:
+        prints = [p for f in fed for p in parse_trade_frame(f) or () if p.symbol == symbol]
+        return prints[-1000:]
+
     now_us = lambda: int(rig.now_s * 1_000_000)  # noqa: E731 -- the Rig's own clock, in µs
     stream = TradeStream(
         bus=rig.bus, env="live", set_desired=lambda _t: None, parse_frame=parse_trade_frame,
         topic_for=trade_topic, is_listed=lambda s: s == SYMBOL, touch=lambda _t: None,
         clock=lambda: rig.now_s, now_us=now_us,
         event_window=EventWindow(now_us, lambda _s: None) if window else None,
+        fetch_recent=fetch_recent,
     )  # fmt: skip
     stream.acquire("x02", SYMBOL)
     return stream
@@ -115,7 +125,8 @@ async def _run(tmp_path: Path, *, hostile: bool, window: bool = True) -> _Bars:
     """Every bar the set emits for `SPECS` over the recorded tape, hostile prints interleaved."""
     rig, sink = Rig(), RecordingSink()
     rig.now_s = _ts(TRADES[-1]) / 1000 + 60  # the wall clock a minute past the last print
-    rig.trades = _stream(rig, window=window)
+    fed: list[str] = []  # the recorded frames fed so far: the backfill's page
+    rig.trades = _stream(rig, fed, window=window)
     bars = BarBuilderSet(
         rig.bus, "live",
         EmitRouter([sink]),
@@ -125,6 +136,7 @@ async def _run(tmp_path: Path, *, hostile: bool, window: bool = True) -> _Bars:
         await bars.register(spec, SYMBOL, f"chart-{i}", user="u1")
     kinds = list(HOSTILE.values())
     for n, frame in enumerate(TRADES):
+        fed.append(frame)
         await rig.feed(frame)
         if hostile and n % EVERY == EVERY - 1:
             await rig.feed(kinds[(n // EVERY) % len(kinds)](n))
