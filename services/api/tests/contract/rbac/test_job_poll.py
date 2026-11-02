@@ -36,6 +36,42 @@ def test_the_poll_and_the_lost_count_use_the_store_the_job_routes_submit_to(worl
     assert world.app.state.admin_jobs_lost._jobs is store
 
 
+def test_a_polling_owner_is_recorded_once_per_window_and_counted_in_the_next_row(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#5331 (amends #966 Q15): the poll is the same polling class as any admin GET, so the guard
+    records the first poll of each window and counts the rest.
+
+    Test-only seam: the world is shared by the module, so the coalescer's windows are cleared and
+    its injected monotonic clock replaced by a fake one this test advances."""
+    coalescer = world.app.state.admin_area_coalescer
+    now = [1000.0]
+    monkeypatch.setattr(coalescer, "_mono", lambda: now[0])
+    coalescer._windows.clear()
+    store = world.app.state.admin_jobs
+    job = Job(id="00000000-0000-4000-8000-0000000000bc", kind="archive_import", status="running")
+    store._jobs[job.id] = job
+    polls = 5
+    try:
+        first = [
+            world.client.get(f"/admin/jobs/{job.id}", headers=bearer("owner")) for _ in range(polls)
+        ]
+        opening = [r for r in world.audit.records if r["action"] == "admin.area_entered"]
+        now[0] += coalescer.window_s + 1  # past the window, inside the summary grace
+        later = world.client.get(f"/admin/jobs/{job.id}", headers=bearer("owner"))
+    finally:
+        del store._jobs[job.id]
+        coalescer._windows.clear()
+    assert [a.status_code for a in [*first, later]] == [200] * (polls + 1)
+    assert len(opening) == 1, "five polls in one window write exactly one opening row"
+    assert opening[0]["object_id"] == "/admin/jobs/{jobId}"
+    assert opening[0]["after_state"]["window_s"] == 300
+    assert "prior_window" not in opening[0]["after_state"]
+    rows = [r for r in world.audit.records if r["action"] == "admin.area_entered"]
+    assert len(rows) == 2
+    assert rows[1]["after_state"]["prior_window"]["reads"] == polls
+
+
 @pytest.mark.parametrize(
     ("path", "kind", "body"),
     [

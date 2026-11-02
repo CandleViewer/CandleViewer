@@ -35,6 +35,7 @@ EXEMPT = {
     "api/audit_budget.py": (2, _FORWARDS),
     "api/audit_verify.py": (1, _FORWARDS),
     "api/refusal_session.py": (1, _FORWARDS),  # #4174: `NamesSession` adds the session only
+    "admin/area_coalescer.py": (1, "a coalesced-reads summary: a system write, no one request"),
     "admin/breakglass_wiring.py": (1, "the host CLI's break-glass journal: no HTTP request"),
     "admin/flags/maintenance.py": (1, "`system:maintenance`, the poller's own transition"),
 }

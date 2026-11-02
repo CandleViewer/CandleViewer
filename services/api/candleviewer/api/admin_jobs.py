@@ -1,6 +1,8 @@
 """`GET /admin/jobs/{jobId}` (`getJob`, `admin:read`): every `202` job's poll, on the audited admin
-router (E42-T01), so every poll is recorded (`admin.area_entered`) and a refused one counted, like
-any admin route (#966 Q15, AD-F22); its `501` and `503` are the guard's. Jobs live in process
+router (E42-T01), so a poll is recorded (`admin.area_entered`) once per session and window like any
+admin read (#5331, which amends #966 Q15: the reads a window coalesced are counted in the next
+entry), and a refused one is counted and recorded each time (#966 Q15, AD-F22); its `501`
+and `503` are the guard's. Jobs live in process
 memory (ADR-0004): every `404` is one body, rule `job_unknown`, never issued, evicted, lost on
 a restart or another user's `audit_export` alike (#966 Q10, #889 S9), and `LostJobsCount` counts
 what a restart loses."""
@@ -16,6 +18,7 @@ import structlog
 from fastapi import APIRouter, Path, Request
 from fastapi.responses import JSONResponse
 
+from candleviewer.admin.area_coalescer import AreaEntryCoalescer
 from candleviewer.admin.http import AuditEmitter, PrincipalResolver, admin_router
 from candleviewer.api.recorder_admin import AdminJobStore
 from candleviewer.audit.access import AuditPrincipal
@@ -44,9 +47,15 @@ _WRITE_FLAGS: Final = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os
 
 
 def make_admin_jobs_router(
-    jobs: AdminJobStore, *, resolver: PrincipalResolver | None, audit: AuditEmitter | None
+    jobs: AdminJobStore,
+    *,
+    resolver: PrincipalResolver | None,
+    audit: AuditEmitter | None,
+    coalescer: AreaEntryCoalescer | None = None,
 ) -> APIRouter:
-    router = admin_router(Permission.ADMIN_READ, resolver=resolver, audit=audit)
+    router = admin_router(
+        Permission.ADMIN_READ, resolver=resolver, audit=audit, coalescer=coalescer
+    )
 
     @router.get("/jobs/{jobId}")
     async def get_job(

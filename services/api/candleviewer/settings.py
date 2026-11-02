@@ -626,6 +626,9 @@ class Settings(BaseSettings):
     audit_read_flush_pages: int = Field(default=50, ge=1)
     audit_read_flush_seconds: float = Field(default=300.0, gt=0.0)
     audit_budget_tracked_users: int = Field(default=1024, ge=64)
+    # #5331: the first admin-area read of each window is recorded and later reads are counted;
+    # the window is this many seconds, 0 records every request (the escape hatch).
+    admin_area_coalesce_seconds: int = Field(default=300, ge=0, le=3600)
     audit_inflight_writes: int = Field(default=64, ge=1)
     # #3085: the view-as refusal records' own hourly cap per viewer, the Owner's too (22 "View-as
     # session"); never a slot of the budget above, whose other settings they share.

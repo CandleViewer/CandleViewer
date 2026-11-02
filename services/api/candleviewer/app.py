@@ -42,6 +42,7 @@ from candleviewer.accounts.service import AccountsService
 from candleviewer.accounts.status import AccountStatusReader
 from candleviewer.accounts.trade_group_repository import TradeGroupReader
 from candleviewer.admin.account_access import AccountAccessService
+from candleviewer.admin.area_coalescer import AreaCoalescerFlushTask, AreaEntryCoalescer
 from candleviewer.admin.backups.gate import BackupJobGate
 from candleviewer.admin.flags import default_registry
 from candleviewer.admin.flags.metrics import export_flag_metrics
@@ -2910,6 +2911,16 @@ def create_app(
     app.include_router(
         make_support_bundle_router(support_bundle, _LazyAuditEmitter(ctx.audit), audit_resolver)
     )
+    # #5331: one coalescer for every admin read router: a repeated safe read is recorded once per
+    # window; its flush task and shutdown drain are the lifespan's, like the audit budget's.
+    admin_area_coalescer = AreaEntryCoalescer(
+        resolved.admin_area_coalesce_seconds,
+        _LazyAuditEmitter(ctx.audit),
+        ready=_audit_ready(ctx.audit),
+        monotonic=time.monotonic,
+    )
+    app.state.admin_area_coalescer = admin_area_coalescer
+    app.state.admin_area_coalesce_flush = AreaCoalescerFlushTask(admin_area_coalescer)
     # E42-T01: admin overview + capacity read models behind the audited admin-area dependency.
     admin_settings = build_system_settings(resolved)
     admin_overview, admin_capacity = build_admin_read_models(
@@ -2921,6 +2932,7 @@ def create_app(
             admin_capacity,
             resolver=audit_resolver,
             audit=_LazyAuditEmitter(ctx.audit),
+            coalescer=admin_area_coalescer,
         )
     )
     app.include_router(
@@ -2958,6 +2970,7 @@ def create_app(
             resolver=audit_resolver,
             audit=_LazyAuditEmitter(ctx.audit),
             grants=build_admin_grants(resolved, system_settings=admin_settings),
+            coalescer=admin_area_coalescer,
         )
     )
     # E42-T05: the health report over the E04 registry's snapshot and the incident list, behind the
@@ -2975,6 +2988,7 @@ def create_app(
             admin_incidents,
             resolver=audit_resolver,
             audit=_LazyAuditEmitter(ctx.audit),
+            coalescer=admin_area_coalescer,
         )
     )
     app.include_router(
@@ -2995,7 +3009,10 @@ def create_app(
     )
     # E42-T03: list and set the feature flags, on the audited admin router.
     for flags_router in make_feature_flags_routers(
-        feature_flags, resolver=audit_resolver, audit=_LazyAuditEmitter(ctx.audit)
+        feature_flags,
+        resolver=audit_resolver,
+        audit=_LazyAuditEmitter(ctx.audit),
+        coalescer=admin_area_coalescer,
     ):
         app.include_router(flags_router)
     # E16-T05: weekly cold-tier compaction on demand (async job, polled via /admin/jobs).
@@ -3038,7 +3055,10 @@ def create_app(
     # E42-T05 (#966 Q15): every job's poll, on the audited admin router (AD-F22).
     app.include_router(
         make_admin_jobs_router(
-            admin_jobs, resolver=audit_resolver, audit=_LazyAuditEmitter(ctx.audit)
+            admin_jobs,
+            resolver=audit_resolver,
+            audit=_LazyAuditEmitter(ctx.audit),
+            coalescer=admin_area_coalescer,
         )
     )
     # E42-T05 (#966 Q10): the jobs a restart loses, saved at a clean stop, counted at the next boot.
@@ -3052,7 +3072,10 @@ def create_app(
     backups_catalogue = build_admin_backups(resolved, system_settings=admin_settings)
     app.include_router(
         make_admin_backups_router(
-            backups_catalogue, resolver=audit_resolver, audit=_LazyAuditEmitter(ctx.audit)
+            backups_catalogue,
+            resolver=audit_resolver,
+            audit=_LazyAuditEmitter(ctx.audit),
+            coalescer=admin_area_coalescer,
         )
     )
     # BK-5: the backup series and the freshness the lifespan loads, also only once catalogued.

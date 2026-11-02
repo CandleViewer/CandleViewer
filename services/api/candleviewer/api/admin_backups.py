@@ -31,6 +31,7 @@ from fastapi import APIRouter, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from candleviewer.admin.area_coalescer import AreaEntryCoalescer
 from candleviewer.admin.backups.catalogue import BackupCatalogue
 from candleviewer.admin.backups.gate import BackupConflict, ConflictRule
 from candleviewer.admin.backups.runs import BackupEngineInvalid, BackupRuns, RunsLimited
@@ -155,9 +156,15 @@ async def _run_request(request: Request) -> tuple[bytes, RunRequest] | JSONRespo
 
 
 def make_admin_backups_router(
-    catalogue: BackupCatalogue, *, resolver: PrincipalResolver | None, audit: AuditEmitter | None
+    catalogue: BackupCatalogue,
+    *,
+    resolver: PrincipalResolver | None,
+    audit: AuditEmitter | None,
+    coalescer: AreaEntryCoalescer | None = None,
 ) -> APIRouter:
-    router = admin_router(Permission.BACKUPS_READ, resolver=resolver, audit=audit)
+    router = admin_router(
+        Permission.BACKUPS_READ, resolver=resolver, audit=audit, coalescer=coalescer
+    )
 
     @router.get("/backups")
     async def list_backups(

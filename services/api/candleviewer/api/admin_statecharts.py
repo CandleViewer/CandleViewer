@@ -22,6 +22,7 @@ import structlog
 from fastapi import APIRouter, Path, Query, Request
 from fastapi.responses import JSONResponse
 
+from candleviewer.admin.area_coalescer import AreaEntryCoalescer
 from candleviewer.admin.http import AuditEmitter, PrincipalResolver, admin_router
 from candleviewer.admin.inspector import (
     BoundScope,
@@ -155,8 +156,11 @@ def make_statechart_router(
     audit: AuditEmitter | None,
     clock: Callable[[], datetime] = utc_now,
     grants: GrantsOf | None = None,
+    coalescer: AreaEntryCoalescer | None = None,
 ) -> APIRouter:
-    router = admin_router(Permission.ADMIN_READ, resolver=resolver, audit=audit)
+    router = admin_router(
+        Permission.ADMIN_READ, resolver=resolver, audit=audit, coalescer=coalescer
+    )
 
     @router.get("/statecharts")
     async def list_statecharts(

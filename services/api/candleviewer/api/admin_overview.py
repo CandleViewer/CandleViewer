@@ -19,6 +19,7 @@ from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+from candleviewer.admin.area_coalescer import AreaEntryCoalescer
 from candleviewer.admin.http import AuditEmitter, PrincipalResolver, admin_router
 from candleviewer.admin.overview.capacity import AdminCapacityService, CapacitySnapshot
 from candleviewer.admin.overview.fanout import SliceResult
@@ -87,8 +88,11 @@ def make_admin_overview_router(
     *,
     resolver: PrincipalResolver | None,
     audit: AuditEmitter | None,
+    coalescer: AreaEntryCoalescer | None = None,
 ) -> APIRouter:
-    router = admin_router(Permission.ADMIN_READ, resolver=resolver, audit=audit)
+    router = admin_router(
+        Permission.ADMIN_READ, resolver=resolver, audit=audit, coalescer=coalescer
+    )
 
     @router.get("/overview")
     async def get_admin_overview() -> JSONResponse:
