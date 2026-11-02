@@ -599,7 +599,7 @@ def test_the_alert_job_fires_on_check_alert_streak_alert_or_a_failed_check() -> 
     condition = alert["if"]
     for part in (
         "always()",
-        "needs.check.result == 'failure'",
+        "needs.check.result != 'success'",
         "needs.check.outputs.alert == 'true'",
         "needs.streak.outputs.alert == 'true'",
     ):
