@@ -485,6 +485,23 @@ def test_cli_budget_exits_zero_on_any_bad_input(
     assert capsys.readouterr().out == ""
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["check", "budget"],
+        ["--manifest", "m.json", "check", "budget"],
+        ["check", "rest", "budget"],
+        ["pytest-args", "budget"],
+    ],
+    ids=["check-budget", "global-option-check-budget", "check-rest-budget", "pytest-args-budget"],
+)
+def test_a_budget_argument_after_another_subcommand_does_not_make_a_usage_error_exit_zero(
+    argv: list[str],
+) -> None:
+    # Only a leading `budget` subcommand is advisory; the word elsewhere is not a free pass.
+    assert main(argv) != 0
+
+
 def test_the_py_tests_job_warns_after_pytest_without_changing_its_result() -> None:
     workflow = yaml.safe_load(
         (ROOT / ".github" / "workflows" / "_job-py.yml").read_text(encoding="utf-8")
@@ -492,10 +509,13 @@ def test_the_py_tests_job_warns_after_pytest_without_changing_its_result() -> No
     steps = workflow["jobs"]["py-tests"]["steps"]
     names = [s.get("name", "") for s in steps]
     warn = steps[next(i for i, n in enumerate(names) if n.startswith("Warn when this lane"))]
-    assert warn["if"] == "always()" and warn["continue-on-error"] is True
+    assert warn["if"] == "always()" and "continue-on-error" not in warn
     assert names.index(warn["name"]) > next(
         i for i, n in enumerate(names) if n.startswith("pytest")
     )
-    assert "py_test_lanes.py budget" in warn["run"] and "|| true" in warn["run"]
+    # It cannot fail by other means: every command line of the script ends in `|| true` or `exit 0`.
+    assert "py_test_lanes.py budget" in warn["run"]
+    lines = [ln.strip() for ln in warn["run"].splitlines() if ln.strip()]
+    assert all(ln.endswith(("|| exit 0", "|| true", "exit 0")) for ln in lines)
     assert "uses" not in warn
     assert "permissions" not in workflow["jobs"]["py-tests"]

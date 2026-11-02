@@ -83,7 +83,12 @@ def load_manifest(path: Path = DEFAULT_MANIFEST) -> Manifest:
     if not isinstance(rest, str) or not LANE_NAME_RE.match(rest):
         raise LaneManifestError(f"{path}: 'rest_lane' must be a lowercase kebab-case name")
     budget = raw.get("lane_budget_seconds", DEFAULT_BUDGET_SECONDS)
-    if isinstance(budget, bool) or not isinstance(budget, int | float) or not math.isfinite(budget) or budget <= 0:
+    if (
+        isinstance(budget, bool)
+        or not isinstance(budget, int | float)
+        or not math.isfinite(budget)
+        or budget <= 0
+    ):
         raise LaneManifestError(f"{path}: 'lane_budget_seconds' must be a positive number")
     lanes_raw = raw.get("lanes")
     if not isinstance(lanes_raw, dict) or not lanes_raw:
@@ -296,6 +301,19 @@ def _budget_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _subcommand(argv: list[str]) -> str | None:
+    """The first non-option argument, skipping the values of the two global options."""
+    skip = False
+    for arg in argv:
+        if skip:
+            skip = False
+        elif arg in ("--manifest", "--api-root"):
+            skip = True
+        elif not arg.startswith("-"):
+            return arg
+    return None
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
@@ -322,7 +340,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         args = parser.parse_args(raw_argv)
     except SystemExit as exc:
         # argparse has printed its usage error; `budget` is advisory and must never fail a step.
-        return 0 if "budget" in raw_argv else int(exc.code or 0)
+        # Key on the subcommand's position (the first non-option argument), not on any argument.
+        return 0 if _subcommand(raw_argv) == "budget" else int(exc.code or 0)
 
     if args.command == "budget":
         return _budget_command(args)

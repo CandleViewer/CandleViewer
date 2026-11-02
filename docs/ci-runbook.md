@@ -1528,7 +1528,7 @@ section in the same sprint — do not just work around it and move on.
   shared: a path one lane lists inside another lane's path is carved out of it (`--ignore`), so
   `contract-security-1` runs `tests/contract` minus what the other three list below it, a
   subdirectory added later included.
-- **Budget.** No PR job over 8 minutes (#3881); that is the long-standing aim for ordinary jobs, while the py-tests lanes are held to 12 minutes or less with a 9-minute (540 s) soft warning (#5505). On the sixteen lanes (run 39401416075) the longest
+- **Budget.** No PR job over 8 minutes (#3881); that is the long-standing aim for ordinary jobs, while the `rest*` legs of the py-tests lanes are held to 12 minutes or less (the four untouched lanes ran 12m20s to 16m45s on run 41487753329; a second PR re-balances `db-chaos-1` / `unit-heavy-1`) with a 9-minute (540 s) soft warning (#5505). On the sixteen lanes (run 39401416075) the longest
   lane took 6m04s (`unit-heavy-1`), the others 3 to 5.5 minutes, and the run 7m39s, with
   `semgrep-bandit` (7m02s) the longest job of any lane. The first cut into ten lanes had its
   longest lane at 12m05s (run 39396453049), and before the split the longest was 14m32s (run
@@ -1545,14 +1545,15 @@ section in the same sprint — do not just work around it and move on.
   (`tests/security/auth`, carved out of `contract-security-2`, which keeps the rest of
   `tests/security`, `tests/rules` and the admin storage contract; no file there collects a
   `postgres:16` module, so the Postgres pre-pull condition is unchanged) adds a nineteenth lane:
-  three more `py-tests` jobs in a run, 72 per PR run. The target: every `rest*` leg at 12 minutes
+  three more `py-tests` jobs in a run, 73 per PR run. The target: every `rest*` leg at 12 minutes
   or less, and the critical path from about 26 to about 15 minutes. The coverage and `ci-required` wiring is unchanged, because
   `py_test_lanes.py data-files` expects one coverage file per manifest lane. Re-measure with
   `estimate` after the next runs and move paths again if either leg approaches the budget.
   **Soft budget.** Each `py-tests` lane times its own pytest run and, past `lane_budget_seconds`
-  (540 s, 9 minutes, in `tools/ci/py-test-lanes.json`), a final `if: always()`,
-  `continue-on-error` step prints a `::warning::` annotation (`py_test_lanes.py budget LANE SECONDS`).
-  It is a warning only and never changes the job's result: rebalance the lane when one appears.
+  (540 s, 9 minutes, in `tools/ci/py-test-lanes.json`), a final `if: always()` step
+  prints a `::warning::` annotation (`py_test_lanes.py budget LANE SECONDS`). The script exits 0 and
+  the call ends in `|| true`, so the step carries no `continue-on-error` and never changes the job's
+  result: rebalance the lane when one appears.
 - **To rebalance**, take the lane jobs' logs of a recent green `pr` run (job ids from
   `gh api repos/CandleViewer/CandleViewer/actions/runs/<run id>/jobs`, then
   `gh api --allow-escape-sequences repos/CandleViewer/CandleViewer/actions/jobs/<job id>/logs`) and
