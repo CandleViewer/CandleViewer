@@ -126,13 +126,17 @@ export interface BarsSymbolBarTypeParam {
      */
     amended?: boolean;
     /**
-     * Optional. True when a gap precedes this bar: the recorded trade tape had a gap before the bar's first print, or the builder marked a discontinuity before it (24 §3.3), so the bar may be incomplete at its start. Kind 4 carries it as flags bit1 (§3.4). Absent means false (22 `Bar.gap_before`).
+     * Optional. True when a discontinuity in the series precedes this bar (24 §3.3): for a time bar, intervals with no print before it; for a range bar, a price jump of at least two range widths. Not data loss: that is tape_gap. Kind 4 carries it as flags bit1 (§3.4). Absent means false (22 `Bar.gap_before`).
      */
     gap_before?: boolean;
     /**
      * Optional. True when the bar is not built from a complete tape window (24 §3.1), such as the first bar a builder forms after it starts inside the bar's window. Kind 4 carries it as flags bit2 (§3.4). Absent means false (22 `Bar.partial`).
      */
     partial?: boolean;
+    /**
+     * Optional. True when the recorded trade tape had a gap affecting this bar (24 §3.1), so prints may be missing from it: the per-bar data-loss marker the E12 integrity statement binds to (#538). Kind 4 carries it as flags bit3 (§3.4). Absent means false: no marker recorded (22 `Bar.tape_gap`).
+     */
+    tape_gap?: boolean;
     /**
      * Arbitrary-precision decimal as a string; never a JSON number.
      */

@@ -102,9 +102,10 @@ _DEAD_ALLOWED: Final = {
         for member in (
             "KlineResponse.bars[].gap_before",
             "KlineResponse.bars[].partial",
+            "KlineResponse.bars[].tape_gap",
             "KlineResponse.meta.spec_hash",
             "KlineResponse.meta.build_version",
-            "KlineResponse.meta.stale",
+            "KlineResponse.meta.stale_build",
         )
     },
 }

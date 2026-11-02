@@ -1692,13 +1692,19 @@ class Bar(BaseModel):
     gap_before: Annotated[
         StrictBool,
         Field(
-            description="True when a gap precedes this bar: the recorded trade tape had a gap before the bar's first print, or the builder marked a discontinuity before it (24 §3.3), so the bar may be incomplete at its start. The same flag as the stored row's `gap_before` (21 §4.8) and the WS `bars` item's (23 §14.3). Absent means `false`: a bar not built from the tape (a `kline` row) and a row stored before the column existed both read `false`. Optional, additive (C-6.3)."
+            description="True when a discontinuity in the series precedes this bar (24 §3.3): for a time bar, one or more intervals with no print before it; for a range bar, a price jump of at least two range widths into it. It describes the series' shape, not data loss: a recorded-tape gap is `tape_gap`. The same flag as the stored row's `gap_before` (21 §4.8) and the WS `bars` item's (23 §14.3). Absent means `false`. Optional, additive (C-6.3)."
         ),
     ] = False
     partial: Annotated[
         StrictBool,
         Field(
-            description="True when the bar is not built from a complete tape window (24 §3.1), such as the first bar a builder forms after it starts inside the bar's window, so its open, volume and order flow may cover only part of the bar. The same flag as the stored row's `partial` (21 §4.8) and the WS `bars` item's (23 §14.3). Absent means `false`, as for `gap_before`. Optional, additive (C-6.3)."
+            description="True when the bar is not built from a complete tape window (24 §3.1), such as the first bar a builder forms after it starts inside the bar's window, so its open, volume and order flow may cover only part of the bar. The same flag as the stored row's `partial` (21 §4.8) and the WS `bars` item's (23 §14.3). Absent means `false`. Optional, additive (C-6.3)."
+        ),
+    ] = False
+    tape_gap: Annotated[
+        StrictBool,
+        Field(
+            description="True when the recorded trade tape had a gap affecting this bar (the #5338 marker, 24 §3.1), so prints may be missing from it and it may not match the exchange's tape for its window. This is the per-bar data-loss marker that the E12 integrity statement binds to (#538: served bars match the tape or are marked); a range the server cannot serve at all is listed in `meta.coverage_holes` instead. The same flag as the stored row's `tape_gap` (21 §4.8) and the WS `bars` item's (23 §14.3). Absent means `false`: no marker recorded, which is how a bar not built from the tape (a `kline` row) and a row stored before the column existed read. Optional, additive (C-6.3)."
         ),
     ] = False
     delta: Decimal | None = None
@@ -1722,10 +1728,10 @@ class BarsMeta(DataMeta):
             ge=1,
         ),
     ] = None
-    stale: Annotated[
+    stale_build: Annotated[
         StrictBool,
         Field(
-            description="True when a bar served was built below the running builder version, so `build_version` is below the running one and a later read may serve that window rebuilt. Absent means `false`."
+            description="True when a bar served was built below the running builder version, or has no recorded build version: a NULL `build_version` is unknown provenance and serves `stale_build: true` on every read path (24 §3.1). A later read may serve such a window rebuilt. Absent means `false`."
         ),
     ] = False
 
@@ -6578,7 +6584,12 @@ class JournalTradeContext(BaseModel):
     ]
     from_: Annotated[AwareDatetime, Field(alias="from")]
     to: AwareDatetime
-    bars: list[Bar] | None = None
+    bars: Annotated[
+        list[Bar] | None,
+        Field(
+            description="The trade's bars. The `Bar` flags `gap_before`, `partial` and `tape_gap` are not yet sent here (#5396 serves them on `/market/bars` and `/market/klines` first); a client reads them as absent, so `false`."
+        ),
+    ] = None
     footprint: list[FootprintBar] | None = None
     executions: list[Execution] | None = None
     markers: list[Marker] | None = None
