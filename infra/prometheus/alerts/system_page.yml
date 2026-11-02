@@ -109,10 +109,12 @@ groups:
         # so its first sample, with none 5 minutes before, counts too, as BybitRowsRefusedAccount
         # reads its first one; `absent()` would stand on a healthy process, so no guard watches it
         # (`lazy-series` in tests/qa/e04_q02_alert_guard_baseline.json). One refusal never pages:
-        # its first-sample arm ends as the hold would end. Two a scrape or more apart within 5
-        # minutes do, 30 s apart included: the second keeps the 5 minute increase above 0 past the
-        # hold the first began, so a blip of the store or the audit sink that refuses two orders
-        # pages (a case pins it: refusals at 5:00 and 5:30 page at 10 minutes, ended at 11).
+        # its first-sample arm ends as the hold would end. Two refusals 40 s or more apart within 5
+        # minutes page, and closer pairs may (with 10 s scrapes and 30 s evaluation, a pair 30 s
+        # apart pages in two of three alignments): the second keeps the 5 minute increase above 0
+        # past the hold the first began, so a blip of the store or the audit sink that refuses two
+        # orders pages (a case pins the aligned 30 s pair: refusals at 5:00 and 5:30 page at 10
+        # minutes, ended at 11; Prometheus 3's left-open windows would need it re-derived).
         # PROPOSED, kept by the orchestrator's ruling on #916 PR B's code look (m2): that reading of
         # 20 Sec.12.1's "> 0 for 5 min", the 5 minute window, and the event class (no refusal for 5
         # minutes may only mean no order was tried). Its owner, the E04 alert owner

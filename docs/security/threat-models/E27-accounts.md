@@ -814,7 +814,7 @@ documentation alone.
 | #1274 | E45-T02 reconciliation triggers on start-up, on reconnect and every 30 s: the backstop for no-intent detection (SR-E27-19)                               | KV-E11                                 |
 | #914  | E29-T06 reconciliation loop: its supported manual dashboard orders conflict with SR-E27-19's no-intent freeze (Owner decision D8, #1778 2026-10-14)      | KV-E11                                 |
 
-The four requests in the #848, #913, #916 and #1274 rows were posted on 2026-10-16:
+The four requests in the #848, #913, #916 and #1274 rows were posted on 2026-10-16 (#916's is now built, as its row says):
 [#848](https://github.com/CandleViewer/CandleViewer/issues/848#issuecomment-6210959367) (SR-E27-17, SR-E27-19),
 [#913](https://github.com/CandleViewer/CandleViewer/issues/913#issuecomment-6210959867) (SR-E27-21),
 [#916](https://github.com/CandleViewer/CandleViewer/issues/916#issuecomment-6210960332) (SR-E27-19) and
@@ -926,6 +926,7 @@ amendment (#2352 added Amendment 2); #2285 owns the security-programme text:
 | 2026-10-19 | amendment author (agent)                                   | E27-T04 closing slice (#837 W6c): KV-T12's control is what #837 ships, with its exception (a record that fails leaves its episode to a kill) and its two residuals (no monitoring while the boot's episode read fails; no page for an account red since boot, #3731), and the journal's failed writes are counted (8.2); KV-T13 joins RR-14 in 04 §16.1; independent security review pending                                                                                       |
 | 2026-10-21 | amendment author (agent; #4010, PR #4055)                  | SR-E27-19 narrowed with 24 §8.10: an order the exchange itself places (a closed `createType` class, each value only once E29-K01 confirms it) and its trade fills page at P1 without the freeze; the SR row, D8, the §4.3 controls list and RSK-068 say so, with the residual (an attacker-induced liquidation, bounded by the P1 and E39's loss lockouts); independent code and security review in PR #4055                                                                       |
 | 2026-10-28 | amendment author (agent; #848 S8b, PR #4879)               | KV-T12's control as S8b ships it: an account the boot pass tracks is owed its boot episode `CV_ACCOUNT_DOWN_S` after the later of its tracking and the private-stream consumer's start, or, while no consumer has started, `CV_OMS_STARTUP_WAIT_S` plus `CV_ACCOUNT_DOWN_S` after the boot pass (20 §6.2); no rating, row or count changes                                                                                                                                         |
+| 2026-11-02 | amendment author (agent; #916 PR B)                        | SR-E27-19's untracked page is built: `OmsUntrackedOrders` (E29-T08, PR B) pages on any untracked order, under its own component; the KV and request rows that asked for it now say so                                                                                                                                                                                                                                                                                              |
 
 ## 12. Addendum: the dev/test account-fixture transport (#2893)
 

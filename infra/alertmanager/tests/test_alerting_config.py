@@ -252,7 +252,7 @@ def test_detector_stall_ticket_is_hidden_by_no_page_under_its_own_component() ->
     stuck-order and naked-position detection is blind takes a component no page carries, so no
     standing page hides it: the page-over-ticket inhibit matches on component and env, and
     OmsUnknownOrders can stand for hours. PostgresDown's inhibit does not list the component
-    either, as a Postgres outage fails every scan. The control: the same ticket labelled `oms` is
+    either, so in a Postgres outage the ticket stands beside that page. The control: the same ticket labelled `oms` is
     hidden by every `oms` page, so a revert of the label fails."""
     rules = _rules()
     rule = {r["alert"]: r for r in rules}["OmsStuckDetectorStalled"]
