@@ -1,8 +1,8 @@
 /**
  * The Working-orders tab's REST calls (E29-S02 #912), through `apiFetch` and typed from the
  * generated `packages/protocol` types (C-4.16): the reads, `GET /orders?open_only=true` (`22`
- * `listOrders`) and the account directory the Positions tab reads (`listExchangeAccounts`); and the
- * cancel writes (`cancelOrder`, `cancelAllOrders`; `ordersWrites` below). The amend is PR3's.
+ * `listOrders`) and the account directory the Positions tab reads (`listExchangeAccounts`); the
+ * cancel writes (`cancelOrder`, `cancelAllOrders`) and the amend (`amendOrder`; `ordersWrites` below).
  *
  * `open_only` is "every state but `filled`, `cancelled`, `rejected`, `expired` and `killed`, so
  * `held` and `untracked` too" (`22`), which the WS snapshot never carries (BQ-6). Outcomes are
@@ -19,6 +19,8 @@ import {
   type AccountsOutcome,
   type ReadFailure,
 } from "../api";
+import { amendBody, type AmendField } from "./model/amend";
+import type { OrderRowModel } from "./model/orderRow";
 
 export type Order = generated.rest.components["schemas"]["Order"];
 type ListOrdersQuery = NonNullable<generated.rest.operations["listOrders"]["parameters"]["query"]>;
@@ -120,6 +122,21 @@ export const ordersApi: OrdersApi = {
  *   `exchange_ret_code` reaches the caller (BQ-2, SR-E29-09). `403 risk_limit_breached` on a
  *   cancel is the command port's `NATIVE_STOP_REQUIRED` (a recorded stop's row while its position
  *   is open): the server's enforcement of C-2.6 behind the client's own skip (`model/bulk.ts`).
+ *
+ * The amend (PR3a; `22` `amendOrder`, `PATCH /orders/{orderId}`):
+ *
+ * - **One field, never a stop** (P3-BQ-1, D-13): the body is `model/amend.ts`'s, exactly one of
+ *   `price`, `trigger_price` and `qty`; a native stop's or a recorded take-profit's row is refused
+ *   here before any request (`protected`), and no body carries `stop_loss` or `take_profit`.
+ * - **The arm** (P3-BQ-5): `X-Arm-Token` goes only on a write the caller held a token for, which
+ *   `amendStore` does for a risk-increasing amend on a live account alone; never logged (C-12.6).
+ * - **One more re-send** (P3-BQ-6): a `409 conflict` with `Retry-After` (an order that took a
+ *   step while the amend was admitted, `22` `OrderExitConflict`) is re-sent once, the same key and
+ *   bytes (C-2.10), on its own count. `account_unavailable`, a `conflict` without `Retry-After` and
+ *   a `502` are never re-sent; the 24 h record keeps only a `2xx`, so the re-send is judged afresh.
+ * - **Its own kinds** (`failureOf(res, op)`): on an amend, `403 risk_limit_breached` is the risk
+ *   check (`risk`), never a native stop; `session_not_armed` is `arm_refused`; `trading_disabled`
+ *   and `422 order_not_amendable` are their own.
  */
 
 type CancelAllRequest = generated.rest.components["schemas"]["CancelAllRequest"];
@@ -148,6 +165,16 @@ export type WriteFailure =
   | "store_unavailable"
   | "not_found"
   | "invalid"
+  /** An amend's `403 session_not_armed`: a live account's arm token missing or spent (SR-043). */
+  | "arm_refused"
+  /** An amend's `403 trading_disabled`: the order-entry gate, the kill switch or live not enabled. */
+  | "trading_disabled"
+  /** An amend's `403 risk_limit_breached`: the amended order's risk check (SR-E29-04). */
+  | "risk"
+  /** An amend's `422 order_not_amendable`: the order does not rest at the exchange now. */
+  | "not_amendable"
+  /** A native stop's or a recorded take-profit's row: never amended, refused before any request. */
+  | "protected"
   /**
    * The outcome is not known: no answer after the re-sends, an answer this client cannot read, a
    * `409 idempotency_in_flight` (an earlier send of the key is still running), or a `429` after a
@@ -184,12 +211,34 @@ export interface OrdersWrites {
   cancelAllOrders(body: CancelAllRequest, signal?: AbortSignal): Promise<CancelAllOutcome>;
 }
 
-/** A request as first sent: every re-send is this, its key included (BQ-8). */
+/** An amend's answer: `202` with the order's B1 state (`unknown` when the venue's word is not known). */
+export type AmendOutcome = CancelOutcome;
+
+/** The row an amend is for: its id, and whether it is a native stop or a recorded take-profit. */
+export type AmendTarget = Pick<OrderRowModel, "id" | "protective">;
+
+export interface AmendWrites {
+  /** `PATCH /orders/{orderId}` with one field: one request per press, its own key (BQ-8). */
+  amendOrder(
+    target: AmendTarget,
+    field: AmendField,
+    requested: string,
+    options?: { readonly arm?: string | null; readonly signal?: AbortSignal },
+  ): Promise<AmendOutcome>;
+}
+
+/** Which write a held request is: the rules of its re-sends and of its answer's kinds differ. */
+export type WriteOp = "cancel" | "cancel_all" | "amend";
+
+/** A request as first sent: every re-send is this, its key and its arm token included (BQ-8). */
 export interface HeldWrite {
-  readonly method: "DELETE" | "POST";
+  readonly op: WriteOp;
+  readonly method: "DELETE" | "POST" | "PATCH";
   readonly path: string;
   readonly key: string;
   readonly body: string | null;
+  /** `X-Arm-Token`: on a risk-increasing amend of a live account alone (P3-BQ-5). */
+  readonly arm?: string;
 }
 
 /** Re-sends of one held request at most, after a transport failure, a `409 idempotency_in_flight` or a `429`. */
@@ -245,31 +294,49 @@ async function codeOf(res: Response): Promise<string | null> {
   }
 }
 
-/** `403`'s codes that name their own reason (S-22); any other is `forbidden`. */
-const FORBIDDEN: Readonly<Record<string, WriteFailure>> = {
+/** `403`'s codes that name their own reason, per operation (S-22); any other is `forbidden`. */
+const CANCEL_FORBIDDEN: Readonly<Record<string, WriteFailure>> = {
   risk_limit_breached: "native_stop",
   account_scope_denied: "account_scope",
   view_as_read_only: "view_as",
 };
+const FORBIDDEN: Readonly<Record<WriteOp, Readonly<Record<string, WriteFailure>>>> = {
+  cancel: CANCEL_FORBIDDEN,
+  cancel_all: CANCEL_FORBIDDEN,
+  // an amend's `risk_limit_breached` is the risk check, never the native stop's (a stop is never amended)
+  amend: {
+    risk_limit_breached: "risk",
+    session_not_armed: "arm_refused",
+    trading_disabled: "trading_disabled",
+    account_scope_denied: "account_scope",
+    view_as_read_only: "view_as",
+  },
+};
 
 /**
- * A refused answer's fixed kind, by status and `code` alone. `answered` is false when an earlier send
- * of the same key went unanswered: a `429` then leaves the outcome unknown, as an in-flight `409` does.
+ * A refused answer's fixed kind, by operation, status and `code` alone. `answered` is false when an
+ * earlier send of the same key went unanswered: a `429` then leaves the outcome unknown, as an
+ * in-flight `409` does.
  */
-async function failureOf(res: Response, answered = true): Promise<WriteFailure> {
+async function failureOf(res: Response, op: WriteOp, answered = true): Promise<WriteFailure> {
   const code = await codeOf(res);
   switch (res.status) {
     case 400:
       return "invalid";
-    case 403:
-      return (
-        (code !== null && Object.hasOwn(FORBIDDEN, code) ? FORBIDDEN[code] : undefined) ??
-        "forbidden"
-      );
+    case 403: {
+      const named = FORBIDDEN[op];
+      return (code !== null && Object.hasOwn(named, code) ? named[code] : undefined) ?? "forbidden";
+    }
     case 404:
       return "not_found";
     case 409:
       return code === "idempotency_in_flight" ? "unavailable" : "conflict";
+    case 412:
+      // never asked for (no `If-Match` is sent); nothing was sent
+      return op === "amend" ? "conflict" : "unavailable";
+    case 422:
+      if (op !== "amend") return "unavailable";
+      return code === "order_not_amendable" ? "not_amendable" : "invalid";
     case 429:
       return answered ? "busy" : "unavailable";
     case 502:
@@ -288,16 +355,20 @@ interface HeldAnswer {
   readonly answered: boolean;
 }
 
-/** The answer of a held request, re-sent with its own key while the rule above allows. */
+/** The answer of a held request, re-sent with its own key while the rules above allow. */
 async function sendHeldWrite(
   held: HeldWrite,
   deps: Required<WritesDeps>,
   signal: AbortSignal | undefined,
 ): Promise<HeldAnswer> {
   let answered = true;
-  for (let attempt = 0; ; attempt += 1) {
+  let resends = 0;
+  /** P3-BQ-6: an amend's `409 conflict` with `Retry-After` goes again once, on its own count. */
+  let conflictResent = false;
+  for (;;) {
     const headers: Record<string, string> = { "Idempotency-Key": held.key };
     if (held.body !== null) headers["Content-Type"] = "application/json";
+    if (held.arm !== undefined) headers["X-Arm-Token"] = held.arm;
     const init: RequestInit = { method: held.method, headers };
     if (held.body !== null) init.body = held.body;
     if (signal !== undefined) init.signal = signal;
@@ -308,10 +379,22 @@ async function sendHeldWrite(
       res = null; // no answer: it may have arrived, so only the same key may follow it
     }
     if (signal?.aborted === true) return { res, answered: answered && res !== null };
-    const inFlight =
-      res !== null && res.status === 409 && (await codeOf(res)) === "idempotency_in_flight";
-    if (!(res === null || res.status === 429 || inFlight) || attempt >= MAX_RESENDS)
+    const code = res !== null && res.status === 409 ? await codeOf(res) : null;
+    if (
+      held.op === "amend" &&
+      !conflictResent &&
+      code === "conflict" &&
+      res !== null &&
+      res.headers.has("Retry-After")
+    ) {
+      conflictResent = true; // nothing was sent: the same request, judged afresh
+      await deps.sleep(retryAfterMs(res), signal);
+      continue;
+    }
+    const inFlight = code === "idempotency_in_flight";
+    if (!(res === null || res.status === 429 || inFlight) || resends >= MAX_RESENDS)
       return { res, answered };
+    resends += 1;
     // an unanswered send may have arrived, and an in-flight one is still running: from here on the
     // key's outcome is not known whatever a later send of it is refused with
     if (res === null || inFlight) answered = false;
@@ -336,7 +419,18 @@ function accountResult(entry: unknown): AccountCancelResult | null {
   };
 }
 
-export function createOrdersWrites(options: WritesDeps = {}): OrdersWrites {
+/** A `202`'s order, read for its B1 state alone (`unknown` after a `110001`, or an amend not known). */
+async function accepted(res: Response): Promise<CancelOutcome> {
+  try {
+    const order = (await res.json()) as { lifecycle_state?: unknown };
+    const lifecycle = typeof order.lifecycle_state === "string" ? order.lifecycle_state : null;
+    return { kind: "accepted", lifecycle };
+  } catch {
+    return { kind: "accepted", lifecycle: null };
+  }
+}
+
+export function createOrdersWrites(options: WritesDeps = {}): OrdersWrites & AmendWrites {
   const deps: Required<WritesDeps> = {
     fetch: options.fetch ?? ((path, init) => apiFetch(path, init)),
     newKey: options.newKey ?? (() => crypto.randomUUID()),
@@ -346,6 +440,7 @@ export function createOrdersWrites(options: WritesDeps = {}): OrdersWrites {
     async cancelOrder(orderId, signal) {
       if (!UUID_PATH.test(orderId)) return { kind: "invalid" };
       const held: HeldWrite = Object.freeze({
+        op: "cancel",
         method: "DELETE",
         path: `/api/v1/orders/${orderId.toLowerCase()}`,
         key: deps.newKey(),
@@ -353,17 +448,12 @@ export function createOrdersWrites(options: WritesDeps = {}): OrdersWrites {
       });
       const { res, answered } = await sendHeldWrite(held, deps, signal);
       if (res === null) return { kind: "unavailable" };
-      if (res.status !== 202) return { kind: await failureOf(res, answered) };
-      try {
-        const order = (await res.json()) as { lifecycle_state?: unknown };
-        const lifecycle = typeof order.lifecycle_state === "string" ? order.lifecycle_state : null;
-        return { kind: "accepted", lifecycle };
-      } catch {
-        return { kind: "accepted", lifecycle: null };
-      }
+      if (res.status !== 202) return { kind: await failureOf(res, "cancel", answered) };
+      return accepted(res);
     },
     async cancelAllOrders(body, signal) {
       const held: HeldWrite = Object.freeze({
+        op: "cancel_all",
         method: "POST",
         path: "/api/v1/orders/cancel-all",
         key: deps.newKey(),
@@ -371,7 +461,7 @@ export function createOrdersWrites(options: WritesDeps = {}): OrdersWrites {
       });
       const { res, answered } = await sendHeldWrite(held, deps, signal);
       if (res === null) return { kind: "unavailable" };
-      if (res.status !== 200) return { kind: await failureOf(res, answered) };
+      if (res.status !== 200) return { kind: await failureOf(res, "cancel_all", answered) };
       try {
         const answer = (await res.json()) as { results?: unknown };
         if (!Array.isArray(answer.results)) return { kind: "unavailable" };
@@ -383,7 +473,25 @@ export function createOrdersWrites(options: WritesDeps = {}): OrdersWrites {
         return { kind: "unavailable" };
       }
     },
+    async amendOrder(target, field, requested, { arm = null, signal } = {}) {
+      // D-13 (P3-BQ-1): a native stop and a recorded take-profit move through `setPositionTpSl`
+      if (target.protective.kind !== null) return { kind: "protected" };
+      const body = amendBody(field, requested);
+      if (!UUID_PATH.test(target.id) || body === null) return { kind: "invalid" };
+      const held: HeldWrite = Object.freeze({
+        op: "amend",
+        method: "PATCH",
+        path: `/api/v1/orders/${target.id.toLowerCase()}`,
+        key: deps.newKey(),
+        body: JSON.stringify(body),
+        ...(arm === null ? {} : { arm }),
+      });
+      const { res, answered } = await sendHeldWrite(held, deps, signal);
+      if (res === null) return { kind: "unavailable" };
+      if (res.status !== 202) return { kind: await failureOf(res, "amend", answered) };
+      return accepted(res);
+    },
   };
 }
 
-export const ordersWrites: OrdersWrites = createOrdersWrites();
+export const ordersWrites: OrdersWrites & AmendWrites = createOrdersWrites();
