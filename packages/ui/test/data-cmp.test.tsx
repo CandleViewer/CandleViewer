@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import { describe, expect, it } from "vitest";
 import {
   AdminLayout,
+  AuditActionTrigger,
   AuditRow,
   AuditRowList,
   Button,
@@ -10,6 +11,7 @@ import {
   Checkbox,
   CommandPalette,
   ConfirmDialog,
+  CopyableCodeBlock,
   DatePicker,
   DateRangePicker,
   Dialog,
@@ -153,7 +155,16 @@ const molecules: [string, () => JSX.Element][] = [
     ),
   ],
   ["CMP-050", () => <Card title="Accounts">Body</Card>],
+  ["CMP-068", () => <CopyableCodeBlock code="{}" language="json" label="Raw record" />],
   ["CMP-088", () => <PageHeader title="Users" meta="All times UTC · as of 14:02:11" />],
+  [
+    "CMP-093",
+    () => (
+      <AuditActionTrigger marker={{ codes: ["admin.audit_verify"] }}>
+        <Button>Run tamper check</Button>
+      </AuditActionTrigger>
+    ),
+  ],
   [
     "CMP-173",
     () => (

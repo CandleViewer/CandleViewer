@@ -5,6 +5,8 @@ import type {
   AdminGrace,
   AdminLayoutProps,
   AdminStripItem,
+  AuditActionTriggerProps,
+  AuditMarker,
   AuditRowListProps,
   AuditRowProps,
   ButtonProps,
@@ -22,6 +24,7 @@ import type {
   TableTreeRow,
   UpdatesPausedChipProps,
   ColumnPickerProps,
+  CopyableCodeBlockProps,
   FileDropProps,
   FreshnessMarkerProps,
   TableRowContext,
@@ -247,6 +250,22 @@ describe("@candleviewer/ui positions grid and CMP-049's treegrid (E29-S01)", () 
           UpdatesPausedChipProps,
         ]
       | null = null;
+    expect(props).toBeNull();
+  });
+});
+
+describe("@candleviewer/ui audit log components (E42-S04)", () => {
+  it.each([
+    ["AuditActionTrigger", Atoms.AuditActionTrigger],
+    ["CopyableCodeBlock", Atoms.CopyableCodeBlock],
+    ["auditMarkerText", Atoms.auditMarkerText],
+  ])("exports %s from the package entry as a function", (_name, value) => {
+    expect(typeof value).toBe("function");
+  });
+
+  it("exports the marker's copy and each props type (checked by the typechecker)", () => {
+    expect(Atoms.AUDIT_MARKER_COPY.recorded).toBe("Recorded in the audit log");
+    const props: [AuditActionTriggerProps, AuditMarker, CopyableCodeBlockProps] | null = null;
     expect(props).toBeNull();
   });
 });
