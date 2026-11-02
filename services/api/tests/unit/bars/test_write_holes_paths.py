@@ -9,11 +9,12 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.bars.emit import BarEmission, EmitRouter, WriterSink
 from candleviewer.bars.metrics import bars_write_holes_total
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
-from candleviewer.bars.write_holes import WriteHoleLedger
+from candleviewer.bars.write_holes import HoleKey, WriteHoleLedger
 from candleviewer.bars.writer import MAX_ATTEMPTS, BarBufferFull, BarWriter
 from tests.unit.bars.test_bars_persistence import SPEC, _bar, _SlowSink
 
@@ -57,7 +58,7 @@ class _Failing:
 async def test_writer_permanent_failure_records_one_hole(tmp_path: Path) -> None:
     ledger = WriteHoleLedger(tmp_path)
     before = _metric("permanent")
-    w = BarWriter(_Failing(ValueError("bad row")), sleep=_no_sleep, holes=ledger)
+    w = BarWriter(_Failing(ValueError("not stored")), sleep=_no_sleep, holes=ledger)
     await w.start()
     await w.submit(_bars(1), SPEC, generation=7)
     assert await w.stop() == 0
@@ -71,7 +72,7 @@ async def test_writer_permanent_failure_records_one_hole(tmp_path: Path) -> None
 async def test_writer_exhausted_retries_record_one_hole_and_count_one(tmp_path: Path) -> None:
     ledger = WriteHoleLedger(tmp_path)
     before = _metric("transient_exhausted")
-    sink = _Failing(ConnectionError("down"))
+    sink = _Failing(ConnectionError("not stored"))
     w = BarWriter(sink, sleep=_no_sleep, holes=ledger)
     await w.start()
     await w.submit(_bars(2), SPEC, generation=7)
@@ -98,7 +99,7 @@ async def test_writer_stop_with_queued_rows_records_shutdown_holes(tmp_path: Pat
 @pytest.mark.asyncio
 async def test_writer_later_success_clears_the_hole(tmp_path: Path) -> None:
     ledger = WriteHoleLedger(tmp_path)
-    sink = _Failing(ValueError("bad row"))
+    sink = _Failing(ValueError("not stored"))
     w = BarWriter(sink, sleep=_no_sleep, holes=ledger)
     await w.start()
     await w.submit(_bars(1, 2), SPEC, generation=7)
@@ -113,7 +114,7 @@ async def test_writer_later_success_clears_the_hole(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_writer_success_without_a_ledger_still_stores(tmp_path: Path) -> None:
-    sink = _Failing(ValueError("x"))
+    sink = _Failing(ValueError("not stored"))
     sink.exc = None
     w = BarWriter(sink)
     await w.start()
@@ -186,3 +187,98 @@ async def test_writer_sink_forming_bars_and_no_ledger_record_nothing(tmp_path: P
     with pytest.raises(BarBufferFull):
         await WriterSink(_Writer(BarBufferFull("full"))).emit(BarEmission(SPEC, 7, _closes(1)))
     assert ledger.pending() == []
+
+
+class _Blocking:
+    """A sink ahead of the writer that never returns (cancelled by the stop)."""
+
+    name = "series_store"
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+
+    async def emit(self, emission: BarEmission) -> None:
+        self.entered.set()
+        await asyncio.Event().wait()
+
+
+class _Taking:
+    """A `BarSubmitter` that takes everything (it must never be reached here)."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def submit(
+        self, bars: Sequence[Bar], spec: BarSpec, *, source: str = "tape", generation: int
+    ) -> None:
+        self.calls += 1
+
+
+@pytest.mark.asyncio
+async def test_router_cancelled_at_an_earlier_sink_records_the_writer_s_bars(
+    tmp_path: Path,
+) -> None:
+    """B1: a stop cancels the emission while a sink ahead of the writer is pending. The closed
+    bars the writer never gets are recorded (`shutdown`) and counted, and the cancellation
+    propagates."""
+    ledger = WriteHoleLedger(tmp_path)
+    before = _metric("shutdown")
+    ahead, writer = _Blocking(), _Taking()
+    router = EmitRouter([ahead, WriterSink(writer, holes=ledger)], timeout_s=60)
+    task = asyncio.create_task(router.emit(SPEC, _closes(6, 7), 7))
+    await ahead.entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert writer.calls == 0 and not router.timed_out
+    assert [(r.first_index, r.last_index, r.reason) for r in ledger.pending()] == [
+        (6, 7, "shutdown")
+    ]
+    assert _metric("shutdown") == before + 2
+    await ledger.flush()
+
+
+@pytest.mark.asyncio
+async def test_router_abandon_hook_failure_is_logged_and_the_cancellation_still_propagates(
+    tmp_path: Path,
+) -> None:
+    class _BadHook:
+        name = "indicators"
+
+        async def emit(self, emission: BarEmission) -> None:
+            return None
+
+        def abandon(self, emission: BarEmission) -> None:
+            raise RuntimeError("hook")
+
+    ledger = WriteHoleLedger(tmp_path)
+    ahead = _Blocking()
+    router = EmitRouter([ahead, _BadHook(), WriterSink(_Taking(), holes=ledger)], timeout_s=60)
+    task = asyncio.create_task(router.emit(SPEC, _closes(1), 7))
+    await ahead.entered.wait()
+    task.cancel()
+    with capture_logs() as logs, pytest.raises(asyncio.CancelledError):
+        await task
+    assert "bars_emit_abandon_failed" in [e["event"] for e in logs]
+    assert [r.reason for r in ledger.pending()] == ["shutdown"]  # the next hook still ran
+    await ledger.flush()
+
+
+@pytest.mark.asyncio
+async def test_writer_keeps_draining_when_the_hole_recorder_raises() -> None:
+    class _Broken:
+        def lost(self, keys: Sequence[HoleKey], reason: str) -> int:
+            raise RuntimeError("recorder")
+
+        def written(self, keys: Sequence[HoleKey]) -> None:
+            raise RuntimeError("recorder")
+
+    sink = _Failing(ValueError("not stored"))
+    sink.exc = None
+    w = BarWriter(sink, batch_rows=1, holes=_Broken())
+    await w.start()
+    with capture_logs() as logs:
+        await w.submit(_bars(1, 2), SPEC, generation=7)
+        assert await w.stop() == 0
+    assert len(sink.rows) == 2
+    assert [e["event"] for e in logs].count("bars_write_holes_outcome_failed") == 2

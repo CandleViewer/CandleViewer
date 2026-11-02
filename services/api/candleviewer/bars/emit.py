@@ -70,10 +70,10 @@ class WriterSink:
     Forming-bar `open`/`update` emissions are for the live wire only: writing one row per trade
     would multiply the QuestDB write rate by the trade rate for no reader.
 
-    #5396: when `submit` does not complete, the emission's closed bars are recorded in `holes`
-    before the exception propagates: `sink_timeout` for a cancellation (the router's per-sink
-    bound, or a stop), `refused` for any other exception. The recording is synchronous, so a
-    cancellation cannot interrupt it. A bar the writer queued before that is cleared again when
+    #5396: an emission whose closed bars the writer does not take has them recorded in `holes`
+    before its exception propagates: reason `sink_timeout` when the emission is cancelled,
+    `refused` otherwise. `abandon` records them as `shutdown` when the router is cancelled before
+    it reaches this sink. Recording is synchronous. A bar the writer took is cleared again once
     it is stored.
     """
 
@@ -98,6 +98,12 @@ class WriterSink:
             self._record(closed, emission, "refused")
             raise
 
+    def abandon(self, emission: BarEmission) -> None:
+        """The router was cancelled before this sink got `emission`: its closed bars are holes."""
+        closed = [u.bar for u in emission.updates if u.kind == "close"]
+        if closed:
+            self._record(closed, emission, "shutdown")
+
     def _record(self, closed: list[Bar], emission: BarEmission, reason: str) -> None:
         if self._holes is None:
             return
@@ -119,7 +125,12 @@ class EmitRouter:
     is skipped for that emission, counted as `bar_emit_sink_errors_total{reason=<sink>_timeout}`
     and logged, and `timed_out` turns on (sticky; `BarBuilderSet` reports it as DEGRADED).
     The bound protects the trade publisher: without it, one hung sink would stall the lane,
-    then the lane's `NEVER_DROP` queue, then every publisher of the symbol's trades."""
+    then the lane's `NEVER_DROP` queue, then every publisher of the symbol's trades.
+
+    A cancellation of `emit` itself (a stop of the lane or the ticker) propagates, never
+    swallowed; first every sink the emission has not reached yet that has a synchronous
+    `abandon(emission)` hook gets it, so `WriterSink` records the closed bars it will not get
+    (#5396). A hook that raises is logged and the others still run."""
 
     def __init__(self, sinks: Sequence[BarSink], *, timeout_s: float = SINK_TIMEOUT_S) -> None:
         self._sinks = tuple(sinks)
@@ -128,10 +139,13 @@ class EmitRouter:
 
     async def emit(self, spec: BarSpec, updates: Sequence[BarUpdate], generation: int) -> None:
         emission = BarEmission(spec, generation, updates)
-        for sink in self._sinks:
+        for n, sink in enumerate(self._sinks):
             try:
                 async with asyncio.timeout(self._timeout_s):
                     await sink.emit(emission)
+            except asyncio.CancelledError:  # not the bound: `asyncio.timeout` raises TimeoutError
+                _abandon(self._sinks[n + 1 :], emission)
+                raise
             except TimeoutError:
                 self.timed_out = True
                 bar_emit_sink_errors_total.labels(reason=f"{sink.name}_timeout").inc()
@@ -146,3 +160,17 @@ class EmitRouter:
                     spec_hash=spec.spec_hash,
                     error_type=type(exc).__name__,
                 )
+
+
+def _abandon(sinks: Sequence[BarSink], emission: BarEmission) -> None:
+    """Hand `emission` to the `abandon` hook of every sink in `sinks` that has one."""
+    for sink in sinks:
+        hook = getattr(sink, "abandon", None)
+        if hook is None:
+            continue
+        try:
+            hook(emission)
+        except Exception as exc:  # the other sinks' hooks still run
+            structlog.get_logger(__name__).error(
+                "bars_emit_abandon_failed", sink=sink.name, error_type=type(exc).__name__
+            )

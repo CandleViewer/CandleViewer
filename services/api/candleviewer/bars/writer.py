@@ -264,14 +264,18 @@ class BarWriter:
                 bars_write_queue_depth.set(self._queue.qsize())
 
     def _outcome(self, entries: list[_Entry], reason: str | None) -> None:
-        """Hand `entries`' terminal outcome to the hole recorder: stored when `reason` is None."""
+        """Hand `entries`' terminal outcome to the hole recorder: stored when `reason` is None.
+        A recorder that raises is logged and never stops the drain."""
         if self._holes is None or not entries:
             return
-        keys = [_key(e) for e in entries]
-        if reason is None:
-            self._holes.written(keys)
-        else:
-            self._holes.lost(keys, reason)
+        try:
+            keys = [_key(e) for e in entries]
+            if reason is None:
+                self._holes.written(keys)
+            else:
+                self._holes.lost(keys, reason)
+        except Exception as exc:  # the drain goes on; a cancellation is never caught here
+            _log().error("bars_write_holes_outcome_failed", error=type(exc).__name__)
 
     async def _write_one(self, table: str, entries: list[_Entry]) -> None:
         """One table batch, in order: retry transient errors (bounded), never reorder."""
