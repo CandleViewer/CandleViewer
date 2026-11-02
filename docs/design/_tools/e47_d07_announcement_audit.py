@@ -129,7 +129,7 @@ PINS = (
     Pin(
         "D06",
         "E47-D06",
-        "ff8d3d610",
+        "7a9002dbd",
         "docs/design/E47/E47-D06.md",
         "design/e47-canvas-a11y",
         5443,
@@ -138,7 +138,7 @@ PINS = (
     Pin(
         "D08",
         "E47-D08",
-        "307dffee2",
+        "d08df8873",
         "docs/design/E47/E47-D08.md",
         "design/e47-motion-reduced-motion",
         5444,
@@ -253,10 +253,10 @@ HANDED = (
     ("D09 W-22", "D09:327"),
     ("D06 W-3", "D06:345"),  # E47-D06's range label, handed by its BQ-4
     ("D08 BQ-9", "D03E05:232–233"),  # the words E05-D03 ruled, handed by E47-D08's BQ-9
-    ("D08 W-4", "D08:324"),  # E47-D08's follow-live and tape-pause words ("words E47-D07")
-    ("D08 W-8", "D08:328"),
-    ("D08 W-9", "D08:329"),
-    ("D08 W-10", "D08:330"),
+    ("D08 W-4", "D08:325"),  # E47-D08's follow-live and tape-pause words ("words E47-D07")
+    ("D08 W-8", "D08:329"),
+    ("D08 W-9", "D08:330"),
+    ("D08 W-10", "D08:331"),
 )
 CAT_COUNT_LINE = 48  # CAT:48, "| E47-D07 | 34 |"
 T2_LEAD = "**The T2 paragraph"
@@ -1130,8 +1130,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-PIN",
         "spec",
         "",
-        "`ff8d3d610` (E47-D06, PR #5443)",
-        "`ff8d3d610` (E47-D06, #1305)",
+        "`7a9002dbd` (E47-D06, PR #5443)",
+        "`7a9002dbd` (E47-D06, #1305)",
     ),
     _m(
         "M-33",
