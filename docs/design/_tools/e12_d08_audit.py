@@ -142,6 +142,9 @@ PAGE_ID = re.compile(
 CVD_BOARDS = ("01", "05", "07")  # RULED BQ-27: greyscale, deuteranopia, protanopia
 CVD_KINDS = ("greyscale", "deuteranopia", "protanopia")
 SHEETS_DIR = "docs/design/_tools/sheets/e12-d08/"  # a committed board script, the drawn mode only
+DRAWN_CELL = re.compile(
+    r"drawn \(r\d+[^)]*\): board id `[^`]+`, `[^`]+` \(\d+ × \d+, sha256 `[0-9a-f]{64}`\)"
+)  # a drawn Status cell (the self-test's PENDING probe)
 
 RULED_VALUES = {
     "RULED:cancel.ms": "600",  # BQ-21: Cancel from the strip's first moment
@@ -2649,7 +2652,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "G-BOARDS",
-        "record board 01 as drawn while the rest stay PENDING",
+        "a drawn Status cell for 01 whose sha256 is not its export's (a mix while PENDING)",
         row_cell(
             "0. ",
             "01",
@@ -2663,7 +2666,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "G-UNTOUCHED",
         "commit an export while every board is PENDING",
-        lambda s: s,
+        lambda s: DRAWN_CELL.sub(STATUS_PENDING, s),
         lambda env: setattr(
             env,
             "changed_override",
