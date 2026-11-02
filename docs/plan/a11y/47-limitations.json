@@ -1,0 +1,143 @@
+{
+  "schema": 1,
+  "register": "E47-D13 known-limitations register: one row per open E47-T01 finding or pattern; dry run at 4c662fd5b",
+  "spec": "docs/design/E47/E47-D13.md §6",
+  "overrides": [],
+  "categories": {
+    "focus": "On a few screens the keyboard position can move somewhere you did not expect; report it if it affects you.",
+    "announcements": "Some messages are read out too often or not at all; report it if it affects you.",
+    "reflow": "A few windows do not fit when the page is zoomed in a lot; report it if it affects you.",
+    "contrast": "A few small items are hard to see in some themes; report it if it affects you.",
+    "colour": "A few items use colour alone to show a change; report it if it affects you.",
+    "navigation": "A few pages can be reached in only one way; report it if it affects you.",
+    "security": "One limitation is described only in our internal register; report a problem and the owner will help."
+  },
+  "limitations": [
+    {
+      "id": "A11Y-P-01",
+      "covers": ["A11Y-F-0013"],
+      "sc": ["2.4.3"],
+      "level": "A",
+      "category": "focus",
+      "plain": "Clicking outside the identity check window moves the keyboard position to the page behind it.",
+      "impact": "Keyboard and screen reader users lose their place and may type into the wrong area.",
+      "workaround": "Press Escape to close the window, then open it again from the same button.",
+      "disposition": { "kind": "fix-ticket", "ticket": "E47-S05 #1319" },
+      "disclosure": "statement"
+    },
+    {
+      "id": "A11Y-P-02",
+      "covers": ["A11Y-F-0001", "A11Y-F-0004", "A11Y-F-0007"],
+      "sc": ["2.4.3"],
+      "level": "A",
+      "category": "focus",
+      "plain": "While signing in, at the two-factor step and after a password change, the keyboard position can jump back to the start of the page.",
+      "impact": "Keyboard and screen reader users must find their place again, and nothing is read out.",
+      "workaround": "Press Tab once to reach the first field of the new step.",
+      "disposition": { "kind": "fix-ticket", "ticket": "E47-S05 #1319" },
+      "disclosure": "statement"
+    },
+    {
+      "id": "A11Y-P-05",
+      "covers": ["A11Y-F-0002", "A11Y-F-0014"],
+      "sc": ["4.1.3"],
+      "level": "AA",
+      "category": "announcements",
+      "plain": "Some messages on the sign-in and identity check screens are read out every second, or are not read out at all.",
+      "impact": "Screen reader users hear a long run of repeats, or miss that a code was not sent.",
+      "workaround": "Read the message under the field with your screen reader's reading keys.",
+      "disposition": {
+        "kind": "none",
+        "note": "the register's owner is E47-T01, the audit, which is not a fix ticket"
+      },
+      "disclosure": "statement"
+    },
+    {
+      "id": "A11Y-P-06",
+      "covers": ["A11Y-F-0008", "A11Y-F-0009", "A11Y-F-0016"],
+      "sc": ["1.4.10"],
+      "level": "AA",
+      "category": "reflow",
+      "plain": "At very high zoom the lock and identity check windows and one page do not fit, so some buttons are cut off.",
+      "impact": "People who zoom in a lot may not reach the Unlock or Confirm buttons.",
+      "workaround": "Zoom out one step, or use the in-app text size control instead.",
+      "disposition": {
+        "kind": "none",
+        "note": "the pattern's owner is E47-T01, the audit, which is not a fix ticket"
+      },
+      "disclosure": "statement"
+    },
+    {
+      "id": "A11Y-F-0015",
+      "covers": ["A11Y-F-0015"],
+      "sc": ["4.1.3"],
+      "level": "AA",
+      "category": "announcements",
+      "plain": "When the connection comes back, the app does not say so.",
+      "impact": "Screen reader users hear that the connection dropped but not that it recovered.",
+      "workaround": "Check the connection status in the status bar at the bottom of the window.",
+      "disposition": { "kind": "fix-ticket", "ticket": "E29-S07 #1028" },
+      "disclosure": "statement"
+    },
+    {
+      "id": "A11Y-F-0018",
+      "covers": ["A11Y-F-0018"],
+      "sc": ["1.4.3"],
+      "level": "AA",
+      "category": "contrast",
+      "plain": "Two links on the appearance settings page are hard to read in the dark and high-contrast themes.",
+      "impact": "People with low vision may not see the links to this statement and to the keyboard shortcuts.",
+      "workaround": "Switch to the light theme, or move to the links with Tab.",
+      "disposition": {
+        "kind": "none",
+        "closedTicket": "E05-S04 #267",
+        "note": "fix ticket closed, finding open: unowned, so it blocks sign-off"
+      },
+      "disclosure": "statement"
+    },
+    {
+      "id": "A11Y-F-0023",
+      "covers": ["A11Y-F-0023"],
+      "sc": ["1.4.11"],
+      "level": "AA",
+      "category": "contrast",
+      "plain": "The outline of the connection status chip is faint in every theme.",
+      "impact": "People with low vision may not see where the chip starts and ends.",
+      "workaround": "Read the chip's words, which name the connection state.",
+      "disposition": {
+        "kind": "none",
+        "closedTicket": "E10-S01 #304",
+        "note": "fix ticket closed, finding open: unowned, so it blocks sign-off"
+      },
+      "disclosure": "statement"
+    },
+    {
+      "id": "A11Y-F-0024",
+      "covers": ["A11Y-F-0024"],
+      "sc": ["1.4.1"],
+      "level": "A",
+      "category": "colour",
+      "plain": "The data age line changes colour as the data gets older, without changing its words.",
+      "impact": "People who cannot tell the colours apart may miss that the data is getting old.",
+      "workaround": "Read the age shown in the line, which counts the seconds.",
+      "disposition": { "kind": "fix-ticket", "ticket": "E17-D02 #325" },
+      "disclosure": "statement"
+    },
+    {
+      "id": "A11Y-F-0029",
+      "covers": ["A11Y-F-0029"],
+      "sc": ["2.4.5"],
+      "level": "AA",
+      "category": "navigation",
+      "plain": "Some settings pages can only be reached from the navigation rail.",
+      "impact": "People who prefer to search for a page have only one way in.",
+      "workaround": "Use the navigation rail; every item in it can be reached with Tab.",
+      "disposition": {
+        "kind": "none",
+        "closedTicket": "E05-S03 #266",
+        "note": "fix ticket closed, finding open: unowned, so it blocks sign-off"
+      },
+      "disclosure": "statement"
+    }
+  ]
+}
