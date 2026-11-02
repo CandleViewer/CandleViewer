@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { act, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { generated } from "@candleviewer/protocol";
@@ -218,6 +219,23 @@ const footprintRow = () =>
   within(screen.getByRole("table", { name: "Chart" })).getByRole("row", {
     name: /^Toggle footprint/,
   });
+/**
+ * A sync that was stopped (`stop()`, or its host unmounted) takes no part from then on: a later bootstrap's profile is
+ * not taken, and a rebind is not queued for the server, so no request goes out and no mark is kept.
+ */
+async function expectStopped(server: ReturnType<typeof stubServer>): Promise<void> {
+  const sent = server.calls.length;
+  const kept = m.getBindings().get("chart.footprint_toggle");
+  signIn("u-1", "owner", {
+    hotkey_profile_id: "17000000-0000-4000-8000-000000000009",
+    bindings: [{ action: "chart.footprint_toggle", keys: "Ctrl+Alt+F", scope: "chart" }],
+  }); // a later bootstrap, answering a profile
+  expect(m.getBindings().get("chart.footprint_toggle")).toBe(kept); // not taken
+  rebind("chart.footprint_toggle", "Alt+T");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(server.calls).toHaveLength(sent); // not queued: nothing went out
+  expect(window.localStorage.getItem(`${UNSENT}:u-1`)).toBeNull(); // and no mark was kept
+}
 
 describe("BQ-9: at sign-in the server wins for settings:write, unless this device holds a change it has not acknowledged", () => {
   const remapped: Keymap = {
@@ -325,6 +343,25 @@ describe("BQ-9: at sign-in the server wins for settings:write, unless this devic
     await store.flush();
     expect(m.getBindings().get("chart.footprint_toggle")).toBe("Ctrl+Alt+F");
   });
+
+  it("a profile read for another user is never handed to this one: receiveBindings keeps the signed-in user's own", () => {
+    signIn("u-1", "owner");
+    const own = m.getBindings();
+    const changed = vi.fn();
+    m.subscribeBindings(changed);
+    m.receiveBindings("u-2", new Map(own).set("chart.footprint_toggle", "Ctrl+Alt+F"));
+    expect(m.getBindings()).toBe(own);
+    expect([changed.mock.calls.length, stored(`${DEVICE}:u-1`), stored(`${DEVICE}:u-2`)]).toEqual([
+      0,
+      null,
+      null,
+    ]);
+    const theirs = new Map(own).set("chart.footprint_toggle", "Ctrl+Alt+G");
+    m.receiveBindings("u-1", theirs); // the guard does not stop the signed-in user's own
+    expect(m.getBindings()).toBe(theirs);
+    expect(stored(`${DEVICE}:u-1`)).toEqual({ "chart.footprint_toggle": "Ctrl+Alt+G" });
+    expect(changed).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("flush: on a change, on online and at sign-in; the last write wins, with no If-Match", () => {
@@ -424,7 +461,17 @@ describe("flush: on a change, on online and at sign-in; the last write wins, wit
     expect(server.calls).toHaveLength(sent);
   });
 
-  it("KeymapHost switches the sync on: the sign-in's profile applies on mount, and online flushes", async () => {
+  it("once stopped, a later bootstrap's profile is not taken and a change is not queued for the server", async () => {
+    const server = stubServer();
+    signIn("u-1", "owner");
+    const { store, stop } = startSync();
+    const write = vi.spyOn(store, "write");
+    stop();
+    await expectStopped(server);
+    expect(write).not.toHaveBeenCalled(); // the store is unset: a rebind is handed to no one
+  });
+
+  it("KeymapHost switches the sync on: the sign-in's profile applies on mount, online flushes, and unmounting switches it off", async () => {
     const server = stubServer();
     server.refuse = () => problem(503, "store_unavailable");
     signIn("u-1", "owner", {
@@ -447,6 +494,35 @@ describe("flush: on a change, on online and at sign-in; the last write wins, wit
     });
     expect(server.rows.map((r) => r.isActive)).toEqual([true]);
     unmount();
+    await expectStopped(server);
+  });
+
+  it("under StrictMode the host's second mount keeps the page's one store: a change not acknowledged is sent once, a later one in the same session", async () => {
+    const server = stubServer();
+    const device = JSON.stringify({ "chart.footprint_toggle": "Alt+Q" });
+    window.localStorage.setItem(`${DEVICE}:u-1`, device);
+    window.localStorage.setItem(`${UNSENT}:u-1`, device); // an earlier page's change, never acknowledged
+    signIn("u-1", "owner");
+    const { unmount } = render(
+      <StrictMode>
+        <m.KeymapHost />
+      </StrictMode>,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    const id = server.rows[0]?.id;
+    expect(lines(server.calls)).toEqual([
+      `GET ${VIEW_AS}`,
+      `GET ${PROFILES}`,
+      `POST ${PROFILES}`,
+      `POST ${PROFILES}/${id}/activate`,
+    ]); // one create and one activation: the remount neither doubles the send nor drops it
+    expect(window.localStorage.getItem(`${UNSENT}:u-1`)).toBeNull();
+    rebind("chart.footprint_toggle", "Alt+W");
+    await vi.advanceTimersByTimeAsync(0);
+    // the page's one store, still in its session: the view-as context is not read again
+    expect(lines(server.calls).slice(4)).toEqual([`GET ${PROFILES}`, `PUT ${PROFILES}/${id}`]);
+    unmount();
+    await expectStopped(server);
   });
 });
 
