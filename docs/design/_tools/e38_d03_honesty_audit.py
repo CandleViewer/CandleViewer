@@ -8,7 +8,7 @@ Standalone and offline, shaped on the merged E10-D03 tool (`e10_d03_shell_audit.
 `docs/research/_tools/cvd_simulate.py` (`simulate`, `delta_e76`; JND 5.0) from the working tree
 and never re-implements them. It reads the spec and the pins file from the working tree and every
 cited file AS TEXT with `git show` at the pinned base (`BASE`), except E38-D01, which is read at
-#5451's approved head (`D01_REF`) until it merges. Default-deny: a gate that cannot read its
+`main`'s merge of #5451 (`D01_REF`). Default-deny: a gate that cannot read its
 input FAILs.
 
 Gates (each FAIL led by its name):
@@ -87,7 +87,7 @@ PINS_REL = "docs/design/_tools/e38_d03_ruled_pins.txt"
 CAT_REL = "docs/plan/14-screens-catalogue.md"
 OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL, CAT_REL)
 BASE = "c327ed438c01c5bab9247890dd00f5dce3717f97"  # origin/main when written; re-pinned by content
-D01_REF = "4774b2f8cd7b67a1ee934fe88546568f7aa3e34c"  # #5451's approved head; re-pinned at merge
+D01_REF = "df806df6a1394fb8a1511841a5ed897b2a6eeaf3"  # main's merge of #5451 (E38-D01)
 TOKENS = ROOT / "packages" / "ui" / "tokens"
 CVD_PATH = ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py"
 CONTRAST_PATH = ROOT / "docs" / "design" / "_tools" / "contrast_check.py"
