@@ -106,6 +106,10 @@ describe("SCR-157 update-available banner", () => {
     welcome("cv.v1", "0.2.0");
     expect(screen.getByText("Update available")).toBeInTheDocument();
     expect(screen.getByText(SENTENCE)).toBeInTheDocument();
+    // E10-Q03: its words sit in a landmark (axe `region`, moderate, was 24 cells of the shell sweep)
+    expect(screen.getByRole("region", { name: "Software update" })).toContainElement(
+      screen.getByText(SENTENCE),
+    );
     const region = screen.getByRole("status");
     expect([
       spoken(),

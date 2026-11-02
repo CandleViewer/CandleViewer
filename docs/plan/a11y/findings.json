@@ -899,7 +899,7 @@
           "verdict": "n/a (not applicable: not an authentication step)"
         }
       },
-      "noFindings": true
+      "noFindings": false
     },
     {
       "id": "SCR-012",
@@ -13243,6 +13243,56 @@
       "priority": "P2",
       "alsoOn": ["SCR-123"],
       "evidence": ["docs/qa/a11y/e47-t01-sweep.md#105-disagreements-for-adjudication"]
+    },
+    {
+      "id": "A11Y-F-0030",
+      "screenId": "SCR-013",
+      "state": "cheatsheet open",
+      "componentId": "CMP-094",
+      "wcagSc": "1.4.3",
+      "level": "AA",
+      "severity": "serious",
+      "reproduction": "Environment: apps/web built at the audited sha (base 46e6acd2d plus this PR), `vite preview` on <loopback>, Playwright Chromium headless, API stubbed with apps/web/e2e/support and the WS harness; committed driver docs/plan/a11y/_tools/e10-q03-shell.qa.ts (E10-Q03 #302). Signed-in owner on /journal, press Ctrl+/. Run axe (AXE_GATE_TAGS plus best-practice) in dark and high-contrast.",
+      "detection": {
+        "source": "automated",
+        "tool": "axe-core 4.14 via @axe-core/playwright (e10-q03-shell.qa.ts)",
+        "heuristic": false
+      },
+      "owningTicket": "E10-Q03 #302",
+      "status": "fixed",
+      "title": "The cheatsheet's Customise link took the browser's default link colour: below 4.5:1 on the raised surface in dark and high contrast",
+      "observed": "axe color-contrast (serious) on a[href$=\"hotkeys\"] in 8 of 12 cells (dark and high-contrast, both densities, both motion states); the link had no class and no colour token.",
+      "expected": "1.4.3: link text reaches 4.5:1 on color.surface.raised in every theme; the CMP-021 Link atom (color.text.link, always underlined) is used.",
+      "priority": "P1",
+      "evidence": [
+        "docs/qa/a11y/e10-q03-shell-v0.md#3-findings",
+        "fixed-in: E10-Q03 PR 1 (Refs #302), docs/qa/a11y/e10-q03-shell-v0.md"
+      ]
+    },
+    {
+      "id": "A11Y-F-0031",
+      "screenId": "SCR-011",
+      "state": "rail collapsed",
+      "componentId": "CMP-071",
+      "wcagSc": "1.4.13",
+      "level": "AA",
+      "severity": "moderate",
+      "reproduction": "Environment: apps/web built at the audited sha (base 46e6acd2d plus this PR), `vite preview` on <loopback>, Playwright Chromium headless, API stubbed with apps/web/e2e/support and the WS harness; committed driver docs/plan/a11y/_tools/e10-q03-shell.qa.ts (E10-Q03 #302). Owner on /journal, collapse the rail, Tab to a rail link. The hint appears only on pointer hover (title attribute).",
+      "detection": {
+        "source": "automated",
+        "tool": "the #304 QA ruling 6558083589 (SC 1.4.13 hint must be dismissible, hoverable and persistent), then Playwright (shell-chrome.spec.ts)",
+        "heuristic": false
+      },
+      "owningTicket": "E10-Q03 #302",
+      "status": "fixed",
+      "title": "The collapsed rail's name, badge and key hint were a native title: no keyboard focus, not dismissible, not hoverable",
+      "observed": "NavRail.tsx set title on each collapsed NavLink; a keyboard user saw no hint, and the hint could not be dismissed or hovered (1.4.13). #304 QA ruling 4, #265 ruling 8.",
+      "expected": "1.4.13: the hint shows on hover and keyboard focus, stays while hovered, and Esc dismisses it with focus kept: the CMP-016 Tooltip in echo mode (aria-hidden, so nothing is read twice).",
+      "priority": "P2",
+      "evidence": [
+        "docs/qa/a11y/e10-q03-shell-v0.md#3-findings",
+        "fixed-in: E10-Q03 PR 1 (Refs #302), docs/qa/a11y/e10-q03-shell-v0.md"
+      ]
     }
   ]
 }

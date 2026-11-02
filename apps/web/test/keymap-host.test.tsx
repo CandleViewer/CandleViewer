@@ -250,6 +250,8 @@ describe("SCR-013 cheatsheet", () => {
       "href",
       "/settings/hotkeys",
     );
+    // E10-Q03: the CMP-021 atom's link colour, not the UA's blue (1.4.3, serious in dark and high contrast)
+    expect(screen.getByRole("link", { name: "Customise" })).toHaveClass("cv-link");
     expect(screen.getAllByLabelText(/conflicting binding/).length).toBeGreaterThan(0);
   });
 

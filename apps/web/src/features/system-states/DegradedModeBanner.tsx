@@ -71,7 +71,7 @@ export function DegradedModeBanner({ issues, onDismiss }: DegradedModeBannerProp
     target?.focus();
   };
   return (
-    <div ref={listRef} style={LIST}>
+    <div ref={listRef} role="region" aria-label="System notices" style={LIST}>
       {issues.map((issue, index) => {
         const s = SEVERITY[issue.severity];
         return (
