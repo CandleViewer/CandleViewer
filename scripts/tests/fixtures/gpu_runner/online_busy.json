@@ -1,0 +1,34 @@
+{
+  "total_count": 1,
+  "runners": [
+    {
+      "id": 1,
+      "name": "gpu-01",
+      "os": "linux",
+      "status": "online",
+      "busy": true,
+      "labels": [
+        {
+          "id": 0,
+          "name": "self-hosted",
+          "type": "read-only"
+        },
+        {
+          "id": 1,
+          "name": "Linux",
+          "type": "read-only"
+        },
+        {
+          "id": 2,
+          "name": "X64",
+          "type": "read-only"
+        },
+        {
+          "id": 3,
+          "name": "gpu-bench",
+          "type": "custom"
+        }
+      ]
+    }
+  ]
+}

@@ -255,3 +255,66 @@ describe("run(): a failure to run is surfaced, a regression is not", () => {
     expect(t.out.appended[0]).toContain("FAILED TO RUN");
   });
 });
+
+// E03-T14: `--enforce` (GPU mode) turns a like-for-like regression above 5 % into CI-BEN-001; the
+// recording mode (hosted fallback) never does.
+describe("run(): --enforce", () => {
+  // 1.00 -> 1.05 is exactly 5 % (not above it); 1.00 -> 1.06 is 6 %. Both clear the 0.2 ms floor
+  // only when scaled, so the frames are in the tens of ms.
+  const at = (ms: number, over: Obj = {}) => JSON.stringify(report([frame("B1", ms)], over));
+  const args = (dir: string, ...extra: string[]) => [
+    "--runtime",
+    "chromium",
+    "--report-dir",
+    dir,
+    "--baseline",
+    join(dir, "base.json"),
+    ...extra,
+  ];
+
+  it("exits 1 with CI-BEN-001 above 5 % and 0 at exactly 5 %", () => {
+    const over = dirWith({ "chromium-1.json": at(10.6), "base.json": at(10) });
+    const t = io();
+    expect(run(args(over, "--enforce"), t.io)).toBe(1);
+    expect(t.out.error.join("\n")).toMatch(/CI-BEN-001.*B1 frame p95/);
+    expect(t.out.log[0]).toContain("REGRESSION (enforced)");
+    const at5 = dirWith({ "chromium-1.json": at(10.5), "base.json": at(10) });
+    expect(run(args(at5, "--enforce"), io().io)).toBe(0);
+  });
+  it("records the same regression without failing when --enforce is off", () => {
+    const over = dirWith({ "chromium-1.json": at(10.6), "base.json": at(10) });
+    const t = io();
+    expect(run(args(over), t.io)).toBe(0);
+    expect(t.out.log[0]).toContain("REGRESSION (recorded)");
+  });
+  it("does not fail a 5-rep run against a 3-rep baseline: not like-for-like, reported", () => {
+    const reps = (n: number) => ({
+      config: { reps: n, durationMs: 20000, soakMs: 1, bars: 100000 },
+    });
+    const dir = dirWith({ "chromium-1.json": at(20, reps(5)), "base.json": at(10, reps(3)) });
+    for (const flags of [["--enforce"], []]) {
+      const t = io();
+      expect(run(args(dir, ...flags), t.io)).toBe(0);
+      expect(t.out.log[0]).toContain("config.reps differs");
+    }
+    const t = io();
+    run(args(dir, "--enforce"), t.io);
+    expect(t.out.log.join("\n")).toMatch(/::warning .*CI-BEN-002.*not enforced/);
+  });
+  it("does not enforce with no baseline, and a missing report still exits 1 (CI-BEN-002)", () => {
+    const dir = dirWith({ "chromium-1.json": at(99) });
+    expect(run(["--runtime", "chromium", "--report-dir", dir, "--enforce"], io().io)).toBe(0);
+    const t = io();
+    expect(run(["--runtime", "chromium", "--report-dir", "/nonexistent", "--enforce"], t.io)).toBe(
+      1,
+    );
+    expect(t.out.error[0]).toContain("CI-BEN-002");
+  });
+  it("compares draw calls too", () => {
+    const withDraws = (n: number) => JSON.stringify(report([{ ...frame("B5", 10), drawCalls: n }]));
+    const dir = dirWith({ "chromium-1.json": withDraws(43), "base.json": withDraws(40) });
+    const t = io();
+    expect(run(args(dir, "--enforce"), t.io)).toBe(1);
+    expect(t.out.error.join("\n")).toContain("B5 draw calls");
+  });
+});

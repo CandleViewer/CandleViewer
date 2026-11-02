@@ -63,8 +63,8 @@ PR opened/updated, merge group queued for main, or merge train dispatched (.gith
 │                                      read-only-scans (security-auth, pip-audit, register
 │                                      pins, npm-audit, license-scan)   (CI-SEC-001..005)
 ├─ _job-coverage.yml (js/py filters) → per-package threshold            (CI-COV-001..004)
-├─ _job-engine-bench.yml (engine/protocol filters) → GPU benchmark vs baseline
-│                                      (CI-BEN-001, stub pending E03-T14)
+├─ _job-engine-bench.yml (engine/protocol filters) → benchmark vs baseline, 5 reps; GPU runner on
+│                                      the merge queue, hosted fallback otherwise (CI-BEN-001..004)
 └─ ci-required resolver (always)     → final merge gate                 (CI-GATE-001/002)
 
 PR into main opened/edited/pushed/reopened/ready/(un)labeled (.github/workflows/pr-metadata.yml)
@@ -336,7 +336,11 @@ files no issue either.
 requires; every lane above feeds it. Read its job summary top to bottom:
 
 - A lane with filter `false` and result `skipped` is **fine** — not
-  applicable to this diff.
+  applicable to this diff. `engine-bench` is named when it does not apply: the step prints
+  `engine-bench: not applicable — no engine or protocol path changed` as a notice and in a
+  "lanes not applicable" table in the job summary (the other lanes stay silent). That is a
+  reported success, never a failure. Note that the `protocol` filter also covers `Makefile`,
+  `.npmrc` and `pnpm-workspace.yaml`, so a change to any of them runs the bench lane.
 - A lane with filter `true` and result anything other than `success` is
   **CI-GATE-001** — the PR is genuinely red on an applicable lane; go to
   that lane's own log.
@@ -587,6 +591,68 @@ index alone, removing nothing.
   the mirror holds only where the daemon records a digest on `docker tag` (the containerd image
   store); on a daemon that does not, the step fails with the code, naming the compose reference
   that does not resolve, and a re-run is the answer.
+
+### CI-BEN-* — engine benchmark lane (`_job-engine-bench.yml`, `tools/ci/gpu_runner_health.py`)
+
+`engine-bench` (C-9.1 #16) runs the chart-engine matrix B1-B5 and B9, the median of 5 repetitions
+(`--reps 5`), then `bench/matrix/ci-compare.mjs` against the committed baseline. Where it runs
+(E03-K01 policy P4): the **`route`** job picks the runner. The self-hosted GPU runner, named by the
+repository variable `CV_GPU_BENCH_RUNNER` (a JSON label array, for example
+`["self-hosted","Linux","X64","gpu-bench"]`), is used only for `merge_group`, `schedule` and
+`workflow_dispatch` on `main`. A `pull_request` (a fork included), and any other event or ref,
+always runs on the GitHub-hosted **fallback** (headless Chromium on SwiftShader). Today no runner is
+registered, so the fallback is the active path everywhere; its numbers are software-GL regression
+tracking, never reference-hardware evidence. The job summary and the `route` notice say which mode
+ran.
+
+- **CI-BEN-001** (regression above 5 %): GPU mode only. A like-for-like frame p95, B7 decode, B9
+  cold-init or draw-call figure is more than 5 % (and at least 0.2 ms) above the baseline. The
+  message names the metrics; the summary table has the figures. Re-run once to rule out noise; a
+  real regression is fixed in the PR. Never move the baseline to make it pass: a baseline update
+  is its own PR with CODEOWNER approval and a written cause (ADR-0013 rule 4). The fallback prints
+  `REGRESSION (recorded)` and does not fail.
+- **CI-BEN-002** (run failed, or not like-for-like): the harness produced no report, an invalid
+  one, or a run error (watchdog, early exit), so the job is red; the report and summary are still
+  uploaded as `engine-bench-matrix`. Or, as a warning only, the run is not comparable with the
+  baseline (reps, fixture, driver, flag set or hardware class differ): it is reported and never
+  enforced. The committed baseline was recorded at 3 repetitions, so until a 5-repetition baseline
+  is committed from `main` (a separate `bench:baseline` PR) every run says `config.reps differs`;
+  that is expected and not a failure.
+- **CI-BEN-003** (GPU runner unavailable, jobs queue): the variable is set but the runner is
+  offline, absent, the variable is malformed, or its health cannot be read (with the variable set and
+  no token: `token not configured: health unknown (no CV_RUNNER_HEALTH_TOKEN)`), or the runner has
+  been busy on 3 consecutive hourly checks. The hourly `gpu-runner-health.yml` opens or comments on one
+  issue titled "GPU bench runner unavailable"; one busy check is not an alert. The busy streak is a
+  tiny JSON file carried between runs by `actions/cache`, restored and saved only by the separate
+  secret-free `streak` job (the `check` job holds the token and restores no cache; a cache miss counts
+  as zero). The `route` job holds no secret (a lane never does), so it trusts the variable and the fallback
+  is NOT taken for an unfit runner: a busy, dead or missing runner QUEUES the job (the fallback is
+  taken only when the variable is unset or malformed), and the 45-minute job timeout does not start until a runner
+  picks it up. Re-route with the procedure below.
+- **CI-BEN-004** (no GPU runner registered: fallback active): informational. The variable is
+  unset; nothing is wrong and no issue is opened. The message is exactly
+  `no GPU runner registered: fallback active`.
+
+**Fallback procedure (runner unavailable, ADR-0013 rule 4).**
+
+1. Re-route, do not edit workflow conditions: an owner or admin unsets (or empties) the repository
+   variable `CV_GPU_BENCH_RUNNER`. Every lane then runs on the hosted fallback (CI-BEN-004) and the
+   gate is green when the fallback run is. Set the variable again when the runner is back; the next
+   hourly check confirms it.
+2. The fallback records, it does not enforce the 5 %: for a change that needs the GPU number, the
+   Architect records an explicit manual-override approval as a PR comment (§12), naming the
+   reason and the expected restoration date, and logs it in §11.
+3. **Hard precondition for registering a runner:** before the runner is registered or
+   `CV_GPU_BENCH_RUNNER` is set, it sits in an organisation runner group with a workflow allow-list
+   (not attached to the repository directly), or behind K01's host pre-job check. E03-K01 marks
+   plan-tier allow-list support UNVERIFIED: confirm it first. Do not register the runner until this
+   holds.
+4. To register a runner (owner items, only after step 3 holds): the GPU host with the isolation of E03-K01 section 7 (ephemeral,
+   non-root, no host mounts, read-only root, no secrets, egress allow-list, a runner group limited to
+   this repository, with the allowed refs `refs/heads/main` (schedule and dispatch) and
+   `refs/heads/gh-readonly-queue/main/*` (merge-queue runs; `main` alone would block them)), the repository variable `CV_GPU_BENCH_RUNNER`, and a fine-grained
+   read-only Administration token as the secret `CV_RUNNER_HEALTH_TOKEN` (for the hourly check only).
+   Turning the 5 % into the required gate is E11-T06 (E03-K01 trigger T5).
 
 ### CI-E2E-* / CI-A11Y-* — Playwright + accessibility
 
@@ -1492,7 +1558,7 @@ previous entry.
 
 ## 12. Benchmark manual-override procedure
 
-- The GPU benchmark lane (`_job-engine-bench.yml`, filled in by `E03-T14`)
+- The benchmark lane (`_job-engine-bench.yml`, CI-BEN-001..004 in §4)
   compares against a pinned baseline on a pinned self-hosted runner
   (ADR-0013 rule 4). If that runner is genuinely unavailable (hardware
   failure, maintenance window):

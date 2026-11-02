@@ -11,7 +11,9 @@ scheduled one, so the per-signal group sits on the seconds-long report job inste
 `chaos-ws` job, and registers here or this suite fails. So is e2e-auth-real.yml (#2490, E09-Q02's
 real-backend auth lane), from main only. So is perf-recorder-nightly.yml (#481, E16-Q04): its
 `recorder-perf-issue` job reports a failed recorder budget, and chaos-recorder-nightly.yml, whose
-`chaos-recorder-issue` job reports a failed `chaos-recorder` job."""
+`chaos-recorder-issue` job reports a failed `chaos-recorder` job. So is gpu-runner-health.yml
+(E03-T14): its `alert` job reports an unfit GPU bench runner, never when none is registered.
+"""
 
 from __future__ import annotations
 
@@ -41,6 +43,7 @@ NIGHTLIES = (
     "e2e-auth-real.yml",
     "perf-recorder-nightly.yml",
     "chaos-recorder-nightly.yml",
+    "gpu-runner-health.yml",
 )
 BOT = "github-actions[bot]"
 #: Jobs that read more than `contents` and write nothing: #2825's guard lists runs and jobs.
@@ -125,6 +128,18 @@ SIGNALS = {
         "perf: recorder nightly budget failed",
         "perf,area/recorder-replay",
     ),
+    # E03-T14: the hourly GPU bench runner health check; an unfit, set runner is the verdict.
+    ("gpu-runner-health.yml", "alert"): (
+        ["check", "streak"],
+        (
+            "${{ always() && (needs.check.result != 'success' "
+            "|| needs.check.outputs.alert == 'true' "
+            "|| needs.streak.outputs.alert == 'true') }}"
+        ),
+        "gpu-runner-health",
+        "GPU bench runner unavailable",
+        "area/infra-devops,priority/p1",
+    ),
 }
 #: The verdicts the measuring jobs hand over: the conditions of the issue steps they replace, less
 #: `failure()`, which a failed step implies.
@@ -149,7 +164,10 @@ GATE_DIFF = "services/api/bench/reports/gate-diff.md"
 HANDOFFS = {
     ("fixture-drift.yml", "drift"): ("${{ runner.temp }}/drift.txt", "drift-issue"),
     ("perf-ingestion-nightly.yml", "ingestion-soak"): (GATE_DIFF, "perf-pack-issue"),
-    ("perf-ingestion-nightly.yml", "perf-pack-full"): (GATE_DIFF, "perf-pack-full-issue"),
+    ("perf-ingestion-nightly.yml", "perf-pack-full"): (
+        GATE_DIFF,
+        "perf-pack-full-issue",
+    ),
 }
 #: A stand-in `gh`: logs [argv, the --body-file's text] per call; `api` prints GH_PAGES' text and
 #: exits GH_EXIT, so a failed listing can still print a page that parses.
@@ -181,21 +199,32 @@ def _load(name: str) -> dict[Any, Any]:
 
 def test_nightly_issue_is_only_called_with_four_required_string_inputs() -> None:
     doc = _load(REUSABLE)
-    assert list(doc[True]) == ["workflow_call"] and list(doc[True]["workflow_call"]) == ["inputs"]
+    assert list(doc[True]) == ["workflow_call"] and list(
+        doc[True]["workflow_call"]
+    ) == ["inputs"]
     inputs = doc[True]["workflow_call"]["inputs"]
     assert list(inputs) == ["signal", "title-prefix", "labels", "body"]
-    assert [(i["type"], i["required"]) for i in inputs.values()] == [("string", True)] * 4
+    assert [(i["type"], i["required"]) for i in inputs.values()] == [
+        ("string", True)
+    ] * 4
     assert doc["permissions"] == {}
 
 
 def test_report_job_alone_writes_runs_only_runner_tools_and_queues_per_signal() -> None:
     (name, job), *others = _load(REUSABLE)["jobs"].items()
-    assert (name, others, job["name"], job["runs-on"]) == ("report", [], "report", "ubuntu-latest")
+    assert (name, others, job["name"], job["runs-on"]) == (
+        "report",
+        [],
+        "report",
+        "ubuntu-latest",
+    )
     assert (job["timeout-minutes"], job["permissions"]) == (5, {"issues": "write"})
     # Not cancel-in-progress: a second report of one signal waits, then finds the first's issue.
     group = "nightly-issue-${{ inputs.signal }}"
     assert job["concurrency"] == {"group": group, "cancel-in-progress": False}
-    (step,) = job["steps"]  # no checkout and no action share the job with the write token
+    (step,) = job[
+        "steps"
+    ]  # no checkout and no action share the job with the write token
     assert set(step) == {"name", "env", "run"} and "${{" not in step["run"]
     assert step["env"] == {
         "GH_TOKEN": "${{ github.token }}",
@@ -213,7 +242,11 @@ def test_nightlies_file_nothing_themselves_and_only_their_callers_can_write() ->
         assert "gh issue" not in (WORKFLOWS / name).read_text(encoding="utf-8")
         doc = _load(name)
         # #3449: no workflow-level group; the per-signal one is on the report job.
-        assert doc["permissions"] == {"contents": "read"} and "concurrency" not in doc
+        # gpu-runner-health.yml (E03-T14) holds `permissions: {}` at the top, per job below it.
+        assert (
+            doc["permissions"] in ({"contents": "read"}, {})
+            and "concurrency" not in doc
+        )
         for job_id, job in doc["jobs"].items():
             held = job.get("permissions")
             if (name, job_id) in READERS:
@@ -221,7 +254,9 @@ def test_nightlies_file_nothing_themselves_and_only_their_callers_can_write() ->
             elif held != {"contents": "read"} and held is not None:
                 writers.add((name, job_id))
     assert writers == set(SIGNALS)
-    for path in sorted(WORKFLOWS.glob("*.y*ml")):  # no other caller, and one caller per signal
+    for path in sorted(
+        WORKFLOWS.glob("*.y*ml")
+    ):  # no other caller, and one caller per signal
         for job_id, job in (_load(path.name).get("jobs") or {}).items():
             if job.get("uses") == USES:
                 signals[(path.name, job_id)] = job["with"]["signal"]
@@ -229,7 +264,9 @@ def test_nightlies_file_nothing_themselves_and_only_their_callers_can_write() ->
 
 
 @pytest.mark.parametrize(("workflow", "caller"), sorted(SIGNALS))
-def test_each_signal_reports_through_the_reusable_workflow(workflow: str, caller: str) -> None:
+def test_each_signal_reports_through_the_reusable_workflow(
+    workflow: str, caller: str
+) -> None:
     needs, condition, signal, prefix, labels = SIGNALS[(workflow, caller)]
     job = _load(workflow)["jobs"][caller]
     # A job that calls a workflow takes no runs-on, timeout-minutes or steps of its own. always():
@@ -241,7 +278,12 @@ def test_each_signal_reports_through_the_reusable_workflow(workflow: str, caller
     assert (job["with"]["signal"], job["with"]["title-prefix"]) == (signal, prefix)
     assert job["with"]["labels"] == labels and RUN_URL in job["with"]["body"]
     report = f"${{{{ needs.{needs}.outputs.report }}}}"
-    carries = (workflow, needs) in HANDOFFS and HANDOFFS[(workflow, needs)][1] == caller
+    # A multi-job `needs` (the gpu-runner-health alert) never carries a measuring job's report.
+    carries = (
+        isinstance(needs, str)
+        and (workflow, needs) in HANDOFFS
+        and HANDOFFS[(workflow, needs)][1] == caller
+    )
     assert (report in job["with"]["body"]) is carries
 
 
@@ -249,19 +291,26 @@ def test_each_signal_reports_through_the_reusable_workflow(workflow: str, caller
 def test_measuring_jobs_hand_over_the_conditions_of_the_steps_they_replace(
     workflow: str, job: str, output: str
 ) -> None:
-    assert _load(workflow)["jobs"][job]["outputs"][output] == VERDICTS[(workflow, job, output)]
+    assert (
+        _load(workflow)["jobs"][job]["outputs"][output]
+        == VERDICTS[(workflow, job, output)]
+    )
 
 
 def _bash(tmp_path: Path, run: str, env: dict[str, str]) -> tuple[int, str]:
     """Run a step's script as the runner does (`bash -e`) in tmp_path, with a stand-in `gh` first
-    on PATH and HOME in tmp_path (no stored gh auth, no network): exit code and output."""
+    on PATH and HOME in tmp_path (no stored gh auth, no network): exit code and output.
+    """
     if not shutil.which("bash"):  # CI must run these fail-closed proofs
         (pytest.fail if os.environ.get("CI") else pytest.skip)("bash runs the step")
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     (bin_dir / "gh").write_text(f"#!{sys.executable}\n{FAKE_GH}", encoding="utf-8")
     (bin_dir / "gh").chmod(0o755)
-    base = {"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}", "HOME": str(tmp_path)}
+    base = {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "HOME": str(tmp_path),
+    }
     proc = subprocess.run(
         ["bash", "-e", "-c", run],
         cwd=tmp_path,
@@ -281,7 +330,10 @@ def test_handoff_passes_the_capped_report_under_a_random_delimiter(
     spec = _load(workflow)["jobs"][job]
     assert spec["outputs"]["report"] == "${{ steps.handoff.outputs.report }}"
     (step,) = [step for step in spec["steps"] if step.get("id") == "handoff"]
-    assert (step["if"], step["env"]) == ("failure()", {"REPORT": HANDOFFS[(workflow, job)][0]})
+    assert (step["if"], step["env"]) == (
+        "failure()",
+        {"REPORT": HANDOFFS[(workflow, job)][0]},
+    )
     report, output = tmp_path / "report.md", tmp_path / "output"
     # A line that a fixed delimiter would match cannot end the value or add an output.
     report.write_text("EOF\nstream=x\n" + "y" * 70000, encoding="utf-8")
@@ -291,12 +343,14 @@ def test_handoff_passes_the_capped_report_under_a_random_delimiter(
         assert rc == 0, out
         report.unlink(missing_ok=True)
     text = output.read_text(encoding="utf-8")
-    first, second = re.findall(r"report<<([0-9a-f]{32})\n(.*?)\n\1\n", text, re.S)
+    first, second = re.findall(r"report<<([0-9a-f]{32})\n(.*?)\n\1\n", text, re.DOTALL)
     assert first[1] == "EOF\nstream=x\n" + "y" * 59987 and first[0] != second[0]
     assert second[1] == "(no report produced)\n"
 
 
-def _issue(number: int, title: str, login: str = BOT, pr: bool = False) -> dict[str, Any]:
+def _issue(
+    number: int, title: str, login: str = BOT, pr: bool = False
+) -> dict[str, Any]:
     issue = {"number": number, "title": title, "user": {"login": login}}
     return issue | ({"pull_request": {"url": "u"}} if pr else {})
 
@@ -306,10 +360,18 @@ def _report(
 ) -> tuple[int, str, list[list[Any]]]:
     """Run the report step's script on these listing pages: exit code, output and gh calls."""
     (step,) = _load(REUSABLE)["jobs"]["report"]["steps"]
-    temp, log, listing = tmp_path / "runner-temp", tmp_path / "gh.log", tmp_path / "pages.json"
+    temp, log, listing = (
+        tmp_path / "runner-temp",
+        tmp_path / "gh.log",
+        tmp_path / "pages.json",
+    )
     temp.mkdir()
     listing.write_text(json.dumps(pages), encoding="utf-8")
-    env = {"GH_LOG": str(log), "GH_PAGES": str(listing), "GH_EXIT": values.pop("exit", "0")}
+    env = {
+        "GH_LOG": str(log),
+        "GH_PAGES": str(listing),
+        "GH_EXIT": values.pop("exit", "0"),
+    }
     env |= {"RUNNER_TEMP": str(temp), "GH_REPO": "owner/repo", "SIGNAL": "perf-storage"}
     env |= {"TITLE_PREFIX": PREFIX, "LABELS": LABELS, "BODY": "Run: r."} | values
     rc, out = _bash(tmp_path, step["run"], env)
@@ -317,7 +379,9 @@ def _report(
     return rc, out, [json.loads(line) for line in lines]
 
 
-def test_report_opens_a_dated_issue_with_the_labels_when_none_is_open(tmp_path: Path) -> None:
+def test_report_opens_a_dated_issue_with_the_labels_when_none_is_open(
+    tmp_path: Path,
+) -> None:
     rc, out, calls = _report(tmp_path, [[]])
     assert rc == 0, out
     (listing, _), (create, body) = calls
@@ -327,11 +391,18 @@ def test_report_opens_a_dated_issue_with_the_labels_when_none_is_open(tmp_path: 
     assert (create[-2], body) == ("--body-file", "Run: r.\n")
 
 
-def test_report_comments_on_the_newest_open_bot_issue_of_the_signal(tmp_path: Path) -> None:
-    pages = [[_issue(n, f"{PREFIX} (2026-10-{d})") for n, d in ((2219, 11), (3429, 18), (1, 9))]]
+def test_report_comments_on_the_newest_open_bot_issue_of_the_signal(
+    tmp_path: Path,
+) -> None:
+    pages = [
+        [
+            _issue(n, f"{PREFIX} (2026-10-{d})")
+            for n, d in ((2219, 11), (3429, 18), (1, 9))
+        ]
+    ]
     rc, out, calls = _report(tmp_path, pages)
     assert rc == 0, out
-    (_, (comment, body)) = calls
+    _, (comment, body) = calls
     assert comment[:3] == ["issue", "comment", "3429"] and comment[3] == "--body-file"
     assert body == "Run: r.\n" and "commented on issue #3429" in out
 
@@ -343,10 +414,19 @@ def test_report_ignores_other_authors_pull_requests_and_other_titles(
     title = f"{PREFIX} (2026-10-19)"
     # All newer than the bot's issue, none a match: another account, another app's bot (only
     # github-actions[bot] counts), a pull request, the prefix after a word, another signal.
-    others = [_issue(9005, title, login="someone"), _issue(9004, title, login="dependabot[bot]")]
+    others = [
+        _issue(9005, title, login="someone"),
+        _issue(9004, title, login="dependabot[bot]"),
+    ]
     others += [_issue(9003, title, pr=True), _issue(9002, f"Re: {title}")]
-    others.append(_issue(9001, "perf: ingestion nightly soak/burst regression (2026-10-19)"))
-    pages = [others, [_issue(2219, title)]] if on_page_two else [[*others, _issue(2219, title)]]
+    others.append(
+        _issue(9001, "perf: ingestion nightly soak/burst regression (2026-10-19)")
+    )
+    pages = (
+        [others, [_issue(2219, title)]]
+        if on_page_two
+        else [[*others, _issue(2219, title)]]
+    )
     rc, out, calls = _report(tmp_path, pages)
     assert (rc, calls[-1][0][:3]) == (0, ["issue", "comment", "2219"]), out
     (tmp_path / "none").mkdir()  # and with no bot issue of the signal, it opens one
@@ -373,14 +453,18 @@ def test_report_files_nothing_when_the_listing_fails(tmp_path: Path) -> None:
         ("LABELS", "perf\n::warning::cv-mark"),
     ],
 )
-def test_report_fails_closed_on_a_bad_input(tmp_path: Path, name: str, value: str) -> None:
+def test_report_fails_closed_on_a_bad_input(
+    tmp_path: Path, name: str, value: str
+) -> None:
     rc, out, calls = _report(tmp_path, [[]], **{name: value})
     assert (rc, calls) == (1, []) and "::error title=nightly-issue::" in out
     # Never echoed, so an input cannot add a workflow command (the cv-mark cases) to the log.
     assert "cv-mark" not in out and (not value or value not in out)
 
 
-@pytest.mark.parametrize(("size", "cut"), [(59999, False), (60000, True), (70000, True)])
+@pytest.mark.parametrize(
+    ("size", "cut"), [(59999, False), (60000, True), (70000, True)]
+)
 def test_report_caps_an_overlong_body(tmp_path: Path, size: int, cut: bool) -> None:
     # With the step's newline, 60000 bytes pass whole and one more is cut: under GitHub's 65536.
     rc, out, calls = _report(tmp_path, [[]], BODY="z" * size)
