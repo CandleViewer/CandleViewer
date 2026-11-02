@@ -30,6 +30,7 @@ import { AccessibilitySettingsScreen } from "../features/a11y-preferences/Access
 import { SessionsSection } from "../features/session/SessionsSection";
 import { getMeClaims } from "../lib/auth/meCache";
 import { ShellLayout } from "../features/app-shell/ShellLayout";
+import { ShellLoading } from "../features/app-shell/ShellLoading";
 import { ScreenRoot } from "../features/app-shell/ScreenRoot";
 
 function elementFor(routeId: string, owner: string | null): RouteObject["element"] {
@@ -129,6 +130,9 @@ function buildRoutes(): RouteObject[] {
     {
       id: "shell",
       element: <ShellLayout />,
+      // A first visit to a lazy screen (`LAZY_SCREENS`) draws this, not nothing, while its chunk loads; the shell's
+      // chrome still waits for the guards (A-5335-d06).
+      HydrateFallback: ShellLoading,
       errorElement: <RouteErrorElement />,
       children: [
         ...ROUTE_MANIFEST.filter((e) => !isPublic(e)).map(toRoute),

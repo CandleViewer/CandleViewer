@@ -1408,4 +1408,138 @@ describe("#5335's lens round (SCR-101)", () => {
       screen.queryByRole("region", { name: "Notifications", hidden: true })?.textContent ?? "",
     ).toBe("");
   });
+
+  /** A new list "Breakouts" named and sent while the server refuses: its option goes under the focus it held. */
+  async function createRefused(view: ReturnType<typeof mount>, status: number): Promise<void> {
+    fireEvent.click(button("New watchlist"));
+    await flush();
+    view.server.fail(status);
+    fireEvent.change(field(), { target: { value: "Breakouts" } });
+    fireEvent.keyDown(field(), { key: "Enter" });
+    await flush();
+  }
+
+  it.each([503, 403])(
+    "A-5335-d03: a create rolled back by a %i hands focus to the list shown, never the body",
+    async (status) => {
+      const view = mount([MAJORS]);
+      await flush();
+      await createRefused(view, status);
+      expect(within(dialog()).queryByRole("option", { name: /^Breakouts/ })).toBeNull();
+      expect(active()).toBe(option("Majors, 12 symbols"));
+    },
+  );
+
+  it("A-5335-d03: Retry hands focus to the list being created, and back to the list shown if it fails again", async () => {
+    const view = mount([MAJORS]);
+    await flush();
+    await createRefused(view, 503);
+    act(() => button("Retry").focus());
+    view.server.fail(503);
+    fireEvent.click(button("Retry"));
+    await flush();
+    expect(active()).toBe(option("Majors, 12 symbols"));
+    act(() => button("Retry").focus());
+    fireEvent.click(button("Retry")); // the server answers this time
+    await flush();
+    expect(active()).toBe(option("Breakouts, 0 symbols"));
+  });
+
+  it("A-5335-d03: a Duplicate rolled back hands focus to the list shown, never the body", async () => {
+    const view = mount([MAJORS]);
+    await flush();
+    fireEvent.click(button("Actions for Majors"));
+    await flush();
+    view.server.fail(503);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Duplicate" }));
+    await flush();
+    expect(within(dialog()).queryByRole("option", { name: /^Majors copy/ })).toBeNull();
+    expect(active()).toBe(option("Majors, 12 symbols"));
+  });
+
+  it("A-5335-d03: a create that fails after the user moved on takes no focus from where they went", async () => {
+    const view = mount([MAJORS, SETUPS]);
+    await flush();
+    fireEvent.click(button("New watchlist"));
+    await flush();
+    let answer: () => void = () => undefined;
+    const late = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    view.server.fetch.mockImplementationOnce(async () => {
+      await late;
+      return json({ status: 503 }, 503);
+    });
+    fireEvent.change(field(), { target: { value: "Breakouts" } });
+    fireEvent.keyDown(field(), { key: "Enter" });
+    await flush();
+    // the create is in flight: the user selects another list and goes into its grid
+    act(() => option("My Setups, 2 symbols").focus());
+    fireEvent.click(option("My Setups, 2 symbols"));
+    await flush();
+    act(() => symbolCell("DOTUSDT").focus());
+    answer();
+    await flush();
+    expect(within(dialog()).queryByRole("option", { name: /^Breakouts/ })).toBeNull();
+    expect(said).toContain("Could not save Breakouts. Your last change was undone.");
+    expect(active()).toBe(symbolCell("DOTUSDT"));
+  });
+
+  describe("an import into a new list that the server refuses", () => {
+    /** CMP-067 reads a file through `FileReader`, which runs on real time (see "import and export"). */
+    const WAIT = { timeout: 5_000 };
+    async function importRefused(view: ReturnType<typeof mount>, text: string): Promise<void> {
+      vi.useRealTimers();
+      pick(textFile(text, "Breakouts.txt"));
+      const create = await step(() =>
+        within(dialog()).findByRole("button", { name: 'Import into a new list "Breakouts"' }, WAIT),
+      );
+      view.server.fail(503);
+      fireEvent.click(create);
+      await step(() =>
+        within(dialog()).findByText(
+          "Could not save Breakouts. Your last change was undone.",
+          {},
+          WAIT,
+        ),
+      );
+    }
+
+    it(
+      "A-5335-d03: focus goes to the list shown, and never visits a row of it that holds the first imported symbol",
+      { timeout: 20_000 },
+      async () => {
+        const view = mount([MAJORS]);
+        await flush();
+        const visited: Element[] = [];
+        const visit = (event: FocusEvent): void => {
+          if (event.target instanceof Element) visited.push(event.target);
+        };
+        document.addEventListener("focusin", visit);
+        undo.push(() => document.removeEventListener("focusin", visit));
+        await importRefused(view, "BTCUSDT\nDOTUSDT\n"); // BTCUSDT is on Majors
+        await step(() => waitFor(() => expect(active()).toBe(option("Majors, 12 symbols")), WAIT));
+        expect(visited.filter((node) => node.matches('th, [role="rowheader"]'))).toEqual([]);
+      },
+    );
+
+    it(
+      "A-5335-d03: the imported symbol is forgotten with its list: a list that holds it takes no focus when selected later",
+      { timeout: 20_000 },
+      async () => {
+        const view = mount([MAJORS, SETUPS]);
+        await flush();
+        await importRefused(view, "DOTUSDT\nLTCUSDT\n"); // not on Majors; both on My Setups
+        await step(() => waitFor(() => expect(active()).toBe(option("Majors, 12 symbols")), WAIT));
+        fireEvent.click(option("My Setups, 2 symbols"));
+        await step(() =>
+          waitFor(
+            () => expect(option("My Setups, 2 symbols")).toHaveAttribute("aria-selected", "true"),
+            WAIT,
+          ),
+        );
+        expect(active()).toBe(option("My Setups, 2 symbols"));
+      },
+    );
+  });
 });

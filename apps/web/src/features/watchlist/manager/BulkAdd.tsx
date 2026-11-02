@@ -3,10 +3,10 @@
  * the preview groups the tokens (§4.4: what is added, then what is not and why, each as plain text), focus moving to
  * its heading, and "Add 12 symbols" adds the new Trading symbols at the end of the list, up to its cap (T2 at 200 with
  * the cap's words, D10). The same groups show for an imported file (`PreviewGroups`). A symbol of the right form that
- * the instrument index does not hold is looked up once (`GET /instruments/{symbol}`), at most 20 for a preview in all,
- * so a delisted one reads as delisted, not as unknown; until it answers, and past the 20, it reads "Not found". The
- * text is read up to the file's 64 KB; a text past it, or with no token, says so under the field instead of a preview.
- * Nothing pasted is sent but the symbols the catalogue holds.
+ * the instrument index does not hold is looked up once (`GET /instruments/{symbol}`), at most 20 lookups per pane or
+ * import control in all (its budget, not each preview's), so a delisted one reads as delisted, not as unknown; until
+ * it answers, and past the 20, it reads "Not found". The text is read up to the file's 64 KB; a text past it, or with
+ * no token, says so under the field instead of a preview. Nothing pasted is sent but the symbols the catalogue holds.
  */
 import { useEffect, useId, useState, type CSSProperties, type JSX } from "react";
 import { Button, FormField, Heading, InlineError } from "@candleviewer/ui";
@@ -61,7 +61,8 @@ export function groupFacts(onList: readonly string[], facts: InstrumentFacts): G
 
 /**
  * Looks up, once, the tokens of the right form the index does not know (a delisted symbol reads as one): at most
- * `PREVIEW_LOOKUPS` for a preview, however many it holds.
+ * `PREVIEW_LOOKUPS` per hook instance, so per pane or import control however many previews it shows (a later preview
+ * asks only for what none before it did, until the budget is spent), however many tokens each holds.
  */
 export function useTokenLookups(
   instruments: InstrumentSource,

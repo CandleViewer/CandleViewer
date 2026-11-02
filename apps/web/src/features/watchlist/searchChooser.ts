@@ -53,11 +53,10 @@ export function watchlistChooserItem(
 ): MenuItem {
   const item = { id: "watchlist", label: COPY.addToWatchlist } as const;
   if (!writable) return { ...item, disabledReason: COPY.writeReason, items: [] };
+  // Busy on the item itself, which the menu keeps as the one row through every state: a row of the submenu would go
+  // when the lists arrive, and focus that reached it before then with it (A-5335-d02). → on a busy item opens nothing.
   if (lists.kind === "loading")
-    return {
-      ...item,
-      items: [{ id: "loading", label: COPY.listsLoading, busy: true, onSelect: nothing }],
-    };
+    return { ...item, busy: true, description: COPY.listsLoading, items: [] };
   if (lists.kind === "failed")
     return {
       ...item,

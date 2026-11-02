@@ -136,11 +136,16 @@ export function WatchlistRoute(): JSX.Element {
         {managerOpen ? null : writable ? (
           <EmptyState
             title={COPY.noListsTitle}
+            headingLevel={2}
             actions={[{ label: COPY.createList, onClick: () => openManager({ kind: "create" }) }]}
           />
         ) : (
           // The sentence form (E09-D09 §2.2): the reason alone, no button.
-          <EmptyState title={COPY.noListsReadOnly} description={COPY.writeReason} />
+          <EmptyState
+            title={COPY.noListsReadOnly}
+            headingLevel={2}
+            description={COPY.writeReason}
+          />
         )}
         {manager}
       </ScreenRoot>

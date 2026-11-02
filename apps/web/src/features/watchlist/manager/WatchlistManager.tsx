@@ -220,17 +220,32 @@ export function WatchlistManager(props: WatchlistManagerProps): JSX.Element {
     setFocus(null);
   }, [focus, state, pasteOpen, tab, optionId, newListId]);
 
-  // Each create rolled back, said once (§4.3 Save failed; a 403 as an alert), whatever else changes after it.
+  // Each create rolled back, said once (§4.3 Save failed; a 403 as an alert), whatever else changes after it. Its option
+  // went under the focus it held, which fell to the body: focus goes to the list shown, as after a delete, and only
+  // from the body, so a create that fails after the user moved on takes nothing from where they went (A-5335-d03).
   const failures = state.createFailures;
   const told = useRef(new Set<number>());
   useEffect(() => {
+    let rolledBack = false;
     for (const failure of failures) {
       if (told.current.has(failure.id)) continue;
       told.current.add(failure.id);
+      rolledBack = true;
       if (failure.kind === "refused") sayAlert(COPY.notSent);
       else say(COPY.saveFailed(failure.name));
     }
-  }, [failures, say, sayAlert]);
+    const held = document.activeElement;
+    if (rolledBack && (held === null || held === document.body))
+      setFocus(store.getState().selected === null ? "new" : "option");
+  }, [failures, say, sayAlert, store]);
+  // An import's first symbol belonged to the list that is gone: forgotten in the render that sees the rollback, before
+  // a grid can take focus for it, and for good: a list selected later that holds the symbol must not take it either.
+  const newestFailure = failures.reduce((id, failure) => Math.max(id, failure.id), 0);
+  const [seenFailure, setSeenFailure] = useState(newestFailure);
+  if (newestFailure > seenFailure) {
+    setSeenFailure(newestFailure);
+    setFocusSymbol(null);
+  }
 
   function openDelete(key: string): void {
     const item = store.getState().items.find((i) => i.key === key);
@@ -451,7 +466,16 @@ export function WatchlistManager(props: WatchlistManagerProps): JSX.Element {
             live="off"
             message={failure.kind === "refused" ? COPY.notSent : COPY.saveFailed(failure.name)}
             {...(failure.kind === "failed"
-              ? { retry: { label: COPY.retry, onClick: () => store.retryCreate(failure.id) } }
+              ? {
+                  retry: {
+                    label: COPY.retry,
+                    onClick: () => {
+                      store.retryCreate(failure.id);
+                      // Retry unmounts under focus: it goes to the list being created (A-5335-d03).
+                      setFocus("option");
+                    },
+                  },
+                }
               : {})}
           />
         ))}

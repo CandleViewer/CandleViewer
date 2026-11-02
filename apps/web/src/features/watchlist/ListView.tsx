@@ -55,7 +55,6 @@ import { reportWatchlist } from "./analytics";
 import { COPY, LIST_CAP } from "./copy";
 import { createFocusedLast, lastWordsOf, type PricePrefs } from "./focusedLast";
 import { isDelisted, type InstrumentFacts } from "./instruments";
-import { boundTo } from "./keys";
 import { createListEdits, type SaveError, type Watchlist, type WatchlistSaver } from "./listEdits";
 import { coversView, liveWindow, SETTLE_MS, type ViewRange } from "./liveWindow";
 import { LiveRow, isStale } from "./LiveRow";
@@ -600,19 +599,6 @@ export function ListView(props: ListViewProps): JSX.Element {
     });
   };
 
-  // Ctrl+F (§6.2; `watchlist.filter`, as the profile binds it): the footer's filter, from anywhere in the list's grid or
-  // footer. A listener on the view, not a handler on a static element: the grid's own keys reach it as they bubble.
-  useEffect(() => {
-    const node = root.current;
-    if (node === null) return undefined;
-    const onKeyDown = (event: globalThis.KeyboardEvent): void => {
-      if (event.defaultPrevented || !boundTo(event, "watchlist.filter")) return;
-      event.preventDefault();
-      node.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
-    };
-    node.addEventListener("keydown", onKeyDown);
-    return () => node.removeEventListener("keydown", onKeyDown);
-  }, []);
   const onFocusIn = (event: FocusEvent<HTMLDivElement>): void => {
     setFocusIn(true);
     const row = event.target instanceof Element ? event.target.closest("tr[aria-rowindex]") : null;
@@ -639,14 +625,16 @@ export function ListView(props: ListViewProps): JSX.Element {
     event.preventDefault();
     props.onManage({ kind: "import", listId: list.id });
   };
+  // Under the page's h1 (R-111), so h2s, as the no-list states are.
   const empty =
     symbols.length === 0 ? (
       readOnly ? (
-        <EmptyState title={COPY.emptyTitle} description={COPY.writeReason} />
+        <EmptyState title={COPY.emptyTitle} headingLevel={2} description={COPY.writeReason} />
       ) : (
         <div onClickCapture={importFrom}>
           <EmptyState
             title={COPY.emptyTitle}
+            headingLevel={2}
             description={COPY.emptyBody(name)}
             actions={[{ label: COPY.emptyAction, onClick: openAdd }]}
             link={{ label: COPY.importList, href: props.managerHref }}
@@ -654,7 +642,11 @@ export function ListView(props: ListViewProps): JSX.Element {
         </div>
       )
     ) : (
-      <EmptyState variant="filtered-empty" title={COPY.noMatch(name, filter.trim())} />
+      <EmptyState
+        variant="filtered-empty"
+        title={COPY.noMatch(name, filter.trim())}
+        headingLevel={2}
+      />
     );
 
   return (

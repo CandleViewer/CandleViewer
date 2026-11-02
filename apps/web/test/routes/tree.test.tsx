@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createMemoryRouter, type RouteObject } from "react-router";
 import { RouterProvider } from "react-router/dom";
+import { SHELL_MAIN_ID } from "../../src/features/app-shell/ShellLayout";
+import { KeymapHost } from "../../src/keymap/KeymapHost";
 import { buildRoutes } from "../../src/routes/tree";
+import { ROUTE_FOCUS_KEEP } from "../../src/features/app-shell/useRouteFocus";
 import { WatchlistRoute } from "../../src/features/watchlist/WatchlistRoute";
 import { ROUTE_MANIFEST } from "../../src/routes/manifest";
 import { ROUTE_TITLES, pageTitle, syncDocumentTitle } from "../../src/routes/titles";
@@ -121,7 +124,12 @@ describe("route tree x RBAC matrix", () => {
         const { unmount } = render(<RouterProvider router={router} />);
         // R-110 opens SCR-101 (#4702), a modal: the page under it is inert, `aria-hidden` where jsdom has no `inert`.
         const hidden = entry.id === "R-110";
-        await waitFor(() => expect(screen.getByRole("main", { hidden })).toBeInTheDocument());
+        // the shell's own `main`: a first visit to a lazy screen draws the loading line's `main` before it
+        await waitFor(
+          () => expect(document.getElementById(SHELL_MAIN_ID)).toBeInTheDocument(),
+          ROUTE_WAIT,
+        );
+        expect(screen.getByRole("main", { hidden })).toBe(document.getElementById(SHELL_MAIN_ID));
         if (hidden) expect(screen.getByRole("dialog", { name: "Watchlists" })).toBeInTheDocument();
         unmount();
       }
@@ -152,12 +160,49 @@ describe("feature routes load on first visit (C-14.3; #5335's read)", () => {
     },
   );
 
+  it("route focus: an unmarked navigation into R-111 lands on its h1; a marked tab switch keeps focus where it is (C-5335-d04)", async () => {
+    claimsFor("owner");
+    const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/risk"] });
+    render(<RouterProvider router={router} />);
+    await screen.findByRole("heading", { name: /R-150 — owned by E12/ }, ROUTE_WAIT);
+    await act(() => router.navigate("/watchlist/x"));
+    const h1 = await screen.findByRole("heading", { level: 1, name: "Watchlist" }, ROUTE_WAIT);
+    await waitFor(() => expect(document.activeElement).toBe(h1), ROUTE_WAIT);
+    // stands in for SCR-100's tab: a control the switch of the list's `:groupId` leaves where it is
+    const rules = within(screen.getByRole("navigation", { name: "Primary" })).getByRole("link", {
+      name: "Rules",
+    });
+    act(() => rules.focus());
+    await act(() => router.navigate("/watchlist/y", { state: { [ROUTE_FOCUS_KEEP]: true } }));
+    expect(router.state.location.pathname).toBe("/watchlist/y");
+    expect(document.activeElement).toBe(rules);
+  });
+
   it("a signed-out visit is still guarded: /watchlist/x goes to sign in, coming back there after", async () => {
     claimsFor(null);
     const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/watchlist/x"] });
     render(<RouterProvider router={router} />);
     await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
     expect(router.state.location.search).toBe("?next=%2Fwatchlist%2Fx");
+  });
+});
+
+describe("Ctrl+F on a screen that is not SCR-100 (C-5335-d02)", () => {
+  beforeEach(() => resetMeClaims());
+
+  it("is the browser's find: no 'not available here' notice, and the key is not taken", async () => {
+    claimsFor("owner");
+    const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/risk"] });
+    render(
+      <>
+        <RouterProvider router={router} />
+        <KeymapHost />
+      </>,
+    );
+    await screen.findByRole("heading", { name: /R-150 — owned by E12/ }, ROUTE_WAIT);
+    // fireEvent answers false for a default-prevented event: true means the browser keeps its find
+    expect(fireEvent.keyDown(document.body, { key: "f", code: "KeyF", ctrlKey: true })).toBe(true);
+    expect(screen.queryByRole("region", { name: "Notifications", hidden: true })).toBeNull();
   });
 });
 
