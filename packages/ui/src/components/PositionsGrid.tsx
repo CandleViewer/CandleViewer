@@ -631,10 +631,11 @@ function PositionRow<R extends PositionsGridRow>({
       case "size":
         return (
           <td key={id} {...grid.cellProps(c, figure)}>
-            {size}
+            {/* The space is the cell's own text, as the totals label's is: at the span's edge a name drops it. */}
+            {`${size} `}
             {/* The base coin: a suffix in `color.text.secondary`; in the dock it leaves and stays in the name. */}
             <span className={parts.narrow ? "cv-visually-hidden" : "cv-positions-grid__unit"}>
-              {` ${row.baseCoin}`}
+              {row.baseCoin}
             </span>
           </td>
         );

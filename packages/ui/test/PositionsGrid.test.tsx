@@ -212,6 +212,15 @@ describe("PositionsGrid (CMP-114): the treegrid", () => {
     );
   });
 
+  it("a Size cell is named by its figure and base coin, spaced as a browser names it (D-7: '0.250 BTC')", async () => {
+    inlineSpans();
+    await mount(<Host />);
+    const size = within(rowNamed("BTCUSDT · Long · 0.250 BTC · Main")).getByRole("gridcell", {
+      name: "0.250 BTC",
+    });
+    expect(size).toHaveAttribute("data-cv-c", headerOf("size").getAttribute("data-cv-c"));
+  });
+
   it("a null leverage or margin mode is a dash with its spoken reason (D-7)", async () => {
     await mount(
       <Host
@@ -984,7 +993,7 @@ describe("PositionsGrid (CMP-114): the narrow dock (D02 §11.5)", () => {
     const eth = rowNamed(/^ETHUSDT · Short/);
     expect(eth.textContent).toContain("▼ Short");
     expect(eth.textContent).not.toContain("hedge");
-    expect(within(eth).getByText(" ETH", { normalizer: (s) => s })).toHaveClass(
+    expect(within(eth).getByText("ETH", { normalizer: (s) => s })).toHaveClass(
       "cv-visually-hidden",
     );
     expect(eth.querySelector('[data-part="LiqTierCell"]')?.textContent).toContain("! Near");
