@@ -1,0 +1,147 @@
+/*
+ * CMP-087 AdminLayout (E42-D03 §4, §15; boards 09 and 10). Tokens only, static. The band fill (DS-1's
+ * target) is no carrier; the 4 px rule is the band's border in `color.text.tertiary` (DS-2's target), so
+ * forced colours keep it. Items are CMP-021 links drawn as board 09's tone pills: `color.text.primary` on
+ * the tone's subtle fill (§15's measured pair), no underline (a pill, not a link inside text).
+ */
+.cv-adminlayout__band {
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-inset-xs) var(--space-inset-lg);
+  padding: var(--space-inset-lg);
+  border-block-end: calc(var(--border-thick) * 2 * 1px) solid var(--color-text-tertiary);
+  background: var(--color-surface-raised);
+}
+
+/* The label grows, so the grace line sits at the band's end until it wraps. */
+.cv-adminlayout__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-strong-font-weight) var(--type-ui-body-strong-font-size) /
+    var(--type-ui-body-strong-line-height) var(--type-ui-body-strong-font-family);
+}
+
+.cv-adminlayout__grace {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-secondary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+}
+
+/* The title and the items flow as one wrapping line, a second row starting under the title. */
+.cv-adminlayout__strip {
+  padding-block: var(--space-inset-sm);
+  color: var(--color-text-secondary);
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+}
+
+.cv-adminlayout__none,
+.cv-adminlayout__title,
+.cv-adminlayout__list {
+  display: inline;
+  margin: 0;
+  margin-inline-end: var(--space-inset-sm);
+  padding: 0;
+  list-style: none;
+}
+
+.cv-adminlayout__item {
+  --cv-adminlayout-fill: var(--color-status-warning-subtle);
+  --cv-adminlayout-strong: var(--color-status-warning-strong);
+  display: inline-flex;
+  max-width: 100%;
+  margin-block: var(--space-inset-xs);
+  margin-inline-end: var(--space-inset-sm);
+  vertical-align: middle;
+}
+
+.cv-adminlayout__item[data-severity="critical"] {
+  --cv-adminlayout-fill: var(--color-status-danger-subtle);
+  --cv-adminlayout-strong: var(--color-status-danger-strong);
+}
+
+.cv-adminlayout__item[data-severity="info"] {
+  --cv-adminlayout-fill: var(--color-status-info-subtle);
+  --cv-adminlayout-strong: var(--color-status-info-strong);
+}
+
+/* A control-height target; the transparent hairline is the pill's edge when forced colours drop fills. */
+.cv-adminlayout__item > .cv-link {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-inset-xs) var(--space-inset-sm);
+  max-width: 100%;
+  min-height: var(--size-control-height);
+  padding: var(--space-inset-xs) var(--space-inset-sm);
+  border: calc(var(--border-hairline) * 1px) solid transparent;
+  border-radius: var(--radius-control);
+  background: var(--cv-adminlayout-fill);
+  color: var(--color-text-primary);
+  text-decoration-line: none;
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+}
+
+.cv-adminlayout__glyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--cv-adminlayout-strong);
+}
+
+.cv-adminlayout__text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * OV-3's [LIVE]: the environment's border colour on the raised fill; the word carries it. The modifiers
+ * are classes, after the base rule (equal specificity: the later border-color wins). Never a selector on
+ * the top bar badge's data attribute: that badge has no hide path and its guard rejects such a selector.
+ */
+.cv-adminlayout__env {
+  flex: none;
+  padding-inline: var(--space-inset-xs);
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-strong);
+  border-radius: var(--radius-badge);
+  background: var(--color-surface-raised);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+.cv-adminlayout__env--live {
+  border-color: var(--color-env-live);
+}
+
+.cv-adminlayout__env--demo {
+  border-color: var(--color-env-demo);
+}
+
+.cv-adminlayout__footer {
+  padding-block: var(--space-inset-lg);
+  overflow-wrap: anywhere;
+  color: var(--color-text-tertiary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+@media (forced-colors: active) {
+  .cv-adminlayout__band {
+    border-block-end-color: CanvasText;
+  }
+
+  .cv-adminlayout__item > .cv-link {
+    border-color: LinkText;
+    color: LinkText;
+  }
+
+  .cv-adminlayout__env {
+    border-color: CanvasText;
+  }
+}

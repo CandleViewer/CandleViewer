@@ -1,0 +1,106 @@
+/*
+ * CMP-173 AuditRow, the compact variant (E42-D03 D9, D17, §16, Appendix A; E42-D04 D2, D3; board 09, board 10
+ * row K). Tokens only and static. Rows sit one under another in a plain list, each one link: at least
+ * `size.row.height` tall (32 px in the admin area's comfortable density, never under 24), `space.inset.sm` padX,
+ * the text `type.ui.body` in the `color.text.*` steps, the time and the action code in `type.num.sm`. The text
+ * wraps between fields and inside a long value, never truncating, at 200 % zoom or the in-app
+ * text scale too. Hover underlines the row's text; keyboard focus is CMP-039's ring. High severity (error,
+ * critical) adds the semibold word and a `border.thick` rule in `color.status.danger.strong` on the row's inline
+ * start, the padding giving back its width so every row's text starts on one line.
+ */
+.cv-audit-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cv-audit-row {
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.cv-audit-row__link {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  min-block-size: var(--size-row-height);
+  padding-inline: var(--space-inset-sm);
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+  text-decoration-line: none;
+  cursor: pointer;
+}
+
+.cv-audit-row__link:hover {
+  text-decoration-line: underline;
+  text-decoration-color: currentcolor;
+}
+
+.cv-audit-row:is([data-severity="error"], [data-severity="critical"]) > .cv-audit-row__link {
+  border-inline-start: calc(var(--border-thick) * 1px) solid var(--color-status-danger-strong);
+  padding-inline-start: calc(var(--space-inset-sm) - var(--border-thick) * 1px);
+}
+
+.cv-audit-row__text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cv-audit-row__time,
+.cv-audit-row__code {
+  color: var(--color-text-secondary);
+  font: var(--type-num-sm-font-weight) var(--type-num-sm-font-size) / var(--type-num-sm-line-height)
+    var(--type-num-sm-font-family);
+  font-variant-numeric: tabular-nums;
+}
+
+.cv-audit-row__subject {
+  color: var(--color-text-secondary);
+}
+
+/* The " · " between fields: plain text, so it reads in the link's name too; a line may break either side. */
+.cv-audit-row__sep {
+  color: var(--color-text-tertiary);
+}
+
+.cv-audit-row:is([data-severity="error"], [data-severity="critical"]) .cv-audit-row__severity {
+  font-weight: var(--font-weight-semibold);
+}
+
+/* The severity glyph: `size.icon`, `space.inset.xs` before the word, in the status colour (D2). */
+.cv-audit-row__glyph {
+  display: inline-flex;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  margin-inline-end: var(--space-inset-xs);
+  vertical-align: middle;
+  color: var(--color-status-danger-strong);
+}
+
+.cv-audit-row__glyph[data-glyph="warning"] {
+  color: var(--color-status-warning-strong);
+}
+
+/*
+ * Forced colours: the row reads as a link (LinkText), the glyph follows the text, and the high rule stays a
+ * CanvasText border, so the octagon, the semibold word and the rule all carry without a colour.
+ */
+@media (forced-colors: active) {
+  .cv-audit-row__link,
+  .cv-audit-row__time,
+  .cv-audit-row__code,
+  .cv-audit-row__subject,
+  .cv-audit-row__sep {
+    color: LinkText;
+  }
+
+  .cv-audit-row__glyph,
+  .cv-audit-row__glyph[data-glyph="warning"] {
+    color: currentcolor;
+  }
+
+  .cv-audit-row:is([data-severity="error"], [data-severity="critical"]) > .cv-audit-row__link {
+    border-inline-start-color: CanvasText;
+  }
+}

@@ -166,6 +166,18 @@ export type {
   GlobalErrorScope,
 } from "./GlobalErrorBoundaryFallback.js";
 
+export { ADMIN_COPY, AdminLayout, sortAdminStrip } from "./AdminLayout.js";
+export type {
+  AdminEnv,
+  AdminGrace,
+  AdminLayoutProps,
+  AdminStripItem,
+  AdminStripKind,
+  AdminStripSeverity,
+} from "./AdminLayout.js";
+export { AUDIT_ACTION_LABELS, AUDIT_ROW_COPY, AuditRow, AuditRowList } from "./AuditRow.js";
+export type { AuditRowListProps, AuditRowProps } from "./AuditRow.js";
+
 export { Avatar } from "./Avatar.js";
 export type { AvatarProps, AvatarSize } from "./Avatar.js";
 
@@ -228,6 +240,9 @@ export type { NotFoundStateProps, TryRoute } from "./NotFoundState.js";
 
 export { NumericStepperInput } from "./NumericStepperInput.js";
 export type { NumericStepperInputProps, StepDirection } from "./NumericStepperInput.js";
+
+export { PageHeader } from "./PageHeader.js";
+export type { PageHeaderProps } from "./PageHeader.js";
 
 export { Popover } from "./Popover.js";
 export type {
@@ -314,6 +329,10 @@ export type { SymbolPickerProps, SymbolRecordingState } from "./SymbolPicker.js"
 
 export { SymbolSearchInput } from "./SymbolSearchInput.js";
 export type { SymbolSearchInputProps, SymbolSearchTarget } from "./SymbolSearchInput.js";
+
+export { SYSTEM_HEALTH_TILE_COPY, SystemHealthTile } from "./SystemHealthTile.js";
+export type { SystemHealthTileEnv, SystemHealthTileProps } from "./SystemHealthTile.js";
+export type { SystemHealthTileState, SystemHealthTileTone } from "./SystemHealthTile.js";
 
 export { TextInput } from "./TextInput.js";
 export type { TextInputProps } from "./TextInput.js";

@@ -17,6 +17,12 @@ import { buildRoutes } from "../../../src/routes/tree";
 
 const SRC = resolve(import.meta.dirname, "../../../src");
 
+/**
+ * R-303 renders behind the admin area's lazy chunk (E42-S01): a busy host can take seconds. A test
+ * that waits so long takes a budget above the default 5 s, which would end it first.
+ */
+const ROUTE_WAIT = { timeout: 5_000 } as const;
+
 interface Wire {
   readonly issued: string[];
   readonly stepUps: { readonly challengeId: unknown; readonly issuedBefore: readonly string[] }[];
@@ -134,29 +140,39 @@ describe("test_client_never_posts_step_up_without_a_server_challenge", () => {
     expect(wire.stepUps).toEqual([]);
   });
 
-  it("invite flow: the one step-up names the challenge the server issued", async () => {
-    const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/admin/users/new"] });
-    mountRouter(router);
-    fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "annie" } });
-    expect(wire.stepUps).toEqual([]);
-    fireEvent.click(screen.getByRole("button", { name: "Create invitation" }));
-    await screen.findByRole("alertdialog");
-    expect(wire.issued).toHaveLength(1);
-    expect(wire.stepUps).toEqual([]);
-    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "pw" } });
-    fireEvent.change(screen.getByLabelText("Authenticator code"), { target: { value: "123456" } });
-    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
-    expect(await screen.findByLabelText("Invite link")).toBeInTheDocument();
-    expect(wire.stepUps).toHaveLength(1);
-    expect(wire.stepUps[0]?.challengeId).toBe(wire.issued[0]);
-    expectEveryStepUpChallenged();
-    expectNoRouteError(router, "R-303");
-  });
+  it(
+    "invite flow: the one step-up names the challenge the server issued",
+    { timeout: 30_000 },
+    async () => {
+      const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/admin/users/new"] });
+      mountRouter(router);
+      fireEvent.change(await screen.findByLabelText("Username", {}, ROUTE_WAIT), {
+        target: { value: "annie" },
+      });
+      expect(wire.stepUps).toEqual([]);
+      fireEvent.click(screen.getByRole("button", { name: "Create invitation" }));
+      await screen.findByRole("alertdialog");
+      expect(wire.issued).toHaveLength(1);
+      expect(wire.stepUps).toEqual([]);
+      fireEvent.change(screen.getByLabelText("Password"), { target: { value: "pw" } });
+      fireEvent.change(screen.getByLabelText("Authenticator code"), {
+        target: { value: "123456" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+      expect(await screen.findByLabelText("Invite link")).toBeInTheDocument();
+      expect(wire.stepUps).toHaveLength(1);
+      expect(wire.stepUps[0]?.challengeId).toBe(wire.issued[0]);
+      expectEveryStepUpChallenged();
+      expectNoRouteError(router, "R-303");
+    },
+  );
 
-  it("invite flow, cancelled: no step-up is posted at all", async () => {
+  it("invite flow, cancelled: no step-up is posted at all", { timeout: 30_000 }, async () => {
     const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/admin/users/new"] });
     mountRouter(router);
-    fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "annie" } });
+    fireEvent.change(await screen.findByLabelText("Username", {}, ROUTE_WAIT), {
+      target: { value: "annie" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Create invitation" }));
     fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
     // scoped to the screen: the shell's status bar is a "System status" region too

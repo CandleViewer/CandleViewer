@@ -2,6 +2,9 @@
 import type { JSX } from "react";
 import { describe, expect, it } from "vitest";
 import {
+  AdminLayout,
+  AuditRow,
+  AuditRowList,
   Button,
   Card,
   Checkbox,
@@ -17,11 +20,13 @@ import {
   InfoPanel,
   Menu,
   NumericStepperInput,
+  PageHeader,
   RadioGroup,
   SearchBox,
   SegmentedControl,
   Select,
   Slider,
+  SystemHealthTile,
   Table,
   Tabs,
   TextInput,
@@ -36,7 +41,7 @@ import {
   WatchlistRow,
   watchlistColumns,
 } from "../src/index.js";
-import type { SegmentedOptions, WatchlistRowData } from "../src/index.js";
+import type { AuditRowProps, SegmentedOptions, WatchlistRowData } from "../src/index.js";
 import { mount } from "./theme/mount.js";
 
 const options = [
@@ -48,6 +53,19 @@ const segments: SegmentedOptions = [
   { value: "b", label: "Bravo" },
 ];
 const noop = (): void => undefined;
+const auditEntry: AuditRowProps["entry"] = {
+  id: 1,
+  ts: "2026-10-22T14:02:11Z",
+  action: "admin.area_entered",
+  actor_user_id: null,
+  subject_type: null,
+  subject_id: null,
+  outcome: "success",
+  severity: "info",
+  detail: {},
+  entry_hash: null,
+  prev_hash: null,
+};
 
 const atoms: [string, () => JSX.Element][] = [
   ["CMP-001", () => <Button>Save</Button>],
@@ -134,6 +152,16 @@ const molecules: [string, () => JSX.Element][] = [
     ),
   ],
   ["CMP-050", () => <Card title="Accounts">Body</Card>],
+  ["CMP-088", () => <PageHeader title="Users" meta="All times UTC · as of 14:02:11" />],
+  [
+    "CMP-173",
+    () => (
+      <AuditRowList>
+        <AuditRow entry={auditEntry} variant="compact" href="#audit-1" />
+      </AuditRowList>
+    ),
+  ],
+  ["CMP-178", () => <SystemHealthTile label="Users" href="#users" state="ready" tone="ok" />],
 ];
 
 describe("molecules carry their catalogue id", () => {
@@ -268,6 +296,17 @@ describe("E08-S08's watchlist components carry their catalogue id", () => {
   ];
 
   it.each(watchlist)("%s marks exactly one root with data-cmp", async (id, render) => {
+    const host = await mount(render());
+    expect(host.querySelectorAll(`[data-cmp="${id}"]`)).toHaveLength(1);
+  });
+});
+
+const organisms: [string, () => JSX.Element][] = [
+  ["CMP-087", () => <AdminLayout routeLabel="Users">Body</AdminLayout>],
+];
+
+describe("organisms carry their catalogue id", () => {
+  it.each(organisms)("%s marks exactly one root with data-cmp", async (id, render) => {
     const host = await mount(render());
     expect(host.querySelectorAll(`[data-cmp="${id}"]`)).toHaveLength(1);
   });
