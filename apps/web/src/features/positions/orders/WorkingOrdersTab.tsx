@@ -18,9 +18,10 @@
  *   reason points at its one notice (2a, G-T2.5), the menu item's too, with no second line. Busy is
  *   "Cancelling…" with a static ⟳ (CMP-057's look), never T2, and holds until the row shows the
  *   cancel (it reaches the 202's state, ends, goes `unknown` or leaves; a fill meanwhile keeps it
- *   busy), so a second press sends nothing. One click sends it, no question, and a toast without
- *   Undo names the order (D01 D7); a protective take-profit asks first (D02 §8.2), and its confirm
- *   reads the row again before it sends.
+ *   busy) or `BUSY_BOUND_MS` has passed since the 202 (R2-m1), so a second press meanwhile sends
+ *   nothing. One click sends it, no question, and a toast without Undo names the order (D01 D7); a
+ *   protective take-profit asks first (D02 §8.2), and its confirm reads the row again before it
+ *   sends.
  * - **Bulk** (D02 §8.3; `model/bulk.ts`): "2 selected · Cancel selected · Clear selection" and
  *   "Cancel all in view…" (present while rows are in view, §9.2) open `BulkCancelDialog`; Confirm
  *   reads the targets again, so no row that is a native stop at Confirm is sent (C-2.6, BQ-4); one
@@ -217,18 +218,27 @@ const UP: Link = Object.freeze({ kind: "up" });
 const ROVING_STOP = '[role="treegrid"] [tabindex="0"]';
 let toastSeq = 0;
 
-/** A cancel in flight from this client: the row's lifecycle at the press, and whether the server took it. */
+/**
+ * PROPOSED (R2-m1): the longest a cancel the server took stays busy past its `202`, the 10 s
+ * server bound (`CV_COMMAND_TIMEOUT`, `22` `cancelOrder`) that #912's P3-BQ-7 ruling names. Past
+ * it the row is pressable again, so one that moved on before its `202` was read is never left
+ * busy; a repeat DELETE is harmless (B1 refuses and audits it).
+ */
+export const BUSY_BOUND_MS = 10_000;
+
+/** A cancel in flight from this client: the row's lifecycle at the press, and when the server took it. */
 interface Pending {
   readonly from: string | null;
   /** The order's state in the server's `202` (`22` `cancelOrder`), `null` until it answers or when it gave none. */
   readonly to: string | null;
-  readonly taken: boolean;
+  /** When the `202` arrived, on the tab's clock (`wall`); `null` until the server takes it. */
+  readonly takenAt: number | null;
 }
 
 /**
  * The store's row shows a cancel the server took (n6): it reached the `202`'s state, ended, went
  * `unknown` or left. A `202` with no state to read falls back to the row leaving the state it was
- * pressed in. Any other move (a fill meanwhile) keeps the row busy.
+ * pressed in. Any other move (a fill meanwhile) keeps the row busy, to `BUSY_BOUND_MS` at most.
  */
 const shows = (row: OrderRowModel | undefined, pending: Pending): boolean =>
   row === undefined ||
@@ -686,7 +696,7 @@ export function WorkingOrdersTab({
   // row is what the gate reads, so a second press meanwhile sends nothing.
   useEffect(() => {
     const rowOf = new Map(snap.rows.map((r) => [r.id, r]));
-    const done = [...cancelling].filter(([id, p]) => p.taken && shows(rowOf.get(id), p));
+    const done = [...cancelling].filter(([id, p]) => p.takenAt !== null && shows(rowOf.get(id), p));
     if (done.length === 0) return;
     setCancelling((all) => {
       const next = new Map(all);
@@ -694,6 +704,25 @@ export function WorkingOrdersTab({
       return next;
     });
   }, [snap.rows, cancelling]);
+
+  // ...or until `BUSY_BOUND_MS` has passed since its 202, whichever comes first (R2-m1). One timer,
+  // for the earliest 202: it lets go of every cancel taken by then, and any change to the map or
+  // leaving the tab clears it. Its wait is capped at the bound, so a clock set back adds none.
+  useEffect(() => {
+    const taken = [...cancelling.values()].flatMap((p) => (p.takenAt === null ? [] : [p.takenAt]));
+    if (taken.length === 0) return undefined;
+    const first = Math.min(...taken);
+    const timer = setTimeout(
+      () =>
+        setCancelling((all) => {
+          const next = new Map(all);
+          for (const [id, p] of all) if (p.takenAt !== null && p.takenAt <= first) next.delete(id);
+          return next.size === all.size ? all : next;
+        }),
+      Math.min(BUSY_BOUND_MS, Math.max(0, first + BUSY_BOUND_MS - wall())),
+    );
+    return () => clearTimeout(timer);
+  }, [cancelling, wall]);
 
   const readOnly = useMemo(
     () =>
@@ -788,7 +817,7 @@ export function WorkingOrdersTab({
     const row = view.find((r) => r.id === pressed.id);
     if (row === undefined || gateOf(row).kind !== "allowed") return;
     const from = row.state.lifecycle;
-    setCancelling((all) => new Map(all).set(row.id, { from, to: null, taken: false }));
+    setCancelling((all) => new Map(all).set(row.id, { from, to: null, takenAt: null }));
     reportCancelAttempted();
     // no abort signal: leaving the tab never stops a cancel that was sent (N-M1)
     void writes
@@ -796,13 +825,14 @@ export function WorkingOrdersTab({
       .catch((): CancelOutcome => ({ kind: "unavailable" })) // a throw is no answer (code m9)
       .then((outcome: CancelOutcome) => {
         if (alive.current) {
-          if (outcome.kind === "accepted")
+          if (outcome.kind === "accepted") {
+            const takenAt = wall(); // the 202's arrival: `BUSY_BOUND_MS` counts from here
             setCancelling((all) =>
               all.has(row.id)
-                ? new Map(all).set(row.id, { from, to: outcome.lifecycle, taken: true })
+                ? new Map(all).set(row.id, { from, to: outcome.lifecycle, takenAt })
                 : all,
             );
-          else release(row.id);
+          } else release(row.id);
           if (outcome.kind === "account_scope") setDenied((all) => new Set(all).add(row.accountId));
         }
         deliver(cancelToast(row, outcome));

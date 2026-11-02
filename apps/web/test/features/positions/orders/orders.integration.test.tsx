@@ -24,6 +24,7 @@ import { positionsApi, type ExchangeAccount } from "../../../../src/features/pos
 import { ordersApi, type OrdersWrites } from "../../../../src/features/positions/orders/api";
 import type * as ViewModule from "../../../../src/features/positions/orders/view";
 import { LINGER_MS } from "../../../../src/features/positions/orders/ordersStore";
+import { BUSY_BOUND_MS } from "../../../../src/features/positions/orders/WorkingOrdersTab";
 import { resetPanelState, updatePanelState } from "../../../../src/features/positions/panelState";
 import { PositionsPanel } from "../../../../src/features/positions/PositionsPanel";
 import type { PositionsDeps } from "../../../../src/features/positions/positionsSession";
@@ -339,6 +340,17 @@ function heldCancels(): {
   };
 }
 
+/**
+ * Whether a timer runs out at `at` and is not set again: the pending count changes across that
+ * millisecond (the frame loops set their next one as they fire, and nothing else is due then).
+ */
+async function timerEndsAt(at: number): Promise<boolean> {
+  await settle(at - 1 - Date.now());
+  const pending = vi.getTimerCount();
+  await settle(1);
+  return vi.getTimerCount() !== pending;
+}
+
 /** Every message the shell's regions take from now on, in order (`ShellAnnouncer`: a node each). */
 function heard(): () => string[] {
   const said: string[] = [];
@@ -536,6 +548,7 @@ describe("a row's Cancel (D02 §8.2)", () => {
       await openOrders(); // each DELETE answers 202 with the order cancel_pending
       const push = (id: string, lifecycle: string, at: number): void =>
         ws.live("orders")[0]?.push(delta(moved(id, { lifecycle_state: lifecycle }, at)));
+      const pressed = Date.now(); // its 202 comes at once: the bound counts from here
       fireEvent.click(cancelOf(ETH)); // submitted
       await settle(TICK);
       // a fill moves it, but not to the 202's state: busy holds, and a press sends nothing
@@ -545,11 +558,15 @@ describe("a row's Cancel (D02 §8.2)", () => {
       fireEvent.click(cancelOf(ETH));
       await settle(TICK);
       expect(deletes()).toEqual([ETH]);
-      // it reaches cancel_pending (busy by its own state), then the venue refuses: free again
+      await settle(pressed + BUSY_BOUND_MS - 3 * TICK - Date.now());
+      expect(cancelOf(ETH)).toHaveAttribute("aria-busy", "true"); // to the bound's last frames
+      // it reaches cancel_pending (busy by its own state), then the venue refuses: free again,
+      // still before the bound, so it is the 202's state that let it go
       push(ETH, "cancel_pending", 1_793_455_341_000);
       await settle(TICK);
       push(ETH, "partially_filled", 1_793_455_342_000);
       await settle(TICK);
+      expect(Date.now()).toBeLessThan(pressed + BUSY_BOUND_MS);
       expect(cancelOf(ETH)).not.toHaveAttribute("aria-busy");
       expect(cancelOf(ETH)).not.toHaveAttribute("aria-disabled");
       // one parked unknown is let go too: its own reason shows, not busy
@@ -561,6 +578,58 @@ describe("a row's Cancel (D02 §8.2)", () => {
       expect(cancelOf(COND)).toHaveAccessibleDescription(
         "We could not confirm this order with Bybit; checking.",
       );
+    },
+  );
+
+  it(
+    "a row that moved on before its 202 was read is busy to the bound, then cancellable (R2-m1)",
+    SCREEN,
+    async () => {
+      const held = heldCancels();
+      await openOrders({ cancel: held.cancel });
+      const push = (lifecycle: string, at: number): void =>
+        ws.live("orders")[0]?.push(delta(moved(ETH, { lifecycle_state: lifecycle }, at)));
+      fireEvent.click(cancelOf(ETH)); // submitted, its DELETE held
+      await settle(TICK);
+      // the cancel's step, then a fill (INV-B1-d), both before the 202 is read, in one commit
+      push("cancel_pending", 1_793_455_340_000);
+      push("partially_filled", 1_793_455_341_000);
+      await settle(TICK);
+      const answered = Date.now();
+      held.answer(); // 202 cancel_pending: a state the row has already left
+      await settle(TICK);
+      push("partially_filled", 1_793_455_342_000);
+      await settle(answered + BUSY_BOUND_MS - 1 - Date.now());
+      expect(cancelOf(ETH)).toHaveAttribute("aria-busy", "true"); // n6's hold, to the bound
+      fireEvent.click(cancelOf(ETH));
+      await settle(1);
+      expect(cancelOf(ETH)).not.toHaveAttribute("aria-busy"); // let go at the bound
+      expect(deletes()).toEqual([ETH]); // the press while busy sent nothing
+      fireEvent.click(cancelOf(ETH));
+      await settle(TICK);
+      expect(deletes()).toEqual([ETH, ETH]); // cancellable again
+    },
+  );
+
+  it(
+    "a row that reaches its 202's state is let go there, before the bound, timer and all (R2-m1)",
+    SCREEN,
+    async () => {
+      const held = heldCancels();
+      await openOrders({ cancel: held.cancel });
+      const push = (lifecycle: string, at: number): void =>
+        ws.live("orders")[0]?.push(delta(moved(ETH, { lifecycle_state: lifecycle }, at)));
+      fireEvent.click(cancelOf(ETH));
+      await settle(TICK);
+      const answered = Date.now();
+      held.answer();
+      await settle(TICK);
+      push("cancel_pending", 1_793_455_340_000); // the 202's state: busy by its own state now
+      await settle(TICK);
+      push("partially_filled", 1_793_455_341_000); // the venue refused it
+      await settle(TICK);
+      expect(cancelOf(ETH)).not.toHaveAttribute("aria-busy");
+      expect(await timerEndsAt(answered + BUSY_BOUND_MS)).toBe(false); // its timer went with it
     },
   );
 
@@ -1568,6 +1637,25 @@ describe("axe and teardown", () => {
       await settle(TICK);
       expect(ws.live("orders")).toEqual([]);
       expect(ws.live("positions")).toHaveLength(1);
+    },
+  );
+
+  it(
+    "leaving the tab clears a busy row's bound: nothing runs for it after (R2-m1)",
+    SCREEN,
+    async () => {
+      const held = heldCancels();
+      await openOrders({ cancel: held.cancel });
+      fireEvent.click(cancelOf(ETH));
+      await settle(TICK);
+      const answered = Date.now();
+      held.answer(); // taken, the row still submitted: busy, its bound set
+      await settle(TICK);
+      expect(cancelOf(ETH)).toHaveAttribute("aria-busy", "true");
+      fireEvent.click(screen.getByRole("tab", { name: "Positions" }));
+      await settle(TICK);
+      expect(screen.queryByRole("group", { name: "Working orders", hidden: true })).toBeNull();
+      expect(await timerEndsAt(answered + BUSY_BOUND_MS)).toBe(false);
     },
   );
 });
