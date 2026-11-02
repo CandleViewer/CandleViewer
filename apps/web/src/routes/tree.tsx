@@ -24,6 +24,7 @@ import { ChangePasswordScreen } from "../features/auth/ChangePasswordScreen";
 import { InviteAcceptScreen } from "../features/invites/InviteAcceptScreen";
 import { AppearanceScreen } from "../features/appearance/AppearanceScreen";
 import { SetupChecklistCard } from "../features/onboarding/SetupChecklistCard";
+import { AlertsRoute } from "../features/alerts/AlertsRoute";
 import { HotkeyEditor } from "../keymap/HotkeyEditor";
 import { AccessibilitySettingsScreen } from "../features/a11y-preferences/AccessibilitySettingsScreen";
 import { SessionsSection } from "../features/session/SessionsSection";
@@ -38,6 +39,7 @@ function elementFor(routeId: string, owner: string | null): RouteObject["element
   if (routeId === "R-001") return <LoginScreen />;
   if (routeId === "R-007") return <ChangePasswordScreen />;
   if (routeId === "R-009") return <InviteAcceptScreen />;
+  if (routeId === "R-190") return <AlertsRoute />; // SCR-090 alerts centre (E40-S01)
   if (routeId === "R-202") return <HotkeyEditor />;
   // R-203 /settings/appearance hosts SCR-116 (palette) and SCR-117 a11y prefs (12-sitemap.md).
   if (routeId === "R-203")

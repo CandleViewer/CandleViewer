@@ -472,6 +472,22 @@ export const Selectable: Story = {
 };
 
 /**
+ * Selection=denied (T2, RBAC): the select column stays so the table's shape holds, every CMP-005 is disabled with the
+ * reason and nothing can be selected.
+ */
+export const SelectDenied: Story = {
+  render: () => <SelectHost selectDisabledReason="Your role can't change alerts." />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const all = canvas.getByRole("checkbox", { name: "Select all rows" });
+    await expect(all).toHaveAttribute("aria-disabled", "true");
+    await expect(all).toHaveAccessibleDescription("Your role can't change alerts.");
+    await userEvent.click(canvas.getByRole("checkbox", { name: "Select BTCUSDT" }));
+    await expect(canvas.getByRole("checkbox", { name: "Select BTCUSDT" })).not.toBeChecked();
+  },
+};
+
+/**
  * Mode=grid (the APG Grid pattern), implied by the actions column: one Tab stop, the arrows by cell with the header
  * row in their path, the CMP-039 ring on the focused cell. In a bounded box a focused cell scrolls below the sticky
  * header (`scroll-margin-top` is the header's height), so focus is never hidden under it (WCAG 2.4.11).

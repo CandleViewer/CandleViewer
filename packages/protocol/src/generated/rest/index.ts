@@ -7464,7 +7464,7 @@ export interface components {
       exchange_account_id?: string | null;
       /**
        * Format: date-time
-       * @description A past instant is refused with `422 validation_failed` (E40-D02 CC-10).
+       * @description A past instant is refused with `422 validation_failed` (E40-D02 CC-10), except that a replace (`PUT`) may echo the alert's stored past `expires_at` unchanged.
        */
       expires_at?: string | null;
       /** @description Mustache-style placeholders resolved from the rule context. */

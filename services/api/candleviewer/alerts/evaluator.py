@@ -34,7 +34,13 @@ from candleviewer.alerts.gating import (
 )
 from candleviewer.alerts.models import AlertCondition
 from candleviewer.alerts.owners import OwnerGate
-from candleviewer.alerts.ports import AlertRecord, AuditSink, FiringStore, MetricChildLike
+from candleviewer.alerts.ports import (
+    AlertRecord,
+    AuditSink,
+    DisarmReason,
+    FiringStore,
+    MetricChildLike,
+)
 from candleviewer.observability import spawn
 from candleviewer.rules.evaluator import MetricSource, SnapshotBuilder
 from candleviewer.rules.evaluator.nodes import (
@@ -492,12 +498,13 @@ class AlertEvaluator:
             if a is None or not a.enabled:
                 return
             now = self._clock()
+            reason: DisarmReason = "source_unavailable"
             ids = await self._store.record_firing(
                 alert_id=a.id, user_id=a.owner_user_id, channels=a.channels, status="queued",
                 title=DISARM_TITLE.format(metric=metric), body="",
-                context={"disarmed": True, "reason": "source_unavailable", "metric": metric},
+                context={"disarmed": True, "reason": reason, "metric": metric},
                 fired_at=_dt(now), once=False, bump=False,
-                disarm_reason="source_unavailable",
+                disarm_reason=reason,
             )  # fmt: skip
             a.enabled = False
             if ids is None:  # already disarmed (a `once` firing won): nothing to announce

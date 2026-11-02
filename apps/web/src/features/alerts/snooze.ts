@@ -4,18 +4,19 @@
  * here, before the request, mirroring the server's `422 validation_failed` (including its 30-day cap) (the server stays the
  * authority). The wire value is a tz-aware UTC ISO string, as the contract requires.
  */
-export type SnoozePreset = "15m" | "1h" | "4h" | "24h";
+export type SnoozePreset = "15m" | "30m" | "1h" | "4h" | "24h";
 
 const MINUTE_MS = 60_000;
 export const SNOOZE_PRESET_MS: Readonly<Record<SnoozePreset, number>> = {
   "15m": 15 * MINUTE_MS,
+  "30m": 30 * MINUTE_MS,
   "1h": 60 * MINUTE_MS,
   "4h": 240 * MINUTE_MS,
   "24h": 1_440 * MINUTE_MS,
 };
 /** The server refuses a snooze reaching further than this (`until_too_far`). */
 export const SNOOZE_MAX_MS = 30 * 1_440 * MINUTE_MS;
-export const SNOOZE_PRESETS: readonly SnoozePreset[] = ["15m", "1h", "4h", "24h"];
+export const SNOOZE_PRESETS: readonly SnoozePreset[] = ["15m", "30m", "1h", "4h", "24h"];
 
 export interface SnoozeClock {
   readonly now: () => number;
