@@ -679,7 +679,9 @@ async def test_inv_b1_o_a_fill_reaching_a_final_or_held_order_is_an_audited_anom
 @pytest.mark.parametrize("event", ["RECON_FOUND_LIVE", "RECON_FOUND_PARTIAL", "EXEC"])
 async def test_b01_untracked_consumes_the_exchange_facts(event: str, charts: Charts) -> None:
     """INV-B1-l (version 3): `untracked` records the facts and restarts its miss count, never
-    deferring them (past DEFER_MAX a deferred event is evicted), and runs no managing action."""
+    deferring them (past DEFER_MAX a deferred event is evicted), and runs no managing action. The
+    `EXEC` case is an `EXEC` neither guard admits (the harness answers each guard `False`), which
+    version 8's unguarded third arm consumes."""
     async with _at("untracked", charts) as (i, rec, _c):
         mark = len(rec.actions)
         await i.send(event, wait=True)

@@ -20,6 +20,7 @@ from candleviewer.accounts.order_gate import AccountHealthCheck, DisabledReason,
 from candleviewer.accounts.selfcheck import FRESHNESS_GRACE, KeyCheck, KeySelfCheck
 from candleviewer.admin.flags.maintenance import MaintenanceGate
 from candleviewer.domain.order_entry import GlobalOrderEntryCheck, OrderEntryCheck, OrderEntryGate
+from candleviewer.oms.reconcile_standing import ReconcileStanding
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.accounts import SelfCheckTargetRow
 from tests.unit.accounts._fakes import ACC, ACC_B, FakeClock, fake_sql_edges, key_of, key_row
@@ -83,7 +84,8 @@ def test_create_app_serves_one_gate_the_maintenance_check_then_the_account_check
 ) -> None:
     gate: OrderEntryGate = world.app.state.order_entry_gate
     assert gate is world.app.state.feature_flags.order_entry_gate  # no gate without the account
-    assert gate.checks == (world.maintenance, world.runtime.order_entry_check)
+    standing = world.app.state.reconcile_standing  # E29-T06 #914: `account_stale`, last
+    assert gate.checks == (world.maintenance, world.runtime.order_entry_check, standing)
 
 
 def test_the_gate_the_order_lane_reads_in_place_is_over_the_sources_20_argues_alone(
@@ -94,8 +96,10 @@ def test_the_gate_the_order_lane_reads_in_place_is_over_the_sources_20_argues_al
     over the key standing, the self-check's results and the account health. A check or a source
     added here joins that inventory, with its argument, first."""
     gate: OrderEntryGate = world.app.state.order_entry_gate
-    maintenance, account = gate.checks
+    maintenance, account, standing = gate.checks
     assert type(maintenance) is MaintenanceGate and type(account) is AccountHealthCheck
+    assert type(standing) is ReconcileStanding  # 20 Sec.6.2: a set the lane alone writes
+    assert world.app.state.oms_runtime._standing is standing  # the one the jobs set and clear
     assert (type(account._keys), type(account._health)) == (KeyStandings, AccountHealthMonitor)
     assert type(world.runtime.standings._selfcheck) is KeySelfCheck
     assert world.runtime.standings is account._keys and world.app.state.oms_runtime._gate is gate

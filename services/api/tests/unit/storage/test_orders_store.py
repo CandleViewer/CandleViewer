@@ -663,6 +663,17 @@ def test_no_other_fill_step_keeps_or_makes_a_row_untracked(
         replace(_FILL, step=moved)
 
 
+@pytest.mark.parametrize("kind", ["partial_fill", "fill"])
+def test_a_fill_never_brings_an_untracked_row_under_management(kind: Any) -> None:
+    """BQ-17 (#914): no partial fill takes an `untracked` row to `partially_filled`. The chart has
+    no such arm; the store refuses the step too, before any statement, so a chart mutant that
+    added one would meet a second control (#5157's security look), as the completing fill meets
+    `state_mismatch`."""
+    moved = step(_HELD, "partially_filled", event(kind), from_state="untracked")
+    with pytest.raises(ValueError, match="a partial fill keeps an untracked row untracked"):
+        replace(_FILL, step=moved)
+
+
 _ORDER_STATES = get_args(port.OrderState)
 _EVENT_KINDS = get_args(port.OrderEventKind)
 
@@ -696,6 +707,7 @@ def _refusal(done: OrderFill) -> str | None:
 @example(frm="untracked", to="filled", kind="fill", cum="0.2")  # `filled` short of qty
 @example(frm="untracked", to="filled", kind="fill", cum="0.4")  # past qty
 @example(frm="partially_filled", to="filled", kind="fill", cum="0.3")
+@example(frm="untracked", to="partially_filled", kind="partial_fill", cum="0.1")  # BQ-17's refusal
 def test_the_fill_rule_changes_nothing_outside_untracked_property(
     frm: Any, to: Any, kind: Any, cum: str
 ) -> None:
@@ -703,7 +715,8 @@ def test_the_fill_rule_changes_nothing_outside_untracked_property(
     quantity is not `qty` never takes its row to `filled`, and one at `qty` takes it nowhere
     else: `check` refuses either (`above_qty`, `state_mismatch`). (b) A fill step out of any state
     but `untracked` is admitted and checked exactly as before version 8; out of `untracked` the
-    one step more is a `partial_fill` back into `untracked`."""
+    one step more is a `partial_fill` back into `untracked`, and the one step fewer is a fill into
+    `partially_filled`, which the store refuses as a second control (BQ-17, #914)."""
     moved = step(_HELD, to, event(kind), from_state=frm)
     try:
         done: OrderFill | None = replace(
@@ -712,7 +725,9 @@ def test_the_fill_rule_changes_nothing_outside_untracked_property(
     except ValueError:
         done = None
     one_more = frm == "untracked" and (to, kind) == ("untracked", "partial_fill")
-    assert (done is not None) == (_before_version_8(to, kind) or one_more)  # (b): admission
+    one_fewer = frm == "untracked" and to == "partially_filled"
+    admitted = (_before_version_8(to, kind) and not one_fewer) or one_more
+    assert (done is not None) == admitted  # (b): admission
     if done is None:
         return
     refused, total, qty = _refusal(done), Decimal(cum), _HELD.qty

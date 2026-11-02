@@ -127,6 +127,10 @@ class OrderFill:
                 "a fill's step is to partially_filled or filled by a fill event, or keeps an "
                 "untracked row untracked by a partial_fill"
             )
+        if (step.from_state, step.to_state) == ("untracked", "partially_filled"):
+            # BQ-17, the store as a second control beside the chart: a partial fill never brings
+            # an `untracked` row under management (#914, #5157's security look)
+            raise ValueError("a partial fill keeps an untracked row untracked")
 
     def check(self, qty: Decimal, is_paper: bool) -> None:
         """`FillRefused` for what its order, locked with its `qty` and `is_paper`, cannot take: run

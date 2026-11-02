@@ -54,6 +54,9 @@ ALLOWED = {
             "oms_wiring.py",
             "storage/repositories/orders.py",
             "storage/repositories/orders_sqlalchemy.py",
+            # E29-T06 #914: the pass's own store runs the sweep's statement for the one account
+            # its job reconciles, which B19 names (no route reaches it, C-12.4)
+            "storage/repositories/reconcile_sqlalchemy.py",
         }
     ),
     EVERY_ACCOUNT: frozenset(

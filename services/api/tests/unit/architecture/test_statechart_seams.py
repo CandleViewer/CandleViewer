@@ -67,15 +67,24 @@ def test_every_gateway_construction_names_its_admission() -> None:
     files = {rel for rel, _ in sites}
     assert files == {
         "alerts/lifecycle.py", "app.py", "auth/session_chart.py", "oms/order_machine.py",
-        "recorder/policy.py", "replay/sessions_service.py", "rules/lifecycle.py",
+        "oms/reconcile_job.py", "recorder/policy.py", "replay/sessions_service.py",
+        "rules/lifecycle.py",
     }  # fmt: skip
-    assert len(sites) == 9
+    assert len(sites) == 10
 
 
 def test_every_order_machines_construction_names_its_latch() -> None:
     sites = _calls("OrderMachines")
     assert {rel for rel, _ in sites} == {"oms_wiring.py"}  # the one composition site
     assert [rel for rel, call in sites if "latch" not in {k.arg for k in call.keywords}] == []
+
+
+def test_the_reconciliation_gateway_admits_every_send_of_its_driver() -> None:
+    """E29-T06 #914: B19's sends are the driver's own, under each job's lock; a latch that refused
+    them would stop the pass, and with it step 5's repair of a naked position (C-2.6)."""
+    [(_, call)] = [(rel, c) for rel, c in _calls("Gateway") if rel == "oms/reconcile_job.py"]
+    [admission] = [k.value for k in call.keywords if k.arg == "admission"]
+    assert isinstance(admission, ast.Name) and admission.id == "ALWAYS_ADMIT"
 
 
 def test_the_oms_gateway_admits_everything_its_facades_latch_is_the_gate() -> None:

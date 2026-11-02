@@ -721,30 +721,54 @@ class ReconciliationRequests(Protocol):
 
 
 class NoReconciliation(Interim):
-    """`ReconciliationRequests` until E29-T06 (24 Sec.8.12): each request is
-    `ReconciliationUnavailable`, which the consumer logs (`stream_resync_refused`), counts
-    (`reconciliation_unavailable`) and pages once per episode, keeping `oms.account_resyncing` in
-    force without holding order entry."""
+    """`ReconciliationRequests` of a composition with no reconciliation stores (24 Sec.8.12; with
+    them, E29-T06's jobs take each request): each request is `ReconciliationUnavailable`, which
+    the consumer logs (`stream_resync_refused`), counts (`reconciliation_unavailable`) and pages
+    once per episode, keeping `oms.account_resyncing` in force without holding order entry."""
 
     port: ClassVar[RuntimePortName] = "reconciliation"
     replaced_by: ClassVar[str] = "E29-T06 (#914)"
     serves: ClassVar[str] = "no reconciliation pass: each request is refused and paged"
 
     async def request_reconciliation(self, account_id: AccountId, *, reason: ResyncReason) -> None:
-        raise ReconciliationUnavailable("no reconciliation pass exists until E29-T06")
+        raise ReconciliationUnavailable("no reconciliation pass is composed: no store for it")
+
+
+#: E45-T01's four named carries of reconciliation (#914's ruling of record, BQ-2; 24 Sec.8.5
+#: "What E29-T06 builds"): step 6's end of the records a flat read ended, the recorded stops held
+#: for reconciliation, the Partial-mode restore and SR-E29-06 (ii)'s foreign-stop cancel.
+RECONCILIATION_CARRIES: Final = (
+    "flat_records_ended", "held_stop_rows", "partial_mode_restore", "foreign_stop_cancel",
+)  # fmt: skip
+_CARRIES_REGISTERED: set[str] = set()
+
+
+def register_reconciliation_carry(name: str) -> None:
+    """E45-T01's carries register themselves here as each lands, at its module's import: the
+    marker the live refusal reads. A name outside the four is a `ValueError`."""
+    if name not in RECONCILIATION_CARRIES:
+        raise ValueError("not one of reconciliation's named carries")
+    _CARRIES_REGISTERED.add(name)
+
+
+def reconciliation_carries_missing() -> tuple[str, ...]:
+    """The carries not registered yet, in their order."""
+    return tuple(name for name in RECONCILIATION_CARRIES if name not in _CARRIES_REGISTERED)
 
 
 def refuse_live_without_reconciliation(
     environment: ProcessEnvironment, port: ReconciliationRequests
 ) -> None:
-    """The live start-up self-check (24 Sec.8.12, C-2.21), which E29-T05's wiring slice calls on
-    the binding as bound, before any wrapper (a wrapped stand-in would pass it):
-    `ReconciliationUnavailable` when a live process would run with `NoReconciliation`, as the
-    exchange is truth after a reconnect (C-2.5). The environment compares by value, so a plain
-    `"live"` refuses too. Demo and testnet run with its page; E29-T06 removes the stand-in and
-    this refusal together."""
-    if environment == ProcessEnvironment.LIVE and isinstance(port, NoReconciliation):
-        raise ReconciliationUnavailable("a live process needs E29-T06's reconciliation pass")
+    """The live start-up self-check (24 Sec.8.12, C-2.21), which the stream's wiring calls on the
+    binding as bound: `ReconciliationUnavailable` while a live process would run reconciliation
+    without E45-T01's four carries (BQ-2), keyed to their marker (`RECONCILIATION_CARRIES`, each
+    registered by its own code), never to the type of `port`, which E29-T06 binds to its real
+    driver (`NoReconciliation` included, as a process that composes none). So a live process fails
+    closed once the stand-in is gone, and E45-T01 lifts the refusal by registering the last carry.
+    The environment compares by value, so a plain `"live"` refuses too; demo and testnet run."""
+    del port  # the port as bound, its type deliberately not read (#914)
+    if environment == ProcessEnvironment.LIVE and reconciliation_carries_missing():
+        raise ReconciliationUnavailable("a live process needs E45-T01's reconciliation carries")
 
 
 class AccountNotices(Protocol):

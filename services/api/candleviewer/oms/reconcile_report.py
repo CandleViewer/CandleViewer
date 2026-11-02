@@ -70,9 +70,11 @@ STEPS: Final[tuple[Step, ...]] = get_args(Step)
 NO_RECORD_IN_FORCE: Final = "no_record_in_force"
 HANDOVER_UNREADABLE: Final = "handover_unreadable"
 #: A found row the pass sends no finding, as the fills it read are not the venue's totals or
-#: cannot close it (`reconciler.found_sends`). An `untracked` row's stands: its fills sit in the
-#: hand-over store, and B1 chart version 8 closes it (the orchestrator's ruling of 2026-10-31). An
-#: `unknown` or `quarantined` row's holds the watermark, so the next pass reads the window again.
+#: cannot close it (`reconciler.found_sends`). An `untracked` row's stands: B1 chart version 8
+#: applies its fills, so one whose fills read complete it closes, and what stays is a row whose
+#: fills read cannot complete it, which a held window would not recover (the orchestrator's ruling
+#: of 2026-10-31, its interim ended by version 8). An `unknown` or `quarantined` row's holds the
+#: watermark, so the next pass reads the window again.
 FILLS_UNREAD: Final = "fills_unread"
 UNTRACKED_FILLS_UNREAD: Final = "untracked_fills_unread"
 STANDING_ITEMS: Final = frozenset({NO_RECORD_IN_FORCE, HANDOVER_UNREADABLE, UNTRACKED_FILLS_UNREAD})

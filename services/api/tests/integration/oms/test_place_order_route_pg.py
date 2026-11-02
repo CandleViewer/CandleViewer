@@ -7,7 +7,8 @@ own, and a `FakeTradingPort` as the venue (C-13.5). As in E4's `test_startup_swe
 account read is in memory (no key row is seeded); here the instrument catalogue is composed too,
 so the pipeline admits. Each scenario asserts the answer against 22 and the rows, the audit
 records and the exchange calls behind it, counting the venue's calls from just before its request,
-and depends on no other test's rows (`world`); an unreachable Postgres is a loopback relay that is
+once the process's startup reconciliation pass (E29-T06) has made its own reads, and depends on no
+other test's rows (`world`); an unreachable Postgres is a loopback relay that is
 cut, both pools behind it. "Retry reuses the id" and "A persist-time id collision is re-allocated"
 never reach the route: slices 1 and 2 prove them (C6's `test_retry_reuses_the_id`,
 `test_a_persist_time_id_collision_is_re_allocated`). Amend is slice 4's. Run once locally before
@@ -17,7 +18,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import re
+import threading
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -101,6 +104,37 @@ async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> N
     writer.close()
 
 
+@dataclass
+class AuditLog(Writer):
+    """The world's audit log: the order lane's own writer (`Writer`, #913 L2), every process's.
+    Each record that lands is noticed (`landed`) on the thread it lands on, the lane's or the
+    serving loop's, so a test waits for one on a thread of its own (`recorded`), never on the
+    serving loop."""
+
+    landed: threading.Condition = field(default_factory=threading.Condition)
+
+    async def emit(self, action: str, **fields: Any) -> None:
+        await super().emit(action, **fields)
+        self._noticed()
+
+    async def emit_keyed(self, action: str, name: str, **fields: Any) -> None:
+        await super().emit_keyed(action, name, **fields)
+        self._noticed()
+
+    def _noticed(self) -> None:
+        with self.landed:
+            self.landed.notify_all()
+
+    def count(self, action: str) -> int:
+        return sum(landed == action for landed, _ in self.actions)
+
+    def recorded(self, action: str, *, above: int, timeout_s: float) -> bool:
+        """Blocks the calling thread until more than `above` records of `action` have landed, at
+        most `timeout_s`: whether they have."""
+        with self.landed:
+            return self.landed.wait_for(lambda: self.count(action) > above, timeout_s)
+
+
 class _Relay:
     """A loopback relay in front of the database: `cut` makes Postgres unreachable, its port
     refusing every connection and each connection through it reset."""
@@ -146,7 +180,7 @@ class World:
     user: UUID
     clock: c6.Clock
     wal: Path
-    writer: Writer = field(default_factory=Writer)
+    writer: AuditLog = field(default_factory=AuditLog)
     pager: Pager = field(default_factory=Pager)
     retrying: asyncio.Event = field(default_factory=asyncio.Event)
     beats: Beats = field(default_factory=Beats)
@@ -290,13 +324,14 @@ async def _serving(
     settle: bool = True, drain_s: float | None = None,
 ) -> AsyncIterator[httpx.AsyncClient]:  # fmt: skip
     """One API process until the block ends, when its facade, once composed, settles and its lane
-    sink flushes into Postgres (unless `settle` is False: a venue call left held would never let
-    it) and it goes down, draining for `drain_s` when given: `POST /orders`,
-    `POST /orders/cancel-all` and the exit routes, mounted in `create_app()`'s order over its OMS
-    runtime (`world.runtime`), which is ready unless `ready` is False, and then composed nothing to
-    settle (CR-S3L2X-01). Its own pools, both on `dsn` (the OMS stores', and the profile cache's
-    unless `profiles` stands in), metrics and 24 h record; the venue, the audit log and the pager
-    are the world's."""
+    sink flushes into Postgres (unless `settle` is False: a venue call left held, or a cut to
+    Postgres that outlasts the block, would never let it) and it goes down, draining for `drain_s`
+    when given: `POST /orders`, `POST /orders/cancel-all` and the exit routes, mounted in
+    `create_app()`'s order over its OMS runtime (`world.runtime`), which is ready unless `ready` is
+    False, and then composed nothing to settle (CR-S3L2X-01); once ready, its startup
+    reconciliation pass has recorded itself before the block starts (`_reconciled`). Its own
+    pools, both on `dsn` (the OMS stores', and the profile cache's unless `profiles` stands in),
+    metrics and 24 h record; the venue, the audit log and the pager are the world's."""
     metrics = Metrics("demo")
     process_dsn = dsn or c6._login(world.dsn, "cv_app")
     pool = SqlAlchemyRelationalRepository(process_dsn, "place-order-route-it")
@@ -323,9 +358,11 @@ async def _serving(
     )
     client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://cv")
     try:
+        passes = _passes(world)
         async with started(runtime), client:
             if ready:
                 await asyncio.wait_for(runtime.wait_ready(), _READY_BOUND_S)
+                await _reconciled(world, passes)
             yield client
             if ready and settle:  # composed: one never ready composed nothing (CR-S3L2X-01)
                 parts = runtime._composed()  # the facade's tasks are the order lane's (CV-C13)
@@ -346,6 +383,31 @@ async def _serving(
 
 async def _post(client: httpx.AsyncClient, body: dict[str, Any]) -> httpx.Response:
     return await client.post("/orders", json=body, headers={"Idempotency-Key": str(KEY)})
+
+
+#: The reconciliation pass's record (24 Sec.15.5), which `_reconciled` waits for.
+_RECONCILE = "oms.reconcile"
+
+
+def _passes(world: World) -> int:
+    """The reconciliation passes recorded so far (`oms.reconcile`, 24 Sec.15.5), every process's
+    on the world's audit log."""
+    return world.writer.count(_RECONCILE)
+
+
+async def _reconciled(world: World, before: int) -> None:
+    """E29-T06 (#914): the process's startup reconciliation pass, which `ready` never waits for
+    (BQ-14), has made its venue reads and recorded itself, so the calls a test counts from here are
+    its request's own. A thread of its own waits on the world's audit log, so the serving loop
+    stays idle meanwhile. Turning it in place until the record landed held the GIL and a core
+    against the order lane's thread, whose step writes for the requests the startup resumed come
+    before that record (24 Sec.8.5), and on a slow runner they missed their 1 s bound
+    (`CV_PERSIST_TIMEOUT`, #5185). The bound only turns a hang into a failure."""
+    wait = functools.partial(
+        world.writer.recorded, _RECONCILE, above=before, timeout_s=_READY_BOUND_S
+    )
+    if not await asyncio.to_thread(wait):
+        raise TimeoutError("the process's startup reconciliation pass did not record itself")
 
 
 def _entry(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -513,7 +575,9 @@ async def test_order_entry_blocked_when_we_cannot_record_it_postgres_unreachable
     relay = _Relay(world.dsn)
     dsn = await relay.through(c6._login(world.dsn, "cv_app"))
     try:
-        async with _serving(world, dsn=dsn) as client:
+        # Not settled: the cut lasts past the block, so the lane sink, which also carries the
+        # reconciliation machine's rows (B19), can never flush the ones that meet the cut.
+        async with _serving(world, dsn=dsn, settle=False) as client:
             relay.cut()
             calls = len(world.port.calls)
             answer = await _post(client, world.body)

@@ -49,13 +49,16 @@ _SQL_WRITE = re.compile(r"\b(?:update|insert\s+into|merge\s+into)\b", re.IGNOREC
 #: FOR SHARE (`exchange_accounts.c`) to require them live while it inserts the legs (#905); the
 #: order store selects the ids of an environment's accounts (`exchange_accounts.c`) for the OMS's
 #: startup hydration (#913); the order-path symbols store keeps a profile's symbols only of a live
-#: account (`exchange_accounts.c`, an `IN` subquery) for the tier refresh's seed (#913 S4-S-c).
+#: account (`exchange_accounts.c`, an `IN` subquery) for the tier refresh's seed (#913 S4-S-c); the
+#: reconciliation pass's store reads an account's watermark (`exchange_accounts.c`) and writes it
+#: only through one static UPDATE of `last_reconciled_at`, which `_scan` reads (#914).
 _DEFINITION = Path("db/models.py")
 _READERS = frozenset(
     {
         Path("storage/repositories/account_profiles_sqlalchemy.py"),
         Path("storage/repositories/order_path_symbols_sqlalchemy.py"),
         Path("storage/repositories/orders_sqlalchemy.py"),
+        Path("storage/repositories/reconcile_sqlalchemy.py"),
         Path("storage/repositories/trade_groups_sqlalchemy.py"),
     }
 )
@@ -142,7 +145,9 @@ def _scan(root: Path = _PKG) -> tuple[int, dict[str, list[str]]]:
 
 def test_no_candleviewer_sql_changes_an_accounts_identity() -> None:
     updates, risks = _scan()
-    assert updates >= 4  # the store's patch and soft delete, the self-check's disarm and its mark
+    # the store's patch and soft delete, the self-check's disarm and its mark, and the
+    # reconciliation pass's watermark (#914)
+    assert updates >= 5
     assert risks == {}
 
 

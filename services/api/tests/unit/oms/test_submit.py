@@ -76,6 +76,7 @@ from candleviewer.oms.order_link import OrderLinkIdParts
 from candleviewer.oms.order_link_allocator import MAX_SEQ_INCREMENTS
 from candleviewer.oms.order_machine import OrderMachines
 from candleviewer.oms.ports import KeyedRecord, RequestRecord, SizingRequest, StopOffset
+from candleviewer.oms.reconcile_standing import STALE_DETAIL
 from candleviewer.oms.repository import IdempotencyAnchorRepository
 from candleviewer.oms.submit import (
     PLACE_WAIT_S,
@@ -674,10 +675,14 @@ async def test_the_switches_refuse_just_before_the_persist(rig: SubmitRig) -> No
 
 
 _GATE_PAUSED = OrderEntryRefusal("maintenance", "Order entry is paused for maintenance.")
+#: E29-T06 #914: the reconciliation standing's refusal, one more account check of the gate.
+_GATE_STALE = OrderEntryRefusal("account_stale", STALE_DETAIL)
 
 
 @pytest.mark.parametrize(
-    "switched", [TradingDisabled(), OrderEntryRefused(_GATE_PAUSED)], ids=["kill_or_live", "gate"]
+    "switched",
+    [TradingDisabled(), OrderEntryRefused(_GATE_PAUSED), OrderEntryRefused(_GATE_STALE)],
+    ids=["kill_or_live", "gate", "account_stale"],
 )
 async def test_a_protective_close_passes_the_kill_switch_live_and_the_gate_c26(
     rig: SubmitRig, switched: TradingDisabled

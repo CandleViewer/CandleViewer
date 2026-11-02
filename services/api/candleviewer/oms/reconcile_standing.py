@@ -30,6 +30,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from typing import Final
+from uuid import UUID
 
 from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.domain.primitives import AccountId
@@ -60,8 +61,10 @@ class ReconcileStanding:
     def __init__(self) -> None:
         self._stale: set[AccountId] = set()
 
-    def refusal(self, account_id: AccountId) -> OrderEntryRefusal | None:
-        """`OrderEntryCheck`: refuses a stale account's entry with `account_stale` (24 Sec.8.10)."""
+    def refusal(self, account_id: UUID) -> OrderEntryRefusal | None:
+        """`OrderEntryCheck`: refuses a stale account's entry with `account_stale` (24 Sec.8.10).
+        A set read, O(1) and in memory, from the serving loop, while the order lane writes the
+        set (C-2.20, C-2.21)."""
         if account_id in self._stale:
             return OrderEntryRefusal("account_stale", STALE_DETAIL)
         return None

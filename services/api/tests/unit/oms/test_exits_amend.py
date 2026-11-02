@@ -23,17 +23,20 @@ from structlog.testing import capture_logs
 from candleviewer import oms_wiring
 from candleviewer.api.order_etag import NO_VERSION
 from candleviewer.api.order_exits_common import exit_fault, exit_response, run_claimed
+from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.exchange.base.errors import OmsErrorCode
 from candleviewer.exchange.base.fakes import FakeReject
 from candleviewer.oms.errors import (
     OMS_NOT_READY_RETRY_AFTER_S,
     AccountScopeDenied,
     IllegalTransition,
+    OrderEntryRefused,
     TradingDisabled,
     VersionConflict,
 )
 from candleviewer.oms.exits import AmendTerms, ExitCaller, ExitOutcome, OrderExits, risk_increasing
 from candleviewer.oms.ports import RequestRecord, StopOffset
+from candleviewer.oms.reconcile_standing import STALE_DETAIL
 from candleviewer.risk.models import RiskDecision, RiskRefusal
 from candleviewer.statechart.gateway import GatewayDegradedError, GatewayOverloadedError
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -955,3 +958,19 @@ async def test_an_amend_that_raises_after_its_intent_records_its_failure_then_go
     assert (failed.severity, failed.actor, failed.request_id) == ("error", TRACED.actor, REQUEST)
     assert failed.detail == {"operation": "amend", "code": None, "state": None}
     assert amends(rig) == []
+
+
+async def test_a_stale_account_refuses_a_risk_increasing_amend_and_never_a_reducing_one(
+    rig: SubmitRig,
+) -> None:
+    """E29-T06 #914 (24 Sec.8.10, BQ-5, C-2.6): the reconciliation standing is one account check
+    of the gate, so a risk-increasing amend of a stale account meets `account_stale`, while a
+    quantity-reducing amend, which never consults the gate, is sent."""
+    found = await scoped(rig)
+    stale = OrderEntryRefusal("account_stale", STALE_DETAIL)
+    rig.port.switches.refusals[cr.ACCOUNT] = OrderEntryRefused(stale)
+    exits = exits_of(rig)
+    up = await exits.amend(found, AmendTerms(qty=D("0.011")), caller=CALLER, expected_seq=None)
+    assert (up.kind, up.status) == ("refused", 403) and amends(rig) == []
+    down = await exits.amend(found, AmendTerms(qty=D("0.009")), caller=CALLER, expected_seq=None)
+    assert down.kind == "accepted" and len(amends(rig)) == 1

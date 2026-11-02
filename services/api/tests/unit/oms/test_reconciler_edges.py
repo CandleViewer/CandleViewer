@@ -29,6 +29,7 @@ from tests.unit.oms.reconcile_rig import (
     NOW_US,
     OTHER,
     SWEEP_ID,
+    FakeOms,
     Job,
     World,
     fill,
@@ -362,6 +363,70 @@ async def test_3d_a_materialised_stops_fill_reread_answering_another_accounts_ro
     _refused_as_the_diff_refuses(w, report, met)
 
 
+class _KeepingStore(FakeOms):
+    """The hand-over store as `oms_handovers` keeps it (21 Sec.3.3.12): a fill handed over again
+    under an `exec_id` it holds changes nothing, and a prune deletes exactly the entries named."""
+
+    async def prune(self, account_id: Any, entry_ids: Any) -> int:
+        self.handed_fills = [e for e in self.handed_fills if e.entry_id not in entry_ids]
+        return await super().prune(account_id, entry_ids)
+
+
+async def _materialised_from_the_store(failure: str, monkeypatch: pytest.MonkeyPatch) -> Any:
+    """3d materialises a recorded stop's filled order for a fill only the hand-over store holds
+    (entry 41, beside entry 42, another fill the pass stores); the remediation then meets
+    `failure` on that fill: the store, as the pass left it."""
+    w = World(oms=_KeepingStore())
+    w.oms.records = [_pending_record()]
+    w.venue.seed_order(_stop_order(7, state="filled", filled_qty=Decimal("0.2")), uid="1001")
+    w.oms.seed(row(3, "accepted"))
+    e7 = fill("e7", n=7, side="sell", qty=Decimal("0.2"), order_link_id=ext_key("x7"))
+    w.oms.handed_fills = [waiting(e7, entry_id=41), waiting(fill("e3", n=3), entry_id=42)]
+    plan = await w.plan()
+    if failure == "timed_out":
+        w.oms.fail["get_by_exchange_order_id"] = TimeoutError()
+    elif failure == "another_account":
+
+        async def foreign(*_a: Any) -> Any:
+            return row(7, exchange_account_id=OTHER)
+
+        monkeypatch.setattr(w.oms, "get_by_exchange_order_id", foreign)
+    elif failure == "exec_refused":
+        push = w.oms.push
+
+        async def refused(account_id: Any, order_id: Any, event: str, payload: Any) -> None:
+            if payload.get("exec_id") == "e7":
+                raise ConnectionError("the facade's step writer is down")
+            await push(account_id, order_id, event, payload)
+
+        monkeypatch.setattr(w.oms, "push", refused)
+    await w.reconciler.remediate(plan)
+    return w
+
+
+@pytest.mark.parametrize("failure", ["timed_out", "another_account", "exec_refused"])
+async def test_3d_a_materialised_stops_fill_is_settled_only_once_applied(
+    failure: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#5121's security delta r2, Low 1 (24 Sec.8.5 step 3d): the fill's hand-over entry is
+    settled only once `_fill` applied it, as `PushFill` settles one, so a re-read that times out
+    or answers another account's row, or an `EXEC` that fails, leaves entry 41 in the store for
+    the next pass; entry 42, whose fill step 2 applied, is pruned beside it."""
+    w = await _materialised_from_the_store(failure, monkeypatch)
+    assert [e[2] for e in w.oms.effects("materialise")] == ["x7"]
+    assert [e.entry_id for e in w.oms.handed_fills] == [41]
+    assert w.oms.effects("prune") == [("prune", (42,))]
+
+
+async def test_3d_a_materialised_stops_fill_applied_is_settled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The control: a re-read that answers the row applies the fill, and both entries go."""
+    w = await _materialised_from_the_store("none", monkeypatch)
+    assert [e[2] for e in w.oms.effects("push")] == ["EXEC", "EXEC"]
+    assert (w.oms.handed_fills, w.oms.effects("prune")) == ([], [("prune", (41, 42))])
+
+
 async def test_a_recorded_stop_under_our_own_id_keeps_it_while_no_row_holds_it() -> None:
     w = World()
     w.oms.records = [_pending_record()]
@@ -511,10 +576,16 @@ def test_a_full_match_on_malformed_money_never_matches(monkeypatch: pytest.Monke
             [fill("e1", qty=Decimal(1))],
             ["RECON_FOUND_FILLED"],
         ),
-        (  # no one fill completes the row, which takes no EXEC: the store would refuse it
+        (  # B1 v8 applies the first as an EXEC; their sum completes the row
             "untracked",
             remote(1, state="filled", filled_qty=Decimal(1)),
             [fill("e1", qty=Decimal("0.4")), fill("e2", qty=Decimal("0.6"), seq=2)],
+            ["EXEC", "RECON_FOUND_FILLED"],
+        ),
+        (  # fills read that do not complete the row: the store would refuse `filled`
+            "untracked",
+            remote(1, state="filled", filled_qty=Decimal(1)),
+            [fill("e2", qty=Decimal("0.6"), seq=2)],
             None,
         ),
         ("untracked", remote(1, state="filled"), [], None),
@@ -625,10 +696,11 @@ async def test_the_phases_hold_the_watermark_for_a_tracked_rows_unread_fills() -
     assert job.watermarks.advanced == []
 
 
-async def test_the_phases_advance_the_watermark_past_an_untracked_rows_unread_fills() -> None:
-    """The orchestrator's ruling (iv), 24 Sec.8.5: an `untracked` row filled in two fills, which
-    no finding can close in B1 version 7, is listed `untracked_fills_unread`, a standing item:
-    the pass sends it nothing, keeps both fills and advances the watermark."""
+async def test_the_phases_close_an_untracked_row_filled_in_two_fills() -> None:
+    """B1 chart version 8 applies an `untracked` row's `EXEC`, so the orchestrator's interim (iv)
+    ends for an order filled in two fills (24 Sec.8.5): the pass sends the first as an `EXEC`, the
+    second rides the `RECON_FOUND_FILLED` that closes the row, as the two complete it, and nothing
+    is listed or kept; the watermark advances."""
     job = Job()
     job.world.oms.seed(row(1, "untracked", lifecycle_state="untracked"))
     filled = remote(1, state="filled", filled_qty=Decimal(1), leaves_qty=Decimal(0))
@@ -636,12 +708,32 @@ async def test_the_phases_advance_the_watermark_past_an_untracked_rows_unread_fi
     for n, qty in ((1, "0.4"), (2, "0.6")):
         job.world.venue.seed_execution(fill(f"e{n}", qty=Decimal(qty), seq=n))
     state = await _one_pass(job)
+    assert (state["errors"], state["resolved_from_history"]) == ([], [LINK.format(1)])
+    assert job.watermarks.advanced == [NOW_US]
+    sent = job.world.oms.effects("command", "push")
+    assert [(e[0], e[2]) for e in sent] == [("push", "EXEC"), ("command", "RECON_FOUND_FILLED")]
+    assert (sent[0][3]["exec_id"], sent[1][3]["execution"]["exec_id"]) == ("e1", "e2")
+    assert job.world.oms.effects("hand_over_execution") == []
+
+
+async def test_the_phases_advance_the_watermark_past_an_untracked_row_its_fills_cannot_close() -> (
+    None
+):
+    """24 Sec.8.5: an `untracked` row whose fills read cannot complete it (the venue counts a fill
+    no window read holds) is listed `untracked_fills_unread`, a standing item: the pass sends it
+    nothing, keeps the fill it read and advances the watermark."""
+    job = Job()
+    job.world.oms.seed(row(1, "untracked", lifecycle_state="untracked"))
+    filled = remote(1, state="filled", filled_qty=Decimal(1), leaves_qty=Decimal(0))
+    job.world.venue.seed_order(filled, uid="1001")
+    job.world.venue.seed_execution(fill("e2", qty=Decimal("0.6"), seq=2))  # e1 is unread
+    state = await _one_pass(job)
     assert state["errors"] == [
         {"step": "3b", "kind": "untracked_fills_unread", "subject": LINK.format(1)}
     ]
     assert job.watermarks.advanced == [NOW_US]
     assert job.world.oms.effects("command", "push") == []
-    assert [e[1] for e in job.world.oms.effects("hand_over_execution")] == ["e1", "e2"]
+    assert [e[1] for e in job.world.oms.effects("hand_over_execution")] == ["e2"]
 
 
 def test_the_phases_observe_only_their_own_report_and_refuse_a_bad_severity() -> None:

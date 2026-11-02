@@ -29,9 +29,10 @@ with `source: reconcile` (BQ-8); an `unknown`, `quarantined` or `untracked` row 
 `RECON_FOUND_*`, carrying the first of the order's fills this pass read that the row has not
 applied, the rest then sent as `EXEC`s and an end after them (`found_sends`): an `unknown` row
 takes no `EXEC` (INV-B1-e), and B1 adopts no totals without their execution (OM-R02). An
-`untracked` row's fills ride its finding too, as B1 records its `EXEC` and applies nothing: the
-last fill of a filled order is carried by the `RECON_FOUND_FILLED` that closes it, and a finding
-that leaves the row `untracked` is sent but never listed as a correction. A row the
+`untracked` row's fills ride its finding too: B1 chart version 8 applies its `EXEC`s and keeps it
+`untracked`, and the last fill of a filled order is carried by the `RECON_FOUND_FILLED` that closes
+it, once the fills read complete it; a finding that leaves the row `untracked` is sent but never
+listed as a correction. A row the
 pass finds nowhere takes `RECON_MISS`, with the closed `reject_code` `HistoryRetentionPolicy`
 decides (BQ-15): past the history span on demo, `DEMO_RETENTION_EXPIRED`; a live `unknown` row
 older than the venue's 24 h span is paged P1 and held, never abandoned. Fills pair through the
@@ -163,8 +164,8 @@ _LEFT_TO_THEIR_REQUEST: Final = frozenset(
 )
 #: The persisted states a `RECON_FOUND_*` reaches (24 Sec.8.5's table). Their fills ride their
 #: finding, never step 2's `EXEC`: an `unknown` or `quarantined` row takes no `EXEC` (INV-B1-e),
-#: and an `untracked` row's `EXEC` is recorded and applied to nothing, so only the fill its
-#: `RECON_FOUND_FILLED` carries closes it (`found_sends`).
+#: and an `untracked` row's are sent just before its finding, which closes it only once the fills
+#: read complete it (`found_sends`; B1 chart version 8 applies each `EXEC`).
 _FINDABLE: Final = frozenset({"unknown", "quarantined", "untracked"})
 #: A row's final states (B1's finals).
 _TERMINAL: Final = frozenset({"filled", "cancelled", "rejected", "expired", "killed"})
@@ -183,6 +184,9 @@ _RATE_LIMITED: Final = (RateLimitError, RateBudgetExceededError)
 #: The page for a row of another account met in the pass (BQ-12, C-2.11): a key and an account
 #: mixed up. Its episode ends with an order diff that met none.
 _ANOTHER: Final = "oms_rows_of_another_account"
+#: The page for a hand-over entry that no longer reads (24 Sec.8.5): once per entry, as it keeps
+#: its slot until the Owner prunes it.
+_UNREADABLE: Final = "oms_handover_unreadable"
 
 
 # --- Ports ---------------------------------------------------------------------------------------
@@ -324,8 +328,9 @@ class PositionTruth(Protocol):
     async def apply(self, position: Position, *, pass_id: str) -> PositionDriftSeen | None: ...
 
 
-#: What a step-5 stop write did: sent and answered, refused by the venue, no longer looser on the
-#: writer's own re-read (a restore), or not sent (the writer refused before any send).
+#: What a step-5 stop write did: sent and answered, refused by the venue, no longer needed on the
+#: writer's own re-read (a restore's stop no longer looser, an attach's position flat or
+#: protected), or not sent (the writer refused before any send).
 StopWrite = Literal["sent", "refused", "not_looser", "not_sent"]
 
 
@@ -484,14 +489,15 @@ def found_sends(
     their execution (OM-R02): its finding carries the first fill this pass read that it has not
     applied, the rest follow as `EXEC`s, and an end other than `filled` comes after them (INV-B1-k).
     An `untracked` row is recorded, never managed: one finding by the order's state, the fills it
-    does not carry sent before it as `EXEC`s, which B1 records and applies to nothing; a filled
-    order's last fill rides its `RECON_FOUND_FILLED`, the one arm that closes the row, and the step
-    writer stores that fill. As the store takes `filled` only with the row's `qty` filled, a filled
-    order closes so only when that one fill completes the row: an order filled in more executions
-    than one is not sent a finding the store would refuse (B1 version 7 cannot close it). None when
-    the totals the venue shows are not the fills read (they lie outside every window read), or
-    for such an order: nothing is adopted, the row is listed and the next pass reads again, an
-    `untracked` row's as a standing item, its fills kept (`UNTRACKED_FILLS_UNREAD`)."""
+    does not carry sent before it as `EXEC`s, which B1 chart version 8 applies to the row and
+    which leave it `untracked`; a filled order's last fill rides its `RECON_FOUND_FILLED`, the one
+    arm that closes the row, and the step writer stores that fill. As the store takes `filled`
+    only with the row's `qty` filled, a filled order is sent its finding only when the fills read
+    complete the row: their sum, over what the row holds already, is its `qty` (an order filled in
+    several executions closes so too). None when the totals the venue shows are not the fills read
+    (they lie outside every window read), or for such an order whose fills read cannot complete
+    it: nothing is adopted, the row is listed and the next pass reads again, an `untracked` row's
+    as a standing item, its fills kept (`UNTRACKED_FILLS_UNREAD`)."""
     base: dict[str, Any] = {"exchange_order_id": order.exchange_order_id, "pass_id": pass_id}
     if order.state not in _ENDED and order.state not in _OPEN:
         return None  # a status 24 Sec.8.12 does not map: decided by no finding
@@ -499,8 +505,9 @@ def found_sends(
     if row.state == "untracked":
         logged = list(fills)
         if order.state == "filled":
-            if not fills or row.cum_exec_qty + fills[-1].qty != row.qty:
-                return None  # no fill read, or none that completes the row (`state_mismatch`)
+            read = sum((f.qty for f in fills), Decimal(0))
+            if not fills or row.cum_exec_qty + read != row.qty:
+                return None  # no fill read, or fills that do not complete it (`state_mismatch`)
             last = logged.pop()
             carried = exec_payload(last, order_id=row.id, order_link_id=row.order_link_id)
             finding = FoundCommand("RECON_FOUND_FILLED", base | {"execution": carried})
@@ -1044,8 +1051,9 @@ class Reconciler:
         account = fetched.account
         draft = ReportDraft(account.account_id, fetched.pass_id, fetched.trigger, fetched.window)
         plan = Plan(fetched, draft)
-        for entry_id in fetched.unreadable:
+        for entry_id in fetched.unreadable:  # listed every pass, paged once (24 Sec.8.5)
             draft.error("1", HANDOVER_UNREADABLE, str(entry_id))
+            self.page_once(_UNREADABLE, account.account_id, str(entry_id))
         try:
             await _OrderDiff(self, plan).run()
         except Exception as exc:  # the order steps as a whole; 4 and 5 still plan
@@ -1542,6 +1550,7 @@ _PAGES: Final[Mapping[str, str]] = {
     "oms_position_drift": "Reconciliation corrected a position the OMS held otherwise.",
     "oms_freeze_failed": "Reconciliation could not freeze an account for a finding with no intent.",
     _ANOTHER: "Reconciliation read a row of another account.",
+    _UNREADABLE: "A hand-over entry no longer reads; it waits for the Owner.",
 }
 #: Each alert's summary, as fixed as a page's.
 _ALERTS: Final[Mapping[str, str]] = {"oms_reconcile_anomaly": "Reconciliation met an anomaly."}
@@ -1810,7 +1819,11 @@ class _Remediation:
         self, record: RecordedStopRow, order: Order, fill: Execution | None, entry_id: int | None
     ) -> None:
         """A recorded stop's order (Sec.8.3 rule 7): its row under "Adopted rows"'s id, bound to
-        the record in the same transaction, `source: reconcile`; then the fill that showed it."""
+        the record in the same transaction, `source: reconcile`; then the fill that showed it.
+        In 3c `entry_id` is the order's hand-over entry, settled once its row exists; in 3d it is
+        the fill's, settled only once `_fill` applied the fill, as `PushFill` settles one, so a
+        re-read that fails, answers another account's row or none, or an `EXEC` that fails,
+        leaves the fill in `oms_handovers` for the next pass (24 Sec.8.5 step 3d)."""
         p, xid = self._p, order.exchange_order_id
         link = order.order_link_id
         if OUR_ID.fullmatch(link) is None:
@@ -1825,14 +1838,15 @@ class _Remediation:
             new, environment=self._f.account.environment, pass_id=self._pid, binds=binds
         )
         await _bounded(call, FACADE_TIMEOUT_S)
-        if entry_id is not None:
-            self._settled.append(entry_id)
-        if fill is not None:
-            row = await self._reread(xid, fill)
-            if row is None:
-                await self._keep(fill, empty_read=False)
-            else:
-                await self._fill(row, fill, None)
+        if fill is None:  # 3c: the order's hand-over entry, now that its row exists
+            if entry_id is not None:
+                self._settled.append(entry_id)
+            return
+        row = await self._reread(xid, fill)
+        if row is None:
+            await self._keep(fill, empty_read=False)
+        else:
+            await self._fill(row, fill, entry_id)  # settled once applied
 
     def _size_of(self, record: RecordedStopRow, order: Order, fill: Execution | None) -> Decimal:
         """The materialised row's provisional size (the 2026-10-26 ruling): the order's; for a
@@ -1882,6 +1896,8 @@ class _Remediation:
         outcome = await _bounded(call, FACADE_TIMEOUT_S)
         if outcome == "sent":
             self._list("sl_repaired", position.symbol)
+            return
+        if outcome == "not_looser":  # the writer's own read: flat or protected since step 1
             return
         self._draft.error("5", f"attach_{outcome}", position.symbol)
         self._r.page_once(

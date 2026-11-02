@@ -4,6 +4,8 @@ C-2.21). The ordering of the standing against B19 itself is `test_reconcile_job.
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar, Literal
 from uuid import UUID
@@ -77,15 +79,20 @@ def test_the_standing_is_rebuilt_from_the_restored_state(state: str, stale: bool
 
 
 def test_protective_paths_never_consult_the_standing() -> None:
-    """C-2.6, BQ-5: only the order-entry gate reads the standing (its call site is the wiring's);
-    the stop writers, the cancel and close paths and the exits never name it. Its writers are the
-    pass's own modules."""
+    """C-2.6, BQ-5: only the order-entry gate reads the standing; the stop writers, the cancel
+    and close paths and the exits never name it. Its writers are the pass's own modules (the
+    phases, and the driver, which rebuilds it from a restored job and refuses an account whose
+    job did not open), and the composition hands the one standing on: `app.py` composes it into
+    the gate and gives it to the runtime, which gives it to reconciliation's composition (PR 2b)."""
     naming = {
         path.relative_to(PACKAGE).as_posix()
         for path in sorted(PACKAGE.rglob("*.py"))
         if "ReconcileStanding" in path.read_text(encoding="utf-8")
     }
-    assert naming == {"oms/reconcile_standing.py", "oms/reconcile_phases.py"}
+    assert naming == {
+        "oms/reconcile_standing.py", "oms/reconcile_phases.py", "oms/reconcile_job.py",
+        "oms_reconcile_wiring.py", "oms_wiring.py", "app.py",
+    }  # fmt: skip
 
 
 # --- The tracker (BQ-4) ---------------------------------------------------------------------------
@@ -169,6 +176,39 @@ async def test_the_window_runs_from_the_older_mark_to_now() -> None:
     await job.phases.fetch(str(ACCOUNT), pass_id=SWEEP_ID, trigger="periodic")
     [executions] = [c.request for c in job.world.venue.calls if c.method == "executions"]
     assert executions == (NOW_US - 45_000_000, NOW_US)
+
+
+@dataclass
+class _Resumed:
+    """`ResumedRequests` behind a door: `answered` waits until the test opens it."""
+
+    opened: asyncio.Event = field(default_factory=asyncio.Event)
+    asked: list[UUID] = field(default_factory=list)
+
+    async def answered(self, account_id: UUID) -> None:
+        self.asked.append(account_id)
+        await self.opened.wait()
+
+
+async def test_a_fetch_reads_only_once_the_requests_the_startup_resumed_have_answered() -> None:
+    """24 Sec.8.5, Sec.8.2 "Recovery" (#5185's merge-queue run): a request the startup resumed
+    can answer between the venue's reads and the diff's row reads, so the fetch asks for the
+    account's to answer before it reads anything, and its window ends at its reads, after the
+    wait, never at the instant it was asked."""
+    resumed = _Resumed()
+    job = Job(resumed=resumed)
+    job.watermarks.stored = NOW_US - 30_000_000
+    fetching = asyncio.create_task(
+        job.phases.fetch(str(ACCOUNT), pass_id=SWEEP_ID, trigger="startup")
+    )
+    for _ in range(64):
+        await asyncio.sleep(0)
+    assert (resumed.asked, job.world.venue.calls, fetching.done()) == ([ACCOUNT], [], False)
+    job.world.now_us += 5_000_000  # the resumed request took its time
+    resumed.opened.set()
+    await fetching
+    [executions] = [c.request for c in job.world.venue.calls if c.method == "executions"]
+    assert executions == (NOW_US - 35_000_000, NOW_US + 5_000_000)
 
 
 async def _pass(job: Job, trigger: str = "periodic", *, episode: bool = False) -> dict[str, object]:

@@ -29,6 +29,7 @@ from candleviewer.exchange.base.models import AccountRef, Order, PrivateKind
 from candleviewer.ingestion.clock import ClockGuard
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
+from candleviewer.oms import ports as ports_module
 from candleviewer.oms import positions as position_stage
 from candleviewer.oms import stream_consumer, stream_push
 from candleviewer.oms.errors import (
@@ -278,13 +279,19 @@ class RealFreeze:
         return None
 
 
-def test_a_real_port_named_in_place_of_a_stand_in_is_announced_at_zero() -> None:
+def test_a_real_port_named_in_place_of_a_stand_in_is_announced_at_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     world = World()
     with capture_logs() as logs:
         w = world.build(reconciliation=RealPass(), lockout=RealFreeze())
     assert _gauge(world.metrics, INTERIM_PORTS_METRIC, port="reconciliation") == 0.0
     assert "reconciliation" not in [log.get("port") for log in logs]
-    w.refuse_live(ProcessEnvironment.LIVE)  # a real pass and freeze, the projection: it runs
+    with pytest.raises(ReconciliationUnavailable):  # a real pass, but E45-T01's carries missing
+        w.refuse_live(ProcessEnvironment.LIVE)
+    carries = set(ports_module.RECONCILIATION_CARRIES)
+    monkeypatch.setattr(ports_module, "_CARRIES_REGISTERED", carries)
+    w.refuse_live(ProcessEnvironment.LIVE)  # every carry, a real freeze, the projection: it runs
     live = World().build(
         reconciliation=RealPass(), lockout=RealFreeze(), environment=ProcessEnvironment.LIVE
     )
@@ -298,11 +305,17 @@ def test_a_live_build_with_a_stand_in_that_refuses_live_is_refused() -> None:
         World().build(environment=env)
 
 
-def test_a_live_build_refuses_the_paging_lockout_even_with_a_real_pass() -> None:
+def test_a_live_build_refuses_the_paging_lockout_even_with_a_real_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The security sign-off on #848, condition M1: the paging foreign-order lockout records and
     pages a finding but cannot freeze its account (SR-E27-19), so a live build refuses it on the
-    binding as bound, even where a real reconciliation pass leaves no other refusal before it;
-    demo and testnet compose with it. The environment compares by value."""
+    binding as bound, even where a real reconciliation pass, with E45-T01's carries registered,
+    leaves no other refusal before it; demo and testnet compose with it. The environment compares
+    by value."""
+    monkeypatch.setattr(
+        ports_module, "_CARRIES_REGISTERED", set(ports_module.RECONCILIATION_CARRIES)
+    )
     with pytest.raises(FreezeUnavailable):  # never a consumer to start
         World().build(reconciliation=RealPass(), environment=ProcessEnvironment.LIVE)
     for env in (ProcessEnvironment.DEMO, ProcessEnvironment.TESTNET):
@@ -416,14 +429,34 @@ def test_notices_message_table_is_closed_and_names_no_account() -> None:
         RESYNCING: (
             "warning",
             "An account is resynchronising; its orders and positions are being verified.",
-        )
-    }  # 23 Sec.15.9's table, E29-T05's one row
+        ),
+        "oms.account_desync": (
+            "warning",
+            "Reconciliation found a difference on an account and is correcting it.",
+        ),
+        "oms.account_stale": (
+            "critical",
+            "Order entry on an account is refused: reconciliation has failed for 2 minutes.",
+        ),
+        "oms.account_synced": ("info", "An account is reconciled and live again."),
+    }  # 23 Sec.15.9's table, E29-T05's row and E29-T06's three
     body = account_notice(A, RESYNCING)
     assert body["message"] == NOTICES[RESYNCING][1] and str(A) not in body["message"]
     assert str(A) not in repr({k: v for k, v in body.items() if k != "exchange_account_ids"})
-    for reason in ("oms.account_desync", "oms.account_stale", "oms.account_synced"):
-        with pytest.raises(ValueError):  # E29-T06 adds its rows with its code
-            account_notice(A, cast(Any, reason))
+    with pytest.raises(ValueError):
+        account_notice(A, cast(Any, "oms.account_unknown"))
+
+
+def test_only_the_desync_notice_takes_a_severity_its_producer_chooses() -> None:
+    """23 Sec.15.9: `oms.account_desync` is `critical` for a pass that found a naked position with
+    no record in force; every other row keeps its one severity."""
+    critical = account_notice(A, "oms.account_desync", "critical")
+    assert checked_notice(critical) == critical and critical["severity"] == "critical"
+    for reason, severity in (("oms.account_synced", "critical"), (RESYNCING, "info")):
+        with pytest.raises(ValueError, match="does not allow"):
+            account_notice(A, cast(Any, reason), cast(Any, severity))
+    with pytest.raises(ValueError, match="off the closed table"):
+        checked_notice(account_notice(A, "oms.account_synced") | {"severity": "critical"})
 
 
 def test_notice_ids_are_a_list_of_canonical_lowercase_strings() -> None:

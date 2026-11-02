@@ -36,6 +36,7 @@ from candleviewer.oms.errors import (
 )
 from candleviewer.oms.exits import ExitCaller, ExitDeps, ExitOutcome, InFlightGuard, OrderExits
 from candleviewer.oms.ports import InterimStopResolver, RequestRecord, SubmitActor
+from candleviewer.oms.reconcile_standing import STALE_DETAIL
 from candleviewer.oms.validator import Validator
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.gateway import (
@@ -1040,3 +1041,16 @@ async def test_deny_names_the_class_re_check_and_its_reason_beside_the_code(rig:
     assert {k: v for k, v in named.detail.items() if k not in ("step", "reason")} == plain.detail
     assert not {"step", "reason"} & set(plain.detail)
     assert requests(rig, "account.disabled_by_policy") == []
+
+
+async def test_a_cancel_passes_an_account_the_reconciliation_standing_refuses(
+    rig: SubmitRig,
+) -> None:
+    """E29-T06 #914 (24 Sec.8.10, BQ-5, C-2.6): a stale account's order entry is refused with
+    `account_stale`, but a cancel never consults the gate: it is sent and settled."""
+    stale = OrderEntryRefused(OrderEntryRefusal("account_stale", STALE_DETAIL))
+    row = await placed(rig)
+    rig.port.switches.refusals[cr.ACCOUNT] = stale
+    got = await exits_of(rig).cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    assert (got.kind, got.status, got.lifecycle_state) == ("accepted", 202, "cancelled")
+    assert [c.method for c in rig.port.demo.calls].count("cancel_order") == 1

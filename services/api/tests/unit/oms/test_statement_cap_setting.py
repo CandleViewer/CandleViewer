@@ -27,6 +27,7 @@ from tests.unit.oms import test_oms_runtime as rt
 
 #: The stores `pg_stores` builds that cap their statements, by their `OmsStores` field.
 _CAPPED = {"orders", "executions", "submissions", "anchors", "stops", "groups", "accounts", "sweep"}
+_CAPPED |= {"handovers", "reconcile"}  # E29-T06 #914: `oms_handovers` and the pass's own store
 
 
 async def test_every_capped_store_the_runtime_builds_reads_the_setting() -> None:

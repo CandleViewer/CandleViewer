@@ -127,6 +127,19 @@ async def test_step5_an_attach_the_venue_refuses_is_listed_and_paged() -> None:
     assert [s for s, _ in w.oms.pages] == ["page"]
 
 
+async def test_step5_an_attach_the_writer_finds_no_longer_needed_is_no_failure() -> None:
+    """The writer reads the position itself (24 Sec.8.8 rule 4): one flat or protected since step
+    1's read sends nothing (`not_looser`), which lists no error and pages nothing, unlike a write
+    the venue refused or the writer could not send."""
+    w = World()
+    w.oms.records = [record()]
+    w.oms.stop_writes["attach"] = "not_looser"
+    w.venue.seed_position(position(stop_loss=None))
+    report = await w.run()
+    assert (report.sl_repaired, report.errors, w.oms.pages) == ((), (), [])
+    assert len(w.oms.effects("attach_recorded")) == 1
+
+
 async def test_step5_a_looser_full_mode_stop_is_put_back() -> None:
     w = World()
     w.oms.records = [record()]
