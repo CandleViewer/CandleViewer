@@ -14,20 +14,34 @@ const NAMES: Record<string, string> = {
 const name = (paneId: string): string => NAMES[paneId] ?? paneId;
 const leaf = (paneId: string): DockViewNode => ({ type: "leaf", id: `leaf-${paneId}`, paneId });
 
-function Panel({ paneId, focused = false }: { paneId: string; focused?: boolean }): JSX.Element {
+interface PanelProps {
+  paneId: string;
+  focused?: boolean;
+  onFocus?: () => void;
+}
+
+function Panel({ paneId, focused = false, onFocus }: PanelProps): JSX.Element {
   const kind = name(paneId).split(" ")[0] ?? "";
   return (
     <DockPanel
       title={name(paneId)}
       focused={focused}
+      {...(onFocus === undefined ? {} : { onFocus })}
       header={<PanelHeader kind={kind} title={name(paneId)} onMove={() => {}} onClose={() => {}} />}
     />
   );
 }
 
-/** A host holding the tree in state, as the app's store does. */
-function Grid({ initial }: { initial: DockViewNode }): JSX.Element {
+/** A host holding the tree and the focused pane in state, as the app's DockGrid does. */
+function Grid({
+  initial,
+  initialFocus = null,
+}: {
+  initial: DockViewNode;
+  initialFocus?: string | null;
+}): JSX.Element {
   const [root, setRoot] = useState(initial);
+  const [focused, setFocused] = useState(initialFocus);
   const resize = (node: DockViewNode, id: string, i: number, d: number): DockViewNode => {
     if (node.type === "leaf" || node.type === "tabset") return node;
     if (node.id !== id) return { ...node, children: node.children.map((c) => resize(c, id, i, d)) };
@@ -46,7 +60,13 @@ function Grid({ initial }: { initial: DockViewNode }): JSX.Element {
       <DockGridView
         root={root}
         paneName={name}
-        renderSlot={(l) => <Panel paneId={l.paneId} />}
+        renderSlot={(l) => (
+          <Panel
+            paneId={l.paneId}
+            focused={focused === l.paneId}
+            onFocus={() => setFocused(l.paneId)}
+          />
+        )}
         onResize={(id, i, d) => setRoot((r) => resize(r, id, i, d))}
         onActivateTab={(id, i) => setRoot((r) => activate(r, id, i))}
         minSizes={() => [0.2, 0.2, 0.2]}
@@ -147,6 +167,41 @@ export const TabsetLeaf: Story = {
     await expect(canvas.getByRole("tab", { name: name("d") })).toHaveAttribute(
       "aria-selected",
       "true",
+    );
+  },
+};
+
+/** The focused panel in a grid with a tab group: CMP-080's inset frame and header bar (FM-01). */
+export const FocusedPanel: Story = {
+  render: () => (
+    <Grid
+      initialFocus="d"
+      initial={{
+        type: "row",
+        id: "r",
+        sizes: [0.5, 0.5],
+        children: [
+          leaf("a"),
+          {
+            type: "tabset",
+            id: "t",
+            active: 1,
+            children: [
+              { type: "leaf", id: "leaf-c", paneId: "c" },
+              { type: "leaf", id: "leaf-d", paneId: "d" },
+            ],
+          },
+        ],
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByRole("region", { name: name("d") })).toHaveAttribute("data-focused");
+    await userEvent.click(canvas.getByRole("heading", { name: name("a") }));
+    await expect(canvas.getByRole("region", { name: name("a") })).toHaveAttribute("data-focused");
+    await expect(canvas.getByRole("region", { name: name("d") })).not.toHaveAttribute(
+      "data-focused",
     );
   },
 };

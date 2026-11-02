@@ -6,6 +6,13 @@
  * a preset is a re-parent of a DOM node and React never unmounts the panel, its canvas or its WebGL
  * context (E15-D02 §8). A hidden tab's host waits in a parking element. Only `close` unmounts.
  *
+ * Focus (E15-D15 FM-01..03, FM-11): parking is `hidden`, and a browser drops focus from a node that
+ * is not rendered, so when a slot detaches with focus inside its host the focused element is noted
+ * and focused again once the host is in its new slot (tabify, split out, maximise, restore). If the
+ * pane is now a hidden tab, the shown tab's panel takes focus; on `close`, the panel that takes the
+ * space does (its next sibling, else its previous one), else the dock itself. The panel holding
+ * focus is drawn focused (CMP-080).
+ *
  * Panels mount lazily on first visibility and are told to unsubscribe after 30 s as a hidden tab
  * (SCR-020). Resizes go to CSS flex fractions; the store commits once per keyboard step or drag.
  */
@@ -14,6 +21,7 @@ import {
   close,
   equalise,
   activateTab,
+  layoutRects,
   leavesOf,
   minExtent,
   resize,
@@ -22,6 +30,7 @@ import {
   type DockLeaf,
   type DockNode,
   type DockTree,
+  type Size,
 } from "@candleviewer/dock";
 import { DockGridView, DockPanel, PanelHeader, type DockViewLeaf } from "@candleviewer/ui";
 import { useEffect, useLayoutEffect, useRef, useState, type JSX } from "react";
@@ -68,6 +77,45 @@ function visiblePanes(tree: DockTree): Set<string> {
   return out;
 }
 
+/** The pane shown first in `node`'s reading order: a leaf, a group's active tab, a split's first. */
+function shownPane(node: DockNode): string | null {
+  if (node.type === "leaf") return node.paneId;
+  const child = node.type === "tabset" ? node.children[node.active] : node.children[0];
+  return child === undefined ? null : shownPane(child);
+}
+
+/** The pane that takes `paneId`'s space when it closes: its next sibling's, else its previous. */
+function heirOf(node: DockNode | null, paneId: string): string | null {
+  if (node === null || node.type === "leaf") return null;
+  const index = node.children.findIndex((c) => c.type === "leaf" && c.paneId === paneId);
+  if (index !== -1) {
+    const heir = node.children[index + 1] ?? node.children[index - 1];
+    return heir === undefined ? null : shownPane(heir);
+  }
+  if (node.type === "tabset") return null;
+  for (const child of node.children) {
+    const found = heirOf(child, paneId);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+/** The tab group holding `paneId`, if it is a tab. */
+function groupOf(node: DockNode | null, paneId: string): DockNode | null {
+  if (node === null || node.type === "leaf") return null;
+  if (node.type === "tabset") return node.children.some((l) => l.paneId === paneId) ? node : null;
+  for (const child of node.children) {
+    const found = groupOf(child, paneId);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+/** Where focus goes after this commit: an element to keep, or a pane's panel (null: the dock). */
+type FocusIntent =
+  | { readonly kind: "keep"; readonly el: HTMLElement; readonly paneId: string }
+  | { readonly kind: "pane"; readonly paneId: string | null };
+
 /** Moves `host` to the end of `slot`, keeping the focused element focused. */
 function place(slot: Element, host: HTMLElement): void {
   type Mover = { moveBefore?: (node: Node, child: Node | null) => void };
@@ -89,6 +137,8 @@ interface PaneHostProps {
   readonly registry: PaneRegistry;
   readonly timers: Timers;
   readonly level: 2 | 3;
+  readonly focused: boolean;
+  readonly onFocus: () => void;
   readonly onClose: () => void;
 }
 
@@ -99,6 +149,8 @@ function PaneHost({
   registry,
   timers,
   level,
+  focused,
+  onFocus,
   onClose,
 }: PaneHostProps): JSX.Element {
   const [seen, setSeen] = useState(visible);
@@ -123,6 +175,8 @@ function PaneHost({
   return (
     <DockPanel
       title={name}
+      focused={focused}
+      onFocus={onFocus}
       {...(entry === undefined ? { state: "error" as const } : {})}
       header={<PanelHeader kind={label} title={name} level={level} onClose={onClose} />}
     >
@@ -144,6 +198,9 @@ export function DockGrid({
   const slots = useRef(new Map<string, HTMLElement>());
   const parking = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLDivElement>(null);
+  const focusIntent = useRef<FocusIntent | null>(null);
+  const [focusedPane, setFocusedPane] = useState<string | null>(null);
+  const [dockSize, setDockSize] = useState<Size>({ width: 0, height: 0 });
   const leaves = allLeaves(tree);
   const visible = visiblePanes(tree);
 
@@ -160,8 +217,17 @@ export function DockGrid({
         if (el !== null) slots.current.set(paneId, el);
         else if (previous !== undefined) {
           slots.current.delete(paneId);
-          if (host?.parentNode === previous && parking.current !== null)
+          if (host?.parentNode === previous && parking.current !== null) {
+            // Parking is not rendered, so focus inside the host is lost there: note it first.
+            const active = host.ownerDocument.activeElement;
+            if (
+              focusIntent.current === null &&
+              active instanceof HTMLElement &&
+              host.contains(active)
+            )
+              focusIntent.current = { kind: "keep", el: active, paneId };
             place(parking.current, host);
+          }
         }
       };
       slotRefs.current.set(paneId, ref);
@@ -195,14 +261,39 @@ export function DockGrid({
       const host = hosts.current.get(l.paneId);
       if (slot !== null && host !== undefined && host.parentNode !== slot) place(slot, host);
     }
+    const intent = focusIntent.current;
+    focusIntent.current = null;
+    if (intent === null) return;
+    const shown = (el: Element): boolean =>
+      el.isConnected && parking.current?.contains(el) !== true;
+    if (intent.kind === "keep" && shown(intent.el)) {
+      if (intent.el.ownerDocument.activeElement !== intent.el) intent.el.focus();
+      return;
+    }
+    // A hidden tab hands focus to the tab shown in its place; a closed pane to its heir.
+    const group = intent.kind === "keep" ? groupOf(tree.root, intent.paneId) : null;
+    const paneId = intent.kind === "pane" ? intent.paneId : group && shownPane(group);
+    const panel =
+      paneId === null
+        ? null
+        : hosts.current.get(paneId)?.querySelector<HTMLElement>(".cv-dockpanel");
+    (panel !== null && panel !== undefined && shown(panel) ? panel : root.current)?.focus();
   });
+
+  // The first measure, before paint, so the separators' minimums are right from the first frame.
+  useLayoutEffect(() => {
+    const el = root.current;
+    if (el !== null) setDockSize({ width: el.clientWidth, height: el.clientHeight });
+  }, []);
 
   useEffect(() => {
     const el = root.current;
     if (el === null || typeof ResizeObserver === "undefined") return undefined;
     const observer = new ResizeObserver(([entry]) => {
-      if (entry !== undefined)
-        store.setViewport({ width: entry.contentRect.width, height: entry.contentRect.height });
+      if (entry === undefined) return;
+      const next = { width: entry.contentRect.width, height: entry.contentRect.height };
+      store.setViewport(next);
+      setDockSize((was) => (was.width === next.width && was.height === next.height ? was : next));
     });
     observer.observe(el);
     return () => observer.disconnect();
@@ -217,11 +308,14 @@ export function DockGrid({
       ? tree.root
       : (leavesOf(tree.root).find((l) => l.paneId === tree.maximised) ?? null);
 
+  // A split's minimum shares are of the split's own px extent (a nested split is smaller than the
+  // dock), from the same rects the dock's normal form fits minimums against.
   const minShares = (splitId: string): number[] | undefined => {
     const node = tree.root === null ? null : findNode(tree.root, splitId);
-    const extent = root.current?.[node?.type === "row" ? "clientWidth" : "clientHeight"] ?? 0;
-    if (node === null || (node.type !== "row" && node.type !== "column") || extent === 0)
-      return undefined;
+    if (node === null || (node.type !== "row" && node.type !== "column")) return undefined;
+    const rect = layoutRects(tree, dockSize).get(splitId);
+    const extent = rect === undefined ? 0 : node.type === "row" ? rect.width : rect.height;
+    if (!(extent > 0)) return undefined;
     return node.children.map((child) => minExtent(child, node.type as "row") / extent);
   };
 
@@ -229,7 +323,13 @@ export function DockGrid({
     <div
       ref={root}
       className="cv-dock-root"
+      // The focus target of last resort (FM-11: closing the last pane); never a Tab stop.
+      tabIndex={-1}
       style={{ display: "flex", width: "100%", height: "100%" }}
+      onBlur={(event) => {
+        const next = event.relatedTarget;
+        if (!(next instanceof Node && event.currentTarget.contains(next))) setFocusedPane(null);
+      }}
     >
       <DockGridView
         root={viewRoot}
@@ -262,13 +362,18 @@ export function DockGrid({
             registry={registry}
             timers={timers}
             level={isTab(tree.root, l) ? 3 : 2}
-            onClose={() =>
-              store.apply(
+            focused={focusedPane === l.paneId}
+            onFocus={() => setFocusedPane(l.paneId)}
+            onClose={() => {
+              const heir = heirOf(tree.root, l.paneId);
+              focusIntent.current = { kind: "pane", paneId: heir };
+              const closed = store.apply(
                 "close",
                 (t, c) => close(t, l.paneId, c),
                 layoutSummary.closed(paneName(l)),
-              )
-            }
+              );
+              if (!closed) focusIntent.current = null;
+            }}
           />,
           hostOf(l.paneId),
           l.paneId,
