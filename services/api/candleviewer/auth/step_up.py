@@ -97,6 +97,8 @@ READONLY_WINDOW = timedelta(minutes=5)
 #: kill-switch-class release nor `trading.live_enabled: true`; a grace class (`setFeatureFlag`).
 #: E27-S04 (#898): `accounts` gates an exchange account's disable, re-enable or delete and a
 #: revoke's `flatten_first`; no-grace.
+#: E08-T10 (#5111, 04 §7.2.2 row 5a): `instruments` gates the instrument catalogue's refresh from
+#: the venue (`refreshInstruments`); a grace class.
 ACTION_CLASSES = frozenset(
     {
         "keys",
@@ -110,6 +112,7 @@ ACTION_CLASSES = frozenset(
         "audit",
         "backups",
         "accounts",
+        "instruments",
     }
 )
 #: Ticket "No-grace list": always a fresh code. `backups`: a restore, download-link issue or delete

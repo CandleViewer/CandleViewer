@@ -347,6 +347,12 @@ class InstrumentsRefreshScheduler:
         """Current snapshot (O(1), no I/O) for readers such as the API."""
         return self.cache.current()
 
+    @property
+    def stopped(self) -> bool:
+        """E08-T10: `stop()` has run, so a refresh the route would schedule could not run; the
+        route answers 503, as the reads do (#5111)."""
+        return self._stopping
+
     async def ensure_symbol(self, symbol: str) -> Instrument | None:
         """ "Refresh without restart" on-demand path: if `symbol` is not in
         the current snapshot, force one refresh and re-check. Returns the

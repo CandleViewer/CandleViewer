@@ -287,6 +287,11 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "watchlist.created",
         "watchlist.updated",
         "watchlist.deleted",
+        # E08-T10 (#5111): `refreshInstruments`, written ahead of the `202` (a join included) and,
+        # for a new job, before the job exists; `.completed` is the job's end, `succeeded` or
+        # `failed`, from its `on_done` hook (24 Sec.15.5).
+        "instruments.refresh.requested",
+        "instruments.refresh.completed",
         "recorder.start",
         "recorder.stop",
         # #2188 (orchestrator ruling): `update_manual` changed a manual entry's streams or depth.

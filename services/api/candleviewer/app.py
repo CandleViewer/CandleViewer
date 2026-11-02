@@ -152,6 +152,7 @@ from candleviewer.api.indicator_presets_service import (
     IndicatorPresetsGaugePrimer,
 )
 from candleviewer.api.indicators import make_indicators_router
+from candleviewer.api.instruments import REFRESH_STEP_UP_CLASS, make_instruments_refresh_router
 from candleviewer.api.invites import make_invites_router
 from candleviewer.api.market_bars import TradeTotalsSource, make_market_bars_router
 from candleviewer.api.market_coverage import make_data_coverage_router
@@ -3273,6 +3274,23 @@ def create_app(
         )
     )
     catalogue_rest = _compose_instrument_catalogue(ctx, resolved, public_rest)
+    # E08-T10 (#5111): `refreshInstruments` schedules one catalogue refresh as an
+    # `instrument_refresh` job in the admin job store, polled through `getJob`; 503 until the
+    # scheduler above is attached. Owner only (`instruments:write`), then the `instruments`
+    # step-up in the handler, then the join, the 60 s limit and the catalogue client's
+    # `MARKET_DATA` headroom (C-12.7; none where the app talks to no exchange). No app-wide
+    # per-user bucket exists yet, so none is wired: the route's own 60 s limit binds first.
+    app.include_router(
+        make_instruments_refresh_router(
+            lambda: ctx.ingestion.instruments,
+            admin_jobs,
+            audit=_LazyAuditEmitter(ctx.audit),
+            environment=resolved.environment.value,
+            principal_resolver=audit_resolver,
+            venue_headroom=catalogue_rest.client.headroom if catalogue_rest is not None else None,
+            elevation=request_elevation(ctx.auth, REFRESH_STEP_UP_CLASS),
+        )
+    )
     # E08-S03: merged ticker snapshot; session-backed resolver (501 only without identity).
     app.include_router(
         make_ticker_router(lambda: ctx.ingestion.tickers, principal_resolver=audit_resolver)

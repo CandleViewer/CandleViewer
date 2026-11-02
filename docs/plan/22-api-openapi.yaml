@@ -4330,12 +4330,44 @@ paths:
       tags: [instruments]
       operationId: refreshInstruments
       summary: Force a refresh of the instrument cache from Bybit
+      description: >-
+        Schedules one refresh of the instrument catalogue and answers at once with the job that
+        runs it, never waiting for the venue (E08-T10, #5111). The job is polled through
+        `getJob`, `kind: instrument_refresh`, in the job store's envelope as for every kind: it
+        ends `succeeded` with an empty `result` object, `failed` with `error` a stable code (the
+        exception's class name, never a message) once the refresh's retries are spent, which
+        leaves the previous catalogue served with `meta.stale_since` set, or `cancelled` when the
+        process stops. A request while a refresh job is queued or running joins it: `202` with
+        that job's `job_id` and `scheduled_at`, never `409`, no second job and no second venue
+        call. One refresh is accepted per environment per 60 s: a request beyond it answers
+        `429 rate_limited` with `Retry-After` and creates no job; a request that joins a running
+        job starts no refresh, so this limit neither refuses nor counts it. **Step-up.**
+        `instruments:write` is a dangerous permission (04-security-program.md SR-025 and section
+        7.2.2 row 5a): after authorisation, and once the scheduler is known to be running and
+        the `Idempotency-Key` is well formed, the handler demands a live step-up of the grace
+        class `instruments`, and without one answers `403 step_up_required` with `action_class`
+        set to `instruments`; nothing is looked up, joined, counted or recorded before it. The
+        checks then run in this order: the idempotency lookup, the join, the 60 s limit, the per-user bucket (`429 rate_limited`), then the venue budget of
+        the market-data class the refresh's fetches draw (`429 exchange_rate_limited` with
+        `Retry-After` and `retry_after_seconds`; the stop, cancel and SL reserve is never drawn).
+        The request is audited ahead as `instruments.refresh.requested` (24-internal-schemas.md
+        section 15.5) before every `202`, a join included, and for a new job before the job
+        exists; a record that cannot be written answers `503 audit_unavailable` and starts
+        nothing. The job's end, `succeeded` or `failed`, is audited as
+        `instruments.refresh.completed`. A repeat with the same `Idempotency-Key` within 24 h
+        replays the original `202` with `Idempotency-Replayed: true` and starts nothing. Answers
+        `501 not_implemented` while no principal resolver is wired, and `503` while the catalogue
+        scheduler is not wired or has stopped.
       x-rbac: { permissions: [instruments:write], scope: none }
       x-idempotency: optional
-      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "202":
-          description: Refresh scheduled.
+          description: Refresh scheduled, or a running refresh joined.
+          headers:
+            Idempotency-Replayed: { $ref: "#/components/headers/IdempotencyReplayed" }
           content:
             application/json:
               schema:
@@ -13611,7 +13643,8 @@ paths:
                     E27-S04's (#898), which lands them in slices (C-6.1). `recorder_purge` gates
                     purging recorded data (`purgeRecordedData`), one fresh code per purge: a
                     no-grace, request-bound class (the grant binds the exact method, path and
-                    body).
+                    body). `instruments` gates the refresh of the instrument catalogue from the
+                    venue (`refreshInstruments`, E08-T10), a grace class.
                   type: string
                   enum:
                     [
@@ -13627,6 +13660,7 @@ paths:
                       sl_loosen,
                       accounts,
                       recorder_purge,
+                      instruments,
                     ]
       responses:
         "200":

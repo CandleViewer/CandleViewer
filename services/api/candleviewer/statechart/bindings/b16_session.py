@@ -316,6 +316,7 @@ NO_GRACE_ACTION_CLASSES = frozenset(
 #: `audit` and `backups` (#2751, SR-025): the audit-log export, and a backup's restore,
 #: download-link issue or delete.
 #: `flags` (#3083): a feature-flag write; a grace class, as the contract's `setFeatureFlag` says.
+#: `instruments` (E08-T10, #5111): the instrument catalogue's refresh; a grace class.
 ACTION_CLASSES = frozenset(
     {
         "keys",
@@ -329,6 +330,7 @@ ACTION_CLASSES = frozenset(
         "audit",
         "backups",
         "accounts",
+        "instruments",
     }
 )
 
