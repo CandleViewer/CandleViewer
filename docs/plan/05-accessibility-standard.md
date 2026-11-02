@@ -110,7 +110,7 @@ The normative expansion of §3.1 items 6 and 7 and §3.4 item 8, one line per ru
 - K-2 Selecting an object changes nothing and announces the object with its value.
 - K-3 Arrows adjust by one unit (a tick, a bar, a step); `Shift` ×10; `PageUp`/`PageDown` ×100 for ticks and bars where not used to move between objects.
 - K-4 `Enter` commits through the pointer drop's own path: its confirm, the destructive-action policy, its refusals and its audit.
-- K-5 `Esc`, or moving focus away, before a commit restores the value at selection and sends nothing.
+- K-5 `Esc`, or moving focus away, before a commit restores the value at selection and sends nothing; an object that applies each step at once (a drawing) keeps the steps on `Esc`, and `Ctrl+Z` undoes them.
 - K-6 The pending value is spoken politely, coalesced while a key is held (E06-D03 D5), never once per repeat.
 - K-7 An exchange-bound adjustment never sends a request per keypress: one commit, one request; stops tighten only by key.
 - K-8 The command palette lists every registered command with its current binding or "unbound"; a command absent from it is a defect.
