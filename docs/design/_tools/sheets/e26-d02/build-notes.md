@@ -39,9 +39,25 @@ The live check's SHEET-FIX lines are folded in, so a rebuild reproduces the boar
 Against the sheets that were rendered, the rebuilt raw sheets differ only in those values and in their notes (the
 sources line's md5 pins and the live-check lines that quote the root size).
 
-Drawn deviations, recorded in E26-D02 §16 and not fixed: B6 frame 16's second visually hidden box loses its bottom
-padding and border to the row's estimated h (`lower`, 256 px); B7 and B8 frame 12's DOM scrim label crosses a dimmed
-book row.
+Drawn deviations, recorded in E26-D02 §16: B6 frame 16's second visually hidden box loses its bottom padding and
+border to the row's estimated h (`lower`, 256 px; folded below, redraw pending); B7 and B8 frame 12's DOM scrim label
+crosses a dimmed book row (kept).
+
+## Boards-lens fold (redraw pending)
+
+The boards lens on the drawn PNGs is folded into the kit; the PNGs are the earlier render until B4, B5, B6, B7, B8, B9
+and B10 are redrawn. B1, B2 and B3 differ only in the sources line's spec md5.
+
+- B9 frame 10: the other-sessions line (D-11) sits under the Positions row (y 88), clear of the trays.
+- B10 frame 23: the hold tray's `Pause` is T1 (no lock); `replay.degraded` gates the steps, seeks and presets.
+- B10 frame 22: the leave-confirm tray starts past the ticket (x 544, over the tape), so the T2 submit stays in view.
+  Moving it 40 px down would cover the transport's `rbac.view_as` notice, so it moves right instead.
+- B5, B7, B8, B10: the T2 `Go to` keeps its time value (lock, label, value at `type.num.xs`, all
+  `color.text.tertiary`) at the T1 field's width, so the track and the thumb keep frame 04's geometry.
+- B5, B7, B8: an end thumb (frames 03 and 11) turns the track's clip off, so the disc and its halo stay whole.
+- B4 frame 05: `Paper fills` alone (no account attached).
+- B6 frame 16: `lower` is 16 px taller (272), so the second hidden box keeps its padding and border.
+- B7, B8 frame 12: the closed state's alert reads "… without a control." with §7's amended row (D-17, D-20).
 
 ## Pipeline
 

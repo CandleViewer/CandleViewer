@@ -13,8 +13,8 @@ Composite B10 of ten (§16 L693: 15 with insets 14, 22 and 23). Grid (24000, 320
 
 ## Validator and size
 
-- `10-panels-and-conditions.json: 0 errors, 63 warnings, 211 sections, 400887 bytes` (exit 0)
-- 211 sections, 400887 bytes
+- `10-panels-and-conditions.json: 0 errors, 62 warnings, 206 sections, 399720 bytes` (exit 0)
+- 206 sections, 399720 bytes
 
 ## Live checks (8)
 
@@ -79,7 +79,7 @@ Composite B10 of ten (§16 L693: 15 with insets 14, 22 and 23). Grid (24000, 320
 
 ## Sources (3)
 
-- spec E26-D02.md md5 8acbcacc and hand-off md5 32dd0521 (§16 L693; §3-§13; RULED comment 6555545802)
+- spec E26-D02.md md5 d4f77108 and hand-off md5 32dd0521 (§16 L693; §3-§13; RULED comment 6555545802)
 - packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a (tick size and qty step only)
 - tokens: token-sync.json + local-tokens.json (color.replay.border, PROPOSED, RULED BQ-10)
 

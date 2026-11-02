@@ -68,10 +68,10 @@ board under dark, as `docs/design/E26/img/E26-D02-NN-<slug>-<theme>.png`; B2 and
 | 04 ac1-control-set       | 2      | 4560 × 1278 | dark  | 81                |
 | 05 pre-play-and-paused   | 3      | 4560 × 2438 | dark  | 71                |
 | 06 scrubber-and-seeking  | 2      | 4240 × 1398 | dark  | 68                |
-| 07 stop-states           | 4      | 4560 × 2438 | dark  | 214               |
-| 08 stop-states-light     | 4      | 4560 × 2438 | light | 214               |
+| 07 stop-states           | 4      | 4560 × 2438 | dark  | 212               |
+| 08 stop-states-light     | 4      | 4560 × 2438 | light | 212               |
 | 09 paper-fills-and-speed | 2      | 4560 × 1398 | dark  | 89                |
-| 10 panels-and-conditions | 4      | 4560 × 2558 | dark  | 211               |
+| 10 panels-and-conditions | 4      | 4560 × 2558 | dark  | 206               |
 
 Root heights are the live-measured footer end + 80 (`k.MEASURED_H`, build-notes "Live-check fold"). Board ids, PNG
 paths and the theme-gate results are in E26-D02 §16's Status cells and its As built record.

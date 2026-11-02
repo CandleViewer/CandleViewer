@@ -57,7 +57,7 @@ LOCAL_TOKENS = KIT_DIR / "local-tokens.json"  # the PROPOSED local token rows (B
 TOKENS_FILE = KIT_DIR / "tokens.with-local.json"  # token-sync.json + the local rows: the validator's --tokens
 
 DOCS = {  # key -> (repo-relative path, md5): every read is md5-checked (pinned at the committed boards-PR text)
-    "spec": ("docs/design/E26/E26-D02.md", "8acbcaccc614cd34ce21ae483af70ef5"),
+    "spec": ("docs/design/E26/E26-D02.md", "d4f771089fecf536af17f46dbb39dce8"),
     "handoff": ("docs/design/E26/E26-D02-handoff.md", "32dd05214341aed52e9e9ba533e1daac"),
     "fixture": ("packages/fixtures/bybit/2026-10-05/rest/instruments_before.json", "edd9dd2a060c51bd4bd1450307728ddf"),
 }

@@ -11,8 +11,8 @@ Composite B4 of ten (§16 L687: 18 (the live terminal control) and 05 (no accoun
 
 ## Validator and size
 
-- `04-ac1-control-set.json: 0 errors, 12 warnings, 81 sections, 150270 bytes` (exit 0)
-- 81 sections, 150270 bytes
+- `04-ac1-control-set.json: 0 errors, 12 warnings, 81 sections, 150417 bytes` (exit 0)
+- 81 sections, 150417 bytes
 
 ## Live checks (6)
 
@@ -23,9 +23,10 @@ Composite B4 of ten (§16 L687: 18 (the live terminal control) and 05 (no accoun
 - local token: create set 'E26-D02 local · dark' with color.replay.border = palette.purple.400 (local-tokens.json) before the first section call; every frame and chip border binds it
 - export docs/design/E26/img/E26-D02-04-ac1-control-set-dark.png; record the board id and the PNG size
 
-## Readings (1)
+## Readings (2)
 
 - frame 18 (the AC 1 control) is the same dock live in DEMO: no header strip, transport, frame or chip, no dimmed future; the same synthetic prices, so only the replay carriers differ
+- frame 05's Paper fills switch reads 'Paper fills' alone: no account is attached, so the switch names none (boards lens #7), off and T2 2a on replay.no_account
 
 ## Derivations (4)
 
@@ -62,7 +63,7 @@ Composite B4 of ten (§16 L687: 18 (the live terminal control) and 05 (no accoun
 
 ## Sources (3)
 
-- spec E26-D02.md md5 8acbcacc and hand-off md5 32dd0521 (§16 L687; §3-§13; RULED comment 6555545802)
+- spec E26-D02.md md5 d4f77108 and hand-off md5 32dd0521 (§16 L687; §3-§13; RULED comment 6555545802)
 - packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a (tick size and qty step only)
 - tokens: token-sync.json + local-tokens.json (color.replay.border, PROPOSED, RULED BQ-10)
 

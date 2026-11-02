@@ -12,8 +12,8 @@ Composite B5 of ten (§16 L688: 02 (with revived, not found and a Viewer's confi
 
 ## Validator and size
 
-- `05-pre-play-and-paused.json: 0 errors, 33 warnings, 71 sections, 168869 bytes` (exit 0)
-- 71 sections, 168869 bytes
+- `05-pre-play-and-paused.json: 0 errors, 33 warnings, 71 sections, 169021 bytes` (exit 0)
+- 71 sections, 169021 bytes
 
 ## Live checks (7)
 
@@ -72,7 +72,7 @@ Composite B5 of ten (§16 L688: 02 (with revived, not found and a Viewer's confi
 
 ## Sources (3)
 
-- spec E26-D02.md md5 8acbcacc and hand-off md5 32dd0521 (§16 L688; §3-§13; RULED comment 6555545802)
+- spec E26-D02.md md5 d4f77108 and hand-off md5 32dd0521 (§16 L688; §3-§13; RULED comment 6555545802)
 - packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a (tick size and qty step only)
 - tokens: token-sync.json + local-tokens.json (color.replay.border, PROPOSED, RULED BQ-10)
 

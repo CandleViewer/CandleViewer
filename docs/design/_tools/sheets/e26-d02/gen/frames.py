@@ -364,9 +364,13 @@ def track(tw: int, thumb_t: datetime | None, *, focused: bool = False, t2: bool 
             kids.append(text(nm, chars, k.CAPTION, k.TEXT_3, x=min(tx(t, tw), tw - round(k.text_w(chars, k.CAPTION))),
                              y=24))
     kids += list(extra)
+    o: dict[str, Any] = {}
     if thumb_t is not None:
-        kids.append(thumb(tx(thumb_t, tw), y0 + bar // 2, focused=focused, t2=t2))
-    return box("CMP-170 coverage track", kids, w=tw, h=ROW_TRACK,
+        x = tx(thumb_t, tw)
+        kids.append(thumb(x, y0 + bar // 2, focused=focused, t2=t2))
+        if x < 12 or x > tw - 12:  # an end thumb: no clip, so the disc and its halo stay whole (boards lens #5)
+            o["clip"] = False
+    return box("CMP-170 coverage track", kids, o, w=tw, h=ROW_TRACK,
                note="the track is DOM, not canvas (§12.1); classes per §6.1")
 
 
@@ -462,17 +466,28 @@ def track_row(tr: Tr, w: int) -> Node:
     start = text("start label", k.hm(k.W_FROM), k.NUM_XS, k.TEXT_3)
     end = text("end label", k.hm(k.W_TO), k.NUM_XS, k.TEXT_3)
     go_lab = S("Go to")
+    go_val = tr.goto or k.hms(tr.thumb or k.PLAYHEAD)
+    go = hbox("Go to (time field)", [text("label", go_lab, k.LABEL, k.TEXT_2),
+                                     text("value", go_val, k.NUM_SM, k.TEXT_1)],
+              {"gap": k.INSET_SM, "padX": k.INSET_SM, "fill": k.SUNKEN, "stroke": k.BORDER,
+               "strokeWidth": k.HAIR, "strokeAlign": "inner", "radius": k.R_CONTROL}, h=CTRL,
+              note="the track row's time field itself (§3, §16 readings): hh:mm:ss UTC; Enter seeks")
+    go_w = k.est_width(go)  # the T1 field's width: the track's share is the same in every frame
     if tr.goto_t2:
-        go = t2_label(go_lab, "Go to · T2 2a")
-    else:
-        go = hbox("Go to (time field)", [text("label", go_lab, k.LABEL, k.TEXT_2),
-                                         text("value", tr.goto or k.hms(tr.thumb or k.PLAYHEAD), k.NUM_SM, k.TEXT_1)],
-                  {"gap": k.INSET_SM, "padX": k.INSET_SM, "fill": k.SUNKEN, "stroke": k.BORDER,
-                   "strokeWidth": k.HAIR, "strokeAlign": "inner", "radius": k.R_CONTROL}, h=CTRL,
-                  note="the track row's time field itself (§3, §16 readings): hh:mm:ss UTC; Enter seeks")
-        if "goto" in tr.focus:
-            go = ring(go)
-    fixed = k.est_width(start) + k.est_width(end) + k.est_width(go) + 3 * k.PX[k.INSET_MD]
+        # §5.3 2a, the control whole: lock + label + its time value, all color.text.tertiary, at the T1 field's
+        # width so the track (and the thumb) keep frame 04's geometry (boards lens #4); the value at num.xs to fit
+        gw = round(k.est_width(go))
+        kids_ = [lock(), text("label", go_lab, k.LABEL, k.TEXT_3), text("value", go_val, k.NUM_XS, k.TEXT_3)]
+        need = 2 * k.PX[k.INSET_XS] + sum(k.est_width(c) for c in kids_) + 2 * k.PX[k.INSET_XS]
+        if need > gw:
+            raise ValueError(f"Go to T2: {need:.1f} px > the T1 field's {gw}")
+        go = hbox("Go to · T2 2a", kids_, {"gap": k.INSET_XS, "padX": k.INSET_XS, "fill": k.RAISED,
+                                           "stroke": k.BORDER, "strokeWidth": k.HAIR, "strokeAlign": "inner",
+                                           "radius": k.R_CONTROL}, w=gw, h=CTRL,
+                  note='T2 2a: aria-disabled="true", reason linked; the field keeps its value (§3, §5.3)')
+    elif "goto" in tr.focus:
+        go = ring(go)
+    fixed = k.est_width(start) + k.est_width(end) + (go_w if tr.goto_t2 else k.est_width(go)) + 3 * k.PX[k.INSET_MD]
     tw = int(w - fixed)
     if tr.no_window:
         tk = box("CMP-170 coverage track (no window)", [rect("groove", tw, 6, k.SUNKEN, {"radius": k.R_PILL}, x=0,
@@ -906,6 +921,7 @@ class Pg:
     dock_words: str | None = None  # a dock without panels: one centred line
     overlay: list[Node] = field(default_factory=list)  # board markers (frame coordinates)
     trays: list[Node] = field(default_factory=list)  # 'board marker · tray' boxes, in a row at the dock's foot
+    tray_x: int = 16  # the first tray's x (frame 22: past the ticket, so its T2 submit stays in view)
 
 
 def page(pg: Pg, w: int, h: int) -> list[Node]:
@@ -931,7 +947,7 @@ def page(pg: Pg, w: int, h: int) -> list[Node]:
     kids.append(statusbar(w, h - STATUS_H))
     if pg.trays:
         th = max(_TRAY_EST_H.get(t_["name"], round(k.est_height(t_))) for t_ in pg.trays)
-        x = 16
+        x = pg.tray_x
         for t_ in pg.trays:
             kids.append(dict(t_, x=x, y=y + dock_h - th - 12))
             x += round(k.est_width(t_)) + 16
@@ -1088,7 +1104,7 @@ def anatomy_page(theme: str, *, account: str = "paper", exit_glyph: bool = False
     kind = SIM_KIND if account == "paper" else S("No account attached")
     tr = tr_playing(t, exit_glyph=exit_glyph, **trkw)
     if account == "none":
-        tr.paper, tr.paper_t2 = "off", k.why("replay.no_account")
+        tr.paper, tr.paper_t2, tr.paper_label = "off", k.why("replay.no_account"), S("Paper fills")
     return Pg(account=account, head=Head(t=t, kind=kind),
               tr=tr, panels=dock_layout(t, account, ticket_mode="armed" if account == "paper" else "none",
                                         banner=None if account == "paper" else k.why("replay.no_account")))
@@ -1243,6 +1259,8 @@ def f04(theme: str) -> tuple[Node, list[str]]:
 
 def f05(theme: str) -> tuple[Node, list[str]]:
     kids = page(anatomy_page(theme, account="none"), PW, 1080)
+    k.reading("frame 05's Paper fills switch reads 'Paper fills' alone: no account is attached, so the switch names "
+              "none (boards lens #7), off and T2 2a on replay.no_account")
     return frame("05", theme, kids), [
         "No account (D-4): NO ACCOUNT badges (no glyph, 2 px color.text.tertiary), band "
         f"{S('REPLAY · no account attached')!r}, header {S('No account attached')!r}",
@@ -1509,7 +1527,7 @@ def f16(theme: str) -> tuple[Node, list[str]]:
     lower = hbox("thumbs, values and the CC-15 inset", [vbox("left", [thumbs, values], {"gap": k.STACK_MD},
                                                               w=w - bm_w - 24), inset],
                  {"gap": k.INSET_XL, "align": "start"}, w=w,
-                 h=round(max(130 + 12 + k.est_height(values), k.est_height(inset))))
+                 h=round(max(130 + 12 + k.est_height(values), k.est_height(inset))) + 16)  # D1: +16, measured
     body = vbox("specimens", [classes, lower], {"gap": k.STACK_LG}, w=w, x=24, y=round(k.est_height(trn)) + 24)
     kids = [dict(trn, x=0, y=0), body]
     if k.est_height(body) + k.est_height(trn) + 24 > fr.h:
@@ -1619,7 +1637,7 @@ def f12(theme: str) -> tuple[Node, list[str]]:
     cause = board_marker("the closed state's alert", "At expiry the closed state's alert is the one announcement "
                          "(the notice has no live role); the cause only when known (CC-6)",
                          [announce(S(f"Replay session closed — data as of {k.hms(t)}.") + " " +
-                                   S("Sessions close after 2 h without a playback control."), role="assertive",
+                                   S("Sessions close after 2 h without a control."), role="assertive",
                                    w=tw - 24)], w=tw)
     pg = Pg(account="paper", head=Head(t=t, kind=SIM_KIND), tr=tr, trays=[warn, cause],
             panels=dock_layout(t, "paper", scrim=closed))
@@ -1735,7 +1753,9 @@ def f10(theme: str) -> tuple[Node, list[str]]:
               P("Ticket", g, y0 + 2 * g + top_h, tw_, bot_h, ticket("armed"), chip_t=t),
               mk("Positions", 2 * g + tw_, pos), mk("Orders", 3 * g + tw_ + rest, ords),
               mk("Fills", 4 * g + tw_ + 2 * rest, fills)]
-        ps[3].overlay = [text("other sessions line", other, k.CAPTION, k.TEXT_2, w=rest - 24, x=12, y=bot_h - 40)]
+        # under the row (header 4 + 24, row 24, then 8), clear of the trays at the dock's foot (boards lens #1)
+        ps[3].overlay = [text("other sessions line", other, k.CAPTION, k.TEXT_2, w=rest - 24, x=12,
+                              y=HEAD_ROW + 4 + 2 * 24 + 8)]
         return ps
     tw = tray_w(2)
     inv = board_marker("the arm's invalidations", "The replay arm and its three invalidations (§8): each returns "
@@ -1915,7 +1935,8 @@ def f22(theme: str) -> tuple[Node, list[str]]:
     conf = board_marker("the leave confirm while viewing as", "While viewing as, Leave replay only navigates: the "
                         "confirm without its second sentence, Also end the session T2 (D-17)",
                         [leave_confirm(tw - 24, viewing_as=True)], w=tw)
-    pg = Pg(account="paper", head=Head(t=t, kind=SIM_KIND), tr=tr, trays=[conf],
+    # the tray starts past the ticket (8 + 520, then the tape's 8 + 8): the T2 submit stays in view (boards lens #3)
+    pg = Pg(account="paper", head=Head(t=t, kind=SIM_KIND), tr=tr, trays=[conf], tray_x=8 + 520 + 16,
             panels=dock_layout(t, "paper", ticket_mode="gated", banner=va))
     kids = page(pg, PW, 1080)
     k.reading("viewing as: the session plays as it is; Pause (Play's slot) is a write, so it is T2 2a on the notice; "
@@ -1935,7 +1956,8 @@ def f23(theme: str) -> tuple[Node, list[str]]:
     tw = 1400
     playing = board_marker("on hold while playing", "Playing when the hold lands: Pause stays enabled (and Cancel "
                            "seek, Cancel, Leave replay); the steps, the seeks and the presets T2",
-                           [controls_row(Tr(play="Pause", state_line=playing_line(), **all_t2(dg)), tw - 24)], w=tw)
+                           [controls_row(Tr(play="Pause", state_line=playing_line(), **{**all_t2(dg), "play_t2": None}),
+                                         tw - 24)], w=tw)
     pg = Pg(account="paper", head=Head(t=t, kind=SIM_KIND), tr=tr, trays=[playing],
             panels=dock_layout(t, "paper"))
     kids = page(pg, PW, 1080)

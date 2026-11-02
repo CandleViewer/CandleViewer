@@ -13,8 +13,8 @@ Composite B8 of ten (§16 L691: 08, 11, 12 and 13, light twin of B7: the two dis
 
 ## Validator and size
 
-- `08-stop-states-light.json: 0 errors, 56 warnings, 214 sections, 403785 bytes` (exit 0)
-- 214 sections, 403785 bytes
+- `08-stop-states-light.json: 0 errors, 56 warnings, 212 sections, 403470 bytes` (exit 0)
+- 212 sections, 403470 bytes
 
 ## Live checks (9)
 
@@ -81,7 +81,7 @@ Composite B8 of ten (§16 L691: 08, 11, 12 and 13, light twin of B7: the two dis
 
 ## Sources (3)
 
-- spec E26-D02.md md5 8acbcacc and hand-off md5 32dd0521 (§16 L691; §3-§13; RULED comment 6555545802)
+- spec E26-D02.md md5 d4f77108 and hand-off md5 32dd0521 (§16 L691; §3-§13; RULED comment 6555545802)
 - packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a (tick size and qty step only)
 - tokens: token-sync.json + local-tokens.json (color.replay.border, PROPOSED, RULED BQ-10)
 

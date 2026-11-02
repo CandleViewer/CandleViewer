@@ -13,8 +13,8 @@ Composite B7 of ten (§16 L690: 08, 11, 12 and 13 (AC 2; the three terminal T2 k
 
 ## Validator and size
 
-- `07-stop-states.json: 0 errors, 56 warnings, 214 sections, 403020 bytes` (exit 0)
-- 214 sections, 403020 bytes
+- `07-stop-states.json: 0 errors, 56 warnings, 212 sections, 402707 bytes` (exit 0)
+- 212 sections, 402707 bytes
 
 ## Live checks (8)
 
@@ -80,7 +80,7 @@ Composite B7 of ten (§16 L690: 08, 11, 12 and 13 (AC 2; the three terminal T2 k
 
 ## Sources (3)
 
-- spec E26-D02.md md5 8acbcacc and hand-off md5 32dd0521 (§16 L690; §3-§13; RULED comment 6555545802)
+- spec E26-D02.md md5 d4f77108 and hand-off md5 32dd0521 (§16 L690; §3-§13; RULED comment 6555545802)
 - packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a (tick size and qty step only)
 - tokens: token-sync.json + local-tokens.json (color.replay.border, PROPOSED, RULED BQ-10)
 
