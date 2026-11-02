@@ -23,8 +23,6 @@ from uuid import UUID
 
 #: 22 `createHotkeyProfile`: a user holds at most this many profiles (`409 limit_reached`).
 MAX_PROFILES: Final = 20
-#: `hk_name_len` and 22's `name` bound.
-NAME_MAX: Final = 80
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,7 +126,7 @@ class HotkeyProfileStore(Protocol):
 
 
 __all__ = [
-    "MAX_PROFILES", "NAME_MAX", "HotkeyActivationWriteAhead", "HotkeyProfileActiveError",
+    "MAX_PROFILES", "HotkeyActivationWriteAhead", "HotkeyProfileActiveError",
     "HotkeyProfileFields", "HotkeyProfileLimitError", "HotkeyProfileNameTakenError",
     "HotkeyProfileNotFoundError", "HotkeyProfileRow", "HotkeyProfileStaleError",
     "HotkeyProfileStore", "HotkeyProfileWriteAhead",

@@ -7,7 +7,13 @@ generated vocabulary `api/_generated/hotkey_vocabulary.json` (BQ-8: the API imag
 Pure: nothing but the vocabulary is read, once, at import. A JavaScript string operation keeps its
 JavaScript meaning here, so the port reads a binding as `validate.ts` does: `trim` and `\\s` take
 JavaScript's white space (no U+001C to U+001F or U+0085, but U+FEFF), `\\d` is ASCII, and a key is
-upper-cased only when its upper case is one UTF-16 unit (`ß` stays `ß`). The shared case fixture
+upper-cased only when its upper case is one UTF-16 unit (`ß` stays `ß`). `\\p{L}` moves with the
+Unicode version, and the browser's is newer than this Python's (15.0 in 3.12): a code point these
+tables leave unassigned (`Cn`) may be a letter to the client. A `422` is permanent (BQ-5), so the
+port refuses on a code point's category only where its tables know it: Shift stays allowed on a
+`Cn` code point (`typedCharacter` refuses a known non-letter) and a dangerous command may be bound
+bare to one (`isSingleLetter` answers for a known letter), so no key a client accepts is refused
+for it; a client reading the profile back applies its own tables. The shared case fixture
 `packages/fixtures/golden/hotkeys/profile_cases.json`, which pytest and vitest both run, pins the
 port to the client.
 
@@ -91,8 +97,14 @@ def _utf16_length(text: str) -> int:
 
 
 def _is_letter(char: str) -> bool:
-    """`\\p{L}` for one code point."""
+    """`\\p{L}` for one code point, by this Python's tables."""
     return unicodedata.category(char).startswith("L")
+
+
+def _unassigned(char: str) -> bool:
+    """A code point these tables leave unassigned (`Cn`): the browser's, newer, may call it a
+    letter, so the port takes it for neither a letter nor a known non-letter."""
+    return unicodedata.category(char) == "Cn"
 
 
 def _key_name(key: str) -> str | None:
@@ -112,10 +124,11 @@ def _key_name(key: str) -> str | None:
 
 def _typed_character(key: str) -> bool:
     """`typedCharacter`: a digit or a punctuation key, alone or as a range, which a press reads as
-    the character Shift typed, so Shift never goes on one."""
+    the character Shift typed, so Shift never goes on one. An unassigned code point is not one
+    (it may be a letter to the client), so Shift stays allowed on it."""
     if _RANGE.fullmatch(key):
         return True
-    return len(key) == 1 and not _is_letter(key) and key not in _ARROWS
+    return len(key) == 1 and not _is_letter(key) and not _unassigned(key) and key not in _ARROWS
 
 
 def normalise_binding(raw: str) -> str | None:
@@ -164,7 +177,8 @@ def binding_atoms(binding: str) -> list[str]:
 
 
 def is_single_letter(binding: str) -> bool:
-    """`isSingleLetter`: one letter, Shift or not (`Shift+Y` too)."""
+    """`isSingleLetter`: one letter, Shift or not (`Shift+Y` too). An unassigned code point is no
+    letter here (it may be one to the client), so a dangerous command may be bound bare to it."""
     rest = binding.removeprefix("Shift+")
     return len(rest) == 1 and _is_letter(rest)
 

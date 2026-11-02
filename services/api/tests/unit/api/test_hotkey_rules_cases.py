@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -89,7 +90,12 @@ def test_a_binding_has_the_atoms_binding_atoms_gives(case: dict[str, Any]) -> No
 
 @pytest.mark.parametrize("case", _CASES["single_letter"], ids=lambda c: repr(c["binding"]))
 def test_a_single_letter_is_what_is_single_letter_says(case: dict[str, Any]) -> None:
-    assert is_single_letter(case["binding"]) is case["single"]
+    """The client's verdict, but for a code point this Python's Unicode leaves unassigned (`Cn`):
+    the browser's, newer, may call it a letter, and the port refuses no key on that (the rules
+    module's docstring), so there it answers no."""
+    rest = case["binding"].removeprefix("Shift+")
+    unassigned = len(rest) == 1 and unicodedata.category(rest) == "Cn"
+    assert is_single_letter(case["binding"]) is (case["single"] and not unassigned)
 
 
 @pytest.mark.parametrize("case", _CASES["profiles"], ids=lambda c: str(c["id"]))

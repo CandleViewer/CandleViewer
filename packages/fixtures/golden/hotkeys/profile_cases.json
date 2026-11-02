@@ -1,5 +1,5 @@
 {
-  "$comment": "E10-T05 (#5211, BQ-4): one case table for the server's port of the client's binding rules (services/api/candleviewer/api/hotkey_rules.py) and the client itself (apps/web/src/keymap/validate.ts). pytest (services/api/tests/unit/api/test_hotkey_rules_cases.py) runs every case through the server's judge; vitest (apps/web/test/keymap-server-parity.test.ts) runs each against validate.ts, but for the server_only cases, whose rule the client's map cannot express. Hand-written; no recorded data.",
+  "$comment": "E10-T05 (#5211, BQ-4): one case table for the server's port of the client's binding rules (services/api/candleviewer/api/hotkey_rules.py) and the client itself (apps/web/src/keymap/validate.ts). pytest (services/api/tests/unit/api/test_hotkey_rules_cases.py) runs every case through the server's judge; vitest (apps/web/test/keymap-server-parity.test.ts) runs each against validate.ts, but for the server_only cases, whose rule the client's map cannot express. A letter the browser's Unicode has and Python's 15.0 lacks (U+10D4A, 16.0; U+2EBF0, 15.1) holds the client's verdict, which needs a Node with Unicode 16.0 tables (the .nvmrc one has them); the server is lenient on such a code point, so pytest takes an unassigned one for no single letter (hotkey_rules.py's docstring). Hand-written; no recorded data.",
   "grammar": [
     { "raw": "ctrl+shift+a", "canonical": "Ctrl+Shift+A" },
     { "raw": "Shift+Ctrl+F", "canonical": "Ctrl+Shift+F" },
@@ -82,7 +82,9 @@
     { "raw": "ǅ", "canonical": "Ǆ" },
     { "raw": "\ud801\udc28", "canonical": "\ud801\udc28" },
     { "raw": "€", "canonical": "€" },
-    { "raw": "Shift+€", "canonical": null }
+    { "raw": "Shift+€", "canonical": null },
+    { "raw": "Shift+\ud803\udd4a", "canonical": "Shift+\ud803\udd4a" },
+    { "raw": "Ctrl+Shift+\ud87a\udff0", "canonical": "Ctrl+Shift+\ud87a\udff0" }
   ],
   "atoms": [
     { "binding": "Alt+1..3", "atoms": ["Alt+1", "Alt+2", "Alt+3"] },
@@ -108,6 +110,8 @@
     { "binding": "Shift+Y", "single": true },
     { "binding": "é", "single": true },
     { "binding": "ß", "single": true },
+    { "binding": "\ud803\udd4a", "single": true },
+    { "binding": "\u0378", "single": false },
     { "binding": "Ctrl+Y", "single": false },
     { "binding": "1", "single": false },
     { "binding": "Shift+Tab", "single": false },
