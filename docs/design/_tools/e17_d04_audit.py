@@ -79,7 +79,7 @@ UPSTREAM = "origin/main"
 PIN = "86f6a14c25e18e7b155d4de13062c70244b5ad5e"
 DECK_REL = "docs/design/E08/E08-D13-copy.json"
 DS_JSON_DIR = "packages/ui/tokens"
-RULING_COMMENT = "6573202575"
+RULING_COMMENT = "6573589779"
 
 WEB = "apps/web/src/"
 SHELL = WEB + "features/app-shell/"
@@ -156,7 +156,7 @@ SEVERITIES = {
     "Minor": "priority/p2",
     "Info": "—",
 }
-OPEN_OWNERS = {"#32", "#302", "#325", "#569", "#1028", "#5335"}
+OPEN_OWNERS = {"#32", "#325", "#569", "#1028", "#5335"}
 TARGETS_EXTRA = {"register"}
 OWNER_DOCS = re.compile(r"^(`D02` §\d+[A-Z ]*(row \d+(–\d+)?)?|`14` SCR-\d+|`15` CMP-\d+)")
 T2_VERDICTS = {"not a gated control", "not built", "other surface"}
