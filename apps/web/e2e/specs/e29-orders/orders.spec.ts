@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { generated } from "@candleviewer/protocol";
 import { stubSession } from "../../support/api";
 import { seriousAxe } from "../../support/axe";
@@ -11,7 +11,8 @@ import { installWsHarness, type WsHarness } from "../../support/wsHarness";
 // take-profit's confirm (D02 §8.2), "Cancel-all partial failure", Retry failed sending the retryable
 // account alone), the native stop's T2 Cancel with the proof that no stop row is sent (C-2.6), axe
 // and the keyboard path. The real web client runs against the fake gateway (wsHarness) and stubbed REST (the
-// shipped mappers' goldens, `support/orders.ts`). CI-only: this host has no Playwright browser.
+// shipped mappers' goldens, `support/orders.ts`). The page clock is Playwright's, running in real time, and moves
+// on only past CMP-044's press guard (`pastTheGuard`, no sleep: C-13.7). CI-only: this host has no Playwright browser.
 
 type Orders = generated.ws.Orders;
 type Positions = generated.ws.Positions;
@@ -41,6 +42,8 @@ async function openOrders(
   readonly orders: Awaited<ReturnType<typeof stubOrders>>;
 }> {
   const role = options.role ?? "owner";
+  // from the real time, never a fixed date: the socket's shared worker is out of the clock's reach (as session.spec.ts)
+  await page.clock.install();
   await stubSession(page, { role });
   await stubPositions(page, { role });
   const orders = await stubOrders(page, options.answers);
@@ -54,6 +57,19 @@ async function openOrders(
   harness.sendOrders(options.book ?? snapshot());
   await expect(grid(page).locator('[aria-level="3"]').first()).toBeVisible();
   return { harness, orders };
+}
+
+/** CMP-044 drops a Confirm press within 400 ms of its opening or re-arming (E30-D03 D3 (2)); past it, with room. */
+const GUARD_MS = 500;
+
+/**
+ * Moves the page clock (and the `performance.now` the guard reads) past CMP-044's guard, once `confirm` is enabled:
+ * the dialog is open and a typed word, if any, matched, so the guard has re-armed in that same commit. Playwright
+ * would press at once, inside it, and the press would send nothing.
+ */
+async function pastTheGuard(page: Page, confirm: Locator): Promise<void> {
+  await expect(confirm).toBeEnabled();
+  await page.clock.fastForward(GUARD_MS);
 }
 
 const grid = (page: Page) => page.getByRole("treegrid", { name: "Working orders" });
@@ -85,7 +101,9 @@ test.describe("SCR-063 Working orders (E29-S02)", () => {
     await expect(confirm).toBeHidden();
     expect(orders.writes()).toEqual([]);
     await cancelOf(page, TP).click();
-    await confirm.getByRole("button", { name: "Cancel take-profit" }).click();
+    const takeProfit = confirm.getByRole("button", { name: "Cancel take-profit" });
+    await pastTheGuard(page, takeProfit);
+    await takeProfit.click();
     await expect.poll(() => orders.writes().map((w) => w.path)).toEqual([`/api/v1/orders/${TP}`]);
     expect(orders.writes()[0]).toMatchObject({ method: "DELETE", arm: false });
     expect(orders.writes()[0]?.key).toMatch(/^[0-9a-f-]{36}$/);
@@ -143,7 +161,9 @@ test.describe("SCR-063 Working orders (E29-S02)", () => {
     const dialog = page.getByRole("alertdialog", { name: "Cancel 3 orders?" });
     await expect(dialog).toContainText("2 orders on Sub-1 · LIVE");
     await dialog.getByRole("textbox").fill("CANCEL");
-    await dialog.getByRole("button", { name: "Cancel 3 orders" }).click();
+    const cancelThree = dialog.getByRole("button", { name: "Cancel 3 orders" });
+    await pastTheGuard(page, cancelThree);
+    await cancelThree.click();
     const result = page.getByRole("dialog", { name: "Cancel results" });
     await expect(result.getByRole("listitem")).toHaveText([
       "Sub-1 · LIVE: cancelled 1, then Bybit stopped answering — try again",
@@ -186,7 +206,9 @@ test.describe("SCR-063 Working orders (E29-S02)", () => {
       "1 native-stop order is not included: every position keeps a native stop.",
     );
     await dialog.getByRole("textbox").fill("CANCEL");
-    await dialog.getByRole("button", { name: "Cancel 4 orders" }).click();
+    const cancelFour = dialog.getByRole("button", { name: "Cancel 4 orders" });
+    await pastTheGuard(page, cancelFour);
+    await cancelFour.click();
     await expect(page.getByRole("dialog", { name: "Cancel results" })).toBeVisible();
     const paths = orders.writes().map((w) => w.path);
     expect(paths).toHaveLength(4);
