@@ -263,6 +263,10 @@ a running transition completes on its clock when the mode flips (no re-mount on 
 `transition: none` reduce utility); every row has a `motion-reduce` twin (instant style change plus text). Toasts keep
 §7's recipe. The recipes are E05-D03's (§7); #3174 builds them.
 
+### 7.3 Node-graph motion (E37-D03; PROPOSED until the owner's approval)
+
+Spec: `docs/design/E37/E37-D03.md` §7 (the motion-pair table M-1…M-19, every reduce cell `instant` or `identical` except the 0-flash row's `0`, 0 flashes; §7.1 the reduced-motion mode bound to `data-motion`). Tokens used by name, none added: `motion.duration.{fast,slow}`, `motion.easing.{standard,decelerate,accelerate}`. The connection-made motion is an opacity fade, never a line-draw; the active-connect port never pulses; auto-layout is `slow` 400 ms with stagger 0 for any node count.
+
 ---
 
 ## 8. Layout grid, docking rules, responsive & minimum sizes (desktop-only)

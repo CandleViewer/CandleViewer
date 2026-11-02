@@ -470,6 +470,30 @@ A47_TAIL = (
 LINE_RX = re.compile(r"\((\d+)\)\s*$")
 
 
+class Texts(NamedTuple):
+    """`15`, `16` and `14` as in the working tree, and `15` / `16` at the merge base (None: no git)."""
+
+    cat15: str
+    brief16: str
+    screens14: str
+    base15: str | None
+    base16: str | None
+
+
+def read_texts() -> Texts:
+    def at_base(rel: str) -> str | None:
+        base = git("merge-base", "HEAD", "origin/main")
+        return git("show", f"{base.strip()}:{rel}") if base else None
+
+    return Texts(
+        CATALOGUE.read_text(encoding="utf-8"),
+        BRIEF.read_text(encoding="utf-8"),
+        SCREENS.read_text(encoding="utf-8"),
+        at_base("docs/plan/15-component-catalogue.md"),
+        at_base("docs/plan/16-design-system-brief.md"),
+    )
+
+
 def cited_line(today: str, lines: list[str]) -> tuple[str, str]:
     """The `(NNNN)` line number a today-cell cites and that line of the file ('' if none)."""
     m = LINE_RX.search(today)
@@ -479,13 +503,65 @@ def cited_line(today: str, lines: list[str]) -> tuple[str, str]:
     return m.group(1), lines[n - 1] if 0 < n <= len(lines) else ""
 
 
-def amendments(spec: str, problems: list[str], screens: str | None = None) -> dict[str, Any]:
+def unquote(cell: str) -> str | None:
+    """A Proposed cell's text: `keep; append: "…"` or `"…"` (`\n` a newline); None for a pointer."""
+    m = re.match(r'^keep; append: "(.*)"$', cell.strip()) or re.match(r'^"(.*)"$', cell.strip())
+    return m.group(1).replace("\\n", "\n") if m else None
+
+
+def field_line(cat_lines: list[str], cmp_: str, head: str) -> int | None:
+    """The index of a CMP entry's `- **<head>**` line (None if absent)."""
+    st = next((k for k, ln in enumerate(cat_lines) if ln.startswith(f"### {cmp_} ")), None)
+    if st is None:
+        return None
+    for k in range(st + 1, len(cat_lines)):
+        if cat_lines[k].startswith(("### ", "## ")):
+            return None
+        if cat_lines[k].startswith(head):
+            return k
+    return None
+
+
+def landed(r: list[str], cat_lines: list[str], brief: str, screens: str) -> bool | None:
+    """Is the A-row's New text in place (`15` field line, `16` subsection, `14` line)? None: a pointer."""
+    new = unquote(r[4])
+    if new is None:
+        return None
+    cmp_ = next((c for c in CMPS if c in r[1]), None)
+    if cmp_:
+        fname = next((f for f in FIELDS if r[2].startswith(f)), "")
+        if fname in ("Tokens", "Storybook"):
+            k = field_line(cat_lines, cmp_, f"- **{fname}**:")
+            return (
+                k is not None and cat_lines[k].endswith(" " + new) and cat_lines[k].count(new) == 1
+            )
+        return sum(1 for ln in cat_lines if ln == "- " + new) == 1
+    if "`16`" in r[1]:
+        return brief.count(new) == 1
+    return sum(1 for ln in screens.splitlines() if ln == new) == 1
+
+
+def amendments(
+    spec: str, problems: list[str], screens: str | None = None, texts: Texts | None = None
+) -> dict[str, Any]:
     rows = table(spec, "A-")
-    cat = CATALOGUE.read_text(encoding="utf-8")
-    cat_lines = cat.splitlines()
-    brief = BRIEF.read_text(encoding="utf-8")
-    brief_lines = brief.splitlines()
-    screens = SCREENS.read_text(encoding="utf-8") if screens is None else screens
+    texts = read_texts() if texts is None else texts
+    cat, brief = texts.cat15, texts.brief16
+    screens = texts.screens14 if screens is None else screens
+    cat_lines, brief_lines = cat.splitlines(), brief.splitlines()
+    # the mode: every A-row with a New text pending, or every one landed (PR 2); a mix FAILs
+    states = {r[0]: landed(r, cat_lines, brief, screens) for r in rows if len(r) >= 5}
+    done = [k for k, v in states.items() if v is True]
+    todo = [k for k, v in states.items() if v is False]
+    mode = "landed" if done and not todo else "pending" if not done else "mix"
+    if mode == "mix":
+        problems.append(f"A-rows: {len(done)} of {len(done) + len(todo)} applied (a mix): {todo}")
+    # the Old cells: at their cited line in the working tree (pending) or at the merge base (landed)
+    old15: list[str] | None = cat_lines if mode == "pending" else None  # a mix reports once
+    old16: list[str] | None = brief_lines if mode == "pending" else None
+    if mode == "landed":
+        old15 = texts.base15.splitlines() if texts.base15 else None
+        old16 = texts.base16.splitlines() if texts.base16 else None
     per_cmp: dict[str, set[str]] = {c: set() for c in CMPS}
     saw16 = saw14 = False
     for r in rows:
@@ -503,34 +579,39 @@ def amendments(spec: str, problems: list[str], screens: str | None = None) -> di
                 continue
             per_cmp[cmp_].add(fname)
             if fname in ("Tokens", "Storybook"):
-                block = section(cat, f"### {cmp_} ", "\n### ")
-                # a line check: the quoted text sits on the cited `15` line, which is that
-                # entry's field line — not merely somewhere in the entry's block
-                no, line = cited_line(today, cat_lines)
-                on_line = (
-                    bool(no)
-                    and line.startswith(f"- **{fname}**:")
-                    and line in block
-                    and all(q in line for q in quoted(today))
-                )
-                if not on_line:
-                    problems.append(
-                        f"A-row {r[0]}: today's text is not on 15 line {no or '?'} "
-                        f"({cmp_} {fname})"
+                if old15 is not None:
+                    no, line = cited_line(today, old15)
+                    on_line = (
+                        bool(no)
+                        and line.startswith(f"- **{fname}**:")
+                        and all(q in line for q in quoted(today))
                     )
-                if f"- **{fname}**:" not in block:
+                    if not on_line:
+                        problems.append(
+                            f"A-row {r[0]}: today's text is not on 15 line {no or '?'} "
+                            f"({cmp_} {fname}{', at the merge base' if mode == 'landed' else ''})"
+                        )
+                if field_line(cat_lines, cmp_, f"- **{fname}**:") is None:
                     problems.append(f"A-row {r[0]}: 15 {cmp_} has no {fname} field")
                 if "**E37-D03 —**" not in proposed:
                     problems.append(f"A-row {r[0]}: proposed text lacks the E37-D03 lead-in")
             else:
                 if not proposed.lstrip('"').startswith(f"**{fname} (E37-D03)**:"):
                     problems.append(f"A-row {r[0]}: {fname} text lacks its heading string")
+                elif mode == "landed":  # the New bullets sit right after the Tokens bullet
+                    k = field_line(cat_lines, cmp_, "- **Tokens**:")
+                    want = 1 if fname == "Motion" else 2
+                    if k is None or cat_lines[k + want] != "- " + (unquote(proposed) or ""):
+                        problems.append(f"A-row {r[0]}: the {fname} bullet is not after Tokens")
         elif "`16`" in entry:
             saw16 = True
-            no, line = cited_line(today, brief_lines)
-            for q in quoted(today):
-                if q not in (line if no else brief):
-                    problems.append(f"A-row {r[0]}: today's text not on 16 line {no or '?'}: {q!r}")
+            if old16 is not None:
+                no, line = cited_line(today, old16)
+                for q in quoted(today):
+                    if q not in (line if no else "\n".join(old16)):
+                        problems.append(
+                            f"A-row {r[0]}: today's text not on 16 line {no or '?'}: {q!r}"
+                        )
             if "§7 recipe" in field:  # A-46: E05-D03 A-7 owns the recipe (merged as #4990)
                 if "E05-D03 (#162)" not in proposed:
                     problems.append(f"A-row {r[0]}: the §7 recipe row does not point at #162")
@@ -542,10 +623,18 @@ def amendments(spec: str, problems: list[str], screens: str | None = None) -> di
             saw14 = True
             if not (proposed.startswith(A47_HEAD) and proposed.endswith(A47_TAIL)):
                 problems.append(f"A-row {r[0]}: the 14 pointer line is not in its PR 2 form")
+            elif mode == "landed":
+                ls = screens.splitlines()
+                k = next((i for i, ln in enumerate(ls) if ln.startswith(ANCHOR_14)), None)
+                n = sum(1 for ln in ls if POINTER_14 in ln)
+                if k is None or n != 1 or ls[k + 1] != unquote(proposed):
+                    problems.append(
+                        f"14: the A-47 line is not once, right after the D02 line ({n})"
+                    )
         else:
             problems.append(f"A-row {r[0]} names no known entry: {entry!r}")
-    if POINTER_14 in screens:
-        problems.append("14: the SCR-082 pointer line is applied in this PR (BQ-02: PR 2)")
+    if mode == "pending" and POINTER_14 in screens:
+        problems.append("14: the SCR-082 pointer line is applied before the A-rows (BQ-02: PR 2)")
     if ANCHOR_14 not in screens:
         problems.append("14: the SCR-082 D02 pointer line A-47 follows is missing")
     if not saw14:
@@ -556,7 +645,7 @@ def amendments(spec: str, problems: list[str], screens: str | None = None) -> di
             problems.append(f"A-rows: {c} lacks {lost}")
     if not saw16:
         problems.append("A-rows: no 16 row")
-    return {"rows": len(rows)}
+    return {"rows": len(rows), "mode": mode}
 
 
 # ------------------------------------------------------------------ G. the boards ---------------
@@ -581,6 +670,7 @@ class Repo(NamedTuple):
     """The committed exports (path -> bytes) and the changed lines against the merge base."""
 
     files: Files
+    texts: Texts
     diff: (
         dict[str, list[str]] | None
     )  # None: not a git work tree (an archive), the scope gate skips
@@ -615,11 +705,11 @@ def read_repo() -> Repo:
         else {}
     )
     if git("rev-parse", "--is-inside-work-tree") is None:
-        return Repo(files, None)
+        return Repo(files, read_texts(), None)
     base = git("merge-base", "HEAD", "origin/main")
     names = git("diff", "--name-only", base.strip()) if base else None
     if base is None or names is None:
-        return Repo(files, {"?": ["no merge base with origin/main"]})
+        return Repo(files, read_texts(), {"?": ["no merge base with origin/main"]})
     diff: dict[str, list[str]] = {}
     for path in names.split():
         diff[path] = []
@@ -630,7 +720,7 @@ def read_repo() -> Repo:
                 for ln in body.splitlines()
                 if ln[:1] in "+-" and not ln.startswith(("+++", "---"))
             ]
-    return Repo(files, diff)
+    return Repo(files, read_texts(), diff)
 
 
 def png_size(data: bytes | None) -> tuple[int, int] | None:
@@ -797,7 +887,7 @@ def scope(repo: Repo, problems: list[str]) -> str:
     ):
         problems.append("scope: `15` changes a line other than a CMP field the A-rows name")
     if any(ln[0] == "-" for ln in repo.diff.get("docs/plan/16-design-system-brief.md", [])):
-        problems.append("scope: `16` loses a line (A-45 only adds the §7.2 pointer subsection)")
+        problems.append("scope: `16` loses a line (A-45 only adds the §7.3 pointer subsection)")
     return f"{len(repo.diff)} file(s) differ, all in E37-D03's set" if not out else "outside"
 
 
@@ -952,8 +1042,8 @@ def evaluate(
     out["proposals"] = proposals(spec, problems)
     out["motion"] = motion(spec, problems)
     out["tiers"] = tiers(spec, problems)
-    out["amendments"] = amendments(spec, problems, screens)
     repo = read_repo() if repo is None else repo
+    out["amendments"] = amendments(spec, problems, screens, repo.texts)
     out["boards"] = boards(spec, problems, repo.files)
     out["boards"]["scope"] = scope(repo, problems)
     out["hygiene"] = hygiene(spec, problems)
@@ -1057,7 +1147,7 @@ MUTATIONS: tuple[tuple[str, ...], ...] = (  # (name, old, new[, occurrences])
 # applied to `14` in memory: the pointer line lands in PR 2, never in this PR
 MUTATIONS_14: tuple[tuple[str, str, str], ...] = (
     (
-        "the 14 line is applied in PR 1",
+        "a second 14 pointer line",
         ANCHOR_14,
         f"- **{POINTER_14}:** [E37-D03.md](../design/E37/E37-D03.md) (…)\n{ANCHOR_14}",
     ),
@@ -1147,7 +1237,7 @@ def drawn_view(v: View) -> tuple[View, bool]:
         + "; ".join(renders)
         + ".",
     )
-    return ("\n".join(ls), screens, Repo(files, {})), True
+    return ("\n".join(ls), screens, repo._replace(files=files, diff={})), True
 
 
 def swap_exports(v: View) -> View | None:
@@ -1222,6 +1312,19 @@ def uuid_outside(v: View) -> View | None:
     )
 
 
+def edit_text(field: str, old: str, new: str) -> Callable[[View], View | None]:
+    """A mutation of `15` / `16` / `14` in memory (the texts the A-row gate reads)."""
+
+    def apply(v: View) -> View | None:
+        tx = v[2].texts
+        cur = str(getattr(tx, field))
+        if old not in cur:
+            return None
+        return v[0], v[1], v[2]._replace(texts=tx._replace(**{field: cur.replace(old, new, 1)}))
+
+    return apply
+
+
 def plan() -> list[Mut]:
     lits: list[Mut] = [
         (m[0], False, literal(m[1], m[2], int(m[3]) if len(m) > 3 else 1)) for m in MUTATIONS
@@ -1241,6 +1344,28 @@ def plan() -> list[Mut]:
         ("a greyscale / deuteranopia render is missing (the drawn view)", True, render_missing),
         ("a uuid outside §0 (the drawn view)", True, uuid_outside),
         ("a file outside the pack differs (the drawn view)", True, outside_file),
+        (
+            "an applied 15 row's New text drifts",
+            False,
+            edit_text(
+                "cat15", "**E37-D03 —** canvas `color.surface.canvas`", "**E37-D03 —** the canvas"
+            ),
+        ),
+        (
+            "the 16 subsection loses a word",
+            False,
+            edit_text("brief16", "Node-graph motion (E37-D03;", "Node graph motion (E37-D03;"),
+        ),
+        (
+            "the 14 line is dropped",
+            False,
+            literal(
+                "- **Design-system tokens and motion (E37-D03):**",
+                "- **Design-system tokens (E37-D03):**",
+                1,
+                "14",
+            ),
+        ),
     ]
 
 
