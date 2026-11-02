@@ -23,12 +23,11 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 import structlog
 
 from candleviewer.auth.models import SessionRecord
-from candleviewer.auth.session_service import OWNER_REVOKE_AUDIT_TIMEOUT_S
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.statechart import build
 from candleviewer.statechart.bindings import b16_session
@@ -74,6 +73,10 @@ _MUST_RECORD: frozenset[str] = frozenset(
         "ACTION_REQUEST",
     }
 )
+#: B16.2's final `elevation` state, which only a revocation reaches; an event it holds never runs.
+_ENDED = "session.elevation.dead"
+#: #5512: the bound (s) on stopping a dropped chart; its caller may still hold the row locks.
+CHART_STOP_TIMEOUT_S: Final = 1.0
 
 
 def _log() -> Any:
@@ -87,7 +90,7 @@ class SessionChartError(RuntimeError):
 
 class SessionChartUnrecorded(SessionChartError):
     """#5512 (C-2.9): the chart did not record *event*, which it had to (`_MUST_RECORD`): past its
-    end, it held the event for good (`deferred`), or the event, one of `_MUST_REACH`, changed
+    end, or as a `STEP_UP_OK`, it held the event (`deferred`), or one of `_MUST_REACH` changed
     nothing (`unchanged`): the chart was already past the state it must reach, whose entry writes
     the record. A `SessionChartError`, so every caller's arm for a failed record applies; the
     chart has been dropped."""
@@ -168,8 +171,9 @@ class SessionChart:
         reaches) and holds the event for good (`deferred`), or a `_MUST_REACH`
         event's receipt is not conclusive (its step changed nothing: the chart
         was already past the state, so the entry that writes the record did
-        not run). The chart is dropped first, so a held event never runs later
-        and the next use rebuilds the chart from the row."""
+        not run). A held `STEP_UP_OK` raises in any state (`deferred`). The
+        chart is dropped first, so a held event never runs later and the next
+        use rebuilds the chart from the row."""
         replay = bool(payload.get("replay"))
         if not replay:
             request_uuid = current_request_uuid()
@@ -182,8 +186,11 @@ class SessionChart:
         must_reach = _MUST_REACH.get(event)
         # A replay was recorded when it happened (`_hydrate`), so it is never refused here.
         if event in _MUST_RECORD and not replay:
-            # B16.2: `elevation.dead` is final, so an event held there never runs.
-            if getattr(receipt, "deferred", False) is True and self.in_state(sid, "dead"):
+            # The hold check reads the held chart's state from its receipt. A held `STEP_UP_OK`
+            # raises in any state, so the step-up ends its grant (`StepUpUnrecorded`).
+            if getattr(receipt, "deferred", False) is True and (
+                event == "STEP_UP_OK" or _ENDED in getattr(receipt, "state_ids", ())
+            ):
                 await self._drop(sid)
                 raise SessionChartUnrecorded(event, "deferred")
             if must_reach is not None and not receipt_is_conclusive(receipt):
@@ -289,7 +296,7 @@ class SessionChart:
         """Drop the session's chart at once, never waiting for `_lock`, which another session's
         build may hold while the caller holds the session's row locks: it leaves the cache and
         the gateway here, and its next use rebuilds it from the row. Its interpreter is then
-        stopped, bounded by the owner revoke's bound (`OWNER_REVOKE_AUDIT_TIMEOUT_S`). A stop
+        stopped within `CHART_STOP_TIMEOUT_S`, no longer than the role change's drop bound. A stop
         that fails or overruns is logged with its error class only (C-12.6) and never replaces
         what the caller raises or returns; a new cancellation goes on."""
         self._bind_loop()
@@ -298,7 +305,7 @@ class SessionChart:
             return
         self._gateway.unregister(session_id)
         try:
-            async with asyncio.timeout(OWNER_REVOKE_AUDIT_TIMEOUT_S):
+            async with asyncio.timeout(CHART_STOP_TIMEOUT_S):
                 await interp.stop()
         except Exception as exc:  # a timeout included; logged, never the caller's outcome
             _log().error(
