@@ -464,7 +464,7 @@ A47_HEAD = (
     "(E37-D03; owner approval pending;"
 )
 A47_TAIL = (
-    "; nine Penpot boards planned on page `E37-D03 Tokens and motion`, "
+    "; nine Penpot boards drawn (E37-D03 §0) on page `E37-D03 Tokens and motion`, "
     'exports in `docs/design/E37/img/`)"'
 )
 LINE_RX = re.compile(r"\((\d+)\)\s*$")
@@ -541,6 +541,21 @@ def landed(r: list[str], cat_lines: list[str], brief: str, screens: str) -> bool
     return sum(1 for ln in screens.splitlines() if ln == new) == 1
 
 
+def mix_message(rows: list[list[str]], done: list[str], todo: list[str]) -> str:
+    """One FAIL for a mix, naming the rows that differ from the majority state."""
+    where = {
+        r[0]: (
+            "`16` subsection"
+            if "`16`" in r[1]
+            else "`14` line" if "`14`" in r[1] else f"`15` {r[1]} {r[2].split(' (')[0]} line"
+        )
+        for r in rows
+    }
+    if len(done) >= len(todo):  # applied: the odd rows are edited, not missing
+        return "A-rows: " + "; ".join(f"{k} New text differs from its {where[k]}" for k in todo)
+    return "A-rows: " + "; ".join(f"{k} applied while the others are pending" for k in done)
+
+
 def amendments(
     spec: str, problems: list[str], screens: str | None = None, texts: Texts | None = None
 ) -> dict[str, Any]:
@@ -555,7 +570,7 @@ def amendments(
     todo = [k for k, v in states.items() if v is False]
     mode = "landed" if done and not todo else "pending" if not done else "mix"
     if mode == "mix":
-        problems.append(f"A-rows: {len(done)} of {len(done) + len(todo)} applied (a mix): {todo}")
+        problems.append(mix_message(rows, done, todo))
     # the Old cells: at their cited line in the working tree (pending) or at the merge base (landed)
     old15: list[str] | None = cat_lines if mode == "pending" else None  # a mix reports once
     old16: list[str] | None = brief_lines if mode == "pending" else None
