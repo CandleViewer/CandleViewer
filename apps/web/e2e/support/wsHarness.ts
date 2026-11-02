@@ -17,6 +17,7 @@ export type Frame = Readonly<Record<string, unknown>> & { readonly t: string };
 export type TickerRow = generated.ws.TickerSymbolTicker["tickers"][number];
 /** A `positions` payload (`23` §15.2 `PositionUpdate`). */
 export type PositionsBody = generated.ws.Positions;
+export type OrdersBody = generated.ws.Orders;
 /** One private topic's `sub` as the gateway took it: the accounts it named and those it kept (6.2). */
 export interface PrivateSub {
   readonly ch: string;
@@ -96,6 +97,8 @@ export interface WsHarness {
   privateSubs(): readonly PrivateSub[];
   /** A `positions` frame (6.2.3): the first a `snap`, then `d`s, as the server sends them. */
   sendPositions(body: PositionsBody): void;
+  /** An `orders` frame (6.2.3, E29-S02): the first a `snap`, then `d`s, as the server sends them. */
+  sendOrders(body: OrdersBody): void;
 }
 
 /** The client frames whose replies `hold` can keep back. */
@@ -471,6 +474,13 @@ export async function startWsHarness(
       const [t, meta] =
         last === undefined ? (["snap", { reason: "initial" }] as const) : (["d"] as const);
       data(current, t, "positions", body, (last ?? 0) + 1, meta);
+    },
+    sendOrders(body) {
+      if (!current) throw new Error("sendOrders: no live connection");
+      const last = current.seq.get("orders");
+      const [t, meta] =
+        last === undefined ? (["snap", { reason: "initial" }] as const) : (["d"] as const);
+      data(current, t, "orders", body, (last ?? 0) + 1, meta);
     },
     sendTicker(symbol, fields = {}) {
       if (!current) throw new Error("sendTicker: no live connection");
