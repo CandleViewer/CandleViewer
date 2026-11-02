@@ -1,12 +1,12 @@
 # E21-D04 — Hand-off (`16` §11.4): the seven component checklists
 
-Components: CMP-108, CMP-111, CMP-113, CMP-227, CMP-228, CMP-229 and CMP-230. The pack is [E21-D04.md](E21-D04.md): every "A-n" below is its §C row, applied to `15` by PR 2, and every "R-n", "W-n", "C-n" or "OQ-n" is the pack's. The keyboard tables add no global binding (`05` §3.2) and leave `Esc` and `Ctrl+K` untouched (`05` §3.3). Boards are PENDING (the pack's §0): no Penpot link exists yet, and none is ever an instance URL (R32 R7).
+Components: CMP-108, CMP-111, CMP-113, CMP-227, CMP-228, CMP-229 and CMP-230. The pack is [E21-D04.md](E21-D04.md): every "A-n" below is its §C row, applied to `15` by PR 2 (the boards PR, which closes the ticket; BQ-1), and every "R-n", "W-n", "C-n" or "OQ-n" is the pack's. The keyboard tables add no global binding (`05` §3.2) and leave `Esc` and `Ctrl+K` untouched (`05` §3.3). Boards are PENDING (the pack's §0): no Penpot link exists yet, and none is ever an instance URL (R32 R7).
 
 Rule: every line is `[x]` with its evidence, or `[ ]` with its reason (a PR still to land, or `N/A — <reason>`); a line that does not apply is `[x]` with `N/A — <reason>`, the E09-D07 precedent, which `16` §13.3 item 8 accepts. No blank line at Done (`16` §11.4, §13.3).
 
 ## Handoff checklist — CMP-108 DomLadderRow (E21-D04, #504)
 
-- [ ] **Final Penpot link** — file `E21-D04 boards`, page `E21-D04` (page id recorded at PR 3); specimen frames `CMP-108 · DomLadderRow / Variant=…, State=…` on boards 01, 02, 09 and 10 — PR 3
+- [ ] **Final Penpot link** — file `E21-D04 boards`, page `E21-D04` (page id recorded at PR 2); specimen frames `CMP-108 · DomLadderRow / Variant=…, State=…` on boards 01, 02, 09 and 10 — PR 2
 - [x] **Variants × States matrix** — table 1; A-3, A-7
 - [x] **Keyboard table** — table 2; A-4
 - [x] **Accessible name / role table** — table 3; the label template (pack §4.1)
@@ -14,10 +14,10 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with its reason (a PR stil
 - [x] **Motion pair** — N/A — none animated (follow and scrim motion are E21-D05 #505's)
 - [x] **Density notes** — the density table
 - [x] **Essential-exceptions log** — none
-- [x] **Tokens used** — equal to A-5 after PR 2; no token invented; token sets = `packages/ui/tokens` at `9b77e6b83`
+- [x] **Tokens used** — equal to A-5 after PR 2; no token invented; token sets = `packages/ui/tokens` at `201e19744` (unchanged since `9b77e6b83`). Hue pin (R32 R6): the bid / ask hue (`05`:129, green = bid and red = ask; `24`:812–813 counts bid volume as aggressor selling) holds here if E18-D03 #497, still open, merges as is, and re-pins when it merges.
 - [x] **Data contract confirmed** — props only, from an already-filtered caller; callbacks only (A-6; R-1)
 - [x] **Contrast and CVD** — computed by the tool (pack §5.4: the text on both bar fills, the text and the stale word on the stale surface, the ring); no new pair for `tools/contrast/pairs.mjs`
-- [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PR 3, on the boards
+- [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PR 2, on the boards
 - [ ] **Sign-off** — owner `approved` on #504 (pending, #2701)
 
 ### Table 1 — Variants × States
@@ -64,7 +64,7 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with its reason (a PR stil
 
 ### Density
 
-Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), the values of `space.row.height.*` at `9b77e6b83`; both are minimums that grow with the text scale (R-7).
+Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), the values of `space.row.height.*` at `201e19744`; both are minimums that grow with the text scale (R-7).
 
 | Mode        | Row / control height                   | Padding tokens                 | Smallest target                                                         |
 | ----------- | -------------------------------------- | ------------------------------ | ----------------------------------------------------------------------- |
@@ -79,7 +79,7 @@ Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), th
 
 ## Handoff checklist — CMP-111 HeatmapCell (E21-D04, #504)
 
-- [ ] **Final Penpot link** — page `E21-D04`, board 03 (the reveal) — PR 3
+- [ ] **Final Penpot link** — page `E21-D04`, board 03 (the reveal) — PR 2
 - [x] **Variants × States matrix** — table 1; A-9, A-13
 - [x] **Keyboard table** — table 2; A-10
 - [x] **Accessible name / role table** — table 3
@@ -87,10 +87,10 @@ Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), th
 - [x] **Motion pair** — N/A — the reveal opens in one frame; the layer's decay is E21-D05 #505's
 - [x] **Density notes** — the reveal's table follows CMP-049's densities
 - [x] **Essential-exceptions log** — none
-- [x] **Tokens used** — equal to A-11 after PR 2
+- [x] **Tokens used** — equal to A-11 after PR 2. Hue pin (R32 R6): the bid / ask hue (`05`:129, green = bid and red = ask; `24`:812–813 counts bid volume as aggressor selling) holds here if E18-D03 #497, still open, merges as is, and re-pins when it merges.
 - [x] **Data contract confirmed** — the logical unit `{time, price, intensity, side}`; the layer's pipeline is CMP-193's (pack §6)
 - [x] **Contrast and CVD** — computed (pack §5.2, §5.3)
-- [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PR 3
+- [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PR 2
 - [ ] **Sign-off** — owner `approved` on #504 (pending, #2701)
 
 ### Table 1 — Variants × States
@@ -143,7 +143,7 @@ Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), th
 
 ## Handoff checklist — CMP-113 HeatmapLegend (E21-D04, #504)
 
-- [ ] **Final Penpot link** — page `E21-D04`, boards 04, 05 and 09 — PR 3
+- [ ] **Final Penpot link** — page `E21-D04`, boards 04, 05 and 09 — PR 2
 - [x] **Variants × States matrix** — table 1; A-16, A-21
 - [x] **Keyboard table** — N/A — static, no interactive element
 - [x] **Accessible name / role table** — table 3; A-17
@@ -151,10 +151,10 @@ Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), th
 - [x] **Motion pair** — N/A — none animated
 - [x] **Density notes** — the density table
 - [x] **Essential-exceptions log** — none
-- [x] **Tokens used** — equal to A-18 after PR 2
+- [x] **Tokens used** — equal to A-18 after PR 2. Hue pin (R32 R6): the bid / ask hue (`05`:129, green = bid and red = ask; `24`:812–813 counts bid volume as aggressor selling) holds here if E18-D03 #497, still open, merges as is, and re-pins when it merges.
 - [x] **Data contract confirmed** — props only; the anchors and scale from E21-T06 #651 (A-20; G-2)
 - [x] **Contrast and CVD** — computed (pack §5.2, §5.3)
-- [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PR 3
+- [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PR 2
 - [ ] **Sign-off** — owner `approved` on #504 (pending, #2701)
 
 ### Table 1 — Variants × States
@@ -199,7 +199,7 @@ Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), th
 
 ## Handoff checklist — CMP-227 EstimatedBadge (E21-D04, #504)
 
-- [ ] **Final Penpot link** — page `E21-D04`, board 07 — PR 3
+- [ ] **Final Penpot link** — page `E21-D04`, board 07 — PR 2
 - [x] **Variants × States matrix** — table 1 (usage only; the contract is E25-D05's, #619); A-23
 - [x] **Keyboard table** — the entry's (`15`:2937); nothing added
 - [x] **Accessible name / role table** — the entry's; nothing added
@@ -210,7 +210,7 @@ Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), th
 - [x] **Tokens used** — the entry's Tokens field, unchanged
 - [x] **Data contract confirmed** — the entry's (`15`:2941), unchanged
 - [x] **Contrast and CVD** — the entry's measured word; no new pair
-- [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PR 3
+- [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PR 2
 - [ ] **Sign-off** — owner `approved` on #504 (pending, #2701)
 
 ### Table 1 — Variants × States
@@ -222,7 +222,7 @@ Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), th
 
 ## Handoff checklist — CMP-228 PreviewTile (E21-D04, #504)
 
-- [ ] **Final Penpot link** — page `E21-D04`, board 08 — PR 3
+- [ ] **Final Penpot link** — page `E21-D04`, board 08 — PR 2
 - [x] **Variants × States matrix** — table 1 (the `heatmap` kind); A-24
 - [x] **Keyboard table** — N/A — not interactive (`role="img"`)
 - [x] **Accessible name / role table** — table 3
@@ -233,7 +233,7 @@ Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), th
 - [x] **Tokens used** — the entry's Tokens field plus the active palette's stops
 - [x] **Data contract confirmed** — a seeded synthetic book; never live or recorded data
 - [x] **Contrast and CVD** — the palette sets of pack §5.2, §5.3
-- [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PR 3
+- [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PR 2
 - [ ] **Sign-off** — owner `approved` on #504 (pending, #2701)
 
 ### Table 1 — Variants × States
@@ -254,7 +254,7 @@ Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), th
 
 ## Handoff checklist — CMP-229 ArmToggle (E21-D04, #504)
 
-- [ ] **Final Penpot link** — page `E21-D04`, board 07 — PR 3
+- [ ] **Final Penpot link** — page `E21-D04`, board 07 — PR 2
 - [x] **Variants × States matrix** — table 1 (usage only; the contract is E30-D04's, #917); A-25
 - [x] **Keyboard table** — table 2
 - [x] **Accessible name / role table** — the entry's (`15`:2964); nothing added
@@ -265,7 +265,7 @@ Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), th
 - [x] **Tokens used** — the entry's plus R-3's T2 tokens
 - [x] **Data contract confirmed** — the entry's (`15`:2967), unchanged
 - [x] **Contrast and CVD** — pack §5.4 (the T2 label and reason on `color.surface.raised`)
-- [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PR 3
+- [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PR 2
 - [ ] **Sign-off** — owner `approved` on #504 (pending, #2701)
 
 ### Table 1 — Variants × States
@@ -283,7 +283,7 @@ Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), th
 
 ## Handoff checklist — CMP-230 OwnOrderMarker (E21-D04, #504)
 
-- [ ] **Final Penpot link** — page `E21-D04`, boards 06 and 09 — PR 3
+- [ ] **Final Penpot link** — page `E21-D04`, boards 06 and 09 — PR 2
 - [x] **Variants × States matrix** — table 1; A-28, A-32
 - [x] **Keyboard table** — table 2; A-29
 - [x] **Accessible name / role table** — table 3
@@ -294,7 +294,7 @@ Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), th
 - [x] **Tokens used** — equal to A-30 after PR 2
 - [x] **Data contract confirmed** — props only, already filtered by an account-scoped caller (A-31; pack §8)
 - [x] **Contrast and CVD** — text in `color.text.primary` / `.secondary`, the side word in `color.buy.default` / `color.sell.default`, all on the canvas (pack §5.4); no new pair
-- [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PR 3
+- [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PR 2
 - [ ] **Sign-off** — owner `approved` on #504 (pending, #2701)
 
 ### Table 1 — Variants × States
@@ -334,7 +334,7 @@ Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), th
 
 ### Density
 
-Row heights are CMP-108's: `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px) at `9b77e6b83`.
+Row heights are CMP-108's: `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px) at `201e19744`.
 
 | Mode        | Row / control height   | Padding tokens | Smallest target                                                                              |
 | ----------- | ---------------------- | -------------- | -------------------------------------------------------------------------------------------- |

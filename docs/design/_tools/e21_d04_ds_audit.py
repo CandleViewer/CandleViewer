@@ -10,7 +10,8 @@ pins file. The only repo code it runs is the two measuring modules the pack name
 
 Gates (one PASS or FAIL line each): G-CITE, G-QUOTE, G-VERSION, G-AC, G-ENTRY, G-AROWS, G-SPLIT,
 G-TOKENS, G-CONTRAST, G-CVD, G-LABEL, G-T2, G-ENV, G-BOARDS, G-BQ, G-RULED, G-NOCLOSE, G-PUBLIC,
-G-PENPOT, G-UNTOUCHED and G-MUTLIST (the pack's section 12.3 equals this tool's list).
+G-PENPOT, G-UNTOUCHED, G-RIDERS (the ruling of record's riders) and G-MUTLIST (the pack's
+section 12.3 equals this tool's list).
 
 Pins (G-RULED): every bullet of the BQ section is pinned by its sha256 in
 `e21_d04_ruled_pins.txt`; `--repin-ruled` is the only writer.
@@ -42,10 +43,11 @@ from pathlib import Path
 from types import ModuleType
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "9b77e6b83"  # origin/main when the pack was written; every plan cite is read here
+BASE = "201e19744"  # origin/main at the ruling's fold (written at 9b77e6b83); cites read here
 D02_HEAD = "7e1040260"  # PR #5488 (E21-D02) head; re-pinned to its merge commit when it merges
 D02_PR = "#5488"
-BQ_LIST = "6579619019"  # the BQ list on #504; its ruling is pending
+BQ_LIST = "6579619019"  # the BQ list on #504
+RULING = "6580397401"  # the orchestrator's ruling of record on it
 
 SPEC_REL = "docs/design/E21/E21-D04.md"
 HANDOFF_REL = "docs/design/E21/E21-D04-handoff.md"
@@ -61,6 +63,7 @@ PLAN = {
     "14": "docs/plan/14-screens-catalogue.md",
     "15": CAT15,
     "16": "docs/plan/16-design-system-brief.md",
+    "24": "docs/plan/24-internal-schemas.md",
     "26": "docs/plan/26-chart-engine-design.md",
 }
 KEYED = {
@@ -120,6 +123,13 @@ T2_MARKERS = (
     "CMP-019",
     "never `opacity.disabled`",
 )
+# BQ-12 rider: one identical sentence wherever bid / ask hue is bound (pack and hand-off).
+HUE_PIN = (
+    "Hue pin (R32 R6): the bid / ask hue (`05`:129, green = bid and red = ask; `24`:812–813 counts "
+    "bid volume as aggressor selling) holds here if E18-D03 #497, still open, merges as is, and "
+    "re-pins when it merges."
+)
+HUE_MIN = {"pack": 5, "hand-off": 3}
 # Names the pack quotes from owner texts as NOT shipped (A-rows retire them); never bound.
 UNSHIPPED = frozenset({"font.mono", "color.surface.ownorder", "color.buy", "color.sell"})
 
@@ -654,13 +664,15 @@ def g_boards(t: Texts) -> list[Finding]:
 
 
 def g_bq(t: Texts) -> list[Finding]:
-    head = "## The questions BQ-0 … BQ-15 — defaults built; ruling pending " f"(comment {BQ_LIST})"
+    head = f"## The questions BQ-0 … BQ-15 — RULED (comment {RULING})"
     bad = [] if head in t.spec.split("\n") else ["heading"]
     bullets = bq_bullets(t.spec)
     ids = [m.group(1) for b in bullets if (m := re.match(r"- \*\*(BQ-\d+)", b))]
     if ids != [f"BQ-{n}" for n in range(16)]:
         bad.append(f"ids {ids}")
-    bad += [b[:10] for b in bullets if "Default built:" not in b or "RULED" in b]
+    bad += [b[:10] for b in bullets if "RULED (" not in b or "Default built:" in b]
+    if not any(b.startswith("- **BQ-1 ") and "RULED (OVERRIDE)" in b for b in bullets):
+        bad.append("BQ-1 override")
     return [("G-BQ", "; ".join(bad))] if bad else []
 
 
@@ -699,6 +711,30 @@ def g_penpot(t: Texts) -> list[Finding]:
 def g_untouched(t: Texts) -> list[Finding]:
     bad = [p for p in t.paths if p not in OWN]
     return [("G-UNTOUCHED", f"outside the ticket: {', '.join(bad)}")] if bad else []
+
+
+def g_riders(t: Texts) -> list[Finding]:
+    bad = []
+    for label, text in (("pack", t.spec), ("hand-off", t.handoff)):
+        if text.count(HUE_PIN) < HUE_MIN[label]:
+            bad.append(f"{label}: hue pin x{text.count(HUE_PIN)}")
+        for ln in text.split("\n"):
+            if "#497" in ln and HUE_PIN not in ln and not ln.startswith("- **BQ-"):
+                bad.append(f"{label}: a #497 line without the hue pin")
+            if "#213" in ln and "closed" not in ln:
+                bad.append(f"{label}: #213 named as an owner")
+            if "PR 3" in ln or "of 3" in ln:
+                bad.append(f"{label}: a three-PR plan")
+    if "`Partial: PR 1 of 2`" not in t.spec:
+        bad.append("PR 1 of 2")
+    g1 = [r for r in rows(section(t.spec, "### 9.2 Gaps")) if r and r[0] == "G-1"]
+    if not g1 or "E21-T06 #651" not in g1[0][2]:
+        bad.append("G-1 owner")
+    a22 = [a for a in arows(t.spec) if a.aid == "A-22"]
+    head = section(t.spec, "### A-22 ").split("Old:")[0] if a22 else ""
+    if "E21-T05 #650" not in head:
+        bad.append("A-22 stamp owner")
+    return [("G-RIDERS", "; ".join(bad))] if bad else []
 
 
 @dataclass(frozen=True)
@@ -799,9 +835,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "| dark         | PENDING |",
         "| dark + light | PENDING |",
     ),
-    Mutation(
-        "M-15", "G-BQ", "the heading claims a ruling", "defaults built; ruling pending", "RULED"
-    ),
+    Mutation("M-15", "G-BQ", "the heading loses its ruling", "— RULED (comment", "— (comment"),
     Mutation(
         "M-16", "G-RULED", "a BQ default edited without a re-pin", "no new id;", "one new id;"
     ),
@@ -827,6 +861,35 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation("M-22", "G-MUTLIST", "the list drifts", "| M-22 | G-MUTLIST", "| M-99 | G-MUTLIST"),
     Mutation("M-23", "G-RULED", "a pin edited, its BQ line unchanged", "BQ-0 ", "BQ-0 0", "pins"),
+    Mutation(
+        "M-24",
+        "G-RIDERS",
+        "a hue-pin copy reworded",
+        "#497, still open,",
+        "#497, open,",
+        "handoff",
+    ),
+    Mutation(
+        "M-25",
+        "G-RIDERS",
+        "the plan goes back to three PRs",
+        "`Partial: PR 1 of 2`",
+        "`Partial: PR 1 of 3`",
+    ),
+    Mutation(
+        "M-26",
+        "G-RIDERS",
+        "G-1 routed to the closed ticket",
+        "| E21-T06 #651 (PROPOSED; never E05-T05 #213, closed) |",
+        "| E05-T05 #213 |",
+    ),
+    Mutation(
+        "M-27",
+        "G-RIDERS",
+        "A-22 loses its stamp owner",
+        "Stamp owner: E21-T05 #650,",
+        "Stamp owner: E21-T05,",
+    ),
 )
 
 
@@ -865,6 +928,7 @@ GATES: tuple[Callable[[Texts], list[Finding]], ...] = (
     g_public,
     g_penpot,
     g_untouched,
+    g_riders,
     g_mutlist,
 )
 
