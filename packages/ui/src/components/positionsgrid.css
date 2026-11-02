@@ -235,6 +235,6 @@
   }
 
   .cv-positions-grid__paused {
-    border: 1px solid CanvasText;
+    border: calc(var(--border-hairline) * 1px) solid CanvasText;
   }
 }

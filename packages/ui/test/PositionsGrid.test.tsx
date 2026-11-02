@@ -693,6 +693,28 @@ describe("PositionsGrid (CMP-114): TotalsRow (D02 §5.2, D-15)", () => {
   });
 });
 
+describe("PositionsGrid (CMP-114): a long account label (D-8)", () => {
+  const LONG = "Desk 4 swing book London";
+
+  it("cut on screen, the cell keeps its whole label as its name; focused, it keeps focus and its echo shows the label", async () => {
+    await mount(<Host groups={[group("desk-4", `${LONG} · LIVE`, [row(LONG, "BTCUSDT")])]} />);
+    const position = rowNamed(`BTCUSDT · Long · 0.250 BTC · ${LONG}`);
+    const account = within(position).getAllByRole("gridcell")[1] as HTMLElement;
+    // jsdom has no layout: the label lies 190 px wide in the cell's 80 px, as its 96 px column cuts it.
+    Object.defineProperty(account, "scrollWidth", { configurable: true, value: 190 });
+    Object.defineProperty(account, "clientWidth", { configurable: true, value: 80 });
+    act(() => within(position).getByRole("checkbox").focus());
+    await userEvent.keyboard("{ArrowRight}");
+    expect(account).toHaveFocus();
+    expect(account).toHaveAttribute("tabindex", "0");
+    expect(account).toHaveAccessibleName(LONG);
+    const echo = document.querySelector(".cv-table__echo:not([hidden])");
+    expect(echo).toHaveTextContent(LONG);
+    expect(echo).toHaveAttribute("aria-hidden", "true");
+    expect(account).toHaveFocus();
+  });
+});
+
 describe("PositionsGrid (CMP-114): selection (D-3)", () => {
   it("the box and Space on a cell toggle the row; Ctrl+A selects every position, closed groups' too", async () => {
     const onSelect = vi.fn();
@@ -732,6 +754,34 @@ describe("PositionsGrid (CMP-114): selection (D-3)", () => {
     expect(grid()).not.toHaveAttribute("aria-multiselectable");
     expect(page.queryAllByRole("checkbox")).toHaveLength(0);
     expect(rowNamed(/^BTCUSDT · Long · 0\.250/)).not.toHaveAttribute("aria-selected");
+  });
+
+  /** Ctrl+A on `cell`, as a browser dispatches it: the press, to read whether the grid handled it. */
+  const ctrlA = (cell: HTMLElement | undefined): KeyboardEvent => {
+    const press = new KeyboardEvent("keydown", {
+      key: "a",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      (cell as HTMLElement).dispatchEvent(press);
+    });
+    return press;
+  };
+
+  it("with onSelectionChange Ctrl+A is the grid's: every position selected, the key handled", async () => {
+    const onSelect = vi.fn();
+    await mount(<Host onSelect={onSelect} />);
+    const press = ctrlA(within(rowNamed(/^BTCUSDT · Long · 0\.250/)).getAllByRole("gridcell")[1]);
+    expect(press.defaultPrevented).toBe(true);
+    expect(onSelect).toHaveBeenLastCalledWith([MAIN.key, SUB1_BTC.key, SUB1_ETH.key, SUB2_SOL.key]);
+  });
+
+  it("without onSelectionChange Ctrl+A stays the browser's: the grid leaves the key alone", async () => {
+    await mount(<PositionsGrid caption="Positions" groups={GROUPS} />);
+    const press = ctrlA(within(rowNamed(/^BTCUSDT · Long · 0\.250/)).getAllByRole("gridcell")[0]);
+    expect(press.defaultPrevented).toBe(false);
   });
 });
 
@@ -1075,7 +1125,8 @@ describe("PositionsGrid (CMP-114): states", () => {
 
 describe("PositionsGrid stories", () => {
   const all = composeStories(stories);
-  // Theme stories wait on the preview's theme runtime, and the bench is a perf story: mounted, not played.
+  // Theme stories wait on the preview's theme runtime, LongText measures a browser's layout (its cut is the test
+  // above's), and the bench is a perf story: mounted, not played.
   const played = new Set([
     "Default",
     "GroupedByAccount",
