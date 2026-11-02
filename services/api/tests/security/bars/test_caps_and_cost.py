@@ -16,14 +16,15 @@ import statistics
 import time
 from collections import Counter
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Final
 
 import httpx
 import pytest
 
-from candleviewer.api import market, market_bars
+from candleviewer.api import market_bars
+from candleviewer.api.market_time import ts_us
 from candleviewer.bars.errors import BarParamOutOfRange
 from candleviewer.bars.models import BarSpec
 from candleviewer.bars.spec import check_param_bounds
@@ -46,7 +47,6 @@ TIME_DAYS, NON_TIME_DAYS, MAX_BARS, MAX_LIMIT = 400, 31, 250_000, 5_000
 #: #452 BQ-5, proposed into X01 §3 as SR-E12-01's rejection-cost bound: the median CPU time one
 #: refused `tick:1` request adds over a 401, in process. The one place the number lives.
 REJECTION_CPU_BUDGET_S: Final = 0.002
-F1: Final = "#452 findings row F1: a window whose `from` is before 1970"
 F3: Final = "#452 findings row F3: one session sending a burst of maximal pages"
 F8: Final = (
     "#452 findings row F8: the applied floor is 1 for qty_step < 0.1; the documented 10 x qty_step"
@@ -276,7 +276,6 @@ def test_caps_tick_1_refusal_costs_under_the_cpu_budget(stores: Stores) -> None:
     assert stores.calls == Counter()
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=F1)
 def test_caps_pre_epoch_window_is_measured_from_its_from(stores: Stores) -> None:
     """X01 AC-01: `from=1900-01-01 to=1970-06-01` spans about 70 years, over the 400-day cap: it
     is refused before any bar read. The findings register on #452 holds the analysis."""
@@ -318,11 +317,9 @@ _INSTANTS: Final = {
 def test_caps_non_rfc_3339_time_parses_to_its_instant_accepted_f6(field: str, value: str) -> None:
     """#452 F6, accepted by the coordinator; X01 note: the accepted forms are not only served but
     read as the instant they name (a date-only value is its UTC midnight), by the parser each route
-    calls for `from` and `to` alike (`market_bars._ts_us`, `market._parse_time`)."""
-    klines_at = market._parse_time(value, default=None)
-    assert klines_at is not None, field
+    calls for `from` and `to` alike (`api.market_time.ts_us`)."""
+    assert ts_us(value) == _INSTANTS[value]
     assert market_bars._ts_us(value) == _INSTANTS[value]
-    assert (klines_at - _EPOCH) // timedelta(microseconds=1) == _INSTANTS[value]  # exact
 
 
 @pytest.mark.xfail(strict=True, raises=BarParamOutOfRange, reason=F8)

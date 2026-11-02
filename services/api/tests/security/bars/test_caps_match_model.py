@@ -3,7 +3,7 @@ prevention"): each number X01 §7 states for SR-E12-01/02/03/04/07/12/15 is read
 itself and compared with the constant the code enforces, so a change on either side fails here.
 
 X01 §7 also says "the numbers live in `candleviewer/bars/limits.py`". The SR-E12-04 spec caps
-live in `bars/leases.py` instead: the values agree, the location does not (#452 findings row F5).
+live in `bars/limits.py` since #452 F5 (`bars/leases.py` re-exports them).
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ from candleviewer.bars import leases, limits
 from candleviewer.bars.state_store import MAX_BLOB_BYTES
 from candleviewer.ws.limits import MAX_BARS_SUBSCRIPTIONS
 
-F5: Final = "#452 findings row F5: the SR-E12-04 caps live in bars/leases.py, not bars/limits.py"
 _MODEL: Final = Path(__file__).resolve().parents[5] / "docs/security/threat-models/E12-bars.md"
 _DAY_US: Final = 86_400_000_000
 _MIB: Final = 1024 * 1024
@@ -75,7 +74,6 @@ def test_caps_match_model_qty_max_is_a_power_of_ten() -> None:
     assert limits.QTY_PARAM_MAX == 10 ** (len(str(limits.QTY_PARAM_MAX)) - 1)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=F5)
 def test_caps_match_model_spec_caps_live_in_limits() -> None:
     for name in ("CAP_PER_USER", "CAP_PER_SYMBOL", "CAP_GLOBAL"):
         assert getattr(limits, name, None) == getattr(leases, name), name

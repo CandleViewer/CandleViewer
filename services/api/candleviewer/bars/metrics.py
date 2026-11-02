@@ -153,7 +153,23 @@ bars_heal_refresh_total = Counter(
 #: Allow-listed label values (bounded cardinality; never client text).
 ENDPOINT_ROUTES: Final = frozenset({"klines", "bars"})
 SOURCE_TIERS: Final = frozenset({"questdb", "parquet", "exchange_rest", "tape"})
-PARAM_REJECT_REASONS: Final = frozenset({"invalid", "unsupported", "out_of_range"})
+#: Why a bars/klines request was refused (#452 F4a). The first three are the bar_type/param and
+#: interval/price_type refusals; the rest are every other refusal of the two routes.
+PARAM_REJECT_REASONS: Final = frozenset(
+    {
+        "invalid",
+        "unsupported",
+        "out_of_range",
+        "unauthenticated",
+        "forbidden",
+        "bad_window",
+        "invalid_cursor",
+        "unknown_symbol",
+        "window_too_large",
+        "no_data_recorded",
+        "unavailable",
+    }
+)
 
 bars_endpoint_rows_returned_total = Counter(
     "bars_endpoint_rows_returned_total",
@@ -166,8 +182,13 @@ bars_endpoint_422_no_data_recorded_total = Counter(
 )
 bars_endpoint_param_rejected_total = Counter(
     "bars_endpoint_param_rejected_total",
-    "bar_type/param pairs refused before any read.",
+    "bars/klines requests refused, by reason (bounded set).",
     labelnames=("reason",),
+)
+api_request_rejected_total = Counter(
+    "api_request_rejected_total",
+    "bars/klines requests refused, by route and reason (#452 F4a).",
+    labelnames=("route", "reason"),
 )
 bars_endpoint_source_tier_total = Counter(
     "bars_endpoint_source_tier_total",
@@ -254,6 +275,13 @@ def record_param_rejected(reason: str) -> None:
         bars_endpoint_param_rejected_total.labels(reason=reason).inc()
 
 
+def record_rejected(route: str, reason: str) -> None:
+    """Count one refusal of `route` in `api_request_rejected_total`; both labels are closed sets
+    (`ENDPOINT_ROUTES`, `PARAM_REJECT_REASONS`), an unknown value is dropped, never minted."""
+    if route in ENDPOINT_ROUTES and reason in PARAM_REJECT_REASONS:
+        api_request_rejected_total.labels(route=route, reason=reason).inc()
+
+
 #: Names served by `export_bars_metrics` (the S01/S02 builder counters plus the above, and the
 #: write and read path series of `bars.writer` / `bars.reader`, #1998).
 EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
@@ -291,6 +319,7 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "bars_endpoint_rows_returned_total",
         "bars_endpoint_422_no_data_recorded_total",
         "bars_endpoint_param_rejected_total",
+        "api_request_rejected_total",
         "bars_endpoint_source_tier_total",
         "bars_tape_read_degraded_total",
         "bar_renko_multi_brick_total",

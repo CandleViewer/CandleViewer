@@ -11,7 +11,7 @@ an `asyncio.Event` nobody sets (no sleep). The deadline is not lowered: a reques
 
 A known gap is a strict xfail on how it fails: a hang hits the guard (`pytest.fail`), a driver
 error is a 500 (`AssertionError` on the status). The findings register on #452 holds the analysis
-(F2; the /market/bars half is #3287).
+(F2; the /market/bars half is #3287: the only gaps left here; /market/klines is fixed).
 """
 
 from __future__ import annotations
@@ -33,8 +33,6 @@ from tests.unit.audit.audit_waits import virtual
 GUARD_S: Final = limits.QUERY_TIMEOUT_S * 5
 F2_BARS: Final = "#452 findings row F2 (bars half: #3287): a hung recording-start read"
 F2_BARS_DRIVER: Final = "#452 findings row F2 (bars half: #3287): a driver error from the bar read"
-F2_KLINES: Final = "#452 findings row F2: a hung /market/klines store read"
-F2_KLINES_DRIVER: Final = "#452 findings row F2: a driver error from the klines hot read"
 BARS: Final = {"symbol": "BTCUSDT", "from": _iso(T0), "to": _iso(NOW), "limit": 10}
 _HOUR_US: Final = 3_600_000_000
 _KLINES: Final = {"symbol": "BTCUSDT", "interval": "1", "limit": 10,
@@ -89,9 +87,9 @@ async def test_deadline_bars_hung_read_or_count_is_503(
     [
         pytest.param("getBars", RECORDING, hang, marks=_hangs(F2_BARS)),
         pytest.param("getBars", BAR_READ, _driver_error, marks=_is_500(F2_BARS_DRIVER)),
-        pytest.param("getKlines", HOT_READ, hang, marks=_hangs(F2_KLINES)),
-        pytest.param("getKlines", RECORDING, hang, marks=_hangs(F2_KLINES)),
-        pytest.param("getKlines", HOT_READ, _driver_error, marks=_is_500(F2_KLINES_DRIVER)),
+        pytest.param("getKlines", HOT_READ, hang),
+        pytest.param("getKlines", RECORDING, hang),
+        pytest.param("getKlines", HOT_READ, _driver_error),
     ],
 )
 @virtual
