@@ -12,6 +12,7 @@ import {
 import type { WsState } from "../../lib/ws/state/types";
 import type { ShellState } from "../../shell/bootstrap/store.js";
 import { useShellSelector } from "../../shell/useShellSelector.js";
+import { useChipAnnouncements } from "./chipAnnouncer";
 import { ConnectionStatus, type ConnectionStatusProps } from "./ConnectionStatus";
 
 const NO_TOPICS: readonly TopicReading[] = Object.freeze([]);
@@ -80,7 +81,9 @@ function propsOf(view: ChipView): ChipProps {
  * (rows 10–12, 16). The topics are read, never pushed: no frame renders it. Its clock runs at 1 Hz
  * while the link is up (a silent topic crosses T1 with no event) or an age is drawn; a store
  * change re-renders it at once, so the exchange's feed down reads within the frame of its message.
- * It announces nothing: E17-D02 §11 rows 1 and 14 are CMP-077's (`ConnectionRegionSlot`).
+ * The chip owns no live region (§5): this container writes §11 rows 4 and 5 for the chip's states
+ * through the shell announcer (`useChipAnnouncements`); the feed down is CMP-092's row to say, and
+ * rows 1 and 14 are CMP-077's (`ConnectionRegionSlot`).
  */
 export function ConnectionStatusSlot(): JSX.Element {
   const ws = useWsState();
@@ -96,6 +99,7 @@ export function ConnectionStatusSlot(): JSX.Element {
   useEffect(() => {
     setMemory((m) => stepChipMemory(m, chipInput(ws, upstreamDown, multiplier)));
   }, [ws, upstreamDown, multiplier, ticks]);
+  useChipAnnouncements(view);
 
   const aged = view.status !== "live" && view.status !== "delayed" && view.lastGoodTs !== null;
   const clocked = ws.link.kind === "up" || aged;
