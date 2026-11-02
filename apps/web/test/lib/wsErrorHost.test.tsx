@@ -22,4 +22,11 @@ describe("WsErrorHost", () => {
     feed("frame_malformed");
     expect(screen.getByRole("status").textContent).toContain("report a bug");
   });
+  it("forbidden keeps its 10.3 copy (sign in again or contact an owner) inside the modal", () => {
+    render(<WsErrorHost />);
+    feed("forbidden");
+    expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
+      "Session error (forbidden). Sign in again or contact an owner.",
+    );
+  });
 });
