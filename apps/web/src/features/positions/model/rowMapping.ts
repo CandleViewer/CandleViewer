@@ -3,10 +3,26 @@
  * `Position`) and the caller's account directory (`22` `ExchangeAccount`). Columns follow E29-D02
  * §5.1; the three the wire does not carry today take #911's BQ-8 fallbacks: margin mode from the
  * account, rPnL today "—" with a spoken reason, and R from the server's `r_multiple`, else derived
- * (`24` §7.2) only when the row carries `stop_loss`. Money stays decimal text (`decimal.ts`).
+ * (`24` §7.2) only when the row carries `stop_loss`. Money stays decimal text (`decimal.ts`), in one
+ * form whatever the source: no trailing fraction zero, as `23` §15.2's mapper writes it, while `22`'s
+ * keeps the stored scale (`numeric(38,18)`). Neither carries the instrument's tick or lot, so D-7's
+ * step precision waits for a source the panel can read; until then a row reads the same from first
+ * paint to the snapshot, and its name does not change under focus.
  */
 import type { generated } from "@candleviewer/protocol";
-import { abs, cmp, dec, div, mul, neg, parseDecimal, sub, toPlain, type Decimal } from "./decimal";
+import {
+  abs,
+  cmp,
+  dec,
+  div,
+  mul,
+  neg,
+  normalise,
+  parseDecimal,
+  sub,
+  toPlain,
+  type Decimal,
+} from "./decimal";
 
 export type WsPosition = generated.ws.Positions["positions"][number];
 export type RestPosition = generated.rest.components["schemas"]["Position"];
@@ -83,9 +99,13 @@ export const HEDGE_SUFFIX = " · hedge";
 export const keyOf = (accountId: string, symbol: string, positionIdx: number): string =>
   `${accountId}|${symbol}|${positionIdx}`;
 
-/** A decimal string the wire may hold, kept as sent, or `null` for none or junk. */
+/** One form of a decimal, whatever its source: no trailing fraction zero (`63980.0` → `63980`). */
+const canonical = (d: Decimal): string => toPlain(normalise(d));
+
+/** A decimal string the wire may hold, in its canonical form, or `null` for none or junk. */
 function money(value: unknown): string | null {
-  return parseDecimal(value) === null ? null : (value as string);
+  const d = parseDecimal(value);
+  return d === null ? null : canonical(d);
 }
 
 const positionIdxOf = (value: unknown): 0 | 1 | 2 => (value === 1 || value === 2 ? value : 0); // absent: one-way (Bybit's 0)
@@ -186,7 +206,7 @@ export function mapRow(
     hedge,
     sideLabel: hedge ? `${SIDE_WORDS[side]}${HEDGE_SUFFIX}` : SIDE_WORDS[side],
     positionIdx,
-    size: wire.size as string,
+    size: canonical(size),
     entry,
     mark,
     unrealisedPnl: money(wire.unrealised_pnl),

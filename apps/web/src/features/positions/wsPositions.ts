@@ -22,7 +22,8 @@
  *   link-down episode as the fallback. Never polled. Past 25 accounts a read names the 25 the
  *   subscription does, once the directory is known (first paint is asked before it is).
  * - **S-02:** no first `snap` within 5 s (BQ-18's budget), or a refused subscription, is "Could not
- *   load"; `retry()` re-subscribes.
+ *   load"; `retry()` re-subscribes. The budget also runs while the directory is read, so a read that
+ *   never answers (no request carries a timeout) is "Could not load" too, never an endless load.
  * - **A narrowing** (`23` §9.5) carries no account to a feature, and the handle's `effective`
  *   keeps the old list, so the feed re-reads the directory: `setAccounts` names and drops the
  *   accounts it no longer lists (SR-E29-11). The subscription continues with the kept accounts;
@@ -141,6 +142,15 @@ export function startPositionsFeed(options: PositionsFeedOptions): PositionsFeed
     wallet = null;
   }
 
+  /** S-02's budget from now: no first `snap` by its end is "Could not load". */
+  function armBudget(): void {
+    clearBudget();
+    budget = timers.setTimeout(() => {
+      budget = undefined;
+      store.markSnapshotFailed();
+    }, SNAPSHOT_BUDGET_MS);
+  }
+
   function subscribe(ids: readonly string[]): void {
     release();
     if (stopped || ids.length === 0) return; // an empty list is `invalid_options` (23 §6.2)
@@ -149,10 +159,7 @@ export function startPositionsFeed(options: PositionsFeedOptions): PositionsFeed
     const opts = { exchange_account_ids: [...named] };
     positions = client.consume(spec("positions", opts));
     wallet = client.consume(spec("wallet", opts));
-    budget = timers.setTimeout(() => {
-      budget = undefined;
-      store.markSnapshotFailed();
-    }, SNAPSHOT_BUDGET_MS);
+    armBudget();
   }
 
   /**
@@ -263,14 +270,17 @@ export function startPositionsFeed(options: PositionsFeedOptions): PositionsFeed
   store.setStarted(true);
   store.commit();
   readRest();
+  armBudget(); // the directory read's wait counts: a subscription re-arms it
   loadAccounts();
 
   return {
     retry() {
       if (stopped) return;
       store.markRetrying();
-      if (accountIds === null) loadAccounts();
-      else subscribe(accountIds);
+      if (accountIds === null) {
+        armBudget();
+        loadAccounts();
+      } else subscribe(accountIds);
     },
     stop() {
       if (stopped) return;

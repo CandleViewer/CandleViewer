@@ -108,10 +108,14 @@ describe("Rows render the whole book: each row's columns (D02 §5.1)", () => {
     expect(own.map((r) => r?.tradeGroupId)).toEqual([GROUP, GROUP, null, null, null]);
   });
 
-  it("maps the REST read to the same rows and keys", () => {
+  it("maps the REST read to the same rows and keys, in the WS read's one decimal form", () => {
     const rest = mapAll(restItems, "rest");
     expect(rest.map((r) => r?.key)).toEqual(rows.map((r) => r?.key));
-    expect(rest[0]).toMatchObject({ size: "0.250", entry: "63980.0", source: "rest" });
+    // REST sends "0.250" and "63980.0", WS "0.25" and "63980": a row reads the same from both
+    expect(rest[0]).toMatchObject({ size: "0.25", entry: "63980", mark: "64012", source: "rest" });
+    expect(rest.map((r) => [r?.size, r?.entry, r?.mark, r?.liqPrice, r?.unrealisedPnl])).toEqual(
+      rows.map((r) => [r?.size, r?.entry, r?.mark, r?.liqPrice, r?.unrealisedPnl]),
+    );
   });
 
   it("names the account by id alone when the directory does not hold it", () => {

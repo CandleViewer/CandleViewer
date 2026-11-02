@@ -336,6 +336,22 @@ describe("S-02: the snapshot budget and Retry", () => {
     await settle(COMMIT_INTERVAL_MS + 16);
     expect(ws.live("positions")).toHaveLength(1);
   });
+
+  it("a directory read that never answers fails at the budget's end, as Retry's does", async () => {
+    const hung = vi.fn((): Promise<AccountsOutcome> => new Promise(() => undefined));
+    start(fakeApi({ listExchangeAccounts: hung }));
+    await settle(SNAPSHOT_BUDGET_MS - 100);
+    expect(store.getSnapshot().status).not.toBe("snapshot_failed");
+    await settle(200);
+    expect(store.getSnapshot().status).toBe("snapshot_failed");
+    feed?.retry();
+    await settle(COMMIT_INTERVAL_MS + 16);
+    expect(hung).toHaveBeenCalledTimes(2);
+    expect(store.getSnapshot().status).not.toBe("snapshot_failed");
+    await settle(SNAPSHOT_BUDGET_MS);
+    expect(store.getSnapshot().status).toBe("snapshot_failed");
+    expect(ws.handles).toEqual([]);
+  });
 });
 
 describe("the link-down fallback (BQ-18)", () => {
