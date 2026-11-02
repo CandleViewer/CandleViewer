@@ -105,9 +105,11 @@ class StalenessWatchdog:
 
     def all_stale(self) -> bool:
         """True when every watched topic that has a limit is stale (#1913): only
-        then is the shared socket suspect; one silent topic is per-topic."""
-        limited = {t for t in self._last if self._kind(t) in self._limits}
-        return bool(limited) and limited <= (self._stale - self._forced)
+        then is the shared socket suspect; one silent topic is per-topic. A topic the
+        exchange refused (#1955, `force_stale`) says nothing about the socket, so it
+        leaves the set judged: it neither recycles the socket nor keeps it alive."""
+        limited = {t for t in self._last if self._kind(t) in self._limits} - self._forced
+        return bool(limited) and limited <= self._stale
 
     def check(self) -> list[str]:
         """Emit stale events; returns newly stale topics."""

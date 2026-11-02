@@ -231,6 +231,21 @@ async def test_refused_only_topic_set_does_not_recycle_the_socket() -> None:
     assert wd.check() == [TOPIC] and wd.all_stale()  # genuine silence still recycles
 
 
+def test_a_refused_topic_never_masks_a_dead_socket() -> None:
+    """A refused topic leaves the set judged: when every other limited topic goes silent,
+    the socket is suspect, however long the refused one stays forced."""
+    clk = _Clock()
+    wd = StalenessWatchdog(clk, lambda _e: None, kind_of=topic_kind)
+    other = "orderbook.50.ETHUSDT"
+    wd.watch(TOPIC)
+    wd.watch(other)
+    wd.force_stale(TOPIC)
+    assert wd.check() == [TOPIC] and not wd.all_stale()  # only the refusal so far
+    clk.t = 1_000.0  # the socket dies: the live topic goes silent past its limit
+    assert wd.check() == [other]
+    assert TOPIC in wd._forced and wd.all_stale()
+
+
 async def test_stale_resubscribe_is_one_per_episode() -> None:
     clk, sock = _Clock(), _Sock()
     m, wd = _mgr(clk, sock)
