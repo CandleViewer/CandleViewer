@@ -5,18 +5,24 @@ and every cited file AS TEXT at its pin with `git show`: the base on `main`, and
 unmerged heads (#5463 approved text, #5482 boards head). It imports, never copies:
 `contrast_check.py`'s `contrast_ratio()`, `verify_tokens.py`'s resolver,
 `docs/research/_tools/cvd_simulate.py`'s `simulate()` and `delta_e76()`, and the E30-D04 audit's
-`over()` and `grey()`. Nine gates, each FAIL led by its letter:
+`over()` and `grey()`. Ten gates, each FAIL led by its letter:
 
   A cites       every `KEY`:line resolves at its pin to a non-blank line; a `D03` line also stands
                 verbatim in the #5463 text; pins and cites match both ways, each pin's words on its line
   B contrast    section 10 equals the measurement; a gated cell below its bar names a High F row
   C cvd         section 11 equals the computation; a channel "none" names a High F row
-  D findings    counts against the heading and the stamp; every row complete; High rows name A-rows
-  E amendments  each Old once in its target and on its line; no New there already; its F row exists
+  D findings    counts against the heading and the stamp; every row complete, one owner; High rows
+                name A-rows
+  E amendments  each Old once in its target and on its line; no New there already; its F row exists;
+                the per-target counts sentence equals the table
   F focus       six screen tables with FO steps; every subsection names a return
   G hygiene     the lane's public-text word list, no local path, host or URL, no hex, known stamps
-  H live        every LR row has a politeness and a rate; LR-01 at most one per second
-  I matrix      section 3's window and whole-matrix counts equal the computation
+  H live        every LR row has a politeness and a rate; LR-01 at most one per second; LR-04
+                assertive
+  I matrix      section 3's window and whole-matrix counts equal the computation; its prose names
+                VIEWPORT_H and OVERSCAN
+  J t2          section 7 quotes G-T2.1d and G-T2.6 verbatim; every T2 row names CMP-079 and the
+                `lock`; a read-only row carries PROPOSED and its three reason keys
 
 usage: e28_d05_a11y_review_audit.py [--check | --self-test | --json | --tables | --write-tables
                                      | --repin]
@@ -107,7 +113,7 @@ def ratio(fg: str, bg: str) -> float:
 
 
 # ------------------------------------------------------------------ section 10 ----------------
-# id | state | fg | bg | opacity | role | finding (as drawn)
+# id | state | fg | bg | opacity | role | finding (as specified; board 07 does not draw it)
 CT = [
     [c.strip() for c in ln.split("|")]
     for ln in """CT-01|allowed box on the card|action.primary.default|surface.raised|1|non-text|
@@ -147,12 +153,12 @@ CT-34|focus ring on a selected row|focus.ring|action.selected|1|non-text|
 CT-35|focus ring on a field|focus.ring|surface.sunken|1|non-text|
 CT-36|focus ring on a warning row|focus.ring|status.warning.subtle|1|non-text|
 CT-37|focus ring on the refusal summary|focus.ring|status.danger.subtle|1|non-text|
-CT-38|muted table, secondary text (as drawn)|text.secondary|surface.raised|0.7|text|F-01
-CT-39|muted table, primary text (as drawn)|text.primary|surface.raised|0.7|text|F-01
-CT-40|muted table, LIVE border (as drawn)|env.live|surface.raised|0.7|non-text|F-01
-CT-41|muted table, DEMO border (as drawn)|env.demo|surface.raised|0.7|non-text|F-01
-CT-42|muted table, ready glyph (as drawn)|status.success.strong|surface.raised|0.7|non-text|F-01
-CT-43|muted table, WARN glyph (as drawn)|status.warning.strong|surface.raised|0.7|non-text|F-01""".splitlines()
+CT-38|muted table, secondary text (as specified, not drawn on board 07)|text.secondary|surface.raised|0.7|text|F-01
+CT-39|muted table, primary text (as specified, not drawn on board 07)|text.primary|surface.raised|0.7|text|F-01
+CT-40|muted table, LIVE border (as specified, not drawn on board 07)|env.live|surface.raised|0.7|non-text|F-01
+CT-41|muted table, DEMO border (as specified, not drawn on board 07)|env.demo|surface.raised|0.7|non-text|F-01
+CT-42|muted table, ready glyph (as specified, not drawn on board 07)|status.success.strong|surface.raised|0.7|non-text|F-01
+CT-43|muted table, WARN glyph (as specified, not drawn on board 07)|status.warning.strong|surface.raised|0.7|non-text|F-01""".splitlines()
 ]
 
 
@@ -187,8 +193,8 @@ CV = [
 CV-02|allowed / not allowed|action.primary.default|text.tertiary|fill against hollow; check against none; the words
 CV-03|blocked / not allowed|status.danger.strong|text.tertiary|close against none; the words
 CV-04|ready / not ready|status.success.strong|status.warning.strong|filled against hollow; the words
-CV-05|not ready / unknown|status.warning.strong|text.tertiary|none as drawn (F-04); dashed after A-07
-CV-06|ready / unknown|status.success.strong|text.tertiary|filled against hollow; the help glyph; the words
+CV-05|not ready / unknown|status.warning.strong|text.tertiary|none as drawn (F-04): the strip-end `help` glyph marks the strip, not a segment; dashed after A-07
+CV-06|ready / unknown|status.success.strong|text.tertiary|filled against hollow; the words
 CV-07|warn / blocked (preview)|status.warning.strong|status.danger.strong|warning against danger glyph; the words
 CV-08|ready / blocked (preview)|status.success.strong|status.danger.strong|check against danger glyph; the words
 CV-09|LIVE / DEMO|env.live|env.demo|the word; filled against outline dot""".splitlines()
@@ -335,7 +341,7 @@ def g_contrast(t: Texts, p: list[str]) -> dict[str, Any]:
     said = as_fixed_sentence()
     if said not in section(t.spec, "## 10. ", "## 11. "):
         p.append(f"[B] section 10 does not say: {said}")
-    return {"rows": len(want), "as_drawn_fail": fails}
+    return {"rows": len(want), "as_specified_fail": fails}
 
 
 def as_fixed_sentence() -> str:
@@ -398,6 +404,8 @@ def g_findings(t: Texts, p: list[str]) -> dict[str, Any]:
             continue
         if not r[2] or not CITE.search(r[3]) or not r[5] or not r[6]:
             p.append(f"[D] {r[0]}: a criterion, a cited line, a fix or an owner is missing")
+        if ";" in r[6]:
+            p.append(f"[D] {r[0]}: more than one owner")
         if r[1] in ("Critical", "High"):
             named = re.findall(r"A-\d+", r[7])
             if not named or any(a not in aids or aids[a][2] != r[0] for a in named):
@@ -410,7 +418,9 @@ def g_findings(t: Texts, p: list[str]) -> dict[str, Any]:
 
 def g_amend(t: Texts, p: list[str]) -> dict[str, Any]:
     rows = a_rows(t.spec)
-    fids = set(re.findall(r"^\|\s*(F-\d+)\s*\|", section(t.spec, "## 15. ", "## 16. "), re.M))
+    fids = set(
+        re.findall(r"^\|\s*(F-\d+)\s*\|", section(t.spec, "## 15. ", "## 16. "), re.MULTILINE)
+    )
     stamp = re.search(r"<!-- audit:a=(\d+) -->", t.spec)
     if not stamp or int(stamp.group(1)) != len(rows):
         p.append(f"[E] the A-row stamp does not equal {len(rows)}")
@@ -426,19 +436,53 @@ def g_amend(t: Texts, p: list[str]) -> dict[str, Any]:
             p.append(f"[E] {r[0]}: the Old is not once in {key} and on line {n}")
         if new in text:
             p.append(f"[E] {r[0]}: the New is already in {key}")
+    said = a_counts_sentence(rows)
+    if said is None:
+        p.append("[E] an A-row targets a file outside E28-D03, its `15` entries and E28-D02")
+    elif said not in section(t.spec, "### 16.1 ", "### 16.2 "):
+        p.append(f"[E] section 16.1 does not say: {said}")
     return {"rows": len(rows)}
+
+
+_NUM_WORDS = (
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
+    "sixteen seventeen eighteen nineteen twenty"
+)
+NUM = _NUM_WORDS.split()
+FAMILY = {"D03": "D03", "D03B": "D03", "15B": "15", "D02": "D02"}
+
+
+def word(n: int) -> str:
+    if n < len(NUM):
+        return NUM[n]
+    tens, one = divmod(n, 10)
+    return ("twenty", "thirty", "forty")[tens - 2] + (f"-{NUM[one]}" if one else "")
+
+
+def a_counts_sentence(rows: list[list[str]]) -> str | None:
+    fam: dict[str, int] = {"D03": 0, "15": 0, "D02": 0}
+    for r in rows:
+        m = CITE.fullmatch(r[1])
+        if not m or m.group(1) not in FAMILY:
+            return None
+        fam[FAMILY[m.group(1)]] += 1
+    n = len(rows)
+    return (
+        f"{word(n).capitalize()} A-rows <!-- audit:a={n} -->: {word(fam['D03'])} to E28-D03's text, "
+        f"{word(fam['15'])} to its applied `15` entries, {word(fam['D02'])} to E28-D02."
+    )
 
 
 def g_focus(t: Texts, p: list[str]) -> dict[str, Any]:
     s4 = section(t.spec, "## 4. ", "## 5. ")
-    subs = re.split(r"^### ", s4, flags=re.M)[1:]
+    subs = re.split(r"^### ", s4, flags=re.MULTILINE)[1:]
     seen, steps = [], 0
     for sub in subs:
         head = sub.splitlines()[0]
-        n = len(re.findall(r"^\|\s*FO-\d+\s*\|", sub, flags=re.M))
+        n = len(re.findall(r"^\|\s*FO-\d+\s*\|", sub, flags=re.MULTILINE))
         if n == 0:
             p.append(f"[F] subsection {head!r} has no FO steps")
-        if not re.search(r"\breturn", sub, flags=re.I):
+        if not re.search(r"\breturn", sub, flags=re.IGNORECASE):
             p.append(f"[F] subsection {head!r} names no return target")
         m = re.match(r"4\.\d+ (SCR-\d+) ", head)
         if m and m.group(1) in SCREENS:
@@ -500,6 +544,8 @@ def g_hygiene(t: Texts, p: list[str]) -> dict[str, Any]:
 
 
 RATE = re.compile(r"^(\d+) per (\d+(?:\.\d+)?) s")
+# the refused-whole summary that answers no press is said in the assertive region (section 4.6, F-05)
+POLITENESS = {"LR-04": "assertive"}
 
 
 def g_live(t: Texts, p: list[str]) -> dict[str, Any]:
@@ -507,6 +553,10 @@ def g_live(t: Texts, p: list[str]) -> dict[str, Any]:
     for r in rows:
         if r[2] not in ("polite", "assertive", "none (not live)") or not r[3]:
             p.append(f"[H] {r[0]}: no politeness or no rate")
+    for lid, want in POLITENESS.items():
+        hit = next((x for x in rows if x[0] == lid), None)
+        if hit is None or hit[2] != want:
+            p.append(f"[H] {lid}: its politeness is not {want}")
     lr1 = next((r for r in rows if r[0] == "LR-01"), None)
     m = RATE.match(lr1[3]) if lr1 else None
     if not m or int(m.group(1)) / float(m.group(2)) > 1.0:
@@ -535,7 +585,50 @@ def g_matrix(t: Texts, p: list[str]) -> dict[str, Any]:
     said = f"**{f['window']} cells** ({f['rows']} rows × {f['accounts']} accounts)"
     if said not in s3 or f"**{f['whole']}**" not in s3:
         p.append(f"[I] section 3 does not say {said} and **{f['whole']}**")
+    for prose in (
+        f"minimum viewport of {VIEWPORT_H} px",
+        f"overscan of {OVERSCAN} rows (PROPOSED)",
+    ):
+        if prose not in s3:
+            p.append(f"[I] section 3 does not say: {prose}")
     return f
+
+
+T2_RULES = ("G-T2.1d", "G-T2.6")
+T2_KEYS = ("`rbac.read_only`", "`rbac.view_as`", "`rbac.owner_only`")
+
+
+def ds_rule(t: Texts, rid: str) -> str:
+    lines = t.files["DS"]
+    i = next((k for k, x in enumerate(lines) if x.startswith(f"- **{rid}** ")), None)
+    if i is None:
+        raise SystemExit(f"t2: `DS` no longer carries {rid}")
+    out = [lines[i]]
+    for x in lines[i + 1 :]:
+        if not x.startswith("  "):
+            break
+        out.append(x.strip())
+    return re.sub(r"^- \*\*[^*]+\*\* \([^)]*\): ", "", " ".join(out))
+
+
+def g_t2(t: Texts, p: list[str]) -> dict[str, Any]:
+    s7 = section(t.spec, "## 7. ", "## 8. ")
+    for rid in T2_RULES:
+        if f'"{ds_rule(t, rid)}"' not in s7:
+            p.append(f"[J] section 7 does not quote {rid} verbatim")
+    rows = rows_of(s7, r"^\|\s*DR-\d+\s*\|")
+    t2 = [r for r in rows if len(r) == 7 and r[3].startswith("T2")]
+    if not t2:
+        p.append("[J] section 7 has no T2 row with a Wrapper column")
+    for r in t2:
+        if "CMP-079" not in r[5] or "`lock`" not in r[5]:
+            p.append(f"[J] {r[0]}: a T2 row whose Wrapper lacks CMP-079 or the `lock`")
+        whole = " ".join(r)
+        if "read-only" in r[1] and (
+            "PROPOSED" not in whole or any(k not in whole for k in T2_KEYS)
+        ):
+            p.append(f"[J] {r[0]}: a read-only row without PROPOSED and its three reason keys")
+    return {"t2_rows": len(t2)}
 
 
 GATES: list[tuple[str, Callable[[Texts, list[str]], dict[str, Any]]]] = [
@@ -548,6 +641,7 @@ GATES: list[tuple[str, Callable[[Texts, list[str]], dict[str, Any]]]] = [
     ("G", g_hygiene),
     ("H", g_live),
     ("I", g_matrix),
+    ("J", g_t2),
 ]
 
 
@@ -590,6 +684,17 @@ def lr01_twice(t: Texts) -> Texts:
     return t._replace(spec=t.spec.replace(row, row.replace("1 per 1 s", "2 per 1 s", 1), 1))
 
 
+def f09_two_owners(t: Texts) -> Texts:
+    row = next(ln for ln in t.spec.splitlines() if ln.startswith("| F-09"))
+    new = row.replace("E28-D03 (#839) · accounts-admin", "E28-D03 (#839); E34-D02", 1)
+    return t._replace(spec=t.spec.replace(row, new, 1))
+
+
+def lr04_polite(t: Texts) -> Texts:
+    row = next(ln for ln in t.spec.splitlines() if ln.startswith("| LR-04"))
+    return t._replace(spec=t.spec.replace(row, row.replace("| assertive", "| polite", 1), 1))
+
+
 def deny_in_prose(t: Texts) -> Texts:
     word = codecs.decode("sybbq", "rot13")
     return sub("spec", "## 19. Summary for #841", f"## 19. Summary for #841 ({word})")(t)
@@ -601,16 +706,31 @@ MUTATIONS: list[tuple[str, Callable[[Texts], Texts]]] = [
     ("C: a computed colour-vision cell retyped", cv_cell_off),
     (
         "D: the findings stamp off by one",
-        sub("spec", "audit:f=18/0/5/8/3/2", "audit:f=18/0/5/8/3/1"),
+        sub("spec", "audit:f=19/0/5/8/4/2", "audit:f=19/0/5/8/4/1"),
     ),
+    ("D: a finding with two owners", f09_two_owners),
     (
         "E: an Old that is not in its target",
         sub("spec", '"The same muting, and"', '"The same muting and"'),
     ),
+    ("E: a per-target A count retyped", sub("spec", "nine to E28-D02.", "eight to E28-D02.")),
     ("F: a screen loses its focus-order table", sub("spec", "### 4.5 SCR-062", "### 4.5 SCR-999")),
     ("G: a deny word in prose", deny_in_prose),
     ("H: the preview announces twice a second", lr01_twice),
+    ("H: the unpressed refusal turned polite", lr04_polite),
     ("I: the window figure retyped", sub("spec", "**264 cells**", "**260 cells**")),
+    (
+        "I: the overscan prose retyped, the figures kept",
+        sub("spec", "overscan of 10 rows (PROPOSED)", "overscan of 12 rows (PROPOSED)"),
+    ),
+    (
+        "J: a T2 row loses the `lock`",
+        sub("spec", "cell; the CMP-019 `lock` (", "cell; the CMP-019 glyph ("),
+    ),
+    (
+        "J: the G-T2.1d quote loses a word",
+        sub("spec", "leads the full label (in 2b", "leads the label (in 2b"),
+    ),
 ]
 
 

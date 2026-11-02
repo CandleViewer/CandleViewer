@@ -15,6 +15,7 @@
 05|168|- `aria-live="polite"` region for ambient updates (best bid/
 05|169|- `aria-live="assertive"` (or `role="alert"`) reserved for d
 05|171|- **Region hygiene**: live regions are pre-rendered empty co
+05|265|any task in the script that cannot be completed keyboard+SR-only is a release blocker (P0)
 14|266|- **A11y:** Dialog is `role="alertdialog"` with the sensitiv
 14|1497|- **Interactions:** per-row include/exclude checkbox, per-ro
 14|1500|- **A11y:** the preview is a table with row status in text;
@@ -23,28 +24,40 @@
 15|210|- **A11y**: appears on hover AND focus, dismissible via `Esc
 15|521|- **A11y**: `variant="hold"` always ships a keyboard-operabl
 15|584|- **A11y**: semantic `<table>` with `scope` on headers even
+15|590|a cell's built-in control (the select box, a sort button, the actions button) takes focus in the cell's place
 15|591|- **As built (E08-S08)**: E08-D07 §5's grid additions. The v
 15|896|- **A11y**: propagates `disabledReason` to the wrapped atom'
 15|1930|- **A11y**: `role="note"`, always visible in both CMP-145 an
+15B|597|not applicable as CMP-079 disabled-with-reason, the reason in text
 15B|3210|- **Variants**: comfortable (32 × 32 cell, the word shown);
 15B|3223|- **States**: ready (a `color.status.success.strong` filled
 DS|28|- **G-T2.1b** (§9.1): `aria-disabled="true"`, never the `dis
 DS|30|- **G-T2.1c** (§2.2, §9.2): the reason node is in the DOM at
+DS|36|CMP-079 RbacGate wraps every §2.1 step-3 control
+DS|39|the icon; the sentence form has no glyph and no button).
 DS|47|- **G-T2.3** (§9.3): `Enter`, `Space` or a bound hotkey on a
+DS|59|T2 is named in every state row and frame that shows a
+DS|61|covers those surfaces.
 DS|65|- **R1 Text resize** (`05` §5 item 7, WCAG 1.4.4): for every
 DS|67|- **R2 Forced colours** (this file): name the `forced-colors
 DS|69|- **R3 Keyboard model** (`05` §3.1 item 1, §3.4 items 2, 4 a
 DS|79|- **R6 Contracts in flight** (this file; `.claude/rules/70-m
 D02|168|| D26 | Keyboard and focus: no new binding; the step-up keep
-D02|352|- **Three cell states by glyph and text** (B3, AD-8): "+ all
+D02|354|An "(all)" suffix marks a cell allowed by the flag
 D02|362|- **Bulk.** A column action ("Block SOLUSDT on all accounts"
 D02|432|(`403 risk_limit_breached`, one entry per offending leg): th
 D02|438|- **Stale preview (D12).** When the intent changes after the
 D02|442|- **Send** is drawn as the boundary only: it names the accou
+D02|519|`SCR-061 / previewing`
+D02|527|the greyed table, the CD-10 summary with focus on it
+D02|529|the table greyed after an intent change
 D02|553|- **Focus order** follows reading order per screen: SCR-130
 D02|555|SCR-133 search → filters → the grid (arrow keys move between
 D02|558|- **Dialogs** (step-up, delete confirm, bulk confirm, open-p
 D02|559|(confirms `alertdialog`), Cancel first, focus returns to the
+D02|561|the refused-whole summary take focus (no live region needed)
+D03|167|"Allows all symbols"
+D03|170|nested CMP-028 `tone="warning"` line
 D03|172|- **Delete.** The confirm (CMP-044, `elevation.dialog`) name
 D03|241|- **Second-pass refusal.** Focus moves to the top summary (C
 D03|268|The aggressive card for a LIVE target carries "Demo only — n
@@ -54,7 +67,11 @@ D03|300|- Space toggles allowed ↔ not allowed.
 D03|301|- "Block on {account}" and "Allow on {account}" sit in the c
 D03|303|- Focus is the 2 px `color.focus.ring` (P17) around the 32 p
 D03|306|- **Unsaved summary.** A sticky footer bar (`color.surface.o
+D03|327|**No session reaches the T2 grid today.**
+D03|331|CMP-079 wraps every cell
+D03|332|led by the CMP-019 `lock` glyph ("Not available")
 D03|333|- **The rendering (G-T2.1c):** rendering **2a**, the one inl
+D03|336|the cell menu, the bulk actions and "Review changes" are T2 the same way
 D03|341|- **Expanded row.** A nested CMP-049 of members: account, "r
 D03|342|- **State unknown.** "state unknown for sub_002" in `color.t
 D03|365|- the ok cell is a word ("ready", "warn", "skipped", "blocke
@@ -65,6 +82,8 @@ D03|371|- **Stale.** The same muting, and "Preview again" is the one
 D03|407|- **Variants:** comfortable (32 × 32 cell, the word shown);
 D03|432|- **A11y:** the word "override" is text; the host field's ac
 D03|444|| `row`   | SCR-061 account cell, second line | 48 × 4 px
+D03|449|the same `role="meter"`
+D03|485|CMP-079 disabled-with-reason, with the reason in text
 D03|506|- **Focus:** every interactive element (rows, matrix cells (
 D03|507|- **Targets:** every target is at least `size.target.min` (2
 D03|513|- **Matrix:** the symbol column and both header rows are sti
