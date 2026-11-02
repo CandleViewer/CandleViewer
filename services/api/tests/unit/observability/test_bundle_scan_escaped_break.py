@@ -2,9 +2,11 @@
 
 The support bundle's log buffer `repr`s what the redaction already wrote (a stdlib traceback and
 stack, a structlog traceback, an event dict's values), so `password:\\n[redacted:key-name]`
-reaches the scan as `password:\\\\n[redacted:key-name]`. The scan keeps `_LABELLED` as it was and
-drops a match only when its value, after its escapes, is a marker or a placeholder: its findings
-are the old ones less exactly those. Values are assembled at runtime; none is a real secret.
+reaches the scan as `password:\\\\n[redacted:key-name]`. The scan drops a match only when its
+value, after its escapes, is a marker or a placeholder: of the findings of the rule before #4681,
+it keeps each one with a genuine value. #4713 widens the rule (`test_redaction_widened_labels`);
+the pinned copy here is the rule before it, and the scan now finds a genuine value in more shapes.
+Values are assembled at runtime; none is a real secret.
 """
 
 from __future__ import annotations
@@ -30,13 +32,11 @@ from candleviewer.observability.bundle_scan import scan_text, scan_tree
 from candleviewer.observability.logging import configure_logging, reset_logging
 from candleviewer.observability.support_bundle import BundleSources, build_bundle
 from candleviewer.observability.support_bundle_wiring import LogRingBuffer
+from tests.unit.observability import _redaction_before_4713 as before
 
-#: `bundle_scan._LABELLED` as `main` wrote it before #4681, pinned: the scan before the fix.
-_MAIN_SOURCE = (
-    rf"""(?ix)["']?(?:\b|(?<=\\[tnr])){redaction._NOT_DOTTED}"""
-    rf"""(?:{redaction._KEY_NAMES})["']?
-    \s*[:=](?:\s|\\[tnr])*+(?:\\?["'])?{redaction._NO_VALUE}[^\s"',}}\]]{{6,}}"""
-)
+#: `bundle_scan._LABELLED` as `main` wrote it before #4681, pinned: the scan before the fix. #4681
+#: left it as it was, so it is also the rule before #4713, frozen there.
+_MAIN_SOURCE = before.LABELLED_SOURCE
 _TAIL = r"""[^\s"',}\]]{6,}"""
 _MAIN_LABELLED = re.compile(_MAIN_SOURCE.removesuffix(_TAIL) + f"(?P<value>{_TAIL})")
 #: A marker or a placeholder (what the redaction writes for a value) and what may follow one.
@@ -57,23 +57,32 @@ def _new_flags(text: str) -> bool:
     return "labelled-secret" in set(scan_text(text))
 
 
+#: The code of an escaped whitespace character after its `\\`, as the filter reads one (#4713).
+_SPACE_ESCAPE = re.compile(redaction._SPACE_ESCAPE, re.IGNORECASE)
+
+
 def _marker_after_escapes(text: str, at: int) -> bool:
-    """A run of `\\` (each with a `t`, `n` or `r` or not) from `at`, then a marker."""
-    while at < len(text) and text[at] == "\\":
+    """Runs of `\\` (each with an escaped whitespace character's code or not) and quotes from `at`,
+    then a marker (#4713: quotes too)."""
+    while at < len(text) and text[at] in "\\\"'":
         while at < len(text) and text[at] == "\\":
             at += 1
-        if at < len(text) and text[at] in "tnr":
+        if (code := _SPACE_ESCAPE.match(text, at)) is not None:
+            at = code.end()
+        while at < len(text) and text[at] in "\"'":
             at += 1
     return _MARKER_AHEAD.match(text, at) is not None
 
 
-def test_the_scan_keeps_mains_labelled_rule() -> None:
-    assert bundle_scan._LABELLED.pattern == _MAIN_SOURCE
+def test_the_pinned_rule_is_the_scan_rule_before_4713() -> None:
+    # #4713 widens the scan's rule; the pinned copy stays the one #4681 was checked against
+    assert bundle_scan._LABELLED.pattern != _MAIN_SOURCE
     assert _MAIN_LABELLED.pattern != _MAIN_SOURCE  # the value is a group in the pinned copy
 
 
 def test_the_scan_head_is_the_labelled_rule_with_a_six_character_value() -> None:
-    assert bundle_scan._LABELLED_HEAD.pattern == _MAIN_SOURCE.removesuffix("{6,}") + "{6}"
+    head = bundle_scan._LABELLED.pattern.removesuffix("{6,}") + "{6}"
+    assert bundle_scan._LABELLED_HEAD.pattern == head
     assert bundle_scan._LABELLED_HEAD.flags == bundle_scan._LABELLED.flags
 
 
@@ -206,15 +215,22 @@ def _text(draw: st.DrawFn, value: st.SearchStrategy[str]) -> tuple[str, str]:
 
 @given(case=_text(st.one_of(st.sampled_from(_MARKERS), _GENUINE)))
 @example(case=("repr", "password:\\n" + _KEY_MARK))
-def test_the_scan_finds_what_main_found_less_a_marker_after_its_escapes(
+def test_the_scan_drops_a_finding_of_mains_only_for_a_marker_after_its_escapes(
     case: tuple[str, str],
 ) -> None:
     _, text = case
     old = _MAIN_LABELLED.search(text)
 
-    assert not _new_flags(text) or old is not None
     if old is not None and not _new_flags(text):
         assert _marker_after_escapes(text, old.start("value"))
+
+
+@given(case=_text(st.sampled_from(_MARKERS)))
+@example(case=("repr", "x.password:\\\\n" + _KEY_MARK))
+def test_the_scan_flags_no_marker_that_main_did_not(case: tuple[str, str]) -> None:
+    _, text = case
+
+    assert not _new_flags(text) or _main_flags(text)
 
 
 @given(case=_text(_GENUINE))
@@ -223,7 +239,7 @@ def test_the_scan_finds_what_main_found_less_a_marker_after_its_escapes(
 def test_the_scan_still_flags_every_genuine_value_main_flagged(case: tuple[str, str]) -> None:
     _, text = case
 
-    assert _new_flags(text) == _main_flags(text)
+    assert _new_flags(text) or not _main_flags(text)  # #4713: and more shapes besides
 
 
 @pytest.mark.parametrize("rendering", ["repr", "repr2", "json", "json2"])

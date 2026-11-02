@@ -976,14 +976,22 @@ def test_a_cut_keeps_the_last_lines_from_a_line_break_that_no_label_runs_on_past
 
 #: A label whose whitespace runs to the end of a text, as the label rule reads one (a key name
 #: read anywhere), and a key name, a quote and whitespace (an escaped line break or tab reads as
-#: whitespace too) at the end of a text, which a separator on the next line makes a label.
-_LABEL_TO_END = re.compile(rf"""(?i)(?:{redaction._KEY_NAMES})["']?{redaction._LABEL_SPACE}\Z""")
-_NAME_TO_END = re.compile(rf"""(?i)(?:{redaction._KEY_NAMES})["']?(?:\s|\\[tnr])*+\Z""")
+#: whitespace too) at the end of a text, which a separator on the next line makes a label. Each is
+#: read with the line break after it, as an escaped whitespace character reads as whitespace where
+#: whitespace follows it; a name takes a quote or two (#4713).
+_LABEL_TO_END = re.compile(
+    rf"""(?i)(?:{redaction._KEY_NAMES})["']{{0,2}}{redaction._LABEL_SPACE}\Z"""
+)
+_NAME_TO_END = re.compile(
+    rf"""(?i)(?:{redaction._KEY_NAMES})["']{{0,2}}"""
+    rf"""(?:\s|\\[tnr]|\\{redaction._SPACE_ESCAPE}(?=\s))*\n\Z"""
+)
 #: Key names (in any case, either twin, in a longer word), separators, quotes, whitespace, escapes
 #: and other characters.
 _READ_BACK_PIECES = (
     *("password", "Token", "x-api-key", "x_API_key", "set-cookie", "tokens", "my", "ab", "."),
     *(":", "=", '"', "'", ",", " ", "\t", "\n", "\r\n", "\\n", "\\t", "\\R", "\\"),
+    *("\\xa0", "\\x0b", "\\u2028", "\\f", '""', "''"),  # #4713
 )
 _READ_BACK_TEXT = st.lists(st.sampled_from(_READ_BACK_PIECES), max_size=10).map("".join)
 
@@ -995,8 +1003,9 @@ def test_a_label_is_read_back_from_a_line_break_as_the_label_rule_reads_it(
     start: str, before: str, after: str
 ) -> None:
     head = start + before
-    expected = _LABEL_TO_END.search(head) is not None or (
-        _NAME_TO_END.search(head) is not None and re.match(r"\s*[:=]", "\n" + after) is not None
+    expected = _LABEL_TO_END.search(head + "\n") is not None or (
+        _NAME_TO_END.search(head + "\n") is not None
+        and re.match(r"\s*[:=]", "\n" + after) is not None
     )
 
     assert redaction._label_runs_on(f"{head}\n{after}", len(head)) is expected
