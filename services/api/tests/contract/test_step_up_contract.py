@@ -176,6 +176,16 @@ def test_step_up_description_states_the_approved_rotation_rule(
         "ended grant; when `auth.step_up_granted` is all that stands, the row's reason is "
         "`grant_ended`.",
         "A row the audit writer refuses too is lost, counted and alerted (`AuthAuditOutcomeLost`).",
+        # A grant that cannot be ended either stays for its window; the grant is on the old
+        # session until the claim; the `200`'s echo is advisory.
+        "When the grant cannot be ended either (the session store refuses that too), it stays on "
+        "the old session, which is not rotated, for the rest of its window",
+        "The grant is stored on the old session first and moves to the new one at that "
+        "revocation (the claim)",
+        "until the claim, a request with the old access token is elevated for a grace class, "
+        "while a no-grace grant serves only the request it is bound to",
+        "echo the grant as it was made and are advisory: the server reads the session's row on "
+        "every elevated request",
         # C-8: the conditional claim, no grace for the old token.
         "of a step-up and a `POST /auth/refresh` of the same session exactly one rotates it, and "
         "the old token gets no grace period",

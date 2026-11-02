@@ -103,9 +103,23 @@ decision_ are not settled here. Paths are under `services/api/candleviewer/`.
   whole family), the session minted on MFA completion, and step-up (#2101, SR-013): a successful
   step-up mints a successor that keeps the absolute expiry, idle timeout and live grants, and the
   old session is revoked `rotated` inside the family (its sockets re-`auth` in place, as after a
-  refresh). A role change, on `setUserRoles` or `updateUser` with `roles`, revokes every live session
-  of the target, never the actor's (#2101): each `auth.session_revoked` (reason `role_changed`) is
-  written ahead with the change, and the target signs in again under the new roles. A refresh or a
+  refresh). The grant is written to the presented session and carried to the successor at the
+  claim, which follows `auth.step_up_granted` and the rotation's two write-ahead records: until the
+  claim, the old access token is elevated for a grace class, while a no-grace grant stays bound to
+  the challenged request's fingerprint. When a rotation record is refused and ending the grant is
+  refused too, the grant stays on the unrotated session for its window, recorded only by the error
+  log line `auth.step_up.grant_not_ended`. The `200`'s `elevated_until` echoes the grant as made;
+  every elevated request re-reads the session row. A role change, on `setUserRoles` or `updateUser`
+  with `roles`, revokes every live session of the target, never the actor's (#2101): each
+  `auth.session_revoked` (reason `role_changed`) is written ahead with the change, and the target
+  signs in again under the new roles. Those records are written within the change's write-ahead
+  bound, so a target with many live sessions, or a slow audit writer, makes the change answer
+  `503 audit_unavailable` until its sessions are revoked first (one
+  `DELETE /users/{userId}/sessions/{sessionId}` each). A change that rolls back after writing some
+  of its records (a refused record, the bound or a failed commit) leaves them standing, the
+  `auth.session_revoked` rows included: write-ahead records over-report, never under-report. The
+  `before` of the user's next `roles.grant` or `roles.revoke`, or the user's current roles, shows
+  whether a change committed. A refresh or a
   step-up rotation of the target in flight across that revocation can still mint a successor that
   survives it: its claim and mint are two transactions, and unlike a disable (#2911, whose mint
   refuses the user and whose `require_active` ends a survivor on its next use) a role change
