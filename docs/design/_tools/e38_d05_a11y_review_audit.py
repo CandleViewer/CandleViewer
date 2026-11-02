@@ -24,17 +24,20 @@ Gates (each FAIL led by its name):
               empty nor a placeholder (AC 1).
   G-PATH      §4's W rows are in order and cover the pill, the popover, the typed
               confirmation, the step-up and the completion; each has a focus target and
-              a visible-focus note (AC 4).
+              a visible-focus note (AC 4); every line where `Esc` does nothing cites
+              `05`:97, whose exception it is, and names S74-04's bound (BQ-17).
   G-T2        V_ROWS are V and every other §5 row T2; a V row carries no key and no
               rendering; a T2 reason is an E09-D09 §3.1 key's string at the base (its
               slot filled), or another key's or a PROPOSED (named owner) text on its
               cited line; every T2 row names its rendering (2a, 2b, the sentence form
               or its owner's) and its `lock`, with a cite; no §3 or §5 row outside a V
-              gate carries the `disabled` attribute.
+              gate carries the `disabled` attribute; a parent with a §5 T2 row names
+              CMP-079 at its ref, or an A-row to it adds the wrapper (G-T2.1d).
   G-CONTRAST  every §6.1 row recomputed per theme (dark, light, high-contrast as
               verify_tokens merges them) equals the review to two decimals; `text` rows
               are at least 4.5:1 and `ui` rows at least 3:1 in every theme; each row's
-              role equals ROLE_OF; the verdict matches.
+              role equals ROLE_OF; the verdict matches; G-T2.2's label and reason
+              tokens are each measured as a `text` pair.
   G-CVD       every §6.2 row's four ΔE76 figures and its JND column equal the tool's;
               DEMO vs LIVE stays above the JND in every simulation.
   G-AROW      every quoted Old, After or Before phrase of an A-row parses, and each
@@ -156,13 +159,24 @@ RENDERING = re.compile(r"\b2a\b|\b2b\b|sentence form|owner's")
 PLACEHOLDER = re.compile(r"\b(?:TBD|TODO|XXX|FIXME)\b|^\?+$|^…$", re.IGNORECASE)
 # each §6.1 pair's role, ruled here so a role turned to `structure` loses no floor quietly
 ROLE_OF = {
-    **{f"P-{i:02d}": "ui" for i in range(1, 17)},
+    **{f"P-{i:02d}": "ui" for i in range(1, 19)},
     "P-01": "text",
     "P-10": "text",
     "P-12": "structure",
     "P-13": "structure",
     "P-16": "text",
+    "P-17": "text",
+    "P-18": "text",
 }
+# G-T2.2's label and reason tokens, each measured as a `text` pair in §6.1
+T2_TEXT_TOKENS = ("color.text.tertiary", "color.text.secondary")
+# BQ-17: `Esc` inert in S74-04 is an exception to `05`:97, and S74-04 is bounded
+ESC_INERT = "`Esc` does nothing"
+ESC_EXCEPTION = "`05`:97"
+S74_04_BOUND = "10 s"
+# G-T2.1d: the wrapper every step-3 control takes
+WRAPPER = "CMP-079"
+
 # the six screens of the ticket's Scope, each a §3 subsection with its row prefix
 SCREENS = (
     ("### 3.1 SCR-074", "N74"),
@@ -519,6 +533,9 @@ def g_path(t: Texts, vals: dict[str, str]) -> list[str]:
         for col, what in ((3, "focus target"), (4, "visible-focus note")):
             if r[col] in ("", "—"):
                 bad.append(f"{r[0]}: no {what}")
+    for i, ln in enumerate(t.spec.split("\n"), 1):
+        if ESC_INERT in ln and not (ESC_EXCEPTION in ln and S74_04_BOUND in ln):
+            bad.append(f"spec:{i}: `Esc` inert with no {ESC_EXCEPTION} exception or bound (BQ-17)")
     return bad
 
 
@@ -589,6 +606,18 @@ def g_t2(t: Texts, vals: dict[str, str]) -> list[str]:
             bad.append(f"{tid}: {km[1]} is not an E09-D09 §3.1 key at the base")
         elif not on_cited_line(t, quote[1], source):
             bad.append(f"{tid}: {quote[1][:40]!r} is not on its cited line")
+    gated = {k for r in ts if len(r) == 8 and r[3] == "T2" for k, _, _ in cites(r[7])}
+    for key in sorted(gated & set(REF_OF)):
+        if WRAPPER in at(t, key):
+            continue
+        word = next(w for w, k in PARENT_WORDS.items() if k == key)
+        adds = [
+            ln
+            for ln in section(t.spec, "## 10.").split("\n")
+            if re.match(rf"- \*\*A-\d+ → {word}\b", ln) and WRAPPER in ln
+        ]
+        if not adds:
+            bad.append(f"{key} gates a §5 T2 row, names no {WRAPPER}, and no A-row adds it")
     return bad
 
 
@@ -611,6 +640,12 @@ def g_contrast(t: Texts, vals: dict[str, str]) -> list[str]:
             bad.append(f"{r[0]}: below {floor}:1 for a `{r[3]}` pair")
         if r[7] != verdict(r[3], want):
             bad.append(f"{r[0]}: verdict reads {r[7]!r}, not {verdict(r[3], want)!r}")
+    measured = {tok(r[1]) for r in ps if len(r) == 8 and r[3] == "text"}
+    bad += [
+        f"§6.1 measures no `text` pair for {k} (G-T2.2)"
+        for k in T2_TEXT_TOKENS
+        if k not in measured
+    ]
     return bad
 
 
@@ -673,7 +708,7 @@ def g_cite(t: Texts, vals: dict[str, str]) -> list[str]:
 def g_hygiene(t: Texts, vals: dict[str, str]) -> list[str]:
     bad = []
     checks = (
-        (CLOSING, "a closing keyword (the closing line waits for the A-row PR)"),
+        (CLOSING, "a closing keyword (the PR body carries the one closing line, BQ-03)"),
         (AGENT_NAME, "an agent name"),
         (URL_OR_HOST, "a URL or a host"),
     )
@@ -851,6 +886,21 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-PATH", "W-04's focus target emptied", set_cell("W-04", 3, "—")),
     ("G-PATH", "the completion step renamed", set_cell("W-08", 1, "the end")),
     (
+        "G-PATH",
+        "N74-16's S74-04 bound dropped",
+        chain(
+            set_cell(
+                "N74-16", 4, "none; `Esc` does nothing in S74-04, the `05`:97 exception (F-03)"
+            ),
+            set_cell("N74-16", 5, "receives focus after the step-up (F-03)"),
+        ),
+    ),
+    (
+        "G-PATH",
+        "A-3's `05`:97 exception dropped",
+        sub("reachable: an exception to `05`:97's", "reachable: an exception to the rule's"),
+    ),
+    (
         "G-T2",
         "T-01's reason reworded",
         set_cell("T-01", 5, '"Live trading is not enabled for you."'),
@@ -883,7 +933,13 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         ),
     ),
     ("G-T2", "T-03's rendering emptied", set_cell("T-03", 6, "—")),
+    (
+        "G-T2",
+        "A-21's CMP-079 wrap dropped",
+        sub("wrapped in CMP-079 RbacGate, `allowed`", "wrapped in the gate, `allowed`"),
+    ),
     ("G-CONTRAST", "P-03's dark figure typed by hand", set_cell("P-03", 4, "3.65")),
+    ("G-CONTRAST", "the T2 reason pair dropped", drop_row("P-17")),
     ("G-CONTRAST", "P-14's verdict changed", set_cell("P-14", 7, "structure")),
     (
         "G-CONTRAST",
