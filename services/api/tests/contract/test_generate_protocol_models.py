@@ -213,7 +213,7 @@ def test_only_the_rest_run_passes_the_strict_types(
 
 
 #: A codegen output of one model, whose member each fake run types its own way.
-_BOX_MODULE = "from __future__ import annotations\n\n\nclass Box(BaseModel):\n"
+_BOX_MODULE = "from pydantic import (\n    BaseModel,\n)\n\n\nclass Box(BaseModel):\n"
 
 
 def test_a_sentinel_run_that_marks_nothing_stops_the_generator(
@@ -259,6 +259,7 @@ from pydantic import (
 )
 class Parent(BaseModel):
     a: str | None = None
+    g: str | None = None
 class Child(Parent):
     b: str | None = None
 class Shown(Parent):
@@ -270,32 +271,27 @@ class Sent(Base):
     e: str | None = None
 """
 _MARKED = {"Parent": ["a"], "Child": ["b"], "Shown": ["c"], "Base": ["d"], "Sent": ["e"]}
-_REQUESTED = {"Parent", "Child", "Sent"}
 
 
 def test_each_marked_class_gets_one_refusal_of_its_own() -> None:
-    patched = _generator()._add_null_refusals(_NULL_BLOCK, _MARKED, _REQUESTED)
+    patched = _generator()._add_null_refusals(_NULL_BLOCK, _MARKED)
     assert [line.strip() for line in patched.splitlines() if "= field_validator(" in line] == [
-        '__null_refused = field_validator("a", mode="before")(_refuse_null)',
-        '__null_refused = field_validator("b", mode="before")(_refuse_null)',
-        '_Parent__null_refused = field_validator("a", mode="before")(_take_null)',
-        '_Base__null_refused = field_validator("d", mode="before")(_refuse_null)',
-        '__null_refused = field_validator("e", mode="before")(_refuse_null)',
+        f'__null_refused = field_validator("{member}", mode="before")(_refuse_null)'
+        for member in "abcde"
     ]
 
 
 def test_a_subclass_keeps_its_parents_null_refusals() -> None:
-    """No request model extends another on this contract, so a fixture shows the mangled names at
-    work: `Child` keeps `Parent`'s refusal; `Shown`, which no request body reaches, takes `null`
-    again; `Sent` refuses its base's `d`, which `Base` itself takes."""
+    """The mangled names at work: each subclass keeps its base's refusal beside its own, and a
+    member no run marks (`g`) takes `null` in the base and the subclass alike (#4237)."""
     namespace: dict[str, Any] = {}
-    patched = _generator()._add_null_refusals(_NULL_BLOCK, _MARKED, _REQUESTED)
+    patched = _generator()._add_null_refusals(_NULL_BLOCK, _MARKED)
     code = compile(patched, "<patched>", "exec", dont_inherit=True)
     exec(code, namespace)  # noqa: S102 - the generator's own output for a fixed fixture
     probes = [("Parent", "a"), ("Child", "a"), ("Child", "b"), ("Shown", "a"), ("Shown", "c")]
-    probes += [("Base", "d"), ("Sent", "d"), ("Sent", "e")]
+    probes += [("Base", "d"), ("Sent", "d"), ("Sent", "e"), ("Parent", "g"), ("Child", "g")]
     taken = [(name, member) for name, member in probes if _takes_null(namespace[name], member)]
-    assert taken == [("Shown", "a"), ("Shown", "c"), ("Base", "d")]
+    assert taken == [("Parent", "g"), ("Child", "g")]
 
 
 def _takes_null(model: Any, member: str) -> bool:
@@ -308,21 +304,22 @@ def _takes_null(model: Any, member: str) -> bool:
 
 @pytest.mark.parametrize(
     ("marked", "says"),
-    [({"Gone": ["a"]}, "does not define"), ({"Base": ["f"]}, "not `= None` here")],
+    [({"Gone": ["a"]}, "does not define"), ({"Base": ["d", "f"]}, "not `= None` here")],
     ids=["class", "default"],
 )
 def test_a_mark_the_models_cannot_hold_stops_the_generator(
     marked: dict[str, list[str]], says: str
 ) -> None:
-    """Each disagreement between the two runs stops the generator with its own message (R1C-03)."""
+    """Each disagreement between the two runs stops the generator with its own message (R1C-03);
+    one member the normal run does not default to `None` is enough, beside one it does (R2-03)."""
     with pytest.raises(RuntimeError, match=f"{says}; update _null_refused_members"):
-        _generator()._add_null_refusals(_NULL_BLOCK, marked, _REQUESTED)
+        _generator()._add_null_refusals(_NULL_BLOCK, marked)
 
 
 def test_a_module_without_the_pydantic_import_tuple_stops_the_generator() -> None:
     source = "from pydantic import BaseModel\nclass Box(BaseModel):\n    a: str | None = None\n"
     with pytest.raises(RuntimeError, match="no pydantic import tuple"):
-        _generator()._add_null_refusals(source, {"Box": ["a"]}, {"Box"})
+        _generator()._add_null_refusals(source, {"Box": ["a"]})
 
 
 def test_a_refusal_lands_after_its_class_whatever_its_text_holds() -> None:
@@ -332,26 +329,16 @@ def test_a_refusal_lands_after_its_class_whatever_its_text_holds() -> None:
         "from pydantic import (\n    BaseModel,\n)\nclass Box(BaseModel):\n"
         '    """One\u2028two."""\n    a: (\n        str | None\n    ) = None\n'
     )
-    patched = _generator()._add_null_refusals(source, {"Box": ["a"]}, {"Box"})
+    patched = _generator()._add_null_refusals(source, {"Box": ["a"]})
     box = next(n for n in ast.parse(patched).body if isinstance(n, ast.ClassDef))
     assert [ast.unparse(m.targets[0]) for m in box.body if isinstance(m, ast.Assign)] == [
         "__null_refused"
     ]
 
 
-def test_the_request_walk_follows_a_shared_body_and_a_bases_members() -> None:
-    """A `requestBodies` entry's schema is a root, and what a reached class's base names is
-    reached through the subclass (R1C-05)."""
-    body = {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Child"}}}}
-    spec = {
-        "paths": {"/x": {"post": {"requestBody": {"$ref": "#/components/requestBodies/Shared"}}}},
-        "components": {"requestBodies": {"Shared": body}},
-    }
-    source = (
-        "class Held(BaseModel):\n    x: int\nclass Base(BaseModel):\n    held: Held | None = None\n"
-        "class Child(Base):\n    y: int\nclass Other(BaseModel):\n    z: int\n"
-    )
-    assert _generator()._request_models(spec, source) == {"Child", "Held"}
+def test_the_banner_strip_ends_a_line_only_at_a_newline() -> None:
+    """A U+2028 in a banner comment does not end it early, as in `_add_null_refusals` (R1C-02)."""
+    assert _generator()._strip_generator_banner("# a\u2028b\n\nclass X: ...\n") == "class X: ...\n"
 
 
 def test_ws_models_module_imports_cleanly(generated_ws_module) -> None:  # type: ignore[no-untyped-def]

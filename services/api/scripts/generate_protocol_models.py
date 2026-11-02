@@ -12,8 +12,8 @@ pattern on the raw input, and a member the contract defaults and does not mark n
 `null` (`--strict-nullable`): the generated models are no laxer than the contract (#906 slice G).
 A REST boolean, integer or number takes only its JSON type (`--strict-types`), and an integer keeps
 `5.0`, which the contract's `type: integer` takes too (`_patch_json_integer`, #906 slice G2a). A
-request model refuses `null` where the contract does, on an optional member that a second REST
-run, `--use-missing-sentinel`, names (`_add_null_refusals`, #906 slice G2b).
+REST model refuses `null` where the contract does, on an optional member that a second REST run,
+`--use-missing-sentinel`, names (`_add_null_refusals`: #906 slice G2b; every model since #4237).
 
 It also writes `candleviewer/api/_generated/contract_subset.json` (#2555): the pruned copy of
 the REST contract that the app reads at runtime, since the API image ships no `docs/plan`.
@@ -30,15 +30,13 @@ from __future__ import annotations
 
 import ast
 import importlib.util
-import json
 import re
 import subprocess
 import sys
 import tempfile
-from collections.abc import Mapping, Set
+from collections.abc import Mapping
 from pathlib import Path
 from types import ModuleType
-from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
@@ -138,11 +136,6 @@ def _refuse_null(value: object) -> object:
     if value is None:
         raise ValueError("null is not allowed: leave the member out")
     return value
-
-
-def _take_null(value: object) -> object:
-    """A model no request body reaches takes `null` where a request model it extends refuses it."""
-    return value
 '''
 
 
@@ -189,7 +182,7 @@ def _run_datamodel_codegen(
 
 
 def _strip_generator_banner(source: str) -> str:
-    lines = source.splitlines(keepends=True)
+    lines = re.split(r"(?<=\n)", source)  # only "\n" ends a line, as in `_add_null_refusals`
     out = []
     skipping = True
     for line in lines:
@@ -290,38 +283,10 @@ def _null_refused_members(sentinel_source: str) -> dict[str, list[str]]:
     return found
 
 
-def _request_models(spec: dict[str, Any], source: str) -> set[str]:
-    """The classes of `source` a request body reaches: those its `$ref`s name (a shared
-    `requestBodies` entry's too), then each class a reached class's members or bases' members name:
-    codegen's own names, so an inline class (`Override1`) is found where its parent names it."""
-    ops = [op for item in spec["paths"].values() for op in item.values() if isinstance(op, dict)]
-    bodies = json.dumps([op.get("requestBody") for op in ops])
-    shared = spec.get("components", {}).get("requestBodies", {})
-    found = re.findall(r'"#/components/requestBodies/([^"]+)"', bodies)
-    bodies += json.dumps([shared[name] for name in found])
-    classes = {node.name: node for node in ast.parse(source).body if isinstance(node, ast.ClassDef)}
-
-    def named(node: ast.ClassDef) -> set[str]:
-        annotations = [m.annotation for m in node.body if isinstance(m, ast.AnnAssign)]
-        names = {n.id for each in annotations for n in ast.walk(each) if isinstance(n, ast.Name)}
-        for base in [b.id for b in node.bases if isinstance(b, ast.Name) and b.id in classes]:
-            names |= named(classes[base])
-        return names & classes.keys()
-
-    roots = set(re.findall(r'"\$ref": "#/components/schemas/([^"]+)"', bodies))
-    reached: set[str] = set()
-    pending = sorted(roots & classes.keys())
-    while pending:
-        if (name := pending.pop()) not in reached:
-            reached.add(name)
-            pending += sorted(named(classes[name]) - reached)
-    return reached
-
-
-def _add_null_refusals(source: str, refused: Mapping[str, list[str]], requested: Set[str]) -> str:
-    """Has each class a request body reaches (`requested`) refuse `null` for the members `refused`
-    names, by one line under its own mangled `__null_refused`, which a subclass keeps; any other
-    class takes `null` again where a base refuses it (ruling 1 of 2026-10-23 00:29Z)."""
+def _add_null_refusals(source: str, refused: Mapping[str, list[str]]) -> str:
+    """Has each class `refused` names refuse `null` for the members it lists, by one line under its
+    own mangled `__null_refused`, which a subclass keeps: every REST model, whether a request body
+    or a response reaches it (#4237, slice G2c)."""
     classes = {node.name: node for node in ast.parse(source).body if isinstance(node, ast.ClassDef)}
     for name, fields in refused.items():  # the two runs agree, or nothing is emitted
         if name not in classes:
@@ -333,25 +298,14 @@ def _add_null_refusals(source: str, refused: Mapping[str, list[str]], requested:
                 continue
             message = f"the sentinel run marks members of {name} that are not `= None` here"
         raise RuntimeError(f"generate_protocol_models: {message}; update _null_refused_members.")
-    held: dict[str, dict[str, bool]] = {}  # per class: whether each marked class's refusal holds
-    added: dict[int, list[str]] = {}
-    for name, node in classes.items():  # source order: a base comes before its subclasses
-        bases = [b.id for b in reversed(node.bases) if isinstance(b, ast.Name) and b.id in held]
-        holds = {owner: on for base in bases for owner, on in held[base].items()}
-        holds |= {name: False} if name in refused else {}
-        for owner in [owner for owner, on in holds.items() if on != (name in requested)]:
-            attribute = "__null_refused" if owner == name else f"_{owner}__null_refused"
-            members = ", ".join(f'"{member}"' for member in refused[owner])
-            check = "_refuse_null" if name in requested else "_take_null"
-            line = f'    {attribute} = field_validator({members}, mode="before")({check})\n'
-            added.setdefault(node.end_lineno or 0, []).append(line)
-            holds[owner] = name in requested
-        held[name] = holds
-    if not added:
+    if not refused:
         return source
     lines = re.split(r"(?<=\n)", source)  # only "\n" ends a line, as `end_lineno` counts them
-    for at in sorted(added, reverse=True):
-        lines[at:at] = added[at]
+    for name in sorted(refused, key=lambda n: classes[n].end_lineno or 0, reverse=True):
+        members = ", ".join(f'"{member}"' for member in refused[name])
+        line = f'    __null_refused = field_validator({members}, mode="before")(_refuse_null)\n'
+        at = classes[name].end_lineno or 0
+        lines[at:at] = [line]
     marker = "from pydantic import (\n"
     if marker not in source:
         raise RuntimeError(
@@ -367,12 +321,11 @@ def _write(
     header: str,
     source: str,
     refused: Mapping[str, list[str]] | None = None,
-    requested: Set[str] = frozenset(),
 ) -> None:
     body = _strip_generator_banner(source)
     body = _patch_decimal_money_type(body)
     body = _patch_json_integer(body)
-    body = _add_null_refusals(body, refused or {}, requested)
+    body = _add_null_refusals(body, refused or {})
     path.write_text(header + body, encoding="utf-8", newline="\n")
 
 
@@ -406,8 +359,7 @@ def generate() -> None:
     if not refused:  # a sentinel run whose shape changed marks nothing: stop, never drop the lines
         message = "the sentinel run marked no member"
         raise RuntimeError(f"generate_protocol_models: {message}; update _null_refused_members.")
-    spec = _contract_builder().load_openapi_spec(OPENAPI_SPEC)
-    _write(REST_OUT, REST_HEADER, raw_rest, refused, _request_models(spec, raw_rest))
+    _write(REST_OUT, REST_HEADER, raw_rest, refused)
 
     _run_datamodel_codegen(input_path=WS_SCHEMA, input_file_type="jsonschema", output_path=WS_OUT)
     raw_ws = WS_OUT.read_text(encoding="utf-8")
