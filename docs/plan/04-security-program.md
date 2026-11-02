@@ -961,7 +961,7 @@ Admin-area denials (E42-T01), scoped to routes mounted on the E42 admin-area gua
 `candleviewer/admin/http.py`): a request the guard refuses for a missing permission increments `authz_denied_total`
 (SR-125) and is audited once, as `admin.area_entered{outcome=denied}` (SR-062), not as a second `rbac.denied`. Any
 audit-side alert on denials MUST include that action (`admin.area_entered`), filtered by `outcome=denied`: the guard
-writes the same action with `outcome=success` for every allowed entry.
+writes the same action with `outcome=success` for every allowed write, and for the first allowed read of each window (#5331: `admin_area_coalesce_seconds`); later reads of the window are counted, not recorded. The reads a window coalesced are counted in the next entry's `after_state.prior_window` or in one `coalesced_summary` entry; a refusal is never coalesced and closes its key's window, so denial alerts and counts are unchanged. Dashboards of allowed-read volume read `prior_window.reads` and `coalesced_summary`.
 
 ### 6.10 Backups and data protection (SR-090…SR-099)
 

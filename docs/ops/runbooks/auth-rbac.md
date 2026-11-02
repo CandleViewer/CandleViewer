@@ -1239,7 +1239,7 @@ To answer a denial:
      permission was missing is the entry's object). The entry names the permission and scope
      (`auth/scopes.py`, `enforce`).
    - Admin-area routes on the E42 guard (`admin/http.py`; `permission="admin:read"` today): action
-     `admin.area_entered`, not `rbac.denied`. The same action is written for every allowed entry,
+     `admin.area_entered`, not `rbac.denied`. The same action is written for every allowed write and, for a read, once per session, route and window (#5331),
      so filter on the outcome:
      `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=admin.area_entered&outcome=denied"`
      (add `&actor_user_id=<id>`). The entry's `subject_id` is the route template, such as
