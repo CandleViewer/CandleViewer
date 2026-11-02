@@ -11,6 +11,7 @@ import { CANDLE } from "./shaders/candle.js";
 import { LINE } from "./shaders/line.js";
 import { QUAD } from "./shaders/quad.js";
 import { SDF_TEXT } from "./shaders/sdf-text.js";
+import { VOLUME } from "./shaders/volume.js";
 
 export const ENGINE_SHADER_COMPILE_FAILED = "ENGINE_SHADER_COMPILE_FAILED";
 /** BQ-52: the driver's info log is trimmed to this many characters in `message`. */
@@ -31,7 +32,7 @@ export class ContextLostError extends Error {
 }
 
 /** A batch's `program` number (shared with the 2D backend, BQ-87) indexes this table. */
-export const PROGRAMS: readonly ProgramSource[] = [LINE, QUAD, SDF_TEXT, BAR_CELL, CANDLE];
+export const PROGRAMS: readonly ProgramSource[] = [LINE, QUAD, SDF_TEXT, BAR_CELL, CANDLE, VOLUME];
 export { PROGRAM };
 
 /** A compile or link failure; `log` is the driver's info log (trimmed in the backend's message). */

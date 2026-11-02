@@ -71,4 +71,5 @@ export type {
   Unsubscribe,
   Viewport,
   VisibleWindow,
+  VolumeOptions,
 } from "./api/types.js";

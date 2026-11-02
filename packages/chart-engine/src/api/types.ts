@@ -352,6 +352,21 @@ export interface IndicatorHandle {
   remove(): void;
 }
 
+/**
+ * E12-S08 (BQ-6, BQ-11, additive; the `Pane.addVolume` method lands with PR 2): a volume sub-pane
+ * over the price series' own bars (§3.3).
+ */
+export interface VolumeOptions {
+  /**
+   * The quantisation step, base-asset units per tick (the instrument's qty_step). REQUIRED: the
+   * store holds f32 volume and the ring int32 ticks, so the step is the instrument's, never a
+   * default. A missing, non-positive or non-finite step is refused (`VolumeQuantumError`).
+   */
+  quantum: number;
+  /** E12-D06 §12 default 0.2 of the chart height. */
+  heightRatio?: number;
+}
+
 // Option bags §8 maps but leaves to their owning tickets (E12 candles/lines, E13 profile/bubbles).
 export interface CandleOptions {
   upColorToken: string;
