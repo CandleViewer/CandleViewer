@@ -202,6 +202,72 @@ async def test_the_reports_record_is_oms_reconcile_finished_as_the_system() -> N
     assert fields["after_state"]["stage"] == "finished" and fields["request_id"] is None
 
 
+class _Kept:
+    """`ReconcileDigests.keep`, recording each digest handed over and the order of the calls."""
+
+    def __init__(self, trace: list[str]) -> None:
+        self.trace, self.kept = trace, list[tuple[UUID, dict[str, object]]]()
+
+    def keep(self, account_id: UUID, state: Any) -> None:
+        self.trace.append("keep")
+        self.kept.append((account_id, state))
+
+
+class _Notify:
+    def __init__(self, trace: list[str]) -> None:
+        self.trace = trace
+
+    def notify(self, fn: Any, /, *args: Any, **kwargs: Any) -> None:
+        self.trace.append("notify")
+        fn(*args, **kwargs)
+
+
+async def test_a_passs_digest_is_kept_on_the_serving_loop_once_its_record_is_written() -> None:
+    """E29-S07 (24 Sec.8.5 "The digest"): the record first (C-2.9), then the digest's hand-off."""
+    trace: list[str] = []
+    emitter, kept = Emitter(), _Kept(trace)
+    records = rw.DigestRecords(
+        rw.ReconcileRecords(emitter, environment="demo"), kept, _Notify(trace)
+    )
+    state = {"stage": "finished", "pass_id": RUN_ID, "corrected": ["cvl-1"]}
+    await records.finished(ACCOUNT, pass_id=RUN_ID, state=state)
+    assert [action for action, _ in emitter.emitted] == [rw.RECONCILE]
+    assert trace == ["notify", "keep"] and kept.kept == [(ACCOUNT, state)]
+    assert kept.kept[0][1] is not state  # a copy: the record's own state stays the writer's
+
+
+async def test_a_pass_whose_record_is_not_written_keeps_no_digest() -> None:
+    class Failing:
+        async def emit(self, action: str, **fields: Any) -> None:
+            raise RuntimeError("the audit writer is not started")
+
+    trace: list[str] = []
+    kept = _Kept(trace)
+    records = rw.DigestRecords(
+        rw.ReconcileRecords(Failing(), environment="demo"), kept, _Notify(trace)
+    )
+    with pytest.raises(RuntimeError):
+        await records.finished(ACCOUNT, pass_id=RUN_ID, state={"stage": "finished"})
+    assert trace == [] and kept.kept == []
+
+
+async def test_a_digest_hand_off_that_fails_is_logged_and_the_record_stands() -> None:
+    class Closed:
+        def notify(self, fn: Any, /, *args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("the serving loop is closed")
+
+    emitter = Emitter()
+    records = rw.DigestRecords(
+        rw.ReconcileRecords(emitter, environment="demo"), _Kept([]), Closed()
+    )
+    with capture_logs() as logs:
+        await records.finished(ACCOUNT, pass_id=RUN_ID, state={"stage": "finished"})
+    assert [action for action, _ in emitter.emitted] == [rw.RECONCILE]
+    assert [(log["event"], log["error"]) for log in logs] == [
+        ("reconcile_digest_unkept", "RuntimeError")
+    ]
+
+
 async def test_an_adoption_is_recorded_with_the_venues_identity_and_no_payload() -> None:
     """24 Sec.15.5, BQ-17: written ahead of the row, the order as the venue reported it."""
     emitter, order = Emitter(), remote(7, exchange_placed=True)
@@ -390,6 +456,35 @@ def test_a_live_or_demo_record_that_does_not_remediate_fails_the_composition(
     assert isinstance(
         _build(environment="testnet", remediates=lambda _e: False).jobs, ReconcileJobs
     )
+
+
+def test_build_reconciliation_keeps_digests_only_when_given_them() -> None:
+    assert isinstance(_build().phases._records, rw.ReconcileRecords)
+    kept = _Kept([])
+    records = _build(digests=kept).phases._records
+    assert isinstance(records, rw.DigestRecords) and records._digests is kept
+
+
+def test_the_runtime_hands_reconciliation_the_digests_the_root_gave_it() -> None:
+    """The OMS runtime composes reconciliation on the real backend only, so its call is pinned by
+    its source: `build_oms_runtime` forwards `digests` to the runtime, and the runtime to
+    `build_reconciliation` (E29-S07)."""
+    import ast
+    import inspect
+    from collections.abc import Callable
+
+    from candleviewer import oms_wiring
+
+    def keywords(fn: Callable[..., object], callee: str) -> dict[str | None, str]:
+        tree = ast.parse(inspect.getsource(fn))
+        [call] = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and getattr(node.func, "id", None) == callee
+        ]  # fmt: skip
+        return {k.arg: ast.unparse(k.value) for k in call.keywords}
+
+    assert keywords(oms_wiring.build_oms_runtime, "OmsRuntime")["digests"] == "digests"
+    assert keywords(oms_wiring.OmsRuntime, "build_reconciliation")["digests"] == "self._digests"
 
 
 async def test_build_reconciliation_wires_the_pass_its_phases_and_the_driver() -> None:

@@ -688,6 +688,15 @@ operations:
     public: false
     state: executed
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
+  GET /exchange-accounts/{accountId}/reconciliation/latest:
+    permissions: ['orders:read', 'positions:read']
+    scope: granted_accounts
+    public: false
+    state: executed
+    # E29-S07 #1028: the CI app composes no OMS, so no account holds a digest: an admitted read is
+    # `404 not_found` for every account (account_scope below); the granted, foreign and absent
+    # answers over a kept digest are pinned in test_reconciliation_digest_route.py.
+    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   GET /executions:
     permissions: ['executions:read']
     scope: granted_accounts
@@ -1898,6 +1907,12 @@ account_scope:
   GET /exchange-accounts/{accountId}/profiles/{profileId}: {delegated: E28-X03 (#976)}
   PUT /exchange-accounts/{accountId}/profiles/{profileId}: {delegated: E28-X03 (#976)}
   DELETE /exchange-accounts/{accountId}/profiles/{profileId}: {delegated: E28-X03 (#976)}
+  GET /exchange-accounts/{accountId}/reconciliation/latest:
+    step_up: null
+    cells:
+      owner: {granted: 404 not_found, foreign: 404 not_found, absent: 404 not_found}
+      manager: {granted: 404 not_found, foreign: 404 not_found, absent: 404 not_found}
+      viewer: {granted: 404 not_found, foreign: 404 not_found, absent: 404 not_found}
   PUT /positions/{positionId}/leverage:  # the situation is the account of the position (4.2)
     # E29-T07 #915: the CI app has no position store (`503 store_unavailable` once admitted), so
     # each situation's id names no position here; the granted/foreign/absent answers on a seeded

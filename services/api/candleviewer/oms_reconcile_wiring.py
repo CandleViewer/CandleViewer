@@ -23,6 +23,8 @@ the facade and before the private-stream consumer, which takes its driver as its
   loop: no new bus topic, BQ-6; kept for the replay at connect, E29-S07), the pager, and the five
   metrics of 20 Sec.12.1 with no account label (`ReconcileMetrics`; `oms_stale_accounts` is the
   driver's);
+* each pass's digest, kept once its record is written (`DigestRecords`, E29-S07, 24 Sec.8.5 "The
+  digest"), on the serving loop, for `getReconciliationDigest`;
 * the stream's last message per account (`LastMessages`), the other half of `gap_from`;
 * the requests the startup sweep resumed (`SweptRequests`), which the sweep records and each
   account's next fetch waits for, bounded, so the first pass never races them (24 Sec.8.5).
@@ -102,6 +104,7 @@ __all__ = [
     "AccountWatermarks",
     "AdoptionRecords",
     "BundleJobs",
+    "DigestRecords",
     "LastMessages",
     "PassFills",
     "PassOrders",
@@ -353,6 +356,33 @@ class AdoptionRecords:
         )  # fmt: skip
 
 
+class DigestKeep(Protocol):
+    """`oms.reconcile_digest.ReconcileDigests.keep`, on the serving loop."""
+
+    def keep(self, account_id: UUID, state: Mapping[str, object]) -> None: ...
+
+
+class DigestRecords:
+    """`reconcile_phases.ReportRecords` with the digest (E29-S07, 24 Sec.8.5 "The digest"): the
+    pass's record first, durable or it raises (C-2.9), then its digest handed to the serving loop
+    (`Serving.notify`, never awaited), so a pass whose record is not written keeps no digest. A
+    hand-off that fails is logged by its class and the account; the record stands."""
+
+    def __init__(self, records: ReconcileRecords, digests: DigestKeep, serving: Notify) -> None:
+        self._records, self._digests, self._serving = records, digests, serving
+
+    async def finished(
+        self, account_id: AccountId, *, pass_id: str, state: Mapping[str, object]
+    ) -> None:
+        await self._records.finished(account_id, pass_id=pass_id, state=state)
+        try:
+            self._serving.notify(self._digests.keep, account_id, dict(state))
+        except Exception as exc:
+            _log().error(
+                "reconcile_digest_unkept", account_id=str(account_id), error=type(exc).__name__
+            )
+
+
 class ReconcileNoticesBinding:
     """`reconcile_phases.ReconcileNotices`: 23 Sec.15.9's row for the notice, stamped with its
     transition time (`changed_at_ms`, `now_ms`), checked against the closed table, offered to the
@@ -529,13 +559,14 @@ def build_reconciliation(
     serving: Notify, feed: StreamEvidence, metrics: Metrics, pager: Pager,
     sink: MachineEventSink, persistence: JobPersistence | None, now_us: Callable[[], int],
     stale_after_s: float, remediates: Callable[[Environment], bool],
-    resumed: ResumedRequests | None = None,
+    resumed: ResumedRequests | None = None, digests: DigestKeep | None = None,
 ) -> ReconcileWiring:  # fmt: skip
     """The pass, its phases and the driver over the runtime's stores and adapters (module
     docstring), built and not started; `ReconcileJobs.start` opens the jobs. A live or demo
     environment whose capability record does not remediate is a `ValueError` here, so the OMS's
     composition fails closed (24 Sec.14.3, C-2.6, C-4.14). `resumed`, the requests the startup
-    sweep resumed, holds each account's next fetch until they have answered (24 Sec.8.5)."""
+    sweep resumed, holds each account's next fetch until they have answered (24 Sec.8.5);
+    `digests`, when given, keeps each pass's digest once its record is written (E29-S07)."""
     if environment in ("live", "demo") and not remediates(environment):
         raise ValueError("a live or demo reconciliation job always remediates (24 Sec.14.3)")
     counted = ReconcileMetrics(metrics)
@@ -550,10 +581,11 @@ def build_reconciliation(
     )  # fmt: skip
     reconciler = Reconciler(ports, now_us=now_us, on_naked=counted.naked)
     marks, hop = LastMessages(feed, now_us), RetryHop()
+    records = ReconcileRecords(emitter, environment=environment)
     phases = ReconcilePhases(
         reconciler, standing=standing, tracker=FailureTracker(window_s=stale_after_s),
         marks=marks, watermarks=AccountWatermarks(reads),
-        records=ReconcileRecords(emitter, environment=environment),
+        records=records if digests is None else DigestRecords(records, digests, serving),
         notices=ReconcileNoticesBinding(hub, serving, now_ms=lambda: now_us() // 1_000),
         retries=hop, metrics=counted,
         pager=pager, now_us=now_us, resumed=resumed,

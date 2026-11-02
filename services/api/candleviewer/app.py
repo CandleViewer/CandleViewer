@@ -184,6 +184,7 @@ from candleviewer.api.position_reverse import make_position_reverse_router
 from candleviewer.api.preview_limiter import PreviewLimiter
 from candleviewer.api.profile_writes import SaveMeasures, make_profile_writes_router
 from candleviewer.api.profiles import make_profiles_router
+from candleviewer.api.reconciliation_digest import make_reconciliation_digest_router
 from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
 from candleviewer.api.recorder_purge import make_recorder_purge_router
 from candleviewer.api.recording_reports import make_recording_reports_router
@@ -363,6 +364,7 @@ from candleviewer.observability.support_bundle import filter_config
 from candleviewer.observability.support_bundle_wiring import build_support_bundle_service
 from candleviewer.observability.telemetry import SessionRateLimiter, TelemetrySink
 from candleviewer.oi_wiring import OiRuntime, wire_open_interest
+from candleviewer.oms.reconcile_digest import ReconcileDigests
 from candleviewer.oms.reconcile_standing import ReconcileStanding
 from candleviewer.oms.service import OmsService
 from candleviewer.oms.ws_topics import FAMILIES as OMS_FAMILIES
@@ -2695,6 +2697,9 @@ def create_app(
     # never reach this gate (C-2.6).
     app.state.reconcile_standing = reconcile_standing = ReconcileStanding()
     account_states.bind_standing(reconcile_standing)  # E29-S07: a restored lock is replayed too
+    # E29-S07 (#1028, 24 Sec.8.5 "The digest"): each account's latest reconciliation pass, kept by
+    # the OMS runtime's jobs once its record is written, served by `getReconciliationDigest`.
+    reconcile_digests = ReconcileDigests()
     app.state.order_entry_gate = feature_flags.compose_order_entry_gate(
         account_health.order_entry_check, reconcile_standing
     )
@@ -2759,6 +2764,7 @@ def create_app(
         # E29-S07: each notice the runtime publishes is kept for the replay, then broadcast
         hub=StatesBroadcast(account_states, ws_hub),
         standing=reconcile_standing,
+        digests=reconcile_digests,
         topics=ws_oms,  # E29-T13 (#4207): its WS topics, published from its lane
         trade_groups=ws_trade_groups,
         kill_switch=kill_switch_port,  # #2904: the halt's port, shared (G-79)
@@ -2844,6 +2850,13 @@ def create_app(
             audit=_LazyAuditEmitter(ctx.audit),
             auth=ctx.auth,
             versions=order_versions(lambda: oms_runtime_of(app.state)),
+        )
+    )
+    # E29-S07 (#1028): `getReconciliationDigest`, in the caller's grants, over the digests above;
+    # none is held on the fake backend, which composes no OMS (404 for every account).
+    app.include_router(
+        make_reconciliation_digest_router(
+            order_principals, reconcile_digests, audit=_LazyAuditEmitter(ctx.audit), auth=ctx.auth
         )
     )
     # E29-T07 #915 PR 2: `setPositionLeverage`, its position read in scope on the reads above and
