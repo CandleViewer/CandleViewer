@@ -895,3 +895,12 @@ def test_a_train_runs_with_a_pull_requests_permissions_and_no_secret() -> None:
     assert not [job for job, spec in JOBS.items() if "secrets" in spec]
     text = (WORKFLOWS / "pr.yml").read_text(encoding="utf-8")
     assert not [expr for expr in EXPRESSION.findall(text) if re.search(r"\bsecrets\b", expr)]
+
+
+def test_engine_bench_job_has_no_concurrency_group_that_could_cancel_queued_runs() -> None:
+    # GitHub keeps one pending job per group and cancels older pending ones: a shared group would
+    # drop merge-queue entries. A self-hosted runner serialises its jobs itself (E03-T14).
+    wf = _load("_job-engine-bench.yml")
+    assert "concurrency" not in wf
+    for job in wf["jobs"].values():
+        assert "concurrency" not in job

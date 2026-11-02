@@ -212,11 +212,12 @@ jobs:
             engine:
               - 'packages/chart-engine/**'
               - 'packages/rule-graph/**'
-              # The engine-bench job, its Node version, install script and allow-list (#3182).
+              # The engine-bench job, its Node version, install script, allow-list (#3182) and route script (E03-T14).
               - '.github/workflows/_job-engine-bench.yml'
               - '.nvmrc'
               - 'tools/ci/run-allowed-postinstall.mjs'
               - 'tools/ci/allowed-postinstall.json'
+              - 'tools/ci/gpu_runner_health.py'
             protocol:
               - 'packages/protocol/**'
               - 'docs/plan/22-api-openapi.yaml'
