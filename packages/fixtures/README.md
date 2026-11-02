@@ -102,6 +102,12 @@ before commit.
   `bybit/2026-10-05/ws/private-position.jsonl` push with E29-D02 §5.2's LIVE rows' values, through
   the shipped adapter, projection and mappers; one contract-valid extension file. Provenance, the
   mapper commits and regeneration: `golden/positions/README.md` and its `manifest.json`.
+- `golden/orders/` — E29-S02 web working-orders goldens: the `orders` snapshot and one frame per step (the
+  amend, cancel, 110001, reconciliation, adoption, hold and late cases), the `listOrders?open_only=true` body with a
+  held and an untracked order, a five-account `cancelAllOrders` result and two request bodies. Source: OMS rows with
+  E29-D02 §6.2's values (no capture: an order row is the OMS's own), through the shipped topic and REST mappers; one
+  contract-valid extension file. Provenance, the mapper commits and regeneration: `golden/orders/README.md` and its
+  `manifest.json`.
 
 ## Scripts
 
