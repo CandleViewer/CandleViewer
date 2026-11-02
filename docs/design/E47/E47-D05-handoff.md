@@ -119,4 +119,4 @@ The boards of spec §0, on page `E47-D05 SCR-117` of the Penpot file `E47-D05 bo
 4. An OS change updates in place with one polite status and never discards an explicit choice; forced colours make the contrast row T2.
 5. Four PROPOSED preview kinds that obey the effective motion; the announcement sample is a list, never a live region.
 6. The six significant classes are quoted from `05`; the cadence default is 2 s until E47-D01 reports.
-7. BQ-0 … BQ-10 RULED (comment 6566806435), BQ-11 … BQ-13 built as posted; D03 / D04 pinned at their PR heads and re-pinned at each merge; `Refs #1304` + `Partial:` until both merge, then `Closes #1304`.
+7. BQ-0 … BQ-10 RULED (comment 6566806435), BQ-11 … BQ-13 built as posted; D03 / D04 pinned at their PR heads and re-pinned at each merge; `Refs #1304` + `Partial:` until both merge, then the closing line for the ticket.
