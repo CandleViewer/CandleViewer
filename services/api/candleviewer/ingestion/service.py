@@ -34,6 +34,7 @@ from candleviewer.ingestion.synthetic_feed import (
 )
 from candleviewer.ingestion.ticker_stream import TickerStream
 from candleviewer.ingestion.trade_stream import TradeStream
+from candleviewer.ingestion.write_behind_heal import WriteBehindHealer
 from candleviewer.observability.context import spawn
 from candleviewer.observability.health import HealthReport, HealthStatus
 from candleviewer.observability.latency import StageRecorder
@@ -129,6 +130,8 @@ class IngestionService:
         self.trades: TradeStream | None = None
         #: E08-S05: reconstructed L2 book, attached with the public WS.
         self.books: BookSink | None = None
+        #: #1944: the write-behind healers, started after the streams and stopped before them.
+        self.healers: list[WriteBehindHealer] = []
         self._pump: asyncio.Task[None] | None = None
         self._pump_rejects = RejectionLog("pump")
         self.pump_breaker_trips = 0
@@ -194,6 +197,9 @@ class IngestionService:
 
     def attach_books(self, stream: BookSink) -> None:
         self.books = stream
+
+    def attach_healer(self, healer: WriteBehindHealer) -> None:
+        self.healers.append(healer)
 
     def attach_router(
         self,
@@ -357,6 +363,8 @@ class IngestionService:
             await self.trades.start()
         if self.books is not None:
             await self.books.start()
+        for healer in self.healers:
+            healer.start()
         if self.tickers is not None or self.trades is not None or self.books is not None:
             self._pump = spawn(self._pump_frames(), name="ws-frame-pump")
         self._started = True
@@ -392,6 +400,8 @@ class IngestionService:
         if pump is not None:
             pump.cancel()
             await asyncio.gather(pump, return_exceptions=True)
+        for healer in self.healers:  # before the streams whose buffers they heal
+            await healer.stop()
         if self.tickers is not None:
             await self.tickers.stop()
         if self.trades is not None:

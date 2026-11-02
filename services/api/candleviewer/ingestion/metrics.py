@@ -135,6 +135,18 @@ SPECS: Final[tuple[MetricSpec, ...]] = (
         "Lost hot-tier runs merged because a symbol hit the per-symbol run cap.",
         "table",
     ),
+    _c(
+        "write_behind_heal_ranges_total",
+        "Lost hot-tier runs the write-behind healer worked, by result (healed|partial|"
+        "unrecoverable|error); unrecoverable is counted once per run.",
+        "table",
+        "result",
+    ),
+    _c(
+        "write_behind_heal_rows_total",
+        "Prints the write-behind healer re-wrote to the hot tier.",
+        "table",
+    ),
     # E08-S05 book health (E08-T06: resync rate + live state for the dashboard/alerts)
     _c(
         "ingest_book_resyncs_total",
@@ -427,6 +439,12 @@ questdb_write_queue_depth = _gauge("questdb_write_queue_depth")
 trade_writes_dropped_total = _counter("trade_writes_dropped_total")
 book_writes_dropped_total = _counter("book_writes_dropped_total")
 write_behind_lost_runs_truncated_total = _counter("write_behind_lost_runs_truncated_total")
+write_behind_heal_ranges_total = _counter("write_behind_heal_ranges_total")
+write_behind_heal_rows_total = _counter("write_behind_heal_rows_total")
+#: #1944: the write-behind heal series the metric catalogue lists as exported.
+HEAL_EXPORTED_NAMES: Final = frozenset(
+    {"write_behind_heal_ranges_total", "write_behind_heal_rows_total"}
+)
 ingest_book_resyncs_total = _counter("ingest_book_resyncs_total")
 ingest_book_live = _gauge("ingest_book_live")
 book_apply_latency_ms = _histogram("book_apply_latency_ms")

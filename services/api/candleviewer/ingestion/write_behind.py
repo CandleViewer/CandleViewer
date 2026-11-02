@@ -15,7 +15,9 @@ Shared by `TradeStream` and `BookStream`. Rules:
   it. Closed runs are capped per symbol (`MAX_LOST_RUNS`): the two oldest are
   merged (a conservative superset, never hidden), counted in
   `write_behind_lost_runs_truncated_total`. Backfill reads `lost_ranges()`;
-  `degraded` feeds the `hot_tier_write_behind` health component.
+  `degraded` feeds the `hot_tier_write_behind` health component. The
+  write-behind healer (#1944, `write_behind_heal.py`) takes `closed_ranges()`
+  and drops what it healed with `clear()`.
 * **At-least-once** — a batch that failed after partially reaching QuestDB
   is resent whole; that is safe only because every hot-tier table declares
   `DEDUP UPSERT KEYS` (`storage/natural_keys.py`).
@@ -93,6 +95,38 @@ class WriteBehindBuffer[T]:
         if run is not None:
             out.append(Range(run[0], run[1]))
         return out
+
+    def lost_symbols(self) -> list[str]:
+        """Symbols whose `lost_ranges()` is not empty (closed runs or an open one)."""
+        return sorted({*self._closed, *self._open})  # `clear` drops an emptied entry
+
+    def closed_ranges(self, symbol: str) -> list[Range]:
+        """`symbol`'s closed lost runs, oldest first. The open run is still growing (at both
+        ends: `min` / `max` below), so a heal never takes it (#1944)."""
+        return list(self._closed.get(symbol, ()))
+
+    def clear(self, symbol: str, healed: Iterable[Range]) -> int:
+        """#1944: drop the closed runs that one healed range wholly covers; returns how many.
+
+        `healed` comes from a snapshot taken before the heal's awaits. A run that changed since
+        (two merged at the cap) is no longer covered and stays whole: a run is cleared whole or
+        not at all. The open run is never touched. No await: atomic on the event loop against
+        `put` / `succeeded`."""
+        runs = self._closed.get(symbol)
+        if not runs:
+            return 0
+        done = list(healed)
+        kept = deque(
+            r
+            for r in runs
+            if not any(h.start_us <= r.start_us and r.end_us <= h.end_us for h in done)
+        )
+        removed = len(runs) - len(kept)
+        if kept:
+            self._closed[symbol] = kept
+        else:
+            del self._closed[symbol]
+        return removed
 
     def _close_runs(self, symbols: Iterable[str]) -> None:
         for sym in symbols:

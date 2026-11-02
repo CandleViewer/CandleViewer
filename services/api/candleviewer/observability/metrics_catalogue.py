@@ -1982,6 +1982,35 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
         max_series=33,
     ),
+    # --- Write-behind healer (#1944): `ingestion.metrics`, re-exported by
+    # export_ingestion_metrics. `table` is a write-behind buffer (trades, orderbook); `result` is
+    # the closed set healed / partial / unrecoverable / error.
+    _s(
+        "write_behind_heal_ranges_total",
+        "counter",
+        "ranges",
+        ("table", "result"),
+        "Lost hot-tier runs the write-behind healer worked, by result (healed|partial|"
+        "unrecoverable|error); unrecoverable is counted once per run.",
+        "dashboard only: unrecoverable above 0 = trade or book rows the hot tier lost for good"
+        " (see the log); error or partial rising for a long time = REST or the store failing",
+        _L,
+        "E08",
+        max_series=8,
+        exported=True,
+    ),
+    _s(
+        "write_behind_heal_rows_total",
+        "counter",
+        "rows",
+        ("table",),
+        "Prints the write-behind healer re-wrote to the hot tier.",
+        "dashboard only",
+        _L,
+        "E08",
+        max_series=2,
+        exported=True,
+    ),
     # --- DOM heatmap engine and its WS topic (E21-T02, #605): `orderflow.heatmap_metrics`,
     # re-exported by export_heatmap_metrics. `state` is live or estimated; `symbol` is bounded by
     # the funding `symbol_label` (64 + other).

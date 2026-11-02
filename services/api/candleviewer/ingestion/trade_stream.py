@@ -564,6 +564,11 @@ class TradeStream:
             }
         )
 
+    def heal_event(self, p: TradePrint) -> TradeEvent:
+        """#1944: the hot-tier row the write-behind healer re-writes for a lost print; never
+        published, so it takes a `seq` like a #2715 heal row (monotonic, not contiguous)."""
+        return self._event(p, "backfill", self._now_us())
+
     def _enqueue_write(self, event: TradeEvent) -> None:
         if self._writer is None:
             return

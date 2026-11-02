@@ -322,6 +322,7 @@ from candleviewer.ingestion.ticker_bulk import AgeGauge, TickerBulkCache
 from candleviewer.ingestion.ticker_stream import TickerStream
 from candleviewer.ingestion.trade_stream import TradeStream
 from candleviewer.ingestion.watchdog import StalenessWatchdog
+from candleviewer.ingestion.write_behind_heal import TradeHealPorts, WriteBehindHealer
 from candleviewer.journal.service import JournalService
 from candleviewer.key_import_wiring import wire_key_import
 from candleviewer.key_selfcheck_wiring import wire_key_selfcheck
@@ -4254,21 +4255,37 @@ def wire_public_ws(
     # shifted by ClockGuard's measured offset so the exchange clock is truth.
     window = EventWindow(corrected_now_us(guard.offset_us), _launch_us)
 
-    ctx.ingestion.attach_trades(
-        TradeStream(
-            bus=ctx.bus.bus,
-            env=env,
-            set_desired=lambda topics: _set_desired("trade", topics),
-            parse_frame=adapter.parse_trade_frame,
-            topic_for=adapter.trade_topic,
-            is_listed=_is_listed,
-            touch=watchdog.touch,
-            fetch_recent=adapter.recent_trades_fetcher(rest.get_public),
-            tick_size=_tick_size,
-            clock=clock,
-            event_window=window,
-            writer=_TradeWriter(),
-        )
+    fetch_recent = adapter.recent_trades_fetcher(rest.get_public)
+    trades = TradeStream(
+        bus=ctx.bus.bus,
+        env=env,
+        set_desired=lambda topics: _set_desired("trade", topics),
+        parse_frame=adapter.parse_trade_frame,
+        topic_for=adapter.trade_topic,
+        is_listed=_is_listed,
+        touch=watchdog.touch,
+        fetch_recent=fetch_recent,
+        tick_size=_tick_size,
+        clock=clock,
+        event_window=window,
+        writer=_TradeWriter(),
+    )
+    ctx.ingestion.attach_trades(trades)
+
+    class _HotTradeIds:
+        """#1944: the healer's read-back of a lost run (`HotTradeReader`)."""
+
+        async def read_trade_ids(self, symbol: str, start_us: int, end_us: int) -> set[str]:
+            rows = await ctx.storage.market_data.read_trades(
+                symbol, TimeRange(start_us=start_us, end_us=end_us), tier="hot"
+            )
+            return {r.trade_id for r in rows}
+
+    # #1944: heal the hot-tier holes the trade write-behind recorded, through the same
+    # rate-governed REST page the stream backfills with and the same writer.
+    ports = TradeHealPorts(fetch_recent, trades.heal_event, _TradeWriter(), _HotTradeIds())
+    ctx.ingestion.attach_healer(
+        WriteBehindHealer(trades.write_behind, table="trades", trades=ports, clock=clock)
     )
 
     class _BookWriter:
@@ -4297,6 +4314,9 @@ def wire_public_ws(
             depth_500=ctx.settings.heatmap_depth_500,  # E21-T01: a 500 demand moves the tier
         )
     )
+    if isinstance(ctx.ingestion.books, BookStream):  # #1944: book runs are counted, not healed
+        healer = WriteBehindHealer(ctx.ingestion.books.write_behind, table="orderbook", clock=clock)
+        ctx.ingestion.attach_healer(healer)
     ctx.ingestion.attach_tickers(
         TickerStream(
             bus=ctx.bus.bus,
