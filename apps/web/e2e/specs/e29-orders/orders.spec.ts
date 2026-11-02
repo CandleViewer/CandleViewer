@@ -7,9 +7,10 @@ import { goldenPositions, POSITIONS_FIXTURE, stubPositions } from "../../support
 import { installWsHarness, type WsHarness } from "../../support/wsHarness";
 
 // E29-S02 (#912) PR2: SCR-063's Working-orders tab on R-130 `/positions`, web. One test per scenario this
-// PR covers ("Conditional orders are separated", "Cancel that lost the race", "Cancel-all partial
-// failure"), the native stop's T2 Cancel with the proof that no stop row is sent (C-2.6), axe and the
-// keyboard path. The real web client runs against the fake gateway (wsHarness) and stubbed REST (the
+// PR covers ("Conditional orders are separated", "Cancel that lost the race", through the protective
+// take-profit's confirm (D02 §8.2), "Cancel-all partial failure", Retry failed sending the retryable
+// account alone), the native stop's T2 Cancel with the proof that no stop row is sent (C-2.6), axe
+// and the keyboard path. The real web client runs against the fake gateway (wsHarness) and stubbed REST (the
 // shipped mappers' goldens, `support/orders.ts`). CI-only: this host has no Playwright browser.
 
 type Orders = generated.ws.Orders;
@@ -75,7 +76,16 @@ test.describe("SCR-063 Working orders (E29-S02)", () => {
 
   test("Cancel that lost the race", async ({ page }) => {
     const { harness, orders } = await openOrders(page);
+    // D02 §6.2's take-profit is a protective one: it asks first, and Keep sends nothing
     await cancelOf(page, TP).click();
+    const confirm = page.getByRole("alertdialog", {
+      name: "Cancel the take-profit at 64,800 for Main BTCUSDT?",
+    });
+    await confirm.getByRole("button", { name: "Keep take-profit" }).click();
+    await expect(confirm).toBeHidden();
+    expect(orders.writes()).toEqual([]);
+    await cancelOf(page, TP).click();
+    await confirm.getByRole("button", { name: "Cancel take-profit" }).click();
     await expect.poll(() => orders.writes().map((w) => w.path)).toEqual([`/api/v1/orders/${TP}`]);
     expect(orders.writes()[0]).toMatchObject({ method: "DELETE", arm: false });
     expect(orders.writes()[0]?.key).toMatch(/^[0-9a-f-]{36}$/);
@@ -136,8 +146,8 @@ test.describe("SCR-063 Working orders (E29-S02)", () => {
     await dialog.getByRole("button", { name: "Cancel 3 orders" }).click();
     const result = page.getByRole("dialog", { name: "Cancel results" });
     await expect(result.getByRole("listitem")).toHaveText([
-      "Sub-1 · LIVE: cancelled 1, then Bybit stopped answering — the rest are still open",
-      "Sub-2 · LIVE: Bybit did not answer — nothing cancelled",
+      "Sub-1 · LIVE: cancelled 1, then Bybit stopped answering — try again",
+      "Sub-2 · LIVE: not confirmed — check its orders on Bybit",
     ]);
     expect(orders.writes()).toEqual([
       expect.objectContaining({
@@ -155,6 +165,8 @@ test.describe("SCR-063 Working orders (E29-S02)", () => {
     await result.getByRole("button", { name: "Retry failed" }).click();
     await expect.poll(() => orders.writes().length).toBe(2);
     expect(orders.writes()[1]?.key).not.toBe(orders.writes()[0]?.key);
+    // Sub-2's exchange_unavailable is not retryable: that order is never sent again (22)
+    expect(orders.writes()[1]?.body).toMatchObject({ exchange_account_ids: [SUB1] });
   });
 
   test("a native stop's Cancel is disabled with its reason, and no stop row is ever sent", async ({
