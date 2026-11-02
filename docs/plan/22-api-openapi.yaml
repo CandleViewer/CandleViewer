@@ -12875,7 +12875,8 @@ paths:
         audited with `outcome: failure`.
         Effect (E42-T05): the artefact is removed from the backup volume (the engine renames it
         to a quarantine name at once and purges it after its grace period, ADR-0041; the
-        catalogue counts it removed at the rename) and the catalogue row is kept, since the catalogue is kept forever (`21-database-schema.md` section 7): the row
+        catalogue counts it removed at the rename) and the catalogue row is kept, since the
+        catalogue is kept forever (`21-database-schema.md` section 7): the row
         gains `deleted_at` and records who deleted it (not exposed), its `status` is unchanged,
         and a later verify, link or restore of it is `409 conflict` with rule
         `backup_not_usable`. An unknown backup is `404` before any challenge, and a catalogue that
@@ -12912,7 +12913,16 @@ paths:
         row that cannot be marked once the artefact is gone ends as a failed removal does (the
         second record, `503 store_unavailable`, the row unmarked), and a retry completes the delete,
         because an artefact already gone counts as removed; until the retry completes, the unmarked
-        row still counts as a usable backup. Until an artefact remover is wired the operation
+        row still counts as a usable backup. A removal the backup engine refuses under its own
+        floor (ADR-0041: it never removes the newest finished artefact of a kind in its own run
+        record) is a policy conflict, not a failure of the store: a second `backup.deleted`
+        record with `outcome: failure` and `reason: engine_retains_backup` follows, the row is
+        unchanged, and the answer is `409 conflict` with rule `engine_retains_backup`; when that
+        record cannot be written, the answer is `503 audit_unavailable`. The grant stays spent.
+        Only the engine's typed floor refusal is this `409`; any other or unreadable answer from
+        the engine is the failed removal above (`503 store_unavailable`), and the problem's
+        detail is fixed text that names no other backup.
+        Until an artefact remover is wired the operation
         answers `501 not_implemented` before any challenge.
       x-rbac: { permissions: [backups:write], scope: none }
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]

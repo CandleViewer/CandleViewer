@@ -6779,6 +6779,18 @@ The orchestrator assigned this number on #5396 (2026-11-01, 23:30Z); its ruling 
 - 22 `exportWorkspace` is refused in a live view-as context: `403 view_as_read_only` with its `admin.view_as_refused` record, as a write is, though it is a read, because a bundle is a copy of the target's workspace that leaves the view. The "View-as session" text of `info.description` gains a "Refused reads" bullet that names it, and the `Forbidden` response text names it beside the state-changing operations. A held context refuses every read already.
 - No new `x-error-codes` entry, schema member or operation, so the `openapi_pending` baselines do not move; no WS, table, column, chart or `machine_hash` change, and no migration.
 
+### 19.88 2026-11-02 — 22 backups: v1 kinds, the refused chained verification, the verification depth and the delete floor (ADR-0041, #3319)
+
+The orchestrator assigned this number on 2026-11-02, after §19.87 (the numbers between `main`'s last entry and this one belong to changes in flight); it is kept through every rebase.
+
+- The orchestrator's rulings of record on #3319 (the BQ list, ADR-0041), contract first (C-6.1), in the first of the ticket's changes; the engine itself follows in B1 and B2.
+- 22 `createBackup`: a `kind` the wired backup engine does not run (v1 runs `pg_dump` and `config_bundle`) is `409 conflict` with rule `kind_not_supported`, answered after the `501` and before the hourly limit, with no record and nothing started.
+- 22 `createBackup`: a chained verification that is refused (a restore running, or the lock wait spent) writes one `backup.verified` record with `stage: refused`, `outcome: failure` and the refusing rule as `reason`, and leaves the run's outcome unchanged.
+- 22 `deleteBackup`: a removal the backup engine refuses under its own floor is `409 conflict` with rule `engine_retains_backup`, recorded as a second `backup.deleted` failure record with that `reason`; the row is unchanged.
+- 22 `verifyBackup` and the chained verification run at `verify_method: checksum` and need no key: the artefact's SHA-256 against the catalogue and the digest bound in `backup.run`, then a well-formed age v1 header with exactly one X25519 stanza, which names no recipient. The restorability proof is the restore drill, `verify_method: restore_smoke` (21 §8.4).
+- 22's key alias, for an age artefact, is the recipient's fingerprint. 21 §3.10.3 and §12: `encryption_ref` is that fingerprint, a public value that keeps class S, and §8.1's secrets row names the offline backup identity and its escrow copy. ADR-0041 adds the sidecar's floor, the identity's custody and rotation, the fingerprint's encoding (`age-x25519-sha256:<64 lower-case hex digits>`) and `cv_restore` `NOLOGIN` outside a restore job; the E42 threat model gains §6a, the sidecar boundary.
+- No new `x-error-codes` entry, schema member, enum value or operation, and no WS, chart or `machine_hash` change.
+
 ### 19.89 2026-11-02 — §15.5: admin-area reads coalesced per window (E42-T01, #5331)
 
 The orchestrator assigned this number on 2026-11-02 (ruling of record on #5331, BQ-1 to BQ-13).
@@ -6793,14 +6805,3 @@ This is the number the orchestrator assigned on 2026-11-03 (02:42Z); it keeps it
 
 - §9.2 gains "Snapshot bound (#3969)", **PROPOSED**: a leg's `profile_snapshot` has its own bound, `PROFILE_SNAPSHOT_MAX_CHARS` = 32,768 (PROPOSED), because the test's maximal `AccountProfile` dumps to 26,337 characters (the two symbol lists alone are 1,000 × (21 + 3) = 24,000; a rung's `r` has no digit cap, and the 6,431 headroom covers a longer one), over the 16,384 of `exchange_payload.MAX_PAYLOAD_CHARS` (PROPOSED as the bound it is set against), which `algo_params` keeps.
 - No migration and no CHECK: `trade_group_legs` carries no size CHECK and the profile's own caps (`SymbolList` 500, `Ladder` 10, `name` 80) stay the one limit on its size. No REST operation, WS frame, chart or `machine_hash` change.
-
-### 19.88 2026-11-02 — 22 backups: v1 kinds, the refused chained verification and the verification depth (ADR-0041, #3319)
-
-The orchestrator assigned this number on 2026-11-02, after §19.87 (the numbers between `main`'s last entry and this one belong to changes in flight); it is kept through every rebase.
-
-- The orchestrator's rulings of record on #3319 (the BQ list, ADR-0041), contract first (C-6.1), in the first of the ticket's changes; the engine itself follows in B1 and B2.
-- 22 `createBackup`: a `kind` the wired backup engine does not run (v1 runs `pg_dump` and `config_bundle`) is `409 conflict` with rule `kind_not_supported`, answered after the `501` and before the hourly limit, with no record and nothing started.
-- 22 `createBackup`: a chained verification that is refused (a restore running, or the lock wait spent) writes one `backup.verified` record with `stage: refused`, `outcome: failure` and the refusing rule as `reason`, and leaves the run's outcome unchanged.
-- 22 `verifyBackup` and the chained verification run at `verify_method: checksum` and need no key: the artefact's SHA-256 against the catalogue and the digest bound in `backup.run`, then a well-formed age v1 header with exactly one X25519 stanza, which names no recipient. The restorability proof is the restore drill, `verify_method: restore_smoke` (21 §8.4).
-- 22's key alias, for an age artefact, is the recipient's fingerprint. 21 §3.10.3 and §12: `encryption_ref` is that fingerprint, a public value that keeps class S, and §8.1's secrets row names the offline backup identity and its escrow copy. ADR-0041 adds the sidecar's floor, the identity's custody and rotation, and `cv_restore` `NOLOGIN` outside a restore job.
-- No new `x-error-codes` entry, schema member, enum value or operation, and no WS, chart or `machine_hash` change.

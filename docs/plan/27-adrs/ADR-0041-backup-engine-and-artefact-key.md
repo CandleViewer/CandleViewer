@@ -93,7 +93,8 @@ which alone carry the Postgres client tools and the age implementation. The API 
   record of the runs it finished (id, kind, digest, `covers_to`, and the outcome of its own header check at each
   verification) on the backup volume and holds three rules no request can lift. A `remove` never takes the newest
   finished artefact of a kind in that record; the sidecar judges "newest" from its own record, never from the request
-  or the catalogue. A removal is a delayed
+  or the catalogue. The API answers that refusal as `409 conflict` with rule `engine_retains_backup`
+  (`22` `deleteBackup`), a policy conflict rather than a store failure. A removal is a delayed
   purge: the file is renamed to a quarantine name at once and deleted only after a grace period, during which the
   Owner can bring it back from the host. Runs are capped per window, so requests cannot fill the volume. B1 sets the
   grace period and the cap in the sidecar's configuration, not in the API, and tests each rule against a stream of
@@ -108,10 +109,11 @@ which alone carry the Postgres client tools and the age implementation. The API 
   runbook's closing step sets it back to `NOLOGIN` and ends any open session of the role; the expiry is the backstop
   if that step is missed, so the sidecar's stored password opens nothing between jobs. This relies on `pg_hba.conf`
   requiring `scram-sha-256` for `cv_restore`, since `VALID UNTIL` applies to password authentication only and an
-  expiry closes no open session. Both credentials exist only in the sidecar, as password files
-  on secret mounts readable by its user alone. The API process never holds an owner, restore or dump DSN and never
-  uses `cv_app` for this (`21` §1.1). The roles' grants land in B1's single revision (C-5.3); passwords never appear
-  in a migration.
+  expiry closes no open session. The API refuses to start when its own login is a member of `cv_backup`, `cv_restore`
+  or the owner role (a synchronous fail-closed check, C-2.21). Both credentials exist only in the sidecar, as password
+  files on secret mounts readable by its user alone. The API process never holds an owner, restore or dump DSN and
+  never uses `cv_app` for this (`21` §1.1). The roles' grants land in B1's single revision (C-5.3); passwords never
+  appear in a migration.
 - **The sidecar records nothing.** It never connects as `cv_app`, writes no catalogue row and no audit record; the
   E42-T05 services record every step, as the ports require.
 
@@ -124,20 +126,23 @@ which alone carry the Postgres client tools and the age implementation. The API 
   every other key. The sidecar holds only the public recipient, which is configuration, not a secret, so a run, a
   scheduled run and the automatic verification need no secret. The identity (private half) is held offline by the
   Owner and reaches the sidecar only for a restore or a restore drill (section 4). The recipient's fingerprint (the
-  SHA-256 of its encoded public key) is pinned in the sidecar's configuration; the sidecar refuses to run while the
-  recipient it would encrypt to does not match it. `encryption_ref` on the catalogue row is that fingerprint as the
-  sidecar's plan reports it, a public value that keeps the column's class (`21` §12); a plan without one stays refused
-  as `503 backup_engine_invalid` (E42-T05 BK-8).
-- **Custody of the identity.** There is one recipient, so losing the identity loses every backup encrypted to it.
-  The Owner holds the identity offline, never on the host that runs CandleViewer, and keeps an escrow copy sealed in a
+  SHA-256 over the lower-case Bech32 `age1…` recipient string as ASCII, written `age-x25519-sha256:<64 lower-case hex
+digits>`) is pinned in the sidecar's configuration; the sidecar refuses to run while the recipient it would encrypt
+  to does not match it. `encryption_ref` on the catalogue row is that fingerprint as the sidecar's plan reports it, a
+  public value that keeps the column's class (`21` §12); a plan without one stays refused as `503
+backup_engine_invalid` (E42-T05 BK-8).
+- **Custody of the identity.** There is one recipient, so losing the identity loses every backup encrypted to it. The
+  Owner holds the identity offline, never on the host that runs CandleViewer, and keeps an escrow copy sealed in a
   second place under their sole control; both are recorded in `21` §8.1's secrets row. Rotation: a new key pair is
   made offline, its fingerprint replaces the pinned one, and runs from then on are encrypted to it; the old identity
   is kept, with its escrow copy, while any artefact encrypted to it is kept (every artefact, since v1 prunes nothing).
-  A suspected exposure of the identity rotates at once and is an incident. The restore drill of `21` §8.4 (monthly, a PRR
-  gate item) opens a current artefact with the held identity, so a lost or wrong identity shows up there, not at a restore.
-- **The implementation** of the format keeps the identity in process memory: a library binding of age, or the
-  reference tool given the identity through an anonymous pipe, never a path on disk. The choice and its dependency
-  review (licence, pin, maintainer) land in B1 under `security-review`.
+  A suspected exposure of the identity rotates at once and is an incident. The restore drill of `21` §8.4 (monthly, a
+  PRR gate item) opens a current artefact with the held identity, so a lost or wrong identity shows up there, not at a
+  restore.
+- **The implementation** of the format is the reference age tool, pinned by SHA-256 and recorded in `PINS.md`, given
+  the identity through an anonymous pipe, never a path on disk; never a Python binding, which cannot overwrite the
+  identity (#3319 ruling 4). "One supervised child per job" means one process group per job joined by kernel pipes,
+  with no shell. Its dependency review (licence, pin, maintainer) lands in B1 under `security-review`.
 - **Origin (v1).** The artefact's origin is the SHA-256 digest bound in the append-only `backup.run` record (ticket
   Notes; SR-E42-05); no artefact signature in v1. A restore compares the digest on the opened handle immediately
   before the decrypt (`e42-admin.md` §6 step 4).
@@ -165,13 +170,14 @@ which alone carry the Postgres client tools and the age implementation. The API 
   `system:<name>` (the `audit/break_halt.py` convention: no route can assume it), `triggered_by: schedule`, cadence
   and retention from `21` §8.1 with no new figures, and a skip when a run or restore is running. `pre_migration`,
   `pre_release` and `pre_restore` runs are out of v1.
-- **Verification depth.** The automatic verification (`createBackup` with `verify: true`, BK-9d) and `verifyBackup` run
-  at **`checksum`** depth and need no key: the file's SHA-256 against the catalogue and the digest bound in
+- **Verification depth.** The automatic verification (`createBackup` with `verify: true`, BK-9d) and `verifyBackup`
+  run at **`checksum`** depth and need no key: the file's SHA-256 against the catalogue and the digest bound in
   `backup.run`, then a well-formed age v1 header with exactly one X25519 stanza. An X25519 stanza names no recipient,
   so this check cannot show which key a file is for; the recipient is fixed when the file is written, by the pinned
   fingerprint (section 2). The API computes the digest over its read-only mount; the sidecar checks the header. It
-  proves the bytes are the ones the run produced; it does not prove they restore. The **`restore_smoke`** depth decrypts with the Owner's identity into a scratch database: it is
-  the per-release restore drill (SR-093, `21` §8.4), the restorability proof.
+  proves the bytes are the ones the run produced; it does not prove they restore. The **`restore_smoke`** depth
+  decrypts with the Owner's identity into a scratch database: it is the per-release restore drill (SR-093, `21` §8.4),
+  the restorability proof.
 - **The chained verification** runs as the system actor after the run's `finished` record, through
   `BackupVerifications`. A chain refused (a restore running, the lock wait spent) is recorded as `backup.verified`
   with `stage: refused`, `outcome: failure` and the rule as `reason`; the run's outcome is unchanged.

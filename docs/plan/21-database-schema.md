@@ -4158,11 +4158,12 @@ CREATE INDEX ix_backups_failed    ON backups (started_at DESC) WHERE status = 'f
 
 **Privileges.** No UPDATE trigger fires on DELETE or INSERT, so the same revision revokes DELETE on `backups` from `cv_app` where the role exists, as `0024` does for `api_keys` and `0030` for `auth_keys`. The runtime role keeps SELECT, INSERT and UPDATE; without DELETE it cannot swap a row's location or digest by deleting the row and inserting it again under the same id. No runtime path deletes a catalogue row: the row is kept forever (§7), and a deleted artefact is marked. The owner role and superusers can still bypass both. The downgrade grants DELETE back, the `pg_bootstrap.sql` default. Verify and restore still check the digest bound in the append-only `backup.run` record.
 
-**What the engine writes (ADR-0041, #3319).** `encryption_ref` is the fingerprint (SHA-256 of the encoded public key)
-of the age recipient pinned in the sidecar's configuration, as its plan reports it; the identity behind it and its
-sealed escrow copy are held offline by the Owner (§8.1, ADR-0041 section 2). The run reports `covers_from` and `covers_to`,
-and the `stage: finished` `backup.run` record binds them before the row is `ok`. For `pg_dump`, `covers_to` is the
-server's time read before the dump's snapshot is taken, never after. `retention_until` is set from §8.1 when the run
+**What the engine writes (ADR-0041, #3319).** `encryption_ref` is the fingerprint of the age recipient pinned in
+the sidecar's configuration, as its plan reports it: `age-x25519-sha256:<64 lower-case hex digits>`, the SHA-256 over the lower-case
+Bech32 recipient string as ASCII. The identity behind it and its sealed escrow copy are held offline by the Owner
+(§8.1, ADR-0041 section 2). The run reports `covers_from` and `covers_to`, and the `stage: finished` `backup.run`
+record binds them before the row is `ok`. For `pg_dump`, `covers_to` is the server's time read before the dump's
+snapshot is taken, never after. `retention_until` is set from §8.1 when the run
 finishes; v1 prunes nothing.
 
 ```sql

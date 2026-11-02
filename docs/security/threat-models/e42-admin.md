@@ -796,6 +796,32 @@ the remote deletion at the exchange (E27 KV-S09) is the only limit. Either optio
 point. Detection is absent today: no verify runner is wired (`main.py:79-83`, #2966) and the checkpoint job has no
 caller (`audit/checkpoint.py:33`), so the tail check of step 8 has no anchor until #1238 lands.
 
+## 6a. The backup sidecar boundary (ADR-0041, #3319)
+
+ADR-0041 moves the backup engine out of the API into a sidecar process. The API reaches it over a local socket
+(**TB-SC**): a socket on a volume shared by the two containers only, open to the API's user alone and checked by
+peer credentials, with no network listener. This annex is the STRIDE pass C-12.1 asks for before the first
+implementation slice (B1a); B1's split into B1a, B1b and B1c is the size ruling on #3319. It extends §2's boundaries
+and §4's rows; the rows stay in this annex, unrated, until the model's next revision folds them into §4 and rates them
+under §1.4. Each control is a requirement on B1 or B2 of #3319, and each residual is owned by that slice's security review.
+
+The API is treated as untrusted across TB-SC, because it is the process that faces the network. A well-formed
+request is not proof that the Owner wants it. The sidecar holds the controls that matter on its own side: its run
+record, its floor, the pinned recipient, and the Owner's intake for a restore.
+
+<!-- prettier-ignore -->
+| Id | STRIDE | Threat at TB-SC | Control (ADR-0041 section) | Slice | Residual |
+| --- | --- | --- | --- | --- | --- |
+| AD-SC01 | S | A process other than the API speaks to the socket | Socket file mode, a peer-credential check against the API's uid, no network listener (§1) | B1b | A process running as the API's uid |
+| AD-SC02 | T | Requests remove artefacts or move "newest" | The sidecar's own run record and floor: never the newest finished artefact of a kind; a delayed purge to quarantine; a run cap per window; the API answers the refusal `409 engine_retains_backup` (§1) | B1b | Removals the floor allows are delayed, not refused; B2 alerts on every quarantine |
+| AD-SC03 | T | A run is encrypted to a recipient the Owner does not hold | The recipient fingerprint is pinned in the sidecar's configuration; a mismatch refuses the run; `encryption_ref` carries the fingerprint (§2) | B1c | Whoever can change the sidecar's configuration |
+| AD-SC04 | T, S | A restore is pointed at a different artefact | The digest is checked three ways (the request, the sidecar's run record, the Owner's confirmation at the intake) on the opened handle before the decrypt; the intake shows the backup id, the digest and `covers_to` (§4) | B2 | None beyond the Owner's confirmation |
+| AD-SC05 | R | A sidecar action leaves no trace | The sidecar writes no catalogue row and no audit record (§1); the API services write every step ahead (`backup.run`, `backup.verified`, `backup.deleted`, `backup.restore`), and refusals are recorded as failures (§1, §3) | B1b | A sidecar action the API never requested would show only in the sidecar's run record; no reconciliation is specified, owned by B2's security review |
+| AD-SC06 | I | Key material or a credential crosses the socket or reaches a log | No request or answer carries a credential, a DSN or key material; the identity reaches the sidecar only through the host-side intake, for one job; log-capture and `repr` tests (§1, §4) | B1a, B1b | Copies a runtime makes internally (§4 residual) |
+| AD-SC07 | D | Requests fill the backup volume or hold the engine | The run cap per window, set in the sidecar's configuration; size-bounded, strict messages; a cancel or a deadline ends the child (§1, §3). The API's admission lock serialises well-formed requests but is not a control across TB-SC | B1b | Runs up to the cap; concurrent connections from the API's uid (B1b's security review sets a bound) |
+| AD-SC08 | E | The API gains dump or restore rights | `cv_backup` is read-only and `cv_restore` is `NOLOGIN` outside a restore job; both credentials live only in the sidecar; the API's boot check refuses start when its login is a member of the backup, restore or owner roles (§1; #3319 ruling 6, C-2.21) | B1a | A host-side step left undone; `VALID UNTIL` is the backstop |
+| AD-SC09 | S | The API reaches a socket that is not the sidecar's | The socket volume is shared by the two containers only (§1); the API checks the peer's uid against the sidecar's (owed, B1b) | B1b | A process running as the sidecar's uid |
+
 ## 7. Denial of service: the audit read side and export
 
 The audit read side shares three things with the order path: the Postgres that a verify walk or an export reads,
@@ -1362,4 +1388,5 @@ AD-F23), with E42-X01 refinements on RSK-020, RSK-021 and RSK-046.
 | 2026-10-23 | author (virtarix-worker-2; #889 S7c) | AD-D13 and §10.1: the rotation served with its three records; an `unrecoverable` rotation is the recovery Q4 names, with no restart. AD-R12 and AD-T14: the controls built since S6 named (code lens C4-5). No rating moves |
 | 2026-10-23 | author (virtarix-worker-2; #889 S10) | The signed export served: SR-E42-08 met for the export part (AD-F04 keeps its verify part) and SR-E42-15 met; AC-ADM-20, AC-ADM-21, AD-S12, AD-R09, AD-D03, the operations rows, §1.1, the Export row, §7 item 3, §10.2's join, E42-T02, and AD-T14 with RR-17 (04 §16.1). No rating moves |
 | 2026-10-23 | author (virtarix-worker-3; #3085 S14b) | AD-F03 closed, and the view-as statements the server slices left stale: §1.1 and §1.3 (the three view-as rows served, the recount and the baseline re-measured), §2, AD-S05, AD-I05 and AD-E04 (built; AC-ADM-22 holds them), §10.1, SR-E42-03 (met) and §13.1 to §13.2. The first looks' findings folded: every count and citation re-measured at this slice's head, and the elevation bullet (§5.1), D6 (§5.2) and the E42-S03 row (§12) no longer say the server slice is owed. No rating moves |
+| 2026-11-02 | author (#3319 PR #5474) | §6a: the backup sidecar boundary TB-SC (ADR-0041), AD-SC01 to AD-SC09, unrated and outside §4.7's count until the next revision folds them in. No rating moves |
 | Pending | Owner (human) | D7 (#3084), D8 (E42-T06, #1085) and the §13.2 residuals (RR-17), queued on #2701 (issuecomment-6244844061; D7: issuecomment-6231423922) |
