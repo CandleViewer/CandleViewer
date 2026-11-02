@@ -78,6 +78,23 @@ describe("FormField (CMP-040)", () => {
     expect(host.querySelectorAll("[aria-live]")).toHaveLength(1);
   });
 
+  // E42-D03 I-2, E42-D04 AL-17: a server's field error moves focus to the field, which carries it by
+  // aria-describedby: one voice, so the line is not live.
+  it("errorLive false: the same error line, linked and shown, but not a live region", async () => {
+    const host = await mount(
+      <FormField label="IP" error={ERROR} errorLive={false}>
+        <TextInput />
+      </FormField>,
+    );
+    const field = within(host).getByRole("textbox", { name: "IP" });
+    const node = host.ownerDocument.getElementById(ids(field, "aria-describedby")[0] ?? "");
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(node).toHaveTextContent(ERROR);
+    expect(node).not.toHaveAttribute("aria-live");
+    expect(node).not.toHaveAttribute("aria-atomic");
+    expect(host.querySelectorAll("[aria-live]")).toHaveLength(0);
+  });
+
   it("sets aria-required for required and draws no asterisk", async () => {
     const host = await mount(
       <FormField label="Username" required>

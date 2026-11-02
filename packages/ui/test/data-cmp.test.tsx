@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   AdminLayout,
   AuditActionTrigger,
+  AuditFilterBar,
   AuditRow,
   AuditRowList,
   Button,
@@ -179,6 +180,10 @@ const molecules: [string, () => JSX.Element][] = [
         <AuditRow entry={auditEntry} variant="compact" href="#audit-1" />
       </AuditRowList>
     ),
+  ],
+  [
+    "CMP-174",
+    () => <AuditFilterBar filters={{}} onChange={noop} actorOptions={[]} actionOptions={[]} />,
   ],
   ["CMP-177", () => <RecorderStatusRow symbol="BTCUSDT" reason="manual" state="recording" />],
   ["CMP-178", () => <SystemHealthTile label="Users" href="#users" state="ready" tone="ok" />],
