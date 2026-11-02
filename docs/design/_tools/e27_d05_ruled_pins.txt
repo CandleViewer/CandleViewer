@@ -48,6 +48,7 @@
 14|2700|### SCR-129 — Admin: account disable / delete confirmation
 14|2704|- **A11y:** `role="alertdialog"` restating the consequences as a list (o
 14|2708|- **Design sign-off acceptance checklist:** [ ] disable and delete are s
+15|143|### CMP-010 Slider
 15|148|- **A11y**: `role="slider"`, `aria-valuenow/min/max/text`, arrow keys ±s
 15|401|### CMP-034 MaskedValue (
 15|403|masked API key/secret display with
@@ -68,6 +69,7 @@
 16|129|| **Compact** (default for trading surfaces) | 24px | 24px | `space.2` (
 16|130|| **Comfortable** (default for admin/onboarding/settings) | 32px | 32px
 16|135|> (E05-D01). Compact remains exactly the WCAG 2.2 §2.5.8 minimum (24×24p
+16|167|- **Runtime contract (E05-T02, `packages/ui/src/theme/`).** The runtime
 23|861|| `wallet` | `exchange_account_ids` | Current balances + account health
 23|866|| `system` | — | Current health + flags + kill-switch | 1 000 ms | [`Sys
 23|1316|| `system` | `feature_flags`: per flag key, last-write-wins, a key is ne
@@ -199,6 +201,8 @@ D03|2037|| the session's access changes mid-session (`permission_change`) | E09-
 D03|2038|| a keystroke on a T2 control | polite | once per press | the reason sen
 D03|2043|The countdown never speaks per tick, the health chips never speak on a r
 D03|2258|| `e27.scr126.invalid.key_empty` | CMP-040 inline error on press · frame
+D03|2536|| `accounts.never_keyed` | "An account that never had a key can only be
+D03|2541|| `accounts.no_key` | "No API key yet — trading is off for this account.
 D03|2700|| D03-C1 | **"cosy".** The ticket asks for compact, cosy and comfortable
 D03|2707|| D03-C8 | **A distinct critical hue (DS-6)**, BQ-6's OWNER-LEVEL rider.
 D03|2708|| D03-C9 | **The verdict line's own announcement vs `15:935`.** E27-D02
@@ -220,7 +224,9 @@ D04|192|| C-4 | §4's "Focus moves only on a user action" has one carve-out: the
 D04|198|## 7. The board register for PR 2
 D04|206|| 01 | `E27-D04 / 01 verification` | `docs/design/E27/img/E27-D04-01-ver
 D04|212|| 07 | `E27-D04 / 07 compromise-drawer` | `docs/design/E27/img/E27-D04-0
+DS|15|orchestrator's round. A **G-T2 miss is a Major** in the pre-lens; a **Re
 DS|17|## G-T2 — the controls E09-D09 §2.1 routes to T2 are specified as T2
+DS|49|- **G-T2.4** (§3.1–§3.2): every reason is one of §3.1's keys (`{verb}` o
 DS|65|- **R1 Text resize** (`05` §5 item 7, WCAG 1.4.4): for every dialog, dra
 DS|74|- **R5 Live accounts** (`22` `ArmToken`): submits — `placeOrder`, `creat
 DS|79|**R6 Contracts in flight** (this file;

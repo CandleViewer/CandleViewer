@@ -20,7 +20,9 @@ review edits no token). Eleven gates, each FAIL led by its code:
   the ten flows, each step a backticked key, no pointer word, an escape.
 - [G4-T2] section 6: the view-as rows first, each led by `rbac.view_as` or recorded T3; a class per
   row; a T2 row's rendering 2a and its checks; no disabled token on a T2 row; an `rbac.*` string
-  one sentence of at most 60 characters; the admin key actions recorded T3 for view-as.
+  one sentence of at most 60 characters; the admin key actions recorded T3 for view-as in the
+  ruled words (BQ-5); the G-T2.4 key check: every `accounts.*` key a leg names is a PROPOSED E27
+  state key in E27-D03's register at the base, its string one sentence of at most 60 characters.
 - [G5-LIVE] section 9: a politeness and a maximum rate on every LR row, a justification, assertive
   rows once per event, and the deliberately silent rows (heartbeat age, countdown ticks, staleness
   age, `wallet`, `system`, the 60 s health refresh) never spoken.
@@ -28,19 +30,22 @@ review edits no token). Eleven gates, each FAIL led by its code:
   deficiencies) and section 11's CT rows and matrix line, all recomputed; section 11's drift line
   equals the E27-D03 audit's own count at the base.
 - [G7-VERDICT] section 13: a verdict from R-3's list; `at risk` names a Major or Minor F row or an
-  interim path, `non-compliant` a Blocking one.
+  interim path, `non-compliant` a Blocking one, `ruled divergence` (BQ-8) an A row and no F row.
 - [G8-FINDINGS] section 14: counts against the heading and the marker; severity, owner (a spec or
   a component and an area, never an agent), target E27-D06 (#819) plus a consuming story unless
   Info, a G-T2 cell; the hold sentence; no dangling F, RQ, FO, KS, T2, LR, CR, CT, SR, C, G, Q, A
   or H id.
-- [G9-RULED] the BQ section is headed "defaults built; ruling pending (comment 6573202169)", lists
-  BQ-0..BQ-16 as posted, each with the section it is built in, carries no RULED stamp of its own,
-  and every default's pinned words (DEFAULT_PINS) stand in the spec.
+- [G9-RULED] the BQ section is headed "RULED (orchestrator, comment 6573574102)" and lists
+  BQ-0..BQ-16 in order, each led by its ruling (OVERRIDE exactly for BQ-4, BQ-8 and BQ-16, ACCEPT
+  for the rest) and naming the section it is built in; the accepted defaults' words
+  (STANDING_PINS) and the ruled words (RULING_PINS) stand in the spec, and with
+  `--source R818=FILE` each ruled phrase also stands in that saved copy of the ruling (bold marks
+  dropped); no superseded wording (SUPERSEDED) is left anywhere in the spec.
 - [G10-CITE] every `KEY`:line cite resolves at the base to a non-blank line; the pins file and the
   cited endpoints match both ways, each pin's words on its line; E27-D04 at the base equals its
   pin (#5001's merge) and E27-D03 equals its last edit.
 - [G11-HYGIENE] no word or substring on the lane's public-text list, host, uuid, local path, URL
-  or closing keyword; no fixture label or decimal amount in a quoted example (sections 5, 9, 16).
+  or closing keyword (with or without a space before the #); no fixture label or decimal amount in a quoted example (sections 5, 9, 16).
 
 `--json` prints the numbers and findings; `--check` exits 1 on any FAIL (0 FAIL, 0 WARN is the
 bar); `--self-test` applies one mutation per gate (MUTATIONS) and the probes (PROBES) to an
@@ -49,7 +54,7 @@ reproduces the base result and no file on disk changed. `--repin` rewrites the p
 spec's cites (keeping every hand-written pin still cited).
 
 Usage: python3 -I -B docs/design/_tools/e27_d05_a11y_review_audit.py [--check] [--json]
-       [--self-test] [--repin]
+       [--self-test] [--repin] [--source R818=FILE]
 """
 
 from __future__ import annotations
@@ -71,7 +76,7 @@ ROOT = Path(__file__).resolve().parents[3]
 TOOLS = ROOT / "docs" / "design" / "_tools"
 SPEC = ROOT / "docs" / "design" / "E27" / "E27-D05.md"
 PINS = TOOLS / "e27_d05_ruled_pins.txt"
-BASE = "e5b286ed50"  # origin/main; the BQ list (6573202169) read every cite here
+BASE = "e5b286ed50"  # origin/main; the BQ list (6573202169) and its ruling read every cite here
 PIN_D04 = "0d63d2cadb"  # E27-D04 PR 1 (#5001) merged; PR 2 (the seven boards) not opened (R6)
 PIN_D03 = "aef2cc150b"  # E27-D03's last edit (the 2026-10-31 token retune, #5161)
 KEYS = {
@@ -107,7 +112,14 @@ REQ_CITES = (  # the catalogue clauses the ticket's Scope names, each with an RQ
     "`14`:2637", "`14`:2666", "`14`:2680", "`14`:2693", "`14`:2704", "`14`:1841",
     "`14`:474", "`14`:85",
 )  # fmt: skip
-VERDICTS = ("compliant", "at risk", "non-compliant", "out of scope", "not yet decidable")
+VERDICTS = (
+    "compliant",
+    "at risk",
+    "non-compliant",
+    "out of scope",
+    "not yet decidable",
+    "ruled divergence",
+)
 FLOWS = ("KS-R", "KS-I", "KS-T", "KS-O", "KS-V", "KS-D", "KS-X", "KS-L", "KS-E", "KS-C")
 POINTER = re.compile(r"pointer|click|mouse|hover|drag|tap\b", re.IGNORECASE)
 T2_CLASSES = ("T2", "T3", "validity", "busy")
@@ -126,22 +138,41 @@ AGENT_RE = re.compile(r"worker|agent|session|lane", re.IGNORECASE)
 TARGET = "E27-D06 (#819)"
 STORY_RE = re.compile(r"E27-S0[1-5] \(#89[5-9]\)|E27-Q04|E27-D07")
 HOLD = "E27-D06 (#819) is not signed off while a Blocking row stands"
-BQ_HEAD = (
-    "## The seventeen questions (BQ-0 to BQ-16) — defaults built; ruling pending "
-    "(comment 6573202169)"
-)
+RULING = "6573574102"  # the orchestrator's ruling of record on the BQ list 6573202169
+BQ_HEAD = f"## The seventeen questions (BQ-0 to BQ-16) — RULED (orchestrator, comment {RULING})"
 BQ_IDS = tuple(f"BQ-{i}" for i in range(17))  # as posted: BQ-0 to BQ-16
-DEFAULT_PINS = (  # the BQ list's default words, each standing in the spec (G9)
+OVERRIDES = ("BQ-4", "BQ-8", "BQ-16")  # the ruling accepts every other default
+STANDING_PINS = (  # the accepted defaults' words, each standing in the spec (G9)
     "Refs #818",
     "not drawn — the text is binding",
     "PENDING (PR 2)",
     "never as evidence",
     "T3 by step 1 — recorded, not a miss",
-    "compliant inside the open modal",
     "focused content replaced inside an open modal",
     "the re-review is this tool's F gate re-run on E27-D06",
-    "owner walkthrough: post-Done (#2701)",
     "`large-pr-approved`",
+)
+RULING_PINS = (  # the ruled words, verbatim from the ruling (bold dropped); G9, and --source
+    "ACCEPT every default except BQ-4, BQ-8 and BQ-16",
+    "a G-T2 miss stays Major",
+    "Blocking = no compliant path, colour alone, or a destructive step not perceivable non-visually",
+    "the route is T3 (E09-D09 §2.1 step 1; D03 §10.2 'who sees what'), so the controls never render",
+    "the `accounts.*` keys are PROPOSED E27 state keys",
+    'ruled divergence, not "compliant"',
+    "keep announce-first and the A-row to `05` §3.4 item 3",
+    "no new figure",
+    "never gating Done",
+    "the owner's explicit `approved` precedes Done for a design ticket (C-10.1)",
+)
+SUPERSEDED = (  # the defaults the ruling overrode, and the pre-ruling stamp
+    "ruling pending",
+    "defaults built",
+    "post-Done",
+    "compliant inside the open modal",
+    "a G-T2 miss that hides the reason",
+)
+STATE_KEY = re.compile(
+    r'^\| `(accounts\.[a-z_]+)` +\| "([^"]+)" +\| state, PROPOSED E27', re.MULTILINE
 )
 ID_KINDS = ("RQ", "FO", "T2", "LR", "CR", "CT", "SR", "C", "G", "Q", "A", "H")
 SIMS = ("protanopia", "deuteranopia", "tritanopia")
@@ -263,6 +294,7 @@ class Ctx(NamedTuple):
     d03_pin: str
     matrix: str
     drift: str
+    source: str = ""
 
 
 class Result:
@@ -275,7 +307,7 @@ class Result:
         self.fails.append(f"[{code}] {msg}")
 
 
-def load_ctx() -> Ctx:
+def load_ctx(source: str = "") -> Ctx:
     return Ctx(
         spec=SPEC.read_text(encoding="utf-8"),
         tool=Path(__file__).read_text(encoding="utf-8"),
@@ -288,6 +320,7 @@ def load_ctx() -> Ctx:
         d03_pin=git_show(PIN_D03, KEYS["D03"]),
         matrix=matrix_line(),
         drift=d03_drift(),
+        source=source,
     )
 
 
@@ -444,9 +477,23 @@ def gate_t2(ctx: Ctx, r: Result) -> None:
             if len(text) > 60 or not text.endswith(".") or text.count(". ") > 0:
                 r.fail("G4-T2", f"{tid}: {key} {text!r} is not one sentence of ≤ 60 characters")
     admin = [row for row in table.values() if all(a in row[1] for a in ADMIN_ACTIONS)]
-    if not admin or admin[0][3] != "T3" or "T3 by step 1 — recorded, not a miss" not in admin[0][6]:
-        r.fail("G4-T2", "the admin key actions are not recorded T3 for view-as")
+    if (
+        not admin
+        or admin[0][3] != "T3"
+        or "T3 by step 1 — recorded, not a miss" not in admin[0][6]
+        or RULING_PINS[3] not in admin[0][2]
+    ):
+        r.fail("G4-T2", "the admin key actions are not recorded T3 for view-as in the ruled words")
+    registered = dict(STATE_KEY.findall(ctx.base["D03"]))
+    named = set(re.findall(r"`(accounts\.[a-z_]+)`", " ".join(" ".join(v) for v in table.values())))
+    bad = sorted(k for k in named if k not in registered)
+    long = sorted(
+        k for k, s in registered.items() if len(s) > 60 or not s.endswith(".") or ". " in s
+    )
+    if not registered or bad or long or RULING_PINS[4] not in six:
+        r.fail("G4-T2", f"G-T2.4: unregistered {bad[:3]}, not one sentence ≤ 60 {long[:3]}")
     r.numbers["t2"] = len(table)
+    r.numbers["state_keys"] = len(registered)
 
 
 # --- G5: live regions ---------------------------------------------------------------------------
@@ -525,6 +572,10 @@ def gate_verdict(ctx: Ctx, r: Result) -> None:
             r.fail("G7-VERDICT", f"{row[0]}: at risk without an F row or an interim path")
         elif verdict == "compliant" and refs:
             r.fail("G7-VERDICT", f"{row[0]}: compliant but names {refs}")
+        elif verdict.startswith("ruled divergence") and (refs or not re.search(r"A-\d\d", row[2])):
+            r.fail(
+                "G7-VERDICT", f"{row[0]}: a ruled divergence without its A row, or with an F row"
+            )
     if n < 15:
         r.fail("G7-VERDICT", f"section 13 has {n} clause rows, under fifteen")
     r.numbers["clauses"] = n
@@ -563,7 +614,7 @@ def gate_findings(ctx: Ctx, r: Result) -> None:
     for kind in ID_KINDS:
         defined |= set(by_id(ctx.spec, kind))
     defined |= {k for k in re.findall(r"^\| (KS-[A-Z]-\d\d) ", ctx.spec, re.MULTILINE)}
-    used = set(re.findall(r"\b((?:F|RQ|FO|T2|LR|CR|CT|SR|C|G|Q|A|H)-\d\d)\b", body))
+    used = set(re.findall(r"\b((?:F|RQ|FO|T2|LR|CR|CT|SR|C|G|Q|A|H)-\d\d)\b(?!\.\d)", body))
     used |= set(re.findall(r"\b(KS-[A-Z]-\d\d)\b", body))
     dangling = sorted(used - defined)
     if dangling:
@@ -571,24 +622,37 @@ def gate_findings(ctx: Ctx, r: Result) -> None:
     r.numbers["findings"] = dict(counts, total=len(table))
 
 
-# --- G9: the BQ list's defaults, not yet ruled ---------------------------------------------------
+# --- G9: the BQ list, ruled -----------------------------------------------------------------------
+def unbold(text: str) -> str:
+    return norm(text.replace("**", ""))
+
+
 def gate_ruled(ctx: Ctx, r: Result) -> None:
     if BQ_HEAD not in ctx.spec:
-        r.fail("G9-RULED", "the BQ section heading is not the pending form")
+        r.fail("G9-RULED", "the BQ section heading is not the ruled form")
         return
     bq = section(ctx.spec, BQ_HEAD.removeprefix("## "))
     table = {row[0]: row for row in rows(bq) if row[0].startswith("BQ-")}
     if tuple(table) != BQ_IDS:
         r.fail("G9-RULED", f"the BQ rows are {list(table)[:3]}…, not BQ-0..BQ-16 in order")
     for bid, row in table.items():
-        if not re.search(r"§\d", row[-1]):
-            r.fail("G9-RULED", f"{bid}: no section named where the default is built")
-    if re.search(r"RULED \(orchestrator", bq) or "RULED as proposed" in bq:
-        r.fail("G9-RULED", "the BQ section carries a RULED stamp before the ruling")
-    for pin in DEFAULT_PINS:
-        if pin not in ctx.spec:
-            r.fail("G9-RULED", f"the default's words {pin!r} are not in the spec")
+        want = "OVERRIDE:" if bid in OVERRIDES else "ACCEPT"
+        if not row[-1].startswith(want) or not re.search(r"§\d", row[-1]):
+            r.fail("G9-RULED", f"{bid}: not led by {want!r} with the section it is built in")
+    flat = unbold(ctx.spec)
+    for pin in (*STANDING_PINS, *RULING_PINS):
+        if norm(pin) not in flat:
+            r.fail("G9-RULED", f"the words {pin!r} are not in the spec")
+    if ctx.source:
+        saved = unbold(ctx.source)
+        for pin in RULING_PINS:
+            if norm(pin) not in saved:
+                r.fail("G9-RULED", f"{pin!r} is not in the saved copy of the ruling")
+    for old in SUPERSEDED:
+        if old.lower() in flat.lower():
+            r.fail("G9-RULED", f"superseded wording {old!r} is still in the spec")
     r.numbers["bq_rows"] = len(table)
+    r.numbers["ruling_pins"] = len(RULING_PINS)
 
 
 # --- G10: cites and pins ------------------------------------------------------------------------
@@ -665,7 +729,7 @@ def gate_hygiene(ctx: Ctx, r: Result) -> None:
         if UUID.search(text):
             r.fail("G11-HYGIENE", f"{name}: an id in the uuid form")
     local = "/" + "home/|/tmp/|/mnt/|[A-Z]:\\\\"
-    closing = r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?) #\d"
+    closing = r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*#\d"
     for pat, what in (
         (local, "a local path"),
         (r"https?://", "a URL"),
@@ -741,7 +805,7 @@ MUTATIONS: tuple[tuple[str, Mut], ...] = (
         "G8-FINDINGS",
         regex(r"^(\| F-01 (?:[^|]*\|){4} )E27-D03 · area/accounts-admin", r"\1a worker"),
     ),
-    ("G9-RULED", sub("ruling pending (comment 6573202169)", "RULED (comment 6573202169)")),
+    ("G9-RULED", sub(f"RULED (orchestrator, comment {RULING})", "ruling pending (comment x)")),
     ("G10-CITE", pin_regex(r"^(05\|\d+\|)", r"\1zz ")),
     ("G11-HYGIENE", sub("## 19. Summary", "## 19. Summary " + codecs.decode("ErynlEbbz", "rot13"))),
 )
@@ -773,6 +837,17 @@ PROBES: tuple[tuple[str, Mut], ...] = (
         "G9-RULED",
         sub("the re-review is this tool's F gate re-run on E27-D06", "the re-review is optional"),
     ),
+    ("G9-RULED", regex(r"^(\| BQ-8 +\| [^|]*\| )OVERRIDE:", r"\1ACCEPT:")),
+    (
+        "G9-RULED",
+        sub("Owner approval pending (#2701): the", "Owner walkthrough post-Done (#2701): the"),
+    ),
+    ("G4-T2", sub(RULING_PINS[4] + " (`D03`", "the keys (`D03`")),
+    (
+        "G7-VERDICT",
+        regex(r"^(\| `05` §3\.4 item 3 [^|]*\| ruled divergence[^|]*\| [^|]*?)A-01", r"\1"),
+    ),
+    ("G11-HYGIENE", sub("## 19. Summary", "## 19. Summary " + "Closes" + "#818")),
     ("G10-CITE", lambda ctx: ctx._replace(d04_pin=ctx.d04_pin + "\n")),
     ("G11-HYGIENE", regex(r'^(\| SR-01 (?:[^|]*\|){2} )"', r'\1"sub_002 ')),
 )
@@ -810,15 +885,22 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--json", action="store_true", help="print the numbers and findings as JSON")
     ap.add_argument("--self-test", "--selftest", action="store_true", help="the mutation self-test")
     ap.add_argument("--repin", action="store_true", help="rewrite the pins file from the cites")
+    ap.add_argument("--source", default="", help="R818=FILE, a saved copy of the ruling")
     args = ap.parse_args(argv)
-    ctx = load_ctx()
+    source = ""
+    if args.source:
+        name, _, path = args.source.partition("=")
+        if name != "R818" or not path:
+            raise SystemExit("--source takes R818=FILE")
+        source = Path(path).read_text(encoding="utf-8")
+    ctx = load_ctx(source)
     if not all(ctx.base.values()):
         missing = [k for k, v in ctx.base.items() if not v]
         print(f"FAIL [G10-CITE] cannot read {missing} at {BASE} (fetch first)")
         return 1
     if args.repin:
         print(f"pins written: {repin(ctx)}")
-        ctx = load_ctx()
+        ctx = load_ctx(source)
     res = run(ctx)
     st = self_test(ctx, res) if args.self_test else []
     if args.json:
