@@ -4,19 +4,19 @@
 Offline and default-deny. The shared gates (git, cites, pins, G-T2 vocabulary, closing keywords,
 hygiene, public text, R7, G-UNTOUCHED, the runner and the mutation harness) live in
 `spec_audit_lib.py`; this file keeps only E19-D04's rows. It reads, AS TEXT at a pinned commit,
-the plan and design texts the spec cites at the base, E19-D02's spec at PR #5487's head and
-E19-D03's at PR #5517's head, and, from the working tree, the spec, the pins file and itself. It
+the plan and design texts the spec cites at the base, E19-D02's spec at its merge commit (PR
+#5487 merged as is) and E19-D03's at PR #5517's head, and, from the working tree, the spec, the pins file and itself. It
 runs no repo code.
 
 Gates: G-CITE, G-QUOTE, G-VERSION, G-AC, G-PRESET-OPS, G-MATRIX, G-ENV, G-KEYS, G-DELETE,
-G-PAYLOAD, G-STATES, G-BOARDS, G-T2, G-TOKENS, G-PENPOT, G-RULING, G-RULED, G-NOCLOSE, G-PUBLIC,
-G-UNTOUCHED and G-MUTLIST (section 15.2 equals this tool's list).
+G-PAYLOAD, G-STATES, G-BOARDS, G-T2, G-TOKENS, G-PENPOT, G-RULING, G-WORDING, G-RULED, G-NOCLOSE,
+G-PUBLIC, G-UNTOUCHED and G-MUTLIST (section 15.2 equals this tool's list).
 Pins (G-RULED): each BQ bullet's sha256[:16] in `e19_d04_ruled_pins.txt`; `--repin-ruled` is the
-only writer. The BQ list 6582998807 has no ruling yet: G-RULING checks the "defaults built;
-ruling pending" form and flips to the RULED form when the ruling of record is folded.
+only writer. The BQ list 6582998807 is RULED by comment 6585044844: G-RULING checks the RULED form
+(ACCEPT, or OVERRIDE for BQ-4, BQ-8 and BQ-9) and G-WORDING the ruled words.
 
 Usage (from the repo root):
-  python3 -I docs/design/_tools/e19_d04_audit.py --check | --self-test | --repin-ruled
+  python3 -I docs/design/_tools/e19_d04_flows_audit.py --check | --self-test | --repin-ruled
 Exit 0 = no FAIL; 1 = at least one FAIL.
 """
 
@@ -32,14 +32,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import spec_audit_lib as L  # the shared helper sits beside this file
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "d23ec8bd7"  # origin/main at the BQ list; every plan and keyed cite is read here
-D02_HEAD = "bed73afaa"  # PR #5487 (E19-D02, #416) head; re-pinned to its merge commit
+BASE = "95a625b09"  # origin/main after the ruling; every plan and keyed cite is read here
+D02_HEAD = "bed73afaa"  # PR #5487 (E19-D02, #416) head as read; merged as is
+D02_MERGE = "3619e95c5"  # its merge commit, byte-identical for D02; D02 is pinned here
 D03_HEAD = "811292427"  # PR #5517 (E19-D03, #438) head read; re-pinned to its merge commit
 D02_PR, D03_PR = "#5487", "#5517"
-BQ_LIST = "6582998807"  # the BQ list on #439; no ruling of record yet
+BQ_LIST = "6582998807"  # the BQ list on #439
+RULING = "6585044844"  # the orchestrator's ruling of record on it
+OVERRIDDEN = frozenset({4, 8, 9})
 
 SPEC_REL = "docs/design/E19/E19-D04.md"
-TOOL_REL = "docs/design/_tools/e19_d04_audit.py"
+TOOL_REL = "docs/design/_tools/e19_d04_flows_audit.py"
 LIB_REL = "docs/design/_tools/spec_audit_lib.py"
 PIN_REL = "docs/design/_tools/e19_d04_ruled_pins.txt"
 CAT_REL = "docs/plan/14-screens-catalogue.md"
@@ -57,7 +60,7 @@ PLAN = {
     "30": "docs/plan/30-release-roadmap.md",
 }
 KEYED = {
-    "D02": L.DocRef("docs/design/E19/E19-D02.md", D02_HEAD),
+    "D02": L.DocRef("docs/design/E19/E19-D02.md", D02_MERGE),
     "D03": L.DocRef("docs/design/E19/E19-D03.md", D03_HEAD),
     "MEMO": L.DocRef("docs/design/research/e19-profiles.md", BASE),
     "D02E14": L.DocRef("docs/design/E14/E14-D02.md", BASE),
@@ -84,7 +87,8 @@ PRESET_ITEMS = (
     "`Reset to {name}` (W-7)",
     "`Restore previous settings` (W-18)",
 )
-WRITES = frozenset(PRESET_ITEMS[2:6])  # the four writes: T2 under view-as (section 1.4)
+WRITES = frozenset(PRESET_ITEMS[2:6])  # the four writes: T2 under view-as and for a Viewer
+RECOVERY = ("`Reset`", "`Reset to {name}` (W-7)", "`Restore previous settings` (W-18)")
 OWNERS = ("Chart", "Drawing", "Profile", "Trading")
 CURSORS = frozenset(
     {"default", "grab", "grabbing", "crosshair", "move", "ew-resize", "ns-resize", "pointer"}
@@ -104,7 +108,20 @@ CAPABILITIES = (
     "Undo an apply",
     "Save, rename or delete a preset",
 )
-DELETE_TOAST = "Drawing deleted — profile kept as a fixed range · Undo"  # BQ-9's default, verbatim
+DELETE_TOAST = "Profile kept as a fixed range."  # BQ-9 as ruled: a line in E14-D07's toast
+VERB = "save workspaces"  # E09-D09's verb for the Viewer leg (section 1.4)
+BANNED = (  # the ruled words (R-8, BQ-8): the mode is entered, never armed
+    "arms the **Profile range**",
+    "arms the Profile range",
+    "arms the range mode",
+    "Profile range armed",
+    "mode stays armed",
+    "the mode disarms",
+    "armed form",
+    "armed chip",
+    "While armed",
+    '"Anchored to {drawing name}',
+)
 PAYLOAD_BAN = re.compile(
     r"\b(?:symbol|name|id|ts|time|timestamp|account|user|env\w*)\b", re.IGNORECASE
 )
@@ -178,13 +195,17 @@ def g_quote(t: L.Tree) -> list[str]:
 
 def g_version(t: L.Tree) -> list[str]:
     spec, v = t.text("spec"), sec(t, "### 14.3 Deviations")
-    need = (BASE, D02_HEAD, D03_HEAD, D02_PR, D03_PR, "re-pinned to its merge commit", BQ_LIST)
+    need = (BASE, D02_HEAD, D02_MERGE, D03_HEAD, D02_PR, D03_PR, BQ_LIST, RULING)
     miss = [n for n in need if n not in v]
+    if v.count("re-pinned to its merge commit") != 2:
+        miss.append("both re-pins")
     if f"Base `origin/main` `{BASE}`" not in spec:
         miss.append("Inputs pinned base")
     for head, pr in ((D02_HEAD, D02_PR), (D03_HEAD, D03_PR)):
         if f"head `{head}`" not in spec or f"if {pr} merges as is" not in spec:
             miss.append(f"Start pin {pr}")
+    if f"re-pinned to its merge commit** `{D02_MERGE}`" not in spec:
+        miss.append("Start: D02's merge commit")
     return [f"missing: {', '.join(miss)}"] if miss else []
 
 
@@ -200,7 +221,7 @@ def g_ac(t: L.Tree) -> list[str]:
 def g_preset_ops(t: L.Tree) -> list[str]:
     got = rows(sec(t, "### 2.2"))
     bad = [] if [r[0] for r in got] == list(PRESET_ITEMS) else ["menu items or their order"]
-    bad += [f"{r[0]} T2 cell" for r in got if (r[3] == "under view-as") != (r[0] in WRITES)]
+    bad += [f"{r[0]} T2 cell" for r in got if (r[3] == "view-as, Viewer") != (r[0] in WRITES)]
     s21, s24 = sec(t, "### 2.1"), sec(t, "### 2.4")
     if "immutable: no Save, Rename or Delete is offered on it" not in s21:
         bad.append("the built-in is not immutable")
@@ -210,6 +231,9 @@ def g_preset_ops(t: L.Tree) -> list[str]:
         bad.append("the conflict may be silent")
     if "until dismissed or until the next settings change" not in sec(t, "### 2.6"):
         bad.append("the undo lifetime is not stated")
+    s27 = sec(t, "### 2.7")
+    if tuple(r[0] for r in rows(s27)) != RECOVERY or "never on the drawings `Ctrl+Z`" not in s27:
+        bad.append("the one undo model or its three recovery verbs")
     return bad
 
 
@@ -264,9 +288,12 @@ def g_delete(t: L.Tree) -> list[str]:
         if not r[1].startswith("converted to ") or re.search(r"removed|blocked", r[1]):
             bad.append(f"{r[0]}: not a conversion")
     if L.unquote(copy_deck(t.text("spec")).get("W-35", ["", ""])[1]) != DELETE_TOAST:
-        bad.append("W-35 differs from BQ-9")
-    if "never removed and never blocked" not in sec(t, "### 4.4"):
+        bad.append("W-35 differs from BQ-9 as ruled")
+    s44 = sec(t, "### 4.4")
+    if "never removed and never blocked" not in s44:
         bad.append("the outcome sentence")
+    if "a named re-link (D04-G5" not in s44 or "never a second" not in s44:
+        bad.append("the re-link G-row or the one toast")
     return bad
 
 
@@ -276,7 +303,13 @@ def g_payload(t: L.Tree) -> list[str]:
     if got.get("`profile.preset_applied`", ["", "", ""])[2] != "`{builtin, host}`":
         bad.append("the preset event payload")
     need = ("`profile.period_changed`", "`profile.mode_changed`", "`profile.settings_changed`")
-    return bad + [f"{n} not annotated" for n in need if n not in got]
+    bad += [f"{n} not annotated" for n in need if n not in got]
+    apply = got.get("`profile.preset_applied`", ["", ""])[1]
+    if "the apply's only event" not in apply:
+        bad.append("an apply is not the preset event only")
+    if "never on a preset apply" not in got.get("`profile.settings_changed`", ["", ""])[1]:
+        bad.append("settings_changed re-emitted by an apply")
+    return bad
 
 
 def g_states(t: L.Tree) -> list[str]:
@@ -306,8 +339,16 @@ def g_t2(t: L.Tree) -> list[str]:
     bad = L.t2_markers(s14) + L.t2_reason_keys(s14, d09_keys()) + L.no_disabled_tokens(spec)
     if L.unquote(copy_deck(spec).get("W-20", ["", ""])[1]) != d09_keys().get("rbac.view_as"):
         bad.append("W-20 is not `rbac.view_as`'s string")
+    perm = d09_keys().get("rbac.permission", "").replace("{verb}", VERB)
+    if L.unquote(copy_deck(spec).get("W-42", ["", ""])[1]) != perm:
+        bad.append("W-42 is not `rbac.permission`'s string with its verb")
+    legs = {r[0]: r[1] for r in rows(s14)}
+    if not legs.get("The same four items, a Viewer", "").startswith("permission (step 3b)"):
+        bad.append("the Viewer's permission leg (3b)")
+    if "two gated legs, not one" not in s14 or "CMP-041 `disabledReason?`" not in s14:
+        bad.append("the two legs through CMP-041 `disabledReason?`")
     for r in rows(sec(t, "## 8. States")):
-        gated = "view-as" in r[0] or "SCR-039/preset-menu" in r[0]
+        gated = any(k in r[0] for k in ("view-as", "viewer", "SCR-039/preset-menu"))
         if gated != (len(r) > 5 and r[5] == "**T2 (§1.4)**"):
             bad.append(f"{r[0]} T2 cell")
     if "**T2 (§1.4)**" not in " ".join(r[2] for r in board_rows(spec) if r[0] == "10"):
@@ -326,18 +367,30 @@ def g_penpot(t: L.Tree) -> list[str]:
     )
 
 
+def verdict(n: int) -> str:
+    return f"RULED (comment {RULING}): " + ("OVERRIDE" if n in OVERRIDDEN else "ACCEPT.")
+
+
 def g_ruling(t: L.Tree) -> list[str]:
-    pending = f"Default built (ruling pending, comment {BQ_LIST})."
     return L.check_ruling(
         t.text("spec"),
-        heading_line=f"## The questions BQ-0 … BQ-15 — defaults built; ruling pending "
-        f"(comment {BQ_LIST})",
+        heading_line=f"## The questions BQ-0 … BQ-15 — RULED (comment {RULING})",
         list_ref=f"comment {BQ_LIST} on #439",
         count=16,
-        verdict=lambda _n: pending,
-        need=("ORCH-default:", "Built as:"),
-        forbid=("RULED:",),
+        verdict=verdict,
+        need=("ORCH-default", "Built as:"),
+        forbid=("ruling pending",),
     )
+
+
+def g_wording(t: L.Tree) -> list[str]:
+    spec = t.text("spec")
+    bad = [f"banned: {b}" for b in BANNED if b in spec]
+    if not any(ln.startswith("- **R-8 Entered, never armed**") for ln in spec.split("\n")):
+        bad.append("R-8")
+    if not L.unquote(copy_deck(spec).get("W-33", ["", ""])[1]).startswith("Attached to "):
+        bad.append("W-33 is not the ruled Attached to")
+    return bad
 
 
 def g_ruled(t: L.Tree) -> list[str]:
@@ -366,8 +419,8 @@ def g_mutlist(t: L.Tree) -> list[str]:
 # fmt: off
 GATES = tuple(L.Gate("G-" + f.__name__[2:].upper().replace("_", "-"), f) for f in (
     g_cite, g_quote, g_version, g_ac, g_preset_ops, g_matrix, g_env, g_keys, g_delete,
-    g_payload, g_states, g_boards, g_t2, g_tokens, g_penpot, g_ruling, g_ruled, g_noclose,
-    g_public, g_untouched, g_mutlist,
+    g_payload, g_states, g_boards, g_t2, g_tokens, g_penpot, g_ruling, g_wording, g_ruled,
+    g_noclose, g_public, g_untouched, g_mutlist,
 ))
 # fmt: on
 
@@ -379,11 +432,11 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-2", "G-QUOTE", "W-24 reworded off its line", "spec",
        '"Click a bar to anchor the profile"', '"Click a bar to anchor it"'),
     _M("M-3", "G-VERSION", "the version line drops the D03 re-pin", "spec",
-       "`811292427`, each re-pinned to its merge commit", "`811292427`, kept as read"),
+       "`811292427`, re-pinned to its merge commit", "`811292427`, kept as read"),
     _M("M-4", "G-AC", "a scenario name reworded", "spec",
        '(AC "A preset name collides"', '(AC "A preset name clashes"'),
     _M("M-5", "G-PRESET-OPS", "Rename loses its T2 cell", "spec",
-       r"(\| `Rename…` \(W-5\) +\|[^|]*\|[^|]*\| )under view-as", r"\1no           ",
+       r"(\| `Rename…` \(W-5\) +\|[^|]*\|[^|]*\| )view-as, Viewer", r"\1no             ",
        regex=True),
     _M("M-6", "G-PRESET-OPS", "the undo lifetime dropped", "spec",
        "until dismissed or until the next settings change", "until dismissed"),
@@ -401,8 +454,7 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "| converted to a Fixed range at the drawing's last two times",
        "| removed with the drawing; nothing kept"),
     _M("M-13", "G-DELETE", "the delete toast reworded", "spec",
-       r'(\| W-35 \| )"Drawing deleted — profile kept as a fixed range · Undo"',
-       r'\1"Drawing deleted · Undo"', regex=True),
+       r'(\| W-35 \| )"Profile kept as a fixed range\."', r'\1"Profile kept."', regex=True),
     _M("M-14", "G-PAYLOAD", "a symbol in the preset event", "spec",
        r"(`profile\.preset_applied` +\|[^|\n]*\| )`\{builtin, host\}`",
        r"\1`{builtin, host, symbol}`", regex=True),
@@ -421,8 +473,8 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "a cut, `motion.duration.instant`", "a cut, `motion.duration.none`"),
     _M("M-20", "G-PENPOT", "a Penpot file id", "spec",
        "page `E19-D04`, cited", "page `E19-D04` (" + "file" + "-id=0), cited"),
-    _M("M-21", "G-RULING", "the heading claims a ruling", "spec",
-       "BQ-15 — defaults built; ruling pending (comment", "BQ-15 — RULED (comment"),
+    _M("M-21", "G-RULING", "the heading says the ruling is pending", "spec",
+       "BQ-15 — RULED (comment", "BQ-15 — defaults built; ruling pending (comment"),
     _M("M-22", "G-RULED", "a BQ default edited without a re-pin", "spec",
        "ORCH-default: 10 boards on D03's", "ORCH-default: 9 boards on D03's"),
     _M("M-23", "G-NOCLOSE", "a closing keyword", "spec", _V, _V + "\n" + "Clo" + "ses #439.\n"),
@@ -435,6 +487,19 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "", "docs/plan/05-accessibility-standard.md"),
     _M("M-28", "G-UNTOUCHED", "a second catalogue line", f"@numstat:{CAT_REL}", "", "2 0"),
     _M("M-29", "G-MUTLIST", "the list drifts", "spec", "| M-1  | G-CITE ", "| M-1  | G-AC   "),
+    _M("M-30", "G-WORDING", "the mode armed again", "spec",
+       "enters the **Profile range** mode", "arms the **Profile range** mode"),
+    _M("M-31", "G-WORDING", "the legend says Anchored", "spec",
+       r'(\| W-33 \| )"Attached to', r'\1"Anchored to', regex=True),
+    _M("M-32", "G-T2", "the Viewer leg dropped", "spec",
+       "| The same four items, a Viewer ", "| The same four items, an Owner "),
+    _M("M-33", "G-PRESET-OPS", "a recovery verb unnamed", "spec",
+       "| `Restore previous settings` (W-18) | the Presets menu, for",
+       "| Restore | the Presets menu, for"),
+    _M("M-34", "G-PAYLOAD", "an apply re-emits per key", "spec",
+       "never on a preset apply", "and on a preset apply"),
+    _M("M-35", "G-DELETE", "the re-link dropped", "spec",
+       "a named re-link (D04-G5", "E14's undo (D04-G5"),
 )
 # fmt: on
 
