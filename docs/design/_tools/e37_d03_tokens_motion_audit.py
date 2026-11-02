@@ -673,6 +673,7 @@ def boards_drawn(spec: str, files: Files, problems: list[str]) -> int:
     listed = dict(RENDER_SHA.findall(s0))
     ids: list[str] = []
     bad_sha: list[str] = []
+    bad_render: list[str] = []
     for r in rows:
         m = DRAWN.fullmatch(r[4]) if len(r) > 4 else None
         if not m:
@@ -709,11 +710,13 @@ def boards_drawn(spec: str, files: Files, problems: list[str]) -> int:
                         f"board {r[0]}: §0 does not list the {k} render with its sha256"
                     )
                 elif hashlib.sha256(rd).hexdigest() != want:
-                    problems.append(f"board {r[0]}: the {k} render's sha256 is not §0's")
+                    bad_render.append(f"{r[0]} {k}")
     if bad_sha:  # one finding: a byte swap between two same-size exports is one defect
         problems.append(
             f"board plan: the export sha256 of board(s) {', '.join(bad_sha)} is not the cell's"
         )
+    if bad_render:  # one finding, as for the exports
+        problems.append(f"board plan: the render sha256 of {', '.join(bad_render)} is not §0's")
     if len(set(ids)) != len(ids):
         problems.append("board plan: two boards share an id")
     stray = sorted(set(files) - set(board_exports(spec))) if len(ids) == len(rows) else []
@@ -749,6 +752,7 @@ def boards(spec: str, problems: list[str], files: Files | None = None) -> dict[s
         problems.append("board plan: a register row is not # · Board · Shows · Theme · Status")
     if f"{len(rows)} boards" not in spec or f"{twins} light twins" not in spec:
         problems.append("board plan: the spec does not state its board and twin counts")
+        return out  # the register itself is wrong: the per-row gates would only echo it
     files = {} if files is None else files
     if mode == "drawn":
         out["exports"] = boards_drawn(spec, files, problems)
@@ -1147,14 +1151,32 @@ def drawn_view(v: View) -> tuple[View, bool]:
 
 
 def swap_exports(v: View) -> View | None:
-    """Swap the bytes of two same-size exports: the size holds, the sha256 catches it."""
-    a, b = (
-        f"{IMG_REL}/E37-D03-01-node-token-sheet.png",
-        f"{IMG_REL}/E37-D03-02-port-edge-token-sheet.png",
-    )
+    """Swap the bytes of two same-size PNGs (two exports, or a board's two renders): the size
+    holds, the sha256 catches it."""
     fl = dict(v[2].files)
-    if a not in fl or b not in fl or png_size(fl[a]) != png_size(fl[b]):
+    by: dict[tuple[int, int] | None, list[str]] = {}
+    for k in sorted(fl):
+        by.setdefault(png_size(fl[k]), []).append(k)
+    mains = [
+        ks
+        for ks in by.values()
+        if len([k for k in ks if not k.endswith(("-greyscale.png", "-deuteranopia.png"))]) > 1
+    ]
+    pair = (
+        [k for k in mains[0] if not k.endswith(("-greyscale.png", "-deuteranopia.png"))][:2]
+        if mains
+        else next(
+            (
+                [k for k in ks if k.endswith(("-greyscale.png", "-deuteranopia.png"))][:2]
+                for ks in by.values()
+                if len([k for k in ks if k.endswith(("-greyscale.png", "-deuteranopia.png"))]) > 1
+            ),
+            [],
+        )
+    )
+    if len(pair) != 2:
         return None
+    a, b = pair
     fl[a], fl[b] = fl[b], fl[a]
     return v[0], v[1], v[2]._replace(files=fl)
 
@@ -1215,7 +1237,7 @@ def plan() -> list[Mut]:
         ),
         ("a drawn Status cell loses its form (the drawn view)", True, row_cell("03", 4, "drawn")),
         ("an export's size cell drifts (the drawn view)", True, size_drifts),
-        ("two same-size exports swap bytes (the drawn view)", True, swap_exports),
+        ("two same-size PNGs swap bytes (the drawn view)", True, swap_exports),
         ("a greyscale / deuteranopia render is missing (the drawn view)", True, render_missing),
         ("a uuid outside §0 (the drawn view)", True, uuid_outside),
         ("a file outside the pack differs (the drawn view)", True, outside_file),
