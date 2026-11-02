@@ -242,10 +242,10 @@ jobs:
 
       # #5505: a soft budget. The lane's pytest wall time (measured in the step above) against
       # lane_budget_seconds in tools/ci/py-test-lanes.json: a `::warning::` annotation past it,
-      # never a failure, so the step cannot change the job's result.
+      # never a failure: the script exits 0 and the call ends in `|| true`, so the step cannot change
+      # the job's result (and it carries no continue-on-error).
       - name: Warn when this lane passed its soft time budget
         if: always()
-        continue-on-error: true
         env:
           LANE: ${{ matrix.lane }}
         run: |

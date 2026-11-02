@@ -1522,7 +1522,7 @@ section in the same sprint — do not just work around it and move on.
   shared: a path one lane lists inside another lane's path is carved out of it (`--ignore`), so
   `contract-security-1` runs `tests/contract` minus what the other three list below it, a
   subdirectory added later included.
-- **Budget.** No PR job over 8 minutes (#3881); that is the long-standing aim for ordinary jobs, while the py-tests lanes are held to 12 minutes or less with a 9-minute (540 s) soft warning (#5505). On the sixteen lanes (run 39401416075) the longest
+- **Budget.** No PR job over 8 minutes (#3881); that is the long-standing aim for ordinary jobs, while the `rest*` legs of the py-tests lanes are held to 12 minutes or less (the four untouched lanes ran 12m20s to 16m45s on run 41487753329; a second PR re-balances `db-chaos-1` / `unit-heavy-1`) with a 9-minute (540 s) soft warning (#5505). On the sixteen lanes (run 39401416075) the longest
   lane took 6m04s (`unit-heavy-1`), the others 3 to 5.5 minutes, and the run 7m39s, with
   `semgrep-bandit` (7m02s) the longest job of any lane. The first cut into ten lanes had its
   longest lane at 12m05s (run 39396453049), and before the split the longest was 14m32s (run
