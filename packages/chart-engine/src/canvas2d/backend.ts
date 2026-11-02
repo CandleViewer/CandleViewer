@@ -7,8 +7,8 @@
 import type { BackendFailure, RenderBackend } from "../gl/backend.js";
 import type { VertexSource } from "../gl/buffers.js";
 import type { BatchUniforms, BatchUniformSource, PaneUniformSource } from "../gl/submit.js";
-import { CANDLE_PART, hollowFill, partColor } from "../layers/candle/geometry.js";
-import { CANDLE_DIR, CANDLE_STRIDE } from "../layers/candle/ring.js";
+import { CANDLE_PART, FILL, fillMode, GEOM, partColor } from "../layers/candle/geometry.js";
+import { CANDLE_STRIDE } from "../layers/candle/ring.js";
 import { PALETTE } from "../layers/candle/palette.js";
 import { DrawTrace } from "../gl/trace.js";
 import type { RetainedBatch } from "../scene/batch-builder.js";
@@ -193,7 +193,8 @@ export class Canvas2DBackend implements RenderBackend {
    * the palette rows' buckets (`partColor`, the shader's choice). A ref is `at * 2 + sub`: an up
    * body's tint is `sub` 1 in the tint bucket, after its outline's; a hollow body (E12-S07) is
    * `sub` 1 alone, its outline without the interior; the OHLC ticks are the open (0) and close
-   * (1) quads. The seam reads its own `[0, instances)` entries.
+   * (1) quads. The seam reads its own `[0, instances)` entries. E12-S09: an L1 up body is `sub` 1
+   * alone when outline-only, else `sub` 0 dashed.
    */
   private candles(blk: BatchUniforms, ints: Int32Array, i: number): void {
     const part = blk.ints[0] ?? 0; // scalar locals: no per-frame array
@@ -202,20 +203,21 @@ export class Canvas2DBackend implements RenderBackend {
     const seam = part === CANDLE_PART.seam;
     const n = seam ? (blk.instances ?? 0) : (blk.ints[3] ?? 0);
     const pal = blk.palette;
+    const body = blk.geom[GEOM.body] ?? 1; // an up / hollow body's width: the fill mode's input
     for (let j = 0; j < n; j += 1) {
       const at = (seam ? j : (head + j) & mask) * CANDLE_STRIDE;
       if (at < 0 || at + CANDLE_STRIDE > ints.length) break; // a ring shorter than its block
       const mark = (ints[at + 4] ?? 0) >> 4;
-      const dir = mark & 3;
       const row = partColor(part, mark);
       const bucket = this.bucketOf(PROGRAM.candle, pal, row * 4, 0);
-      if (hollowFill(part, mark)) {
+      const mode = fillMode(part, mark, body, blk.geom);
+      if (mode >= FILL.hollow) {
         this.push(bucket, i, at * 2 + 1);
         continue;
       }
       this.push(bucket, i, at * 2);
       if (part === CANDLE_PART.ticks) this.push(bucket, i, at * 2 + 1);
-      else if (part === CANDLE_PART.body && dir === CANDLE_DIR.up) {
+      else if (part === CANDLE_PART.body && mode > FILL.solid && mode < FILL.dash) {
         this.push(this.bucketOf(PROGRAM.candle, pal, PALETTE.upTint * 4, 0), i, at * 2 + 1);
       }
     }

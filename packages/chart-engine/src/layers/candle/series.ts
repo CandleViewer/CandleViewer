@@ -8,6 +8,8 @@
 // E12-S07: the hollow shape (the same hosts, ring and program; parts 5 / 6 at L0) and `setShape`,
 // which switches candles / hollow / OHLC in place: the parts are the per-frame `u_batch.x`, so a
 // switch rewrites nothing on the GPU but the ring's derived bits (`CandleRing.setMode`).
+// E12-S09 PR 1a (#421): the candle tier (BQ-04): L1 the hairline mark over the ring. The tier
+// defaults to 0 and nothing passes it yet: the runtime feeds it in PR 2, so L1 stays dormant.
 import type { AttributeLayout, BatchUniforms, VertexSource } from "../../scene/gpu-types.js";
 import type { BarStore } from "../../model/BarStore.js";
 import type { SceneGraph } from "../../scene/graph.js";
@@ -184,18 +186,28 @@ export class CandleSeries implements HostedPlugin {
    * Per frame, before submission: the geometry, the ring's state and the parts, in place. OHLC
    * bars under 5 CSS px draw the candle mark (D06 §3.2): their two batches switch to the wick and
    * body parts. Hollow candles under 3 CSS px draw the candle's mark (D06 §4.2, §5.5). The seam
-   * draws only while a `gap_before` bar lies in logical [first, last].
+   * draws only while a `gap_before` bar lies in logical [first, last]. E12-S09: from `tier` 1
+   * every shape draws the candle mark (D06 §5.5).
    */
-  frame(spacingCss: number, dpr: number, first = 0, last = -1, plotTop = 0, plotBottom = 0): void {
-    candleGeometry(spacingCss, dpr, this.geom);
+  frame(
+    spacingCss: number,
+    dpr: number,
+    first = 0,
+    last = -1,
+    plotTop = 0,
+    plotBottom = 0,
+    tier = 0,
+  ): void {
+    candleGeometry(spacingCss, dpr, this.geom, tier);
+    const l0 = !(tier >= 1); // candleGeometry's clamp: NaN and below 1 are L0
     this.geom[GEOM.plotTop] = plotTop * dpr; // the seam stops at the plot rect's edges
     this.geom[GEOM.plotBottom] = plotBottom > 0 ? plotBottom * dpr : 0;
     const r = this.ring;
     const head = r.head;
     const mask = r.capacity - 1;
     const shape = this.shape;
-    const ohlc = shape === "bars" && spacingCss >= OHLC_TICKS_FROM;
-    const hollow = shape === "hollow" && spacingCss >= HOLLOW_FROM;
+    const ohlc = l0 && shape === "bars" && spacingCss >= OHLC_TICKS_FROM;
+    const hollow = l0 && shape === "hollow" && spacingCss >= HOLLOW_FROM;
     for (let p = 0; p < this.blocks.length; p += 1) {
       const blk = this.blocks[p] as BatchUniforms;
       const ints = blk.ints;

@@ -3,7 +3,14 @@
 // its shader's affine (src/gl/shaders), so both backends place an instance on the same pixels.
 // The pane block (`PaneUniforms`, E11-S03) is the only projection used: no price or time maths here.
 import type { BatchUniforms } from "../gl/submit.js";
-import { CANDLE_PART, candleRect, fullOutline, GEOM } from "../layers/candle/geometry.js";
+import {
+  CANDLE_PART,
+  candleRect,
+  dashOn,
+  FILL,
+  fillMode,
+  GEOM,
+} from "../layers/candle/geometry.js";
 import { CANDLE_STRIDE } from "../layers/candle/ring.js";
 import { attributeOffset, PROGRAM } from "../scene/instance-layout.js";
 import { projectRel, type PaneUniforms } from "../viewport/transform.js";
@@ -88,6 +95,8 @@ const RECT_OUT = new Float64Array(4);
  * rect inset by a hairline on every side from 3 CSS px wide, else top and bottom only; a hollow
  * body's `sub` 1 is its outline alone (E12-S07, D06 §4.2), the same edges, the interior unpainted.
  * For the OHLC ticks `sub` is the tick (0 open, 1 close). A seam instance names its bar's slot.
+ * E12-S09: a `dash.1-1` part (an L1 up body under 2 device px) paints its on rows only, as the
+ * shader's discard does.
  */
 export function paintCandle(ctx: Ctx2DLike, a: PaintArgs): void {
   const b = a.block;
@@ -96,16 +105,16 @@ export function paintCandle(ctx: Ctx2DLike, a: PaintArgs): void {
   const at = a.at;
   const part = blk.ints[0] ?? 0;
   const v = a.ints;
-  const slot = part === CANDLE_PART.seam ? (v[at] ?? 0) : at / CANDLE_STRIDE;
-  const i = (slot - (blk.ints[1] ?? 0)) & (blk.ints[2] ?? 0);
   const o = v[at] ?? 0;
   const hi = v[at + 1] ?? 0;
   const lo = v[at + 2] ?? 0;
   const c = v[at + 3] ?? 0;
-  const mark = (v[at + 4] ?? 0) >> 4;
   const r = RECT_OUT;
-  const sub = part === CANDLE_PART.ticks ? (a.sub ?? 0) : 0;
   const k = b.floats;
+  const mark = (v[at + 4] ?? 0) >> 4;
+  const slot = part === CANDLE_PART.seam ? o : at / CANDLE_STRIDE;
+  const i = (slot - (blk.ints[1] ?? 0)) & (blk.ints[2] ?? 0);
+  const sub = part === CANDLE_PART.ticks ? (a.sub ?? 0) : 0;
   candleRect(part, i, o, hi, lo, c, mark, k, b.ints[0] ?? 0, b.ints[1] ?? 0, blk.geom, r, sub);
   // Scalar locals throughout: a painter runs per bar, per frame (no array per call).
   let x = r[0] ?? 0;
@@ -114,14 +123,23 @@ export function paintCandle(ctx: Ctx2DLike, a: PaintArgs): void {
   let h = r[3] ?? 0;
   const sx = scaleX(a);
   const sy = scaleY(a);
-  if (part === CANDLE_PART.hollowBody && a.sub === 1) {
+  const mode = fillMode(part, mark, w, blk.geom);
+  if (mode === FILL.dash) {
+    // The backing-store rows whose centre lies in the rect, the shader's even window rows only.
+    const end = Math.ceil((y + h) * sy - 0.5);
+    for (let row = Math.ceil(y * sy - 0.5); row < end; row += 1) {
+      if (dashOn(row, a.h)) ctx.rect(x * sx, row, w * sx, 1);
+    }
+    return;
+  }
+  if (mode >= FILL.hollow && a.sub === 1) {
     // The shader's discard: the top and bottom edges, the sides too from 3 CSS px wide.
     const hair = blk.geom[GEOM.hair] ?? 1;
     if (w <= 0 || h <= 0) return;
     const e = Math.min(hair, h);
     ctx.rect(x * sx, y * sy, w * sx, e * sy);
     if (h > hair) ctx.rect(x * sx, (y + h - e) * sy, w * sx, e * sy);
-    if (fullOutline(w, blk.geom) && h > 2 * hair) {
+    if ((mode & 3) === 2 && h > 2 * hair) {
       ctx.rect(x * sx, (y + hair) * sy, Math.min(hair, w) * sx, (h - 2 * hair) * sy);
       if (w > hair) ctx.rect((x + w - hair) * sx, (y + hair) * sy, hair * sx, (h - 2 * hair) * sy);
     }
@@ -129,7 +147,7 @@ export function paintCandle(ctx: Ctx2DLike, a: PaintArgs): void {
   }
   if (part === CANDLE_PART.body && a.sub === 1) {
     const hair = blk.geom[GEOM.hair] ?? 1;
-    if (fullOutline(w, blk.geom)) {
+    if (mode === 2) {
       x += hair;
       w -= 2 * hair;
     }
