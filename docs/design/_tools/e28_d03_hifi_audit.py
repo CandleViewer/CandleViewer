@@ -409,8 +409,10 @@ def g_contrib(t: Texts, p: list[str]) -> dict[str, Any]:
             if f not in body:
                 p.append(f"[E] {ds} has no {f.strip('*:')} field")
     for cid in NEW_IDS:
-        if re.search(rf"^### {cid}\b", t.catalogue, flags=re.MULTILINE):
-            p.append(f"[E] {cid} is already an entry in 15 (re-allocate)")
+        if re.search(
+            rf"^### {cid}\b", t.base15, flags=re.MULTILINE
+        ):  # free at the base; PR 2 adds it
+            p.append(f"[E] {cid} is already an entry in 15 at the base (re-allocate)")
     return {"contributions": len(heads)}
 
 
@@ -431,12 +433,16 @@ def g_pointers(t: Texts, p: list[str]) -> dict[str, Any]:
         p.append(f"[F] the `14` A-rows name {scrs}, not the six screens")
     done: list[str] = []
     todo: list[str] = []
+    skipped = 0
+    applied_any = any(ln.startswith(POINTER) for ln in lines)
     for r in rows:
         scr, new = r[1].split()[-1], r[4].strip('"')
         m = re.match(r"after (\d+) ", r[2])
         k = int(m.group(1)) if m else 0
         if "boards drawn on page" not in new or "to draw" in new:
             p.append(f"[F] {r[0]}: the New text is not in its landed form (boards drawn)")
+            skipped += 1
+            continue
         if not new.startswith(POINTER) or r[3] != "— (no line)":
             p.append(f"[F] {r[0]}: not a pointer insertion")
             continue
@@ -446,9 +452,9 @@ def g_pointers(t: Texts, p: list[str]) -> dict[str, Any]:
             (done if ok else todo).append(r[0] if ok else f"{r[0]} misplaced")
             continue
         todo.append(r[0])
-        if not (0 < k <= len(lines) and lines[k - 1].startswith(D02)):
+        if not applied_any and not (0 < k <= len(lines) and lines[k - 1].startswith(D02)):
             p.append(f"[F] {r[0]}: `14`:{k} is not {scr}'s D02 line")
-    stray = sum(1 for ln in lines if ln.startswith(POINTER)) - len(done)
+    stray = max(0, sum(1 for ln in lines if ln.startswith(POINTER)) - len(done) - skipped)
     if (done and todo) or stray:
         p.append(f"[F] `14` A-rows: applied {done}, pending {todo}, stray lines {stray} (a mix)")
     return {"a14": len(rows), "mode": "applied" if done and not todo else "pending"}
@@ -544,6 +550,12 @@ def g_a15(t: Texts, p: list[str]) -> dict[str, Any]:
             todo.append(r[0])
         else:
             p.append(f"[I] {r[0]}: {r[1]}'s {m.group(1)} differs from both Old and Old + New")
+    s14 = section(t.spec, "## 14. ", "## 15. ")
+    for ln in s14.splitlines():
+        m = re.match(r"^\|\s*(A-\d+)\s*\|\s*new (CMP-\d+) (\w+)\s*\|", ln)
+        if m:  # a new entry: its heading present at HEAD once applied
+            have = f"### {m.group(2)} {m.group(3)} " in t.catalogue
+            (done if have else todo).append(m.group(1))
     if done and todo:
         p.append(f"[I] `15` A-rows: applied {done}, pending {todo} (a mix)")
     return {"a15": len(done) + len(todo), "mode": "applied" if done and not todo else "pending"}
