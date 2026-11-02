@@ -6,6 +6,7 @@ import {
   AuditActionTrigger,
   AuditFilterBar,
   AuditRow,
+  AuditRowDiff,
   AuditRowList,
   Button,
   Card,
@@ -48,7 +49,13 @@ import {
   WatchlistRow,
   watchlistColumns,
 } from "../src/index.js";
-import type { AuditRowProps, SegmentedOptions, WatchlistRowData } from "../src/index.js";
+import { auditColumns, auditGridRowKey } from "../src/index.js";
+import type {
+  AuditGridRow,
+  AuditRowProps,
+  SegmentedOptions,
+  WatchlistRowData,
+} from "../src/index.js";
 import { mount } from "./theme/mount.js";
 
 const options = [
@@ -179,6 +186,51 @@ const molecules: [string, () => JSX.Element][] = [
       <AuditRowList>
         <AuditRow entry={auditEntry} variant="compact" href="#audit-1" />
       </AuditRowList>
+    ),
+  ],
+  [
+    "CMP-173",
+    () => (
+      <Table<AuditGridRow>
+        grid
+        caption="Audit log"
+        columns={auditColumns()}
+        rows={[{ kind: "entry", entry: auditEntry }]}
+        rowKey={auditGridRowKey}
+        renderRow={(row, grid) => (
+          <AuditRow variant="row" grid={grid} entry={row.entry} diffId="diff-1" onOpen={noop} />
+        )}
+      />
+    ),
+  ],
+  [
+    // An expanded entry is one CMP-173: its diff row is a part of it, not a second root.
+    "CMP-173",
+    () => (
+      <Table<AuditGridRow>
+        grid
+        caption="Audit log"
+        columns={auditColumns()}
+        rows={[
+          { kind: "entry", entry: auditEntry },
+          { kind: "diff", entry: auditEntry },
+        ]}
+        rowKey={auditGridRowKey}
+        renderRow={(row, grid) =>
+          row.kind === "entry" ? (
+            <AuditRow
+              variant="row"
+              grid={grid}
+              entry={row.entry}
+              diffId="diff-1"
+              expanded
+              onOpen={noop}
+            />
+          ) : (
+            <AuditRowDiff grid={grid} entry={row.entry} id="diff-1" />
+          )
+        }
+      />
     ),
   ],
   [

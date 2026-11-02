@@ -202,7 +202,9 @@ describe("AuditRow stories", () => {
     const host = await mount(<Story />);
     const rows = host.querySelectorAll('[data-cmp="CMP-173"]');
     expect(rows.length).toBeGreaterThan(0);
-    expect(within(host).getAllByRole("link")).toHaveLength(rows.length);
+    // A compact row is one link; a grid row holds none (its record opens with Enter, E42-D04 §4 Keys).
+    const compact = host.querySelectorAll('[data-cmp="CMP-173"][data-variant="compact"]');
+    expect(within(host).queryAllByRole("link")).toHaveLength(compact.length);
   });
 
   // The storybook project runs each play in Chromium; here in jsdom too, so a wrong name fails without a browser.
