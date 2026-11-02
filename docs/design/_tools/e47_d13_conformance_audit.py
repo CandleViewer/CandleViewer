@@ -121,6 +121,7 @@ THEMES: dict[str, tuple[str, ...]] = {
     "hc": ("primitives", "semantic-dark", "semantic-hc"),
 }
 TEXT_BAR = 4.5  # SC 1.4.3, text
+NONTEXT_BAR = 3.0  # SC 1.4.11, non-text (focus ring, borders)
 BOARD_PENDING = "pending: drawn in a later push of this PR"
 
 # ---------------------------------------------------------------------------- the criteria
@@ -238,7 +239,7 @@ ALT = {
 CANVAS = ("1.1.1", "1.3.1", "1.4.11", "2.1.1", "4.1.2", "4.1.3")
 CANVAS_REMARK = (
     "canvas: met only through the four layers of `05` §6.1–§6.4 (DOM mirror, live regions, table"
-    " alternative, canvas label), never by the canvas itself"
+    " alternative, canvas semantics fallback), never by the canvas itself"
 )
 NA_REASONS = {
     "K-MEDIA": (
@@ -467,10 +468,6 @@ def open_t01(sc: str) -> list[str]:
     )
 
 
-def any_t01(sc: str) -> bool:
-    return any(f.get("wcagSc") == sc for f in t01_findings())
-
-
 def d02_rows() -> list[dict[str, object]]:
     return dicts(d02().get("findings")) + dicts(d02().get("unattributed"))
 
@@ -571,7 +568,7 @@ def determine(sc: str, limits: str) -> tuple[Row, bool]:
     gap = len(screens) - passing
     opens = open_t01(sc)
     d02n = len(d02_open(sc))
-    if not evidence and not any_t01(sc):
+    if not evidence:
         conf = "Does Not Support"
         remarks.append("evidence not produced on any screen")
     else:
@@ -732,7 +729,7 @@ def render_report(limits: str) -> str:
         f"- {REMOVED} Parsing: removed from WCAG 2.2, so it is not a row.",
         (
             "- Level AAA, including the `05` §1 extras (non-text contrast 7:1 for buy and sell state,"
-            " no timing limits, reduced motion): not claimed."
+            " no timing limits): not claimed."
         ),
         "- Section 508 and EN 301 549: not claimed.",
         "",
@@ -1365,6 +1362,12 @@ def g_recur(t: Texts) -> list[Finding]:
     return out
 
 
+def row_bar(row: list[str]) -> float:
+    """The pair's bar from its last cell (`4.5:1` text, `3:1` non-text); never under 3:1."""
+    m = re.fullmatch(r"(\d+(?:\.\d+)?):1", plain(row[-1])) if row else None
+    return max(NONTEXT_BAR, float(m.group(1))) if m else TEXT_BAR
+
+
 def g_contrast(t: Texts) -> list[Finding]:
     _, _, region = section(t.spec, "### 7.6")
     rows = first_table(t.spec, "### 7.6")[1:]
@@ -1373,10 +1376,11 @@ def g_contrast(t: Texts) -> list[Finding]:
     if len(rows) < 6:
         bad.append(f"{len(rows)} pairs, not the six")
     for r in rows:
+        bar = row_bar(r)
         for theme in THEMES:
             v = vals.get(f"CONTRAST:{r[0].lower()}.{theme}")
-            if v is None or float(v) < TEXT_BAR:
-                bad.append(f"{r[0]} in {theme} is {v}, under {TEXT_BAR}:1")
+            if v is None or float(v) < bar:
+                bad.append(f"{r[0]} in {theme} is {v}, under {bar}:1")
     return [("G-CONTRAST", b, "spec", region) for b in bad]
 
 
@@ -1807,8 +1811,8 @@ MUTATIONS = (
         "G-ANCHOR",
         "spec",
         "## 10.",
-        "32<!--=COUNT:report.partial-->",
-        "31<!--=COUNT:report.partial-->",
+        "27<!--=COUNT:report.partial-->",
+        "26<!--=COUNT:report.partial-->",
     ),
     _m(
         "M-31",
@@ -1825,8 +1829,8 @@ MUTATIONS = (
         "G-CITE",
         "spec",
         "### 1.3",
-        "ASS:150; S07:30",
-        "ASS:150; S07:9999",
+        "ASS:150; S07:31–32",
+        "ASS:150; S07:9998–9999",
     ),
     _m(
         "M-33",

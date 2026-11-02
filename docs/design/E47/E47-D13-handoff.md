@@ -12,7 +12,7 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 | Variants × states        | [x] spec §7.3                                                        | [x] spec §2.2 (frozen format)           | [x] spec §6.2                        |
 | Keyboard table           | [x] spec §7.4                                                        | [x] n/a                                 | [x] n/a                              |
 | Accessible name and role | [x] spec §7.2 (one `h1`, `h2` per section, real tables)              | [x] real tables with headers            | [x] n/a                              |
-| Live data                | [x] none; the notices are `role="status"` once                       | [x] none                                | [x] none                             |
+| Live data                | [x] none; the notices are read in order (spec §7.3)                  | [x] none                                | [x] none                             |
 | Motion pair              | [x] none                                                             | [x] n/a                                 | [x] n/a                              |
 | Density notes            | [x] one column at every density                                      | [x] n/a                                 | [x] n/a                              |
 | Essential exceptions     | [x] none                                                             | [x] none                                | [x] spec §6.4 (sign-off blocked)     |
@@ -44,15 +44,16 @@ Old is a verbatim fragment of the cited line at `4c662fd5b` (the tool checks it)
 
 ### §C.2 Carried evidence rows (posted on each producer when the PR opens; their tickets are not edited)
 
-| Producer                         | Produces (spec §4.1 kinds)                | For classes                       | Reference                |
-| -------------------------------- | ----------------------------------------- | --------------------------------- | ------------------------ |
-| E47-T04 (#1359), E47-Q02 (#1355) | `pass`                                    | every class but K-W22 and K-FLASH | `pass:<record id>@<sha>` |
-| E47-D12 (#1369)                  | `d12`                                     | K-W22, K-SR                       | `d12:<verdict id>@<sha>` |
-| E47-Q05 (#1357)                  | `flash`, `q05`                            | K-FLASH, K-MOTION                 | `q05:<row id>@<sha>`     |
-| E47-Q03                          | `keyboard` (the suite behind `A11Y-G004`) | K-KEY                             | `t01:keyboard@<sha>`     |
-| E47-T03 (closed; its matrix)     | `t03`, `contrast`                         | K-CONTRAST                        | `t03:<row id>@<sha>`     |
-| E47-S01 (#1316), E47-S02 (#1358) | the four canvas layers' evidence          | the canvas rows (spec §5)         | `pass:<record id>@<sha>` |
-| E47-S03, E47-S05, E47-S08        | re-runs of the T01 cells on their screens | K-AXE, K-KEY, K-ZOOM              | `t01:<kind>@<sha>`       |
+| Producer                                           | Produces (spec §4.1 kinds)                      | For classes                                   | Reference                      |
+| -------------------------------------------------- | ----------------------------------------------- | --------------------------------------------- | ------------------------------ |
+| E47-T04 (#1359), E47-Q02 (#1355)                   | `pass`                                          | every class but K-CONTRAST, K-W22 and K-FLASH | `pass:<record id>@<sha>`       |
+| E47-D12 (#1369)                                    | `d12`                                           | K-W22, K-SR                                   | `d12:<verdict id>@<sha>`       |
+| E47-Q05 (#1357)                                    | `flash`, `q05`                                  | K-FLASH, K-MOTION                             | `q05:<row id>@<sha>`           |
+| E47-Q03                                            | `keyboard` (the suite behind `A11Y-G004`)       | K-KEY                                         | `t01:keyboard@<sha>`           |
+| E47-T03 (#1325, closed; its matrix)                | `t03`                                           | K-CONTRAST                                    | `t03:<row id>@<sha>`           |
+| the `a11y` check's `A11Y-G003` (E47-T02; `05`:263) | `contrast` (an `A11Y-C00x` run over the tokens) | K-CONTRAST                                    | `contrast:<A11Y-C code>@<sha>` |
+| E47-S01 (#1316), E47-S02 (#1358)                   | the four canvas layers' evidence                | the canvas rows (spec §5)                     | `pass:<record id>@<sha>`       |
+| E47-S03, E47-S05, E47-S08                          | re-runs of the T01 cells on their screens       | K-AXE, K-KEY, K-ZOOM                          | `t01:<kind>@<sha>`             |
 
 ## §D Storybook story lists (each story per theme and density, `15`:41)
 
@@ -87,13 +88,13 @@ Old is a verbatim fragment of the cited line at `4c662fd5b` (the tool checks it)
 
 ## §G QA draft assertions (deterministic; for E47-Q01's TC-606 … TC-608 and E47-T05's staleness check)
 
-| QA   | Given / when                                                                   | Then (assert)                                                                                                           | Q01             |
-| ---- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | --------------- |
-| QA-1 | on SCR-117, activate the "Accessibility statement" link by keyboard            | the statement renders at `/accessibility`; `document.activeElement` is its `h1`; one `h1`; every table has `th` headers | TC-606          |
-| QA-2 | serve a statement whose `appliesTo` differs from the running version           | the W-7 notice is present above the version line, with `role="status"`; the page still renders                          | no case; new    |
-| QA-3 | at 200 % zoom and at 320 CSS px, in dark, light and high contrast              | no horizontal scroll; every control in the Tab order; axe reports no violation                                          | TC-608          |
-| QA-4 | activate "Copy problem report"                                                 | the clipboard holds W-14 with the running version; one polite "Copied"; no field asks for a name                        | no case; new    |
-| QA-5 | run the tool's `--check` on a commit that adds a Supports row without evidence | exit 1, G-CLAIM                                                                                                         | TC-607 (D13-C6) |
+| QA   | Given / when                                                                   | Then (assert)                                                                                                           | Q01              |
+| ---- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| QA-1 | on SCR-117, activate the "Accessibility statement" link by keyboard            | the statement renders at `/accessibility`; `document.activeElement` is its `h1`; one `h1`; every table has `th` headers | TC-606           |
+| QA-2 | serve a statement whose `appliesTo` differs from the running version           | the W-7 notice is present above the version line, with `role="status"`; the page still renders                          | no case; new     |
+| QA-3 | at 200 % zoom and at 320 CSS px, in dark, light and high contrast              | no horizontal scroll; every control in the Tab order; axe reports no violation                                          | TC-608 (in part) |
+| QA-4 | activate "Copy problem report"                                                 | the clipboard holds W-14 with the running version; one polite "Copied"; no field asks for a name                        | no case; new     |
+| QA-5 | run the tool's `--check` on a commit that adds a Supports row without evidence | exit 1, G-CLAIM                                                                                                         | TC-607 (D13-C6)  |
 
 ## §H The board plan (pending; spec §0)
 
@@ -109,7 +110,7 @@ The boards of spec §0, on page `E47-D13 — Conformance statement`; frames name
 | 06    | `criteria/table · dark`                                                       |
 | 07    | `feedback/default · dark`, `feedback/copied · dark`, `feedback/failed · dark` |
 | 08    | `entry/scr-117 · dark`, `entry/scr-119 · dark`                                |
-| 09    | `reflow/200 · dark`, `reflow/320 · dark`                                      |
+| 09    | `reflow/200 · dark`, `reflow/320 · dark`, `reflow/text-scale-max · dark`      |
 | 10    | `keyboard/tab-order · light`, `keyboard/reading-order · light`                |
 
 ## §I Summary for #1311
