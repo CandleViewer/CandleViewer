@@ -50,12 +50,13 @@ export async function openScreen(page: Page, s: A11yScreen): Promise<void> {
       `${s.id}: opened ${s.path} but landed on ${landed}; the session stub did not hold`,
     );
   }
-  // expect gives up after its 5 s default; waitFor has no default timeout, so a missing h1 would
-  // hold until the 300 s test timeout.
+  // expect is bounded and waitFor is not: a missing h1 fails here, not at the 300 s test timeout.
+  // The step's bound, not expect's 5 s default: a lazy screen's first <main> is the shell route's
+  // loading line, so this wait also covers the chunk's load and the shell's render.
   await expect(
     page.getByRole("heading", { level: 1, name: s.signedIn.heading, exact: true }),
     `${s.id}: its h1 did not render`,
-  ).toBeVisible();
+  ).toBeVisible({ timeout: STEP_TIMEOUT_MS });
   if (s.id === "R-201") {
     const table = page.getByRole("table"); // the list state, not loading
     await expect(table, `${s.id}: its table did not render`).toBeVisible({
