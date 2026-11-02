@@ -299,16 +299,16 @@ Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), th
 
 ### Table 1 — Variants × States
 
-| Variant            | State       | Penpot variant                                            | Story name             | Notes                   |
-| ------------------ | ----------- | --------------------------------------------------------- | ---------------------- | ----------------------- |
-| single             | working     | CMP-230 · OwnOrderMarker / Variant=Single, State=Working  | SingleOrder            | W-2                     |
-| single             | pending     | CMP-230 · OwnOrderMarker / Variant=Single, State=Pending  | Pending                | W-6                     |
-| single             | amending    | CMP-230 · OwnOrderMarker / Variant=Single, State=Amending | Amending               | W-7                     |
-| aggregate          | collapsed   | CMP-230 · OwnOrderMarker / Variant=Aggregate              | GroupAggregate         | W-3                     |
-| aggregate          | mixed sides | CMP-230 · OwnOrderMarker / Variant=Aggregate, Sides=Mixed | MixedSides             | W-4                     |
-| aggregate expanded | expanded    | CMP-230 · OwnOrderMarker / Variant=Aggregate, State=Open  | GroupAggregateExpanded | W-5; synthetic accounts |
-| position marker    | default     | CMP-230 · OwnOrderMarker / Variant=Position               | PositionMarker         | W-9                     |
-| any                | drag T2     | CMP-230 · OwnOrderMarker / State=DragT2                   | DragT2                 | R-3                     |
+| Variant            | State       | Penpot variant                                                     | Story name             | Notes                   |
+| ------------------ | ----------- | ------------------------------------------------------------------ | ---------------------- | ----------------------- |
+| single             | working     | CMP-230 · OwnOrderMarker / Variant=Single, State=Working           | SingleOrder            | W-2                     |
+| single             | pending     | CMP-230 · OwnOrderMarker / Variant=Single, State=Pending           | Pending                | W-6                     |
+| single             | amending    | CMP-230 · OwnOrderMarker / Variant=Single, State=Amending          | Amending               | W-7                     |
+| aggregate          | collapsed   | CMP-230 · OwnOrderMarker / Variant=Aggregate                       | GroupAggregate         | W-3                     |
+| aggregate          | mixed sides | CMP-230 · OwnOrderMarker / Variant=Aggregate, Sides=Mixed          | MixedSides             | W-4                     |
+| aggregate expanded | expanded    | CMP-230 · OwnOrderMarker / Variant=Aggregate, State=Open           | GroupAggregateExpanded | W-5; synthetic accounts |
+| position marker    | default     | CMP-230 · OwnOrderMarker / Variant=Position                        | PositionMarker         | W-9                     |
+| any                | drag        | none: absent while E21 holds, no control (the notice carries W-20) | —                      | D02:265                 |
 
 ### Table 2 — Keyboard
 

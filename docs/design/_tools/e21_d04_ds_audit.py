@@ -132,6 +132,10 @@ HUE_PIN = (
 HUE_MIN = {"pack": 5, "hand-off": 3}
 # Names the pack quotes from owner texts as NOT shipped (A-rows retire them); never bound.
 UNSHIPPED = frozenset({"font.mono", "color.surface.ownorder", "color.buy", "color.sell"})
+# The design read (6582546786): CMP-230's drag is absent while E21 holds (D02:265), never a T2 state;
+# an A-row naming the PROPOSED key carries its stamp byte for byte.
+DRAG_T2_RE = re.compile(r"DragT2|drag T2|drag and (?:the )?trade items", re.IGNORECASE)
+NOT_BUILT_STAMP = "`ladder.not_built` (PROPOSED; vocabulary owner E09-D09 #192 §3.1)"
 
 # Deny lists are assembled from fragments so this file never matches itself.
 _KW = "|".join(("clo" + "se[sd]?", "fix" + "(?:e[sd])?", "resol" + "ve[sd]?"))
@@ -632,6 +636,16 @@ def g_t2(t: Texts) -> list[Finding]:
         body = section(t.spec[m.start() :], m.group(0)) if m else ""
         if "R-3" not in body:
             bad.append(f"{c} does not cite R-3")
+    for label, text in (("pack", t.spec), ("hand-off", t.handoff)):
+        for ln in text.split("\n"):
+            if DRAG_T2_RE.search(ln) and not ln.startswith("- **BQ-"):
+                bad.append(f"{label}: CMP-230's drag as a T2 state")
+    a230 = [a for a in arows(t.spec) if a.cmp == "CMP-230"]
+    if not any("not draggable" in a.new and NOT_BUILT_STAMP in a.new for a in a230):
+        bad.append("CMP-230 A-rows: the drag absent with its reason")
+    for a in arows(t.spec):
+        if "`ladder.not_built`" in a.new.replace(NOT_BUILT_STAMP, ""):
+            bad.append(f"{a.aid}: `ladder.not_built` without its stamp")
     return [("G-T2", f"missing: {', '.join(bad)}")] if bad else []
 
 
@@ -673,6 +687,9 @@ def g_bq(t: Texts) -> list[Finding]:
     bad += [b[:10] for b in bullets if "RULED (" not in b or "Default built:" in b]
     if not any(b.startswith("- **BQ-1 ") and "RULED (OVERRIDE)" in b for b in bullets):
         bad.append("BQ-1 override")
+    walk = section(t.spec, "## 11. Owner walkthrough")
+    if f"is RULED (comment {RULING})" not in walk or "not yet ruled" in walk:
+        bad.append("the walkthrough's BQ item")
     return [("G-BQ", "; ".join(bad))] if bad else []
 
 
@@ -727,6 +744,9 @@ def g_riders(t: Texts) -> list[Finding]:
                 bad.append(f"{label}: a three-PR plan")
     if "`Partial: PR 1 of 2`" not in t.spec:
         bad.append("PR 1 of 2")
+    c6 = [r for r in rows(section(t.spec, "### 9.1")) if r and r[0] == "C-6"]
+    if not c6 or "(both tickets), if #503 merges as is" not in c6[0][-1]:
+        bad.append("C-6 without its merge pin")
     g1 = [r for r in rows(section(t.spec, "### 9.2 Gaps")) if r and r[0] == "G-1"]
     if not g1 or "E21-T06 #651" not in g1[0][2]:
         bad.append("G-1 owner")
@@ -889,6 +909,41 @@ MUTATIONS: tuple[Mutation, ...] = (
         "A-22 loses its stamp owner",
         "Stamp owner: E21-T05 #650,",
         "Stamp owner: E21-T05,",
+    ),
+    Mutation(
+        "M-28",
+        "G-T2",
+        "A-32's drag story back",
+        "FocusVisible, LongAccountLabel",
+        "FocusVisible, DragT2, LongAccountLabel",
+    ),
+    Mutation(
+        "M-29",
+        "G-T2",
+        "A-28 loses the absent drag",
+        "the marker is text, not draggable, with no control and no T2 state, and",
+        "the marker is text, and",
+    ),
+    Mutation(
+        "M-30",
+        "G-T2",
+        "A-25's key loses its stamp",
+        "the reason `ladder.not_built` (PROPOSED; vocabulary owner E09-D09 #192 §3.1) under",
+        "the reason `ladder.not_built` under",
+    ),
+    Mutation(
+        "M-31",
+        "G-BQ",
+        "the walkthrough calls the BQ list unruled",
+        "is RULED (comment 6580397401); to change a ruling",
+        "is not yet ruled; to change a default",
+    ),
+    Mutation(
+        "M-32",
+        "G-RIDERS",
+        "C-6 loses its merge pin",
+        "(both tickets), if #503 merges as is |",
+        "(both tickets) |",
     ),
 )
 
