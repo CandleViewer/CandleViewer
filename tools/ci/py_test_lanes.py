@@ -14,7 +14,8 @@ the `py` job applies to the combined data). `check`, also run by scripts/tests/t
 fails when a listed path is missing, holds no test file, is listed twice or overlaps another path of
 its own lane, or when a test file would run in no lane or in two. `estimate LOG...` (#3881) sums
 each lane's per-file run time from the job logs of a CI run: the numbers to rebalance the lanes by.
-Stdlib only; no network.
+`budget LANE SECONDS` (#5505) prints a `::warning::` when a lane's pytest wall time passed the
+manifest's `lane_budget_seconds`; it always exits 0. Stdlib only; no network.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import math
 import re
 import sys
 import tomllib
@@ -35,6 +37,7 @@ DEFAULT_MANIFEST = REPO_ROOT / "tools" / "ci" / "py-test-lanes.json"
 DEFAULT_API_ROOT = REPO_ROOT / "services" / "api"
 
 TESTS_DIR = "tests"
+DEFAULT_BUDGET_SECONDS = 540.0  # #5505: a lane's soft budget when the manifest sets none (9 min)
 DATA_FILE_TEMPLATE = "py-lane-{lane}.coverage"
 LANE_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 # Relative POSIX path below tests/: no whitespace, no glob characters, no trailing slash.
@@ -57,6 +60,7 @@ class LaneManifestError(Exception):
 class Manifest:
     lanes: Mapping[str, tuple[str, ...]]
     rest_lane: str
+    budget_seconds: float = DEFAULT_BUDGET_SECONDS
 
     @property
     def names(self) -> list[str]:
@@ -78,6 +82,9 @@ def load_manifest(path: Path = DEFAULT_MANIFEST) -> Manifest:
     rest = raw.get("rest_lane")
     if not isinstance(rest, str) or not LANE_NAME_RE.match(rest):
         raise LaneManifestError(f"{path}: 'rest_lane' must be a lowercase kebab-case name")
+    budget = raw.get("lane_budget_seconds", DEFAULT_BUDGET_SECONDS)
+    if isinstance(budget, bool) or not isinstance(budget, int | float) or not math.isfinite(budget) or budget <= 0:
+        raise LaneManifestError(f"{path}: 'lane_budget_seconds' must be a positive number")
     lanes_raw = raw.get("lanes")
     if not isinstance(lanes_raw, dict) or not lanes_raw:
         raise LaneManifestError(f"{path}: 'lanes' must be a non-empty object")
@@ -99,7 +106,7 @@ def load_manifest(path: Path = DEFAULT_MANIFEST) -> Manifest:
                     f"{path}: lane {name!r} path {entry!r} must be a plain path below tests/"
                 )
         lanes[name] = tuple(paths)
-    return Manifest(lanes=lanes, rest_lane=rest)
+    return Manifest(lanes=lanes, rest_lane=rest, budget_seconds=float(budget))
 
 
 def _under(path: str, root: str) -> bool:
@@ -258,6 +265,37 @@ def estimate(manifest: Manifest, seconds: Mapping[str, float]) -> dict[str, tupl
     return totals
 
 
+def budget_warning(manifest: Manifest, lane: str, seconds: float) -> str | None:
+    """#5505: a GitHub `::warning::` line when a lane's pytest run passed the soft budget, else None.
+
+    A warning only: it never fails a job, so a slow shared runner cannot turn a lane red."""
+    if seconds <= manifest.budget_seconds:
+        return None
+    return (
+        f"::warning title=py-tests lane over budget::{lane} ran pytest for {seconds:.0f} s, past "
+        f"the {manifest.budget_seconds:.0f} s soft budget (lane_budget_seconds in "
+        "tools/ci/py-test-lanes.json); rebalance with `py_test_lanes.py estimate`"
+    )
+
+
+def _budget_command(args: argparse.Namespace) -> int:
+    """`budget LANE SECONDS`: always 0. Bad input is a notice (or silence), never a failure."""
+    if not math.isfinite(args.seconds):
+        return 0
+    try:
+        manifest = load_manifest(args.manifest)
+    except LaneManifestError as exc:
+        print(f"py_test_lanes: budget skipped: {exc}", file=sys.stderr)
+        return 0
+    if args.lane not in manifest.names:
+        print(f"py_test_lanes: budget skipped: unknown lane {args.lane!r}", file=sys.stderr)
+        return 0
+    warning = budget_warning(manifest, args.lane, args.seconds)
+    if warning:
+        print(warning)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
@@ -271,11 +309,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     commands.add_parser("fail-under", help="print the --cov-fail-under floor from addopts")
     commands.add_parser("check", help="verify that the lanes partition the test files")
+    budget_cmd = commands.add_parser(
+        "budget", help="warn when a lane's pytest run passed its budget"
+    )
+    budget_cmd.add_argument("lane")
+    budget_cmd.add_argument("seconds", type=float)
     commands.add_parser("estimate", help="sum each lane's run time from CI job logs").add_argument(
         "logs", type=Path, nargs="+"
     )
-    args = parser.parse_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    try:
+        args = parser.parse_args(raw_argv)
+    except SystemExit as exc:
+        # argparse has printed its usage error; `budget` is advisory and must never fail a step.
+        return 0 if "budget" in raw_argv else int(exc.code or 0)
 
+    if args.command == "budget":
+        return _budget_command(args)
     try:
         manifest = load_manifest(args.manifest)
         if args.command == "pytest-args":

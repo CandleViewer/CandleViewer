@@ -27,7 +27,9 @@ sys.path.insert(0, str(ROOT))
 
 from tools.ci.py_test_lanes import (  # noqa: E402 - the repo root must be importable first
     DATA_FILE_TEMPLATE,
+    DEFAULT_BUDGET_SECONDS,
     LaneManifestError,
+    budget_warning,
     check,
     collects,
     data_files,
@@ -427,3 +429,73 @@ def test_estimate_sums_each_lanes_files_and_the_cli_prints_them(
     rows = [line.split() for line in capsys.readouterr().out.splitlines()]
     assert rows == [["a", "2", "files", "2", "s"], ["rest", "1", "files", "10", "s"]]
     assert main(["--manifest", str(manifest_path), "estimate", str(tmp_path / "absent.log")]) == 2
+
+
+def test_budget_warning_fires_only_past_the_manifests_soft_budget(tmp_path: Path) -> None:
+    path = tmp_path / "lanes.json"
+    path.write_text(
+        json.dumps({"rest_lane": "rest", "lanes": {"a": ["tests/x"]}, "lane_budget_seconds": 100}),
+        encoding="utf-8",
+    )
+    manifest = load_manifest(path)
+    assert manifest.budget_seconds == 100.0
+    assert budget_warning(manifest, "a", 100) is None
+    warning = budget_warning(manifest, "a", 101)
+    assert warning is not None and warning.startswith("::warning ")
+    assert "a ran pytest for 101 s" in warning and "100 s soft budget" in warning
+
+
+def test_budget_defaults_to_nine_minutes_and_the_shipped_manifest_pins_it(tmp_path: Path) -> None:
+    assert load_manifest(_manifest(tmp_path, {"a": ["tests/x"]})).budget_seconds == 540.0
+    assert DEFAULT_BUDGET_SECONDS == 540.0 == load_manifest().budget_seconds
+
+
+@pytest.mark.parametrize("bad", [0, -1, "540", True, float("nan"), float("inf")])
+def test_load_manifest_rejects_a_bad_budget(tmp_path: Path, bad: object) -> None:
+    path = tmp_path / "lanes.json"
+    path.write_text(
+        json.dumps({"rest_lane": "rest", "lanes": {"a": ["tests/x"]}, "lane_budget_seconds": bad}),
+        encoding="utf-8",
+    )
+    with pytest.raises(LaneManifestError, match="lane_budget_seconds"):
+        load_manifest(path)
+
+
+def test_cli_budget_prints_a_warning_over_budget_and_always_exits_zero(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["budget", "rest", "541"]) == 0
+    assert capsys.readouterr().out.startswith("::warning ")
+    assert main(["budget", "rest", "540"]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_cli_budget_exits_zero_on_any_bad_input(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    assert main(["budget", "rest", "nan"]) == 0
+    assert main(["budget", "rest", "inf"]) == 0
+    assert capsys.readouterr().out == ""
+    assert main(["budget", "no-such-lane", "9999"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "" and "unknown lane" in captured.err
+    assert main(["budget", "rest", "not-a-number"]) == 0
+    assert main(["budget", "rest"]) == 0
+    assert main(["--manifest", str(tmp_path / "missing.json"), "budget", "rest", "9999"]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_the_py_tests_job_warns_after_pytest_without_changing_its_result() -> None:
+    workflow = yaml.safe_load(
+        (ROOT / ".github" / "workflows" / "_job-py.yml").read_text(encoding="utf-8")
+    )
+    steps = workflow["jobs"]["py-tests"]["steps"]
+    names = [s.get("name", "") for s in steps]
+    warn = steps[next(i for i, n in enumerate(names) if n.startswith("Warn when this lane"))]
+    assert warn["if"] == "always()" and warn["continue-on-error"] is True
+    assert names.index(warn["name"]) > next(
+        i for i, n in enumerate(names) if n.startswith("pytest")
+    )
+    assert "py_test_lanes.py budget" in warn["run"] and "|| true" in warn["run"]
+    assert "uses" not in warn
+    assert "permissions" not in workflow["jobs"]["py-tests"]
