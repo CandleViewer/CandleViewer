@@ -1155,13 +1155,67 @@ def test_coalescer_whole_heatmap_frame_trimmed_at_take_is_recorded_as_sent() -> 
     assert not queue.pending  # bucket 100 left complete in the frame that was trimmed as it left
 
 
-def test_coalescer_whole_heatmap_emptied_frame_is_not_queued_whatever_its_root_fields() -> None:
-    """The merging path sends a changed root field with `columns: []` (above); a whole frame the
-    filter leaves with no column is not queued, `max_value` changed or not. Pinned, so that
-    sending it one day is a decision."""
+def test_coalescer_whole_heatmap_emptied_frame_keeps_a_changed_root_field() -> None:
+    """As the merging path does (#3640): `max_value` changed, so the emptied frame goes out with
+    `columns: []`; the same update again changes nothing and is not queued."""
     queue = _sent_whole(0)
-    assert queue.offer({**_HEAT, "max_value": 2.0, "columns": [_column(0)]})
+    changed = {**_HEAT, "max_value": 2.0, "columns": [_column(0)]}
+    assert queue.offer(changed)
+    [frame] = queue.take()
+    assert frame.body == {**_HEAT, "max_value": 2.0, "columns": []}
+    assert queue.offer(changed)
     assert (queue.pending, queue.pending_bytes, queue.take()) == (False, 0, [])
+
+
+def test_coalescer_whole_heatmap_emptied_frame_is_not_queued_when_its_root_is_unchanged() -> None:
+    queue = _sent_whole(0)
+    assert queue.offer({**_HEAT, "columns": [_column(0)]})
+    assert (queue.pending, queue.pending_bytes, queue.take()) == (False, 0, [])
+
+
+def test_coalescer_whole_heatmap_frame_emptied_at_take_keeps_a_root_changed_since_sent() -> None:
+    """The rule at take time, against what was last sent: frame A completes bucket 5; frame B,
+    queued before that was known, repeats it with a changed `max_value`, and leaves as
+    `columns: []`. A third that only repeats B's root is dropped."""
+    queue = CoalescingQueue("heatmap", coalesce=False)
+    assert queue.offer({**_HEAT, "max_value": 1.0, "columns": [_column(5)]})
+    assert queue.offer({**_HEAT, "max_value": 2.0, "columns": [_column(5)]})
+    first, second = queue.take()
+    assert first.body["max_value"] == 1.0 and first.body["columns"] == [_column(5)]
+    assert second.body == {**_HEAT, "max_value": 2.0, "columns": []} and second.part is None
+    assert queue.offer({**_HEAT, "max_value": 2.0, "columns": [_column(5)]})
+    assert queue.take() == []
+
+
+def test_coalescer_whole_heatmap_frame_emptied_at_take_is_dropped_when_its_root_was_sent() -> None:
+    queue = CoalescingQueue("heatmap", coalesce=False)
+    assert queue.offer({**_HEAT, "max_value": 1.0, "columns": [_column(5)]})
+    assert queue.offer({**_HEAT, "max_value": 1.0, "columns": [_column(5, complete=False)]})
+    assert len(queue.take()) == 1  # the root says nothing the client lacks
+
+
+def test_coalescer_whole_heatmap_fold_keeps_the_root_change_of_an_emptied_frame() -> None:
+    """The fold at the frame bound re-adds queued frames: an emptied one that carried a changed
+    root field still counts as a change against what was sent, so the window sends it."""
+    queue = CoalescingQueue("heatmap", coalesce=False, max_frames=1)
+    queue.seed([0], _HEAT)
+    assert queue.offer({**_HEAT, "max_value": 2.0, "columns": [_column(0)]})  # kept, emptied
+    assert queue.offer({**_HEAT, "max_value": 2.0, "columns": [_column(0)]})  # folds the first
+    [frame] = queue.take()
+    assert frame.body == {**_HEAT, "max_value": 2.0, "columns": []}
+
+
+def test_coalescer_whole_heatmap_root_change_on_an_unemptied_frame_is_recorded() -> None:
+    queue = _sent_whole(0)
+    assert queue.offer({**_HEAT, "max_value": 2.0, "columns": [_column(100)]})
+    assert queue.offer({**_HEAT, "max_value": 2.0, "columns": [_column(0)]})  # emptied, unchanged
+    assert [f.body["columns"] for f in queue.take()] == [[_column(100)]]
+
+
+def test_coalescer_whole_heatmap_root_fields_past_the_bound_are_refused() -> None:
+    queue = CoalescingQueue("heatmap", coalesce=False, max_keys=1)
+    assert not queue.offer({**_HEAT, "columns": [_column(0)]})  # two root fields, one allowed
+    assert queue.overflowed and queue.take() == []
 
 
 def test_coalescer_whole_heatmap_frame_is_trimmed_by_the_snapshot_that_seeded_the_queue() -> None:

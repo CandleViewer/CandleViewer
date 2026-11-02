@@ -225,6 +225,19 @@ class _Merge(ABC):
         heatmap drops anything."""
         return body
 
+    def rooted(self, body: dict[str, Any], kept: dict[str, Any] | None) -> dict[str, Any] | None:
+        """What a whole frame queues, given `unsent`'s `kept`; a heatmap also keeps root fields."""
+        return kept
+
+    def emptied(self, body: dict[str, Any]) -> dict[str, Any] | None:
+        """What leaves of a whole frame `unsent` emptied as it leaves, against what was sent
+        before it: None to drop it. Only a heatmap keeps one (a changed root field)."""
+        return None
+
+    def refold(self) -> None:
+        """Called before queued whole frames are re-added to the merge (`_fold`)."""
+        return None
+
     def emitted(self, body: Payload) -> None:
         """Called with each emitted payload; only a family that remembers what it sent uses it."""
         return None
@@ -480,6 +493,7 @@ class _HeatmapMerge(_KeyedMerge):
         super().__init__(limit, "columns", _t_key)
         self.sent: dict[int, None] = {}
         self.known: dict[str, Any] = {}  # root fields as last seen, across emissions
+        self.sent_root: dict[str, Any] = {}  # root fields as last emitted (bounded like `known`)
         self.estimated = False  # an update merged into this window was estimated
 
     def add(self, body: Payload) -> bool:
@@ -549,7 +563,39 @@ class _HeatmapMerge(_KeyedMerge):
             return body
         return {**body, "columns": kept} if kept else None
 
+    def rooted(self, body: dict[str, Any], kept: dict[str, Any] | None) -> dict[str, Any] | None:
+        """What a whole frame queues, given `unsent`'s `kept`: its root fields are recorded in
+        `known`, bounded as `add` bounds it, and a frame the filter emptied is kept as
+        `{**body, "columns": []}` when one of them differs from `known`, as the merging path
+        sends it, and dropped otherwise (#3640)."""
+        root = {k: v for k, v in body.items() if k not in self.lists}
+        changed = any(k not in self.known or self.known[k] != v for k, v in root.items())
+        self.known.update(root)
+        if len(self.known) > self.limit:
+            raise _BufferFullError
+        if kept is None and changed:
+            return {**body, "columns": []}
+        return kept
+
+    def emptied(self, body: dict[str, Any]) -> dict[str, Any] | None:
+        """A frame emptied as it leaves (its buckets went out in a frame before it) is kept as
+        `{**body, "columns": []}` when a root field differs from what was last emitted, as at
+        queue time; `known` tracks what is queued, so it is not the baseline here (#3640)."""
+        sent = self.sent_root
+        if any(k not in sent or sent[k] != v for k, v in body.items() if k not in self.lists):
+            return {**body, "columns": []}
+        return None
+
+    def refold(self) -> None:
+        """Queued frames were compared against `known` as they were queued, which already holds
+        their root fields: re-added to the merge they would all read as unchanged. Compare them,
+        in order, against what the client has instead."""
+        self.known = dict(self.sent_root)
+
     def emitted(self, body: Payload) -> None:
+        for k, v in body.items():
+            if k not in self.lists and (k in self.sent_root or len(self.sent_root) < self.limit):
+                self.sent_root[k] = v
         for col in body.get("columns") or ():
             if _complete(col):
                 self.sent[int(col["t_ms"])] = None
@@ -563,6 +609,7 @@ class _HeatmapMerge(_KeyedMerge):
         known = {k: v for k, v in root.items() if k not in self.lists}
         if len(known) <= self.limit:
             self.known.update(known)
+            self.sent_root.update(known)
 
 
 class _FootprintMerge(_Merge):
@@ -861,7 +908,8 @@ class CoalescingQueue:
                 size = _size(emission.body)
                 if merge is not None:
                     merge.validate(emission.body)  # `take` never meets a frame it can't read
-                    if (kept := merge.unsent(emission.body)) is not emission.body:
+                    kept = merge.rooted(emission.body, merge.unsent(emission.body))
+                    if kept is not emission.body:
                         if kept is None:
                             return  # nothing in it is new: a merging window discards it as well
                         # a part would still carry the dropped columns, so it goes with them
@@ -877,6 +925,7 @@ class CoalescingQueue:
         self._merge_one(merge, body, part, ts_ms, meta, count)
 
     def _fold(self, merge: _Merge) -> None:
+        merge.refold()
         frames, self._frames, self._frame_bytes = self._frames, [], 0
         for frame in frames:
             self._merge_one(
@@ -973,7 +1022,9 @@ class CoalescingQueue:
                 for emission in out:
                     body = merge.unsent(emission.body)
                     if body is None:
-                        continue
+                        body = merge.emptied(emission.body)
+                        if body is None:
+                            continue
                     if body is not emission.body:  # its part mirrored the columns just dropped
                         emission = replace(emission, body=body, part=None)
                     merge.emitted(emission.body)
