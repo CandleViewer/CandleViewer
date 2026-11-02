@@ -7,6 +7,15 @@ bounded, and the portfolio aggregate of `listPositions?aggregate=true`.
 whole request refused before any row is read (SR-E29-13); a store that does not answer within
 `STORE_TIMEOUT_S`, or fails, is `StoreUnavailable`, logged by its class alone (C-12.6).
 
+`listOrders`' `idempotency_key` (#2303) is read in two steps, each bounded: the caller's own
+`placeOrder` anchors under the keys (`OmsReadStore.anchored`, by the principal: a key another
+principal sent names nothing), then their orders, held in scope by the order read like any other,
+an entry's order named from its group as a repeat names it (`submit.entry_order_id`). A key that
+names no order, or whose order the scope does not view, reads no row: never a refusal (C-12.4).
+Named accounts settle before any key is read (an empty id set reads nothing past them), so a
+named account outside the scope is the same `AccountScopeDenied` whatever the key, with no anchor
+read: the refusal is no oracle for a key's existence.
+
 `aggregate_positions` collapses the open legs of a symbol across accounts into one row (22
 `AggregatePosition`), in `Decimal`: `net_size` is the sum of the legs' signed sizes (long positive),
 `gross_size` the sum of their sizes, and `unrealised_pnl` the sum of theirs, absent when a leg has
@@ -20,8 +29,8 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from collections.abc import Awaitable, Callable, Coroutine, Iterable
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Coroutine, Iterable, Iterator
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any, Final, Literal
 from uuid import UUID
@@ -30,9 +39,11 @@ import structlog
 
 from candleviewer.domain.primitives import Environment
 from candleviewer.oms.errors import AccountScopeDenied, StoreUnavailable
+from candleviewer.oms.submit import entry_order_id
 from candleviewer.storage.errors import StorageError
 from candleviewer.storage.repositories.accounts import AccountScope
 from candleviewer.storage.repositories.oms_reads import (
+    AnchoredTarget,
     ExecutionQuery,
     Keyset,
     ListedExecution,
@@ -118,6 +129,15 @@ def _side(row: PositionRow) -> Literal["long", "short"]:
     return "long" if row.side == "Buy" else "short"
 
 
+def _anchored_orders(targets: Iterable[AnchoredTarget]) -> Iterator[UUID]:
+    """Each anchor's order: its own, else its entry group's (`entry_order_id`)."""
+    for target in targets:
+        if target.order_id is not None:
+            yield target.order_id
+        elif target.trade_group_id is not None:
+            yield entry_order_id(target.trade_group_id)
+
+
 def _log() -> Any:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)
@@ -144,6 +164,15 @@ class OmsReads:
         self, scope: AccountScope, query: OrderQuery, *, after: Keyset | None, limit: int
     ) -> tuple[ListedOrder, ...]:
         env = self.environment
+        if query.idempotency_keys:  # the caller's own keys first (module docstring)
+            if query.accounts:  # named accounts settle before any key is read
+                none = replace(query, order_ids=frozenset())
+                await self._bounded(
+                    "orders", self._store.orders(scope, none, environment=env, after=None, limit=1)
+                )
+            keys = query.idempotency_keys
+            found = await self._bounded("anchored", self._store.anchored(scope.user_id, keys))
+            query = replace(query, order_ids=frozenset(_anchored_orders(found)))
         read = self._store.orders(scope, query, environment=env, after=after, limit=limit)
         return await self._bounded("orders", read)
 

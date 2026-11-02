@@ -11,6 +11,12 @@ read. The lists are keyset-paged, newest first, by time then id (`Keyset`), on t
 (`ix_orders_recent`, `ix_orders_open`, `ix_exec_acct_time`, `ix_pos_open`). Positions are not
 paged (22 `listPositions` has no cursor): the exchange holds one row per account, symbol and
 `position_idx`. `oms_reads_sqlalchemy.py` is the Postgres side.
+
+`listOrders`' lookup (#2303): `order_link_ids` match `orders.order_link_id` in scope; an
+`Idempotency-Key` is resolved first, by `anchored`, to the targets of the caller's own `placeOrder`
+anchors alone (`created_by`, 21 Sec.3.3.10: a key another principal sent reads as missing), and
+the OMS names their orders (`order_ids`), which the order read then holds in scope like any other:
+a key whose order is on an account outside the scope reads no row (C-12.4).
 """
 
 from __future__ import annotations
@@ -75,6 +81,12 @@ class OrderQuery:
     open_only: bool = False
     since: datetime | None = None
     until: datetime | None = None
+    #: The caller's `placeOrder` keys (22 `idempotency_key`), resolved by the OMS to `order_ids`.
+    idempotency_keys: frozenset[UUID] = frozenset()
+    order_link_ids: frozenset[str] = frozenset()
+    #: The orders the keys name, set by the OMS before the read (`require_resolved`); None when
+    #: no key is asked for.
+    order_ids: frozenset[UUID] | None = None
 
     def wanted_states(self) -> frozenset[OrderState] | None:
         """The states asked for: `states` narrowed to the non-terminal set by `open_only`; None
@@ -82,6 +94,12 @@ class OrderQuery:
         if not self.open_only:
             return self.states or None
         return (self.states or NON_TERMINAL_STATES) & NON_TERMINAL_STATES
+
+
+def require_resolved(query: OrderQuery) -> None:
+    """A read never serves keys the OMS has not resolved to their orders: it would ignore them."""
+    if query.idempotency_keys and query.order_ids is None:
+        raise ValueError("an Idempotency-Key lookup reads the orders its anchors name")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -103,6 +121,15 @@ class PositionQuery:
     accounts: tuple[UUID, ...] = ()
     symbol: str | None = None
     open_only: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class AnchoredTarget:
+    """A `placeOrder` anchor's target (`ia_target`): an entry's one-leg group, or the order of a
+    request that created no group."""
+
+    order_id: UUID | None
+    trade_group_id: UUID | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,6 +178,11 @@ class OmsReadStore(Protocol):
         self, scope: AccountScope, query: OrderQuery, *, environment: Environment,
         after: Keyset | None, limit: int,
     ) -> tuple[ListedOrder, ...]: ...  # fmt: skip
+
+    async def anchored(self, created_by: UUID, keys: frozenset[UUID]) -> tuple[AnchoredTarget, ...]:
+        """The targets of `created_by`'s own `placeOrder` anchors under `keys` (module docstring);
+        another principal's key, or one never anchored, names none."""
+        ...  # fmt: skip
 
     async def order(
         self, scope: AccountScope, order_id: UUID, *, environment: Environment, events: bool

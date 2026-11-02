@@ -27,6 +27,8 @@ entrypoints). Wires:
   for the value of a header named as a secret. `reset_logging()` removes it.
 - A `FrameLineFilter` beside it (`observability/frame_lines.py`, #415): a WebSocket frame line
   shows the frame's opcode and length only. `reset_logging()` removes it too.
+- An `AccessLineFilter` on the `uvicorn.access` logger (#2303): an access line shows a marker for
+  the value of each query parameter named in `_QUERY_SECRETS`. `reset_logging()` removes it.
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ import queue
 import re
 import sys
 from typing import Any, Final
+from urllib.parse import unquote_plus
 
 import structlog
 from structlog.types import EventDict, Processor
@@ -194,6 +197,42 @@ _UPGRADE_LOGGER: Final = "uvicorn.error"
 _UPGRADE_FILTER: Final = UpgradeLineFilter()
 
 
+#: Query parameters whose values are class P1 (21 Sec.12) and never logged: `listOrders`'
+#: `idempotency_key`, the client's `Idempotency-Key` (#2303). Compared after decoding, as the route
+#: reads a name, so `idempotency%5Fkey` is the same parameter.
+_QUERY_SECRETS: Final = frozenset({"idempotency_key"})
+#: uvicorn's access line (`uvicorn.logging.AccessFormatter`'s message): the target is the third
+#: argument, its path with the raw query string.
+_ACCESS_LINE: Final = '%s - "%s %s HTTP/%s" %d'
+
+
+class AccessLineFilter(logging.Filter):
+    """An access line on `uvicorn.access` shows `_KEY_NAME_MARKER` for the value of each query
+    parameter named in `_QUERY_SECRETS`; every other parameter, and the path, stay as written.
+    A changed library format leaves its line uncut: the access-line test is the guard."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if record.msg == _ACCESS_LINE and isinstance(args, tuple) and len(args) > 2:
+            if isinstance(target := args[2], str) and "?" in target:
+                record.args = (*args[:2], _query_redacted(target), *args[3:])
+        return True
+
+
+def _query_redacted(target: str) -> str:
+    path, _, query = target.partition("?")
+    pairs = []
+    for pair in query.split("&"):
+        name, eq, _value = pair.partition("=")
+        secret = unquote_plus(name) in _QUERY_SECRETS
+        pairs.append(f"{name}{eq}{_KEY_NAME_MARKER}" if secret else pair)
+    return f"{path}?{'&'.join(pairs)}"
+
+
+_ACCESS_LOGGER: Final = "uvicorn.access"
+_ACCESS_FILTER: Final = AccessLineFilter()
+
+
 #: Event fields that hold the text of a stack or a traceback: `StackInfoRenderer` and
 #: `format_exc_info` write them, and `_record_text` for a stdlib record.
 _TEXT_FIELDS: Final = ("stack", "exception")
@@ -330,6 +369,7 @@ def configure_logging(
     root.setLevel(getattr(logging, level_name.upper()))
     logging.getLogger(_UPGRADE_LOGGER).addFilter(_UPGRADE_FILTER)  # the one instance, once
     logging.getLogger(_UPGRADE_LOGGER).addFilter(FRAME_LINE_FILTER)  # likewise (#415)
+    logging.getLogger(_ACCESS_LOGGER).addFilter(_ACCESS_FILTER)  # likewise (#2303)
 
     # `env` is bound onto every subsequent structlog call via contextvars so
     # every log line carries it without every call site passing it manually.
@@ -338,8 +378,8 @@ def configure_logging(
 
 
 def reset_logging() -> None:
-    """Undo `configure_logging()`: stop the listener, drop its root handler and the upgrade-line
-    and frame-line filters, reset structlog.
+    """Undo `configure_logging()`: stop the listener, drop its root handler and the upgrade-line,
+    frame-line and access-line filters, reset structlog.
 
     Test-isolation helper (C-13.7); safe to call when nothing was configured.
     """
@@ -352,5 +392,6 @@ def reset_logging() -> None:
     root.setLevel(logging.WARNING)
     logging.getLogger(_UPGRADE_LOGGER).removeFilter(_UPGRADE_FILTER)
     logging.getLogger(_UPGRADE_LOGGER).removeFilter(FRAME_LINE_FILTER)
+    logging.getLogger(_ACCESS_LOGGER).removeFilter(_ACCESS_FILTER)
     structlog.reset_defaults()
     structlog.contextvars.clear_contextvars()

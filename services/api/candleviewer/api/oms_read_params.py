@@ -7,7 +7,10 @@ and never a probe ahead of the permission check. Unknown parameters are ignored,
 Only 22's vocabulary passes: the account ids (UUIDs, at most `MAX_ACCOUNTS`, 22 `AccountIdsQuery`),
 a `Symbol`, the `OrderState` and `OrderIntent` values, a `limit` of 1 to 500 (default 100), RFC
 3339 times with an offset (`from` inclusive, `to` exclusive; `from` after `to` is
-`invalid_time_range`), and booleans as `true` or `false`.
+`invalid_time_range`), and booleans as `true` or `false`. `listOrders`' lookup (#2303) takes at
+most `MAX_LOOKUP` of each of `idempotency_key` (UUIDs, as the `Idempotency-Key` header is read,
+`order_admission.idempotency_key`) and `order_link_id` (22 `Order.order_link_id`: `OUR_ID` or
+`EXT_ID`), duplicates once.
 
 A cursor is the trade-group lists' (`api.trade_group_cursor`): opaque, bound to the operation, the
 caller and every filter, for one hour. Its position is the last row's time, in microseconds since
@@ -28,6 +31,7 @@ from typing import Final, get_args
 from starlette.datastructures import QueryParams
 
 from candleviewer.api.trade_group_cursor import decode_cursor, encode_cursor
+from candleviewer.domain.order_link import EXT_ID, OUR_ID
 from candleviewer.oms.errors import FieldError
 from candleviewer.storage.repositories.oms_reads import (
     ExecutionQuery,
@@ -38,14 +42,16 @@ from candleviewer.storage.repositories.oms_reads import (
 from candleviewer.storage.repositories.orders import OrderIntent, OrderState
 
 __all__ = [
-    "DEFAULT_LIMIT", "MAX_ACCOUNTS", "MAX_LIMIT", "CursorInvalid", "Listing", "ParamsInvalid",
-    "closed_pnl_query", "execution_query", "next_cursor", "order_query", "position_query",
-    "read_after",
+    "DEFAULT_LIMIT", "MAX_ACCOUNTS", "MAX_LIMIT", "MAX_LOOKUP", "CursorInvalid", "Listing",
+    "ParamsInvalid", "closed_pnl_query", "execution_query", "next_cursor", "order_query",
+    "position_query", "read_after",
 ]  # fmt: skip
 
 DEFAULT_LIMIT: Final = 100
 MAX_LIMIT: Final = 500
 MAX_ACCOUNTS: Final = 25
+#: The most values of each of `listOrders`' `idempotency_key` and `order_link_id` (22).
+MAX_LOOKUP: Final = 20
 _SYMBOL: Final = re.compile(r"[A-Z0-9]{2,20}USDT")
 _STATES: Final = frozenset[str](get_args(OrderState))
 _INTENTS: Final = frozenset[str](get_args(OrderIntent))
@@ -123,6 +129,32 @@ class _Reader:
                 self.fail("exchange_account_ids", "uuid", "Each account id is a UUID.")
         return tuple(dict.fromkeys(found))
 
+    def keys(self) -> frozenset[uuid.UUID]:
+        """`idempotency_key`: the caller's `placeOrder` keys, each a UUID."""
+        raw = self._capped("idempotency_key")
+        found: set[uuid.UUID] = set()
+        for value in raw:
+            try:
+                found.add(uuid.UUID(value))
+            except ValueError:
+                self.fail("idempotency_key", "uuid", "Each `idempotency_key` is a UUID.")
+        return frozenset(found)
+
+    def links(self) -> frozenset[str]:
+        """`order_link_id`: ids the server issues or an adoption's (22 `Order.order_link_id`)."""
+        raw = self._capped("order_link_id")
+        if any(OUR_ID.fullmatch(v) is None and EXT_ID.fullmatch(v) is None for v in raw):
+            self.fail("order_link_id", "pattern", "Each `order_link_id` is an order's link id.")
+            return frozenset()
+        return frozenset(raw)
+
+    def _capped(self, name: str) -> list[str]:
+        """At most `MAX_LOOKUP` values are read; more is refused (`max_items`), the rest unread."""
+        raw = self.params.getlist(name)
+        if len(raw) > MAX_LOOKUP:
+            self.fail(name, "max_items", f"Name at most {MAX_LOOKUP}.")
+        return raw[:MAX_LOOKUP]
+
     def symbol(self) -> str | None:
         raw = self.one("symbol")
         if raw is not None and _SYMBOL.fullmatch(raw) is None:
@@ -195,16 +227,19 @@ def order_query(params: QueryParams) -> Listing[OrderQuery]:
     states = frozenset(s for s in get_args(OrderState) if s in read.members("state", _STATES))
     intents = frozenset(i for i in get_args(OrderIntent) if i in read.members("intent", _INTENTS))
     group, open_only = read.ident("trade_group_id"), read.flag("open_only", False)
+    keys, links = read.keys(), read.links()
     since, until = read.window()
     limit, cursor = read.limit(), read.one("cursor")
     read.done(since, until)
     query = OrderQuery(
         accounts=accounts, symbol=symbol, states=states, intents=intents, trade_group_id=group,
-        open_only=open_only, since=since, until=until,
+        open_only=open_only, since=since, until=until, idempotency_keys=keys,
+        order_link_ids=links,
     )  # fmt: skip
     binding = (
         ",".join(sorted(map(str, accounts))), symbol, ",".join(sorted(states)),
         ",".join(sorted(intents)), _text(group), str(open_only), *_times(since, until),
+        ",".join(sorted(map(str, keys))), ",".join(sorted(links)),
     )  # fmt: skip
     return Listing(query, limit, cursor, binding)
 
