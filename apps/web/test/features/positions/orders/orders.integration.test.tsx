@@ -1281,6 +1281,71 @@ describe("the toolbar, the tree and the toasts", () => {
   });
 });
 
+describe("the bulk dialog's restatement, the busy look and the bar (design n1, m4, n6)", () => {
+  /** `n` placed entries on Sub-1, all of them cancel-all's to select. */
+  const entries = (n: number): Served & { body: OrdersBody } => {
+    const entry = wsItem(snapshotBody(), ENTRY);
+    const rest = restOpen().find((r) => r.id === ENTRY);
+    const id = (i: number) => `0e000000-0000-4000-8000-0000000004${String(i).padStart(2, "0")}`;
+    return {
+      body: {
+        orders: Array.from({ length: n }, (_, i) => ({ ...entry, id: id(i) })),
+      } as OrdersBody,
+      orders: Array.from({ length: n }, (_, i) => ({ ...rest, id: id(i) })),
+    };
+  };
+
+  it(
+    "past ten rows in view it restates the chips, and lists the rows while no chip is set (D02 §8.3)",
+    SCREEN,
+    async () => {
+      await openOrders(entries(12));
+      fireEvent.click(screen.getByRole("button", { name: "Cancel all in view…" }));
+      await settle(500);
+      const listed = document.querySelector(".cv-orders-bulk__targets");
+      expect(listed?.querySelectorAll("li")).toHaveLength(12); // no chip: the list, never nothing
+      fireEvent.click(
+        within(screen.getByRole("alertdialog")).getByRole("button", { name: "Keep orders" }),
+      );
+      await settle(TICK);
+      act(() => updatePanelState({ chips: [{ kind: "symbol", value: "BTCUSDT" }] }));
+      await settle(TICK);
+      fireEvent.click(screen.getByRole("button", { name: "Cancel all in view…" }));
+      await settle(500);
+      const dialog = screen.getByRole("alertdialog");
+      expect(dialog.querySelector(".cv-orders-bulk__targets")).toBeNull();
+      expect(dialog).toHaveTextContent("Symbol: BTCUSDT");
+    },
+  );
+
+  it("the selection bar draws its dots, hidden from the reader", SCREEN, async () => {
+    await openOrders();
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "Select BTCUSDT Buy 0.15 BTC at 63,950 on Sub-1",
+        hidden: true,
+      }),
+    );
+    await settle(TICK);
+    const bar = document.querySelector<HTMLElement>('[data-part="SelectionBar"]');
+    const dots = [...(bar?.querySelectorAll('[aria-hidden="true"]') ?? [])].filter(
+      (node) => node.textContent === "·",
+    );
+    expect(dots).toHaveLength(2);
+    expect(bar).toHaveTextContent("1 selected·Cancel selected·Clear selection");
+  });
+
+  it("a busy Cancel keeps its label beside a static ⟳ (CMP-057's look, D02:345)", () => {
+    // jsdom draws no CSS: the rule itself is pinned, whitespace aside
+    const css = repoFile("apps/web/src/features/positions/positions.css").replace(/\s+/g, " ");
+    const busy = '.cv-orders .cv-button[aria-busy="true"]';
+    expect(css).toContain(
+      `${busy}:not([data-side]) > :is(.cv-button__label, .cv-button__icon) { opacity: 1; }`,
+    );
+    expect(css).toContain(`${busy} > .cv-spinner { display: none; }`);
+  });
+});
+
 describe("axe and teardown", () => {
   it(
     "no serious or critical axe finding on the tab, then with the bulk dialog open",
