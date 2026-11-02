@@ -7,10 +7,14 @@
 import { describe, expect, it } from "vitest";
 import { DECK } from "../../../../src/features/positions/copy";
 import { PROPOSED } from "../../../../src/features/positions/orders/copy";
+import { NO_ARM } from "../../../../src/features/positions/orders/model/amend";
 import {
   bulkGate,
   cancelGate,
+  commitGate,
+  editGate,
   scopeGate,
+  type AmendContext,
   type CancelContext,
 } from "../../../../src/features/positions/orders/model/gates";
 import {
@@ -19,6 +23,7 @@ import {
   type OrderRowModel,
 } from "../../../../src/features/positions/orders/model/orderRow";
 import {
+  COND,
   directory,
   ENTRY,
   ETH,
@@ -276,5 +281,188 @@ describe("never a cancel leg: the kill switch and a lockout (C-2.6; D04 §4.2, D
       kind: "allowed",
     });
     expect(scopeGate({ ...CONTEXT, lockedAccounts: new Set([SUB1]) }, SUB1)).toBeNull();
+  });
+});
+
+describe("the amend's legs (PR3a; D02 §7, §10.3–§10.4, D01 D12, D04 §4.1)", () => {
+  const AMEND: AmendContext = {
+    ...CONTEXT,
+    killSwitch: { state: "disengaged", scope: "global", exchangeAccountIds: [] },
+    amends: new Map(),
+    hasSteps: () => true,
+    arm: NO_ARM,
+    armKey: "Ctrl+Shift+T",
+    role: "owner",
+  };
+  const ARMED: AmendContext = { ...AMEND, arm: { token: () => "arm-token-1" } };
+  const ARM_LOCKED = {
+    kind: "gated",
+    leg: "arm",
+    reason: "one-click off — Ctrl+Shift+T to arm",
+    scope: "row",
+  } as const;
+
+  it("a field the order lacks has no Edit (form validity, not T2)", () => {
+    expect(editGate(row(STOP), "price", AMEND)).toEqual({ kind: "absent" });
+    expect(editGate(row(ETH), "trigger_price", AMEND)).toEqual({ kind: "absent" });
+  });
+
+  it("a native stop and a recorded take-profit are never amended (D-13; M19, M20)", () => {
+    expect(editGate(row(STOP), "trigger_price", ARMED)).toEqual({
+      kind: "gated",
+      leg: "native_stop",
+      reason: PROPOSED["blotter.ui.amend.native_stop"].string,
+      scope: "row",
+    });
+    expect(commitGate(row(STOP), "qty", "0.050", ARMED)).toMatchObject({ leg: "native_stop" });
+    const recorded = row(TP, {}, { provenance: "recorded_stop" });
+    expect(editGate(recorded, "price", ARMED)).toMatchObject({
+      leg: "recorded_take_profit",
+      reason: PROPOSED["blotter.recorded_tp"].string,
+    });
+  });
+
+  it("the scope legs come first, as a cancel's", () => {
+    expect(editGate(row(ETH), "price", { ...ARMED, permissions: ["orders:read"] })).toMatchObject({
+      leg: "permission",
+      scope: "panel",
+    });
+    expect(editGate(row(ETH), "price", { ...ARMED, restReachable: false })).toMatchObject({
+      leg: "offline",
+    });
+  });
+
+  it("this client's amend: pending is in flight, unconfirmed is unknown (D02:320–321)", () => {
+    const amending = (phase: "pending" | "unconfirmed"): AmendContext => ({
+      ...ARMED,
+      amends: new Map([[ETH, { phase }]]),
+    });
+    expect(editGate(row(ETH), "qty", amending("pending"))).toMatchObject({
+      leg: "amend_in_flight",
+      reason: DECK["blotter.amend_in_flight"].string,
+    });
+    expect(editGate(row(ETH), "qty", amending("unconfirmed"))).toMatchObject({
+      leg: "unknown",
+      reason: DECK["blotter.unknown"].string,
+    });
+  });
+
+  it.each([
+    ["amend_pending", "amend_in_flight"],
+    ["submitting", "not_amendable"],
+    ["cancel_pending", "not_amendable"],
+    ["triggered", "not_amendable"],
+    ["held", "held"],
+    ["untracked", "untracked"],
+    ["quarantined", "quarantined"],
+    ["unknown", "unknown"],
+  ])("an order %s takes no amend (D01 D12): %s", (lifecycle, leg) => {
+    expect(editGate(row(ETH, { lifecycle_state: lifecycle }), "qty", ARMED)).toMatchObject({
+      kind: "gated",
+      leg,
+    });
+  });
+
+  it("a final order lingering has nothing to amend", () => {
+    expect(editGate(row(ETH, { lifecycle_state: "filled" }), "qty", ARMED)).toEqual({
+      kind: "ended",
+    });
+  });
+
+  it("no step, no editor: a step is never guessed", () => {
+    expect(editGate(row(ETH), "qty", { ...ARMED, hasSteps: () => false })).toMatchObject({
+      leg: "no_step",
+      reason: PROPOSED["blotter.ui.amend.no_step"].string,
+    });
+  });
+
+  it("a LIVE entry's price edit is T2 arm.locked until the session holds a token (M9)", () => {
+    expect(editGate(row(ETH), "price", AMEND)).toEqual(ARM_LOCKED);
+    expect(editGate(row(COND), "trigger_price", AMEND)).toEqual(ARM_LOCKED);
+    expect(editGate(row(ETH), "price", ARMED)).toEqual({ kind: "allowed" });
+  });
+
+  it("never the arm: a quantity cut, a take-profit's price, a demo entry (M7, M8, M10)", () => {
+    expect(commitGate(row(ENTRY), "qty", "0.100", AMEND)).toEqual({ kind: "allowed" });
+    expect(editGate(row(TP), "price", AMEND)).toEqual({ kind: "allowed" });
+    expect(editGate(row(ETH, { environment: "demo" }), "price", AMEND)).toEqual({
+      kind: "allowed",
+    });
+  });
+
+  it("a quantity raised meets the arm at its commit, never before", () => {
+    expect(editGate(row(ENTRY), "qty", AMEND)).toEqual({ kind: "allowed" });
+    expect(commitGate(row(ENTRY), "qty", "0.200", AMEND)).toEqual(ARM_LOCKED);
+    expect(commitGate(row(ENTRY), "qty", "0.200", ARMED)).toEqual({ kind: "allowed" });
+  });
+
+  it("an environment this client does not know is LIVE (M12)", () => {
+    const unknown = mapOrder(
+      { ...wsItem(snapshotBody(), ETH), environment: undefined } as never,
+      "ws",
+      new Map(),
+      NONE,
+    );
+    expect(unknown?.environment).toBeNull();
+    expect(editGate(unknown as OrderRowModel, "price", AMEND)).toEqual(ARM_LOCKED);
+  });
+
+  it("the arm is read on every call, never kept from an earlier one (M13 at the gate)", () => {
+    let token: string | null = "arm-token-1";
+    const context: AmendContext = { ...AMEND, arm: { token: () => token } };
+    expect(editGate(row(ETH), "price", context)).toEqual({ kind: "allowed" });
+    token = null;
+    expect(editGate(row(ETH), "price", context)).toEqual(ARM_LOCKED);
+  });
+
+  it("under the kill switch: the Owner's frozen with its time, a Manager's E39-D01 line", () => {
+    const killSwitch = { state: "engaged", scope: "global", exchangeAccountIds: [] } as const;
+    const frozenAtMs = Date.parse("2026-10-31T14:02:11Z");
+    expect(editGate(row(ETH), "price", { ...ARMED, killSwitch, frozenAtMs })).toEqual({
+      kind: "gated",
+      leg: "frozen",
+      reason:
+        "Trading frozen by the owner at 14:02 UTC — new orders off. Cancel and close still work.",
+      scope: "row",
+    });
+    expect(editGate(row(ETH), "price", { ...ARMED, killSwitch, role: "manager" })).toMatchObject({
+      leg: "frozen",
+      reason: DECK["blotter.ui.frozen_control"].string,
+    });
+  });
+
+  it("the kill switch and an account's lock never gate an exit: a cut, a take-profit (C-2.6)", () => {
+    const killSwitch = { state: "engaged", scope: "global", exchangeAccountIds: [] } as const;
+    const stale = new Map([
+      [SUB1, { oms: { state: "stale", sinceMs: 0, episode: 1, killLock: false } }],
+    ] as const);
+    const locked: AmendContext = { ...AMEND, killSwitch, accountStates: stale };
+    expect(commitGate(row(ENTRY), "qty", "0.100", locked)).toEqual({ kind: "allowed" });
+    expect(editGate(row(TP), "price", locked)).toEqual({ kind: "allowed" });
+  });
+
+  it("an account reconciling, being verified or locked gates its new exposure (D04:460)", () => {
+    const states = (oms: {
+      state: "reconciling" | "desync" | "stale";
+      killLock: boolean;
+    }): AmendContext => ({
+      ...ARMED,
+      accountStates: new Map([[SUB1, { oms: { ...oms, sinceMs: 0, episode: 1 } }]]),
+    });
+    const reasonFor = (oms: Parameters<typeof states>[0]): unknown =>
+      commitGate(row(ENTRY), "qty", "0.200", states(oms));
+    expect(reasonFor({ state: "reconciling", killLock: false })).toMatchObject({
+      leg: "recon",
+      reason: DECK["recon.reconciling"].string,
+    });
+    expect(reasonFor({ state: "desync", killLock: false })).toMatchObject({
+      reason: DECK["recon.desync"].string,
+    });
+    expect(reasonFor({ state: "stale", killLock: false })).toMatchObject({
+      reason: DECK["recon.stale"].string,
+    });
+    expect(reasonFor({ state: "stale", killLock: true })).toMatchObject({
+      reason: DECK["recon.killlock"].string,
+    });
   });
 });

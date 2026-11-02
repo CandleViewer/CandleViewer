@@ -118,6 +118,25 @@ export const AGE_UNITS = {
 } as const satisfies Readonly<Record<string, CitedText>>;
 
 /**
+ * The amend engine's merged words the deck does not key (E29-S02 PR3a, P3-BQ-10), each cited: D01
+ * D4 × Unknown's two reconciliation lines (D01:228, :229), and E30-D02's arm-locked description, the
+ * E30 deck's `ticket.order.arm.locked.description` (E29-D02:325 draws it with the default key).
+ */
+export const AMEND_TEXT = {
+  reconciled: { string: "Amend confirmed by reconciliation.", source: "D01:228" },
+  notApplied: {
+    string: "Amend not applied — still 63,000.",
+    source: "D01:229",
+    params: { "63,000": "figure" },
+  },
+  armLocked: {
+    string: "one-click off — {arm_key} to arm",
+    source: "E30-D06 ticket.order.arm.locked.description",
+    params: { "{arm_key}": "placeholder" },
+  },
+} as const satisfies Readonly<Record<string, BoundText & CitedText>>;
+
+/**
  * E29-D02 D-19's purpose, after the order type ("Limit · Take profit"): D02:264 draws three; the
  * other five are D01 D1's names of `intent`'s values (D01:153), as D-19 amends that column.
  */
@@ -307,10 +326,43 @@ export const PROPOSED = {
     "Amend not sent — your order is unchanged",
     "An amend refused before any send (a 403, 409 or 422 answer).",
   ),
+  // E29-S02 PR3a: the amend engine's words no design draws (P3-BQ-10).
+  "blotter.ui.amend.confirmed.trigger": proposed(
+    "Amend confirmed: trigger 63,980.0.",
+    "RT-14's sentence for a trigger amend: the deck's `blotter.ui.amend.confirmed` words the price only (D02:322).",
+    { "63,980.0": "figure" },
+    "polite",
+  ),
+  "blotter.ui.amend.confirmed.qty": proposed(
+    "Amend confirmed: quantity 0.200.",
+    "RT-14's sentence for a quantity amend: D02:322 words the price only.",
+    { "0.200": "figure" },
+    "polite",
+  ),
+  "blotter.ui.amend.rejected_desc.trigger": proposed(
+    "Amend rejected. Your order is unchanged: the trigger is still 63,950.0.",
+    "RT-06's sentence for a trigger amend: the deck's `blotter.ui.amend.rejected_desc` words the price only (D02:323).",
+    { "63,950.0": "figure" },
+    "assertive",
+  ),
+  "blotter.ui.amend.rejected_desc.qty": proposed(
+    "Amend rejected. Your order is unchanged: the quantity is still 0.150.",
+    "RT-06's sentence for a quantity amend: D02:323 words the price only.",
+    { "0.150": "figure" },
+    "assertive",
+  ),
+  "blotter.ui.amend.no_step": proposed(
+    "Editing waits until the instrument's steps are known.",
+    "An Edit before `GET /instruments/{symbol}` gave the tick and lot steps (T2): a step is never guessed.",
+  ),
+  "blotter.ui.amend.native_stop": proposed(
+    "A native stop is managed with its position.",
+    "A native-stop row's Edit price, trigger or qty (T2, D-13): it moves through `setPositionTpSl`, which this tab does not mount (BQ-16), never `amendOrder`, which refuses it; owner E29-D03 with E32-D01.",
+  ),
   // E29-S02 PR2: the cancel and the bulk cancel (S-36's orders half).
   "blotter.recorded_tp": proposed(
     "This take-profit is managed with its stop.",
-    "A recorded take-profit's Cancel (T2), present tense, one reason for the row and the bulk dialog: it is cancelled through `setPositionTpSl` with its stop re-sent (D02 §8.2), which this tab does not mount (BQ-5); owner E29-D03 with E32-D01.",
+    "A recorded take-profit's Cancel and Edit (T2), present tense, one reason for the row and the bulk dialog: it is changed and cancelled through `setPositionTpSl` with its stop re-sent (D02 §8.2), which this tab does not mount (BQ-5); owner E29-D03 with E32-D01.",
   ),
   "blotter.ui.cancel.failed": proposed(
     "Not cancelled: BTCUSDT Sell 0.250 on Main.",

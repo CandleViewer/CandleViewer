@@ -4,7 +4,8 @@
  * every entry to the deck byte for byte, so a string changes only through its owner (D06 §6, BQ-17:
  * no string invented). The keys are this story's cut line (#911 BQ-2: S-01 to S-04, S-08, S-09's
  * tier part, S-14 to S-22, S-26) and BQ-14's account lines; E29-S02 (#912) adds the Working-orders
- * tab's: S-12's amend moments, S-13, S-35 and S-36's orders half (its BQ-2, BQ-4, BQ-5).
+ * tab's: S-12's amend moments, S-13, S-35 and S-36's orders half (its BQ-2, BQ-4, BQ-5), and the
+ * states that gate a risk-increasing edit (`frozen`, E39-D01's control string, `recon.*`).
  *
  * Each data-bound span of a string is named in its `params` (D06 §6): `bindDeck` replaces those
  * spans with the caller's values, never the fixture's; a span marked `fixed` stays as written.
@@ -444,6 +445,59 @@ export const DECK = {
     status: "PROPOSED",
     announce: "none",
     source: "D04:464",
+  },
+  // E29-S02 PR3a (#912): a risk-increasing edit's states (D02 §10.3, D04:456–460; never an exit's).
+  frozen: {
+    string:
+      "Trading frozen by the owner at {hh:mm} UTC — new orders off. Cancel and close still work.",
+    screen: "SCR-063",
+    owner: "E30-D02",
+    status: "registered",
+    announce: "none",
+    source: "D04:456",
+    safety: true,
+    params: { "{hh:mm}": "placeholder" },
+  },
+  "blotter.ui.frozen_control": {
+    string: "Frozen — the owner closes or releases",
+    screen: "SCR-063",
+    owner: "E39-D01",
+    status: "registered",
+    announce: "none",
+    source: "D04:458",
+    key_status: "PROPOSED name",
+  },
+  "recon.reconciling": {
+    string: "Reconciling with Bybit — new orders are paused.",
+    screen: "SCR-063",
+    owner: "E29-D03",
+    status: "PROPOSED",
+    announce: "polite",
+    source: "D03:336",
+  },
+  "recon.desync": {
+    string: "Data being verified — new orders are paused.",
+    screen: "SCR-063",
+    owner: "E29-D03",
+    status: "PROPOSED",
+    announce: "polite",
+    source: "D03:337",
+  },
+  "recon.stale": {
+    string: "Stale — new orders locked until the owner resolves it.",
+    screen: "SCR-063",
+    owner: "E29-D03",
+    status: "PROPOSED",
+    announce: "polite",
+    source: "D03:338",
+  },
+  "recon.killlock": {
+    string: "After the kill switch — new orders locked until resolved.",
+    screen: "SCR-063",
+    owner: "E29-D03",
+    status: "PROPOSED",
+    announce: "polite",
+    source: "D03:339",
   },
   // E29-S02 (#912): S-13, the rows no one may send for, and the native stop's Cancel (BQ-5).
   "blotter.untracked": {

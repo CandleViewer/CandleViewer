@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { DECK } from "../../../../src/features/positions/copy";
 import {
   AGE_UNITS,
+  AMEND_TEXT,
   bindProposed,
   ORDER_TEXT,
   PROPOSED,
@@ -102,6 +103,33 @@ describe("merged design words, each at its cited line", () => {
   });
 });
 
+describe("the amend engine's merged words (PR3a, P3-BQ-10), each at its source", () => {
+  it("D01 D4 × Unknown's reconciliation lines are at D01:228 and D01:229", () => {
+    expect(lineOf(AMEND_TEXT.reconciled)).toContain(`"${AMEND_TEXT.reconciled.string}"`);
+    expect(lineOf(AMEND_TEXT.notApplied)).toContain(`"${AMEND_TEXT.notApplied.string}"`);
+    expect(AMEND_TEXT.notApplied.params).toEqual({ "63,000": "figure" });
+  });
+
+  it("the arm-locked description is E30's deck entry, its key a placeholder (F-08)", () => {
+    const entry = e30Deck.strings["ticket.order.arm.locked.description"];
+    expect(entry?.string).toBe(AMEND_TEXT.armLocked.string);
+    expect(entry?.owner).toContain("E30-D02");
+    expect(AMEND_TEXT.armLocked.source).toBe("E30-D06 ticket.order.arm.locked.description");
+    expect(docs.D02[324]).toContain("one-click off — Ctrl+Shift+T to arm");
+  });
+
+  it("the amend's PROPOSED announcements keep the deck's announce rule (RT-14, RT-06)", () => {
+    expect(PROPOSED["blotter.ui.amend.confirmed.trigger"].announce).toBe(
+      DECK["blotter.ui.amend.confirmed"].announce,
+    );
+    expect(PROPOSED["blotter.ui.amend.confirmed.qty"].announce).toBe("polite");
+    expect(PROPOSED["blotter.ui.amend.rejected_desc.trigger"].announce).toBe(
+      DECK["blotter.ui.amend.rejected_desc"].announce,
+    );
+    expect(PROPOSED["blotter.ui.amend.rejected_desc.qty"].announce).toBe("assertive");
+  });
+});
+
 describe("PROPOSED keys (BQ-9), routed to E29-D03's copy owner", () => {
   it.each(Object.keys(PROPOSED))("%s is not in the deck yet", (key) => {
     expect(deck.strings[key]).toBeUndefined();
@@ -120,6 +148,8 @@ describe("PROPOSED keys (BQ-9), routed to E29-D03's copy owner", () => {
       "blotter.quarantined",
       "blotter.not_amendable",
       "blotter.recorded_tp",
+      "blotter.ui.amend.no_step",
+      "blotter.ui.amend.native_stop",
     ] as const) {
       const reason = PROPOSED[key].string;
       expect(reason.length).toBeLessThanOrEqual(60);
