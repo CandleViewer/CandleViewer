@@ -145,6 +145,10 @@ describe("positionsgrid.css contract", () => {
     expect(
       find(css.forced, ".cv-positions-grid .cv-table__header", "border-block-end-color"),
     ).toContain("CanvasText");
+    // The chip's edge is the hairline token, as the data rows' rule is (border.hairline).
+    expect(find(css.forced, ".cv-positions-grid__paused", "border")).toContain(
+      "border: calc(var(--border-hairline) * 1px) solid CanvasText",
+    );
     expect(
       find(
         css.forced,

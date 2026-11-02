@@ -127,6 +127,23 @@ const MAIN_ETH_WATCH = position("Main", "acct-main", {
   liqPrice: "2506.88",
   liq: { tier: "watch", distancePct: "2.1", sharePct: "46" },
 });
+/** E29-D02 D-8's 24-character account label (FilterBar's and AccountMultiSelect's long fixture), on a short. */
+const LONG_ACCOUNT = "Desk 4 swing book London";
+const DESK4_BTC = position(LONG_ACCOUNT, "acct-desk-4", {
+  symbol: "BTCUSDT",
+  baseCoin: "BTC",
+  side: "short",
+  size: "0.050",
+  entry: "64100.0",
+  mark: "64012.0",
+  unrealisedPnl: "4.40",
+  realisedToday: { value: "0.00" },
+  r: { value: "0.11" },
+  leverage: "10",
+  marginMode: isolated,
+  liqPrice: "70189.5",
+  liq: { tier: "none", distancePct: "9.7", sharePct: "101" },
+});
 
 const account = (
   key: string,
@@ -372,6 +389,45 @@ export const Narrow: Story = {
     await expect(total.closest("tr")).toHaveAccessibleDescription(
       "Exposure 34,322.66 USDT · Net 26,639.66 USDT · rPnL today profit 34.40 USDT",
     );
+  },
+};
+
+/**
+ * Long text (D02 D-8): a 24-character account label ends in an ellipsis in its column and keeps its whole label as
+ * the cell's name and in the echo (`cut`), which keyboard focus shows at once while the cell, the grid's one stop,
+ * keeps focus; the group header carries the label whole.
+ */
+export const LongText: Story = {
+  render: () => (
+    <Host
+      groups={[
+        account("acct-main", "Main · LIVE", [MAIN_BTC], "8.00", "37.40"),
+        account("acct-desk-4", `${LONG_ACCOUNT} · LIVE`, [DESK4_BTC], "4.40", "0.00"),
+      ]}
+      totals={undefined}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const grid = gridOf(canvasElement);
+    const row = within(grid).getByRole("row", {
+      name: `BTCUSDT · Short · 0.050 BTC · ${LONG_ACCOUNT}`,
+    });
+    const account = within(row).getAllByRole("gridcell")[1];
+    if (account === undefined) throw new Error("no Account cell");
+    // Cut on screen, whole in the DOM: the ellipsis is drawn and the cell's name is the whole label.
+    await expect(account.scrollWidth).toBeGreaterThan(account.clientWidth);
+    await expect(account).toHaveAccessibleName(LONG_ACCOUNT);
+    // → from the row's box: the cell takes the grid's one stop and keeps focus while the echo shows the label.
+    within(row).getByRole("checkbox").focus();
+    await userEvent.keyboard("{ArrowRight}");
+    await expect(account).toHaveFocus();
+    await expect(account).toHaveAttribute("tabindex", "0");
+    await waitFor(() =>
+      expect(document.querySelector(".cv-table__echo:not([hidden])")).toHaveTextContent(
+        LONG_ACCOUNT,
+      ),
+    );
+    await expect(account).toHaveFocus();
   },
 };
 

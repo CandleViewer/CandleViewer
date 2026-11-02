@@ -537,9 +537,9 @@ interface RowParts<R extends PositionsGridRow> {
 
 /**
  * The keys a row takes over CMP-049's: in a selectable grid `Space` on a cell toggles a position's selection and does
- * nothing on a group header or the totals, a handled key that never scrolls the region (a box's own Space is native);
- * `Ctrl+A` selects every position, drawn or not (D-3); and on the Actions cell's halves `←` / `→` move between them,
- * the roving model's two cells (D02 §11.1).
+ * nothing on a group header or the totals, a handled key that never scrolls the region (a box's own Space is native),
+ * and `Ctrl+A` selects every position, drawn or not (D-3), which without a selection stays the browser's; and on the
+ * Actions cell's halves `←` / `→` move between them, the roving model's two cells (D02 §11.1).
  */
 function rowKeys(
   event: KeyboardEvent<HTMLTableRowElement>,
@@ -551,7 +551,7 @@ function rowKeys(
 ): void {
   if (event.defaultPrevented || !(event.target instanceof HTMLElement)) return;
   const target = event.target;
-  if (event.ctrlKey && (event.key === "a" || event.key === "A")) {
+  if (parts.selectable && event.ctrlKey && (event.key === "a" || event.key === "A")) {
     event.preventDefault();
     parts.selectAll();
     return;
