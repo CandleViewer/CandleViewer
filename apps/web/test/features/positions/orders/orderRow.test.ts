@@ -25,6 +25,7 @@ import {
   triggerLabel,
   triggerWords,
   typeWords,
+  type AlgoKind,
   type LifecycleState,
   type OrderRowModel,
   type OrderState,
@@ -400,11 +401,33 @@ describe("Parent (D02:273; BQ-6: no kind word while the kind is unknown)", () =>
     expect(wsRow(ENTRY, fields).tradeGroupId).toBe("0c000000-0000-4000-8000-000000000001");
   });
 
-  it("a TWAP, a kind no design words, a group leg and none", () => {
+  it("a TWAP reads as D02:273 draws it", () => {
     expect(
       parentWords({ kind: "parent", id: "a04f0000-0000-4000-8000-000000000001", algo: "twap" }),
     ).toBe("TWAP · #a04f");
-    expect(parentWords({ kind: "parent", id: BRACKET, algo: "iceberg" })).toBe("#7c1e");
+  });
+
+  it("every kind the contract names has its word: D02:273's, E30's tab labels, the PROPOSED OCO", () => {
+    const fields = golden<OrdersBody>("ws_orders_contract_fields.json");
+    const words = [
+      ["bracket", "Bracket"],
+      ["twap", "TWAP"],
+      ["iceberg", "Iceberg"],
+      ["chase", "Chase"],
+      ["scaled", "Scaled"],
+      ["oco", "OCO"],
+    ] as const satisfies readonly (readonly [AlgoKind, string])[];
+    for (const [algo, word] of words) {
+      expect(parentWords({ kind: "parent", id: BRACKET, algo })).toBe(`${word} · #7c1e`);
+      const item: WsOrder = { ...wsItem(fields, ENTRY), algo_kind: algo };
+      const row = mapOrder(item, "ws", dir, constantsFor(ENTRY));
+      expect(row?.parentLabel).toBe(`${word} · #7c1e`);
+    }
+  });
+
+  it("a parent of kind none, or of no kind, shows the short id alone; a group leg and none read as D02:273", () => {
+    expect(parentWords({ kind: "parent", id: BRACKET, algo: "none" })).toBe("#7c1e");
+    expect(parentWords({ kind: "parent", id: BRACKET, algo: null })).toBe("#7c1e");
     expect(parentWords({ kind: "leg", id: BRACKET, algo: null })).toBe("Group leg");
     expect(parentWords(null)).toBe("—");
     expect(wsRow(TP).parentLabel).toBe("—");

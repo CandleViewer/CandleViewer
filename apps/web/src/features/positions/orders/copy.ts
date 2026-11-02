@@ -3,9 +3,10 @@
  *
  * - **Merged design words**, each cited to its line (a test finds it there): E29-D01 D2's state
  *   words (D01:177–191), E29-D02 §6.1's column words (D02:263–274), the group rows' environment
- *   words (D02:238, :441), D01 D1's purposes for the five intents D02 does not draw (D01:153) and
- *   E30-D02's trigger-by label "Index" (E30-D02:243). Like `../copy.ts`'s `D02_TEXT`, a string
- *   changes only through its owner (D06 §6: no string invented).
+ *   words (D02:238, :207), D01 D1's purposes for the five intents D02 does not draw (D01:153) and
+ *   E30-D02's trigger-by label "Index" (E30-D02:243) and tab labels "Iceberg", "Chase" and "Scaled"
+ *   (E30-D02:244). Like `../copy.ts`'s `D02_TEXT`, a string changes only through its owner (D06
+ *   §6: no string invented).
  * - **PROPOSED keys** (BQ-9): words no merged design draws, routed to E29-D03's copy owner (G-W3)
  *   as #911's BQ-15 routed its own, and listed in the PR body for the ledger row. A test holds each
  *   one out of the deck, so the deck adopting a key fails it until the entry moves to `DECK`.
@@ -67,10 +68,17 @@ export const ORDER_TEXT = {
   none: { string: "—", source: "D02:271" },
   bracket: { string: "Bracket", source: "D02:273" },
   twap: { string: "TWAP", source: "D02:273" },
+  /**
+   * E30-D06 `ticket.order.label.tab.iceberg`, `.chase` and `.scaled` (by reference, owner E30-D02,
+   * drawn at E30-D02:244): the algo's own name. `oco` has none: it is PROPOSED below.
+   */
+  iceberg: { string: "Iceberg", source: "E30-D02:244" },
+  chase: { string: "Chase", source: "E30-D02:244" },
+  scaled: { string: "Scaled", source: "E30-D02:244" },
   groupLeg: { string: "Group leg", source: "D02:273" },
-  /** The account group row's environment (D02:238 "Main · LIVE", D02:441 "Main · DEMO"). */
+  /** The account group row's environment (D02:238 "Main · LIVE"; D02:207 "Main · DEMO", §5.2). */
   live: { string: "LIVE", source: "D02:238" },
-  demo: { string: "DEMO", source: "D02:441" },
+  demo: { string: "DEMO", source: "D02:207" },
 } as const satisfies Readonly<Record<string, CitedText>>;
 
 /** The Age column's units, as D02:272 writes "38 s", "4 m" and "1 h 12 m". */
@@ -136,6 +144,10 @@ export const PROPOSED = {
     "Price reaches 63,950.0",
     "A trigger with neither a direction nor a `trigger_by`: D02:269 draws neither.",
     { "63,950.0": "figure" },
+  ),
+  "blotter.ui.parent.oco": proposed(
+    "OCO",
+    "The Parent column's word for an `oco` parent: D02:273 draws Bracket and TWAP, E30-D06 words Iceberg, Chase and Scaled, and no design words OCO.",
   ),
   "blotter.ui.orders_group": proposed(
     "Main · LIVE · 3 orders",

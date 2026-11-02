@@ -4,11 +4,13 @@
  * time created, oldest first; the account group row's PROPOSED words (BQ-9).
  */
 import { describe, expect, it } from "vitest";
+import type { AccountInfo, Environment } from "../../../../src/features/positions/model/rowMapping";
 import {
   constantsOf,
   mapOrder,
   NO_CONSTANTS,
   type OrderRowModel,
+  type WsOrder,
 } from "../../../../src/features/positions/orders/model/orderRow";
 import {
   compareOrders,
@@ -16,6 +18,7 @@ import {
   sectionOf,
   sectionsOf,
   sortOrders,
+  type AccountGroup,
 } from "../../../../src/features/positions/orders/model/sections";
 import {
   COND,
@@ -29,6 +32,7 @@ import {
   SUB1,
   SUB2,
   TP,
+  wsItem,
 } from "./support/orders";
 
 const dir = directory();
@@ -127,6 +131,31 @@ describe("the default order (D01 D13 a)", () => {
     expect(groupLabel({ ...group, rows: [base] })).toBe("Main · 1 order");
     for (const label of [groupLabel(group), groupLabel({ ...group, rows: [base] })])
       expect(label).not.toMatch(/·\s+·/);
+  });
+
+  it("an environment outside the union reads as an unknown one: the no-environment form, never a throw", () => {
+    const base = rows()[0] as OrderRowModel;
+    const group = { accountId: MAIN, label: "Main", rows: [base] };
+    // a contract break (an environment this client does not know) reaches the group unnarrowed
+    for (const environment of ["paper", "", "LIVE", "toString", "constructor", "__proto__"]) {
+      const odd = { ...group, environment } as unknown as AccountGroup;
+      expect(groupLabel(odd)).toBe("Main · 1 order");
+      expect(groupLabel({ ...odd, rows: [base, base, base] })).toBe("Main · 3 orders");
+    }
+  });
+
+  it("one a directory passes through unnarrowed reaches the row, and its group row still reads", () => {
+    const info = dir.get(MAIN) as AccountInfo;
+    const paper = new Map(dir).set(MAIN, {
+      ...info,
+      environment: "paper" as unknown as Environment,
+    });
+    // a frame that names no environment of its own falls back to the directory's
+    const item = { ...wsItem(snapshotBody(), TP), environment: undefined } as unknown as WsOrder;
+    const row = mapOrder(item, "ws", paper, NO_CONSTANTS) as OrderRowModel;
+    expect(row.environment).toBe("paper"); // the row trusts the directory's word
+    const [working] = sectionsOf([row]);
+    expect(working?.groups.map(groupLabel)).toEqual(["Main · 1 order"]);
   });
 
   it("the environment words are D02's LIVE and DEMO, and the PROPOSED TESTNET", () => {
