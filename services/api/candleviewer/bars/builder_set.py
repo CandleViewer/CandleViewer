@@ -66,6 +66,22 @@ no catalogue lifecycle (B1-B20), so lease state is plain bookkeeping in `leases.
   give a generation at or below an earlier one. The failure is a lower generation, so a
   consumer treats any change of generation, in either direction, as a swap and compares it for
   equality only, never as a time.
+- **Forming bar (#2022, 24 §3.2).** Builders return only opens, closes and amends; a trade that
+  only extends the forming bar returns nothing. Every `FORMING_SAMPLE_S` (250 ms, the `23` §6.1
+  `bars` throttle) a sampling task, on the injected `sleep` like the ticker, takes each lane's
+  lock and routes `forming()` once for every series whose forming bar changed since it was last
+  routed, and at no other time. "Changed" is `_Entry.dirty`: set when a trade folds into the
+  series and returns no emission; cleared when the series' forming bar is routed (an `open`, or a
+  sample) and when a non-amended `close` ends it with no `open` after it (no bar is forming then).
+  An amended close of an earlier bar leaves it as it was, so it never suppresses the forming bar's
+  sample. A sample equal to the bar last routed (`_Entry.routed`; a late trade the builder
+  dropped sets `dirty` without changing the draft) is not routed. A new or restored series starts
+  dirty, so a restored draft is routed once. The sample is taken and routed under `lane.lock`,
+  the lock every trade and tick holds while it routes, so it never interleaves with their
+  emissions and, being read at that moment, can never be a bar that has already closed: no
+  `update` of a bar is routed after its `close`. Catch-up (`_build`) routes only the opens,
+  closes and amends of the replayed trades; the series' forming bar goes out with the first
+  sample after it joins. Opens, closes and amends are never sampled or throttled.
 - **Emit.** Live and replayed emissions both go through `EmitRouter` (`emit.py`), stamped with
   the series' generation (`_Entry.generation`), which `WriterSink` stores on every row. An
   ADR-0033 rebuild (E12-S12, not implemented) would write under a generation of its own and
@@ -101,7 +117,7 @@ from candleviewer.bars.metrics import (
     bars_gap_detected_total,
     bars_restore_gap_total,
 )
-from candleviewer.bars.models import BarBuilder, BarSpec, BarUpdate
+from candleviewer.bars.models import Bar, BarBuilder, BarSpec, BarUpdate
 from candleviewer.bars.renko_builder import RenkoBarBuilder
 from candleviewer.bars.rows import MAX_GENERATION
 from candleviewer.bars.state_store import StateStore, StoredState, Watermark
@@ -114,6 +130,9 @@ from candleviewer.observability.context import spawn
 
 PERSIST_EVERY_US: Final = 60_000_000
 TICK_S: Final = 1.0
+#: The forming-bar sampling period: `23-ws-protocol.md` §6.1's default `bars` throttle (250 ms),
+#: as `24-internal-schemas.md` §3.2 binds it (#2022). One sample per changed series per period.
+FORMING_SAMPLE_S: Final = 0.25
 LANE_QUEUE: Final = 4096
 #: The gap topic carries one event per closed window, a handful per reconnect; NEVER_DROP so an
 #: unrecovered gap is never lost, drained by its own task and before every trade.
@@ -254,6 +273,10 @@ class _Entry:
     saved_at: int
     generation: int
     skip: _Mark | None = None  # restored/replayed watermark; cleared once live passes it
+    #: The forming bar changed since it was last routed (module docstring, "Forming bar").
+    dirty: bool = True
+    #: The forming bar last routed (an `open` or a sample); None once a close ends it.
+    routed: Bar | None = None
 
 
 @dataclass(slots=True)
@@ -283,15 +306,18 @@ class BarBuilderSet:
         factory: BuilderFactory = default_factory,
         persist_every_us: int = PERSIST_EVERY_US,
         tick_s: float = TICK_S,
+        sample_s: float = FORMING_SAMPLE_S,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._bus, self._env, self._router, self._store = bus, env, router, store
         self._tape, self._now, self._factory = tape, now_us, factory
         self._persist_every, self._tick_s, self._sleep = persist_every_us, tick_s, sleep
+        self._sample_s = sample_s
         self._leases = SpecLeases(caps)
         self._lanes: dict[str, _Lane] = {}
         self._issued: OrderedDict[tuple[str, str], int] = OrderedDict()
         self._ticker: asyncio.Task[None] | None = None
+        self._sampler: asyncio.Task[None] | None = None
         #: A series' build in flight, which its other registrants wait on (#2762): `None` once
         #: built, else the error it raised; cancelled when its registrant left. One per leased
         #: series at most, so bounded by the caps (C-2.18).
@@ -323,24 +349,30 @@ class BarBuilderSet:
 
     # -- lifecycle -------------------------------------------------------------------------
     async def start(self) -> None:
-        """Clear crash-leftover temp blobs, then start the clock/persistence ticker."""
+        """Clear crash-leftover temp blobs, then start the clock/persistence ticker and the
+        forming-bar sampler."""
         if self._ticker is None:
             await self._store.sweep_tmp()
             self._ticker = spawn(self._tick_loop(), name="bars-set-tick")
             self._supervise(self._ticker, lambda: None)
+            self._sampler = spawn(self._sample_loop(), name="bars-set-sample")
+            self._supervise(self._sampler, lambda: None)
 
     async def stop(self) -> None:
-        """Refuse new registrations, cancel the ticker, then per lane: unsubscribe (no new
-        deliveries), cancel the loop, apply everything still queued (including publishers
-        that were blocked on a full queue and wake as it drains), write final blobs.
+        """Refuse new registrations, cancel the ticker and the sampler, then per lane:
+        unsubscribe (no new deliveries), cancel the loop, apply everything still queued
+        (including publishers that were blocked on a full queue and wake as it drains), write
+        final blobs.
 
         Bounded loss: none for trades delivered before the unsubscribe. A publish that starts
         after it never reaches the set; the restart replays it from the tape."""
         self._stopping = True
-        if self._ticker is not None:
-            self._ticker.cancel()
-            await asyncio.gather(self._ticker, return_exceptions=True)
-            self._ticker = None
+        timers = [t for t in (self._ticker, self._sampler) if t is not None]
+        for t in timers:
+            t.cancel()
+        if timers:
+            await asyncio.gather(*timers, return_exceptions=True)
+        self._ticker = self._sampler = None
         if self._drains:
             await asyncio.gather(*self._drains, return_exceptions=True)
         for symbol in list(self._lanes):
@@ -422,6 +454,35 @@ class BarBuilderSet:
             except Exception as exc:  # the ticker must outlive one bad tick
                 self._reasons.add(BarsHealthReason.TASK_FAILED)
                 _log().error("bars_tick_failed", error_type=type(exc).__name__)
+
+    async def _sample_loop(self) -> None:
+        while True:
+            await self._sleep(self._sample_s)
+            try:
+                await self.sample()
+            except Exception as exc:  # the sampler must outlive one bad pass
+                self._reasons.add(BarsHealthReason.TASK_FAILED)
+                _log().error("bars_sample_failed", error_type=type(exc).__name__)
+
+    async def sample(self) -> None:
+        """One forming-bar sampling pass (driven every `sample_s` by `start()`): route `forming()`
+        of every series whose forming bar changed since it was last routed, each under its lane's
+        lock (module docstring, "Forming bar")."""
+        for lane in list(self._lanes.values()):
+            async with lane.lock:
+                for e in lane.entries:
+                    if not e.dirty:
+                        continue
+                    e.dirty = False
+                    try:
+                        u = e.builder.forming()
+                    except Exception as exc:  # as on the trade path: quarantine, keep the lane
+                        self._quarantine(lane, e, exc)
+                        continue
+                    if u is None or u.bar == e.routed:
+                        continue
+                    e.routed = u.bar
+                    await self._router.emit(e.spec, (u,), e.generation)
 
     # -- leases ----------------------------------------------------------------------------
     def check(self, spec: BarSpec, symbol: str, user: str | None = None) -> None:
@@ -662,7 +723,10 @@ class BarBuilderSet:
                 ups = entry.builder.on_trade(t)
             except Exception as exc:  # refused (SR-E12-15) or failed, as on the live path
                 raise _ReplayRefused from exc
-            await self._emit(entry, ups)
+            if ups:
+                await self._emit(entry, ups)
+            else:
+                entry.dirty = True  # folded: the first sample after the series joins routes it
             skip.advance(t.ts_event, t.trade_id)
 
     # -- hot path --------------------------------------------------------------------------
@@ -712,7 +776,9 @@ class BarBuilderSet:
                 self._quarantine(lane, e, exc)
                 continue
             if ups:
-                await self._router.emit(e.spec, ups, e.generation)
+                await self._emit(e, ups)
+            else:
+                e.dirty = True  # folded into the forming bar: the next sample routes it
         lane.mark.advance(ts, tid)
         lane.recent.append(t)
         bar_builder_fanout_latency_seconds.observe(time.perf_counter() - t0)
@@ -732,8 +798,15 @@ class BarBuilderSet:
         )
 
     async def _emit(self, e: _Entry, ups: Sequence[BarUpdate]) -> None:
-        if ups:
-            await self._router.emit(e.spec, ups, e.generation)
+        """Route a builder's opens, closes and amends, tracking the forming bar they route."""
+        if not ups:
+            return
+        for u in ups:
+            if u.kind == "open":
+                e.routed, e.dirty = u.bar, False
+            elif u.kind == "close" and not u.amended:
+                e.routed, e.dirty = None, False  # the forming bar closed; an open may follow
+        await self._router.emit(e.spec, ups, e.generation)
 
     # -- clock, persistence, teardown ------------------------------------------------------
     async def tick(self) -> None:

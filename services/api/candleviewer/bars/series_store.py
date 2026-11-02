@@ -5,7 +5,8 @@ and the forming bar last; §8.2: a bar's key is `(generation, index)`. Pure `bar
 a WS snapshot source reads `latest` and `version`.
 
 - **Sink** (a `BarSink` on the `EmitRouter`). Every close also goes to a per-series ring of the
-  last `RECENT_CLOSES`, kept or not. For a kept series, `open`/`update` set the forming bar and a
+  last `RECENT_CLOSES`, kept or not. For a kept series, an `open` or an `update` (a forming-bar
+  sample, at most one per series per 250 ms: §3.2, #2022) sets the forming bar and a
   `close` appends and clears it. A close of a held bar (same key and open time: amended or
   repeated) replaces it in place; an amended close of a bar not held is ignored. A different bar
   at or below the newest index (a builder cold start restarts `index`) resets the series, and so
@@ -128,7 +129,9 @@ that hole again. A gap a fold flags is logged, never counted: `bars_series_gaps_
 seen live, since every re-read meets the same held closes and a count there would also restart the
 gap interval and end a miss streak, as a gap seen live does.
 
-Not covered: the forming bar is unknown until the next `open` or `update` (builders expose none);
+Not covered: the forming bar is unknown until the next `open` or forming-bar sample (the set
+routes one per 250 ms period while the bar changes, §3.2, #2022), so it lags its trades by up to a
+period;
 a read that loses a held bar repairs nothing, even if it adds bars (§7.4); a hole inside the
 stored rows with no bar held for it is not flagged (`gapped` stays false): one the writer never
 landed leaves the series complete, and a row skipped or withheld leaves it not `hydrated`, so it is
