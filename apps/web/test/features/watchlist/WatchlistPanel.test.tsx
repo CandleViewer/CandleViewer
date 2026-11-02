@@ -862,6 +862,7 @@ describe("keyboard paths", () => {
   });
 
   it("Ctrl+F focuses the filter; typing filters the rows; Esc clears it and returns to the grid", async () => {
+    render(<KeymapHost />); // Ctrl+F is the Watchlist context's command: the window keymap runs it
     mount([MAJORS], MAJORS);
     await flush();
     act(() => cellOf("BTCUSDT", "last").focus());
@@ -1490,6 +1491,10 @@ describe("SCR-101's paths and lists (#4702 PR (c))", () => {
 
 describe("the Watchlist focus context (E08-D07 §6.2; #5335 A-5335-02, B-5335-03)", () => {
   afterEach(() => resetBindings());
+  const order = (): string[] =>
+    within(grid())
+      .getAllByRole("rowheader")
+      .map((header) => header.textContent ?? "");
   /** The toasts the window keymap raised (SCR-015's region, portalled): none for a key the panel handled. */
   const toasts = (): string =>
     screen.queryByRole("region", { name: "Notifications", hidden: true })?.textContent ?? "";
@@ -1535,6 +1540,107 @@ describe("the Watchlist focus context (E08-D07 §6.2; #5335 A-5335-02, B-5335-03
     await flush();
     expect(toasts()).toContain("Move row up is not available here (Watchlist view)");
     expect(toasts()).not.toContain("Rules");
+  });
+
+  /** The row keys pressed off a body row, and what the window keymap says of each. */
+  const OFF_ROW = [
+    [{ key: "Delete" }, "Remove symbol is not available here (Watchlist view)"],
+    [{ key: "ArrowUp", altKey: true }, "Move row up is not available here (Watchlist view)"],
+    [{ key: "ArrowDown", altKey: true }, "Move row down is not available here (Watchlist view)"],
+  ] as const;
+
+  it("Del and Alt+↑/↓ on a column header say they need a row: the header row is not a watchlist row (C-5335-d03)", async () => {
+    render(<KeymapHost />);
+    const { replace } = mount([MAJORS], MAJORS);
+    await flush();
+    const header = within(grid()).getByRole("button", { name: "24h %" });
+    act(() => header.focus());
+    for (const [init, words] of OFF_ROW) {
+      expect(fireEvent.keyDown(header, init), words).toBe(true); // not taken: it did nothing
+      expect(toasts()).toContain(words);
+    }
+    await flush();
+    expect(replace).not.toHaveBeenCalled();
+    expect(order()).toEqual(MAJORS_SYMBOLS);
+  });
+
+  it("Del and Alt+↑/↓ on an empty list's 'Add symbols to watch' say they need a row: its state row is not a watchlist row (C-4702F-01)", async () => {
+    render(<KeymapHost />);
+    const empty = list("Majors", [], MAJORS.id);
+    const { replace } = mount([empty], empty);
+    await flush();
+    const add = screen.getByRole("button", { name: "Add symbols to watch" });
+    act(() => add.focus());
+    for (const [init, words] of OFF_ROW) {
+      expect(fireEvent.keyDown(add, init), words).toBe(true); // not taken: it did nothing
+      expect(toasts()).toContain(words);
+    }
+    await flush();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  /** Whether the window keymap took the press (it prevents the default): a key it leaves is the browser's. */
+  const taken = (target: Element, init: KeyboardEventInit): boolean =>
+    !fireEvent.keyDown(target, init);
+  const CTRL_F = { key: "f", code: "KeyF", ctrlKey: true } as const;
+  const filterBox = (): HTMLElement => screen.getByRole("searchbox", { name: "Filter symbols" });
+
+  it("Ctrl+F on a list tab focuses the panel's filter and is taken: the whole panel is the context (C-5335-d01)", async () => {
+    render(<KeymapHost />);
+    mount([MAJORS, ALTS], MAJORS);
+    await flush();
+    const tab = screen.getByRole("tab", { name: "Majors, 12 symbols" });
+    act(() => tab.focus());
+    expect(taken(tab, CTRL_F)).toBe(true);
+    expect(filterBox()).toHaveFocus();
+    expect(toasts()).toBe("");
+  });
+
+  it("Ctrl+F stays remappable: the profile's key focuses the filter from a tab, and Ctrl+F is the browser's then", async () => {
+    render(<KeymapHost />);
+    act(() => setBindings(new Map(getBindings()).set("watchlist.filter", "Ctrl+Shift+F")));
+    mount([MAJORS, ALTS], MAJORS);
+    await flush();
+    const tab = screen.getByRole("tab", { name: "Majors, 12 symbols" });
+    act(() => tab.focus());
+    expect(taken(tab, CTRL_F)).toBe(false);
+    expect(filterBox()).not.toHaveFocus();
+    expect(taken(tab, { ...CTRL_F, shiftKey: true })).toBe(true);
+    expect(filterBox()).toHaveFocus();
+  });
+
+  it("a panel that is still loading has no filter: Ctrl+F is not taken, so the browser's find opens, with no notice", async () => {
+    render(<KeymapHost />);
+    const { replace } = fakeApi([]);
+    mount([MAJORS], MAJORS, { api: { list: () => new Promise(() => undefined), replace } });
+    await flush();
+    expect(screen.queryByRole("searchbox", { name: "Filter symbols" })).toBeNull();
+    const panel = screen.getByRole("region", { name: "Watchlist" });
+    panel.tabIndex = -1; // nothing in the loading panel takes focus: the panel itself stands in
+    act(() => panel.focus());
+    expect(taken(panel, CTRL_F)).toBe(false);
+    expect(toasts()).toBe("");
+  });
+
+  it("a panel whose read failed has no filter: Ctrl+F on its Retry is the browser's, with no notice", async () => {
+    render(<KeymapHost />);
+    const { replace } = fakeApi([]);
+    mount([MAJORS], MAJORS, { api: { list: () => Promise.reject(new Error("503")), replace } });
+    await flush();
+    const retry = screen.getByRole("button", { name: "Retry" });
+    act(() => retry.focus());
+    expect(taken(retry, CTRL_F)).toBe(false);
+    expect(toasts()).toBe("");
+  });
+
+  it("a panel with no list has no filter: Ctrl+F on 'Create watchlist' is the browser's, with no notice", async () => {
+    render(<KeymapHost />);
+    mount([], MAJORS);
+    await flush();
+    const create = screen.getByRole("button", { name: "Create watchlist" });
+    act(() => create.focus());
+    expect(taken(create, CTRL_F)).toBe(false);
+    expect(toasts()).toBe("");
   });
 });
 
