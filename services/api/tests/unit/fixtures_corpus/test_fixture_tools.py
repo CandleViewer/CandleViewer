@@ -349,3 +349,21 @@ def test_orderbook_generator_is_deterministic(
     gen.main()
     committed = corpus_dir() / "ws" / "orderbook_BTCUSDT.jsonl"
     assert (tmp_path / "ob.jsonl").read_bytes() == committed.read_bytes()
+
+
+def test_drift_load_docs_skips_derived_files_by_manifest_source(tmp_path: Path) -> None:
+    """#1955: a `source: derived` file yields no drift expectations, whatever its name; a file
+    named like a derived one but recorded is still read (keyed on `source`, not the name)."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "acks.jsonl").write_text('{"op": "subscribe", "success": true}\n', encoding="utf-8")
+    (ws / "real-derived.jsonl").write_text('{"op": "pong", "success": true}\n', encoding="utf-8")
+    manifest = {
+        "fixtures": [
+            {"path": "ws/acks.jsonl", "source": "derived"},
+            {"path": "ws/real-derived.jsonl", "source": "capture_fixture.py"},
+        ]
+    }
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    docs = drift_check.load_docs(tmp_path)
+    assert [msg for _, msg in docs] == [{"op": "pong", "success": True}]

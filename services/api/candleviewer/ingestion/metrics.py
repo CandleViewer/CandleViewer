@@ -162,6 +162,12 @@ SPECS: Final[tuple[MetricSpec, ...]] = (
     ),
     # E08-T04 connection (E08-T06: dashboard + silent-death meta-alert)
     _g("ingest_ws_up", "1 while the public socket is open, else 0.", "socket"),
+    _c(
+        "ingest_subscribe_rejected_total",
+        "Topic-level WS subscribe/unsubscribe ops refused (rejected) or unanswered (timeout) "
+        "(#1955); overflow is a dropped tracking entry (pending-ack map full), not a refusal.",
+        "reason",
+    ),
     _g("ingest_enabled", "1 when the ingestion pipeline is wired in this process."),
     # E08-S06 kline backfill
     _c("kline_backfill_pages_total", "Kline page fetches.", "symbol", "interval", "result"),
@@ -439,6 +445,7 @@ BOOK_EXPORTED_NAMES: Final = frozenset(
     }
 )
 ingest_ws_up = _gauge("ingest_ws_up")
+ingest_subscribe_rejected_total = _counter("ingest_subscribe_rejected_total")
 ingest_enabled = _gauge("ingest_enabled")
 kline_backfill_pages_total = _counter("kline_backfill_pages_total")
 kline_backfill_duration_seconds = _histogram("kline_backfill_duration_seconds")

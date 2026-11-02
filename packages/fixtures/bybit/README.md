@@ -168,7 +168,11 @@ it cannot pair. Not documented, so not transcribed: a linear order push, and the
 replies below, which tests derive from the granted ones (E29-K01, #843, records them).
 
 - refused `auth` reply (`op auth`, `success` false): no public example — K01.
-- refused `subscribe` reply (`op subscribe`, `success` false): no public example — K01.
+- refused `subscribe` reply (`op subscribe`, `success` false): no public example — K01. A
+  **derived** stand-in, not evidence, is `ws/public-subscribe-ack-derived.jsonl` (`source`
+  `derived`, #1955): the recorded private ack plus the documented `req_id` echo, one accepted
+  and one refused public ack. A capture row is owned by the recorder lane once the demo stack
+  is up and replaces it.
 
 A K01 recording of a private push has its envelope `id` redacted before it is committed: its
 first segment is the account's UID (C-13.5), as in the documented `386825804_BTCUSDT_...`

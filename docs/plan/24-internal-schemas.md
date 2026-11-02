@@ -516,7 +516,9 @@ declared in `ingestion/metrics.py`, exported with `env`, `exchange`): trades/tic
 `ingest_events_total{stream,symbol}`, `ingest_lag_seconds{stream}`; trade gaps →
 `trade_gaps_total{symbol,recovered}`; books → `ingest_book_live{symbol}`,
 `ingest_book_resyncs_total{symbol,reason}`; feed health → `ws_topic_staleness_seconds{topic}`,
-`ingest_ws_up{socket}`; clock → `exchange_clock_drift_ms`, `clock_offset_age_seconds`.
+`ingest_ws_up{socket}`, `ingest_subscribe_rejected_total{reason}` (`rejected` | `timeout`: a
+topic-level subscribe/unsubscribe refused or unanswered; `overflow`: a dropped ack-tracking
+entry); clock → `exchange_clock_drift_ms`, `clock_offset_age_seconds`.
 
 ### 2.10 Big-trade events (E22-T01, contract-first)
 

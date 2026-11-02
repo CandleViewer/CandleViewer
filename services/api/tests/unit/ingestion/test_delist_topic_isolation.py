@@ -168,7 +168,11 @@ async def test_live_add_subscribes_only_the_new_topic() -> None:
     rig.states()
     rig.m.set_desired({BOOK_BTC, BOOK_ETH})
     await rig.run_for(1.0)
-    assert rig.socks[0].sent[1:] == [{"op": "subscribe", "args": [BOOK_ETH]}]
+    live_add = rig.socks[0].sent[1:]
+    assert [{k: v for k, v in f.items() if k != "req_id"} for f in live_add] == [
+        {"op": "subscribe", "args": [BOOK_ETH]}
+    ]
+    assert all("req_id" in f for f in live_add)  # #1955
     assert "resubscribing" not in rig.states()
     assert len(rig.socks) == 1 and rig.m.state() == "open"
     late = rig.frames[-6:]

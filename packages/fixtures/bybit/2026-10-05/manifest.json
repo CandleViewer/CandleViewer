@@ -652,6 +652,20 @@
       "source_ref": "github.com/bybit-exchange/docs@19518b90fb36e1527eaf99ff692076487a977921:docs/v5/websocket/private/wallet.mdx"
     },
     {
+      "path": "ws/public-subscribe-ack-derived.jsonl",
+      "symbol": "*",
+      "stream": "op subscribe",
+      "host": "bybit-exchange.github.io",
+      "capture_date": "2026-11-01",
+      "source": "derived",
+      "notable_event": "DERIVED, not a capture and not evidence: ws/private-subscribe-ok.jsonl plus the documented req_id echo (Bybit docs ws/connect); one accepted and one refused (10-topic ret_msg echo) public subscribe ack; a recorder-lane capture replaces it",
+      "http_status": null,
+      "size_cap_bytes": 4000,
+      "derived_from": "ws/private-subscribe-ok.jsonl",
+      "retrieved": "2026-11-01",
+      "source_url": "https://bybit-exchange.github.io/docs/v5/ws/connect"
+    },
+    {
       "path": "ws/publicTrade_BTCUSDT.jsonl",
       "symbol": "BTCUSDT",
       "stream": "publicTrade.BTCUSDT",
