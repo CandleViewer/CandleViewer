@@ -89,6 +89,8 @@ class ErrorCode(StrEnum):
     DEGRADED_DATA = "degraded_data"
     INSTRUMENT_CACHE_UNAVAILABLE = "instrument_cache_unavailable"
     AUTH_UNAVAILABLE = "auth_unavailable"
+    STEP_UP_UNAVAILABLE = "step_up_unavailable"
+    LIFECYCLE_UNAVAILABLE = "lifecycle_unavailable"
     SIGNING_UNAVAILABLE = "signing_unavailable"
     TIMEOUT = "timeout"
     PROTOCOL_VIOLATION = "protocol_violation"
@@ -203,6 +205,8 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.DEGRADED_DATA: ErrorMeta(("rest", "ws",), "any", True, None, None, "Local store is behind the exchange beyond the freshness SLO"),
     ErrorCode.INSTRUMENT_CACHE_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "Instrument cache is stale and could not be refreshed in time to check the exchange's limits"),
     ErrorCode.AUTH_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "Second factor temporarily unavailable"),
+    ErrorCode.STEP_UP_UNAVAILABLE: ErrorMeta(("rest",), None, False, None, None, "Step-up is not wired on this server, so the gated action cannot be confirmed; nothing was done"),
+    ErrorCode.LIFECYCLE_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "The lifecycle refused the command, its inbox full or its machine held degraded until an operator acknowledges it; nothing was done"),
     ErrorCode.SIGNING_UNAVAILABLE: ErrorMeta(("rest",), None, False, None, None, "The audit export signing key is missing or cannot be opened, or the export directory takes no hard links; export alone is unavailable"),
     ErrorCode.TIMEOUT: ErrorMeta(("rest",), None, True, None, None, "Upstream exchange call exceeded the deadline"),
     ErrorCode.PROTOCOL_VIOLATION: ErrorMeta(("ws",), "connection", False, None, 1002, "Frame out of order or malformed envelope"),
