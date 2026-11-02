@@ -1,0 +1,169 @@
+/* The cell use of CMP-100 / CMP-101 (E29-S02 BQ-11; E29-D02 §7). Tokens only, no motion: opening, closing, a refusal
+   and a gate are cuts (E29-D04 Mo-8). The editor is the cell itself: it fills the cell, the well at least the control
+   height of the density. At rest the value reads as the cell's own text, right-aligned in tabular figures; open, the
+   well takes a 2px color.focus.ring border at border.focus (D02 §7, board 08). */
+.cv-cell-editor {
+  --cv-cell-editor-bw: calc(var(--border-focus) * 1px);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.cv-cell-editor__well {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  box-sizing: border-box;
+  min-block-size: var(--size-control-height);
+  border: var(--cv-cell-editor-bw) solid transparent;
+  border-radius: var(--radius-control);
+}
+
+/* The value: the digits never truncate (E29-D02 D-8); `size` grows the field with its text, so the cell widens. */
+.cv-cell-editor__input {
+  box-sizing: content-box;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-family: var(--type-num-base-font-family);
+  font-size: var(--type-num-base-font-size);
+  font-weight: var(--type-num-base-font-weight);
+  line-height: var(--type-num-base-line-height);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+/* Open: the editor is the cell, bounded by the focus ring's colour, on the app surface. */
+.cv-cell-editor[data-editing] > .cv-cell-editor__well {
+  border-color: var(--color-focus-ring);
+  background: var(--color-surface-app);
+  padding-inline: var(--space-inset-xs);
+}
+
+.cv-cell-editor[data-editing] .cv-cell-editor__input {
+  outline: 0;
+}
+
+/* A refused value: the danger boundary at the same width, its words in the note (glyph and words, never colour
+   alone). The focus ring stays, outside it, as CMP-007's stays over its danger border (fields.css). */
+.cv-cell-editor[data-invalid] > .cv-cell-editor__well {
+  border-color: var(--color-status-danger-default);
+  outline: var(--cv-cell-editor-bw) solid var(--color-focus-ring);
+  outline-offset: var(--cv-cell-editor-bw);
+}
+
+/* T2 (E09-D09 §2.2; E29-D04 §4.1, D02:429): the value keeps its own look, with no glyph among the numerals and no
+   dimming; `aria-disabled` and the reason carry the state, and a refused press re-shows the reason in the note. */
+.cv-cell-editor[data-gated] .cv-cell-editor__input {
+  cursor: not-allowed;
+}
+
+/* Plain disabled (no reason): native, out of the Tab order, dimmed as every disabled field is. */
+.cv-cell-editor[data-disabled] .cv-cell-editor__input {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+/* The note under the cell (a D02 §7 delta): the live value, a refusal, a T2 reason and the step hint, drawn over the
+   rows below and out of the flow, so a windowed row keeps CMP-049's one row height (D01 D13 b holds the rows still
+   while an editor is open). CMP-016's surface and words; shown for the life of the edit or of a re-shown reason, with
+   no hover or focus trigger, no `Esc` of its own and no pointer events. */
+.cv-cell-editor__note {
+  position: absolute;
+  inset-block-start: 100%;
+  inset-inline-start: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(20rem, calc(100vw - 2 * var(--space-inset-xs)));
+  margin-block-start: var(--space-inset-xs);
+  padding-block: var(--space-inset-xs);
+  padding-inline: var(--space-inset-sm);
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-overlay);
+  box-shadow: var(--elevation-popover);
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+  white-space: normal;
+  overflow-wrap: break-word;
+  pointer-events: none;
+}
+
+/* The live value under the editor (D02 §7: "the old value below it"); the description says it too. It keeps
+   type.num.sm's tabular figures where board 08 names type.ui.caption, so its digits line up with the cell's. */
+.cv-cell-editor__live {
+  color: var(--color-text-secondary);
+  font-family: var(--type-num-sm-font-family);
+  font-size: var(--type-num-sm-font-size);
+  font-weight: var(--type-num-sm-font-weight);
+  line-height: var(--type-num-sm-line-height);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A T2 reason shown 2a (G-T2.2): the lock in color.text.tertiary leads the reason in color.text.secondary; never
+   color.text.disabled or opacity.disabled. Empty and unmarked while nothing is refused. */
+.cv-cell-editor__reason[data-shown] {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-inset-xs);
+  padding-block-start: var(--space-inset-xs);
+  color: var(--color-text-secondary);
+}
+
+.cv-cell-editor__reason[data-shown]:first-child {
+  padding-block-start: 0;
+}
+
+.cv-cell-editor__lock {
+  display: inline-flex;
+  flex: none;
+  color: var(--color-text-tertiary);
+}
+
+/* The step hint (D02 §7: "Step 0.1 · ↑/↓ one tick · Shift ten"), its description too; it wraps in the note. */
+.cv-cell-editor__hint {
+  padding-block-start: var(--space-inset-xs);
+  color: var(--color-text-secondary);
+}
+
+@media (forced-colors: active) {
+  .cv-cell-editor[data-editing] > .cv-cell-editor__well {
+    border-color: Highlight;
+    background: Field;
+  }
+
+  /* The 2px width is the shape cue; the glyph and the words carry the state; the ring stays Highlight. */
+  .cv-cell-editor[data-invalid] > .cv-cell-editor__well {
+    border-color: FieldText;
+    outline-color: Highlight;
+  }
+
+  /* The note keeps its edge (forced colours drop the shadow); the lock and the words are the system's text. */
+  .cv-cell-editor__note {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .cv-cell-editor__live,
+  .cv-cell-editor__reason[data-shown],
+  .cv-cell-editor__lock,
+  .cv-cell-editor__hint {
+    color: CanvasText;
+  }
+
+  .cv-cell-editor[data-disabled] .cv-cell-editor__input {
+    color: GrayText;
+    opacity: 1;
+  }
+}
