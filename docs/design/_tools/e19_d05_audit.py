@@ -132,7 +132,11 @@ FLASH: tuple[tuple[str, str, float, int, int], ...] = (
     ("M-2 trace", "color.profile.poc", 0.25, math.ceil(WINDOW_MS / HS1_GAP_MS), 4 * REGION_H),
     ("M-4 bracket", "color.profile.valuearea", 0.25, 1, 8 * REGION_H),
     ("M-8 ray fade", "color.profile.poc", 1.0, MR1, MR1 * REGION_W),
+    # R-5's combined cap: the largest step (the ray) and the worst area three starts admit
+    # (one bracket plus two traces).
+    ("Combined M-2 + M-4 + M-8", "color.profile.poc", 1.0, MR1, 8 * REGION_H + 2 * 4 * REGION_H),
 )
+COMBINED = "together start at most 3 in any half-open 1 000 ms window per pane"
 CLIPS = ("poc-jump", "developing-final")
 THEMES, MODES, PHASES = ("dark", "light"), ("normal", "reduce"), ("start", "mid", "end")
 TWINS = {"02", "03", "09"}  # BQ-13
@@ -400,6 +404,9 @@ def g_flash(t: L.Tree) -> list[str]:
             bad.append(f"{f[0]}: measured {want[1:]}")
         if want[-1] != "pass":
             bad.append(f"{f[0]} fails MR-1 or HS-1b")
+    r5 = next((ln for ln in t.text("spec").split("\n\n") if "- **R-5 " in ln), "")
+    if COMBINED not in " ".join(r5.split()):
+        bad.append("R-5 lacks the combined cap")
     return bad
 
 
@@ -533,6 +540,8 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-25", "G-UNTOUCHED", "an owner document edited", "@changed",
        "", "docs/plan/05-accessibility-standard.md"),
     _M("M-26", "G-MUTLIST", "the list drifts", "spec", "| M-1  | G-CITE ", "| M-1  | G-AC   "),
+    _M("M-27", "G-FLASH", "the combined start cap dropped", "spec",
+       "together start at most 3", "together start at most 6"),
 )
 # fmt: on
 
