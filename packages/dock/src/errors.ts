@@ -23,6 +23,11 @@ export const DOCK_ERROR_CODES = Object.freeze([
   "invalid_operation",
   /** A stored `grid_preset` that is neither `custom` nor a named preset (refused, never guessed). */
   "unknown_preset",
+  /**
+   * A layout with panes but none docked: `22` has no stored form for it (a named preset docks its
+   * first slots and `custom` needs a spec), so it is refused on write rather than stored wrongly.
+   */
+  "empty_dock",
 ] as const);
 
 export type DockErrorCode = (typeof DOCK_ERROR_CODES)[number];

@@ -10,8 +10,11 @@ import {
   resize,
   separatorId,
   split,
+  toLayoutInput,
+  type DockErrorCode,
   type DockNode,
   type DockTree,
+  type OpContext,
   type Zone,
 } from "../src/index.js";
 import { VIEWPORT, ctx, invariantViolations, leaf, paneIds, preset } from "./fixtures.js";
@@ -46,9 +49,18 @@ function splits(node: DockNode | null): DockNode[] {
   return [node, ...node.children.flatMap(splits)];
 }
 
-/** Applies one command; a refused one (a cap, an invalid target) leaves the tree as it was. */
-function apply(tree: DockTree, command: Command, serial: number): DockTree {
-  const c = ctx();
+/**
+ * The refusals a valid command may meet: a cap, or an operation that cannot apply (a split below
+ * the minimums). Every target is picked from the tree, so any other `DockError` is a bug.
+ */
+const EXPECTED: ReadonlySet<DockErrorCode> = new Set([
+  "tree_too_deep",
+  "tree_too_large",
+  "invalid_operation",
+]);
+
+/** Applies one command; an expected refusal leaves the tree as it was. */
+function apply(tree: DockTree, command: Command, serial: number, c: OpContext): DockTree {
   const leaves = leavesOf(tree.root);
   const pick = <T>(xs: readonly T[], i: number): T | undefined => xs[i % Math.max(xs.length, 1)];
   try {
@@ -66,7 +78,7 @@ function apply(tree: DockTree, command: Command, serial: number): DockTree {
       }
       case "close": {
         const pane = pick(leaves, command.pane);
-        return pane === undefined || leaves.length === 1 ? tree : close(tree, pane.paneId, c);
+        return pane === undefined ? tree : close(tree, pane.paneId, c);
       }
       case "resize": {
         const node = pick(splits(tree.root), command.split);
@@ -76,7 +88,7 @@ function apply(tree: DockTree, command: Command, serial: number): DockTree {
       }
     }
   } catch (error) {
-    if (isDockError(error)) return tree;
+    if (isDockError(error) && EXPECTED.has(error.code)) return tree;
     throw error;
   }
 }
@@ -95,22 +107,33 @@ describe("every operation returns a normalised tree (property)", () => {
   it("1000 random split/move/close/resize operations keep every invariant", () => {
     fc.assert(
       fc.property(fc.array(arbCommand, { minLength: 1000, maxLength: 1000 }), (commands) => {
+        // One minter per run, as in the app: node ids stay unique across operations.
+        const c = ctx();
         let tree = preset("2x2", ["a", "b", "c", "d"]);
         commands.forEach((command, serial) => {
           const before = new Map(leavesOf(tree.root).map((l) => [l.paneId, l]));
-          const next = apply(tree, command, serial);
+          const next = apply(tree, command, serial, c);
           expect(invariantViolations(next)).toEqual([]);
           expect(belowMinimum(next)).toEqual([]);
-          // Pane ids survive every operation but a close (one fewer) and a split (one more), and
-          // a surviving pane keeps its leaf object: a move is a re-parent, never a new panel.
+          // Exactly one pane is added by an applied split and removed by an applied close; every
+          // other pane survives with its leaf object (a move is a re-parent, never a new panel),
+          // and a resize keeps every container id.
           const after = paneIds(next);
           const kept = after.filter((id) => before.has(id));
-          if (command.op === "move" || command.op === "resize")
-            expect(after).toEqual([...before.keys()].sort());
-          expect(kept.length).toBeGreaterThanOrEqual(before.size - 1);
+          expect(kept.length).toBe(
+            after.length - (command.op === "split" && next !== tree ? 1 : 0),
+          );
+          if (command.op === "close" && next !== tree) expect(kept.length).toBe(before.size - 1);
+          else expect(kept.length).toBe(before.size);
           for (const l of leavesOf(next.root))
             if (before.has(l.paneId)) expect(l).toBe(before.get(l.paneId));
-          tree = next;
+          if (command.op === "resize")
+            expect(splits(next.root).map((n) => n.id)).toEqual(splits(tree.root).map((n) => n.id));
+          if (next.root === null) {
+            // The last docked pane closed: the empty dock stores, and the run starts over.
+            expect(toLayoutInput(next, new Map()).panes).toEqual([]);
+            tree = preset("2x2", [`a${serial}`, `b${serial}`, `c${serial}`, `d${serial}`]);
+          } else tree = next;
         });
       }),
       // 10 runs of 1000 operations each; a failure reports unshrunk (shrinking 1000-long runs takes
@@ -124,9 +147,10 @@ describe("every operation returns a normalised tree (property)", () => {
     // counterexample is three splits, and the shrunk report must be exactly that.
     const result = fc.check(
       fc.property(fc.array(arbCommand, { maxLength: 60 }), (commands) => {
+        const c = ctx();
         let tree = preset("1x1", ["a"]);
         commands.forEach((command, serial) => {
-          tree = apply(tree, command, serial);
+          tree = apply(tree, command, serial, c);
         });
         return leavesOf(tree.root).length <= 3;
       }),

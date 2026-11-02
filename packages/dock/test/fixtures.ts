@@ -58,7 +58,10 @@ export function paneIds(tree: DockTree): string[] {
 /** The invariants every operation's result holds (Gherkin "Every operation returns a normalised tree"). */
 export function invariantViolations(tree: DockTree): string[] {
   const out: string[] = [];
+  const ids = new Set<string>();
   const visit = (node: DockNode): void => {
+    if (ids.has(node.id)) out.push(`node id ${node.id} twice`);
+    ids.add(node.id);
     if (node.type === "leaf") return;
     if (node.children.length < 2)
       out.push(`${node.type} ${node.id} has ${node.children.length} child`);

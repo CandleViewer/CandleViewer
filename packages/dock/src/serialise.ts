@@ -73,7 +73,9 @@ function strip(node: DockNode, slots: ReadonlyMap<PaneId, number>): GridNode {
 
 /**
  * `slot_index` is reading order (the dock, then floating, then minimised), so unique and within
- * 0..15; a named grid stores `grid_spec: null`. `panes` supplies each pane's stored fields; its
+ * 0..15; a named grid stores `grid_spec: null`. A layout with no pane at all stores as the default
+ * `1x1` with no panes, which `fromLayout` reads back as nothing docked; panes with none docked are
+ * refused (`empty_dock`): `22` has no form for them. `panes` supplies each pane's stored fields; its
  * `pane_kind` is the leaf's `kind`, which the app took from its registry.
  */
 export function toLayoutInput(
@@ -84,12 +86,17 @@ export function toLayoutInput(
   if (ordered.length > MAX_LEAVES) {
     throw new DockError("tree_too_large", `the layout has more than ${MAX_LEAVES} panes`);
   }
+  if (tree.root === null) {
+    if (ordered.length > 0) {
+      throw new DockError("empty_dock", "a layout with panes must dock at least one of them");
+    }
+    return { grid_preset: "1x1", grid_spec: null, panes: [] };
+  }
   const slots = new Map(ordered.map((leaf, i) => [leaf.paneId, i] as const));
   const preset = matchPreset(tree);
-  const named = preset !== "custom";
   return {
     grid_preset: preset,
-    grid_spec: named || tree.root === null ? null : { version: 1, root: strip(tree.root, slots) },
+    grid_spec: preset === "custom" ? { version: 1, root: strip(tree.root, slots) } : null,
     panes: ordered.map((leaf, i) => ({
       ...EMPTY_PANE,
       ...panes.get(leaf.paneId),
@@ -224,10 +231,11 @@ export function fromLayout(
   const panes = new Map<PaneId, PaneFields>();
   for (const [i, pane] of [...layout.panes].sort((a, b) => a.slot_index - b.slot_index).entries()) {
     const { slot_index: slot, pane_kind: kind, ...fields } = pane;
-    if (bySlot.has(slot)) throw new DockError("duplicate_slot", `slot ${slot} twice`, `panes.${i}`);
+    // Stored values are untrusted and unbounded, so neither message echoes them; the path names
+    // the pane.
+    if (bySlot.has(slot)) throw new DockError("duplicate_slot", "a slot twice", `panes.${i}`);
     const min = ctx.minimums(kind);
-    if (min === null)
-      throw new DockError("unknown_kind", `unknown pane kind ${kind}`, `panes.${i}`);
+    if (min === null) throw new DockError("unknown_kind", "an unknown pane kind", `panes.${i}`);
     const paneId = ctx.mint();
     bySlot.set(slot, { type: "leaf", id: ctx.mint(), paneId, kind, ...min });
     panes.set(paneId, fields);
