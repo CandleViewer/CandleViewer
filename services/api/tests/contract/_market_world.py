@@ -125,9 +125,16 @@ def stored_rows() -> dict[str, list[dict[str, object]]]:
             continue
         specs[bar_param_for(spec)] = spec
     return {
-        key: sorted((bar_row(b, spec, generation=0) for b in _bars(spec)), key=row_key)
+        key: sorted((bar_row(b, spec, generation=0) for b in _marked(_bars(spec))), key=row_key)
         for key, spec in specs.items()
     }
+
+
+def _marked(bars: list[Bar]) -> list[Bar]:
+    """`bars` with the second one marked `gap_before` and `tape_gap` (#5396): the tape has no
+    recorded gap, so the world stores one marked bar per series and the run serves each flag."""
+    flags = {"gap_before": True, "tape_gap": True}
+    return [b.model_copy(update=flags) if n == 1 else b for n, b in enumerate(bars)]
 
 
 class _Rows:

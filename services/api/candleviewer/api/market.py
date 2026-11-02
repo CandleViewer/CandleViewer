@@ -54,6 +54,7 @@ from candleviewer.api.market_refusal import note_refused
 from candleviewer.api.market_response import (
     BarSegments,
     InvalidCursor,
+    bars_provenance,
     build_meta,
     cursor_scope,
     decode_cursor,
@@ -66,6 +67,7 @@ from candleviewer.api.market_time import ts_us
 from candleviewer.bars.errors import BarsError
 from candleviewer.bars.limits import DEFAULT_LIMIT, MAX_LIMIT, MAX_TIME_WINDOW_US, QUERY_TIMEOUT_S
 from candleviewer.bars.metrics import record_page
+from candleviewer.bars.rows import BUILD_VERSIONS
 from candleviewer.bars.spec import from_wire
 from candleviewer.bars.write_holes import Present, WriteHoleLedger
 from candleviewer.ingestion.kline_coverage import CoverageIndex, Range
@@ -532,7 +534,7 @@ def make_market_router(
         meta = build_meta(
             count=len(bars), next_cursor=next_cursor, sources=served,
             recording_started_at_us=recording_started, generated_at_us=now_us(),
-            coverage_holes=holes,
+            coverage_holes=holes, provenance=_provenance(interval, bars),
         )  # fmt: skip
         return kline_response(
             symbol=symbol, interval=interval, bar_type="time",
@@ -540,6 +542,17 @@ def make_market_router(
         )  # fmt: skip
 
     return router
+
+
+def _provenance(interval: str, bars: BarSegments) -> dict[str, object] | None:
+    """22 `BarsMeta` provenance of the interval's time series (#5396): from the tape-built bars
+    the page serves as rows; an exchange kline (a row or a cold page) is no built bar. None for
+    an interval with no bar spec (`M`), which no builder builds."""
+    try:
+        spec = from_wire("time", interval)
+    except BarsError:
+        return None
+    return bars_provenance(bars.rows(), spec_hash=spec.spec_hash, running=BUILD_VERSIONS["time"])
 
 
 def _write_holes(
