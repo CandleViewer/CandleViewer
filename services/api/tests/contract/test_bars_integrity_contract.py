@@ -11,10 +11,11 @@ and additive (C-6.3) in `22-api-openapi.yaml` and `23-ws-protocol.md`.
   models read it as unflagged and not stale_build.
 - 23 §13 `snapMeta` declares `coverage_holes` for bars snapshots, optional, with REST's shape.
 - CVWB kind 4 carries the flags in `flags` bits 1-3 with no stride change: the reference decoders
-  read `confirm` from bit0 alone, so a frame with them set decodes as before.
+  read `confirm` from bit0 alone, so a frame with them set decodes as before, and name each set
+  flag in the item form (PR B of #5396); reserved bits 4-7 name none.
 
-The server does not send these members yet; the E12-Q04 drift guards list them as declared and not
-yet sent until #5396's follow-up serves them.
+The server sends these members since PR B (`tests/unit/bars/test_bar_flags_served.py`); the E12-Q04
+drift guards hold them as sent.
 """
 
 from __future__ import annotations
@@ -220,16 +221,25 @@ def test_contract_generated_models_read_an_old_answer_as_unflagged_and_not_stale
     assert (meta.spec_hash, meta.build_version, meta.stale_build) == (None, None, False)
 
 
+_SET: Final = {"gap_before": True, "partial": True, "tape_gap": True}
+
+
 @pytest.mark.parametrize(
-    ("name", "flags", "confirm"),
-    [("bars_flags_gap_partial", 0b0000_1110, False), ("bars_flags_reserved_bits", 0xF1, True)],
+    ("name", "flags", "confirm", "named"),
+    [
+        ("bars_flags_gap_partial", 0b0000_1110, False, _SET),
+        ("bars_flags_reserved_bits", 0xF1, True, {}),
+    ],
 )
 def test_contract_kind4_flag_vectors_leave_confirm_on_bit0(
-    name: str, flags: int, confirm: bool
+    name: str, flags: int, confirm: bool, named: dict[str, bool]
 ) -> None:
     """The shared golden vectors (`cvwb_vectors`, read by the TS decoder too): bits 1-3
     (`gap_before`, `partial`, `tape_gap`) and reserved bits 4-7 decode as before, same 85-byte
-    stride, no `format_version` change (23 §3.4); `confirm` stays bit0."""
+    stride, no `format_version` change (23 §3.4); `confirm` stays bit0, bits 1-3 are each named
+    in the item when set, and bits 4-7 name nothing."""
     frame = decode(encode(dict(vector_frames())[name]))
     assert frame.records[0][-1] == flags
-    assert [b["confirm"] for b in structured(frame)["bars"]] == [confirm]
+    (bar,) = structured(frame)["bars"]
+    assert bar["confirm"] is confirm
+    assert {k: bar[k] for k in _SET if k in bar} == named
