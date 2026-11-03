@@ -239,6 +239,36 @@ def leaf_of(interp: Any) -> str:
     return state.split(".", 1)[1]
 
 
+#: The facts a sealed snapshot must share with its row before it is restored (#2834): they name
+#: the session, so the row, not the envelope, is their truth. Cursor, speed and loop move.
+_ROW_BOUND: Final = ("session_id", "symbols", "range_start", "range_end", "paper_account_id")
+
+
+def _row_bound(row: ReplaySessionRow) -> dict[str, object]:
+    """The `_ROW_BOUND` facts a chart for `row` is seeded with (`_build`)."""
+    return {
+        "session_id": row.id, "symbols": [row.symbol], "range_start": to_us(row.range_start),
+        "range_end": to_us(row.range_end), "paper_account_id": row.paper_account_id,
+    }  # fmt: skip
+
+
+def _differs_from_row(sealed: SealedSnapshot, row: ReplaySessionRow) -> list[str]:
+    """The `_ROW_BOUND` facts the envelope's chart context disagrees with the row on, in order;
+    every one when the blob carries no context. The Restorer loads this context unchanged, so the
+    check runs on it before anything is started or published (#2834)."""
+    snapshot = sealed.snapshot
+    context = snapshot.get("context") if isinstance(snapshot, Mapping) else None
+    if not isinstance(context, Mapping):
+        return list(_ROW_BOUND)
+    held, want = b12.facts(context), _row_bound(row)
+    # Type too: a float 1756684800000000.0 equals the int, but is not the fact the row holds.
+    return [
+        name
+        for name in _ROW_BOUND
+        if type(held.get(name)) is not type(want[name]) or held.get(name) != want[name]
+    ]
+
+
 def _canon(value: str) -> str | None:
     try:
         return str(uuid.UUID(str(value)))
@@ -661,20 +691,46 @@ class ReplaySessionService:
             sealed = await self._io("snapshot", self._snapshots.load(key))
         interp: Any = None
         if sealed is not None and self._restorer is not None:
-            try:  # a refused envelope is quarantined and paged by the Restorer; rebuild instead
-                restore = restore_chart(
-                    self._restorer, key, sealed, extra_plugins=self._feed_for(row)
-                )
-                restored = await self._io("restore", restore)
-                interp = restored.interpreter
-            except RestoreRefusedError:
-                interp = None
+            if differs := _differs_from_row(sealed, row):  # another session's context (#2834)
+                await self._refuse_foreign(self._restorer, key, sealed, differs)
+            else:  # a refused envelope is quarantined and paged by the Restorer; rebuild instead
+                try:
+                    restore = restore_chart(
+                        self._restorer, key, sealed, extra_plugins=self._feed_for(row)
+                    )
+                    interp = (await self._io("restore", restore)).interpreter
+                except RestoreRefusedError:
+                    interp = None
         if interp is None:
             interp = await self._build(row)
         live = await self._adopt(row, interp)
         async with live.lock:
             await self._sync(live)
         return live
+
+    async def _refuse_foreign(
+        self, restorer: Restorer, key: MachineKey, sealed: SealedSnapshot, differs: Sequence[str]
+    ) -> None:
+        """A snapshot whose context belongs to another session or window is refused as the
+        Restorer refuses an envelope (#2834): counted `refused`, quarantined through its audit,
+        paged P1 through its pager (best effort, bounded), and the caller rebuilds from the row.
+        Named by field only, never a value. A quarantine that fails raises, as in the Restorer."""
+        reason = f"snapshot context differs from its row: {', '.join(differs)}"
+        logger().error("replay_session_snapshot_refused", session_id=key.entity_id, fields=differs)
+        try:
+            await self._io("quarantine", restorer.audit.quarantine(key, sealed, reason))
+        except Exception:
+            if restorer.ops is not None:
+                restorer.ops("restore", "error")
+            raise
+        if restorer.ops is not None:
+            restorer.ops("restore", "refused")
+        try:
+            await self._io("page", restorer.pager.page(key, "P1", f"snapshot refused: {reason}"))
+        except Exception as exc:  # the rebuild goes on, as after the Restorer's own page
+            logger().critical(
+                "replay_session_page_failed", session_id=key.entity_id, error=type(exc).__name__
+            )
 
     def _feed_for(self, row: ReplaySessionRow) -> tuple[Any, ...]:
         """B12's feed (23 §6.4): `replay:{id}`, scoped to its user from the row, never the chart."""
@@ -690,11 +746,9 @@ class ReplaySessionService:
         if self._restorer is not None:
             key = MachineKey(MACHINE, row.id, self._env)
             await self._io("orphan scan", self._restorer.page_unclaimed(key))
-        ctx = {
-            "session_id": row.id, "symbols": [row.symbol], "range_start": to_us(row.range_start),
-            "range_end": to_us(row.range_end), "cursor": to_us(row.cursor_ts or row.range_start),
-            "speed": float(row.speed), "loop": row.loop_enabled,
-            "paper_account_id": row.paper_account_id, "coverage_gaps": [list(g) for g in gaps],
+        ctx = _row_bound(row) | {
+            "cursor": to_us(row.cursor_ts or row.range_start), "speed": float(row.speed),
+            "loop": row.loop_enabled, "coverage_gaps": [list(g) for g in gaps],
         }  # fmt: skip
         plugins = self._feed_for(row)
         return (

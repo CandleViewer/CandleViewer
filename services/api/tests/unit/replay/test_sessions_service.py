@@ -8,6 +8,8 @@ releases. The chart is the real committed B12 contract built through `statechart
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import copy
 import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
@@ -35,6 +37,7 @@ from candleviewer.replay.sessions_service import (
     ReplayUnavailableError,
     ReplayWindowUncoveredError,
     WindowCoverage,
+    _differs_from_row,
     to_us,
     uncovered,
 )
@@ -1183,6 +1186,7 @@ class _Sealed:
     def __init__(self) -> None:
         self.saved: dict[Any, Any] = {}
         self.quarantined: list[str] = []
+        self.pages: list[str] = []
 
     async def write_snapshot(self, key: Any, envelope: Any) -> None:
         self.saved[key] = envelope
@@ -1200,7 +1204,7 @@ class _Sealed:
         self.quarantined.append(reason)
 
     async def page(self, key: Any, severity: str, message: str) -> None:
-        return None
+        self.pages.append(f"{severity} {message}")
 
     async def drain_error(self, key: Any, error: str) -> None:
         return None
@@ -1257,6 +1261,186 @@ async def test_restart_rebuilds_from_the_row_when_the_snapshot_is_refused(tamper
     again = make_env(repo=env.repo, **kw)
     await again.s.start()
     assert again.s.state_of(sid) == "created" and len(sealed.quarantined) == 1
+    await again.s.stop()
+
+
+def _resealed(sealed: _Sealed, key: Any, envelope: Any, snapshot: dict[str, Any]) -> Any:
+    """`snapshot` under a valid seal for `key`: the HMAC verifies, only the context can differ."""
+    from candleviewer.statechart.persistence import seal
+
+    chart = Registry().get("replay")
+    tag = seal(sealed, chart, snapshot, envelope.machine_hash, envelope.version, key=key)
+    return replace(envelope, key=key, snapshot=snapshot, seal=tag)
+
+
+async def _two_sealed_sessions() -> tuple[_Sealed, dict[str, Any], Env, dict[str, Any]]:
+    """Two of one user's sessions, each persisted as a sealed snapshot by `stop()`."""
+    sealed, kw = _persistence()
+    env = make_env(**kw)
+    first = (await env.s.create(USER_A, request(), prepare=True)).id
+    second = (await env.s.create(USER_A, request(symbol="ETHUSDT"), prepare=True)).id
+    await env.s.stop()
+    keys = {k.entity_id: k for k in sealed.saved}
+    return sealed, kw, env, {"first": keys[first], "second": keys[second]}
+
+
+async def test_restart_never_adopts_another_sessions_envelope_stored_under_this_key() -> None:
+    sealed, kw, env, keys = await _two_sealed_sessions()
+    sealed.saved[keys["first"]] = sealed.saved[keys["second"]]  # sealed for the second key
+    again = make_env(repo=env.repo, **kw)
+    await again.s.start()
+    sid = keys["first"].entity_id
+    assert again.s.state_of(sid) == "created" and len(sealed.quarantined) == 1
+    facts = again.s.facts_of(sid)
+    assert facts is not None and facts["session_id"] == sid
+    await again.s.stop()
+
+
+async def test_restart_refuses_a_valid_seal_over_another_sessions_context() -> None:
+    sealed, kw, env, keys = await _two_sealed_sessions()
+    other = sealed.saved[keys["second"]]
+    sealed.saved[keys["first"]] = _resealed(sealed, keys["first"], other, other.snapshot)
+    again = make_env(repo=env.repo, **kw)
+    with capture_logs() as logs:
+        await again.s.start()
+    sid = keys["first"].entity_id
+    assert again.s.state_of(sid) == "created"
+    facts = again.s.facts_of(sid)
+    assert facts is not None and (facts["session_id"], facts["symbols"]) == (sid, ["BTCUSDT"])
+    assert sealed.quarantined == ["snapshot context differs from its row: session_id, symbols"]
+    assert any(p.startswith("P1 snapshot refused: snapshot context differs") for p in sealed.pages)
+    [line] = [e for e in logs if e["event"] == "replay_session_snapshot_refused"]
+    assert (line["session_id"], line["fields"]) == (sid, ["session_id", "symbols"])
+    await again.s.stop()
+
+
+@pytest.mark.parametrize(
+    ("fact", "value"),
+    [
+        ("symbols", ["ETHUSDT"]),
+        ("range_start", to_us(T0) - 1),
+        ("range_end", to_us(T1) + 1),
+        ("paper_account_id", "9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d"),
+    ],
+)
+async def test_restart_refuses_a_snapshot_whose_fact_differs_from_its_row(
+    fact: str, value: object
+) -> None:
+    sealed, kw = _persistence()
+    env = make_env(**kw)
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.stop()
+    [(key, envelope)] = sealed.saved.items()
+    blob = copy.deepcopy(envelope.snapshot)
+    blob["context"][fact] = blob["context"]["input"][fact] = value
+    sealed.saved[key] = _resealed(sealed, key, envelope, blob)
+    again = make_env(repo=env.repo, **kw)
+    await again.s.start()
+    assert again.s.state_of(sid) == "created"
+    assert sealed.quarantined == [f"snapshot context differs from its row: {fact}"]
+    facts = again.s.facts_of(sid)
+    assert facts is not None and facts[fact] != value
+    await again.s.stop()
+
+
+async def test_restart_refuses_a_snapshot_without_a_context_and_counts_it_refused() -> None:
+    sealed, kw = _persistence()
+    env = make_env(**kw)
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.stop()
+    [(key, envelope)] = sealed.saved.items()
+    blob = {k: v for k, v in envelope.snapshot.items() if k != "context"}
+    sealed.saved[key] = _resealed(sealed, key, envelope, blob)
+    counted: list[tuple[str, str]] = []
+    kw["restorer"].ops = lambda op, outcome: counted.append((op, outcome))
+    again = make_env(repo=env.repo, **kw)
+    await again.s.start()
+    assert again.s.state_of(sid) == "created" and counted == [("restore", "refused")]
+    assert sealed.quarantined == [
+        "snapshot context differs from its row: "
+        "session_id, symbols, range_start, range_end, paper_account_id"
+    ]
+    await again.s.stop()
+
+
+async def test_restart_refuses_a_float_fact_equal_in_value_to_the_rows_int() -> None:
+    sealed, kw = _persistence()
+    env = make_env(**kw)
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.stop()
+    [(key, envelope)] = sealed.saved.items()
+    blob = copy.deepcopy(envelope.snapshot)
+    value = float(to_us(T0))
+    assert value == to_us(T0)
+    blob["context"]["range_start"] = blob["context"]["input"]["range_start"] = value
+    sealed.saved[key] = _resealed(sealed, key, envelope, blob)
+    again = make_env(repo=env.repo, **kw)
+    await again.s.start()
+    assert again.s.state_of(sid) == "created"
+    assert sealed.quarantined == ["snapshot context differs from its row: range_start"]
+    await again.s.stop()
+
+
+async def test_a_snapshot_that_is_not_a_mapping_differs_on_every_fact() -> None:
+    _, kw = _persistence()
+    env = make_env(**kw)
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.stop()
+    row = await env.repo.get(USER_A, sid)
+    assert row is not None
+    odd = SimpleNamespace(snapshot=["not", "a", "mapping"])
+    assert _differs_from_row(odd, row) == [  # type: ignore[arg-type]  # a hostile blob, on purpose
+        "session_id", "symbols", "range_start", "range_end", "paper_account_id"
+    ]  # fmt: skip
+
+
+async def test_a_failing_quarantine_counts_the_restore_as_an_error_not_refused() -> None:
+    sealed, kw, env, keys = await _two_sealed_sessions()
+    other = sealed.saved[keys["second"]]
+    sealed.saved[keys["first"]] = _resealed(sealed, keys["first"], other, other.snapshot)
+
+    async def down(key: Any, envelope: Any, reason: str) -> None:
+        raise ConnectionError("audit down")
+
+    kw["restorer"].audit = SimpleNamespace(quarantine=down)
+    counted: list[tuple[str, str]] = []
+    kw["restorer"].ops = lambda op, outcome: counted.append((op, outcome))
+    again = make_env(repo=env.repo, **kw)
+    with contextlib.suppress(Exception):
+        await again.s.start()
+    assert ("restore", "error") in counted and ("restore", "refused") not in counted
+
+
+async def test_a_failing_page_still_rebuilds_a_refused_snapshot_from_its_row() -> None:
+    sealed, kw, env, keys = await _two_sealed_sessions()
+    other = sealed.saved[keys["second"]]
+    sealed.saved[keys["first"]] = _resealed(sealed, keys["first"], other, other.snapshot)
+
+    async def down(key: Any, severity: str, message: str) -> None:
+        raise ConnectionError("pager down")
+
+    kw["restorer"].pager = SimpleNamespace(page=down)
+    again = make_env(repo=env.repo, **kw)
+    with capture_logs() as logs:
+        await again.s.start()
+    sid = keys["first"].entity_id
+    assert again.s.state_of(sid) == "created" and len(sealed.quarantined) == 1
+    [line] = [e for e in logs if e["event"] == "replay_session_page_failed"]
+    assert (line["session_id"], line["error"]) == (sid, "ConnectionError")
+    await again.s.stop()
+
+
+async def test_restart_adopts_a_resealed_snapshot_whose_context_matches_its_row() -> None:
+    sealed, kw = _persistence()
+    env = make_env(**kw)
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.stop()
+    [(key, envelope)] = sealed.saved.items()
+    sealed.saved[key] = _resealed(sealed, key, envelope, copy.deepcopy(envelope.snapshot))
+    again = make_env(repo=env.repo, **kw)
+    await again.s.start()
+    assert again.s.state_of(sid) == "paused" and sealed.quarantined == []
+    assert not any("snapshot refused" in p for p in sealed.pages)
     await again.s.stop()
 
 
