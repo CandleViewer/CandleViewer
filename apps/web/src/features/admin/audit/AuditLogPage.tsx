@@ -21,6 +21,8 @@
  * - An Owner's `403 forbidden` withdraws the area: the page shows CMP-089 withdrawn and reads
  *   nothing more. `onWithdrawn` is the typed hook for the shared store's `deny()` (#1023's, as
  *   ruled), which unmounts the band as an admin read's refusal does; nothing passes it yet.
+ * - The signed export (§8): "Signed export…" in CMP-093 opens the rung-1 dialog; the job's line
+ *   sits under the header while it exists, and its polls are held while the page is mounted.
  * - No control here edits, deletes, corrects, archives or repairs a record (D9).
  */
 import {
@@ -36,6 +38,7 @@ import {
 import { useLocation, useNavigate } from "react-router";
 import {
   AUDIT_ACTION_LABELS,
+  AuditActionTrigger,
   AuditFilterBar,
   Button,
   EmptyState,
@@ -60,6 +63,9 @@ import { filtersKey, isFiltered, parseFilters, searchOf, type AuditFilters } fro
 import { NEW_CAP, pagerOf, useAuditPage, type AuditPageState } from "./auditPageStore";
 import type { AuditEntry, AuditView, FieldError } from "./auditReads";
 import { AUDIT_COPY as COPY, num, utc } from "./copy";
+import { EXPORT_MARKER, ExportDialog, draftOf, type WindowDraft } from "./ExportDialog";
+import { ExportLine, exportLineText } from "./ExportLine";
+import { auditExport, useExportHold, useExportState, type ExportPhase } from "./exportJob";
 import {
   auditIntegrity,
   bannerModel,
@@ -177,6 +183,10 @@ function useSecondsLeft(until: number | null): number {
   return until === null ? 0 : Math.max(0, Math.ceil((until - now) / 1_000));
 }
 
+/** The job a phase belongs to, for its lines' keys. */
+const jobOf = (phase: ExportPhase): string =>
+  "jobId" in phase ? phase.jobId : phase.kind === "expired" ? phase.at : "";
+
 /** A read's `Retry-After` as the absolute time `audit.error` names, from when it was refused. */
 function retryAt(state: AuditPageState, at: number): number | null {
   const error = state.error;
@@ -217,8 +227,10 @@ function AuditLogScreen({ view, onWithdrawn }: AuditLogPageProps): JSX.Element {
     viewAs: viewAs !== null,
   });
   const integrity = useIntegrity(wholeState);
-  const denied = state.denied ?? (own ? null : integrity.denied);
+  const exported = useExportState();
+  const denied = state.denied ?? (own ? null : (integrity.denied ?? exported.denied));
   useIntegrityHold(view, { active: denied === null, viewAs: viewAs !== null });
+  useExportHold(!own && denied === null, viewAs !== null);
 
   const prefix = useId();
   const limitedNoticeId = useId();
@@ -437,6 +449,78 @@ function AuditLogScreen({ view, onWithdrawn }: AuditLogPageProps): JSX.Element {
     if (incidentsDown) say(COPY.tamper.incidentsUnavailable, "audit:incidents-unavailable");
   }, [incidentsDown, say]);
 
+  // The signed export (§8): the dialog over its window, the job's line and their lines, once each.
+  const phase = exported.phase;
+  const exportRunning = phase.kind === "running";
+  const startLimited = exported.limitedUntil !== null;
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [draft, setDraft] = useState<WindowDraft>(() => draftOf({}, Date.now()));
+  // One reason per control, view-as first (E09-D09 §2.1); a running export is busy, never T2.
+  const exportReason =
+    viewAsReason ??
+    (own
+      ? formatRbacReason("rbac.owner_only", { verb: COPY.ownerOnlyVerbs.export })
+      : phase.kind === "not_built"
+        ? COPY.admin.exportNotBuilt
+        : startLimited && !dialogOpen
+          ? COPY.admin.rateLimited
+          : undefined);
+  const openExport = (): void => {
+    if (exportRunning || exportReason !== undefined) return;
+    setDraft(draftOf(parsed.filters, Date.now()));
+    setDialogOpen(true);
+  };
+  const closeExport = (): void => {
+    setDialogOpen(false);
+    auditExport.dismiss();
+  };
+  // Leaving the page closes a refusal, an unknown start or an open gate: a later visit opens a
+  // dialog over its own window, never the old request (C-1135P2-19). A running job stays.
+  useEffect(() => () => auditExport.dismiss(), []);
+  useEffect(() => {
+    // the start landed or is not built: the dialog closes and CMP-044 returns focus to its opener
+    if (dialogOpen && (phase.kind === "running" || phase.kind === "not_built")) {
+      setDialogOpen(false);
+    }
+  }, [dialogOpen, phase.kind]);
+  const sawPhase = useRef(phase);
+  const lastStep = useRef(0);
+  useEffect(() => {
+    const before = sawPhase.current;
+    if (before === phase) return;
+    sawPhase.current = phase;
+    if (own) return;
+    const job = jobOf(phase);
+    if (phase.kind === "running") {
+      if (before.kind !== "running") lastStep.current = 0;
+      const step = phase.pct === null ? 0 : Math.floor(phase.pct / 25) * 25;
+      if (step > lastStep.current) {
+        lastStep.current = step;
+        say(COPY.export.running(step, job.slice(0, 8)), `audit:export:${job}:${step}`);
+      }
+      return;
+    }
+    if (phase.kind === "succeeded") {
+      const download = phase.download;
+      if (before.kind !== "succeeded") {
+        say(exportLineText(phase) ?? "", `audit:export:${job}:ready`);
+      } else if (before.download.kind !== download.kind) {
+        const line =
+          download.kind === "limited"
+            ? COPY.export.limited(utc.hm(download.until))
+            : download.kind === "failed"
+              ? COPY.export.downloadFailed
+              : download.kind === "not_sent"
+                ? COPY.inflight.notSent(viewAsReason ?? "")
+                : null;
+        if (line !== null) say(line, `audit:download:${job}:${String(Date.now())}`);
+      }
+      return;
+    }
+    const line = exportLineText(phase);
+    if (line !== null) say(line, `audit:export:${phase.kind}:${job}`);
+  }, [phase, own, say, viewAsReason]);
+
   // Esc or Close returns focus to the row the drawer last showed (D04 §5 Keys). The ref is cleared
   // first: CMP-046 hands focus back to its opener before this effect runs, and that row must not
   // pick the record again (A-1135P2-01).
@@ -544,12 +628,43 @@ function AuditLogScreen({ view, onWithdrawn }: AuditLogPageProps): JSX.Element {
           title={own ? COPY.labels.h.myActivity : COPY.labels.h.auditLog}
           meta={noPage ? COPY.meta.none : COPY.meta.asOf(utc.hms(state.page?.at ?? 0))}
           marker={COPY.audit.marker}
+          actions={
+            <AuditActionTrigger
+              marker={EXPORT_MARKER}
+              align="end"
+              {...(exportReason === undefined ? {} : { disabledReason: exportReason })}
+              {...(viewAsReason === undefined ? {} : { disabledReasonId: viewAsNoticeId })}
+            >
+              <Button
+                variant="secondary"
+                loading={exportRunning}
+                onKeyDown={(event) => {
+                  if (event.repeat && (event.key === "Enter" || event.key === " ")) {
+                    event.preventDefault();
+                  }
+                }}
+                onClick={openExport}
+              >
+                {COPY.labels.act.signedExport}
+              </Button>
+            </AuditActionTrigger>
+          }
         />
         {own ? <p style={LINE}>{COPY.audit.ownOnly}</p> : null}
         {viewAsReason === undefined ? null : (
           <p id={viewAsNoticeId} style={NOTICE}>
             {viewAsReason}
           </p>
+        )}
+        {own ? null : (
+          <ExportLine
+            phase={phase}
+            downloadReason={viewAsReason}
+            downloadReasonId={viewAsReason === undefined ? undefined : viewAsNoticeId}
+            viewAsReason={viewAsReason}
+            onDownload={() => void auditExport.download()}
+            onDownloadResent={(response) => void auditExport.resentDownload(response)}
+          />
         )}
         {banner === null ? null : (
           <TamperBanner
@@ -660,6 +775,20 @@ function AuditLogScreen({ view, onWithdrawn }: AuditLogPageProps): JSX.Element {
           onRun={runCheck}
         />
       </div>
+      {own ? null : (
+        <ExportDialog
+          open={dialogOpen}
+          initial={draft}
+          phase={phase}
+          limited={startLimited}
+          viewAsReason={viewAsReason}
+          onExport={(window) => void auditExport.start(window)}
+          onCheckAgain={() => void auditExport.checkAgain()}
+          onCancel={closeExport}
+          onResent={(response) => void auditExport.resentStart(response)}
+          onLost={() => auditExport.lostStart()}
+        />
+      )}
       <AuditDetailDrawer
         entry={selected}
         view={view}
