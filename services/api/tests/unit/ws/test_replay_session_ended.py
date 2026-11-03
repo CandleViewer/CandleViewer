@@ -123,25 +123,35 @@ def _wired() -> tuple[_World, Any]:
     return world, make_env(on_ended=events.replay_session_ended)
 
 
-async def test_a_client_destroy_revokes_the_owners_replay_subscriptions() -> None:
-    world, env = _wired()
-    sid = (await env.s.create(str(USER), request())).id
-    authz = _replay(world, USER, sid, *TOPICS)
-    assert await env.s.destroy(str(USER), sid) is DestroyOutcome.DESTROYED
-    assert {f["p"]["reason"] for f in world.revoked()[0]} == {"replay_session_ended"}
-    assert [f["ch"] for f in world.revoked()[0]] == sorted(TOPICS)
-    assert _held(authz) == {("trades.BTCUSDT", None)}
-
-
-async def test_an_idle_reclaim_revokes_the_owners_replay_subscriptions() -> None:
-    world, env = _wired()
-    sid = (await env.s.create(str(USER), request())).id
-    authz = _replay(world, USER, sid, "trades.BTCUSDT")
-    peer = _replay(world, PEER, sid, "trades.BTCUSDT")  # not the owner: left alone
-    env.clock.advance(hours=3)
+async def _end(env: Any, sid: str, reason: str) -> None:
+    """End `sid` for `reason` through the service's own path for it."""
+    if reason == "client":
+        assert await env.s.destroy(str(USER), sid) is DestroyOutcome.DESTROYED
+        return
+    if reason == "max_lifetime":  # active all along (no idle reclaim), then past the 24 h bound
+        for _ in range(24):
+            env.clock.advance(hours=1)
+            await env.s.transition(str(USER), sid, "STEP")
+        env.clock.advance(seconds=1)
+        await env.s.transition(str(USER), sid, "STEP")
+    else:
+        env.clock.advance(hours=3)  # past the 2 h idle TTL
     assert await env.s.reclaim_idle(env.clock()) == 1
+
+
+@pytest.mark.parametrize("reason", ["client", "idle_reclaim", "max_lifetime"])
+async def test_every_end_reason_revokes_the_owners_replay_subscriptions(reason: str) -> None:
+    """Whatever the service's reason (`_REASONS`), the same frames: one `revoked`
+    `replay_session_ended` per topic on the owner's socket, and another user's left alone."""
+    world, env = _wired()
+    sid = (await env.s.create(str(USER), request(), prepare=True)).id
+    authz = _replay(world, USER, sid, *TOPICS)
+    peer = _replay(world, PEER, sid, "trades.BTCUSDT")  # not the owner: left alone
+    await _end(env, sid, reason)
+    destroyed = [kw["reason"] for a, kw in env.audit.rows if a.endswith("destroyed")]
+    assert destroyed == [reason]  # the path under test is the one that ran
     assert [(f["ch"], f["rs"], f["p"]["reason"]) for f in world.revoked()[0]] == [
-        ("trades.BTCUSDT", sid, "replay_session_ended")
+        (ch, sid, "replay_session_ended") for ch in sorted(TOPICS)
     ]
     assert _held(authz) == {("trades.BTCUSDT", None)}
     assert world.revoked()[1] == [] and ("trades.BTCUSDT", sid) in _held(peer)

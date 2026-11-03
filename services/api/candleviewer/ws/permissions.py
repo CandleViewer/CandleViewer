@@ -1918,9 +1918,10 @@ class ConnectionRegistry:
 
     async def replay_session_ended(self, replay_session_id: str, user_id: uuid.UUID) -> int:
         """23 §11 (#2811, #624): replay session `replay_session_id` of `user_id` was destroyed,
-        by its client or by the idle reclaim. On each of that user's sockets every subscription
-        of the session ends with one `revoked` `replay_session_ended` per topic
-        (`ConnectionAuthz.end_replay_session`), sent as an account revocation's are, then its
+        whatever the reason (`client`, `idle_reclaim` or `max_lifetime`: the same frames for
+        each). On each of that user's sockets every subscription of the session ends with one
+        `revoked` `replay_session_ended` per topic (`ConnectionAuthz.end_replay_session`), sent
+        as an account revocation's are, then its
         `ws.subscription.revoked` rows. Another user's sockets are not read. Returns how many
         sockets got frames: 0 for an id that is not a uuid or a session already ended here."""
         rs = parse_replay_session_id(replay_session_id)

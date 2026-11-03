@@ -791,8 +791,8 @@ class WsEvents:
 
     async def replay_session_ended(self, session_id: str, user_id: str, reason: str) -> None:
         """`ReplaySessionService(on_ended=...)` (#2811, 23 §11): the replay session was destroyed
-        (`reason` `client` or `idle_reclaim`, the same frames for both), so its subscriptions on
-        the owner's sockets end with `replay_session_ended`
+        (`reason` any of the service's `client`, `idle_reclaim`, `max_lifetime`, the same frames
+        for each), so its subscriptions on the owner's sockets end with `replay_session_ended`
         (`ConnectionRegistry.replay_session_ended`). The service bounds the call and logs a
         failure; it never fails the destroy."""
         await self.registry.replay_session_ended(session_id, uuid.UUID(user_id))
