@@ -1,14 +1,14 @@
 """E28-D05 (#841) audit: the accessibility review of the six profile and trade-group surfaces.
 
 Stdlib only, offline (`python3 -I -B`). It reads the spec and the pins file from the working tree
-and every cited file AS TEXT at its pin with `git show`: the base on `main`, and E28-D03's two
-unmerged heads (#5463 approved text, #5482 boards head). It imports, never copies:
+and every cited file AS TEXT at its pin with `git show`: the base on `main` (E28-D03's text is merged
+as #5463), and the boards head of #5482, PENDING. It imports, never copies:
 `contrast_check.py`'s `contrast_ratio()`, `verify_tokens.py`'s resolver,
 `docs/research/_tools/cvd_simulate.py`'s `simulate()` and `delta_e76()`, and the E30-D04 audit's
-`over()` and `grey()`. Ten gates, each FAIL led by its letter:
+`over()` and `grey()`. Eleven gates, each FAIL led by its letter:
 
-  A cites       every `KEY`:line resolves at its pin to a non-blank line; a `D03` line also stands
-                verbatim in the #5463 text; pins and cites match both ways, each pin's words on its line
+  A cites       every `KEY`:line resolves at its pin to a non-blank line; a `D03B` line does not
+                stand verbatim on main; pins and cites match both ways, each pin's words on its line
   B contrast    section 10 equals the measurement; a gated cell below its bar names a High F row
   C cvd         section 11 equals the computation; a channel "none" names a High F row
   D findings    counts against the heading and the stamp; every row complete, one owner; High rows
@@ -17,12 +17,16 @@ unmerged heads (#5463 approved text, #5482 boards head). It imports, never copie
                 the per-target counts sentence equals the table
   F focus       six screen tables with FO steps; every subsection names a return
   G hygiene     the lane's public-text word list, no local path, host or URL, no hex, known stamps
-  H live        every LR row has a politeness and a rate; LR-01 at most one per second; LR-04
-                assertive
+  H live        every LR row has a politeness and a rate; no "N per M s" rate above one per 2 s
+                (`05` as ruled in BQ-11); LR-04 assertive
   I matrix      section 3's window and whole-matrix counts equal the computation; its prose names
                 VIEWPORT_H and OVERSCAN
   J t2          section 7 quotes G-T2.1d and G-T2.6 verbatim; every T2 row names CMP-079 and the
                 `lock`; a read-only row carries PROPOSED and its three reason keys
+  K rulings     the ruling id in section 1.4; section 10 carries the joint stale-preview sentence
+                verbatim; no pre-stage "merge as is" wording; the Send reasons and DR-08 are
+                registered state strings; each Medium or Low F row's owner carries its date;
+                section 4 cites E47-D04's removed-row move
 
 usage: e28_d05_a11y_review_audit.py [--check | --self-test | --json | --tables | --write-tables
                                      | --repin]
@@ -47,9 +51,9 @@ TOOLS = ROOT / "docs" / "design" / "_tools"
 TOKENS = ROOT / "packages" / "ui" / "tokens"
 SPEC = ROOT / "docs" / "design" / "E28" / "E28-D05.md"
 PINS = TOOLS / "e28_d05_ruled_pins.txt"
-BASE = "e078bf030d9d4da85750a98d937c1b60550fe069"  # origin/main when this review was written
-APPROVED = "e4434e863f8ad9f32d32cff3f2256ae2a78ab5ca"  # #5463, design-approved text
-BOARDS = "6ef49a46b46d17d39a7c0a5671f44259db43b842"  # #5482, the boards head stacked on it
+BASE = "a7d659a5bee5d06a28950f324800f84dc3853e6f"  # main when the BQ rulings were folded
+MERGED = "0af333fa0d"  # #5463, E28-D03 text, merged; read on main (BASE)
+BOARDS = "3b23ab11a88e37cf76071fb99e3a74a320f0a30d"  # #5482, the boards head, PENDING
 D03_PATH = "docs/design/E28/E28-D03.md"
 KEYS: dict[str, tuple[str, str]] = {
     "05": ("docs/plan/05-accessibility-standard.md", BASE),
@@ -58,10 +62,14 @@ KEYS: dict[str, tuple[str, str]] = {
     "15B": ("docs/plan/15-component-catalogue.md", BOARDS),
     "DS": (".claude/rules/32-design-specs.md", BASE),
     "D02": ("docs/design/E28/E28-D02.md", BASE),
-    "D03": (D03_PATH, BOARDS),
+    "D03": (D03_PATH, BASE),
     "D03B": (D03_PATH, BOARDS),
     "E09-D06": ("docs/design/E09/E09-D06.md", BASE),
     "E09-D09": ("docs/design/E09/E09-D09.md", BASE),
+    "E47-D04": ("docs/design/E47/E47-D04.md", BASE),
+    "E47-D09": ("docs/design/E47/E47-D09.md", BASE),
+    "E27-D05": ("docs/design/E27/E27-D05.md", BASE),
+    "E17-D01": ("docs/design/E17/E17-D01.md", BASE),
 }
 THEMES = ("dark", "light", "high-contrast")
 BAR = {"text": 4.5, "non-text": 3.0}
@@ -232,7 +240,7 @@ class Texts(NamedTuple):
     spec: str
     pins: str
     files: dict[str, list[str]]  # KEY -> lines at its pin
-    approved: list[str]  # E28-D03 at #5463
+    merged: list[str]  # E28-D03 on main (#5463, merged)
 
 
 def git_show(ref: str, rel: str) -> str:
@@ -253,7 +261,7 @@ def read_texts() -> Texts:
         SPEC.read_text(encoding="utf-8"),
         PINS.read_text(encoding="utf-8"),
         files,
-        git_show(APPROVED, D03_PATH).splitlines(),
+        git_show(BASE, D03_PATH).splitlines(),
     )
 
 
@@ -273,7 +281,10 @@ def rows_of(text: str, rx: str) -> list[list[str]]:
     return [cells(ln) for ln in text.splitlines() if re.match(rx, ln)]
 
 
-CITE = re.compile(r"`(05|14|15B|15|DS|D02|D03B|D03|E09-D06|E09-D09)`:(\d+)(?:–(\d+))?")
+CITE = re.compile(
+    r"`(05|14|15B|15|DS|D02|D03B|D03|E09-D06|E09-D09|E47-D04|E47-D09|E27-D05|E17-D01)`"
+    r":(\d+)(?:–(\d+))?"
+)
 
 
 def cites(spec: str) -> set[tuple[str, int]]:
@@ -298,14 +309,14 @@ def pins_of(pins: str) -> dict[tuple[str, int], str]:
 # ------------------------------------------------------------------ the gates ----------------
 def g_cites(t: Texts, p: list[str]) -> dict[str, Any]:
     cs, pins = cites(t.spec), pins_of(t.pins)
-    approved = set(t.approved)
+    merged = set(t.merged)
     for key, n in sorted(cs):
         lines = t.files[key]
         if n < 1 or n > len(lines) or not lines[n - 1].strip():
             p.append(f"[A] {key}:{n} is not a non-blank line at its pin")
             continue
-        if key == "D03" and lines[n - 1] not in approved:
-            p.append(f"[A] D03:{n} does not stand verbatim in the #5463 text (cite it as D03B)")
+        if key == "D03B" and lines[n - 1] in merged:
+            p.append(f"[A] D03B:{n} stands verbatim on main (cite it as D03)")
         if (key, n) not in pins:
             p.append(f"[A] {key}:{n} is cited but not pinned")
     for (key, n), words in sorted(pins.items()):
@@ -449,7 +460,7 @@ _NUM_WORDS = (
     "sixteen seventeen eighteen nineteen twenty"
 )
 NUM = _NUM_WORDS.split()
-FAMILY = {"D03": "D03", "D03B": "D03", "15B": "15", "D02": "D02"}
+FAMILY = {"D03": "D03", "D03B": "D03", "15B": "15", "15": "15", "D02": "D02"}
 
 
 def word(n: int) -> str:
@@ -558,19 +569,22 @@ def g_live(t: Texts, p: list[str]) -> dict[str, Any]:
         if hit is None or hit[2] != want:
             p.append(f"[H] {lid}: its politeness is not {want}")
     lr1 = next((r for r in rows if r[0] == "LR-01"), None)
-    m = RATE.match(lr1[3]) if lr1 else None
-    if not m or int(m.group(1)) / float(m.group(2)) > 1.0:
-        p.append("[H] LR-01: the preview is not capped at one announcement a second")
+    if not lr1 or not RATE.match(lr1[3]):
+        p.append("[H] LR-01: the preview has no rate")
+    for r in rows:
+        m = RATE.match(r[3])
+        if m and int(m.group(1)) / float(m.group(2)) > 0.5:
+            p.append(f"[H] {r[0]}: a rate above `05`'s one update per 2 s")
     return {"rows": len(rows)}
 
 
 def matrix_figure(t: Texts) -> dict[str, int]:
-    line = t.files["14"][2788 - 1]
+    line = t.files["14"][2808 - 1]
     acc = re.search(r"with (\d+) accounts", line)
     sym = re.search(r"~(\d+) symbols", line)
     row_h = int(str(T["dark"]["size.row.compact"]).removesuffix("px"))
     if not acc or not sym:
-        raise SystemExit("matrix figure: `14`:2788 no longer states the accounts and symbols")
+        raise SystemExit("matrix figure: `14`:2808 no longer states the accounts and symbols")
     rows = math.ceil(VIEWPORT_H / row_h) + OVERSCAN
     a, s = int(acc.group(1)), int(sym.group(1))
     return {"rows": rows, "accounts": a, "window": rows * a, "whole": s * a}
@@ -631,6 +645,44 @@ def g_t2(t: Texts, p: list[str]) -> dict[str, Any]:
     return {"t2_rows": len(t2)}
 
 
+RULING = "6601763457"
+JOINT = (
+    "**Stale preview (joint ruling: #840 BQ-04, #841 BQ-10, #842 BQ-15).** The stale table's "
+    "text keeps `color.text.secondary` at full opacity, and the table carries the visible "
+    'word "Stale" with the preview\'s age (`E17-D01`:146; dimming alone was misread, '
+    "`E17-D01`:88); the muted treatment applies to decoration only, never to a word, number "
+    "or glyph. No state rests on hue or opacity alone (`05`:141), every word keeps 4.5:1 "
+    "(`05`:159), and focus moves only on a press (`05`:100). The a11y floor wins over the "
+    "token choice; the A-row is #840's A-1 to E28-D03 §8, cross-referenced to #5550."
+)
+STATE_STRINGS = ("DR-03", "DR-04", "DR-05", "DR-08")
+DATE = "by 2026-12-31"
+
+
+def g_rulings(t: Texts, p: list[str]) -> dict[str, Any]:
+    if RULING not in section(t.spec, "### 1.4 ", "## 2. "):
+        p.append(f"[K] section 1.4 does not name the ruling {RULING}")
+    if JOINT not in section(t.spec, "## 10. ", "## 11. "):
+        p.append("[K] section 10 does not carry the joint stale-preview sentence verbatim")
+    if re.search(r"merges? as is", t.spec):
+        p.append("[K] pre-stage 'merge as is' wording is left")
+    for r in rows_of(section(t.spec, "## 7. ", "## 8. "), r"^\|\s*DR-\d+\s*\|"):
+        if r[0] not in STATE_STRINGS:
+            continue
+        s = re.match(r'"([^"]*)"', r[2])
+        word = s.group(1) if s else ""
+        if not s or "{" in word or len(word) > 60 or not word.endswith(".") or ". " in word:
+            p.append(
+                f"[K] {r[0]}: its reason is not one data-free sentence of at most 60 characters"
+            )
+    for r in rows_of(section(t.spec, "## 15. ", "## 16. "), r"^\|\s*F-\d+\s*\|"):
+        if len(r) == 8 and r[1] in ("Medium", "Low") and DATE not in r[6]:
+            p.append(f"[K] {r[0]}: a {r[1]} row logged without its date")
+    if "`E47-D04`:285" not in section(t.spec, "## 4. ", "## 5. "):
+        p.append("[K] section 4 does not cite E47-D04's removed-row move")
+    return {"state_strings": len(STATE_STRINGS)}
+
+
 GATES: list[tuple[str, Callable[[Texts, list[str]], dict[str, Any]]]] = [
     ("A", g_cites),
     ("B", g_contrast),
@@ -642,6 +694,7 @@ GATES: list[tuple[str, Callable[[Texts, list[str]], dict[str, Any]]]] = [
     ("H", g_live),
     ("I", g_matrix),
     ("J", g_t2),
+    ("K", g_rulings),
 ]
 
 
@@ -681,13 +734,23 @@ def cv_cell_off(t: Texts) -> Texts:
 
 def lr01_twice(t: Texts) -> Texts:
     row = next(ln for ln in t.spec.splitlines() if ln.startswith("| LR-01"))
-    return t._replace(spec=t.spec.replace(row, row.replace("1 per 1 s", "2 per 1 s", 1), 1))
+    return t._replace(spec=t.spec.replace(row, row.replace("1 per 2 s", "1 per 1 s", 1), 1))
 
 
 def f09_two_owners(t: Texts) -> Texts:
     row = next(ln for ln in t.spec.splitlines() if ln.startswith("| F-09"))
     new = row.replace("E28-D03 (#839) · accounts-admin", "E28-D03 (#839); E34-D02", 1)
     return t._replace(spec=t.spec.replace(row, new, 1))
+
+
+def lr08_fast(t: Texts) -> Texts:
+    row = next(ln for ln in t.spec.splitlines() if ln.startswith("| LR-08"))
+    return t._replace(spec=t.spec.replace(row, row.replace("1 per 2 s", "1 per 1 s", 1), 1))
+
+
+def f14_undated(t: Texts) -> Texts:
+    row = next(ln for ln in t.spec.splitlines() if ln.startswith("| F-14"))
+    return t._replace(spec=t.spec.replace(row, row.replace(" · by 2026-12-31", "", 1), 1))
 
 
 def lr04_polite(t: Texts) -> Texts:
@@ -711,12 +774,15 @@ MUTATIONS: list[tuple[str, Callable[[Texts], Texts]]] = [
     ("D: a finding with two owners", f09_two_owners),
     (
         "E: an Old that is not in its target",
-        sub("spec", '"The same muting, and"', '"The same muting and"'),
+        sub(
+            "spec", '"The table takes `opacity.muted` with', '"The table took `opacity.muted` with'
+        ),
     ),
     ("E: a per-target A count retyped", sub("spec", "nine to E28-D02.", "eight to E28-D02.")),
     ("F: a screen loses its focus-order table", sub("spec", "### 4.5 SCR-062", "### 4.5 SCR-999")),
     ("G: a deny word in prose", deny_in_prose),
-    ("H: the preview announces twice a second", lr01_twice),
+    ("H: the preview announces once a second", lr01_twice),
+    ("H: the staged-bulk line back to once a second", lr08_fast),
     ("H: the unpressed refusal turned polite", lr04_polite),
     ("I: the window figure retyped", sub("spec", "**264 cells**", "**260 cells**")),
     (
@@ -730,6 +796,23 @@ MUTATIONS: list[tuple[str, Callable[[Texts], Texts]]] = [
     (
         "J: the G-T2.1d quote loses a word",
         sub("spec", "leads the full label (in 2b", "leads the label (in 2b"),
+    ),
+    (
+        "K: the joint stale sentence loses a word",
+        sub("spec", "applies to decoration only, never", "applies to decoration, never"),
+    ),
+    (
+        "K: a T2 reason fills data",
+        sub(
+            "spec",
+            '"Blocked: use the cell menu to allow it." (PROPOSED',
+            '"Blocked on {account}." (PROPOSED',
+        ),
+    ),
+    ("K: a Low row logged without its date", f14_undated),
+    (
+        "K: pre-stage wording comes back",
+        sub("spec", "## 19. Summary for #841", "## 19. Summary for #841 (if #5482 merges as is)"),
     ),
 ]
 
