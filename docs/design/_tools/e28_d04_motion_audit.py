@@ -1,7 +1,7 @@
 """E28-D04 (#840) audit: the choreography table, the quotes, the still list, focus, cites, boards.
 
 Stdlib only, offline (`python3 -I -B`). It reads the spec and the pins file from the working tree,
-and every cited file and the token JSON AS TEXT at the pinned base with `git show`. Nine gates, each
+and every cited file and the token JSON AS TEXT at the pinned base with `git show`. Ten gates, each
 FAIL led by its code, at most one G1 FAIL per table row:
 
 - [G1-TABLE] section 2 holds M-1 to M-12 in order, every cell filled, no Carrier or reduce cell a
@@ -20,11 +20,17 @@ FAIL led by its code, at most one G1 FAIL per table row:
 - [G6-CITE] every `KEY`:line cite resolves to a declared key and a range in the file at the base;
   each word-pinned cite still carries its words; the pins file holds exactly the cited endpoints,
   each with the hash of its line at the base (`--repin-ruled` is its only writer).
-- [G7-REQUEST] section 8 holds R1 to R7; R6 names E28-D03, #839, PR #5463 at e4434e863 and says
-  unmerged; E28-D03 is never cited by path or key, and every block that names it names R6.
+- [G7-REQUEST] section 8 holds R1 to R7; R6 names E28-D03, #839, #5463 merged as 0af333fa0 and the
+  boards PR #5482 PENDING at its head; E28-D03 is cited by the `D03` key only (never `E28-D03`:n),
+  every block that names #5482 says PENDING, and no "if ... merges" pre-stage wording is left.
 - [G8-HYGIENE] no local path, host, closing keyword or word on the lane's public-text list in the
   spec, the pins file or this tool; no own file name carries a reserved word.
 - [G9-BOARDS] section 7: four dark boards, names and exports in the pattern, every one PENDING.
+- [G10-RULED] the BQ rulings (comment 6601762417): section 1 names the ruling and BQ-01 to BQ-14;
+  section 3's MS-2 is the joint stale-preview sentence (JOINT) verbatim, the same in #840, #841 and
+  #842; no `opacity.muted` anywhere; FR-5 and FR-12 cite E47-D04's removed-row move
+  (`E47-D04`:285); section 6.1 holds A-1 to A-4, and each of A-1 to A-3 has its Old once on its
+  target line at the base.
 
 `--json` prints the numbers and findings; `--check` exits 1 on any FAIL (0 FAIL is the bar);
 `--self-test` applies one mutation per gate (MUTATIONS) and the probes (PROBES) to an in-memory
@@ -53,7 +59,7 @@ SPEC_REL = "docs/design/E28/E28-D04.md"
 PINS_REL = "docs/design/_tools/e28_d04_ruled_pins.txt"
 SPEC = ROOT / SPEC_REL
 PINS = ROOT / PINS_REL
-BASE = "e078bf030d"  # origin/main when the spec was drafted; every cite is read here
+BASE = "a7d659a5be"  # main when the rulings were folded; every cite is read here
 TICKET = "E28-D04"
 KEYS = {
     "05": "docs/plan/05-accessibility-standard.md",
@@ -64,6 +70,12 @@ KEYS = {
     "E05-D03": "docs/design/E05/E05-D03.md",
     "E42-D04": "docs/design/E42/E42-D04.md",
     "E28.json": "docs/plan/backlog/E28.json",
+    "15": "docs/plan/15-component-catalogue.md",
+    "D03": "docs/design/E28/E28-D03.md",
+    "E47-D04": "docs/design/E47/E47-D04.md",
+    "E09-D06": "docs/design/E09/E09-D06.md",
+    "E17-D01": "docs/design/E17/E17-D01.md",
+    "DS": ".claude/rules/32-design-specs.md",
 }
 TOKEN_FILES = (
     "packages/ui/tokens/primitives.tokens.json",
@@ -71,9 +83,9 @@ TOKEN_FILES = (
 )
 # key|line|words that must stand on that line at the base (the load-bearing cites)
 CITE_PINS = """\
-05|96|Focus is never silently stolen;05|235|No content flashes more than 3 times per second
-14|1501|preview ≤300 ms;14|1516|coalesced to 5 Hz;14|2762|Saving revalidates
-14|2788|renders in <=600 ms;16|204|Per-property table, rules and override
+05|100|Focus is never silently stolen;05|252|No content flashes more than 3 times per second
+14|1507|preview ≤300 ms;14|1522|coalesced to 5 Hz;14|2782|Saving revalidates
+14|2808|renders in <=600 ms;16|204|Per-property table, rules and override
 16|213|never on a non-live value;16|218|Respects `prefers-reduced-motion`
 16|250|a code dialog replacing a rung dialog;16|252|row expansion, disclosures
 16|255|skeleton (CMP-015);16|256|busy (CMP-001 `loading`);23|862|`trade_groups`
@@ -85,7 +97,13 @@ D02|438|Stale preview (D12);D02|558|Dialogs;D02|561|Live regions
 E05-D03|67|Dialog open / close;E05-D03|74|Loading shimmer;E05-D03|75|Busy spinner
 E05-D03|93|A mode flip mid-transition;E05-D03|118|MR-3
 E42-D04|759|No cross-fade between allowed and denied
-E28.json|444|E28's surfaces change under the user's hands"""
+E28.json|444|E28's surfaces change under the user's hands
+D03|89|No per-cell shadow, gradient or animation;D03|348|The same muting
+E47-D04|285|else the grid's empty-state stop;E47-D04|302|the first credential field
+E09-D06|67|focus starts on the **password** field;E17-D01|146|"Stale 7s"
+05|141|colour is always a _reinforcing_ channel;05|159|body text and labels ≥4.5:1
+DS|36|G-T2.1d;DS|59|G-T2.6;15|191|motion-reduce: no rotation
+15|199|static (the two-tone fill"""
 NA_TEXT = {
     "NA-1": "Preview numbers never tween.",
     "NA-2": "The worked example never tweens.",
@@ -105,7 +123,19 @@ ROWS = tuple(f"M-{i}" for i in range(1, 13))
 PREVIEW_ROWS = ("M-4", "M-5")
 FOCUS_RULES = 12
 REQUESTS = tuple(f"R{i}" for i in range(1, 8))
-R6_WORDS = ("E28-D03", "#839", "#5463", "e4434e863", "unmerged")
+R6_WORDS = ("E28-D03", "#839", "#5463", "0af333fa0", "#5482", "PENDING", "3b23ab11a")
+RULING = "6601762417"
+JOINT = (
+    "**Stale preview (joint ruling: #840 BQ-04, #841 BQ-10, #842 BQ-15).** The stale table's text "
+    'keeps `color.text.secondary` at full opacity, and the table carries the visible word "Stale" '
+    "with the preview's age (`E17-D01`:146; dimming alone was misread, `E17-D01`:88); the muted "
+    "treatment applies to decoration only, never to a word, number or glyph. No state rests on hue "
+    "or opacity alone (`05`:141), every word keeps 4.5:1 (`05`:159), and focus moves only on a "
+    "press (`05`:100). The a11y floor wins over the token choice; the A-row is #840's A-1 to "
+    "E28-D03 §8, cross-referenced to #5550."
+)
+AROWS = ("A-1", "A-2", "A-3", "A-4")
+FOCUS_OWNER = "`E47-D04`:285"
 ASPIRATION = (
     "should",
     "ideally",
@@ -460,11 +490,11 @@ def gate_request(ctx: Ctx, r: Result) -> None:
         r.fail("G7-REQUEST", f"request rows {list(rs)}, expected R1 to R7")
     if missing := [w for w in R6_WORDS if w not in rs.get("R6", "")]:
         r.fail("G7-REQUEST", f"R6 does not name {missing}")
-    if re.search(r"E28-D03\.md|`D03`", ctx.spec):
-        r.fail("G7-REQUEST", "E28-D03 is cited by path or key; it is request row R6 only")
+    if re.search(r"`E28-D03`:\d|merges? as is|once #5463 merges|unmerged", ctx.spec):
+        r.fail("G7-REQUEST", "E28-D03 is cited off its `D03` key, or pre-stage wording is left")
     for block in re.split(r"\n\s*\n|\n(?=\|)", ctx.spec):
-        if "E28-D03" in block and "R6" not in block:
-            r.fail("G7-REQUEST", f"a block names E28-D03 without R6: {block.strip()[:60]!r}")
+        if "#5482" in block and "PENDING" not in block:
+            r.fail("G7-REQUEST", f"a block names #5482 without PENDING: {block.strip()[:60]!r}")
     r.numbers["requests"] = len(rs)
 
 
@@ -503,6 +533,31 @@ def gate_boards(ctx: Ctx, r: Result) -> None:
     r.numbers["boards"] = len(bs)
 
 
+# --- G10: the rulings ------------------------------------------------------------------------
+def gate_ruled(ctx: Ctx, r: Result) -> None:
+    sec1, sec3, sec5 = section(ctx.spec, 1), section(ctx.spec, 3), section(ctx.spec, 5)
+    if RULING not in sec1 or len(bq_ids(ctx.spec)) != 14:
+        r.fail("G10-RULED", f"section 1 does not name ruling {RULING} over BQ-01 to BQ-14")
+    if f"**MS-2.** {JOINT}" not in " ".join(sec3.split()):
+        r.fail("G10-RULED", "MS-2 is not the joint stale-preview sentence verbatim")
+    if "opacity.muted" in ctx.spec:
+        r.fail("G10-RULED", "`opacity.muted` is named; the stale rule cites E28-D03 section 8")
+    for n, _, text in FR.findall(sec5):
+        if n in ("5", "12") and FOCUS_OWNER not in text:
+            r.fail("G10-RULED", f"FR-{n} does not cite E47-D04's removed-row move {FOCUS_OWNER}")
+    sec6 = section(ctx.spec, 6)
+    found = [x for x in rows(sec6) if x and re.fullmatch(r"A-\d+", x[0])]
+    if tuple(x[0] for x in found) != AROWS:
+        r.fail("G10-RULED", f"A-rows {[x[0] for x in found]}, expected {list(AROWS)}")
+    for row in found[:3]:
+        m = re.fullmatch(r"`([A-Za-z0-9.-]+)`:(\d+)", row[1]) if len(row) > 4 else None
+        old = row[3][1:-1] if len(row) > 4 else ""
+        line = base_line(ctx, m.group(1), int(m.group(2))) if m else None
+        if line is None or line.count(old) != 1:
+            r.fail("G10-RULED", f"{row[0]}: its Old does not stand once on its target line")
+    r.numbers["arows"] = len(found)
+
+
 GATE_FNS: tuple[tuple[str, Callable[[Ctx, Result], None]], ...] = (
     ("G1-TABLE", gate_table),
     ("G2-TOKEN", gate_token),
@@ -513,6 +568,7 @@ GATE_FNS: tuple[tuple[str, Callable[[Ctx, Result], None]], ...] = (
     ("G7-REQUEST", gate_request),
     ("G8-HYGIENE", gate_hygiene),
     ("G9-BOARDS", gate_boards),
+    ("G10-RULED", gate_ruled),
 )
 
 
@@ -569,22 +625,36 @@ MUTATIONS: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
     ("G4-STILL", sub("The worked example never tweens.**", "The worked example rarely tweens.**")),
     ("G5-FOCUS", sub("The stale cut never moves focus.", "The stale cut should not move focus.")),
     ("G6-CITE", pin_sub(r"^(D02:154 )[0-9a-f]{16}$", r"\g<1>0000000000000000")),
-    ("G7-REQUEST", regex(r"^(\| R6 .*?), unmerged:", r"\1:")),
+    ("G7-REQUEST", regex(r"^(\| R6 .*?) at `3b23ab11a`", r"\1 at its head")),
     ("G8-HYGIENE", sub("one hash per cited line.", "one hash per cited line (" + "/" + "tmp/x).")),
     ("G9-BOARDS", sub("`E28-D04 / 03 readiness-bulk`", "`E28-D04 / 03 Readiness-bulk`")),
+    ("G10-RULED", sub("full opacity, and the table carries", "full opacity, and the table shows")),
 )
 
 # Probes: edits a weaker gate would let through; each must add one FAIL.
 PROBES: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
     ("G1-TABLE", retarget("M-4", "2a")),
     ("G1-TABLE", regex(r"^(\| M-6 .*\| )PROPOSED \(BQ-06\)", r"\1RULED (BQ-06)")),
-    ("G2-TOKEN", sub("`opacity.muted`", "`opacity.mute`")),
+    ("G2-TOKEN", sub("`color.text.secondary`", "`color.text.second`")),
     ("G3-QUOTES", sub("does not flash a skeleton", "does not show a skeleton")),
     ("G4-STILL", sub(MS_TEXT, "MS-1. Motion is never the sole carrier of a dangerous state.")),
     ("G5-FOCUS", sub("- **FR-9 (M-9).**", "- **FR-9 (M-8).**")),
     ("G6-CITE", sub("`D02`:389, :556;", "`D02`:389, :557;")),
-    ("G7-REQUEST", sub("hi-fi visuals (E28-D03, R6)", "hi-fi visuals (E28-D03)")),
-    ("G8-HYGIENE", sub("Nine gates:", "Nine gates (see relay" + ".example" + ".com):")),
+    ("G7-REQUEST", sub("the one open input (R6, PENDING)", "the one open input (R6)")),
+    ("G8-HYGIENE", sub("Ten gates:", "Ten gates (see relay" + ".example" + ".com):")),
+    (
+        "G7-REQUEST",
+        sub("re-pinned to `main` and cited by", "re-pinned once #5463 merges, cited by"),
+    ),
+    ("G10-RULED", sub('"- **Stale.** The same muting,', '"- **Stale.** The same muted,')),
+    (
+        "G10-RULED",
+        sub(
+            "empty-state stop,\n  announced once (`E47-D04`:285;",
+            "empty-state stop,\n  announced once (",
+        ),
+    ),
+    ("G10-RULED", sub("(`E47-D04`:285). A refused-whole", "(E47-D04). A refused-whole")),
 )
 
 
@@ -649,7 +719,8 @@ def main(argv: list[str]) -> int:
             f"rows {n.get('rows')} (cuts {n.get('cut_rows')}, E05-D03 rows "
             f"{n.get('recipe_rows')}); BQs {n.get('bqs')}; quotes {n.get('quotes')}; still "
             f"{n.get('still')}; focus rules {n.get('focus_rules')}; cites {n.get('cites')}; "
-            f"pins {n.get('pins')}; requests {n.get('requests')}; boards {n.get('boards')}"
+            f"pins {n.get('pins')}; requests {n.get('requests')}; boards {n.get('boards')}; "
+            f"A-rows {n.get('arows')}"
         )
         out.append(f"gates: {len(GATE_FNS)}; FAIL {len(res.fails)}")
         if args.self_test:
