@@ -6908,3 +6908,11 @@ Number assigned by the orchestrator (#540, comment 6615130246).
 
 - §1.7 records the 25 drawing tools with their point counts, optional geometry keys (`text`, `levels`, `bands`, `extend_left`, `extend_right`) and bounds, taken from the as-built `drawings_models.py` and `22` `DrawingTool` / `DrawingGeometry`, as ADR-0045 Decision 3 requires. `services/api/tests/contract/test_drawing_tool_schemas_contract.py` fails when the tables drift from the code or from `22`.
 - No code, `22`, WS, table, column or migration change.
+
+### 19.122 2026-11-03 — `22`: ADR-0045 pointers in the drawing descriptions (E14-C01, #540)
+
+Number assigned by the orchestrator (#540).
+
+- `22` `/drawings` (`listDrawings`), `/drawings/batch` (`batchUpsertDrawings`) and the `DrawingTool` schema descriptions each gain one sentence: "Persistence model, conflict policy and geometry contract: ADR-0045; per-tool tables: `24` §1.7."
+- The "until layouts ship" text in the `/drawings` description is unchanged (#3055).
+- No behaviour, schema-shape, WS, table or migration change.

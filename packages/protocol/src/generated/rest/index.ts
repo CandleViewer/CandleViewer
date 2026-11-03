@@ -2339,6 +2339,8 @@ export interface paths {
      *     zoom, bar-type changes and DPI changes. Only the caller's live (not soft-deleted) drawings
      *     are returned, ordered by `id` ascending, so a cursor walk is stable.
      *
+     *     Persistence model, conflict policy and geometry contract: ADR-0045; per-tool tables: `24` §1.7.
+     *
      *     `symbol` is required. Without `layout_id` the result holds the caller's drawings on that
      *     symbol in **both** scopes (symbol-global and layout-scoped). With `layout_id` the result is
      *     narrowed to that layout, and the call returns `404` when the id is not one of the caller's
@@ -2427,6 +2429,8 @@ export interface paths {
      * Create/update/delete many drawings in one call
      * @description The chart engine batches drawing mutations during a drag with a 500 ms debounce, so a single
      *     call carries all affected shapes.
+     *
+     *     Persistence model, conflict policy and geometry contract: ADR-0045; per-tool tables: `24` §1.7.
      *
      *     Processing order: (1) the body is limited to 1 MiB and `operations` to 200 items, otherwise
      *     `413 payload_too_large`, checked before per-operation validation; (2) the whole body is
@@ -8576,6 +8580,8 @@ export interface components {
     /**
      * @description Drawing tool. **Open-ended for readers:** clients must tolerate values they do not know, so
      *     adding a tool is an additive change (C-6.3). Writers must send one of the listed values.
+     *
+     *     Persistence model, conflict policy and geometry contract: ADR-0045; per-tool tables: `24` §1.7.
      *
      *     Required point count per tool (`geometry.points`):
      *
