@@ -111,6 +111,46 @@ def test_field_table_bounds_match_the_code() -> None:
     assert "1e-6" in f["levels"] and dm._MIN_MAGNITUDE == 1e-6
 
 
+def test_t_and_p_rows_match_the_patterns() -> None:
+    f = {k: v[0] for k, v in _field_table().items()}
+    assert "years 2000 to 2099" in f["points[].t"] and dm._T_PATTERN.startswith("^20[0-9]{2}-")
+    assert "at most millisecond precision" in f["points[].t"]
+    assert r"(\.[0-9]{1,3})?Z$" in dm._T_PATTERN
+    assert "15 integer and 12 fractional digits" in f["points[].p"]
+    assert "[1-9][0-9]{0,14}" in dm._P_PATTERN and "[0-9]{1,12}" in dm._P_PATTERN
+    assert "may be negative" in f["points[].p"] and dm._P_PATTERN.startswith("^-?")
+
+
+def test_point_role_prose_matches_the_code() -> None:
+    table = {r[0].strip("`"): r[5] for r in _rows(_section(), "| Tool ")}
+    assert "third point sets the width" in table["parallel_channel"]
+    for tool in ("long_position", "short_position"):
+        assert "entry, stop, target" in table[tool] and dm.POINT_COUNTS[tool] == (3, 3)
+    assert "at most 500 points" in table["brush"] and dm.POINT_COUNTS["brush"] == (2, 500)
+    assert "at most 100 points" in table["polyline"] and dm.POINT_COUNTS["polyline"] == (2, 100)
+    assert dm.POINT_COUNTS["parallel_channel"] == (3, 3)
+
+
+def test_bands_bound_is_one_to_three_unique_values_of_one_to_three() -> None:
+    ok = _valid("anchored_vwap")
+    for good in ([1], [1, 2, 3], [3, 1]):
+        dm.DrawingIn.model_validate({**ok, "geometry": {**ok["geometry"], "bands": good}})
+    for bad in ([], [0], [4], [1, 1], [1, 2, 3, 1]):
+        with pytest.raises(ValueError):
+            dm.DrawingIn.model_validate({**ok, "geometry": {**ok["geometry"], "bands": bad}})
+
+
+def test_text_row_states_the_sanitise_order() -> None:
+    row = _field_table()["text"][0]
+    assert "as sent" in row and "stripped" in row and "text_required" in row
+    ok = _valid("text")
+    too_long = "x" * (dm._MAX_TEXT + 1)
+    with pytest.raises(ValueError):
+        dm.DrawingIn.model_validate({**ok, "geometry": {**ok["geometry"], "text": too_long}})
+    with pytest.raises(ValueError, match=r"text_required|empty"):
+        dm.DrawingIn.model_validate({**ok, "geometry": {**ok["geometry"], "text": "\x00\x01"}})
+
+
 def test_code_bounds_are_the_documented_ones() -> None:
     ok = _valid("fib_retracement")
     dm.DrawingIn.model_validate({**ok, "geometry": {**ok["geometry"], "levels": [1000, -1000]}})
