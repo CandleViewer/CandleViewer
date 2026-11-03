@@ -40,9 +40,9 @@ import spec_audit_lib as L  # the shared helper sits beside this file
 
 ROOT = Path(__file__).resolve().parents[3]
 BASE = "95a625b09"  # origin/main; every plan and merged-spec cite is read here
-D03_HEAD = "811292427"  # PR #5517 (E19-D03, #438) head; re-pinned to its merge commit
+D03_HEAD = "35032f521"  # PR #5517 (E19-D03, #438) head; re-pinned to its merge commit
 D03_PR = "#5517"
-D02_HEAD = "bed73afaa"  # PR #5487 (E19-D02, #416) head; re-pinned to its merge commit
+D02_HEAD = "3619e95c5"  # PR #5487 (E19-D02, #416) merge commit
 D02_PR = "#5487"
 BQ_LIST = "6583000168"  # the BQ list on #500
 RULING = "6585209632"  # the ruling of record on #500
@@ -72,7 +72,7 @@ TOOL_REL = "docs/design/_tools/e19_d05_motion_audit.py"
 PIN_REL = "docs/design/_tools/e19_d05_ruled_pins.txt"
 LIB_REL = "docs/design/_tools/spec_audit_lib.py"
 OWN = (SPEC_REL, TOOL_REL, PIN_REL, LIB_REL)
-LIB_SHA16 = "03007e3fc2be98f7"  # the shared helper, byte-identical in #439, #505 and #500's PR 1
+LIB_SHA16 = "62b56d6446b218cd"  # the shared helper, byte-identical in #439, #505 and #500's PR 1
 BACKLOG_REL = "docs/plan/backlog/E19.json"
 
 PLAN = {
@@ -342,8 +342,8 @@ def g_version(t: L.Tree) -> list[str]:
     for phrase in (
         f"Base `origin/main` `{BASE}`",
         f"read at the PR head `{D03_HEAD}`",
-        f"read at the PR head `{D02_HEAD}`",
-        "re-pin to their merge commits when they merge",
+        "read at that merge commit",
+        "re-pins to its merge commit when it",
     ):
         if phrase not in flat:
             miss.append(phrase)

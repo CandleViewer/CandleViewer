@@ -1177,7 +1177,7 @@ def _unit_checks() -> list[str]:
         bad.append("CLOSING_RE")
     if COMMENT_RE.flags & re.DOTALL == 0 or COMMENT_OPEN_RE.flags & re.DOTALL == 0:
         bad.append("comment regexes lack DOTALL")
-    if lint_comment_regexes({"X": re.compile("<!--.*-->")}) != ["X lacks re.DOTALL"]:
+    if lint_comment_regexes({"X": re.compile("<!" + "-- marker")}) != ["X lacks re.DOTALL"]:
         bad.append("lint_comment_regexes")
     if not comment_findings([("s", "a <!-- open")]):
         bad.append("an unterminated comment passed")
