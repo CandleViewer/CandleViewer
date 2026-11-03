@@ -20,6 +20,13 @@ words with the magnitude and its unit: "profit 8.00 USDT", "loss 121.50 USDT", "
 `aria-label` (E29-D04 §2.3). The value is the server's decimal string, rounded half away from zero for display and
 never parsed into a JavaScript number.
 
+A fee or a funding payment takes `direction` (E29-D03:144): the magnitude signed as cash, "−3.49 USDT" on the sell bar
+for `paid` and "+0.84 USDT" on the buy bar for `received`, read "paid 3.49 USDT" and "received 0.84 USDT". The noun of
+D04H:114's "fee paid …" and "funding received …" is the host's to put before it (a header, a label or its own words),
+since no prop carries it. `provisional` adds the tag "Provisional — fees pending" after the figure (E29-D02:252), on
+`color.status.info.subtle`, `aria-hidden` and said after the figure in the same sentence: "loss 6.20 USDT, Provisional —
+fees pending". It leaves in place when the fees settle, a cut; the badge has no live region (the host's speaks).
+
 Text resize (`05` §5 item 7: 200 % zoom and the in-app text scale): the digits grow and the badge widens on one line,
 never truncating or wrapping a value (E29-D02 D-8); its column widens with it (E29-D02 §11.5).
 

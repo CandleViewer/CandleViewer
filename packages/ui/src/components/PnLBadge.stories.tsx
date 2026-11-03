@@ -86,6 +86,46 @@ export const LongText: Story = {
   play: async ({ canvasElement }) => reads(canvasElement, "loss 123,456,789,012.35 USDT"),
 };
 
+/** The visible figure, as the badge draws it. */
+const shows = async (canvas: HTMLElement, text: string): Promise<void> => {
+  const value = canvas.querySelector('[data-cmp="CMP-116"] .cv-pnl-badge__value');
+  await expect(value).toHaveTextContent(text);
+};
+
+/**
+ * `CMP-116/fee-paid` (E29-D03:144): the cash effect "−3.49 USDT" on the sell bar, read "paid 3.49 USDT"; the
+ * noun ("fee paid …", D04H:114) is the host's, since no prop carries it.
+ */
+export const FeePaid: Story = {
+  args: { value: "3.49", direction: "paid" },
+  play: async ({ canvasElement }) => {
+    await shows(canvasElement, "−3.49 USDT");
+    await reads(canvasElement, "paid 3.49 USDT");
+  },
+};
+
+/** `CMP-116/funding-received` (E29-D03:144): "+0.84 USDT" on the buy bar, read "received 0.84 USDT". */
+export const FundingReceived: Story = {
+  args: { value: "0.84", direction: "received" },
+  play: async ({ canvasElement }) => {
+    await shows(canvasElement, "+0.84 USDT");
+    await reads(canvasElement, "received 0.84 USDT");
+  },
+};
+
+/**
+ * `CMP-116/provisional` (E29-D02:250, :252): Sub-2's net "−6.20" with the tag "Provisional — fees pending" on
+ * `color.status.info.subtle`, read after the figure; it leaves in place when the fees settle.
+ */
+export const Provisional: Story = {
+  args: { value: "-6.2", provisional: true },
+  play: async ({ canvasElement }) => {
+    await shows(canvasElement, "−6.20 USDT");
+    await reads(canvasElement, "loss 6.20 USDT, Provisional — fees pending");
+    await expect(canvasElement.querySelector(".cv-pnl-badge__tag")).toBeVisible();
+  },
+};
+
 const strip = (
   <div style={col}>
     <PnLBadge value="8" places={2} format="abs" currency="USDT" />
@@ -120,6 +160,9 @@ const themeMatrix = (theme: string): Story => ({
       <PnLBadge value="0" places={2} format="currency" currency="USDT" />
       <PnLBadge value="0.32" places={2} format="r" />
       <PnLBadge value={null} format="r" />
+      <PnLBadge value="3.49" places={2} format="currency" currency="USDT" direction="paid" />
+      <PnLBadge value="0.84" places={2} format="currency" currency="USDT" direction="received" />
+      <PnLBadge value="-6.2" places={2} format="currency" currency="USDT" provisional />
     </div>
   ),
 });

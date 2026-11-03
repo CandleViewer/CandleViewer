@@ -38,7 +38,7 @@ export { FilterBar } from "./FilterBar.js";
 export type { FilterBarProps, FilterChip } from "./FilterBar.js";
 
 export { PnLBadge, pnlReading } from "./PnLBadge.js";
-export type { PnLBadgeProps, PnLFormat } from "./PnLBadge.js";
+export type { PnLBadgeProps, PnLDirection, PnLFormat } from "./PnLBadge.js";
 
 export { PositionModeToggle } from "./PositionModeToggle.js";
 export type { PositionMode, PositionModeToggleProps } from "./PositionModeToggle.js";
