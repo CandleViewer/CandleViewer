@@ -50,6 +50,11 @@ SECURITY = [
     "apps/web/src/features/admin/overview/adminReads.ts",
     "apps/web/src/features/admin/overview/strip.ts",
     "apps/web/src/features/admin/overview/readStore.ts",
+    # E42-S03: SCR-124's view-as banner, its Exit and the held boot, named here too so that
+    # dropping the directory from WEB_AUTH_PATHS fails this list, not only the list built from it
+    "apps/web/src/features/view-as/ViewAsBanner.tsx",
+    "apps/web/src/features/view-as/exitViewAs.ts",
+    "apps/web/src/features/view-as/heldBoot.tsx",
     "apps/web/src/features/sessions/SessionsScreen.tsx",  # a future slice, before the list names it
     "apps/web/src/lib/session/store.ts",
     "package.json",
