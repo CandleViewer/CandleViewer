@@ -124,8 +124,11 @@ test(`Q04-T04 reconnect: Live on a new session with a fresh snapshot; the episod
   harness.restore();
   await patient.poll(() => harness.authenticated()).toBe(2);
   await patient(chip(page)).toHaveAttribute("data-status", "live");
-  await patient(region(page)).toHaveCount(0);
-  await expect(assertive(page)).toHaveCount(0); // no alert outlives the outage
+  // E29-S07 (#1028; E17-D02 §10 B7, SR-03): the episode ends in the `recovered` region, and the one
+  // assertive message is its "Reconnected." — no Disconnected alert outlives the outage.
+  await patient(region(page)).toHaveAttribute("data-state", "recovered");
+  await expect(region(page)).toContainText("Reconnected");
+  await patient(assertive(page)).toHaveText("Reconnected.");
   await expect(statusWord(page)).toHaveText("Connection: live");
   expect(sentTypes(harness, harness.connections())).toEqual(["hello", "auth"]); // no resumption (23 section 9.3)
   expect(systemSnaps(harness)).toHaveLength(before + 1);
@@ -146,7 +149,7 @@ test(`Q04-T05 a 60 s outage on the page's clock, then Live with nothing older th
   harness.restore();
   await patient.poll(() => harness.authenticated()).toBe(2);
   await patient(chip(page)).toHaveAttribute("data-status", "live");
-  await patient(region(page)).toHaveCount(0);
+  await patient(region(page)).toHaveAttribute("data-state", "recovered"); // E29-S07 (#1028)
   // The gateway's counter: the new session's snapshot is newer than anything sent before the outage.
   expect(Number(systemSnaps(harness).at(-1)?.["ts"])).toBeGreaterThan(lastBefore);
 });
@@ -305,7 +308,9 @@ test(`Q04-T13 a slow-consumer close is Disconnected, then Live again on its own 
   await patient(assertive(page)).toHaveText(SAID.disconnected);
   await patient.poll(() => harness.authenticated()).toBe(2);
   await patient(chip(page)).toHaveAttribute("data-status", "live");
-  await patient(region(page)).toHaveCount(0);
+  await patient(region(page)).toHaveAttribute("data-state", "recovered"); // E29-S07 (#1028)
+  await region(page).getByRole("button", { name: "Dismiss" }).click(); // dismissed, it goes
+  await expect(region(page)).toHaveCount(0);
 });
 
 // SCR-153's CMP-092 rows that the `system` stream drives (`degradedIssues.ts`): what a trader sees when the server or
