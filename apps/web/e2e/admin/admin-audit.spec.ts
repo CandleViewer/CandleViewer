@@ -1,10 +1,11 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { stubSession } from "../support/api";
-import { stubAdminReads, stubAuditLog } from "../support/admin";
+import { AUDIT_JOB_ID, stubAdminReads, stubAuditLog } from "../support/admin";
 import { seriousAxe } from "../support/axe";
 
 // E42-S04 (#1135) admin-audit.spec: SCR-135 and SCR-136 (E42-D04 §4 to §8) in a real browser, every
-// call answered at the network layer (C-13.5: no backend): the owner's log inside CMP-087.
+// call answered at the network layer (C-13.5: no backend). The owner's log inside CMP-087 and the
+// export through the `audit` step-up and a download.
 
 const main = (page: Page) => page.getByRole("main");
 const row = (page: Page, id: number) => page.locator(`tr[data-entry="${id}"]`);
@@ -21,6 +22,29 @@ async function openAsOwner(page: Page, options: Parameters<typeof stubAuditLog>[
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Audit log");
   await expect(row(page, 1_204_300)).toBeVisible();
   return wire;
+}
+
+/**
+ * Presses the export dialog's Export until it acts: CMP-044 ignores a press in its first 400 ms
+ * (E30-D03 D3), and fires once per opening, so a repeat never sends twice. `then` is what shows once
+ * it acted; it is checked first, so no press lands behind SCR-006.
+ */
+async function pressExport(page: Page, then: Locator): Promise<void> {
+  const dialog = page.getByRole("alertdialog", { name: "Export the audit log" });
+  await expect(async () => {
+    if (!(await then.isVisible())) {
+      await dialog.getByRole("button", { name: "Export" }).click({ timeout: 1_000 });
+    }
+    await expect(then).toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
+}
+
+/** SCR-006: the password and the code, then Confirm. */
+async function passStepUp(page: Page): Promise<void> {
+  const gate = page.getByRole("alertdialog", { name: "Confirm with two-factor" });
+  await gate.getByLabel("Password", { exact: true }).fill("pw-audit-e2e");
+  await gate.getByLabel("Authenticator code").fill("123456");
+  await gate.getByRole("button", { name: "Confirm" }).click();
 }
 
 test("E42-S04 the filter round trip and cursor paging, with the first-page measures", async ({
@@ -182,6 +206,46 @@ test("E42-S04 no control on the page, a row or the drawer changes a record", asy
     main(page).getByText("Records can only be added, never edited or deleted. Kept indefinitely."),
   ).toBeVisible();
   expect(await seriousAxe(page)).toEqual([]);
+});
+
+test("E42-S04 the export: step-up, the job, ready, and a download through the step-up", async ({
+  page,
+}) => {
+  const wire = await openAsOwner(page, { stepUp: true, outcome: "succeeded" });
+  await page.getByRole("button", { name: "Signed export…" }).click();
+  const dialog = page.getByRole("alertdialog", { name: "Export the audit log" });
+  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await pressExport(page, page.getByRole("alertdialog", { name: "Confirm with two-factor" }));
+  await passStepUp(page);
+  // the job is polled at 2 s, then 3 s (BQ-7): ready on the second poll
+  await expect(main(page).getByText(/^Export ready — 851,204 entries/u)).toBeVisible({
+    timeout: 15_000,
+  });
+  expect(wire.exports).toHaveLength(2);
+  expect(wire.exports[1]).toBe(wire.exports[0]); // the held request, re-sent unchanged
+  const download = page.waitForEvent("download");
+  await main(page).getByRole("button", { name: "Download" }).click();
+  await passStepUp(page);
+  expect((await download).suggestedFilename()).toBe("audit-2026-10-22.ndjson.gz");
+  expect(wire.stepUps).toHaveLength(2); // the export's and the download's
+  expect(wire.downloads).toBe(2);
+  expect(page.url()).not.toContain(AUDIT_JOB_ID); // the job id is never URL state
+});
+
+test("E42-S04 a failed export says why, offers no file and lets the owner export again", async ({
+  page,
+}) => {
+  await openAsOwner(page, { outcome: "failed" });
+  await page.getByRole("button", { name: "Signed export…" }).click();
+  await pressExport(page, main(page).getByText(/^Preparing the export…/u));
+  await expect(
+    main(page).getByText("Too many entries for one file — choose a shorter window."),
+  ).toBeVisible({ timeout: 15_000 });
+  await expect(main(page).getByRole("button", { name: "Download" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Signed export…" })).not.toHaveAttribute(
+    "aria-busy",
+    "true",
+  );
 });
 
 test("E42-S04 an open chain break is the critical banner, with the halt line", async ({ page }) => {

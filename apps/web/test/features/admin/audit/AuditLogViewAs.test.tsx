@@ -3,14 +3,15 @@
  * check is T2 `rbac.view_as`, described by the page's ONE notice (`32` G-T2.5, G-T2.6), and a press
  * sends nothing; reads answer as the target, so a `403 forbidden` there is the target's refusal,
  * never the area withdrawn. The shell has no view-as source yet (#1134), so this file forces one
- * through the page's seam.
+ * through the page's seam; the export's two controls join the same notice in their own pair.
  */
 import { fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearAnnouncements } from "../../../../src/features/app-shell/announcer";
+import { auditExport } from "../../../../src/features/admin/audit/exportJob";
 import { auditIntegrity } from "../../../../src/features/admin/audit/integrity";
 import { resetShellState } from "../../../../src/shell/bootstrap/store";
-import { T0, entries, json, problem, verifyBody } from "./fixtures";
+import { JOB_ID, T0, entries, exportResult, job, json, problem, verifyBody } from "./fixtures";
 import { flush, mountAuditPage, pagesOf, sessionAs } from "./harness";
 
 // The page renders CMP-049's grid, CMP-174 and the shell's announcer from the ui sources: a busy
@@ -30,12 +31,14 @@ beforeEach(() => {
   vi.setSystemTime(T0);
   clearAnnouncements();
   auditIntegrity.reset();
+  auditExport.reset();
   sessionAs("owner");
   viewing.as = VIEWING;
 });
 
 afterEach(() => {
   viewing.as = null;
+  auditExport.reset();
   auditIntegrity.reset();
   resetShellState();
   vi.useRealTimers();
@@ -60,6 +63,41 @@ describe("view-as (BQ-9): T2 rbac.view_as behind one notice", () => {
     expect(
       within(screen.getByRole("main")).getByText("Recorded in the audit log · admin.audit_verify"),
     ).toBeVisible();
+    page.unmount();
+  });
+
+  it("test_view_as_signed_export_and_download_join_the_one_notice_and_send_nothing", async () => {
+    // an export this session finished before the view began: its Download is gated too (BQ-9)
+    const page = await mountAuditPage({
+      routes: {
+        audit: pagesOf(entries(2)),
+        other: (sent) => {
+          if (sent.url === "/api/v1/admin/audit/export") {
+            return json(202, { job_id: JOB_ID, download_url: null });
+          }
+          if (sent.url === `/api/v1/admin/jobs/${JOB_ID}`) {
+            return json(200, job({ status: "succeeded", result: exportResult() }));
+          }
+          return json(404, {});
+        },
+      },
+    });
+    auditExport.start({ from: "2026-10-21T14:00:00Z", to: "2026-10-22T14:00:00Z", compress: true });
+    await flush();
+    await flush(2_000);
+    const notice = within(screen.getByRole("main")).getAllByText(NOTICE)[0] as HTMLElement;
+    const signed = screen.getByRole("button", { name: /Signed export…$/ });
+    const download = screen.getByRole("button", { name: /Download$/ });
+    for (const control of [signed, download]) {
+      expect(control).toHaveAttribute("aria-disabled", "true");
+      expect(control.getAttribute("aria-describedby")).toBe(notice.id);
+    }
+    const before = page.sent.length;
+    fireEvent.click(signed);
+    fireEvent.click(download);
+    await flush(1_000);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(page.sent.slice(before).filter((s) => !s.url.includes("/incidents"))).toEqual([]);
     page.unmount();
   });
 

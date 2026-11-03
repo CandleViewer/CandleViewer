@@ -129,6 +129,8 @@ export async function stubAdminReads(
 // 1,204,118. No value is secret-shaped: hashes and keys repeat one character.
 
 const OWNER_ID = "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001";
+export const AUDIT_JOB_ID = "19000000-0000-4000-8000-000000000001";
+const STEP_UP_CHALLENGE = "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
 
 /** Entry `id` of the worked example, one second apart up to 14:02:11, one field changed. */
 export function auditEntry(
@@ -193,20 +195,54 @@ const CHAIN_BREAK: Schemas["Incident"] = {
   signature: "5f0c2d9e4b7a1c3e",
 };
 
+const EXPORT_RESULT: Schemas["AuditExportResult"] = {
+  download_url: `/api/v1/admin/audit/exports/${AUDIT_JOB_ID}`,
+  sha256: "d".repeat(64),
+  signature: `${"A".repeat(86)}==`,
+  signature_alg: "ed25519",
+  key_id: `cv-audit-export-v1:${"2".repeat(16)}`,
+  public_key: `${"B".repeat(43)}=`,
+  compressed: true,
+  size_bytes: 44_120_000,
+  row_count: 851_204,
+  from: "2026-10-21T14:02:00Z",
+  to: "2026-10-22T14:02:00Z",
+  first_id: 87_268_001,
+  last_id: 88_119_204,
+  expires_at: "2026-10-23T14:03:00Z",
+};
+
+const job = (over: Partial<Schemas["Job"]>): Schemas["Job"] => ({
+  id: AUDIT_JOB_ID,
+  kind: "audit_export",
+  status: "running",
+  started_at: "2026-10-22T14:02:30Z",
+  finished_at: null,
+  result: null,
+  error: null,
+  ...over,
+});
+
 export interface AuditWire {
   /** Each `GET /admin/audit` (but the strip's `?limit=3`) as its query string. */
   readonly reads: string[];
+  readonly stepUps: string[];
+  readonly exports: string[];
+  readonly downloads: number;
 }
 
 /**
- * SCR-135's server: the list reads by cursor and filter (`rows`: page 1's size, 3 by default) and
- * the incidents (`broken`: one open chain break). Registered after `stubAdminReads`, so it answers
- * first.
+ * SCR-135's server: the list reads by cursor and filter (`rows`: page 1's size, 3 by default), the
+ * incidents (`broken`: one open chain break), the export (`stepUp`: its first answer `403
+ * step_up_required`; `outcome`: the job's end) and its download (the file's bytes, `403
+ * step_up_required` first under `stepUp`). Registered after `stubAdminReads`, so it answers first.
  */
 export async function stubAuditLog(
   page: Page,
   options: {
     readonly broken?: boolean;
+    readonly stepUp?: boolean;
+    readonly outcome?: "succeeded" | "failed";
     readonly rows?: number;
   } = {},
 ): Promise<AuditWire> {
@@ -217,7 +253,27 @@ export async function stubAuditLog(
           Array.from({ length: options.rows }, (_, i) => auditEntry(1_204_300 - i)),
           "c1",
         );
-  const wire = { reads: [] as string[] };
+  const wire = {
+    reads: [] as string[],
+    stepUps: [] as string[],
+    exports: [] as string[],
+    downloads: 0,
+  };
+  const challenge = (cls: string, summary: string) =>
+    json(
+      {
+        type: "https://candleviewer.local/errors/step_up_required",
+        title: "A dangerous action needs a live step-up elevation for its action class",
+        status: 403,
+        code: "step_up_required",
+        action_class: cls,
+        challenge_id: STEP_UP_CHALLENGE,
+        challenge_expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+        action_summary: summary,
+        target: null,
+      },
+      403,
+    );
   await page.route(
     (url) => url.pathname === "/api/v1/admin/audit" && url.search !== "?limit=3",
     (route) => {
@@ -241,5 +297,41 @@ export async function stubAuditLog(
       }),
     ),
   );
+  let polls = 0;
+  await page.route("**/api/v1/admin/audit/export", (route) => {
+    wire.exports.push(route.request().headers()["idempotency-key"] ?? "");
+    return route.fulfill(
+      options.stepUp === true && wire.exports.length === 1
+        ? challenge("audit", "Export the audit log (UTC)")
+        : json({ job_id: AUDIT_JOB_ID, download_url: null }, 202),
+    );
+  });
+  await page.route(`**/api/v1/admin/jobs/${AUDIT_JOB_ID}`, (route) => {
+    polls += 1;
+    if (polls === 1) return route.fulfill(json(job({ progress_pct: 50 })));
+    return route.fulfill(
+      json(
+        options.outcome === "failed"
+          ? job({ status: "failed", error: "export_too_large" })
+          : job({ status: "succeeded", progress_pct: 100, result: EXPORT_RESULT }),
+      ),
+    );
+  });
+  await page.route(`**/api/v1/admin/audit/exports/${AUDIT_JOB_ID}`, (route) => {
+    wire.downloads += 1;
+    if (options.stepUp === true && wire.downloads === 1) {
+      return route.fulfill(challenge("audit", "Download the audit export"));
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: "application/gzip",
+      headers: { "Content-Disposition": 'attachment; filename="audit-2026-10-22.ndjson.gz"' },
+      body: "{}\n",
+    });
+  });
+  await page.route("**/api/v1/auth/step-up", (route) => {
+    wire.stepUps.push(route.request().postData() ?? "");
+    return route.fulfill(json({ elevated_until: new Date().toISOString(), action_class: "audit" }));
+  });
   return wire;
 }
