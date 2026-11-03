@@ -1,12 +1,12 @@
 # E21-D04 — Hand-off (`16` §11.4): the seven component checklists
 
-Components: CMP-108, CMP-111, CMP-113, CMP-227, CMP-228, CMP-229 and CMP-230. The pack is [E21-D04.md](E21-D04.md): every "A-n" below is its §C row, applied to `15` by PR 2 (the boards PR, which closes the ticket; BQ-1), and every "R-n", "W-n", "C-n" or "OQ-n" is the pack's. The keyboard tables add no global binding (`05` §3.2) and leave `Esc` and `Ctrl+K` untouched (`05` §3.3). Boards are PENDING (the pack's §0): no Penpot link exists yet, and none is ever an instance URL (R32 R7).
+Components: CMP-108, CMP-111, CMP-113, CMP-227, CMP-228, CMP-229 and CMP-230. The pack is [E21-D04.md](E21-D04.md): every "A-n" below is its §C row, applied to `15` by PR 2 (the boards PR, which closes the ticket; BQ-1), and every "R-n", "W-n", "C-n" or "OQ-n" is the pack's. The keyboard tables add no global binding (`05` §3.2) and leave `Esc` and `Ctrl+K` untouched (`05` §3.3). Boards are drawn (the pack's §0, as built in its §14): page `E21-D04`, page id `2373897a-cf76-8072-8008-e3bcb65546a3`, cited by page name and id, never an instance URL (R32 R7).
 
 Rule: every line is `[x]` with its evidence, or `[ ]` with its reason (a PR still to land, or `N/A — <reason>`); a line that does not apply is `[x]` with `N/A — <reason>`, the E09-D07 precedent, which `16` §13.3 item 8 accepts. No blank line at Done (`16` §11.4, §13.3).
 
 ## Handoff checklist — CMP-108 DomLadderRow (E21-D04, #504)
 
-- [ ] **Final Penpot link** — file `E21-D04 boards`, page `E21-D04` (page id recorded at PR 2); specimen frames `CMP-108 · DomLadderRow / Variant=…, State=…` on boards 01, 02, 09 and 10 — PR 2
+- [x] **Final Penpot link** — file `E21-D04 boards`, page `E21-D04` (page id `2373897a-cf76-8072-8008-e3bcb65546a3`); specimen frames `CMP-108 · DomLadderRow / Variant=…, State=…` on boards 01, 02, 09 and 10 — drawn (the pack's §0)
 - [x] **Variants × States matrix** — table 1; A-3, A-7
 - [x] **Keyboard table** — table 2; A-4
 - [x] **Accessible name / role table** — table 3; the label template (pack §4.1)
@@ -79,7 +79,7 @@ Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), th
 
 ## Handoff checklist — CMP-111 HeatmapCell (E21-D04, #504)
 
-- [ ] **Final Penpot link** — page `E21-D04`, board 03 (the reveal) — PR 2
+- [x] **Final Penpot link** — page `E21-D04`, board 03 (the reveal) — drawn (the pack's §0)
 - [x] **Variants × States matrix** — table 1; A-9, A-13
 - [x] **Keyboard table** — table 2; A-10
 - [x] **Accessible name / role table** — table 3
@@ -143,7 +143,7 @@ Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), th
 
 ## Handoff checklist — CMP-113 HeatmapLegend (E21-D04, #504)
 
-- [ ] **Final Penpot link** — page `E21-D04`, boards 04, 05 and 09 — PR 2
+- [x] **Final Penpot link** — page `E21-D04`, boards 04, 05 and 09 — drawn (the pack's §0)
 - [x] **Variants × States matrix** — table 1; A-16, A-21
 - [x] **Keyboard table** — N/A — static, no interactive element
 - [x] **Accessible name / role table** — table 3; A-17
@@ -199,7 +199,7 @@ Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), th
 
 ## Handoff checklist — CMP-227 EstimatedBadge (E21-D04, #504)
 
-- [ ] **Final Penpot link** — page `E21-D04`, board 07 — PR 2
+- [x] **Final Penpot link** — page `E21-D04`, board 07 — drawn (the pack's §0)
 - [x] **Variants × States matrix** — table 1 (usage only; the contract is E25-D05's, #619); A-23
 - [x] **Keyboard table** — the entry's (`15`:2937); nothing added
 - [x] **Accessible name / role table** — the entry's; nothing added
@@ -222,7 +222,7 @@ Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), th
 
 ## Handoff checklist — CMP-228 PreviewTile (E21-D04, #504)
 
-- [ ] **Final Penpot link** — page `E21-D04`, board 08 — PR 2
+- [x] **Final Penpot link** — page `E21-D04`, board 08 — drawn (the pack's §0)
 - [x] **Variants × States matrix** — table 1 (the `heatmap` kind); A-24
 - [x] **Keyboard table** — N/A — not interactive (`role="img"`)
 - [x] **Accessible name / role table** — table 3
@@ -254,7 +254,7 @@ Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), th
 
 ## Handoff checklist — CMP-229 ArmToggle (E21-D04, #504)
 
-- [ ] **Final Penpot link** — page `E21-D04`, board 07 — PR 2
+- [x] **Final Penpot link** — page `E21-D04`, board 07 — drawn (the pack's §0)
 - [x] **Variants × States matrix** — table 1 (usage only; the contract is E30-D04's, #917); A-25
 - [x] **Keyboard table** — table 2
 - [x] **Accessible name / role table** — the entry's (`15`:2964); nothing added
@@ -283,7 +283,7 @@ Row heights from `16`:129 (compact, 24 px) and `16`:130 (comfortable, 32 px), th
 
 ## Handoff checklist — CMP-230 OwnOrderMarker (E21-D04, #504)
 
-- [ ] **Final Penpot link** — page `E21-D04`, boards 06 and 09 — PR 2
+- [x] **Final Penpot link** — page `E21-D04`, boards 06 and 09 — drawn (the pack's §0)
 - [x] **Variants × States matrix** — table 1; A-28, A-32
 - [x] **Keyboard table** — table 2; A-29
 - [x] **Accessible name / role table** — table 3
