@@ -1,22 +1,23 @@
 /**
- * SCR-135 Audit log (E42-S04; E42-D04 §4, D4 to D9, AL-1 to AL-9, AL-15 to AL-17, AL-25 to AL-28), one page
+ * SCR-135 Audit log (E42-S04; E42-D04 §4, D4 to D11, D14, AL-1 to AL-17, AL-25 to AL-28), one page
  * for two views: the Owner's raw log at R-360 inside CMP-087, and a Manager's own actions, "My
  * activity", at the same route in the plain shell (`own`, the orchestrator's BQ-8 (a)).
  * - Top to bottom: CMP-088 "Audit log" with `meta.asof` and `audit.marker`; the AL-16 line and its
  *   one notice; CMP-174; the new-entries pill (D5); the CMP-049 grid of CMP-173 rows; the paging
- *   lines and CMP-053; `audit.append_only`. SCR-136 comes with its drawer; the tamper banner, the
- *   footer and the view-as notice with Run tamper check.
+ *   lines and CMP-053; `audit.append_only`; SCR-136 last. The tamper banner, the footer and the
+ *   view-as notice come with Run tamper check.
  * - The filter set is URL state (D04 §4 Filters): a change pushes a new location, a read follows,
  *   and Environment re-filters the loaded rows and reads nothing (D7). The cursor never is.
  * - Every read is the page store's (`useAuditPage`): this page only renders its state and makes no
  *   request of its own, and only `GET`s on mount (the source scan `noUnchallengedStepUp.test.tsx`
  *   walks R-360 too).
- * - Lines are said once, politely, through the shell's announcer (`usePageVoice`). A T2 press is its
- *   own polite line there (G-T2.3: the shell's gated announcement is a no-op, so the page routes its
- *   atoms' refusals; A-1135P2-02).
+ * - Lines are said once, politely, through the shell's announcer (`usePageVoice`). A T2 press, and
+ *   each record [Previous] or [Next] shows, is its own polite line there (G-T2.3: the shell's
+ *   gated announcement is a no-op, so the page routes its atoms' refusals; A-1135P2-02,
+ *   A-1135P2-11).
  * - One column that never grows past the canvas, so the page reflows at 200 % and 400 % (AL-28),
- *   and its own stacking context, so the grid's sticky header stays under the page's overlays (the
- *   kit-wide `.cv-table { isolation: isolate }` comes with E42-S02's PR A).
+ *   and its own stacking context, so the grid's sticky header stays under SCR-136 and the dialogs
+ *   (the kit-wide `.cv-table { isolation: isolate }` comes with E42-S02's PR A).
  * - An Owner's `403 forbidden` withdraws the area: the page shows CMP-089 withdrawn and reads
  *   nothing more. `onWithdrawn` is the typed hook for the shared store's `deny()` (#1023's, as
  *   ruled), which unmounts the band as an admin read's refusal does; nothing passes it yet.
@@ -52,11 +53,13 @@ import { useShellSelector } from "../../../shell/useShellSelector";
 import { announce } from "../../app-shell/announcer";
 import { ScreenRoot } from "../../app-shell/ScreenRoot";
 import { AdminDenied } from "../shell/AdminDenied";
+import { AuditDetailDrawer } from "./AuditDetailDrawer";
 import { AuditGrid, diffRowId } from "./AuditGrid";
 import { filtersKey, isFiltered, parseFilters, searchOf, type AuditFilters } from "./auditFilters";
 import { NEW_CAP, pagerOf, useAuditPage, type AuditPageState } from "./auditPageStore";
 import type { AuditEntry, AuditView, FieldError } from "./auditReads";
-import { AUDIT_COPY as COPY, utc } from "./copy";
+import { AUDIT_COPY as COPY, num, utc } from "./copy";
+import { breakEntry, recordLine, useIntegrity, type IntegrityState } from "./integrity";
 import { usePageVoice } from "./pageVoice";
 import { useAuditViewAs } from "./viewAs";
 
@@ -79,6 +82,7 @@ const selectUserId = (state: ShellState): string | null => {
   const user: Partial<Me["user"]> | undefined = state.me?.user;
   return user?.id ?? null;
 };
+const wholeState = (state: IntegrityState): IntegrityState => state;
 
 const report = (detail: Readonly<Record<string, unknown>>): void => {
   window.dispatchEvent(new CustomEvent(THEME_ANALYTICS_EVENT, { detail }));
@@ -198,11 +202,13 @@ function AuditLogScreen({ view, onWithdrawn }: AuditLogPageProps): JSX.Element {
     ownUserId,
     viewAs: viewAs !== null,
   });
+  const integrity = useIntegrity(wholeState);
   const denied = state.denied;
 
   const prefix = useId();
   const limitedNoticeId = useId();
   const endLineId = useId();
+  const [selected, setSelected] = useState<AuditEntry | null>(null);
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => new Set());
 
   const filtered = isFiltered(parsed.filters);
@@ -210,9 +216,13 @@ function AuditLogScreen({ view, onWithdrawn }: AuditLogPageProps): JSX.Element {
   const limited = state.phase === "limited";
   const rateLimited = limited ? COPY.admin.rateLimited : undefined;
 
-  // The shown page's set, which the stable callbacks read.
+  // The rows, the selection and the shown page's set, which the stable callbacks read.
+  const rowsRef = useRef(state.rows);
+  const selectedRef = useRef(selected);
   const shownKey = useRef(state.page?.key ?? null);
   useEffect(() => {
+    rowsRef.current = state.rows;
+    selectedRef.current = selected;
     shownKey.current = state.page?.key ?? null;
   });
   const onExpandedChange = useCallback((id: number, open: boolean): void => {
@@ -223,8 +233,19 @@ function AuditLogScreen({ view, onWithdrawn }: AuditLogPageProps): JSX.Element {
       return next;
     });
   }, []);
+  const onOpen = useCallback((id: number): void => {
+    const entry = rowsRef.current.find((e) => e.id === id);
+    if (entry !== undefined) setSelected(entry);
+  }, []);
+  const onRowFocus = useCallback((id: number): void => {
+    // D14: while SCR-136 is open, ↑ ↓ in the grid keep it on the focused row
+    const open = selectedRef.current;
+    if (open === null || open.id === id) return;
+    const entry = rowsRef.current.find((e) => e.id === id);
+    if (entry !== undefined) setSelected(entry);
+  }, []);
 
-  // Focus moves to row 1 once a pager press, the pill or Clear filters has landed its
+  // Focus moves to row 1 once a pager press, the pill, a pivot or Clear filters has landed its
   // page; a read that fails or is refused leaves it where it was (§4 Keys). `landed: -1` is a set
   // whose rows are shown already (only Environment cleared, D7): row 1 as soon as the bar clears.
   const pendingFocus = useRef<{ readonly key: string; readonly landed: number } | null>(null);
@@ -373,6 +394,38 @@ function AuditLogScreen({ view, onWithdrawn }: AuditLogPageProps): JSX.Element {
     if (droppedOwn) say(COPY.audit.ownFilter, `audit:own-filter:${location.search}`);
   }, [droppedOwn, location.search, say]);
 
+  // Esc or Close returns focus to the row the drawer last showed (D04 §5 Keys). The ref is cleared
+  // first: CMP-046 hands focus back to its opener before this effect runs, and that row must not
+  // pick the record again (A-1135P2-01).
+  const lastShown = useRef<number | null>(null);
+  useEffect(() => {
+    if (selected !== null) {
+      lastShown.current = selected.id;
+      return;
+    }
+    const id = lastShown.current;
+    lastShown.current = null;
+    if (id !== null) focusRow(id);
+  }, [selected, focusRow]);
+  const closeDrawer = useCallback((): void => {
+    selectedRef.current = null;
+    setSelected(null);
+  }, []);
+  const showRecord = (to: AuditEntry): void => {
+    selectedRef.current = to;
+    setSelected(to);
+    sayPress(COPY.labels.h.record(num(to.id))); // the heading and body change in one frame (M3)
+  };
+  const onPivot = useCallback(
+    (filters: AuditFilters): void => {
+      // the record is not in the new set: the drawer closes, row 1 once it lands (C-1135P2-13)
+      lastShown.current = null;
+      closeDrawer();
+      pendingFocus.current = { key: filtersKey(filters, view), landed: landedRef.current };
+    },
+    [closeDrawer, view],
+  );
+
   // The withdrawn area (SCR-154 N-2): the shared store's seam, called once.
   const reported = useRef(false);
   useEffect(() => {
@@ -381,6 +434,8 @@ function AuditLogScreen({ view, onWithdrawn }: AuditLogPageProps): JSX.Element {
     onWithdrawn?.(denied.refId);
   }, [denied, onWithdrawn]);
 
+  // My activity stays neutral: an Owner's run in this document never shows there (BQ-4)
+  const afterBreak = own ? null : breakEntry(integrity);
   const pageRows = state.rows;
   const actorOptions = useMemo(() => actorsOf(pageRows), [pageRows]);
   const actionOptions = useMemo(() => actionsOf(pageRows), [pageRows]);
@@ -422,6 +477,10 @@ function AuditLogScreen({ view, onWithdrawn }: AuditLogPageProps): JSX.Element {
   }, [state.page, state.rows, own, filtered, clearFilters]);
   // No page read yet (limited, refused): no rows and no claim of none, never an empty list (AL-15)
   const gridEmpty = firstFailed ? errorLine : noPage ? <></> : emptyState;
+
+  const selectedAt = selected === null ? -1 : pageRows.findIndex((e) => e.id === selected.id);
+  const previous = selectedAt > 0 ? pageRows[selectedAt - 1] : undefined;
+  const next = selectedAt >= 0 ? pageRows[selectedAt + 1] : undefined;
 
   if (denied !== null) return <AdminDenied refId={denied.refId} />;
 
@@ -476,10 +535,15 @@ function AuditLogScreen({ view, onWithdrawn }: AuditLogPageProps): JSX.Element {
         <AuditGrid
           rows={pageRows}
           expanded={expanded}
+          selectedId={selected?.id ?? null}
           view={view}
+          afterBreakId={afterBreak}
           idPrefix={prefix}
           onExpandedChange={onExpandedChange}
+          onOpen={onOpen}
+          onRowFocus={onRowFocus}
           loading={noPage && (state.phase === "loading" || state.phase === "idle")}
+          drawerOpen={selected !== null}
           emptyState={gridEmpty}
         />
         {state.cursorLost ? (
@@ -520,6 +584,19 @@ function AuditLogScreen({ view, onWithdrawn }: AuditLogPageProps): JSX.Element {
         )}
         <p style={LINE}>{COPY.audit.appendOnly}</p>
       </div>
+      <AuditDetailDrawer
+        entry={selected}
+        view={view}
+        onClose={closeDrawer}
+        {...(previous === undefined ? {} : { onPrevious: () => showRecord(previous) })}
+        {...(next === undefined ? {} : { onNext: () => showRecord(next) })}
+        integrity={recordLine(integrity, selected ?? { id: 0 }, view)}
+        pivotsBlocked={
+          rateLimited === undefined ? undefined : { reason: rateLimited, reasonId: limitedNoticeId }
+        }
+        onBlockedPivot={() => sayPress(COPY.admin.rateLimited)}
+        onPivot={onPivot}
+      />
     </ScreenRoot>
   );
 }
