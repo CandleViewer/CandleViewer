@@ -8,6 +8,9 @@
 // E12-S07: two derived modes, switched in place (`setMode`, one rewrite of the same array): the
 // hollow bits (`CANDLE_META`), whose colour bit reads the previous close, so a write extends by
 // the next bar; and Heikin-Ashi (`HaRing`), whose recurrence runs from the first mutated bar on.
+// E12-S07 PR B: one guard slot past the ring mirrors slot 0, so the `ribbon` program's +1
+// instance read (the next bar's close) stays inside its buffer at the last physical slot; the
+// candle program's `data` view stops before it, so its buffer and uploads are unchanged.
 import type { VertexSource } from "../../scene/gpu-types.js";
 import type { BarStore } from "../../model/BarStore.js";
 import { type MutationRange, RangeSlot } from "../../model/counters.js";
@@ -65,7 +68,10 @@ export class CandleRing implements VertexSource {
   readonly stride = CANDLE_STRIDE;
   /** The instance words as floats (the `VertexSource` the GPU uploads) and as int32 (written). */
   data = new Float32Array(0);
+  /** The int32 words, the guard slot included: `(capacity + 1) * CANDLE_STRIDE` once synced. */
   ints = new Int32Array(0);
+  /** `data` plus the guard slot (the ribbon's source, `RibbonSource`): the same buffer. */
+  guarded = new Float32Array(0);
   head = 0;
   /** Bars mirrored: the store's length at the last sync. */
   length = 0;
@@ -114,8 +120,9 @@ export class CandleRing implements VertexSource {
     this.seams?.sync(store, r, rewrite);
     if (rewrite) {
       this.cap = store.capacity;
-      this.ints = new Int32Array(this.cap * CANDLE_STRIDE);
-      this.data = new Float32Array(this.ints.buffer);
+      this.ints = new Int32Array((this.cap + 1) * CANDLE_STRIDE);
+      this.guarded = new Float32Array(this.ints.buffer);
+      this.data = this.guarded.subarray(0, this.cap * CANDLE_STRIDE);
       this.of = cols;
       this.rewrites += 1;
       if (this.derived) this.derive(store, 0, this.length);
@@ -176,6 +183,38 @@ export class CandleRing implements VertexSource {
       c.close,
       c.flags,
     );
+    this.guard();
+  }
+
+  /**
+   * E12-S07 PR B: the guard slot (physical `capacity`) mirrors slot 0 after a write that covers
+   * it (`lastFrom`, `lastTo`): the ribbon's next-bar read of the last slot. Five scalar copies,
+   * and only then: the live tick appends far from slot 0 and pays one compare.
+   */
+  private guard(): void {
+    const n = this.lastTo - this.lastFrom;
+    const p = (this.head + this.lastFrom) & (this.cap - 1);
+    if (n <= 0 || (p !== 0 && p + n <= this.cap)) return;
+    const v = this.ints;
+    const at = this.cap * CANDLE_STRIDE;
+    v[at] = v[0] as number;
+    v[at + 1] = v[1] as number;
+    v[at + 2] = v[2] as number;
+    v[at + 3] = v[3] as number;
+    v[at + 4] = v[4] as number;
+  }
+
+  /**
+   * Makes `ids` the nodes this ring patches (E12-S07 PR B: a switch between the candle and the
+   * line family, whose hosts read separate GPU buffers) and patches each with [0, length): a
+   * family shown again missed the syncs while hidden. Switches only, never per frame.
+   */
+  follow(ids: readonly string[]): void {
+    this.nodes.length = 0;
+    for (let i = 0; i < ids.length; i += 1) this.nodes.push(ids[i] as string);
+    if (this.sink === null || this.length === 0) return;
+    const all = this.all.set("replace", 0, this.length, 0);
+    for (let i = 0; i < ids.length; i += 1) this.sink.patch(ids[i] as string, all);
   }
 
   /**
@@ -207,6 +246,7 @@ export class CandleRing implements VertexSource {
         c.flags,
       );
     }
+    this.guard();
   }
 }
 

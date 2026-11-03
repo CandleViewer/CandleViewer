@@ -919,3 +919,91 @@ the first source a node is attached to, so a second ring would mean remounting t
 switch, and the scene graph cannot remove the old ones. `HaRing` therefore holds only the float64
 state and writes into the series' existing ring; switching back rewrites the real bars from the
 store.
+
+## Line, area and baseline (E12-S07 PR B)
+
+**Program.** `ribbon` (`src/gl/shaders/ribbon.ts`) draws every part of the line family from the
+series' own `CandleRing`, the same close word the candles read, through the pane block (BQ-1). It
+does not reuse the E11-S02 `line` program, because that one takes CPU-projected device-px
+segments, and a pan would rewrite and upload every visible segment. The program index is
+`PROGRAM.ribbon = 5`, the first free index after the candle stack. #358's drawing programs claim
+5..7 on their own stack, so whichever lands second moves `ribbon` to 8. The four tables to change
+are `PROGRAM`, `PROGRAMS`, `PROGRAM_VERTICES` and `PAINTERS`; the program-table test checks that
+they stay dense and agree.
+
+**The +1 read.** An instance is a physical ring slot. `a_ohlc` and `a_meta` are that slot, and
+`a_next` and `a_nextMeta` are the next slot, the same words one stride on (`RIBBON_ATTRIBUTES`,
+ivec4 and int, `vertexAttribIPointer`, divisor 1). Bar i is `(slot - head) & mask`, so the next
+slot holds bar i + 1 on a wrapped ring too, except at the last physical slot. That slot reads a
+**guard slot**: the ring allocates `capacity + 1` slots, and slot `capacity` mirrors slot 0 after
+every write. The candles' `data` view stops before the guard, so their buffer, uploads and byte
+counts are unchanged. The ribbon reads `guarded` through `RibbonSource`, which has a GPU buffer of
+its own and declares `slots` (the wrap modulus). `GlBuffers` re-sends the guard whenever an upload
+covers slot 0. A seeded property test checks both the read and the GPU copy across wraps and
+evictions.
+
+**Parts and draws** (`u_batch.x`): 0 stroke, 1 join, 2 last disc, 3 area fill, 4 / 5 baseline fill
+above / below, 6 base line. Six hosts are mounted (fill, fill2, base, stroke, join, last, in draw
+order). A kind sets each host's part, and a host the kind does not use draws nothing
+(`instances` 0). Line is 3 draws, area 4 and baseline 6, within the pane's 18. The stroke, the
+joins and the fills draw over every slot (the shader collapses empty slots). The disc and the base
+line are one instance each and read `u_base`, an int uniform: the last close for the disc, B for
+the base line and the fills.
+
+**Geometry** (E12-D06 §3.2, the twin in `src/layers/ribbon/geometry.ts`, line for line with the
+shader):
+
+- The stroke is a 2 px bar, `2 × floor(dpr)` device px (D06 §2 rule 3), with butt caps. Round
+  joins are discs of half the stroke at every vertex. The last-point disc has a radius of
+  3.5 CSS px × dpr.
+- The area fill runs from each segment down to the plot rect's bottom edge (`u_geom[2].x`, device
+  px, the way the gap seam takes `plotTop` / `plotBottom`); with no plot rect set it runs to
+  `u_viewport.y`. The base line likewise stops at the plot's right edge (`u_geom[1].z`), short of
+  the price gutter. The stroke, the joins and the fills' sides are not clipped to the plot rect.
+- The baseline fills split at base B in the vertex shader. A segment's endpoint on the far side of
+  B moves to the exact crossing, so the above and below fills tile the band between the line and
+  B. A property test checks that the areas add up and that the crossing lies on the segment and on
+  B.
+- The base line is one solid hairline in `color.candle.wick`.
+- B is the first visible bar's close, recomputed in `frame` (a uniform, so a pan uploads nothing),
+  or the user's tick: the series option `baseline`, an integer inside the int32 tick window
+  (`|b| < 2^30`; anything else is ignored, `u_base` being a GLSL int), with `null` restoring the
+  default (BQ-9).
+- R-2: a segment into a `gap_before` bar is not drawn, so fills close at the break edges.
+
+**L2** (s < 1.5 CSS px, D06 §5.5). x snaps to the device-pixel column's centre, so a column's
+bars share one x. While s × dpr ≥ 1 a column holds at most one bar, so this is exactly D06's one
+vertex per column. Deviation below that: D06 §5.5 asks for one vertex per column at the column's
+last close, but with only the +1 read the shader cannot reach the previous column's last bar.
+Here every close in a column is a vertex on that column (a vertical run), and the column's last
+close connects to the next column. The pure last-close polyline needs a CPU-decimated buffer, which uploads on every pan
+at L2, or a look-behind binding. That is an open question for the owner.
+
+**Palette** (D06 §14, `ribbonPalette`): `color.chart.line` (PROPOSED, A-12) for the line, then
+opaque tints over `color.surface.canvas` resolved at theme load. The area tint is 16 % of the
+line. The baseline tints are 22 % of up (above) and 22 % of down (below), swapped only by the
+inverted convention. The base line stays `color.candle.wick` (R-6). Tokens resolve per kind (D06
+§3.2's Ink column): a line needs only `color.chart.line`, an area adds the canvas, a baseline adds
+up, down, the wick and the canvas. D06 §3.2's Baseline Ink cell omits that canvas, although the
+baseline tints are opaque tints over it: PROPOSED, pending the E12-D06 owner's ruling (the L2
+vertex above is open the same way). The palette is re-resolved on every kind change and activation. BQ-7: a theme
+without a needed token posts `ENGINE_THEME_TOKEN_MISSING` and hides only the line family. Candles
+keep drawing, and the candles' `u_palette` is unchanged. A family hidden behind the other is not
+themed (no refusal for what is not drawing) until it is shown again.
+
+**Runtime.** `addSeries` and `setSeriesKind` accept `line`, `area` and `baseline` (additive, §6).
+The series keeps its store and ring. Its `RibbonSeries` is made on the first line kind, and the
+candle hosts are hidden. A switch between the families re-points the ring's patch list at the shown
+hosts (`CandleRing.follow`) and patches their buffer with every bar: that buffer missed the syncs
+while it was hidden. A switch among line, area and baseline uploads nothing. The ring goes plain
+(no hollow bits, no Heikin-Ashi), so the line reads real closes (R-4). Heikin-Ashi with a line
+kind is refused (`heikin-ashi+line`, `ENGINE_SERIES_INCOMPATIBLE`). A pick near the line answers
+the series' bar: the nearer bar of the nearest drawn segment, within the tolerance of the stroke's
+edge. The pane facade's `addSeries("line")` still sends nothing: §8 types line data as `LineData`,
+not OHLC, so wiring it is the app-wiring ticket's call.
+
+Bench: `bench/scenes/ribbon-series.ts` (unit: draws, 0 pan bytes, one 20-byte slot per feed, no
+allocation; `ribbon-series.perf.test.ts`: pan and feed frames ≤ 0.3 ms at 5k and 100k bars, 600 in
+view and at the floor). No baseline is moved. Goldens: `ribbon-golden` pins line, line across a
+gap, area, baseline, and a baseline at a crossing user B as CPU stand-in text. The SwiftShader rows
+are `it.todo`s for #391.

@@ -9,8 +9,13 @@ export interface VertexSource {
   readonly data: Float32Array;
   /** The physical slot of logical index 0. */
   readonly head: number;
-  /** Floats per slot; the capacity is `data.length / stride`. */
+  /** Floats per slot; the capacity is `data.length / stride` unless `slots` says otherwise. */
   readonly stride: number;
+  /**
+   * E12-S07 PR B: the ring's physical slots (the wrap modulus) when `data` holds guard slots past
+   * them, mirrors of its first slots (the ribbon's +1 instance read); absent, all of `data`.
+   */
+  readonly slots?: number;
 }
 
 /** E12-S06: int instance attributes a node's VAO binds (`INSTANCE_LAYOUTS` rows read as int). */
@@ -38,4 +43,6 @@ export interface BatchUniforms {
   label?: string;
   /** Instances to draw this frame; below 0 (or absent) the batch's count. 0 skips the draw. */
   instances?: number;
+  /** E12-S07 PR B, `u_base` (an int tick): the ribbon's base B, or its last close (the disc). */
+  base?: number;
 }

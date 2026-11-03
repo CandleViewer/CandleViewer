@@ -89,6 +89,8 @@ export class CandleSeries implements HostedPlugin {
   hosts: readonly SeriesHost[] = [];
   /** False while the theme lacks a candle token: the hosts are hidden. */
   drawable = false;
+  /** E12-S07 PR B: false while the series draws as a line kind (the runtime's switch): hidden. */
+  active = true;
   /** BQ-12 (`CandleOptions.isTimeAligned`, default true): false never draws the seam. */
   timeAligned = true;
 
@@ -154,7 +156,7 @@ export class CandleSeries implements HostedPlugin {
     this.hosts = SERIES_PARTS[this.mounted].map(([name, part]) => {
       const host = new SeriesHost(`${base}.${name}`, this, deps, { part, program: PROGRAM.candle });
       graph.addNode(paneId, "series", host);
-      host.visible = this.drawable;
+      host.visible = this.drawable && this.active;
       return host;
     });
     this.ring.nodes.length = 0;
@@ -176,8 +178,19 @@ export class CandleSeries implements HostedPlugin {
       err = e;
     }
     this.drawable = err === null;
-    for (const h of this.hosts) h.visible = this.drawable;
+    this.setActive(this.active);
     return err;
+  }
+
+  /** E12-S07 PR B: shows or hides the hosts (the switch to and from the line family). */
+  setActive(on: boolean): void {
+    this.active = on;
+    for (const h of this.hosts) h.visible = this.drawable && on;
+  }
+
+  /** E12-S07 PR B: the mark hosts' ids, the ring's patch list while the candle family draws. */
+  get markIds(): readonly string[] {
+    return this.hosts.filter((_, i) => i !== SEAM).map((h) => h.id);
   }
 
   /**

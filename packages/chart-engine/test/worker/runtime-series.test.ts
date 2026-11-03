@@ -246,4 +246,28 @@ describe("the degraded-2d re-init keeps the DataModel (BQ-53)", () => {
     send(0, "append", candles(12, 1));
     expect([store().length, before?.ring.length]).toEqual([13, 13]);
   });
+
+  it("E12-S07 PR B: a series drawing a line kind gets its ribbon remounted on the fresh scene", () => {
+    cmd({ k: "addSeries", series: 0, kind: "line" });
+    send(0, "replace", candles(0, 12));
+    const old = rt.series(1, 0)?.ribbon;
+    rt.handle({
+      t: "init",
+      id: 1,
+      canvas: { width: 800, height: 400, getContext: () => null },
+      dpr: 1,
+      theme: { ...THEME, "color.chart.line": "#8b5cf6" },
+      config: { bench: true, syncGroup: null },
+      profile: "degraded-2d",
+    });
+    const fresh = rt.series(1, 0)?.ribbon;
+    expect(fresh).toBeDefined();
+    expect(fresh).not.toBe(old);
+    expect(fresh?.hosts.map((h) => rt.graph(1)?.get(h.id) !== undefined)).toEqual(
+      Array(6).fill(true),
+    );
+    expect(fresh?.hosts.every((h) => h.visible)).toBe(true);
+    expect(rt.series(1, 0)?.candle.hosts.some((h) => h.visible)).toBe(false);
+    expect(rt.series(1, 0)?.ring.nodes).toEqual(fresh?.hosts.map((h) => h.id));
+  });
 });

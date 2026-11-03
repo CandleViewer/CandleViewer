@@ -5,6 +5,7 @@
 import type { BatchUniforms } from "../gl/submit.js";
 import { CANDLE_PART, candleRect, fullOutline, GEOM } from "../layers/candle/geometry.js";
 import { CANDLE_STRIDE } from "../layers/candle/ring.js";
+import { RIBBON_GEOM, RIBBON_PART, ribbonQuad } from "../layers/ribbon/geometry.js";
 import { attributeOffset, PROGRAM } from "../scene/instance-layout.js";
 import { projectRel, type PaneUniforms } from "../viewport/transform.js";
 import type { Ctx2DLike } from "./ctx2d.js";
@@ -140,6 +141,63 @@ export function paintCandle(ctx: Ctx2DLike, a: PaintArgs): void {
   ctx.rect(x * sx, y * sy, w * sx, h * sy);
 }
 
+const QUAD_OUT = new Float64Array(8);
+/** A disc's polygon in the 2D path: this many vertices on the twin's circle. */
+export const DISC_SIDES = 16;
+const COS = Float64Array.from({ length: DISC_SIDES }, (_, j) =>
+  Math.cos((2 * Math.PI * j) / DISC_SIDES),
+);
+const SIN = Float64Array.from({ length: DISC_SIDES }, (_, j) =>
+  Math.sin((2 * Math.PI * j) / DISC_SIDES),
+);
+
+/**
+ * `ribbon` (E12-S07 PR B): instance `a.at` (the bar's logical index) of the batch's part, from
+ * the geometry twin (the shader's arithmetic), scaled to the backing store. A strip quad (the
+ * stroke, a fill, the base line) is its polygon v0 v1 v3 v2; a disc (a join, the last point) is
+ * a `DISC_SIDES`-gon on the twin's circle. Every polygon of a bucket winds the same way, so
+ * the nonzero fill unions a stroke with its joins. A collapsed instance paints nothing.
+ */
+export function paintRibbon(ctx: Ctx2DLike, a: PaintArgs): void {
+  const b = a.block;
+  const blk = a.batch ?? null;
+  if (b === null || blk === null) return; // the submit loop skips these and counts them
+  const bi = blk.ints;
+  const part = bi[0] ?? 0;
+  const head = bi[1] ?? 0;
+  const mask = bi[2] ?? 0;
+  const n = bi[3] ?? 0;
+  const i = a.at;
+  const v = a.ints;
+  const p0 = ((head + i) & mask) * CANDLE_STRIDE;
+  const p1 = ((head + i + 1) & mask) * CANDLE_STRIDE; // the CPU wraps by mask: no guard read
+  const q = QUAD_OUT;
+  const k = b.floats;
+  const c0 = v[p0 + 3] ?? 0;
+  const c1 = v[p1 + 3] ?? 0;
+  const f1 = v[p1 + 4] ?? 0;
+  const base = blk.base ?? 0;
+  if (!ribbonQuad(part, i, n, c0, c1, f1, base, k, b.ints[0] ?? 0, b.ints[1] ?? 0, blk.geom, q)) {
+    return;
+  }
+  const sx = scaleX(a);
+  const sy = scaleY(a);
+  if (part === RIBBON_PART.join || part === RIBBON_PART.last) {
+    const r = blk.geom[part === RIBBON_PART.join ? RIBBON_GEOM.join : RIBBON_GEOM.disc] ?? 0;
+    const cx = ((q[0] as number) + (q[6] as number)) * 0.5;
+    const cy = ((q[1] as number) + (q[7] as number)) * 0.5;
+    ctx.moveTo((cx + r) * sx, cy * sy);
+    for (let j = 1; j < DISC_SIDES; j += 1) {
+      ctx.lineTo((cx + r * (COS[j] as number)) * sx, (cy + r * (SIN[j] as number)) * sy);
+    }
+    return;
+  }
+  ctx.moveTo((q[0] as number) * sx, (q[1] as number) * sy);
+  ctx.lineTo((q[2] as number) * sx, (q[3] as number) * sy);
+  ctx.lineTo((q[6] as number) * sx, (q[7] as number) * sy);
+  ctx.lineTo((q[4] as number) * sx, (q[5] as number) * sy);
+}
+
 /** Indexed by `PROGRAM`; `sdf-text` has none: the 2D path cannot rebuild strings (BQ-88). */
 export const PAINTERS: readonly (((ctx: Ctx2DLike, a: PaintArgs) => void) | null)[] = [
   paintLine,
@@ -147,4 +205,5 @@ export const PAINTERS: readonly (((ctx: Ctx2DLike, a: PaintArgs) => void) | null
   null,
   paintBarCell,
   paintCandle,
+  paintRibbon,
 ];

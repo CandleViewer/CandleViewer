@@ -117,11 +117,15 @@ export class GlBuffers implements UploadSink {
       return;
     }
     this.gl.bindBuffer(GL.ARRAY_BUFFER, this.registry.get(shared.buffer));
-    const capacity = data.length / stride;
+    const all = data.length / stride;
+    const capacity = source.slots ?? all;
     const at = (head + from) % capacity;
     const first = Math.min(to - from, capacity - at);
     this.put(at, first, stride, data);
     if (first < to - from) this.put(0, to - from - first, stride, data);
+    // The guard slots mirror slot 0 on: re-sent whenever slot 0 is (E12-S07 PR B).
+    if (all > capacity && (at === 0 || first < to - from))
+      this.put(capacity, all - capacity, stride, data);
   }
 
   private full(shared: Shared): void {

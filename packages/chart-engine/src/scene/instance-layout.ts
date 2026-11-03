@@ -2,8 +2,13 @@
 // sits in its node's `VertexSource` slot, so the WebGL2 backend (its shaders' `in` attributes)
 // and the Canvas2D backend (its painters) read one ring the same way. DOM- and GL-free.
 
-/** A batch's `program` number: the state-sort key of 26 §3.1, shared by both backends. */
-export const PROGRAM = { line: 0, quad: 1, sdfText: 2, barCell: 3, candle: 4 } as const;
+/**
+ * A batch's `program` number: the state-sort key of 26 §3.1, shared by both backends. E12-S07
+ * PR B: `ribbon` takes 5, the first index after the candle stack's. #358's drawing programs
+ * claim 5..7 on their own stack: when both land, the later rebase moves `ribbon` to 8 (this
+ * table, `PROGRAMS`, `PROGRAM_VERTICES` and `PAINTERS` are the four places to move).
+ */
+export const PROGRAM = { line: 0, quad: 1, sdfText: 2, barCell: 3, candle: 4, ribbon: 5 } as const;
 
 /** [shader attribute, float offset in the slot, components, read as int32 bits]. */
 export type InstanceAttribute = readonly [name: string, offset: number, size: number, int: boolean];
@@ -12,6 +17,11 @@ export interface InstanceLayout {
   /** Floats per instance; a source's `stride` may be larger, never smaller. */
   readonly stride: number;
   readonly attributes: readonly InstanceAttribute[];
+  /**
+   * E12-S07 PR B: attributes read one instance ahead (the next slot), each at its slot
+   * attribute's offset + `stride`; the source keeps a guard slot so the last slot reads in range.
+   */
+  readonly next?: readonly InstanceAttribute[];
 }
 
 /**
@@ -57,6 +67,19 @@ export const INSTANCE_LAYOUTS: readonly InstanceLayout[] = [
     attributes: [
       ["a_ohlc", 0, 4, true],
       ["a_meta", 4, 1, true],
+    ],
+  },
+  {
+    // E12-S07 PR B `ribbon`: the same CandleRing slot (its close and its flags), and the next
+    // slot's through the +1 instance binding (the segment's far end, a gap break).
+    stride: 5,
+    attributes: [
+      ["a_ohlc", 0, 4, true],
+      ["a_meta", 4, 1, true],
+    ],
+    next: [
+      ["a_next", 5, 4, true],
+      ["a_nextMeta", 9, 1, true],
     ],
   },
 ];
