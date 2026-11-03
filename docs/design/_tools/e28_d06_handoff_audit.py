@@ -171,7 +171,7 @@ SCREENS = ("SCR-130", "SCR-131", "SCR-132", "SCR-133", "SCR-062", "SCR-061")
 SECTION_OF = {"SCR-130": "4.1", "SCR-131": "4.2", "SCR-132": "4.3", "SCR-133": "4.4"}
 SECTION_OF |= {"SCR-062": "4.5", "SCR-061": "4.6"}
 FIELDS: tuple[str, ...] = (
-    "key",
+    "id",
     "text",
     "screen",
     "kind",
@@ -359,7 +359,7 @@ def g_deck(t: Texts) -> list[Finding]:
         bad.append(("G-DECK", "the header's statuses are not merged, RULED, PROPOSED"))
     seen: set[str] = set()
     for r in rows:
-        k = str(r.get("key"))
+        k = str(r.get("id"))
         if set(r) != ROW_FIELDS:
             bad.append(("G-DECK", f"{k}: fields {sorted(set(r) ^ ROW_FIELDS)} differ"))
             continue
@@ -395,7 +395,7 @@ def g_status(t: Texts) -> list[Finding]:
         return [("G-STATUS", "no deck rows to judge")]
     bad: list[Finding] = []
     for r in rows:
-        k, st, owner = r.get("key"), r.get("status"), r.get("owner")
+        k, st, owner = r.get("id"), r.get("status"), r.get("owner")
         cs = src_cites(r)
         d02_cells = [d02_source_cell(t, n) for key, n in cs if key == "D02"]
         if st == "merged":
@@ -432,7 +432,7 @@ def g_codes(t: Texts, full: bool) -> list[Finding]:
             bad.append(("G-CODES", f"`{c}` has no row"))
     if not full or t.spec is None:
         return bad
-    by_key = {r.get("key"): r for r in rows}
+    by_key = {r.get("id"): r for r in rows}
     body = section(t.spec, "### 8.2")
     listed = []
     for ln in body.split("\n"):
@@ -812,7 +812,7 @@ def deck_edit(key: str, change: Callable[[dict[str, Any]], None]) -> Callable[[T
         assert t.deck is not None
         out = []
         for ln in t.deck.split("\n"):
-            if ln.strip() and json.loads(ln).get("key") == key:
+            if ln.strip() and json.loads(ln).get("id") == key:
                 r = json.loads(ln)
                 change(r)
                 ln = json.dumps(r, ensure_ascii=False)
@@ -839,7 +839,7 @@ MUTATIONS: list[tuple[str, str, Callable[[Texts], Texts]]] = [
     ("MU-7", "G-FROZEN", deck_edit("e28.code.risk_limit_breached", setter("frozen", None))),
     ("MU-8", "G-HYGIENE", lambda t: replace(t, tool=t.tool + "\n# " + "flo" + "od\n")),
     ("MU-9", "G-SCOPE", lambda t: replace(t, changed=[*(t.changed or []), PATHS["14"]])),
-    ("MU-10", "G-DECK", deck_edit("e28.code.write_once", setter("key", "e28.code.write_ONCE"))),
+    ("MU-10", "G-DECK", deck_edit("e28.code.write_once", setter("id", "e28.code.write_ONCE"))),
     ("MU-11", "G-COMP", sub("spec", "| CMP-232 | LimitsChip", "| CMP-23x | LimitsChip")),
     ("MU-12", "G-BIND", sub("spec", "`updated_at` (`22`:20134)", "`updated_on` (`22`:20134)")),
     ("MU-13", "G-BUDGET", sub("spec", "600<!--=BUD:SCR133-->", "650<!--=BUD:SCR133-->")),
