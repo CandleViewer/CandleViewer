@@ -988,7 +988,7 @@ def _alert_evaluator(b: Board) -> None:
     )
     _describe(b, "Alerts auto-disarmed on source loss. Catalogue alert: any.")
     b.ts(
-        "Alert eval latency p95 (budget 1 s)",
+        "Alert eval latency p95, tick to firing recorded (budget 1 s)",
         q("cv_alert_eval_latency_seconds"),
         "s",
         1,
@@ -996,8 +996,10 @@ def _alert_evaluator(b: Board) -> None:
     _threshold_lines(b)
     _describe(
         b,
-        "Condition met to delivery committed. Budget: E40-T03 records a firing within 1 s of the "
-        "condition being met (docs/plan/backlog/E40.json); 20-architecture.md 12.1: p95 <= 1 s.",
+        "From tick processing start (after dequeue) to the firing row recorded. Queue wait is not "
+        "included: the queue depth and dropped panels cover it. Budget: E40-T03 records a firing "
+        "within 1 s of the condition being met (docs/plan/backlog/E40.json); "
+        "20-architecture.md 12.1: p95 <= 1 s.",
     )
     b.stat("Armed alerts", f"max(cv_alerts_armed{{{E}}})", "short")
     _describe(b, "Armed alerts in the evaluator. Dashboard only (metrics catalogue).")

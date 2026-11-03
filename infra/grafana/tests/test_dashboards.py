@@ -341,6 +341,8 @@ def test_rules_board_alert_evaluator_row_uses_catalogue_metrics_and_labels() -> 
         "cv_alert_eval_queue_depth": "",
         "cv_alert_eval_dropped_total": "",
         "cv_alert_owner_skipped_total": "stage, reason",
+        "cv_alert_compile_seconds": "",
+        "cv_alert_compile_rejected_total": "reason",
     }
     for metric, by in used.items():
         assert metric in lint.catalogue_names(), metric
@@ -348,3 +350,22 @@ def test_rules_board_alert_evaluator_row_uses_catalogue_metrics_and_labels() -> 
         assert hits, metric
         if by:
             assert all(f"by ({by})" in e for e in hits), metric
+    by_title = {p["title"]: p for p in d["panels"]}
+
+    def steps(p: dict) -> list:
+        return [s["value"] for s in p["fieldConfig"]["defaults"]["thresholds"]["steps"]]
+
+    for metric, budget in (("cv_alert_eval_latency_seconds", 1), ("cv_alert_compile_seconds", 0.3)):
+        (p95,) = [
+            p
+            for p in d["panels"]
+            if any(f"{metric}_bucket" in t["expr"] for t in p.get("targets", []))
+        ]
+        assert p95["targets"][0]["expr"].startswith("histogram_quantile(0.95, ")
+        assert steps(p95) == [None, budget]
+        assert p95["fieldConfig"]["defaults"]["custom"]["thresholdsStyle"] == {"mode": "dashed"}
+        assert p95.get("description")
+    queue = next(p for t, p in by_title.items() if t.startswith("Eval queue depth"))
+    assert steps(queue) == [None, 512, 1024]
+    dropped = next(p for t, p in by_title.items() if t.startswith("Ticks dropped"))
+    assert steps(dropped) == [None, 1]
