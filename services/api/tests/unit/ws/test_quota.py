@@ -79,8 +79,13 @@ WORKED = [
     ("heatmap.BTCUSDT", {"depth": 200, "time_bucket_ms": 500}, 13),
     ("heatmap.BTCUSDT", {"depth": 200, "time_bucket_ms": 500, "encoding": "structured"}, 39),
     ("heatmap.BTCUSDT", {"depth": 200, "time_bucket_ms": 100}, 63),
-    ("heatmap.BTCUSDT", {"depth": 500, "time_bucket_ms": 100}, 80),
-    ("heatmap.BTCUSDT", {"depth": 500, "time_bucket_ms": 100, "throttle_ms": 50}, 160),
+    ("heatmap.BTCUSDT", {"depth": 500, "time_bucket_ms": 100, "price_grouping": 2}, 80),
+    ("heatmap.BTCUSDT", {"depth": 500, "time_bucket_ms": 100, "price_grouping": 1}, 240),
+    (
+        "heatmap.BTCUSDT",
+        {"depth": 500, "time_bucket_ms": 100, "price_grouping": 2, "throttle_ms": 50},
+        160,
+    ),
     ("book.BTCUSDT.200", {}, 1),
     ("book.BTCUSDT.500", {}, 2),
 ]
@@ -134,7 +139,7 @@ def test_the_contract_states_the_worked_values_the_code_weighs() -> None:
     [
         {"depth": 50, "time_bucket_ms": 1000},
         {"depth": 200, "time_bucket_ms": 500},
-        {"depth": 500, "time_bucket_ms": 100, "throttle_ms": 50},
+        {"depth": 500, "time_bucket_ms": 100, "price_grouping": 2, "throttle_ms": 50},
     ],
 )
 def test_a_structured_heatmap_weighs_three_times_its_binary_points(opts: dict[str, Any]) -> None:
@@ -149,6 +154,28 @@ def test_a_structured_heatmap_weighs_three_times_its_binary_points(opts: dict[st
     assert spec_points(spec) == column_points(spec.depth, opts["time_bucket_ms"])
 
 
+@pytest.mark.parametrize(
+    ("depth", "grouping", "factor"),
+    [(500, 1, limits.STRUCTURED_HEATMAP_WEIGHT), (500, 2, 1), (200, 1, 1), (50, 1, 1)],
+)
+def test_a_heatmap_whose_window_cannot_hold_its_depth_weighs_at_the_structured_factor(
+    depth: int, grouping: int, factor: int
+) -> None:
+    """23 §16.2: a `heatmap.*` whose window, the grid's rows centred on the mid at
+    `price_grouping` ticks a row, cannot hold its `depth` levels a side weighs at the structured
+    factor whatever its `encoding`, once; one whose window holds its depth keeps its binary weight
+    in the binary encoding. Its spec, the server's points, is the same either way."""
+    assert limits.HEATMAP_WINDOW_ROWS_A_SIDE == ROWS // 2 == 256
+    edge = limits.heatmap_window_cannot_hold
+    assert (edge(256, 1), edge(257, 1), edge(512, 2), edge(513, 2)) == (False, True, False, True)
+    opts: dict[str, Any] = {"depth": depth, "price_grouping": grouping, "time_bucket_ms": 100}
+    binary, structured = heatmap(**opts), heatmap(encoding="structured", **opts)
+    assert limits.heatmap_window_cannot_hold(depth, grouping) is (factor == 3)
+    assert binary.points == factor * column_points(depth, 100)
+    assert structured.points == limits.STRUCTURED_HEATMAP_WEIGHT * column_points(depth, 100)  # once
+    assert binary.spec == structured.spec == HeatmapSpec("BTCUSDT", depth, grouping, 100)
+
+
 def test_depth_500_and_a_100ms_bucket_weigh_more_than_depth_50_at_1000ms() -> None:
     """The ticket's sentence: depth 500 and a 100 ms bucket count more than depth 50 at 1 000 ms."""
     shallow, deep = heatmap(depth=50, time_bucket_ms=1000), heatmap(depth=500, time_bucket_ms=100)
@@ -159,7 +186,8 @@ def test_depth_500_and_a_100ms_bucket_weigh_more_than_depth_50_at_1000ms() -> No
 
 def test_rows_are_capped_at_512() -> None:
     """24 §6.1's `rows`: depth 500 sends at most 512 rows, never 1 000."""
-    assert heatmap(depth=500, time_bucket_ms=1000).points == 8  # ⌈512 ÷ 64⌉, never ⌈1 000 ÷ 64⌉
+    deep = heatmap(depth=500, time_bucket_ms=1000, price_grouping=2)  # a window that holds it
+    assert deep.points == 8  # ⌈512 ÷ 64⌉, never ⌈1 000 ÷ 64⌉
     assert column_points(500, 1000) == column_points(256, 1000) == -(-512 // QUOTA_ROWS_PER_POINT)
     assert column_points(200, 1000) == 7  # 400 rows: under the cap, 2 x depth
 
@@ -202,6 +230,7 @@ def test_the_budgets_are_the_interim_values() -> None:
     assert (limits.MAX_HEATMAP_SPECS_PER_USER, limits.MAX_HEATMAP_SPECS_PER_USER_SYMBOL) == (8, 2)
     assert QUOTA_ROWS_PER_POINT == 64
     assert limits.STRUCTURED_HEATMAP_WEIGHT == STRUCTURED_ROW_BYTES // ROW_BYTES == 3  # G-03's
+    assert limits.HEATMAP_WINDOW_ROWS_A_SIDE == ROWS // 2  # the window's rows a side of the mid
 
 
 # -- the ledgers ----------------------------------------------------------------------------------
@@ -427,7 +456,7 @@ def _services(**caps: int) -> SubscriptionServices:
 
 def _scenario(reason: QuotaReason) -> tuple[ConnectionAuthz, dict[str, Any]]:
     """A connection one `sub` entry short of `reason`'s refusal, and that entry."""
-    deep = {"depth": 500, "time_bucket_ms": 100, "throttle_ms": 50}  # 160 points
+    deep = {"depth": 500, "time_bucket_ms": 100, "price_grouping": 2, "throttle_ms": 50}  # 160
     if reason == "deep_book_connection":
         conn = _conn(_services())
         _sub(conn, *({"ch": f"book.{s}.200"} for s in SYMBOLS[:4]))

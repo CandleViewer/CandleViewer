@@ -208,7 +208,10 @@ def encode(frame: Frame, weight: int = 0) -> bytes:
     if kind.id == HEATMAP_COLUMN and kind.body_prefix is not None and frame.prefix is not None:
         # E21-X02 (§3.4): a column both decoders refuse is never encoded, so a round trip is total.
         rows = len(frame.records)
-        _heatmap_bounds(kind.name, kind.body_prefix, frame.prefix, rows, FrameEncodeError)
+        try:
+            _heatmap_bounds(kind.name, kind.body_prefix, frame.prefix, rows, FrameEncodeError)
+        except (IndexError, TypeError) as exc:  # not the layout's prefix of three ints
+            raise FrameEncodeError(f"{kind.name}: a malformed prefix: {exc}") from exc
     out = bytearray(HEADER.size + _body_size(frame, kind))
     rec = _st(kind.record)
     try:

@@ -37,9 +37,10 @@ from tests.unit.ws._seq_support import ACC_A
 
 #: 23 §16.2, interim: the points of a connection and of a user, and the counts.
 POINTS_CONNECTION, POINTS_USER, HEATMAPS_CONNECTION, DEEP_BOOKS = 200, 400, 8, 4
-#: Worked weights (23 §16.2): a depth-500 heatmap at 100 ms with a 50 ms throttle, and without.
-HEAVY = {"depth": 500, "time_bucket_ms": 100, "throttle_ms": 50}  # 160 points
-DEEP = {"depth": 500, "time_bucket_ms": 100}  # 80 points; its spec 80 against the server's
+#: Worked weights (23 §16.2): a depth-500 heatmap at 100 ms with a 50 ms throttle, and without,
+#: each at grouping 2, a window that holds depth 500 (at grouping 1 it weighs three times).
+HEAVY = {"depth": 500, "time_bucket_ms": 100, "price_grouping": 2, "throttle_ms": 50}  # 160 points
+DEEP = {"depth": 500, "time_bucket_ms": 100, "price_grouping": 2}  # 80; its spec 80 for the server
 RS = "bb000000-0000-4000-8000-000000000001"
 SYMBOLS = tuple(f"S{n:02d}USDT" for n in range(40))
 QUOTA = "cv_ws_subscription_quota_rejections_total"
@@ -121,7 +122,7 @@ def test_structured_heatmaps_reach_the_connection_quota_at_a_third_of_the_binary
     a 250 ms bucket a connection holds six binary heatmaps and two structured ones; the next of
     each is refused at the connection's points."""
     alice = world.login("alice")
-    wide = {"depth": 500, "time_bucket_ms": 250}
+    wide = {"depth": 500, "time_bucket_ms": 250, "price_grouping": 2}  # a window that holds it
     seen = counted("points_connection")
     for encoding, fit in (("binary", 6), ("structured", 2)):
         with socket(world, alice) as c:
@@ -131,6 +132,47 @@ def test_structured_heatmaps_reach_the_connection_quota_at_a_third_of_the_binary
             assert found[fit]["error"] == refused(MESSAGES["points_connection"])
             assert world.held(alice)[:2] == (192, fit)
     assert seen["points_connection"]() == 2
+
+
+def test_binary_heatmaps_whose_window_cannot_hold_their_depth_weigh_three_times(
+    world: QuotaWorld,
+) -> None:
+    """23 §16.2: a `heatmap.*` whose window cannot hold its depth weighs at the structured factor
+    whatever its encoding. Binary depth-500 heatmaps at grouping 1 reach the connection's points at
+    a third of the count of grouping-2 ones, whose window holds depth 500."""
+    alice = world.login("alice")
+    seen = counted("points_connection")
+    for grouping, fit in ((2, 6), (1, 2)):
+        with socket(world, alice) as c:
+            wide = {"depth": 500, "time_bucket_ms": 250, "price_grouping": grouping}
+            found = results(c, *(heatmap(s, **wide) for s in SYMBOLS[: fit + 1]))
+            assert codes(found) == [None] * fit + ["subscription_limit"]
+            assert found[fit]["error"] == refused(MESSAGES["points_connection"])
+            assert world.held(alice)[:2] == (192, fit)
+    assert seen["points_connection"]() == 2
+
+
+def test_a_structured_heatmaps_ctl_keeps_its_factor(world: QuotaWorld) -> None:
+    """§5.4, §16.2: a `ctl` on a structured heatmap, of a spec option or of `throttle_ms`, moves
+    its charge to three times its new binary weight, in the subscription's, the connection's and
+    the user's charge alike."""
+    alice = world.login("alice")
+    ch = f"heatmap.{SYMBOLS[0]}"
+    with socket(world, alice) as c:
+        asked = heatmap(SYMBOLS[0], depth=200, time_bucket_ms=500, encoding="structured")
+        assert codes(results(c, asked)) == [None]  # 13 binary, 39 charged
+        authz = world.authz(alice)
+        (sub,) = (s for s in authz.by_id.values() if s.ch == ch)
+
+        def charged() -> tuple[int, int, int]:
+            return sub.quota_points, authz.quota.points, world.user_held(alice)[0]
+
+        assert charged() == (39, 39, 39)
+        respec = ctl(c, ch, 1, time_bucket_ms=1000)  # 7 binary
+        assert respec["t"] == "ctl_ok" and charged() == (21, 21, 21)
+        faster = ctl(c, ch, 2, throttle_ms=250)  # 25 binary
+        assert faster["t"] == "ctl_ok" and charged() == (75, 75, 75)
+        assert sub.effective["encoding"] == "structured"  # fixed at `sub`, kept by every `ctl`
 
 
 def test_quota_per_user_budget_spans_the_users_connections(world: QuotaWorld) -> None:
@@ -302,7 +344,7 @@ def test_a_ctl_past_a_budget_changes_nothing(world: QuotaWorld) -> None:
         assert codes(results(c, heatmap(SYMBOLS[2], depth=50, time_bucket_ms=1000))) == [None]
         rebuilds, key = world.authz(alice).rebuilds, topic_key(parse_topic(light), None)
         drawn = rebuilds.drawn(key)
-        respec = ctl(c, light, 2, depth=500, time_bucket_ms=100)  # 80 in place of 2: 242
+        respec = ctl(c, light, 2, depth=500, time_bucket_ms=100)  # 240 in place of 2: 400
         assert respec["t"] == "err" and respec["p"]["message"] == MESSAGES["points_connection"]
         assert world.held(alice) == (162, 3, 3)
         assert rebuilds.drawn(key) == drawn  # §5.4: a `ctl` refused for a quota draws no rebuild

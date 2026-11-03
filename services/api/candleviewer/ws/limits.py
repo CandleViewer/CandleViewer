@@ -136,8 +136,20 @@ DEEP_BOOK_PUBLISHES_PER_S = 10
 #: A `heatmap.*` subscription whose effective `encoding` is `structured` weighs this many times its
 #: binary points in the connection's and the user's ledgers: G-03's per-row bound ratio (§6.1), a
 #: structured row's bound to a binary row's (`orderflow.heatmap.STRUCTURED_ROW_BYTES` ÷ `ROW_BYTES`,
-#: which `test_quota.py` pins it to). The server's spec points do not change with encoding.
+#: which `test_quota.py` pins it to), and so does one whose window cannot hold its depth
+#: (`heatmap_window_cannot_hold`), whatever its encoding. The server's spec points do not change.
 STRUCTURED_HEATMAP_WEIGHT = 3
+#: A `heatmap.*` column's window holds this many rows a side of the mid: the grid's `rows`
+#: (`orderflow.heatmap.ROWS`, which `test_quota.py` pins it to) centred on it (24 §6.3).
+HEATMAP_WINDOW_ROWS_A_SIDE = 256
+
+
+def heatmap_window_cannot_hold(depth: int, price_grouping: int) -> bool:
+    """23 §16.2: whether a `heatmap.*` spec's window cannot hold its `depth` levels a side, at
+    `price_grouping` ticks a row; such a subscription weighs at `STRUCTURED_HEATMAP_WEIGHT`."""
+    return depth > HEATMAP_WINDOW_ROWS_A_SIDE * price_grouping
+
+
 #: SR-E12-07 (§8.4): the share, in percent of each limit of a connection's outbound
 #: budget, that its queued `bars.*` frames may hold, so `book` and `trades` are not starved.
 BARS_SHARE_PCT = 50

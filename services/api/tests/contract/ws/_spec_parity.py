@@ -224,8 +224,9 @@ LIMIT_ROWS: Final[dict[str, str | Sequence[str | Callable[[], float]]]] = {
     "Quota points / user": "limits.QUOTA_POINTS_PER_USER",
     # the point: its rows a second, its bytes a second at a kind-6 row (1 KiB), and that row
     "Quota point": [_heatmap("QUOTA_ROWS_PER_POINT"), _point_bytes, _heatmap("ROW_BYTES")],
-    # the formula by reference to the grid's `rows`; its one figure, a `structured` one's factor
-    "`heatmap.*` weight": ["limits.STRUCTURED_HEATMAP_WEIGHT"],
+    # the formula by reference to the grid's `rows`; its figures: the factor of a `structured` one
+    # and of one whose window cannot hold its depth, and that window's rows a side
+    "`heatmap.*` weight": ["limits.STRUCTURED_HEATMAP_WEIGHT", "limits.HEATMAP_WINDOW_ROWS_A_SIDE"],
     "Deep `book.*` weight": [
         "limits.DEEP_BOOK_ROWS_PER_PUBLISH",
         "limits.DEEP_BOOK_MEASURED_DEPTH",
