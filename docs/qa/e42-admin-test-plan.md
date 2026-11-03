@@ -1043,6 +1043,10 @@ limit. **Blocked:** `GET /admin/statecharts/{machineKey}` is `not_mounted` on th
   `dropped_receipts` count is on the `kinds` summary, `null` until a metrics source exists, so no count
   can be shown today (Q-24).
 - Audit: none beyond `admin.area_entered` per call.
+- UI half (E42-S08): `e2e` with stubs (`apps/web/e2e/admin/admin-inspector.spec.ts`, the SC-CHAIN-TRIPS
+  world): the latched row reads "Latched — chain trips: 2" beside the octagon, the banner
+  `machine.latched_effect` shows, the B8 kind reads its `machine.rowless` line, and every dropped
+  receipts count reads "— not received". A deployed stack lists nothing until #2701.
 
 **AD-S08-02 Acknowledge a latch [R]** (`e2e`, `integration`; E42-S08 "Acknowledge a latch")
 
@@ -1051,7 +1055,9 @@ limit. **Blocked:** `GET /admin/statecharts/{machineKey}` is `not_mounted` on th
 - Expected: the latch clears, and the machine serves order-path commands again. The acknowledgement is
   audited with the owner's identity, the machine and its prior `chain_trips` count. Its operation, step-up
   class and action are not in `22` yet: see Q-7.
-- **Blocked** on Q-7: the acknowledgement has no operation, step-up class or audit action yet.
+- **Blocked** on Q-7: the acknowledgement has no operation, step-up class or audit action yet. Moved
+  to the acknowledge's backend Task (E42-S08 BQ-5): E42-S08 asserts the T2 control only
+  (AD-S08-N01).
 
 **AD-S08-03 Acknowledging without elevation is refused [R]** (`contract`, `security`; E42-S08 "Acknowledge
 without elevation is refused")
@@ -1061,14 +1067,37 @@ without elevation is refused")
 - Expected: the server answers `403 step_up_required` with the acknowledgement's `action_class`, the gate
   appears, and the latch stays set.
 - Audit: `auth.step_up_required`; no acknowledgement record.
-- **Blocked** on Q-7, as AD-S08-02.
+- **Blocked** on Q-7, as AD-S08-02, and moved with it (BQ-5).
 
 **AD-S08-04 The diagram matches the running chart** (`e2e`; E42-S08 "State diagram matches the running
 chart")
 
 - Expected: the diagram matches the Stately export for that `machine_hash` and highlights the current
-  state.
+  state. The text list is the oracle: it equals the export's states and transitions for the row's
+  `machine_kind` (the export is read by the bare kind); the leaves of `getStatechart`'s
+  `configuration` read "(current)" in the list and carry the drawing's current border; when the
+  export's `machine_hash` differs from the machine's, nothing is marked current and
+  `machine.chart_changed` shows.
 - Audit: none beyond `admin.area_entered` per call.
+
+**AD-S08-N01 The acknowledge is T2 and sends nothing** (`e2e`, `component`; E42-S08 BQ-5): on a
+latched machine, [Acknowledge latch…] is focusable, `aria-disabled`, named for its machine and
+described by `admin.ack_not_built` from mount; Enter, Space or a press sends no request (no `POST`
+in the request log) and says the reason once per press, politely.
+
+**AD-S08-N02 A rowless kind is a line, never a row** (`e2e`, `component`): a latched B8, B9, B13 or
+B15 machine reads its kind's `machine.rowless` line with the octagon; the grid has no row for it,
+so it can't be opened.
+
+**AD-S08-N03 A non-owner's inspector is the 404** (`e2e`, `component`): a Manager or Viewer on
+`/admin/statecharts` gets "Page not found", with no `/api/v1/admin` request and no admin chunk.
+
+**AD-S08-N04 A dropped receipts count not received reads so** (`e2e`, `component`; Q-24): a `null`
+`dropped_receipts`, or a `metrics` slice that is not `ok`, reads "— not received", never 0, under
+`machine.metrics_unavailable`.
+
+**AD-S08-N05 A failed seal reads its line** (`component`): `snapshots` `error` "snapshot seal did
+not verify" reads `machine.seal_failed` above whatever rows were served.
 
 ## 3. Cross-session scenarios
 
