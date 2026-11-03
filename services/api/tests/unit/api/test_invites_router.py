@@ -516,8 +516,13 @@ def _challenges(em: _Emitter) -> int:
 
 @pytest.mark.parametrize(
     ("body", "status"),
-    [({**_BODY, "roles": ["manager"]}, 422), ({**_BODY, "nickname": "x"}, 422), ([], 400)],
-    ids=["role", "unknown-field", "not-an-object"],
+    [
+        ({**_BODY, "roles": ["manager"]}, 422),
+        ({**_BODY, "nickname": "x"}, 422),
+        ({**_BODY, "mfa_required": False}, 422),
+        ([], 400),
+    ],
+    ids=["role", "unknown-field", "mfa-not-required", "not-an-object"],
 )
 async def test_an_unelevated_owners_invalid_invite_is_refused_never_challenged(
     body: Any, status: int

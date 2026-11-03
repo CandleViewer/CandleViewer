@@ -132,11 +132,6 @@ def test_ac_adm_27_a_spent_invite_link_answers_as_an_unknown_one(stack: Stack) -
     assert len(stack.audit.of("users.invite_redeemed")) == redeemed  # nothing redeemed twice
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="AD-F10 (#3086): `createUser` still accepts `mfa_required: false` (C-12.2)",
-)
 def test_ac_adm_27_create_user_refuses_mfa_not_required(stack: Stack) -> None:
     owner = _owner(stack)
     refused = stack.client.post("/users", headers=owner, json={**_INVITE, "mfa_required": False})
