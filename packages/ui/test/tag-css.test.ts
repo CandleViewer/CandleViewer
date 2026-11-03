@@ -73,7 +73,7 @@ describe("tag.css contract", () => {
     expect(forced).not.toMatch(/forced-color-adjust/);
   });
 
-  it("toggle at rest: the neutral chip's look as a button; hover surface.hover under text.primary", () => {
+  it("toggle at rest: the neutral chip's look as a button; hover action.secondary.hover under text.primary", () => {
     const rest = find(normal, '.cv-tag[data-variant="toggle"]', "border-color");
     expect(rest).toContain("border-color: var(--color-border-default)");
     expect(rest).toContain("position: relative");
@@ -82,7 +82,7 @@ describe("tag.css contract", () => {
       '.cv-tag[data-variant="toggle"]:hover:not([aria-pressed="true"])',
       "background",
     );
-    expect(hover).toContain("background: var(--color-surface-hover)");
+    expect(hover).toContain("background: var(--color-action-secondary-hover)");
     expect(hover).toContain("color: var(--color-text-primary)");
   });
 
