@@ -158,7 +158,7 @@ REQUIRED_FRAMES = (
     "SCR-062/lockout-frozen",
     "DS/cmp-124-summary",
     "DS/cmp-232-budget",
-    "DS/cmp-257-leg-status",
+    "DS/cmp-258-leg-status",
     "DS/scope-confirm",
     "DS/motion-twins",
 )
