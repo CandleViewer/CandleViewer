@@ -886,7 +886,7 @@ The account-scoped private topics (below) intersect the requested `exchange_acco
 - **Owner status (#3349).** Nothing starts leaving for a user who is not active (disabled, locked, invited or deleted) after the disable. The evaluator skips a due alert of theirs (for up to its 1 s owner cache it can still record a firing, which is never delivered), and the dispatcher, reading the status fresh, settles a delivery queued before the disable `suppressed` with `error` `owner_inactive` (`recipient_deleted` once the user row is gone): final, kept in history and never announced here, so no delta follows. A delivery already past that read can still be sent once, and one whose owner's status cannot be read stays `queued` for the next lease. Once the Owner enables the user again, new firings are delivered and the dropped ones stay `suppressed`. No frame, option or schema changes.
 - **Backpressure (§8.4).** The deltas of one 250 ms window leave whole and in order at its close; past the window's frame bound the window is dropped for a `backpressure` snapshot of the owner's current set (step 2), which the topic reads again first when it no longer holds that set, so a window is never sent cut short.
 
-Payload: [`AlertUpdate`](#157-alertupdate); `message` is the delivery `body`, falling back to `title`. A firing's `title` is the alert's name and its `body` the message rendered at fire time with the values it fired on, or the condition restated with them when the template is empty (E40-D02 CC-1): plain text, control characters removed, no `{{` from a substituted value, and the value of an account- or position-scope metric shown as `—`; rows written before CC-1 hold the raw template as `title`. `kind` classes every item (CC-7, D-39): `firing`, `disarm_notice`, `failure_notice` or `storm_summary`, derived from the row the server wrote; a `storm_summary` item carries `summary` (the held count, the symbols in first-seen order and the window, its bounds null on a summary written before CC-7), every other item `summary: null`. `silenced` (CC-9) is `muted_symbol` or `quiet_hours` on the `in_app` item of a firing a symbol mute or quiet hours held: it is recorded and kept, and the client shows no toast and plays no sound for it; null otherwise. The server sends `kind`, `summary` and `silenced` on every item once E40-S02's delivery change is served; the schema leaves them optional so a client reads an older server. The fire-time values themselves are read over REST, `GET /v1/alerts/deliveries/{deliveryId}` (CC-2, a PROPOSED path), never sent on this topic. Desktop-channel outcomes are reported over REST via `POST /v1/alerts/deliveries/{deliveryId}/desktop-outcome`, not over this socket. A `skipped` report (CC-17: the window was visible, or desktop notifications are off) settles the row `suppressed` with that reason and raises no failure notice. Metric: `cv_ws_alerts_subscriptions_in_use`, the live `alerts` subscriptions (the ticket's `cv_ws_alerts_subscribers`; 20-architecture.md §12.1).
+Payload: [`AlertUpdate`](#157-alertupdate); `message` is the delivery `body`, falling back to `title`. A firing's `title` is the alert's name and its `body` the message rendered at fire time with the values it fired on, or the condition restated with them when the template is empty (E40-D02 CC-1): plain text, control characters removed, no `{{` from a substituted value, and the value of an account- or position-scope metric shown as `—`; rows written before CC-1 hold the raw template as `title`. `kind` classes every item (CC-7, D-39): `firing`, `disarm_notice`, `failure_notice` or `storm_summary`, derived from the row the server wrote; a `storm_summary` item carries `summary` (the held count, the symbols in first-seen order and the window, its bounds null on a summary written before CC-7), every other item `summary: null`. `silenced` (CC-9) is `muted_symbol` or `quiet_hours` on the `in_app` item of a firing a symbol mute or quiet hours held: it is recorded and kept, and the client shows no toast and plays no sound for it; null otherwise. The server sends `kind`, `summary` and `silenced` on every item once E40-S02's delivery change is served; the schema leaves them optional so a client reads an older server, and a client reads a missing `kind` as `firing` and a missing `summary` or `silenced` as null (so nothing is silenced by an absent field). `title` and `message` are at most 1,000 characters, and a summary names at most 100 symbols. The fire-time values themselves are read over REST, `GET /v1/alerts/deliveries/{deliveryId}` (CC-2, a PROPOSED path), never sent on this topic. Desktop-channel outcomes are reported over REST via `POST /v1/alerts/deliveries/{deliveryId}/desktop-outcome`, not over this socket. A `skipped` report (CC-17: the window was visible, or desktop notifications are off) settles the row `suppressed` with that reason and raises no failure notice. Metric: `cv_ws_alerts_subscriptions_in_use`, the live `alerts` subscriptions (the ticket's `cv_ws_alerts_subscribers`; 20-architecture.md §12.1).
 
 #### 6.2.2 `recorder` topic
 
@@ -4134,8 +4134,8 @@ behind a `positions` window open when it arrives (§16.1 S5).
           "channel": { "enum": ["in_app", "email", "webhook", "push", "desktop"] },
           "status": { "enum": ["queued", "sent", "failed", "suppressed", "acked"] },
           "severity": { "enum": ["debug", "info", "warning", "error", "critical"] },
-          "title": { "type": "string" },
-          "message": { "type": "string" },
+          "title": { "type": "string", "maxLength": 1000 },
+          "message": { "type": "string", "maxLength": 1000 },
           "symbol": {
             "oneOf": [{ "$ref": "cv://ws/v1/common.schema.json#/$defs/symbol" }, { "type": "null" }]
           },
@@ -4156,7 +4156,11 @@ behind a `positions` window open when it arrives (§16.1 S5).
                 "required": ["count", "symbols", "window_start_ms", "window_end_ms"],
                 "properties": {
                   "count": { "type": "integer", "minimum": 0 },
-                  "symbols": { "type": "array", "items": { "type": "string" } },
+                  "symbols": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "items": { "type": "string", "maxLength": 1000 }
+                  },
                   "window_start_ms": {
                     "oneOf": [
                       { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },

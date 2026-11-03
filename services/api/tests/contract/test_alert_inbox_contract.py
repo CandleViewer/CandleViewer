@@ -167,3 +167,24 @@ def test_every_problem_code_the_routes_answer_is_catalogued_with_its_status() ->
     expected = {"audit_unavailable", "store_unavailable", "unauthenticated", "invalid_cursor"}
     assert expected <= {code for _, code in found}
     assert found <= catalogue | {(422, "validation_failed")}, found - catalogue
+
+
+@pytest.mark.parametrize(
+    ("body", "valid"),
+    [
+        ({"outcome": "skipped", "reason": "window_visible", "permission": "granted"}, True),
+        ({"outcome": "skipped", "reason": "desktop_off", "permission": "denied"}, True),
+        ({"outcome": "shown", "permission": "granted"}, True),
+        ({"outcome": "skipped", "permission": "granted"}, False),  # a skip says why
+        ({"outcome": "shown", "reason": "desktop_off", "permission": "granted"}, False),
+        ({"outcome": "skipped", "reason": "bored", "permission": "granted"}, False),
+    ],
+)
+def test_desktop_outcome_body_states_the_skipped_reason_conditional(
+    body: dict[str, Any], valid: bool
+) -> None:
+    """E40-D02 CC-17 (#1130 S1 lens m-1): `reason` is required with `skipped`, refused otherwise."""
+    op = _SPEC["paths"]["/alerts/deliveries/{deliveryId}/desktop-outcome"]["post"]
+    schema = op["requestBody"]["content"]["application/json"]["schema"]
+    errors = list(Draft202012Validator(schema).iter_errors(body))
+    assert (not errors) is valid

@@ -43,6 +43,7 @@ from urllib.parse import urlsplit
 import structlog
 from pydantic import BaseModel, ValidationError
 
+from candleviewer.alerts._generated.notification_overrides import LOCKED_CELLS
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.drawings_models import format_errors
 from candleviewer.domain.text import unpaired_surrogate
@@ -57,6 +58,8 @@ _MAX_ERRORS: Final = 20
 META: Final = "_meta"
 #: 22 `updateSettings`: set only through `armOneClickTrading` (SR-043), never through a patch.
 READ_ONLY: Final = frozenset({"trading.one_click_armed"})
+#: The SCR-115 matrix leaf, whose locked cells are refused false (E40-D02 CC-8).
+MATRIX: Final = "notifications.matrix"
 #: The credential-class leaves (21 Sec.12): their values leave their owner only as `masked()`.
 MASKED_LEAVES: Final = frozenset({"notifications.webhook_url"})
 #: A masked value's elided part, and the whole of a value with no scheme and host to keep.
@@ -172,7 +175,23 @@ def _judge_group(group: str, members: dict[str, object], out: dict[str, object])
                 out[key] = canonical(leaf, value)
             except ValidationError as exc:
                 errors += redact_structure(format_errors(exc, prefix=group))
+            else:
+                if key == MATRIX:
+                    errors += _locked_cells_muted(out[key])
     return errors
+
+
+def _locked_cells_muted(matrix: object) -> list[Any]:
+    """E40-D02 CC-8 (#1130): a cell the critical-override constant locks is never stored false,
+    server-side and behind no flag (C-4.14). Its `notifications.risk_channel_muted` record is
+    written by the preferences slice; a refusal without it is the safe half."""
+    rows = matrix if isinstance(matrix, dict) else {}
+    return [
+        _error(f"{MATRIX}.{category}.{channel}", "risk_channel_locked",
+               "Cannot be muted — critical.")
+        for category, channel in sorted(LOCKED_CELLS)
+        if isinstance(row := rows.get(category), dict) and row.get(channel) is False
+    ]  # fmt: skip
 
 
 def judge_patch(raw: bytes) -> dict[str, object]:

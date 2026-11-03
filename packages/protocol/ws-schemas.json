@@ -54,6 +54,7 @@
                 ]
               },
               "message": {
+                "maxLength": 1000,
                 "type": "string"
               },
               "severity": {
@@ -92,8 +93,10 @@
                       },
                       "symbols": {
                         "items": {
+                          "maxLength": 1000,
                           "type": "string"
                         },
+                        "maxItems": 100,
                         "type": "array"
                       },
                       "window_end_ms": {
@@ -141,6 +144,7 @@
                 ]
               },
               "title": {
+                "maxLength": 1000,
                 "type": "string"
               }
             },
