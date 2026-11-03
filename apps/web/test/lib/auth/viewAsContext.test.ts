@@ -597,3 +597,44 @@ describe("subscribeViewAs", () => {
     expect(seen).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("startViewAsSync: a server's view-as refusal re-reads (the request guard's seam)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("re-reads once apiFetch sees a 403 view_as_read_only, and follows a context another tab started", async () => {
+    const api = server(none, () => held());
+    const reload = vi.fn();
+    startViewAsSync({ fetchImpl: api.fetchImpl, openChannel: () => null, reload });
+    await bootViewAs({ fetchImpl: api.fetchImpl });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ status: 403, code: "view_as_read_only" }), { status: 403 }),
+      ),
+    );
+    const { apiFetch } = await import("../../../src/lib/http/csrfFetch");
+    await apiFetch("/api/v1/settings", { method: "PUT", body: "{}" });
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+    expect(api.calls).toHaveLength(2);
+  });
+
+  it("lets go of its refusal listener when it stops", async () => {
+    const guard = await import("../../../src/lib/http/viewAsGuard");
+    const listen = guard.onServerRefusal;
+    const offs: (() => void)[] = [];
+    const spy = vi.spyOn(guard, "onServerRefusal").mockImplementation((listener) => {
+      const off = vi.fn(listen(listener));
+      offs.push(off);
+      return off;
+    });
+    try {
+      const stop = startViewAsSync({ openChannel: () => null });
+      expect(offs).toHaveLength(1);
+      stop();
+      expect(offs[0]).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
