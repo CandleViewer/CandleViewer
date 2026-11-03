@@ -39,6 +39,7 @@ import {
   FreshnessMarker,
   PositionsGrid,
   PrintExportBar,
+  Tag,
   WatchlistGroupTabs,
   WatchlistRow,
   watchlistColumns,
@@ -327,5 +328,10 @@ describe("E29-S04's export bar carries its catalogue id", () => {
     const host = await mount(<PrintExportBar formats={["csv", "pdf"]} onExport={noop} />);
     expect(host.querySelectorAll('[data-cmp="CMP-099"]')).toHaveLength(1);
     expect(host.querySelectorAll('[data-cmp="CMP-001"]')).toHaveLength(2);
+  });
+
+  it("CMP-011's toggle chip is itself the root that carries the id", async () => {
+    const host = await mount(<Tag variant="toggle" label="Trade" pressed onPressedChange={noop} />);
+    expect(host.querySelectorAll('button[data-cmp="CMP-011"]')).toHaveLength(1);
   });
 });
