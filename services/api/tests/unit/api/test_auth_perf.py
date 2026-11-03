@@ -13,7 +13,6 @@ from collections.abc import Callable
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import SecretStr
 from structlog.testing import capture_logs
 
 from candleviewer.api._generated.openapi_models import Problem
@@ -53,16 +52,16 @@ def test_auth_perf_enabled_on_a_keyless_testnet_logs_the_boot_line() -> None:
 
 @pytest.mark.parametrize(
     ("environment", "key"),
-    [(Environment.LIVE, None), (Environment.DEMO, None), (Environment.TESTNET, SecretStr("m"))],
+    [(Environment.LIVE, None), (Environment.DEMO, None), (Environment.TESTNET, "m")],
     ids=["live", "demo", "testnet_with_key"],
 )
 def test_create_app_refuses_to_build_with_the_switch_on_where_the_gate_refuses_it(
-    environment: Environment, key: SecretStr | None
+    monkeypatch: pytest.MonkeyPatch, environment: Environment, key: str | None
 ) -> None:
     """`model_construct` skips validation; the app still never builds, so nothing is mounted."""
-    unvalidated = Settings.model_construct(
-        environment=environment, auth_perf_enabled=True, bybit_api_key=key
-    )
+    if key is not None:
+        monkeypatch.setenv("CV_BYBIT_API_KEY", key)
+    unvalidated = Settings.model_construct(environment=environment, auth_perf_enabled=True)
     with pytest.raises(ValueError, match="CV_AUTH_PERF_ENABLED is refused"):
         create_app(unvalidated)
 

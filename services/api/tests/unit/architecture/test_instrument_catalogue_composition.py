@@ -38,12 +38,8 @@ _REAL: dict[str, Any] = {
     "auth_recovery_hmac_key_hex": SecretStr("22" * 32),
     "auth_csrf_key_hex": SecretStr("33" * 32),
 }
-#: `CV_FEED=live` refuses to start without both (fake values: nothing is ever signed here).
-_LIVE: dict[str, Any] = {
-    "feed": FeedMode.LIVE,
-    "bybit_api_key": SecretStr("test-key"),
-    "bybit_api_secret": SecretStr("test-secret"),
-}
+#: `CV_FEED=live` needs no exchange key (#2386); the public feed is credential-less.
+_LIVE: dict[str, Any] = {"feed": FeedMode.LIVE}
 
 
 @pytest.mark.parametrize(

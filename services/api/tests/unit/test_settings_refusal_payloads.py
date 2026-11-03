@@ -92,15 +92,13 @@ def test_settings_marked_baseline_loads_with_every_text_setting_marked(
 ) -> None:
     """The fixture is sound: every marked value validates, so each refusal below is its own."""
     settings = Settings()
-    assert settings.bybit_api_key is not None
-    assert _MARKER in settings.bybit_api_key.get_secret_value()
     assert settings.liquidity_pinned_symbols == (_MARKER,)
 
 
 def test_settings_every_text_setting_is_marked_or_named_unmarkable() -> None:
     """A new text setting is covered by the marker sweep unless it is named here."""
     assert _UNMARKABLE <= set(_text_fields())
-    assert "bybit_api_key" in _text_fields() and "pg_dsn" in _text_fields()
+    assert "bybit_api_key" not in _text_fields() and "pg_dsn" in _text_fields()
 
 
 #: Live refuses the old env auth keys (#2152 AC2), which the marker sweep sets: a live trigger
@@ -186,12 +184,6 @@ _REFUSALS = [
         "mesh_trusted_proxy_address",
         "CV_MESH_TRUSTED_PROXY_HEADER and CV_MESH_TRUSTED_PROXY_ADDRESS must be set together",
         id="trusted-proxy-pair",
-    ),
-    pytest.param(
-        {"CV_FEED": "live", "CV_BYBIT_API_KEY": None},
-        "feed",
-        "CV_FEED=live requires CV_BYBIT_API_KEY and CV_BYBIT_API_SECRET to be set",
-        id="feed-live-half-configured",
     ),
 ]  # fmt: skip
 

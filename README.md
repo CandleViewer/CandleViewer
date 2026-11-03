@@ -333,9 +333,11 @@ Dates from [`30-release-roadmap.md`](docs/plan/30-release-roadmap.md) §1.1 (sou
 - **Docker Desktop integration.** On WSL Ubuntu, enable _Settings → Resources → WSL Integration_
   for your distro in Docker Desktop; without it `docker` and `docker compose` are not on `PATH`
   inside WSL.
-- **`CV_FEED=live` refuses to start.** By design: without exchange credentials the API fails fast
-  rather than starting half-configured. Keep the default `CV_FEED=synthetic` unless you hold real,
-  provisioned Bybit credentials.
+- **`CV_FEED=live` needs no key.** The public feed is credential-less, and `Settings` holds no
+  exchange key (C-2.7, C-12.2): keys live only in the envelope-encrypted secrets module. The test
+  clock, auth perf and account fixture switches still refuse to start while any `CV_BYBIT_API_*`
+  variable is set. Remove any `CV_BYBIT_API_*` key from `.env`: an unknown key now fails startup
+  with `extra_forbidden`.
 
 ## Security
 
