@@ -78,3 +78,34 @@ SHEET-FIX E21-D04 10 backticks removed from three drawn texts, words kept: the T
   `cvd_sim.py` renders of the dark 04 PNG above, for whoever owns that step.
 - 09: in the two 'Forced colours' frames the stand-in tokens keep the blue focus ring, and the CMP-113 legend keeps its
   coloured stops; only the bars are hidden. The annotation says the ring is Highlight; drawn as bound, as RENDER.md asks.
+
+## Board 09 redraw (sheet 48ac763c9)
+
+hcl-worker-2 folded the W-20 copy into board 09's sheet (transport `48ac763c9`: the forced-colours ladder frame now
+draws the W-20 panel notice above its rows and the W-20 reason line under the `limit` item; that frame grows from 880 x
+320 to 880 x 376, and the two CMP-230 frames move from y 480 to y 536). The board was redrawn from that sheet; the other
+nine boards are unchanged.
+
+- Same file and page: `E21-D04 boards`, page `E21-D04` (`2373897a-cf76-8072-8008-e3bcb65546a3`). The old board 09 root
+  (`66e25a87-5f14-8014-8008-e3cad03bb620`) was deleted by name, and the page read back with no board of that name; the
+  new root was then drawn at the same position (18000, 3600) under dark with `render_exec.py --page "E21-D04"` and the
+  post-step `common/board.sh` (6 frame names renamed from U+2215 to "/", nothing dashed or rotated).
+- New board 09 id: `307e836f-d138-801c-8008-e4168b3ade8f`.
+- Nodes: `lc.count` 624 = `lintd.shapes` 623 + 1. The sheet holds 605 nodes; its 6 icons each draw as an icon component
+  with 3 more inner shapes, which gives the 18 extra (the first draw was 599 sheet nodes and 5 icons, 615 live).
+- Lint: overflow 0 / outside 0 / unmeasured 0 / overlap 0 / unbound 0; `lc3.cutN` 0; `lc.clippedN` 0.
+- Frames: all 6 at their md size and position, `clip` true, `spill` 0. The forced-colours ladder frame reads back 880 x
+  376 at (1040, 80); the CMP-230 frames read back 880 x 344 at (80, 536) and (1040, 536).
+- Root height: the render left the sheet's 1090; the live check measured the annotation column end 1049 (footer end 918),
+  so `want` = 1129, and the root was set to it (`lc.h` = `lc.want` = 1129). The md's estimate was 1127.
+- Looked at in the frame: the W-20 notice ("Orders from here come later; cancel and close work as usual.", with its lock)
+  sits above the rows, and the same W-20 line sits under the `limit` item, both inside the frame.
+- Theme: after `theme-hc.js` and a 90 s wait, all 155 `color.text.primary` texts read #f6f8fa (the hc set; the canvas
+  fill still reads #11151a, as before). Exported once, 1:1, under high contrast; then the theme was set back to dark and
+  the same 155 texts read #e8eaed.
+- PNG: `docs/design/E21/img/E21-D04-09-high-contrast-forced.png` (overwritten), 3584x1129, 391979 bytes.
+- Gate: `PASS E21-D04-09-high-contrast-forced.png theme=hc own=4372 other=0`.
+
+This redraw replaces the board 09 row of the table above and its earlier SHEET-FIX line.
+
+SHEET-FIX E21-D04 09 root height 1090 -> 1129 (checked want: annotation end 1049 + 80; redraw on sheet 48ac763c9)
