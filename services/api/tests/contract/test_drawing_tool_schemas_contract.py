@@ -83,6 +83,15 @@ def test_field_table_names_the_option_fields_of_the_model() -> None:
     assert {"points[].t", "points[].p"} <= fields
 
 
+def test_field_table_extend_flags_are_on_every_tool_and_polyline_caps_at_100() -> None:
+    fields = _field_table()
+    for key in ("extend_left", "extend_right"):
+        assert fields[key][1] == "every tool"
+        assert key in dm.DrawingGeometryIn.model_fields
+    assert "1..500 items" in fields["points"][0]
+    assert _tool_table()["polyline"][0] == "2..100" and dm.POINT_COUNTS["polyline"][1] == 100
+
+
 def test_field_table_allowed_on_matches_the_tool_sets() -> None:
     allowed = {k: v[1] for k, v in _field_table().items()}
     for key, tools in (
