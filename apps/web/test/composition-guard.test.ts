@@ -36,6 +36,7 @@ const ALLOW_UNMOUNTED: Readonly<Record<string, string>> = {
   tape: "E22-S01 (#714) PR-A: the SCR-053 model only; PR-B mounts the panel behind its flag",
   "confirm-policy":
     "E47-S08 (#1322): resolver and hook for the confirm surfaces (SCR-029/072/076/129), unbuilt (BQ-8)",
+  derivatives: "E24-S05 (#780): the liquidation feed and its states; slice 3 mounts it on SCR-054",
 };
 
 interface ParsedImports {
