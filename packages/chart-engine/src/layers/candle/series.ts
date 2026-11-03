@@ -57,7 +57,6 @@ export const SERIES_PARTS: Readonly<Record<SeriesShape, readonly (readonly [stri
     ["wick", CANDLE_PART.hollowWick],
     ["body", CANDLE_PART.hollowBody],
     ["seam", CANDLE_PART.seam],
-
     ["marks", CANDLE_PART.marks],
   ],
   bars: [

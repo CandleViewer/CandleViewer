@@ -90,7 +90,7 @@ void main() {
       // The ring's outer rect: the wick and body union (a doji / zero-range body around the open).
       float bw = dir == 3 ? max(body, floor(3.0 * u_geom[1].x + 0.5)) : body;
       float bx = left + floor((body - bw) * 0.5);
-      float weight = (a_meta & 64) != 0 ? 2.0 * h : h; // the drawn wick's (hollow: colour-up)
+      float weight = (a_meta & 64) != 0 ? 2.0 * h : h; // the drawn wick's (hollow: colour-down, 2 hairlines)
       float wl = yOf(a_ohlc.z);
       float wh = yOf(a_ohlc.y);
       float top = min(wl, wh);
