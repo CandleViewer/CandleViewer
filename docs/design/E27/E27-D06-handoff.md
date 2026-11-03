@@ -142,7 +142,7 @@ T3 (`D02`:441). Events: `admin.accounts_list_viewed` (analytics), `account.teste
 | `getOnboardingChecklist` | `GET /onboarding/checklist`                | self             |
 
 Topics: `system`. RBAC: the Owner, `keys` step-up before the import (`D03`:1205). Events: `account.created` (audit,
-`accounts.create` and `api_key.import`), `account.updated` (audit; registered, `24`:5360), `admin.key_form_opened`
+`accounts.create` and `api_key.import`), `account.updated` (audit; registered in the code registry, E27-S04), `admin.key_form_opened`
 (analytics). Budget: the round trip within 3<!--=BUD:test.s--> s, with a validating state that names its wait
 (`14`:2689; `D04`:81). Data detail: `D03`:1205.
 
@@ -155,7 +155,7 @@ Topics: `system`. RBAC: the Owner, `keys` step-up before the import (`D03`:1205)
 | `authStepUp`   | `POST /auth/step-up`                                      | self          |
 
 Topics: `system`. RBAC: the Owner, rung 3 with a fresh `keys` code and the typed account label (`14`:2706). Events:
-`account.key_rotated` (audit; `24`:5360 registers `apikey.rotated`, C-2), `security.key_policy_violation` on a refused new key. Budget: 10<!--=BUD:rotate.s--> s
+`account.key_rotated` (audit; the code registry's `api_key.rotate`, C-2), `security.key_policy_violation` on a refused new key. Budget: 10<!--=BUD:rotate.s--> s
 across stages 2–3 with each stage's elapsed time, never the 900 s overlap (`14`:2702). Data detail: `D03`:1301.
 The rung is `14`:2706's ruling, which supersedes `D03`:1278 (rung 1; C-1): the deck carries it as PROPOSED rows on
 that line, `e27.scr127.typed` and `e27.scr127.hint.typed` at stage 2, and the menu's ask line for Rotate key… moves to
@@ -172,7 +172,7 @@ that line, `e27.scr127.typed` and `e27.scr127.hint.typed` at stage 2, and the me
 
 Topics: `system` (`rate_budget_free_pct`, `secrets.kek_unavailable`). RBAC: the Owner only (`D03`:1399). Events:
 `admin.key_health_viewed` (analytics), `admin.key_marked_compromised` (audit, no operation and no registered code;
-BLOCKS the build, R6 in §10). Budget: computed server-side and cached 60 s, never an exchange call from the browser (`14`:2715). Data detail:
+PROPOSED, registered by E27-S03/S04's contract commit, `24` §15.5; R6 in §10). Budget: computed server-side and cached 60 s, never an exchange call from the browser (`14`:2715). Data detail:
 `D03`:1399.
 
 ### 4.5 SCR-129 — Disable, delete and the revoke dialog
@@ -356,30 +356,30 @@ The ticket's thirteen events with their real state at the base. Implementation e
 an event with none shows "Recorded in the audit log" and is routed to the registry owner, never invented
 (`D03`:2561; BQ-09). Payloads carry fingerprints or ids, never key material (`D03`:2564).
 
-| Event                          | Kind      | Screens          | State at the base                                                                       |
-| ------------------------------ | --------- | ---------------- | --------------------------------------------------------------------------------------- |
-| `account.created`              | audit     | SCR-126, SCR-016 | registered as `accounts.create` and `api_key.import`                                    |
-| `account.updated`              | audit     | SCR-126          | registered (`24`:5360); D03's edit flow names no code yet                               |
-| `account.tested`               | audit     | SCR-125, SCR-128 | registered; written by the server                                                       |
-| `account.disabled_by_policy`   | audit     | SCR-125          | registered; written by the server on a failing verdict                                  |
-| `account.key_rotated`          | audit     | SCR-127          | registered: `apikey.rotated` (`24`:5360); the marker keeps D03's `api_key.rotate` (C-2) |
-| `account.key_revoked`          | audit     | SCR-129, SCR-128 | registered: `api_key.revoke` ahead, `api_key.revoked` on completion (`24`:5372)         |
-| `admin.secrets_policy_changed` | audit     | SCR-128          | dropped: the policy has no write (D03 C15)                                              |
-| `admin.key_marked_compromised` | audit     | SCR-128          | BLOCKS the build: no code is registered (R6)                                            |
-| `admin.accounts_list_viewed`   | analytics | SCR-125          | PROPOSED here: the payload is the verdict form, never a label                           |
-| `admin.key_form_opened`        | analytics | SCR-126          | PROPOSED: the key step opened                                                           |
-| `admin.key_test_run`           | analytics | SCR-125, SCR-128 | PROPOSED: the Test press                                                                |
-| `admin.key_health_viewed`      | analytics | SCR-128          | named in `14`:2716: the disclosure opened                                               |
-| `account.detail_viewed`        | analytics | SCR-079          | named in `14`:1850: the payload is the viewer's role only                               |
+| Event                          | Kind      | Screens          | State at the base                                                                                 |
+| ------------------------------ | --------- | ---------------- | ------------------------------------------------------------------------------------------------- |
+| `account.created`              | audit     | SCR-126, SCR-016 | registered as `accounts.create` and `api_key.import` (code registry; `24` lists other names, G-1) |
+| `account.updated`              | audit     | SCR-126          | registered as `account.updated` (code registry, E27-S04); D03 reads "no registered code"          |
+| `account.tested`               | audit     | SCR-125, SCR-128 | registered; written by the server                                                                 |
+| `account.disabled_by_policy`   | audit     | SCR-125          | registered; written by the server on a failing verdict                                            |
+| `account.key_rotated`          | audit     | SCR-127          | registered as `api_key.rotate` (code registry); `24`:5360 differs (G-1, C-2)                      |
+| `account.key_revoked`          | audit     | SCR-129, SCR-128 | registered: `api_key.revoke` ahead, `api_key.revoked` on completion (`24`:5372)                   |
+| `admin.secrets_policy_changed` | audit     | SCR-128          | dropped: the policy has no write (D03 C15)                                                        |
+| `admin.key_marked_compromised` | audit     | SCR-128          | PROPOSED; registered by E27-S03/S04's contract commit (`24` §15.5), R6                            |
+| `admin.accounts_list_viewed`   | analytics | SCR-125          | PROPOSED here: the payload is the verdict form, never a label                                     |
+| `admin.key_form_opened`        | analytics | SCR-126          | PROPOSED: the key step opened                                                                     |
+| `admin.key_test_run`           | analytics | SCR-125, SCR-128 | PROPOSED: the Test press                                                                          |
+| `admin.key_health_viewed`      | analytics | SCR-128          | named in `14`:2716: the disclosure opened                                                         |
+| `account.detail_viewed`        | analytics | SCR-079          | named in `14`:1850: the payload is the viewer's role only                                         |
 
 Disable and delete are registered for E27-S04 (`24`:5370), so SCR-129's markers name them
 (`e27.scr129.marker.disable`, `e27.scr129.marker.delete`; BQ-09, ruled); both drops above hold.
 
 **Requests to owners.** A-5 … A-8 and A-10 (§14) are the first five rows routed to an owner; R6 is the sixth.
 
-| R   | To                                                               | Request                                                                                                                                                                                   | Blocks                                                                   |
-| --- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| R6  | the `24` audit-registry owner; E27-S03 (#897) and E27-S04 (#898) | `admin.key_marked_compromised` is a key action (C-12.12) and C-2.9 audits every key action: register an ahead code and a completion code for it before any build of the compromise action | the compromise action on SCR-128's card: no build until both codes exist |
+| R   | To                                                               | Request                                                                                                                                                                                                                         | Blocks                                                               |
+| --- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| R6  | the `24` audit-registry owner; E27-S03 (#897) and E27-S04 (#898) | `admin.key_marked_compromised` is a key action (C-12.12) and C-2.9 audits every key action: an ahead code and a completion code are registered by E27-S03/S04's contract commit (`24` §15.5); the key stays PROPOSED until then | the card's markers name the key only once both codes exist (G-EVENT) |
 
 ## 11. Budgets (restated from `14`, never re-decided)
 
@@ -433,6 +433,10 @@ An engineer who meets a state with no frame, a string with no deck row or a cont
 comments on the story with the screen and the state, and asks the design lane for a follow-up design ticket. The design
 ticket updates this pack (a new deck row, a frame, an entry) and logs the gap in a "Gaps found" table appended here, so
 the next pack's checklist can be improved. Nothing is invented in code meanwhile.
+
+| G   | To           | Gap                                                                                                                                                                                                      |
+| --- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| G-1 | `24`'s owner | `24`:5360 lists `apikey.rotated`, `account.created` and `apikey.added`; the code registry serves `api_key.rotate`, `accounts.create`, `api_key.import`. A `24` §19 correction at the next contract touch |
 
 ## 14. Copy-ready rows (A-1 … A-4 and A-9 applied by PR 2; A-5 … A-8 and A-10 routed to their owners)
 
@@ -489,10 +493,10 @@ others likewise; D05 §17, `D05`:561, did it first), and the orchestrator confir
 
 ### 16.2 Contradictions (C-rows)
 
-| C   | Between                                                                                                                                                                                                                         | Reading here                                                                                                                           |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| C-1 | `D03`:1278 (the rotation switch at rung 1) vs `14`:2706 (OQ-10, RULED: rung 3)                                                                                                                                                  | the pack and the deck follow `14`:2706 (§4.3); frames 11 and 34 are redrawn or annotated in PR 2 (BQ-05)                               |
-| C-2 | `24`:5360 registers rotation as `apikey.rotated` (and lists `account.created`, `apikey.added`) vs the audit registry in code at the base and D03's markers, which read `api_key.rotate`, `accounts.create` and `api_key.import` | the deck keeps D03's merged markers until the registry's owner settles one spelling; routed to E27-S03 (#897) and `24`'s owner (BQ-09) |
+| C   | Between                                                                                                                                                                                                                         | Reading here                                                                                                                            |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| C-1 | `D03`:1278 (the rotation switch at rung 1) vs `14`:2706 (OQ-10, RULED: rung 3)                                                                                                                                                  | the pack and the deck follow `14`:2706 (§4.3); frames 11 and 34 are redrawn or annotated in PR 2 (BQ-05)                                |
+| C-2 | `24`:5360 registers rotation as `apikey.rotated` (and lists `account.created`, `apikey.added`) vs the audit registry in code at the base and D03's markers, which read `api_key.rotate`, `accounts.create` and `api_key.import` | ruled 3 Nov: the code registry's spelling wins for what is served; the pack and the deck cite it; `24`:5360 is corrected by G-1 (§13.3) |
 
 ## 17. The tool
 
