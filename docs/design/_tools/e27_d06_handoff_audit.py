@@ -31,7 +31,11 @@ Gates (each FAIL led by its name):
   G-DATA     every §4 operation is in `22` at the base, under the named method and path, and the
              permission is one of its x-rbac permissions (or `self` for a self-scoped one); every
              topic is in `23`'s topic table.
-  G-EVENT    §10's events are the ones the ticket's Observability names, each on a known screen.
+  G-EVENT    §10's events are the ones the ticket's Observability names, each on a known screen;
+             the compromise event's row says it BLOCKS the build and names its request row (R6).
+  G-RULING   (full) §16.1 has the fold rows BQ-01 ... BQ-10, each opening with agreed, amended or
+             disagreed; §10 pins the registered spellings (`apikey.rotated`, `api_key.revoke` and
+             `api_key.revoked`).
   G-MOTION   §7's rows are D04's M rows with the same recipe; a cut is reduced to "identical".
   G-A11Y     §8.2 carries every D05 F row with its severity; §8.1's ranges are D05's.
   G-BUDGET   every BUD and COUNT anchor is computed from its source.
@@ -674,6 +678,34 @@ def g_event(t: Texts, vals: dict[str, str]) -> list[str]:
         for s in re.findall(r"SCR-\d{3}", r[2]):
             if s not in SCREENS:
                 bad.append(f"{r[0]}: {s} is not a pack screen")
+    gap = next((r for r in rows if r[0] == "`admin.key_marked_compromised`"), None)
+    if gap is None or len(gap) < 4 or "BLOCKS the build" not in gap[3] or "R6" not in gap[3]:
+        bad.append("the compromise event's row must say it BLOCKS the build and name R6")
+    return bad
+
+
+RULING_OPENERS = ("agreed", "amended", "disagreed")
+SPELLINGS = (
+    ("account.key_rotated", ("`apikey.rotated`",)),
+    ("account.key_revoked", ("`api_key.revoke`", "`api_key.revoked`")),
+)
+
+
+def g_ruling(t: Texts, vals: dict[str, str]) -> list[str]:
+    rows = table_rows(section(t.hand, "### 16.1"), "BQ-")
+    want = [f"BQ-{i:02d}" for i in range(1, 11)]
+    bad = []
+    if [r[0] for r in rows] != want:
+        bad.append(f"§16.1's fold rows are {[r[0] for r in rows]}, not {want}")
+    for r in rows:
+        if len(r) < 3 or not r[2].startswith(RULING_OPENERS):
+            bad.append(f"{r[0]}: the fold cell opens with none of {RULING_OPENERS}")
+    events = {r[0].strip("`"): r for r in table_rows(section(t.hand, "## 10."), "`")}
+    for event, spellings in SPELLINGS:
+        row = events.get(event)
+        for sp in spellings:
+            if row is None or sp not in row[3]:
+                bad.append(f"§10's {event} row does not pin the registered spelling {sp}")
     return bad
 
 
@@ -817,7 +849,7 @@ def g_scope(t: Texts, vals: dict[str, str]) -> list[str]:
 
 GATES: dict[str, Callable[[Texts, dict[str, str]], list[str]]] = {
     "G-DECK": g_deck, "G-COVER": g_cover, "G-RULES": g_rules, "G-SECRET": g_secret, "G-INDEX": g_index,
-    "G-DATA": g_data, "G-EVENT": g_event, "G-MOTION": g_motion, "G-A11Y": g_a11y,
+    "G-DATA": g_data, "G-EVENT": g_event, "G-RULING": g_ruling, "G-MOTION": g_motion, "G-A11Y": g_a11y,
     "G-BUDGET": g_budget, "G-AHEAD": g_ahead, "G-AROW": g_arow, "G-SIGN": g_sign,
     "G-CITE": g_cite, "G-FILLED": g_filled, "G-HYGIENE": g_hygiene, "G-SCOPE": g_scope,
 }  # fmt: skip
@@ -915,6 +947,9 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts], tuple[str, ...]], ...
     ("G-INDEX", "drop a component from SCR-129's row", sub("hand", "CMP-027, CMP-044, CMP-093 (`14`:2727)", "CMP-027, CMP-093 (`14`:2727)"), FULL_ONLY),
     ("G-DATA", "give an operation a permission it lacks", sub("hand", "| `rotateApiKey` | `POST /exchange-accounts/{accountId}/keys/{keyId}/rotate` | `keys:manage` |", "| `rotateApiKey` | `POST /exchange-accounts/{accountId}/keys/{keyId}/rotate` | `keys:read` |"), FULL_ONLY),
     ("G-EVENT", "rename an event", sub("hand", "| `admin.key_test_run`  ", "| `admin.key_tested`    "), FULL_ONLY),
+    ("G-EVENT", "let the compromise row stop blocking the build", sub("hand", "BLOCKS the build: no code is registered (R6)", "the card writes none: no code is registered (R6)"), FULL_ONLY),
+    ("G-RULING", "drop the BQ-06 fold row", sub("hand", "| BQ-06 | The design-ahead AC      |", "| BQ-6  | The design-ahead AC      |"), FULL_ONLY),
+    ("G-RULING", "change the registered rotate spelling", sub("hand", "registered: `apikey.rotated` (`24`:5360); the marker", "registered: `apikey.rotate` (`24`:5360); the marker"), FULL_ONLY),
     ("G-MOTION", "give M-10 the wrong recipe", sub("hand", "| row 2b                           |", "| row 2a                           |"), FULL_ONLY),
     ("G-A11Y", "change a finding's severity", sub("hand", "| F-09 | Major    |", "| F-09 | Minor    |"), FULL_ONLY),
     ("G-BUDGET", "type a wrong drawer budget", sub("hand", "opens from cache in 100<!--=BUD:drawer.ms-->", "opens from cache in 200<!--=BUD:drawer.ms-->"), FULL_ONLY),
