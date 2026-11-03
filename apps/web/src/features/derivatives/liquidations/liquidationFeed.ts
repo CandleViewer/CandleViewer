@@ -9,7 +9,7 @@ import { useSyncExternalStore } from "react";
 import type { WsClient } from "../../../lib/ws/api";
 import type { TopicStatus } from "../../../lib/ws/state/types";
 import { LiquidationCoalescer } from "./coalescer";
-import type { LiqCoverage, LiqHistoryRequest, LiqHistoryResult } from "./history";
+import type { LiqCoverage, LiqHistoryRequest, LiqHistoryResult, LiqTruncation } from "./history";
 import { CLUSTER_WINDOW_MS, parseLiquidationFrames, type LiquidationPrint } from "./prints";
 import { LiquidationRing, type HeldPrint } from "./ring";
 
@@ -36,7 +36,11 @@ export const browserLiqClock = (): LiqClock => ({
 
 export type LiqHistoryPhase =
   | { readonly phase: "loading" }
-  | { readonly phase: "ready"; readonly coverage: LiqCoverage; readonly truncated: boolean }
+  | {
+      readonly phase: "ready";
+      readonly coverage: LiqCoverage;
+      readonly truncated: LiqTruncation | null;
+    }
   | {
       readonly phase: "failed";
       readonly status: number | null;
@@ -62,6 +66,14 @@ export interface LiqSnapshot {
   /** The requested backfill window; `null` before a feed runs. */
   readonly window: LiqWindow | null;
   readonly history: LiqHistoryPhase;
+  /** The last read's coverage, kept while a retry runs or fails, so the chip never goes away; `null` before one. */
+  readonly coverage: LiqCoverage | null;
+  /** Prints held in the ring (the "newest 40 of N" disclosure). */
+  readonly held: number;
+  /** The newest `seq` right after the last backfill merge (-1 before one): a paused view counts from here. */
+  readonly mergedSeq: number;
+  /** Wall-clock epoch ms of the last data frame the topic delivered (the stale chip's "last"), or `null`. */
+  readonly lastFrameAtMs: number | null;
 }
 
 export interface LiqFeedOptions {
@@ -90,6 +102,41 @@ export interface LiqFeedHandle {
 
 const DECIMAL = /^\d{1,30}(\.\d{1,18})?$/;
 
+const keyOf = (p: LiquidationPrint): string =>
+  `${String(p.tsMs)}|${p.side}|${p.price}|${p.size}|${String(p.clusterSize)}`;
+
+/**
+ * The prints at one boundary millisecond, as a multiset. A print before the boundary is old; one at it is old
+ * only while it matches a held print (side, price, size and cluster too), each held print matching at most
+ * one print of a batch; one after it is new. Two distinct prints in one millisecond both survive.
+ */
+class Boundary {
+  ms: number | null = null;
+  private readonly keys = new Map<string, number>();
+
+  note(prints: readonly LiquidationPrint[]): void {
+    for (const p of prints) {
+      if (this.ms === null || p.tsMs > this.ms) {
+        this.ms = p.tsMs;
+        this.keys.clear();
+      }
+      if (p.tsMs === this.ms) this.keys.set(keyOf(p), (this.keys.get(keyOf(p)) ?? 0) + 1);
+    }
+  }
+
+  newOnly(prints: readonly LiquidationPrint[]): LiquidationPrint[] {
+    const ms = this.ms;
+    if (ms === null) return [...prints];
+    const left = new Map(this.keys);
+    return prints.filter((p) => {
+      if (p.tsMs !== ms) return p.tsMs > ms;
+      const n = left.get(keyOf(p)) ?? 0;
+      if (n > 0) left.set(keyOf(p), n - 1);
+      return n === 0;
+    });
+  }
+}
+
 export function startLiquidationFeed(
   client: Pick<WsClient, "consume">,
   options: LiqFeedOptions,
@@ -115,11 +162,14 @@ export function startLiquidationFeed(
     paneId,
     priority: "other",
   });
-  /** The newest print taken in, held or pending: a snapshot's replay at or before it is dropped. */
-  let newestTsMs: number | null = null;
-  /** The last backfilled print: a live print at or before it is the same print, dropped. */
-  let restFloorMs: number | null = null;
+  /** The newest prints taken in, held or pending: a snapshot's replay of them is dropped. */
+  const taken = new Boundary();
+  /** The last backfilled prints: a live print that is one of them is dropped. */
+  let recordedEnd = new Boundary();
   let history: LiqHistoryPhase = { phase: "loading" };
+  let coverage: LiqCoverage | null = null;
+  let mergedSeq = -1;
+  let lastFrameAtMs: number | null = null;
   let lastSuccessAtMs: number | null = null;
   let pendingStructural = false;
   let abort: AbortController | null = null;
@@ -135,26 +185,29 @@ export function startLiquidationFeed(
     minNotionalUsd,
     window,
     history,
+    coverage,
+    held: ring.length,
+    mergedSeq,
+    lastFrameAtMs,
   });
   let snapshot = build("idle", 0);
 
   const take = (prints: readonly LiquidationPrint[], nowMs: number, live: boolean): void => {
     coalescer.add(prints, nowMs, live);
-    for (const p of prints) if (newestTsMs === null || p.tsMs > newestTsMs) newestTsMs = p.tsMs;
+    taken.note(prints);
   };
-
-  const after = (floor: number | null) => (p: LiquidationPrint) => floor === null || p.tsMs > floor;
 
   /** The recorded prints first, then the live ones newer than the last of them. */
   const merge = (recorded: readonly LiquidationPrint[]): void => {
-    const last = recorded.at(-1);
-    if (last === undefined) return;
-    const live = ring.all().filter(after(last.tsMs));
+    if (recorded.length === 0) return;
+    recordedEnd = new Boundary();
+    recordedEnd.note(recorded);
+    const live = recordedEnd.newOnly(ring.all());
     ring.clear();
     for (const p of recorded.slice(-ring.capacity)) ring.push(p);
     for (const p of live) ring.push(p);
-    restFloorMs = last.tsMs;
-    if (newestTsMs === null || last.tsMs > newestTsMs) newestTsMs = last.tsMs;
+    taken.note(recorded);
+    mergedSeq = ring.nextSeq - 1;
   };
 
   const load = (): void => {
@@ -176,6 +229,7 @@ export function startLiquidationFeed(
       if (result.kind === "ok") {
         lastSuccessAtMs = wallNow();
         merge(result.prints);
+        coverage = result.coverage;
         history = { phase: "ready", coverage: result.coverage, truncated: result.truncated };
       } else {
         // TODO(slice 3, #780): the ticket's backfill error event rides with the analytics.
@@ -192,11 +246,12 @@ export function startLiquidationFeed(
     for (const batch of parseLiquidationFrames(handle.read(), symbol)) {
       if (batch === "reset") continue; // last-good rows stay; the snapshot after it is deduplicated
       malformed += batch.malformed;
-      if (batch.kind === "snap") take(batch.prints.filter(after(newestTsMs)), now, false);
+      lastFrameAtMs = wallNow();
+      if (batch.kind === "snap") take(taken.newOnly(batch.prints), now, false);
       else take(batch.prints, now, true);
     }
     const due = coalescer.drain(now);
-    if (due !== null) for (const p of due.filter(after(restFloorMs))) ring.push(p);
+    if (due !== null) for (const p of recordedEnd.newOnly(due)) ring.push(p);
     const rate = coalescer.rateLowerBound(now);
     const feed = handle.status;
     const changed = due !== null || rate !== snapshot.ratePerSec || feed !== snapshot.feed;
@@ -244,6 +299,10 @@ export const INITIAL_LIQ_SNAPSHOT: LiqSnapshot = {
   minNotionalUsd: null,
   window: null,
   history: { phase: "loading" },
+  coverage: null,
+  held: 0,
+  mergedSeq: -1,
+  lastFrameAtMs: null,
 };
 
 const noopSubscribe = (): (() => void) => () => undefined;

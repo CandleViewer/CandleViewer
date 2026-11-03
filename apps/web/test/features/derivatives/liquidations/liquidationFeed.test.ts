@@ -100,15 +100,36 @@ describe("startLiquidationFeed", () => {
     expect(published.mock.calls.length).toBeLessThanOrEqual(40 * 2 + 4); // per bucket, never per print
   });
 
-  it("shows the burst rate of the last push window", () => {
+  it("shows the burst rate of the last push window, then 0 after its hold", () => {
     const { d, handle, feed } = start({}, 50);
     handle.status = "live";
-    handle.queue.push(delta(burst(620)));
-    d.frame(); // 50: bucket 0
-    for (let f = 0; f < 5; f += 1) d.frame(); // 300: bucket 1
+    const push = burst(620).map((w, k) => ({
+      ...w,
+      ts_ms: EXAMPLE.ts_ms + Math.floor((k * 499) / 620),
+    }));
+    handle.queue.push(delta(push));
+    for (let f = 0; f < 6; f += 1) d.frame(); // 300
     expect(feed.getSnapshot().ratePerSec).toBe(1_240);
-    for (let f = 0; f < 10; f += 1) d.frame(); // 800
+    for (let f = 0; f < 11; f += 1) d.frame(); // 850: past one window plus a bucket
     expect(feed.getSnapshot().ratePerSec).toBe(0);
+  });
+
+  it("keeps a distinct print of the newest millisecond from a snapshot replay", () => {
+    const { d, handle, feed } = start();
+    handle.queue.push(snap([DESIGN]));
+    for (let f = 0; f < 6; f += 1) d.frame();
+    const twin = { ...DESIGN, size: "1.000" }; // same ms, another print
+    handle.queue.push(reset(), snap([DESIGN, twin]));
+    for (let f = 0; f < 6; f += 1) d.frame();
+    expect(feed.getSnapshot().rows.map((r) => r.size)).toEqual(["1.000", "0.498"]);
+  });
+
+  it("names the last data frame's wall time", () => {
+    const { d, handle, feed } = start();
+    expect(feed.getSnapshot().lastFrameAtMs).toBeNull();
+    handle.queue.push(delta([EXAMPLE]));
+    for (let f = 0; f < 6; f += 1) d.frame();
+    expect(feed.getSnapshot().lastFrameAtMs).toBe(Date.parse("2026-10-21T09:14:02Z"));
   });
 
   it("drops a resubscribe snapshot's replay at or before what it holds, after a reset", () => {
@@ -167,10 +188,11 @@ describe("startLiquidationFeed", () => {
     expect(requests).toHaveLength(1);
     expect(requests[0]).toMatchObject({ ...WINDOW, minNotionalUsd: "50000", keep: 1_000 });
     handle.status = "live";
-    // a live print the read also returns (same time), and one after it
+    // a live print the read also returns, a distinct one in the same millisecond, and one after it
     const sameAsRest = { ...DESIGN };
+    const sameMs = { ...DESIGN, price: "82751.30" };
     const newer = { ...DESIGN, ts_ms: DESIGN.ts_ms + 5 };
-    handle.queue.push(delta([sameAsRest, newer]));
+    handle.queue.push(delta([sameAsRest, sameMs, newer]));
     d.frame();
     resolve({
       kind: "ok",
@@ -183,17 +205,25 @@ describe("startLiquidationFeed", () => {
         clusterSize: w.cluster_size ?? 1,
       })),
       coverage: { firstAvailableMs: 1, coveredFromMs: 2, coveredToMs: 3, noCoverage: false },
-      truncated: false,
+      truncated: null,
       malformed: 0,
     });
     await settle();
     for (let f = 0; f < 6; f += 1) d.frame();
     const snapshot = feed.getSnapshot();
-    expect(snapshot.rows.map((r) => r.tsMs)).toEqual([newer.ts_ms, DESIGN.ts_ms, EXAMPLE.ts_ms]);
+    expect(snapshot.rows.map((r) => [r.tsMs, r.price])).toEqual([
+      [newer.ts_ms, "82751.20"],
+      [DESIGN.ts_ms, "82751.30"],
+      [DESIGN.ts_ms, "82751.20"],
+      [EXAMPLE.ts_ms, "62880.00"],
+    ]);
+    expect(snapshot.held).toBe(4);
+    expect(snapshot.mergedSeq).toBe(1); // the two recorded prints; a paused view counts from here
+    expect(snapshot.coverage?.firstAvailableMs).toBe(1);
     expect(snapshot.history).toEqual({
       phase: "ready",
       coverage: { firstAvailableMs: 1, coveredFromMs: 2, coveredToMs: 3, noCoverage: false },
-      truncated: false,
+      truncated: null,
     });
     expect(snapshot.window).toEqual(WINDOW);
   });
@@ -209,7 +239,7 @@ describe("startLiquidationFeed", () => {
           coveredToMs: null,
           noCoverage: true,
         },
-        truncated: false,
+        truncated: null,
         malformed: 0,
       },
       { kind: "failed", status: 500, code: null },
@@ -230,6 +260,7 @@ describe("startLiquidationFeed", () => {
       lastSuccessAtMs: Date.parse("2026-10-21T09:14:02Z"),
     });
     expect(feed.getSnapshot().rows).toHaveLength(1);
+    expect(feed.getSnapshot().coverage?.noCoverage).toBe(true); // the chip's data survives the failed retry
     expect(loadHistory).toHaveBeenCalledTimes(2);
   });
 
