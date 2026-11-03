@@ -88,7 +88,7 @@ def test_built_surface_without_a_capture_is_infra(monkeypatch: pytest.MonkeyPatc
 def test_whole_viewport_region_is_rejected() -> None:
     cap = _fixtures()
     cap["regions"]["synthetic-1hz"]["rect"] = [0, 0, 1280, 800]
-    with pytest.raises(InfraError, match="whole viewport"):
+    with pytest.raises(InfraError, match="spans the viewport"):
         ma.audit(cap)
 
 
@@ -177,3 +177,18 @@ def test_cli_reduce_exit_codes(tmp_path: Path) -> None:
     ko = tmp_path / "ko.json"
     ko.write_text(json.dumps({"safe": SAFE, "reduced": SAFE}))
     assert ma.main(["reduce", str(ko)]) == 1
+
+
+@pytest.mark.parametrize("rect", [[0, 0, 1280, 50], [0, 0, 50, 800], [0, 0, 1200, 450]])
+def test_strip_or_half_viewport_region_is_rejected(rect: list[int]) -> None:
+    cap = _fixtures()
+    cap["regions"]["synthetic-1hz"]["rect"] = rect
+    with pytest.raises(InfraError, match="spans the viewport"):
+        ma.audit(cap)
+
+
+def test_capture_shorter_than_one_second_is_infra() -> None:
+    cap = _fixtures()
+    cap["regions"]["synthetic-1hz"]["luminance"] = ma.synthetic_luminance(1)[:59]
+    with pytest.raises(InfraError, match="under 1 s"):
+        ma.audit(cap)

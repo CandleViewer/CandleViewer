@@ -74,16 +74,22 @@ def synthetic_luminance(hz: float, fps: int = 60, seconds: int = 5) -> list[floa
     return [1.0 if int(i // half) % 2 else 0.0 for i in range(fps * seconds)]
 
 
-def _region(name: str, region: dict, viewport: object) -> None:
+def _region(name: str, region: dict, viewport: object, fps: float) -> None:
     rect = region.get("rect")
     if not (isinstance(rect, list) and len(rect) == 4 and rect[2] > 0 and rect[3] > 0):
         raise InfraError(f"A11Y-INFRA region {name} has no declared rect [x, y, w, h]")
     vw, vh = viewport if isinstance(viewport, list) and len(viewport) == 2 else (None, None)
-    if vw is not None and rect[2] >= vw and rect[3] >= vh:
-        # Whole-viewport averaging is how a flash is averaged away on a mostly static screen.
-        raise InfraError(f"A11Y-INFRA region {name} spans the whole viewport")
-    if not region.get("luminance"):
+    if vw is not None and (rect[2] >= vw or rect[3] >= vh or rect[2] * rect[3] >= vw * vh / 2):
+        # Averaging over a mostly static screen is how a flash is averaged away: a full-width or
+        # full-height strip or half the viewport is as bad as all of it.
+        raise InfraError(f"A11Y-INFRA region {name} spans the viewport (or half its area)")
+    lum = region.get("luminance")
+    if not lum:
         raise InfraError(f"A11Y-INFRA region {name} has no luminance samples")
+    if len(lum) < fps:
+        raise InfraError(
+            f"A11Y-INFRA region {name} has {len(lum)} samples, under 1 s at {fps:g} fps"
+        )
 
 
 def audit(capture: dict) -> tuple[list[dict], list[str]]:
@@ -104,7 +110,7 @@ def audit(capture: dict) -> tuple[list[dict], list[str]]:
                 raise InfraError(f"A11Y-INFRA built surface {s.id} ({s.scr}) was not captured")
             rows.append(_row(s, None, f"pending {s.ref}" if s.status == "pending" else "absent"))
             continue
-        _region(s.id, region, capture.get("viewport"))
+        _region(s.id, region, capture.get("viewport"), fps)
         rate = count_flashes(region["luminance"], fps)
         over = rate > s.budget or rate >= MAX_FLASHES_PER_SECOND
         verdict = "FAIL" if over else "pass"

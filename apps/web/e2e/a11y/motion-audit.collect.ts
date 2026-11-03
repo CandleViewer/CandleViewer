@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "@playwright/test";
 import { REPORT_DIR } from "./screens";
 
@@ -14,7 +14,8 @@ const FPS = 60;
 const SECONDS = 5;
 const VIEWPORT = [1280, 800] as const;
 const RECT = [100, 80, 341, 256] as const; // x, y, w, h: D08 FR-2
-const ROOT = resolve(process.cwd(), "../..");
+// Repo root from this file (apps/web/e2e/a11y), independent of the runner's cwd.
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const COLOR_MATH = pathToFileURL(resolve(ROOT, "tools/contrast/color-math.mjs")).href;
 
 type Histogram = Record<string, number>; // "#rrggbb" -> pixel count in the region
