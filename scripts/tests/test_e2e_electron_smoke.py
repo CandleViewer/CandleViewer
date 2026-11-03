@@ -78,5 +78,6 @@ def test_every_job_that_launches_electron_runs_the_allowlist_runner_after_its_in
     assert launching == [
         ("_job-e2e.yml", "e2e-electron"),
         ("_job-js.yml", "build"),
+        ("ga-regression-nightly.yml", "electron"),  # E49-Q01 (#1335): the pack's Electron lane
         ("perf-engine-matrix.yml", "electron"),
     ]

@@ -12,7 +12,9 @@ scheduled one, so the per-signal group sits on the seconds-long report job inste
 real-backend auth lane), from main only. So is perf-recorder-nightly.yml (#481, E16-Q04): its
 `recorder-perf-issue` job reports a failed recorder budget, and chaos-recorder-nightly.yml, whose
 `chaos-recorder-issue` job reports a failed `chaos-recorder` job. So is gpu-runner-health.yml
-(E03-T14): its `alert` job reports an unfit GPU bench runner, never when none is registered.
+(E03-T14): its `alert` job reports an unfit GPU bench runner, never when none is registered. So is
+ga-regression-nightly.yml (#1335, E49-Q01): its `ga-regression-issue` job reports a red `report`
+job, whose `history` job alone reads the Actions API.
 """
 
 from __future__ import annotations
@@ -44,10 +46,15 @@ NIGHTLIES = (
     "perf-recorder-nightly.yml",
     "chaos-recorder-nightly.yml",
     "gpu-runner-health.yml",
+    "ga-regression-nightly.yml",
 )
 BOT = "github-actions[bot]"
 #: Jobs that read more than `contents` and write nothing: #2825's guard lists runs and jobs.
-READERS = {("perf-ingestion-nightly.yml", "bench-free"): {"actions": "read"}}
+READERS = {
+    ("perf-ingestion-nightly.yml", "bench-free"): {"actions": "read"},
+    # E49-Q01 (#1335): the run's start time and the last nights' ga-report artefacts.
+    ("ga-regression-nightly.yml", "history"): {"actions": "read"},
+}
 RUN_URL = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 #: (workflow, caller job) -> (measuring job, `if:`, signal, title prefix, labels). The prefixes are
 #: those of the open issues filed before #1849, byte for byte, so the next red night finds them.
@@ -140,6 +147,14 @@ SIGNALS = {
         "GPU bench runner unavailable",
         "area/infra-devops,priority/p1",
     ),
+    # E49-Q01 (#1335): the GA regression pack; a failed area, budget or leg is the verdict.
+    ("ga-regression-nightly.yml", "ga-regression-issue"): (
+        "report",
+        "${{ always() && needs.report.result == 'failure' && github.ref == 'refs/heads/main' }}",
+        "ga-regression",
+        "qa: GA regression pack nightly failed",
+        "qa,area/frontend-platform,priority/p1",
+    ),
 }
 #: The verdicts the measuring jobs hand over: the conditions of the issue steps they replace, less
 #: `failure()`, which a failed step implies.
@@ -168,6 +183,7 @@ HANDOFFS = {
         GATE_DIFF,
         "perf-pack-full-issue",
     ),
+    ("ga-regression-nightly.yml", "report"): ("ga-report/ga-report.md", "ga-regression-issue"),
 }
 #: A stand-in `gh`: logs [argv, the --body-file's text] per call; `api` prints GH_PAGES' text and
 #: exits GH_EXIT, so a failed listing can still print a page that parses.
