@@ -21,7 +21,9 @@ Three checks, all required:
   3. ``.github/workflows/xstate-nightly.yml`` sets ``UPSTREAM_SHA`` to the
      full commit ``801eacdeef5bda2ba24b75f537ae04cc3527747e`` (the commit the
      annotated tag v0.9.1 dereferences to, not the tag object), so the
-     nightly's upstream checkout cannot follow a moved tag.
+     nightly's upstream checkout cannot follow a moved tag. The
+     ``actions/checkout`` step with ``path: _upstream`` must also use
+     ``ref: ${{ env.UPSTREAM_SHA }}``, so the value is bound to its use.
 
 Exit codes: 0 clean, 1 violation found, 2 internal error (bad path / repo
 files missing).
@@ -51,6 +53,14 @@ NIGHTLY_WORKFLOW = Path(".github") / "workflows" / "xstate-nightly.yml"
 UPSTREAM_SHA_RE = re.compile(
     r"^\s*UPSTREAM_SHA:\s*[\"']?(?P<sha>[^\s\"'#]*)[\"']?\s*(?:#.*)?$", re.MULTILINE
 )
+
+EXPECTED_UPSTREAM_REF = "${{ env.UPSTREAM_SHA }}"
+# A workflow step starts at a list item opening with one of these keys.
+STEP_START_RE = re.compile(r"^(?=\s*-\s+(?:name|uses|id|if|run|with):)", re.MULTILINE)
+UPSTREAM_PATH_RE = re.compile(
+    r"^\s*path:\s*[\"']?_upstream[\"']?\s*(?:#.*)?$", re.MULTILINE
+)
+STEP_REF_RE = re.compile(r"^\s*ref:\s*(?P<ref>.*?)\s*(?:#.*)?$", re.MULTILINE)
 
 # Matches a PEP 508 requirement string naming the package, capturing the
 # specifier that follows the name.
@@ -199,6 +209,34 @@ def check_workflow(workflow: Path) -> list[Violation]:
                 workflow,
                 f"UPSTREAM_SHA must be exactly '{PINNED_UPSTREAM_SHA}' "
                 f"(tag v0.9.1's commit); found {matches}",
+            )
+        ]
+    return _check_upstream_ref(workflow)
+
+
+def _check_upstream_ref(workflow: Path) -> list[Violation]:
+    """The `actions/checkout` step with `path: _upstream` must use the pin."""
+    steps = [
+        step
+        for step in STEP_START_RE.split(workflow.read_text(encoding="utf-8"))
+        if re.search(r"^\s*(?:-\s+)?uses:\s*actions/checkout@", step, re.MULTILINE)
+        and UPSTREAM_PATH_RE.search(step)
+    ]
+    if len(steps) != 1:
+        return [
+            Violation(
+                workflow,
+                "expected exactly one 'actions/checkout' step with 'path: _upstream'; "
+                f"found {len(steps)}",
+            )
+        ]
+    refs = [m.group("ref") for m in STEP_REF_RE.finditer(steps[0])]
+    if refs != [EXPECTED_UPSTREAM_REF]:
+        return [
+            Violation(
+                workflow,
+                f"the '_upstream' checkout step must use 'ref: {EXPECTED_UPSTREAM_REF}'; "
+                f"found {refs or '(no ref)'}",
             )
         ]
     return []
