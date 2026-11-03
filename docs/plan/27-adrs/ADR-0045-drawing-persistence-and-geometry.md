@@ -116,9 +116,10 @@ Two corrections to the ticket's list. **There is no channel-width field**: `para
 width (the offset of the second rail through it), as E14-D02 draws it (`E14-D02.md:45`, T25 at :243). **The position
 tool's entry, stop and target are its three points**, in placement order entry → stop → target (E14-D06 AD-11,
 `E14-D06.md:58`); there is no separate field for any of them. A risk size computed from a manipulated `geometry` is
-TM DR16 (High, owned by E14-S07, unbuilt); this record adds no control for it and removes none. Per-tool JSON Schema
-fragments, marked shipped or not-shipped-in-R1, go to `24-internal-schemas.md` in this ticket's second slice
-(BQ-07), checked against these constants by a unit test.
+TM DR16 (High, owned by E14-S07, unbuilt); this record adds no control for it and removes none. Per-tool
+tables (point counts, option fields, bounds) are in `24-internal-schemas.md` §1.7 (this ticket's second slice, BQ-07),
+checked against these constants and `22` by `test_drawing_tool_schemas_contract.py`. Server validation of all 25 is
+shipped (#357); the client's R1 tool set belongs to E14-S04 to S06.
 
 ### Decision 4 — optimistic store, debounced atomic batches (debounce negotiable)
 
@@ -276,8 +277,8 @@ A rising `version_conflict` rate says Decision 5's single-owner premise is wrong
   purged after 90 days.
 - Geometry is opaque to SQL: no query may filter on a point inside `geometry`; a new query shape needs a scalar
   column first.
-- Validation is in the application layer only (Decision 3); the 24 fragments of slice 2 make it reviewable, and
-  "server validation generated from the fragments" is a direction, not built here.
+- Validation is in the application layer only (Decision 3); the per-tool tables of slice 2 (24 §1.7) make it reviewable, and
+  "server validation generated from the tables" is a direction, not built here.
 - No WS contract change, no migration and no OpenAPI change come from this record.
 
 ## Why not the alternatives
@@ -319,7 +320,7 @@ that differs amends this record before it leaves `proposed`.
 3. Decision 9's values re-based on E14-Q05 (#468); the soft-deleted row count is emitted or its absence accepted.
 4. Decision 10 checked against E14-T03 (#358) and E14-T04: an anchor keeps its time and price within one tick across
    log scale, an interval change and range bars (the E14 epic AC), and the 26:831 property test holds.
-5. The slice-2 fragments in `24-internal-schemas.md` match `POINT_COUNTS`, `_TEXT_TOOLS`, `_LEVEL_TOOLS` and
+5. The slice-2 tables in `24-internal-schemas.md` §1.7 match `POINT_COUNTS`, `_TEXT_TOOLS`, `_LEVEL_TOOLS` and
    `_BAND_TOOLS`, and one fixture drawing per tool passes them.
 6. The slice-3 cross-references cite this record and none contradicts it: 21 §3.8.3, the `/drawings` description in
    22, SCR-036 and SCR-037, including 14:976 ("≥2 anchors before it persists", which four one-point tools
