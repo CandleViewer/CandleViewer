@@ -30,6 +30,7 @@ Every external await is bounded by `store_timeout_s`; the clock is injected (epo
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -53,6 +54,8 @@ GapCause = Literal[
     "maintenance_pause",
 ]
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
+#: Sessions whose close this process remembers (#5629: a hold's gap ends at its session's close).
+_ENDED_MAX: Final = 1024
 #: Default recorded streams (Postgres `stream_kind`) when the policy names none.
 DEFAULT_STREAMS: Final[tuple[str, ...]] = (
     "trades",
@@ -246,6 +249,8 @@ class SessionManager:
         #: Stale sessions audited by this process and not closed yet: a retried recovery must
         #: not append their append-only record again (SEC-A5, C-2.9).
         self._audited: set[str] = set()
+        #: session id -> the µs this process closed it, the newest `_ENDED_MAX` (#5629).
+        self._ended: OrderedDict[str, int] = OrderedDict()
         self._lock = asyncio.Lock()
 
     # -- queries -------------------------------------------------------------------------------
@@ -332,6 +337,9 @@ class SessionManager:
     async def _close(self, symbol: str, reason: str, at_us: int, *, error: bool = False) -> None:
         live = self._live.pop(symbol)
         recorder_sessions_open.set(len(self._live))
+        self._ended[live.session_id] = at_us
+        if len(self._ended) > _ENDED_MAX:
+            self._ended.popitem(last=False)
         await self._call(
             lambda: self._store.close_session_at(
                 live.session_id, reason=reason, ended_at=to_dt(at_us), error=error
@@ -414,8 +422,10 @@ class SessionManager:
     ) -> None:
         """The interval maintenance held capture (#5629): one `maintenance_pause` gap per stream of
         every session live during it, those live when it began (`held`, closed meanwhile or not)
-        and those live now, each from the later of the hold's start and its own. Idempotent: a
-        window already written is not written again (`record_gap`), so a cut call is retried."""
+        and those live now, each from the later of the hold's start and its own, to the earlier of
+        the hold's end and the session's close (one this process no longer remembers ends with the
+        hold: an over-cover, never a hole). Idempotent: a window already written is not written
+        again (`record_gap`), so a cut call is retried."""
         async with self._lock:
             seen: set[str] = set()
             for live in (*held, *self.live_sessions()):
@@ -423,10 +433,9 @@ class SessionManager:
                     continue
                 seen.add(live.session_id)
                 lo = max(start_us, live.started_us)
+                hi = min(end_us, self._ended.get(live.session_id, end_us))
                 for s in live.streams:
-                    await self._gap(
-                        live.symbol, live.session_id, s, lo, end_us, "maintenance_pause"
-                    )
+                    await self._gap(live.symbol, live.session_id, s, lo, hi, "maintenance_pause")
 
     async def poll_writer(self, writer: WriterSignals) -> None:
         """Consume the StreamWriter's seq-jump windows and event bounds (E16-T03 signals)."""

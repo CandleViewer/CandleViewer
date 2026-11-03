@@ -22,7 +22,9 @@ the first tick that sees it, not a whole interval later.
 * A skip loses no data (the deltas are still recorded), so it is not a `DataGap`: a seek falls
   back to the previous anchor. Each skip is logged and counted in
   `recorder_anchor_skipped_total{reason}`; a resync's own gap and anchor, or a writer drop's
-  `backpressure_drop` gap, already mark what the deltas lack.
+  `backpressure_drop` gap, already mark what the deltas lack. A maintenance hold (`held`,
+  #5629) is no skip: its `maintenance_pause` gap marks it, and the symbol is retried every tick,
+  so the first tick after the release anchors it.
 * Plain code, never a statechart (C-2.20).
 """
 
@@ -142,6 +144,8 @@ class SnapshotAnchors:
             shed = await self._sink.on_book_anchor(book, at_us=anchor_ts(book.ts_event, wall))
         except Exception as exc:  # never a CancelledError: the runtime's cancel goes through
             self._skip(symbol, "error", type(exc).__name__, quiet=quiet)
+            return
+        if shed == "held":  # the hold's gap marks it; not anchored, so retried every tick
             return
         if shed is not None:
             self._skip(symbol, shed, quiet=quiet)

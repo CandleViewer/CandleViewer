@@ -610,3 +610,21 @@ async def test_the_service_releases_its_closers_once_on_stop_and_a_failing_one_s
     await svc.stop(1.0)
     await svc.stop(1.0)  # released once: a second stop has nothing left to close
     assert released == ["broken", "wire"]
+
+
+async def test_a_stop_writes_the_holds_gaps_after_the_writer_and_before_the_sessions() -> None:
+    """#5629: the hold's stop step writes its gaps while the sessions are still open, and a
+    failing one skips no later step."""
+    rig = Rig(BOUNDS, lambda: 1.0)
+    rig.m.pause.stop.side_effect = OSError("pg down")
+    rig.rt = RecorderRuntime(
+        policy=rig.m.policy, sessions=rig.m.sessions, writer=rig.m.writer, seed=rig.m.seed,
+        restore_b11=rig.m.restore, process_start_us=0, env="demo", clock=rig.clock,
+        sleep=rig.sleep, rng=lambda: 1.0, bounds=BOUNDS, pause=rig.m.pause,
+    )  # fmt: skip
+    await rig.rt.start()
+    with capture_logs() as logs:
+        await asyncio.wait_for(rig.rt.stop(0.5), 5)
+    order = [n for n, _, _ in rig.m.mock_calls if n in (*STOP, "pause.stop")]
+    assert order == ["writer.stop", "pause.stop", "sessions.stop", "policy.stop"]
+    assert ("recorder_stop_failed", "pause") in [(e["event"], e.get("step")) for e in logs]

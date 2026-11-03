@@ -87,8 +87,10 @@ STREAM_KIND: Final[dict[Stream, str]] = {
 GAP_CAUSE: Final = "backpressure_drop"
 #: `orderbook_snapshots.source` of a periodic seek anchor, a book built locally (21 Sec.4.3).
 ANCHOR_SOURCE: Final = "synthetic"
-#: Why the writer shed an anchor (`recorder_anchor_skipped_total{reason}`, #2223).
-AnchorShed = Literal["gated", "spilling"]
+#: Why the writer shed an anchor (`recorder_anchor_skipped_total{reason}`, #2223). `held`
+#: (#5629): a maintenance hold, whose interval is the `maintenance_pause` gap, so the anchors
+#: count no skip for it and retry the symbol once released.
+AnchorShed = Literal["gated", "spilling", "held"]
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 
 
@@ -663,12 +665,15 @@ class StreamWriter:
     async def on_book_anchor(self, ev: BookSnapshotLike, *, at_us: int) -> AnchorShed | None:
         """A periodic seek anchor (#2223, 24 Sec.13.7), stamped `at_us`: queued on the
         `orderbook_snapshots` lane, or shed (the reason returned) while the disk gate drops the
-        symbol or the lane spills or would start to: an anchor never spends the WAL budget the
-        deltas need. No data is lost either way, so it is never a gap, a received or dropped
-        message or an event bound, and it never moves the delta sequence tracker (the bus may
-        still hold deltas older than the book it was read from). Never awaits I/O."""
-        if ev.symbol not in self._active or self._held:
+        symbol or the lane spills or would start to (or `held` during a maintenance hold): an
+        anchor never spends the WAL budget the deltas need. No data is lost either way, so it is
+        never a gap, a received or dropped message or an event bound, and it never moves the
+        delta sequence tracker (the bus may still hold deltas older than the book it was read
+        from). Never awaits I/O."""
+        if ev.symbol not in self._active:
             return None
+        if self._held:
+            return "held"
         try:
             gated = self._gate.halted() and not self._gate.position_open(ev.symbol)
         except Exception:  # as in `_admit`: a failing check never stops recording

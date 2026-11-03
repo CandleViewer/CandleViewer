@@ -511,3 +511,32 @@ def test_settings_snapshot_interval_accepts_the_ceiling_and_refuses_above_it(
     else:
         with pytest.raises(ValueError, match="recorder_snapshot_interval_s"):
             Settings(recorder_snapshot_interval_s=value)
+
+
+_REASONS = ("no_book", "not_live", "error", "late", "timeout", "gated", "spilling")
+
+
+async def test_snapshot_anchors_a_held_writer_counts_no_skip_and_anchors_once_released(
+    tmp_path: Path,
+) -> None:
+    """#5629: a maintenance hold sheds the anchor as `held`, which is no skip (the hold is the
+    `maintenance_pause` gap) and leaves the symbol unanchored, so the first tick after the
+    release anchors it rather than the next slot."""
+    anchors, books, writer, sink, _store, clock = await rig(tmp_path)
+    books.books["BTCUSDT"] = snapshot(1)
+    writer.hold()
+    assert await writer.on_book_anchor(snapshot(1), at_us=T0) == "held"
+    before = [skipped(r) for r in _REASONS]
+
+    await anchors.tick()
+    clock.advance(INTERVAL)
+    await anchors.tick()  # a whole slot while held
+    clock.advance(1)
+
+    assert [skipped(r) for r in _REASONS] == before
+    assert await flushed_anchors(writer, sink) == []
+    writer.release()
+    await anchors.tick()  # between slots: the unanchored symbol is retried at once
+    clock.advance(1)
+    rows = await flushed_anchors(writer, sink)
+    assert rows and {str(r["symbol"]) for r in rows} == {"BTCUSDT"}

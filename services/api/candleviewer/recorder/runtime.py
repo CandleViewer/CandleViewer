@@ -15,7 +15,7 @@ import asyncio
 import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, Protocol
 
 import structlog
 
@@ -30,6 +30,12 @@ from candleviewer.recorder.writer import RecorderWalVolumeError, StreamWriter
 MODULE: Final = "recorder"
 TICK_S: Final = 1.0  # the policy's evaluation tick (20 §3.8)
 _Step = tuple[str, Callable[[], Awaitable[None]]]
+
+
+class PauseStop(Protocol):
+    """The maintenance hold's stop step (`recorder.pause.RecorderPause.stop`, #5629)."""
+
+    async def stop(self) -> None: ...
 
 
 def logger() -> structlog.stdlib.BoundLogger:
@@ -79,14 +85,17 @@ class RecorderRuntime:
         on_ready: Callable[[], Awaitable[None]] | None = None,
         heal: Callable[[], Awaitable[None]] | None = None,
         anchors: Callable[[], Awaitable[None]] | None = None,
+        pause: PauseStop | None = None,
     ) -> None:
         """`clock` is monotonic seconds, `rng` a uniform draw in [0, 1) (the backoff's jitter).
         `on_ready` runs once, after the startup and before `startup_complete` turns true: it opens
         what a restored chart never published (S3a finding 1). It is isolated: a raise is logged and
         health degrades. `heal` is a tick step after the policy's: it reopens what a failed fan-out
         left without a session (SEC-B1), bounded like every step. `anchors` is the last step: the
-        periodic book seek anchors (#2223), which keep their own cadence on `clock`."""
+        periodic book seek anchors (#2223), which keep their own cadence on `clock`. `pause` is the
+        maintenance hold (#5629), whose stop step writes a hold's gaps before the sessions close."""
         self._on_ready, self._heal, self._anchors = on_ready, heal, anchors
+        self._pause = pause
         self._on_ready_error: type[Exception] | None = None
         self._policy, self._sessions, self._writer = policy, sessions, writer
         self._restore_b11, self._seed, self._env = restore_b11, seed, env
@@ -115,15 +124,16 @@ class RecorderRuntime:
             recorder_up.set(0)
 
     async def stop(self, grace_s: float) -> None:
-        """Cancel the task, then stop the writer, the sessions and the policy, each within a
-        quarter of `grace_s` (so the four fit the bound the supervisor puts on `stop`), each run
-        whatever the one before did. `wait`, not `await task`: the task's cancellation is not
-        ours. The writer's own flush bound is half its share, so its spill path runs before the
-        cut; a WAL thread still running at the cut adds at most `WriterConfig.wal_join_timeout_s`
-        (0.5 s) once, which `STOP_SLACK_S` covers (#5333). A cancellation that reaches this stop
-        is held until the last step has run, then re-raised, as `Supervisor._stop_each` does
-        (#3361): the sessions still close."""
-        share = grace_s / 4
+        """Cancel the task, then stop the writer, the maintenance hold (when there is one: it
+        writes a hold's gaps while the sessions are open, #5629), the sessions and the policy, each
+        within an equal share of `grace_s` (so they fit the bound the supervisor puts on `stop`),
+        each run whatever the one before did. `wait`, not `await task`: the task's cancellation
+        is not ours. The writer's own flush bound is half its share, so its spill path runs
+        before the cut; a WAL thread still running at the cut adds at most
+        `WriterConfig.wal_join_timeout_s` (0.5 s) once, which `STOP_SLACK_S` covers (#5333). A
+        cancellation that reaches this stop is held until the last step has run, then
+        re-raised, as `Supervisor._stop_each` does (#3361): the sessions still close."""
+        share = grace_s / (4 if self._pause is None else 5)
         held: BaseException | None = None
         recorder_up.set(0)
         task, self._task = self._task, None
@@ -138,6 +148,7 @@ class RecorderRuntime:
                     logger().error("recorder_stop_failed", step="task", error="TimeoutError")
         steps: tuple[_Step, ...] = (
             ("writer", lambda: self._writer.stop(share / 2)),
+            *(() if self._pause is None else (("pause", self._pause.stop),)),
             ("sessions", self._sessions.stop),
             ("policy", self._policy.stop),
         )

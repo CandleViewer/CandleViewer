@@ -37,7 +37,7 @@ from tests.unit.admin.flag_fakes import Clock, FakeFlagStore, FakeStepUp, FakeUs
 from tests.unit.admin.flag_fakes import FakeAudit as FlagAudit
 from tests.unit.recorder._fakes import FakeAudit
 from tests.unit.recorder._session_fakes import LIVE, MemRecorderStore, UsClock
-from tests.unit.recorder._writer_helpers import FakeSink, delta, make_writer, trade
+from tests.unit.recorder._writer_helpers import FakeSink, delta, make_writer, snapshot, trade
 
 _OWNER = AuditPrincipal(user_id=UUID(int=1), username="owner", permissions=frozenset({"*"}))
 T0 = 1_790_000_000_000_000  # session wall clock, epoch µs
@@ -102,7 +102,13 @@ class _BlockingGaps(MemRecorderStore):
 
 
 class _Rig:
-    def __init__(self, writer: StreamWriter, sink: FakeSink, store: MemRecorderStore) -> None:
+    def __init__(
+        self,
+        writer: StreamWriter,
+        sink: FakeSink,
+        store: MemRecorderStore,
+        effect_timeout_s: float = 5.0,
+    ) -> None:
         self.writer, self.sink, self.store = writer, sink, store
         self.clock = UsClock(T0)
         self.sessions = SessionManager(store, now_us=self.clock, audit=FakeAudit(), config=LIVE)
@@ -117,7 +123,7 @@ class _Rig:
             notify=lambda _on: None,
             audit=FlagAudit(),
             recorder=self.pause,
-            effect_timeout_s=5.0,
+            effect_timeout_s=effect_timeout_s,
         )
         hook = chain_hooks(self.controller.gate_hook, self.controller.effects_hook)
         self.flag_writer = FlagWriter(
@@ -141,10 +147,14 @@ class _Rig:
 
 
 async def _rig(
-    tmp_path: Path, *, sink: FakeSink | None = None, store: MemRecorderStore | None = None
+    tmp_path: Path,
+    *,
+    sink: FakeSink | None = None,
+    store: MemRecorderStore | None = None,
+    effect_timeout_s: float = 5.0,
 ) -> _Rig:
     writer, sink_, *_ = await make_writer(tmp_path, sink=sink)
-    return await _Rig(writer, sink_, store or MemRecorderStore()).start()
+    return await _Rig(writer, sink_, store or MemRecorderStore(), effect_timeout_s).start()
 
 
 def test_recorder_pause_is_the_maintenance_recorder_port() -> None:
@@ -338,6 +348,8 @@ async def test_a_session_closed_during_the_hold_still_gets_its_gap(tmp_path: Pat
     by_session = {g["session_id"] for g in rig.store.gaps}
     eth = rig.sessions.live_session("ETHUSDT")
     assert by_session == {first, eth}
+    first_hi = {to_us(g["gap_end"]) for g in rig.store.gaps if g["session_id"] == first}
+    assert first_hi == {T0 + 30_000_000}  # clamped to its session's close
     eth_lo = {to_us(g["gap_start"]) for g in rig.store.gaps if g["session_id"] == eth}
     assert eth_lo == {T0 + 30_000_000}  # from its own start, not the hold's
 
@@ -371,3 +383,107 @@ async def test_a_flag_store_row_change_keeps_the_hold_until_maintenance_leaves(
     await rig.toggle(MAINTENANCE_MODE, False)
     assert not rig.writer.held
     assert len(rig.store.gaps) == len(DEFAULT_STREAMS)
+
+
+async def test_a_held_writer_takes_nothing_on_any_path(tmp_path: Path) -> None:
+    """Review B (Major): each hold guard is pinned. Held, a trade, a delta whose `prev` breaks
+    the chain, a snapshot and an anchor change no counter, sequence, bound or backlog; removing
+    any one guard fails this test (checked by mutation)."""
+    rig = await _rig(tmp_path)
+    await rig.writer.on_book_delta(delta(10))  # the chain a later delta could break
+    await rig.pause.pause("maintenance.enabled")  # holds, then flushes the delta
+    rig.writer.take_event_bounds()
+    rig.writer.take_seq_jump_windows()
+    ctr = rig.writer._ctr("BTCUSDT")
+    before = (ctr.received, ctr.dropped, dict(rig.writer._last_update_id))
+
+    await rig.writer.on_trade(trade(1))
+    await rig.writer.on_book_delta(delta(50, prev=49))
+    await rig.writer.on_book_snapshot(snapshot(60))
+    assert await rig.writer.on_book_anchor(snapshot(70), at_us=T0) == "held"
+
+    assert rig.writer.take_seq_jump_windows() == []
+    assert (ctr.received, ctr.dropped, dict(rig.writer._last_update_id)) == before
+    assert rig.writer.take_event_bounds() == {}
+    assert rig.writer.backlog_rows == 0
+
+
+async def test_pause_and_resume_log_their_event_level_and_reason(tmp_path: Path) -> None:
+    rig = await _rig(tmp_path)
+    with capture_logs() as logs:
+        await rig.pause.pause("maintenance.enabled")
+        rig.clock.advance_s(1)
+        await rig.pause.resume("maintenance.disabled")
+    mine = [
+        (e["event"], e["log_level"], e["reason"])
+        for e in logs
+        if e["event"] in ("recorder_paused", "recorder_resumed")
+    ]
+    assert mine == [
+        ("recorder_paused", "warning", "maintenance.enabled"),
+        ("recorder_resumed", "info", "maintenance.disabled"),
+    ]
+
+
+async def test_a_pause_cut_by_its_flush_budget_then_exit_releases_and_writes_the_gaps(
+    tmp_path: Path,
+) -> None:
+    """Review A (Major 1): the controller's flag is no longer what decides the exit's resume."""
+    sink = _BlockingSink()
+    rig = await _rig(tmp_path, sink=sink, effect_timeout_s=0.01)
+    await rig.toggle(MAINTENANCE_KEEP_RECORDER, False)
+    await rig.writer.on_trade(trade(1))
+    sink.armed = True
+    with capture_logs() as logs:
+        await rig.toggle(MAINTENANCE_MODE, True)  # the flush is cut by the effect budget
+    assert "feature_flag_hook_failed" in [e["event"] for e in logs]
+    assert rig.writer.held
+    sink.armed = False
+    rig.clock.advance_s(30)
+    await rig.toggle(MAINTENANCE_MODE, False)
+    assert not rig.writer.held
+    assert len(rig.store.gap_windows("maintenance_pause")) == len(DEFAULT_STREAMS)
+
+
+async def test_a_resume_cut_by_its_budget_then_reentry_holds_again(tmp_path: Path) -> None:
+    store = _BlockingGaps()
+    rig = await _rig(tmp_path, store=store, effect_timeout_s=0.01)
+    await rig.toggle(MAINTENANCE_KEEP_RECORDER, False)
+    await rig.toggle(MAINTENANCE_MODE, True)
+    rig.clock.advance_s(30)
+    store.armed = True
+    await rig.toggle(MAINTENANCE_MODE, False)  # released at once, the gap write cut
+    assert not rig.writer.held
+    store.armed = False
+    await rig.toggle(MAINTENANCE_MODE, True)
+    assert rig.writer.held
+
+
+async def test_stop_writes_the_open_hold_as_gaps_and_keeps_the_writer_held(
+    tmp_path: Path,
+) -> None:
+    """Review A (Major 2, C-2.14): a normal shutdown while held still records the hold."""
+    rig = await _rig(tmp_path)
+    await rig.pause.pause("maintenance.enabled")
+    rig.clock.advance_s(45)
+    await rig.pause.stop()
+    assert rig.writer.held
+    assert sorted(rig.store.gap_windows()) == sorted(
+        (s, T0, T0 + 45_000_000, "maintenance_pause") for s in DEFAULT_STREAMS
+    )
+    await rig.pause.stop()  # nothing left: a second stop writes nothing
+    assert len(rig.store.gaps) == len(DEFAULT_STREAMS)
+
+
+async def test_stop_logs_every_interval_it_cannot_write_as_critical(tmp_path: Path) -> None:
+    store = _BlockingGaps()
+    rig = await _rig(tmp_path, store=store)
+    await rig.pause.pause("maintenance.enabled")
+    rig.clock.advance_s(5)
+    store.broken = True
+    with capture_logs() as logs, pytest.raises(OSError):
+        await rig.pause.stop()
+    lost = [e for e in logs if e["event"] == "recorder_pause_gap_unpersisted"]
+    assert [(e["log_level"], e["start_us"], e["end_us"]) for e in lost] == [
+        ("critical", T0, T0 + 5_000_000)
+    ]

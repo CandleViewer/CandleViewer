@@ -13,10 +13,15 @@ Both are idempotent and cancel-safe, as the port requires (the controller's effe
 either, and its next poll calls it again): the synchronous step runs once, a cut flush puts its
 batch back, and a held interval stays pending until its gaps are written, which `record_gap`
 de-duplicates. Pending intervals are bounded (`MAX_PENDING`); past it the oldest is logged as
-critical and dropped. A process that stops while held: the next start's `process_restart` gap,
-from the session's last event (none was admitted while held), covers the hold. An interval released
-but not yet written when the process stops is lost with the process (residual, #5629). No task is
-spawned here.
+critical and dropped.
+
+* `stop` is the runtime's stop step, before the sessions close (C-2.14): the open hold is written
+  as gaps up to now, without releasing the writer, and so is every pending interval; one it
+  cannot write is logged as critical (`recorder_pause_gap_unpersisted`). A crash writes none: the
+  next start's `process_restart` gap, from the session's last event (none was admitted while
+  held), covers the hold.
+
+No task is spawned here.
 """
 
 from __future__ import annotations
@@ -91,6 +96,21 @@ class RecorderPause:
     def paused(self) -> bool:
         return self._open is not None
 
+    def _queue(self, held: _Held) -> None:
+        if len(self._pending) >= MAX_PENDING:
+            lost = self._pending.popleft()
+            logger().critical(
+                "recorder_pause_gap_unpersisted", start_us=lost.start_us, end_us=lost.end_us
+            )
+        self._pending.append(held)
+
+    async def _drain(self) -> None:
+        async with asyncio.timeout(self._gap_s):
+            while self._pending:
+                held = self._pending[0]
+                await self._sessions.on_maintenance_pause(held.start_us, held.end_us, held.sessions)
+                self._pending.popleft()
+
     async def pause(self, reason: str) -> None:
         if self._open is None:  # no await from here to the hold: one step
             self._open = (self._now_us(), self._sessions.live_sessions())
@@ -103,17 +123,23 @@ class RecorderPause:
         if self._open is not None:  # no await from here to the release: one step
             (start_us, held), self._open = self._open, None
             self._writer.release()
-            if len(self._pending) >= MAX_PENDING:
-                lost = self._pending.popleft()
+            self._queue(_Held(start_us, self._now_us(), held))
+            logger().info("recorder_resumed", reason=reason)
+        await self._drain()
+
+    async def stop(self) -> None:
+        """Shutdown: the open hold (to now, the writer kept held) and every pending interval are
+        written as gaps; any left unwritten is logged as critical, then the failure goes on."""
+        if self._open is not None:  # no await from here to the queue: one step
+            (start_us, held), self._open = self._open, None
+            self._queue(_Held(start_us, self._now_us(), held))
+            logger().warning("recorder_pause_stopped_held")
+        try:
+            await self._drain()
+        except BaseException:
+            for lost in self._pending:
                 logger().critical(
                     "recorder_pause_gap_unpersisted", start_us=lost.start_us, end_us=lost.end_us
                 )
-            self._pending.append(_Held(start_us, self._now_us(), held))
-            logger().info("recorder_resumed", reason=reason)
-        async with asyncio.timeout(self._gap_s):
-            while self._pending:
-                held_ = self._pending[0]
-                await self._sessions.on_maintenance_pause(
-                    held_.start_us, held_.end_us, held_.sessions
-                )
-                self._pending.popleft()
+            self._pending.clear()
+            raise

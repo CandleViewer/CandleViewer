@@ -17,7 +17,8 @@ and side effects.
 Side effects run only at a real transition (`setFeatureFlag`) to a value read as `True` from the
 store or committed by a write, never on a fail-closed reading (an outage or an unreadable row):
 entering maintenance cancels running emulated algos through `AlgoCanceller` and pauses the
-recorder only when `maintenance.keep_recorder` is false. Resting orders are not cancelled and
+recorder only when `maintenance.keep_recorder` is false; every reading of `False` (a write or a
+poll) resumes it, as the port is idempotent (#5629). Resting orders are not cancelled and
 can still fill. Each effect has a timeout, and an entry that fails is retried on the next poll.
 A transition the poll reads (a boot that finds a stored `True` included, as unknown to `True`
 counts) also sends every session the `notice` and writes the `maintenance.*` audit as
@@ -132,7 +133,6 @@ class MaintenanceController:
         #: `None` = unknown, which keeps the gate engaged.
         self._values: dict[str, bool | None] = dict.fromkeys(GATE_FLAGS)
         self._entered = False
-        self._recorder_paused = False
         #: The stored `maintenance.mode` last announced; `None` until known (`setFeatureFlag`).
         self._announced: bool | None = None
 
@@ -205,10 +205,11 @@ class MaintenanceController:
             self._entered = True  # only after every entry effect succeeded
         elif not on:
             self._entered = False
-            if self._recorder_paused and self._recorder is not None:
+            # Every reading of `False` resumes: no flag of ours can drift from the recorder (a
+            # pause or resume the budget cut), and a resume retries its unwritten gaps (#5629).
+            if self._recorder is not None:
                 async with asyncio.timeout(self._timeout):
                     await self._recorder.resume("maintenance.disabled")
-                self._recorder_paused = False
 
     async def _enter(self) -> None:
         if self._algos is None:
@@ -220,10 +221,9 @@ class MaintenanceController:
         keep = bool(await self._service.value(MAINTENANCE_KEEP_RECORDER))
         if not keep and self._recorder is None:
             logger().warning("maintenance_recorder_pause_unavailable")
-        if not keep and not self._recorder_paused and self._recorder is not None:
+        if not keep and self._recorder is not None:  # every entry: the port is idempotent
             async with asyncio.timeout(self._timeout):
                 await self._recorder.pause("maintenance.enabled")
-            self._recorder_paused = True
 
     @audited("maintenance.enabled", "maintenance.disabled")
     async def run(self) -> None:
