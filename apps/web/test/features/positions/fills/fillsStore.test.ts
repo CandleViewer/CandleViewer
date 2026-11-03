@@ -476,6 +476,22 @@ describe("revocation and narrowing (SR-E29-11, E29-D05 F-02)", () => {
     expect(store.getSnapshot().rows).toEqual([]);
   });
 
+  it("a revoke before the first snapshot keeps later reads out", () => {
+    const store = started();
+    store.applyFrames([reset("revoked")]);
+    store.applyRest(restItems());
+    store.commit();
+    const { rows, all } = store.getSnapshot();
+    expect([rows, all]).toEqual([[], []]);
+  });
+
+  it("a revoke before the first snapshot reads could not load (S-02)", () => {
+    const store = started();
+    store.applyFrames([reset("revoked")]);
+    store.commit();
+    expect(store.getSnapshot().status).toBe("snapshot_failed");
+  });
+
   it("narrowed: every fill leaves; the directory names who left; REST brings back who stayed", () => {
     const store = started();
     store.applyFrames([snap(snapshotBody())]);
@@ -544,6 +560,26 @@ describe("revocation and narrowing (SR-E29-11, E29-D05 F-02)", () => {
     store.dismissWithdrawn(SUB2);
     store.commit();
     expect(store.getSnapshot().withdrawn).toEqual([]);
+  });
+
+  it("dismissing a withdrawn line keeps the account's fills out of later reads", () => {
+    const store = started();
+    store.applyFrames([snap(snapshotBody())]);
+    store.setEffective({ exchange_account_ids: [MAIN, SUB1] });
+    store.dismissWithdrawn(SUB2);
+    store.applyRest(restItems());
+    store.commit();
+    expect(accountsOf(store).has(SUB2)).toBe(false);
+  });
+
+  it("after a revocation, dismissing a line keeps the account out past Retry", () => {
+    const store = started();
+    store.applyFrames([snap(snapshotBody()), reset("revoked")]);
+    store.dismissWithdrawn(SUB1);
+    store.markRetrying();
+    store.applyRest(restItems());
+    store.commit();
+    expect(accountsOf(store).has(SUB1)).toBe(false);
   });
 });
 
