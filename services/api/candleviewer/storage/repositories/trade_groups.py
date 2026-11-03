@@ -80,10 +80,11 @@ __all__ = [
 type JsonValue = bool | int | str | list[JsonValue] | dict[str, JsonValue] | None
 type JsonObject = dict[str, JsonValue]
 
-#: The bound of a leg's `profile_snapshot` (24 Sec.9.2; #3969). The largest valid `AccountProfile`
-#: (500 + 500 symbols of 21 characters, ten full-width ladder rungs) dumps to about 26,000
-#: characters, over `MAX_PAYLOAD_CHARS`; 32 KiB leaves headroom and the profile's own caps stay the
-#: one limit on its size. `algo_params` keeps `MAX_PAYLOAD_CHARS`.
+#: The bound of a leg's `profile_snapshot` (24 Sec.9.2; #3969). The test's maximal `AccountProfile`
+#: (500 + 500 symbols of 21 characters, 1,000 * (21 + 3) = 24,000 characters, ten full-width ladder
+#: rungs, every number at its column width) dumps to 26,337 characters, over `MAX_PAYLOAD_CHARS`;
+#: 32 KiB leaves headroom and the profile's own caps stay the one limit on its size.
+#: `algo_params` keeps `MAX_PAYLOAD_CHARS`.
 PROFILE_SNAPSHOT_MAX_CHARS: Final = 32768
 
 #: The `trade_group_status`, `leg_status`, `algo_kind`, `sizing_mode` and `exchange_env` types and

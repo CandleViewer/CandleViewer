@@ -1208,23 +1208,48 @@ def test_group_replay_is_a_frozen_id() -> None:
         replay.group_id = GroupId(_OTHER)  # type: ignore[misc]  # frozen on purpose
 
 
-# -- the largest valid profile snapshots (#3969) -----------------------------------------------
+# -- the maximal profile snapshots (#3969) -----------------------------------------------
 
 
 def _largest_valid_profile() -> AccountProfile:
-    """Every list at its cap, every entry at its longest, every ladder value at full width."""
-    symbols = tuple(f"*{chr(65 + i // 26)}{chr(65 + i % 26)}" + "9" * 17 for i in range(500))
-    denied = tuple(f"*{chr(65 + i // 26)}{chr(66 + i % 25)}" + "8" * 17 for i in range(500))
-    rung = {"qty_pct": "0.1", "r": "1." + "1" * 36}
-    return _leg_draft().profile.model_copy(
-        update={
-            "name": "n" * 80,
-            "all_symbols": False,
-            "allowed_symbols": symbols,
-            "denied_symbols": denied,
-            "tp_ladder": tuple(TakeProfitRung.model_validate(rung) for _ in range(10)),
-        }
-    )
+    """Every list at its cap, every entry at its longest, every number at its column's width.
+
+    A symbol is `*` plus 20 characters (21), so the two lists alone are 1,000 * (21 + 3) = 24,000
+    characters with their quotes and comma. `fixed_qty` is the widest sizing mode, the other
+    sizing fields are NULL, and each `numeric(p, s)` value takes its maximum digits.
+    """
+    symbols = tuple(f"*{chr(65 + i // 26)}{chr(65 + i % 26)}" + "9" * 18 for i in range(500))
+    denied = tuple(f"*{chr(65 + i // 26)}{chr(66 + i % 25)}" + "8" * 18 for i in range(500))
+    money = "9" * 20 + "." + "9" * 18  # numeric(38,18)
+    fraction = "0." + "9" * 8  # numeric(9,6) percent, as a fraction
+    rung = {"qty_pct": "0.0" + "9" * 35, "r": "1." + "1" * 36}
+    data = _leg_draft().profile.model_dump(mode="json") | {
+        "name": "n" * 80,
+        "sizing_mode": "fixed_qty",
+        "fixed_qty": money,
+        "fixed_notional": None,
+        "pct_equity": None,
+        "risk_pct_equity": None,
+        "risk_fixed_amount": None,
+        "min_leg_notional": money,
+        "leverage": "99.99",  # numeric(10,2)
+        "sl_offset_value": money,
+        "sl_offset_unit": "ticks",
+        "sl_atr_multiple": "999999.9999",  # numeric(10,4)
+        "fallback_sl_offset_pct": fraction,
+        "tp_offset_value": money,
+        "tp_offset_unit": "ticks",
+        "max_position_notional": money,
+        "max_position_pct_equity": fraction,
+        "max_daily_loss": money,
+        "max_daily_loss_pct": fraction,
+        "max_leverage_cap": "99.99",
+        "all_symbols": False,
+        "allowed_symbols": symbols,
+        "denied_symbols": denied,
+        "tp_ladder": [rung] * 10,
+    }
+    return AccountProfile.model_validate(data)
 
 
 def test_leg_snapshot_of_the_largest_valid_profile_renders() -> None:
@@ -1232,7 +1257,8 @@ def test_leg_snapshot_of_the_largest_valid_profile_renders() -> None:
     assert len(profile.allowed_symbols) == len(profile.denied_symbols) == 500
     draft = _leg_draft().model_copy(update={"profile": profile})
     values = leg_values(draft)  # renders the snapshot under its own bound
-    size = len(json.dumps(values.profile_snapshot, separators=(",", ":")))
+    size = len(json.dumps(values.profile_snapshot, separators=(",", ":"), ensure_ascii=False))
+    assert size == 26_337  # 24,000 for the two lists + 2,337 for the rest; update with a new field
     assert MAX_PAYLOAD_CHARS < size <= PROFILE_SNAPSHOT_MAX_CHARS
     LegDraft.model_validate(draft.model_dump())
 
