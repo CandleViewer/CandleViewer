@@ -36,6 +36,9 @@ allowBuilds:
   # electron-builder 26 > electron-winstaller: 7z arch selector for Squirrel.Windows;
   # not used by CI or the portable/NSIS targets, so explicitly denied (E43-T05).
   electron-winstaller: false
+  # E47-Q04 (#1315): pa11y-ci > puppeteer would fetch a Chromium at install; the nightly passes
+  # PUPPETEER_SKIP_DOWNLOAD and points pa11y at Playwright's browser instead.
+  puppeteer: false
 
 # E43-T05 (SR-130/SR-156): force patched transitive `tar` (electron-builder >
 # app-builder-lib, build-time only) past GHSA-23hp-3jrh-7fpw and the other
