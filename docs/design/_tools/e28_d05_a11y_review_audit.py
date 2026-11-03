@@ -615,6 +615,12 @@ RULING = "6601763457"
 JOINT_SHA = "0f6f2a95fc688dbc81f1e001a18bd0896bf1546b29dd4376ecbb4bee4b2d86d2"  # the joint sentence, the same in #840, #841, #842
 JOINT_RX = re.compile(r"\*\*Stale preview \(joint ruling: .*?#5550\.")
 STATE_STRINGS = ("DR-03", "DR-04", "DR-05", "DR-08")
+ACCT = re.compile(r"[{]|\b[a-z]{2,5}_\d")  # a fill or an account token
+PINNED_WORDS = (  # the removed-row order and the step-up's one first field (E47-D04)
+    ("### 4.1 ", "### 4.2 ", "else the previous row, else the grid's empty-state stop"),
+    ("### 4.6 ", "## 5. ", "else the previous, else the table's empty-state stop"),
+    ("### 4.2 ", "### 4.3 ", "the first credential field (the password field"),
+)
 DATE = "by 2026-12-31"
 
 
@@ -631,7 +637,7 @@ def g_rulings(t: Texts, p: list[str]) -> dict[str, Any]:
             continue
         s = re.match(r'"([^"]*)"', r[2])
         word = s.group(1) if s else ""
-        if not s or "{" in word or len(word) > 60 or not word.endswith(".") or ". " in word:
+        if not s or ACCT.search(word) or len(word) > 60 or not word.endswith(".") or ". " in word:
             p.append(
                 f"[K] {r[0]}: its reason is not one data-free sentence of at most 60 characters"
             )
@@ -640,6 +646,9 @@ def g_rulings(t: Texts, p: list[str]) -> dict[str, Any]:
             p.append(f"[K] {r[0]}: a {r[1]} row logged without its date")
     if "`E47-D04`:285" not in section(t.spec, "## 4. ", "## 5. "):
         p.append("[K] section 4 does not cite E47-D04's removed-row move")
+    for a, z, w in PINNED_WORDS:
+        if w not in section(t.spec, a, z):
+            p.append(f"[K] {a.strip('# ')} lacks the ruled words {w!r}")
     return {"state_strings": len(STATE_STRINGS)}
 
 
@@ -746,6 +755,15 @@ MUTATIONS: list[tuple[str, Callable[[Texts], Texts]]] = [
     ("J: the G-T2.1d quote loses a word", sp("the full label (in 2b", "the label (in 2b")),
     ("K: the joint stale sentence loses a word", sp("decoration only, never", "decoration, never")),
     ("K: a T2 reason fills data", sp('"Blocked: use the cell', '"Blocked on {a}: use the cell')),
+    ("K: a T2 reason names an account", sp("Nothing can be", "Nothing sub_001 can be")),
+    (
+        "K: the removed-row order retyped",
+        sp("else the previous row, else", "else the first row, else"),
+    ),
+    (
+        "K: the step-up's first field retyped",
+        sp("initial the first credential", "initial Cancel, the first"),
+    ),
     ("K: a Low row logged without its date", f14_undated),
     ("K: pre-stage wording comes back", sp("## 19. Summary", "## 19. (if #5482 merges as is)")),
 ]
