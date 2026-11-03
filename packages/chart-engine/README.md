@@ -800,7 +800,7 @@ Deviation: `BatchBuilder.patch` folded an empty range into the pending one, so `
 | #395 BQ-16 | `bar-store` microbenches | Coordinator ruling 2026-11-01 02:51Z / acceptance 03:38Z (RelayRoom R28), as the chart-engine CODEOWNER: F-02's per-bar checks stay unconditional. With the flags column written only once a series carries flags and the merge checked only when the first time is at or before the last bar's, the interleaved medians (8 rounds) are 1 M one-bar appends 34.4 → 40.6 ms (+6.3 ms per 1 M, about 6 ns a bar; ≤ 120 ms budget, about 79 ms headroom) and 100 k mutation steps 9.6 → 10.6 ms. No baseline moved: both are `*.perf.test.ts` budgets, in neither `bench/baseline.json` nor the matrix baselines, and `bench/results.json` is byte-identical. Joining the baselined set is a row for E11-T06 #449. |
 
 Seam limit: the scene graph cannot remove nodes, so `removeSeries` hides and unregisters the
-series' three hosts (wick, body and, since PR 2, the gap seam) and frees its store and ring, and host node ids carry a generation number so a
+series' hosts (wick, body, since PR 2 the gap seam, and since E12-S10 the marks) and frees its store and ring, and host node ids carry a generation number so a
 re-added series id cannot collide. Node removal is a row for E11 (the scene graph).
 
 ## OHLC bars, gap seams, bar picks and `dataState` (E12-S06 PR 2)
@@ -856,7 +856,7 @@ Deviations from the plan (#395 plan §2–§3), each for a stated reason:
 ## Hollow candles, Heikin-Ashi and series-kind switching (E12-S07 PR A)
 
 **Hollow candles** are a series kind (`SeriesType` `"hollow"`, BQ-5). They draw with the same
-`candle` program, ring and three hosts as candles, through two parts: 5, the hollow wick, and 6,
+`candle` program, ring and hosts as candles (wick, body, seam and, since E12-S10, marks), through two parts: 5, the hollow wick, and 6,
 the hollow body. Both place exactly as the wick and body (E12-D06 §3.2). The ring writes two meta
 bits per bar (D06 §4.2). Bit 8, `hollow`, is set when close ≥ open: the body is an outline and its
 interior is not painted (the shader discards it; the 2D painter strokes the edges). Bit 9,
@@ -915,7 +915,7 @@ midpoint). The price extent source must read the displayed ring values (or offer
 mode), and `CandleRing.setMode` must bump that source's version so autoscale refits on a switch.
 
 Deviation from the plan (#533 plan §2): the plan put HA in a second `CandleRing`. A backend keeps
-the first source a node is attached to, so a second ring would mean remounting three hosts on every
+the first source a node is attached to, so a second ring would mean remounting every host on every
 switch, and the scene graph cannot remove the old ones. `HaRing` therefore holds only the float64
 state and writes into the series' existing ring; switching back rewrites the real bars from the
 store.
