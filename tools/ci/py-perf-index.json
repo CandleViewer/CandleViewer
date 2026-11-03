@@ -2,6 +2,7 @@
   "marker": "perf and not flaky",
   "default_weight": 2.87,
   "weights": {
+    "tests/alerts/test_alert_evaluator_perf.py": 8.75,
     "tests/contract/bybit/test_contract_leakage.py": 0.06,
     "tests/contract/test_account_profile_saves_observed.py": 2.45,
     "tests/contract/test_create_api_key_provider.py": 0.02,
@@ -65,6 +66,8 @@
     "tests/unit/ws/test_trade_groups_perf.py": 2.78
   },
   "tests": [
+    "tests/alerts/test_alert_evaluator_perf.py::test_evaluator_500_armed_alerts_p95_tick_latency_stays_inside_budget",
+    "tests/alerts/test_alert_evaluator_perf.py::test_evaluator_500_armed_alerts_reports_peak_memory",
     "tests/contract/bybit/test_contract_leakage.py::test_median_parse_time_per_stream_is_inside_the_3ms_budget",
     "tests/contract/test_account_profile_saves_observed.py::test_a_list_of_fifty_profiles_answers_within_150_ms_p95",
     "tests/contract/test_account_profile_saves_observed.py::test_a_profile_save_with_a_cold_catalogue_round_trips_within_two_seconds_p95",
