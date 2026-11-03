@@ -22,6 +22,7 @@ import { OUTPUT_PORT, type PortOracle } from "../a11y/graph.js";
 import type { Point } from "../a11y/nudge.js";
 import { verdictFor } from "../a11y/portSelection.js";
 import { planInsert } from "./insert.js";
+import { normaliseLayout, pointOf } from "./layout.js";
 import { placeNodes, positionOf } from "./placement.js";
 import { portOracle } from "./portOracle.js";
 import { NODE_BOX, tierOf } from "./tiers.js";
@@ -77,7 +78,7 @@ export type GraphCommand =
       readonly nodes: readonly string[];
       readonly edges: readonly string[];
     }
-  /** One drag is one undo entry: its moves share a `gesture` key. */
+  /** One drag is one undo entry: its moves share a `gesture` key, one fresh key per drag. */
   | { readonly type: "move"; readonly moves: readonly NodeMove[]; readonly gesture?: string }
   | {
       readonly type: "select";
@@ -148,34 +149,36 @@ const BLANK_LAYOUT: GraphLayout = Object.freeze({
   extra: {},
 });
 
-/** A loaded graph ready to edit: every node placed (`placement.ts`), nothing selected. */
-export const editorStateOf = (
-  graph: GraphModel,
-  layout: GraphLayout = BLANK_LAYOUT,
-): EditorState => ({
-  graph,
-  layout: placeNodes(graph, layout),
-  selection: NO_SELECTION,
-});
+/**
+ * A loaded graph ready to edit, nothing selected: its stored layout normalised (`layout.ts`), every
+ * node placed (`placement.ts`), and only the presentation keys the client owns kept (SR-E37-03).
+ */
+export function editorStateOf(graph: GraphModel, layout: GraphLayout = BLANK_LAYOUT): EditorState {
+  const { positions, collapsed, comments } = placeNodes(graph, normaliseLayout(graph, layout));
+  return { graph, layout: { positions, collapsed, comments, extra: {} }, selection: NO_SELECTION };
+}
 
 const unchanged = (state: EditorState): Outcome => ({ state, effect: { kind: "none" } });
-
-const isFinitePoint = (p: Point): boolean => Number.isFinite(p.x) && Number.isFinite(p.y);
 
 export const samePoint = (a: Point | undefined, b: Point | undefined): boolean =>
   a === b || (a !== undefined && b !== undefined && a.x === b.x && a.y === b.y);
 
 const unique = (ids: readonly string[]): string[] => [...new Set(ids)];
 
-/** `${prefix}${n}` one above the highest such id in `items`: deterministic, never one in use. */
+/**
+ * `${prefix}${n}`, n one above the highest short suffix in use (one to nine digits), stepped past
+ * any id `items` hold: deterministic, and never one in use whatever ids a loaded rule carries.
+ */
 function freshId(items: readonly { readonly id: string }[], prefix: string): string {
+  const used = new Set(items.map((item) => item.id));
   let highest = 0;
-  for (const { id } of items) {
+  for (const id of used) {
     const digits = id.startsWith(prefix) ? id.slice(prefix.length) : "";
-    const n = /^\d+$/.test(digits) ? Number(digits) : 0;
-    if (Number.isSafeInteger(n)) highest = Math.max(highest, n);
+    if (/^\d{1,9}$/.test(digits)) highest = Math.max(highest, Number(digits));
   }
-  return `${prefix}${highest + 1}`;
+  let n = highest + 1;
+  while (used.has(`${prefix}${n}`)) n += 1;
+  return `${prefix}${n}`;
 }
 
 /** `state` with `ops` applied in order; ops that only move nodes keep the graph object itself. */
@@ -233,12 +236,15 @@ function addNode(
   if (spec.type === "trigger" && graph.nodes.some((n) => n.type === "trigger")) {
     return unchanged(state);
   }
-  if (position !== undefined && !isFinitePoint(position)) return unchanged(state);
-  const node: GraphNode = { id: freshId(graph.nodes, "n"), type: spec.type, data: spec.data };
+  // A drop is a fresh point, clamped to the canvas bound; one that is no point changes nothing.
+  const at = position === undefined ? undefined : pointOf(position);
+  if (position !== undefined && at === undefined) return unchanged(state);
+  const data = { ...spec.data }; // the palette entry's own object stays the palette's
+  const node: GraphNode = { id: freshId(graph.nodes, "n"), type: spec.type, data };
   const plan =
-    position === undefined
+    at === undefined
       ? planInsert(graph, layout, state.selection.nodes, node, oracle)
-      : { position, edge: undefined };
+      : { position: at, edge: undefined };
   const ops: Op[] = [{ op: "addNode", index: graph.nodes.length, node, position: plan.position }];
   const edge =
     plan.edge === undefined ? undefined : { id: freshId(graph.edges, "e"), ...plan.edge };
@@ -342,11 +348,12 @@ function move(state: EditorState, moves: readonly NodeMove[], gesture?: string):
   const now = new Map<string, Point | undefined>();
   const ops: Op[] = [];
   for (const { id, position } of moves) {
-    if (!ids.has(id) || !isFinitePoint(position)) continue;
+    const to = pointOf(position); // a fresh point, clamped to the canvas bound
+    if (!ids.has(id) || to === undefined) continue;
     const from = now.has(id) ? now.get(id) : positionOf(state.layout, id);
-    if (samePoint(from, position)) continue;
-    ops.push({ op: "position", id, from, to: position });
-    now.set(id, position);
+    if (samePoint(from, to)) continue;
+    ops.push({ op: "position", id, from, to });
+    now.set(id, to);
   }
   if (ops.length === 0) return unchanged(state);
   return {
@@ -427,7 +434,10 @@ export function reduce(
   }
 }
 
-/** The intents CMP-146, CMP-236 and CMP-257 call, each one command; `R` is what dispatch gives. */
+/**
+ * The intents CMP-146, CMP-236 and CMP-257 call, each one command; `R` is what dispatch gives.
+ * `onMove` moves positions, one fresh `gesture` key per drag; action reorder is E37-S05's command.
+ */
 export interface GraphIntents<R = void> {
   readonly onAddNode: (node: NodeSpec, position?: Point) => R;
   readonly onConnect: (source: string, sourcePort: string, target: string, targetPort: string) => R;

@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { PORT_COMPAT, toIr, type GraphModel } from "@candleviewer/rule-graph";
+import { PORT_COMPAT, toIr, type GraphLayout, type GraphModel } from "@candleviewer/rule-graph";
 import { describe, expect, it, vi } from "vitest";
 import { REFUSAL } from "../../../src/features/rule-builder-graph/a11y/copy.js";
 import {
@@ -9,6 +9,7 @@ import {
   type CommandEffect,
   type EditorState,
   type GraphCommand,
+  type NodeMove,
   type NodeSpec,
 } from "../../../src/features/rule-builder-graph/model/commands.js";
 import {
@@ -16,6 +17,8 @@ import {
   historyOf,
   undo,
 } from "../../../src/features/rule-builder-graph/model/history.js";
+import { CANVAS_LIMIT } from "../../../src/features/rule-builder-graph/model/layout.js";
+import { GRID, Occupancy } from "../../../src/features/rule-builder-graph/model/placement.js";
 import { edge, node } from "./fixtures.js";
 
 const TRIGGER: NodeSpec = { type: "trigger", data: { type: "on_bar_close", timeframe: "1m" } };
@@ -51,6 +54,12 @@ const SFORM: GraphModel = {
   ],
   edges: [edge("e1", "n2", "n3", "when")],
 };
+
+/** A layout as stored: whatever its writer sent, so the type does not hold for it. */
+const stored = (positions: unknown, extra: object = {}): GraphLayout =>
+  ({ positions, collapsed: [], comments: [], extra }) as unknown as GraphLayout;
+/** A point as a caller sends it: the type does not hold for it either. */
+const raw = (value: unknown) => value as NodeMove["position"];
 
 describe("Author a minimal graph by pointer (AC 1, the model's half)", () => {
   it("holds a trigger, a condition and an action dropped from the palette and connected port to port", () => {
@@ -262,11 +271,90 @@ describe("adding a node", () => {
     expect(outcome.state).toBe(state);
   });
 
-  it("ignores a drop at a position that is not a number", () => {
+  it.each([{ x: NaN, y: 0 }, null, "0,0"])("ignores a drop at %o", (at) => {
     const state = empty();
-    const outcome = reduce(state, { type: "addNode", node: ACTION, position: { x: NaN, y: 0 } });
-    expect(outcome.state).toBe(state);
-    expect(outcome.edit).toBeUndefined();
+    expect(reduce(state, { type: "addNode", node: ACTION, position: raw(at) }).state).toBe(state);
+  });
+
+  it("mints an id no node holds, whatever numeric suffixes the stored ids carry", () => {
+    const long = [node("n9007199254740991", "action"), node("n9007199254740992", "action")];
+    const state = editorStateOf({ envelope: {}, nodes: long, edges: [] });
+    const outcome = reduce(state, { type: "addNode", node: ACTION, position: { x: 0, y: 480 } });
+    expect(new Set(outcome.state.graph.nodes.map((n) => n.id)).size).toBe(3);
+  });
+
+  it.each(["n999999999", "n1000000000"])("never repeats an id in 100 adds after %s", (id) => {
+    let state = editorStateOf({ envelope: {}, nodes: [node(id, "action")], edges: [] });
+    const add: GraphCommand = { type: "addNode", node: ACTION, position: { x: 0, y: 0 } };
+    for (let i = 0; i < 100; i += 1) state = reduce(state, add).state;
+    expect(new Set(state.graph.nodes.map((n) => n.id)).size).toBe(101);
+  });
+});
+
+describe("a stored layout at load, and the points a command brings (SR-E37-03, SR-E37-04)", () => {
+  it("places a node stored at null or a string, and clamps one stored at ±1e19 or ±2^61", () => {
+    const layout = stored({ n1: null, n2: "240,0", n3: { x: 1e19, y: -(2 ** 61) } });
+    expect(editorStateOf(SFORM, layout).layout.positions).toEqual({
+      n1: { x: 0, y: 0 },
+      n2: { x: 240, y: 0 },
+      n3: { x: CANVAS_LIMIT, y: -CANVAS_LIMIT },
+    });
+  });
+
+  it("keeps only the layout keys the client owns: a stored server-owned key is gone", () => {
+    const layout = { ...stored({}, { node_only_constructs: ["sub"] }), mode: "armed" };
+    expect(editorStateOf(SFORM, layout).layout).toEqual(editorStateOf(SFORM).layout);
+  });
+
+  it("clamps a moved or dropped point to the canvas bound, and skips one that is no point", () => {
+    const moved = reduce(editorStateOf(SFORM), {
+      type: "move",
+      moves: [
+        { id: "n1", position: raw(null) },
+        { id: "n2", position: { x: -1e19, y: 2 ** 61 } },
+        { id: "n3", position: raw("480,240") },
+      ],
+    });
+    const to = { x: -CANVAS_LIMIT, y: CANVAS_LIMIT };
+    expect(moved.edit?.ops).toEqual([{ op: "position", id: "n2", from: { x: 240, y: 0 }, to }]);
+    const drop = { x: 1e19, y: -(2 ** 61) };
+    const dropped = reduce(empty(), { type: "addNode", node: ACTION, position: drop });
+    expect(dropped.state.layout.positions).toEqual({ n1: { x: CANVAS_LIMIT, y: -CANVAS_LIMIT } });
+  });
+
+  it("inserts beside an anchor stored at 1e19, read clamped, in a bounded walk", () => {
+    const isFree = Occupancy.prototype.isFree;
+    let calls = 0;
+    const spy = vi.spyOn(Occupancy.prototype, "isFree");
+    spy.mockImplementation(function (this: Occupancy, at) {
+      calls += 1;
+      if (calls > 100) throw new Error("the walk does not end");
+      return isFree.call(this, at);
+    });
+    try {
+      const layout = stored({ n1: null, n2: { x: 0, y: 1e19 }, n3: { x: 240, y: 1e19 } });
+      const { state } = run(editorStateOf(SFORM, layout), [
+        { type: "select", nodes: ["n2"], edges: [], mode: "replace" },
+        { type: "addNode", node: GATE },
+      ]);
+      expect(state.layout.positions["n4"]).toEqual({ x: 240, y: CANVAS_LIMIT + GRID });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("keeps its own copy of a moved or dropped point and of a dropped node's data", () => {
+    const at = { x: 256, y: 32 };
+    const drop = { x: 0, y: 480 };
+    const data: Record<string, unknown> = { type: "flatten_position" };
+    const moves = [{ id: "n2", position: at }];
+    const moved = reduce(editorStateOf(SFORM), { type: "move", moves });
+    const spec: NodeSpec = { type: "action", data };
+    const added = reduce(empty(), { type: "addNode", node: spec, position: drop });
+    [at.x, drop.y, data["type"]] = [0, 0, "close_position"];
+    expect(moved.state.layout.positions["n2"]).toEqual({ x: 256, y: 32 });
+    expect(added.state.layout.positions["n1"]).toEqual({ x: 0, y: 480 });
+    expect(added.state.graph.nodes[0]?.data).toEqual({ type: "flatten_position" });
   });
 });
 
@@ -421,6 +509,19 @@ describe("selecting", () => {
       mode: "add",
     });
     expect(outcome.state.selection.nodes).toEqual(["n1", "n3"]);
+  });
+
+  it.each([
+    [60, ["c0"]],
+    [61, []],
+  ])("meets the marquee with the tier's card: %d nodes select %j", (count, selected) => {
+    // The rect starts 130 past c0's left edge: inside a Tier A card (160 wide), not a Tier B (120)
+    const nodes = Array.from({ length: count }, (_, i) => node(`c${i}`, "condition"));
+    const at = nodes.map(({ id }, i) => [id, { x: i === 0 ? 240 : 0, y: GRID * i }]);
+    const state = editorStateOf({ envelope: {}, nodes, edges: [] }, stored(Object.fromEntries(at)));
+    const rect = { x: 370, y: 0, width: 10, height: 10 };
+    const { selection } = reduce(state, { type: "marquee", rect, mode: "replace" }).state;
+    expect(selection.nodes).toEqual(selected);
   });
 });
 
