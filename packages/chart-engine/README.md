@@ -1096,8 +1096,13 @@ when given). Decisions:
 - A line, area or baseline series draws its closes alone, so its source runs in closes-only mode
   (`SeriesPriceSource.setClosesOnly`, set on `addSeries` and every kind switch): the extent and
   the guard's minimum read the close word, and wicks the line never draws do not widen the window.
+  A baseline's user B is not part of the price extent (like lightweight-charts' `baseValue`): a B
+  outside the window is clipped to the plot rect.
 - A series that is not the time map is read by time (its bars spanning the visible ones), and a
-  series in another price frame is converted into the pane's ticks, rounded outward.
+  series in another price frame is converted into the pane's ticks, rounded outward. A recorded
+  decision: a secondary that ended before the visible bars still contributes its last bar (the
+  at-or-before lookup, `timeToIndex`). The interval-aware bound,
+  `timeAt(j) + interval > indexToTime(lo)`, is left to A2.
 - The runtime bumps the source's version after every applied batch and every kind switch (not
   `CandleRing.setMode`, which keeps the ring free of autoscale knowledge). Adding or removing a
   series rebuilds the pane lists and invalidates the autoscaler's keys (`AutoScaler.invalidate`),

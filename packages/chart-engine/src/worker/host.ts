@@ -451,7 +451,9 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
       const lane = laneOf("bars", cmd.series);
       queues.delete(lane);
       resyncAsked.delete(lane);
-      unacked.delete(lane); // an in-flight batch's late ack finds no entry and adds none
+      // Series ids are chart-unique and never reused (minted by the chart), so the lane can go
+      // now: no later series shares it, and a late ack of its in-flight batches adds no entry.
+      unacked.delete(lane);
     }
   }
 
