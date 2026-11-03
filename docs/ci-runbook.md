@@ -57,7 +57,7 @@ PR opened/updated, merge group queued for main, or merge train dispatched (.gith
 │                                      functions and axe per story, the fail-closed fixture and
 │                                      its 10 min budget (CI-A11Y-002..004); and the `vr` job: every
 │                                      story x theme x density against its baseline PNG, 14 shards
-│                                      of 6 min each, on pinned fonts (CI-A11Y-006..008)
+│                                      judged per cell (CI-A11Y-007), on pinned fonts (CI-A11Y-006..008)
 ├─ _job-security.yml (js/py/infra/semgrep filters) → codeql, gitleaks, trivy (image filter) and two
 │                                      folded jobs, one step per scan (#3104): semgrep-bandit;
 │                                      read-only-scans (security-auth, pip-audit, register
@@ -729,15 +729,32 @@ ran.
   images: an unintended change is fixed in the component or token; an intended one is accepted by
   the update path in `packages/ui/README.md` (Visual regression), never by loosening the tolerance.
   The same code fails the audit test, which names a missing baseline or a PNG no cell owns.
-- **CI-A11Y-007** (a VR compare shard over its 360 s budget): the step summary records the measured
-  time, the job's and the compare step's own. A shard takes every n-th cell (`VR_SHARD=k/n`, n from
-  `strategy.job-total`; `packages/ui/vr/matrix.ts`), so the shards cost about the same; a story count
-  that has outgrown the budget needs another shard (one more entry in the job's matrix), not a higher
+- **CI-A11Y-007** (a VR compare shard over its per-cell budget): the budget step judges the compare
+  step alone, per cell, not the job's time from its start (#5595: runs 41583500578 and 41597908629
+  failed on 288 s and 263 s of setup before a compare step at its normal 300 and 280 ms/cell). The
+  compare step tees its log to `$RUNNER_TEMP/vr-compare.log` and stamps its end; the budget step
+  reads M from the reporter's `VR matrix: M cells` line and takes the shard's count as
+  `ceil((M - (k - 1)) / n)`, the cells a shard takes (`VR_SHARD=k/n`, n from `strategy.job-total`;
+  `packages/ui/vr/matrix.ts`). The figures (set in #5595, from 166 green shards: median 301,
+  p90 329, max 341 ms/cell; revisit them when the shard size or the matrix changes materially): norm
+  300 ms/cell; from 450 ms/cell one warning and a pass,
+  `::warning::CI-A11Y-007 VR shard N compare step ran at X ms/cell over C cells (norm 300, fail at
+900; usually a slow runner pool; a code cause is possible above the norm)`; at 900 ms/cell or more it fails; a compare step under
+  60 s always passes and one of 600 s or more always fails. Setup before the compare step (checkout,
+  install, build, fonts; green median 81 s, max 144 s) never fails the step: over 180 s it adds one
+  warning, `::warning::CI-A11Y-007 VR shard N spent O s before the compare step, over 180 s (setup
+on a slow runner pool, not cells; never fails)`, and `timeout-minutes: 12` stops a hung setup. No
+  `VR matrix` line, a count of zero, a time stamp that is not digits, or stamps out of order fails
+  closed with this code. E is the job time from its start to the end of the compare step. The
+  summary line is
+  `- VR shard N: E s to the end of the compare step (overhead O s, the compare step S s for C cells: X ms/cell; fail at 900
+ms/cell or 600 s)`. The rule is the same on `merge_group` and `pull_request`. A story count that
+  has outgrown the budget needs another shard (one more entry in the job's matrix), not a higher
   number: 10 became 14 shards on 2026-11-01 (#5275) after #5146's cells pushed shards 4-8 to
-  361-400 s. Before adding one, read the summary's two numbers: a job time far above the compare
-  step's is setup, not cells (#5275's breach was a 126 s `install-deps` stall and a 69 s font wait,
-  CI-A11Y-005 and CI-A11Y-008). `workers: "50%"` assumes the 4-vCPU hosted runner of a public repository (2 workers a
-  shard); a 2-vCPU runner would run 1 worker and miss the budget. The `vr_update` dispatch is
+  361-400 s. A high overhead is setup, not cells (#5275's breach was a 126 s `install-deps` stall
+  and a 69 s font wait, CI-A11Y-005 and CI-A11Y-008). `workers: "50%"` assumes the 4-vCPU hosted
+  runner of a public repository (2 workers a shard); a 2-vCPU runner would run 1 worker and miss the
+  budget. The `vr_update` dispatch is
   unsharded and not budget-checked (`timeout-minutes: 40`; its update step took about 30 min in run
   41094472587, so the headroom shrinks as stories are added) and runs the `a11y` and `storybook`
   jobs of the same workflow too.

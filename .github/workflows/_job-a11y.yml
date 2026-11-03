@@ -12,9 +12,9 @@ name: _job-a11y
 # keeps the default and runs both.
 # E05-T04 (#270): the `vr` job runs beside them and fails the same check: every story x 3 themes x
 # 2 densities against its committed baseline PNG (ADR-0019), in 14 shards of one browser per two CPUs
-# that each keep a 6 min budget (CI-A11Y-006, CI-A11Y-007). A `workflow_dispatch` with `vr_update`
-# runs it once, unsharded, as `vr:update` and uploads the baselines for a person to commit
-# (packages/ui/README.md).
+# whose compare step keeps a per-cell budget (CI-A11Y-006, CI-A11Y-007). A `workflow_dispatch` with
+# `vr_update` runs it once, unsharded, as `vr:update` and uploads the baselines for a person to
+# commit (packages/ui/README.md).
 
 on:
   workflow_call:
@@ -303,8 +303,9 @@ jobs:
           retention-days: 14
 
   vr:
-    # Shard 0 is the whole matrix, run only by the vr_update dispatch. The 6 min (360 s) budget (AC)
-    # is measured over a compare shard by its budget step; timeout-minutes is only the backstop.
+    # Shard 0 is the whole matrix, run only by the vr_update dispatch. The budget step judges a
+    # compare shard's compare step per cell, not the setup before it (#5595); timeout-minutes is
+    # the backstop.
     # A pinned image release, never ubuntu-latest: the baselines are drawn with its libraries and the
     # fonts the next steps install from its archive.
     name: vr ${{ matrix.shard }}
@@ -445,7 +446,8 @@ jobs:
 
       - name: Compare every story x theme x density with its baseline (CI-A11Y-006)
         # The summary reporter logs the matrix's cell count, the diff count and the faces Chromium drew
-        # for the token families; the runner image goes beside them.
+        # for the token families; the runner image goes beside them. The log and the end time feed
+        # the budget step (bash's pipefail keeps pnpm's exit code through the tee).
         shell: bash
         env:
           SHARD: ${{ matrix.shard }}
@@ -459,24 +461,66 @@ jobs:
           # The spec takes its shard's cells itself, every TOTAL-th cell of the matrix (packages/ui/vr/
           # matrix.ts): Playwright's --shard cuts contiguous ranges, which kept a slow family together.
           if [ "$SHARD" != 0 ]; then export VR_SHARD="$SHARD/$TOTAL"; fi
-          if ! pnpm --filter @candleviewer/ui run "$script"; then
+          if ! pnpm --filter @candleviewer/ui run "$script" | tee "$RUNNER_TEMP/vr-compare.log"; then
             echo "::error::CI-A11Y-006 a visual-regression cell has no baseline, differs from it beyond the tolerance, or did not render (the summary names each cell; the vr-diffs artifact holds the images; packages/ui/README.md, Visual regression)"
             exit 1
           fi
+          date +%s > "$RUNNER_TEMP/vr-step-end"
 
-      - name: "Budget: a compare shard finishes within 6 minutes (CI-A11Y-007)"
+      - name: "Budget: a compare shard runs within its per-cell budget (CI-A11Y-007)"
+        # #5595: the compare step is judged per cell (norm 300 ms/cell, warn from 450, fail at 900;
+        # under 60 s always passes, 600 s always fails); the setup before it only warns over 180 s.
         if: ${{ !inputs.vr_update }}
+        shell: bash
         env:
           SHARD: ${{ matrix.shard }}
+          TOTAL: ${{ strategy.job-total }}
         run: |
-          now=$(date +%s)
-          elapsed=$(( now - $(cat "$RUNNER_TEMP/vr-start") ))
-          step=$(( now - $(cat "$RUNNER_TEMP/vr-step-start") ))
-          echo "- VR shard $SHARD: $elapsed s of its 360 s budget (the compare step: $step s)" \
-            | tee -a "$GITHUB_STEP_SUMMARY"
-          if [ "$elapsed" -gt 360 ]; then
-            echo "::error::CI-A11Y-007 VR shard $SHARD took $elapsed s, over its 360 s budget (docs/ci-runbook.md)"
+          start=$(cat "$RUNNER_TEMP/vr-start")
+          step_start=$(cat "$RUNNER_TEMP/vr-step-start")
+          step_end=$(cat "$RUNNER_TEMP/vr-step-end")
+          for stamp in "$start" "$step_start" "$step_end"; do
+            if ! [[ "$stamp" =~ ^[0-9]+$ ]]; then
+              echo "::error::CI-A11Y-007 VR shard $SHARD has a garbled time stamp (\"$stamp\" is not seconds): a step of this job did not write it (docs/ci-runbook.md)"
+              exit 1
+            fi
+          done
+          overhead=$(( step_start - start ))
+          step=$(( step_end - step_start ))
+          elapsed=$(( step_end - start ))
+          if [ "$overhead" -lt 0 ] || [ "$step" -lt 0 ]; then
+            echo "::error::CI-A11Y-007 VR shard $SHARD has time stamps out of order (overhead $overhead s, the compare step $step s) (docs/ci-runbook.md)"
             exit 1
+          fi
+          # The reporter logs the matrix total; the shard takes every TOTAL-th cell from its own.
+          log="$RUNNER_TEMP/vr-compare.log"
+          matrix=$(sed -n 's/.*VR matrix: \([0-9][0-9]*\) cells.*/\1/p' "$log" | tail -n 1) || matrix=""
+          if [ "${matrix:-0}" -eq 0 ]; then
+            echo "::error::CI-A11Y-007 VR shard $SHARD has no cell count: the compare step's log has no \"VR matrix: N cells\" line (docs/ci-runbook.md)"
+            exit 1
+          fi
+          cells=$(( (matrix - SHARD + TOTAL) / TOTAL ))
+          if [ "$cells" -le 0 ]; then
+            echo "::error::CI-A11Y-007 VR shard $SHARD has no cell count: the \"VR matrix: $matrix cells\" line leaves it none of $TOTAL shards (docs/ci-runbook.md)"
+            exit 1
+          fi
+          ms=$(( step * 1000 / cells ))
+          echo "- VR shard $SHARD: $elapsed s to the end of the compare step (overhead $overhead s, the compare step $step s for $cells cells: $ms ms/cell; fail at 900 ms/cell or 600 s)" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$overhead" -gt 180 ]; then
+            echo "::warning::CI-A11Y-007 VR shard $SHARD spent $overhead s before the compare step, over 180 s (setup on a slow runner pool, not cells; never fails)"
+          fi
+          if [ "$step" -lt 60 ]; then exit 0; fi
+          if [ "$step" -ge 600 ]; then
+            echo "::error::CI-A11Y-007 VR shard $SHARD compare step took $step s, at or over its 600 s ceiling (docs/ci-runbook.md)"
+            exit 1
+          fi
+          if [ "$ms" -ge 900 ]; then
+            echo "::error::CI-A11Y-007 VR shard $SHARD compare step ran at $ms ms/cell over $cells cells, at or over 900 ms/cell (docs/ci-runbook.md)"
+            exit 1
+          fi
+          if [ "$ms" -ge 450 ]; then
+            echo "::warning::CI-A11Y-007 VR shard $SHARD compare step ran at $ms ms/cell over $cells cells (norm 300, fail at 900; usually a slow runner pool; a code cause is possible above the norm)"
           fi
 
       - name: Upload the diff images
