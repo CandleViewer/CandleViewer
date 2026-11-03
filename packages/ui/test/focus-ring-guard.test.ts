@@ -158,6 +158,25 @@ const SITES: Readonly<Record<string, Site>> = {
     reason:
       "the menuitem holds the label; its row draws the inset ring so the scroll box never clips it",
   },
+  [`${UI}/accountmultiselect.css|.cv-account-multi-select__list`]: {
+    kind: "container-focus",
+    ring: {
+      file: `${UI}/accountmultiselect.css`,
+      selector:
+        ".cv-account-multi-select__list:focus-visible > .cv-account-multi-select__row[data-active]",
+    },
+    reason:
+      "the listbox holds focus; its active row draws the inset ring (CMP-039, H8) and an empty list draws its own",
+  },
+  [`${UI}/celleditor.css|.cv-cell-editor[data-editing] .cv-cell-editor__input`]: {
+    kind: "container-focus",
+    ring: {
+      file: `${UI}/celleditor.css`,
+      selector: ".cv-cell-editor[data-editing] > .cv-cell-editor__well",
+    },
+    reason:
+      "the input sits in the editing well; the well draws the ring over its 2 px focus-ring border while open (E29-D02)",
+  },
   [`${UI}/popover.css|.cv-popover:focus`]: {
     kind: "programmatic-target",
     reason: "tabindex -1 fallback target (conventions 32); not a control, never reached by Tab",
