@@ -65,6 +65,26 @@ describe("PrintExportBar (CMP-099, E29-S04; E29-D04 §2.8.9)", () => {
     expect(onExport).not.toHaveBeenCalled();
   });
 
+  it("running busies every format's button, and nothing is sent from either", async () => {
+    const onExport = fn();
+    const host = await mount(
+      <PrintExportBar formats={["csv", "pdf"]} onExport={onExport} loading />,
+    );
+    const buttons = within(host).getAllByRole("button");
+    expect(buttons.map((b) => [b.textContent, b.getAttribute("aria-busy")])).toEqual([
+      ["Export CSV", "true"],
+      ["Export PDF", "true"],
+    ]);
+    for (const button of buttons) {
+      await userEvent.tab();
+      expect(button).toHaveFocus();
+      await userEvent.keyboard("{Enter}");
+      await userEvent.keyboard(" ");
+      await userEvent.click(button);
+    }
+    expect(onExport).not.toHaveBeenCalled();
+  });
+
   it("busy is never T2: no aria-disabled, no disabled, no lock and no reason (E29-D04:391)", async () => {
     const host = await mount(<PrintExportBar formats={["csv"]} onExport={fn()} loading />);
     const button = exportCsv(host);
@@ -137,6 +157,18 @@ describe("printexportbar.css contract (E29-D04 §2.8.9)", () => {
     const arc = find(css.normal, `${busy} > .cv-spinner`, "order");
     expect(arc).toContain("order: -1");
     expect(arc).toContain("position: static");
+  });
+
+  it("running shows the arc: no rule in the sheet hides CMP-014's spinner", () => {
+    const spinnerRules = [...css.all.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) =>
+      (m[1] ?? "").includes(".cv-spinner"),
+    );
+    expect(spinnerRules.length).toBeGreaterThan(0);
+    for (const [, selector, body] of spinnerRules) {
+      expect(body, selector).not.toMatch(
+        /\bdisplay\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0(?![.\d])/,
+      );
+    }
   });
 });
 
