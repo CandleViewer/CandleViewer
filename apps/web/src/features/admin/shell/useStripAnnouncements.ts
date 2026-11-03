@@ -1,27 +1,32 @@
 import { useEffect, useRef } from "react";
 import { ADMIN_COPY, sortAdminStrip, type AdminStripItem } from "@candleviewer/ui";
-import { announce, forget, lastWrittenAt, REGION_BUDGET_MS } from "../../app-shell/announcer";
+import {
+  announce,
+  clearAnnouncements,
+  lastWrittenAt,
+  REGION_BUDGET_MS,
+} from "../../app-shell/announcer";
 import { useAdminSelector, type AdminReadState } from "../overview/readStore";
-import { denial, STRIP_READS } from "../overview/strip";
+import { denial, STRIP_READS, stripUnread } from "../overview/strip";
 
-/** One announcer key per item: said once, until the item leaves the strip or the visit ends. */
-const keyOf = (id: string): string => `admin:strip:${id}`;
-
+/** Every strip line's announcer key starts with this: the visit's end clears them all. */
+const STRIP_PREFIX = "admin:strip:";
 /**
- * Where the strip's reads stand. `loading` until each has answered once (the strip is still
- * filling); `complete` when every one answered `ok` (the strip is all there is to see); else
- * `partial`: a failed or not-built source draws none of its items, so its absences mean nothing.
+ * One announcer key per item: said once, until the item leaves the strip or the visit ends. The
+ * colon ends the id, so clearing one item's key never reaches another whose id it prefixes; strip
+ * ids carry no colon (today's four: no_mfa, key_expiry, keys_invalid, tier).
  */
-type Reads = "loading" | "partial" | "complete";
-function readsOf(s: AdminReadState): Reads {
-  if (STRIP_READS.some((id) => s[id].phase === "idle")) return "loading";
-  return STRIP_READS.every((id) => s[id].phase === "ok") ? "complete" : "partial";
-}
+const keyOf = (id: string): string => `${STRIP_PREFIX}${id}:`;
+
+/** A read has yet to answer once: the strip is filling, and what it settles on is the arrival. */
+const filling = (s: AdminReadState): boolean => STRIP_READS.some((id) => s[id].phase === "idle");
 
 /**
  * What is said for an item: its pill's accessible name (CMP-087's `StripItem`; E42-D03 §6 Keys:
  * "Attention:" leads a warning and the env badge is part of the name), so the owner hears what
- * Tab will read.
+ * Tab will read. PROPOSED (§14's `announce.*` has no key for a new warning item): the sentence is
+ * the lane's own, as `ADMIN_COPY.graceAnnounce` is. It copies `StripItem`'s naming rule, which
+ * lives in packages/ui and is not shared (that would change the package): the tests pin the two.
  */
 function wordsOf(item: AdminStripItem): string {
   const lead = item.severity !== "info" && !item.label.startsWith(ADMIN_COPY.attention);
@@ -31,12 +36,15 @@ function wordsOf(item: AdminStripItem): string {
 
 /** What one stay in the area has said and has still to say. */
 interface Visit {
-  /** The ids on the strip at the last answer; `null` until the arrival, the strip first settled. */
+  /**
+   * The ids on the strip at the last answer, and the earlier ones whose own source is unread (they
+   * have not left); `null` until the strip first settles.
+   */
   present: ReadonlySet<string> | null;
-  /** New items not yet said, oldest first. */
-  waiting: AdminStripItem[];
-  /** The ids whose line this visit wrote: the visit's end forgets their keys. */
-  said: Set<string>;
+  /** The items on the strip at the last answer: a line is said in the words its pill reads now. */
+  now: ReadonlyMap<string, AdminStripItem>;
+  /** The ids of new items not yet said, in the order queued: the strip's order within a read. */
+  waiting: string[];
   timer: ReturnType<typeof setTimeout> | null;
   /** The polite region's last write when the timer was armed: nobody wrote since, the wait is spent. */
   armedFor: number | null;
@@ -49,11 +57,16 @@ function cancel(visit: Visit): void {
   visit.waiting = [];
 }
 
-/** The visit is over: a later one may say these items again. */
+/**
+ * The visit is over: its lines go from the region, its record with them (nothing an admin read
+ * answered outlives a denial, S-5330-03), and a later visit may say these items again. No stale
+ * text outlives the condition (`announcer.tsx`).
+ */
 function end(visit: Visit): void {
   cancel(visit);
-  for (const id of visit.said) forget(keyOf(id));
-  visit.said.clear();
+  clearAnnouncements(STRIP_PREFIX);
+  visit.now = new Map();
+  visit.present = null;
 }
 
 /**
@@ -65,7 +78,9 @@ function end(visit: Visit): void {
  */
 function sayNext(visit: Visit): void {
   visit.timer = null;
-  const next = visit.waiting[0];
+  // The first waiting item the strip has, as its pill reads it now: a count may have moved while it
+  // waited. One off the strip says nothing and holds no other up; it is said once it is back.
+  const next = visit.waiting.map((id) => visit.now.get(id)).find((item) => item !== undefined);
   if (next === undefined) return;
   const last = lastWrittenAt("polite");
   const wait =
@@ -75,9 +90,8 @@ function sayNext(visit: Visit): void {
     visit.timer = setTimeout(() => sayNext(visit), wait);
     return;
   }
-  visit.waiting.shift();
+  visit.waiting = visit.waiting.filter((id) => id !== next.id);
   announce("polite", wordsOf(next), keyOf(next.id));
-  visit.said.add(next.id);
   sayNext(visit);
 }
 
@@ -86,29 +100,34 @@ function sayNext(visit: Visit): void {
  * E42-D03 §6 Keys: the strip is not live, "the shell announces a new item once"; E42-D02:312 and the
  * hand-off's Table 5: polite, once per item). The area owns no live region of its own.
  *
- * What is new. An item is one `id` on the strip, so a count that moves on an item already there is
- * no new item. The items on the strip once its reads have all answered are the owner's arrival and
- * say nothing, however the answers interleave. After that an `id` not on the strip before is new,
- * and one that left and comes back is new again. Only an answer that read both sources says an item
- * left: a failed read draws none of its items (an item can't be marked old), and its recovery is
- * no news. A strip left undrawn (a source unread, nothing else to show) says nothing either. The
- * one absence the strip cannot tell from an item gone is a slice that errored inside an answer
- * that otherwise succeeded, while another item stands.
+ * What is new. PROPOSED reading (§6 says only "a new item"): the items on the strip once its reads
+ * have all answered are the owner's arrival and say nothing, however the answers interleave; after
+ * that an `id` not on the strip before is new, an item whose source was still unread then included.
+ * An item is one `id`, so a count that moves on an item already there is no new item, and one that
+ * left and comes back is new again. An item has left only if its own source was read and it is not
+ * there: a failed or not-built read, or a slice that errored inside an answer that otherwise
+ * succeeded, draws none of its items (an item can't be marked old), so those are unread, not gone
+ * (`stripUnread`), and their return is no news. A strip left undrawn (a source unread, nothing
+ * else to show) says nothing either.
  *
- * Pacing. New items are said oldest first, one polite line each, behind any writer's last line.
- * Leaving the area, or a `403` that withdraws it, drops every line still waiting, and leaving
- * forgets the keys, so the next visit starts afresh.
+ * Pacing. New items are said in the strip's order within a read (`sortAdminStrip`), one polite line
+ * each, behind any writer's last line, in the words their pills read when their turn comes. A line
+ * is said only while its item is on the strip: one off it at its turn (its source unread, or it
+ * left) says nothing, and holds no other up. Leaving the area, or a `403` that withdraws it, drops
+ * every line still waiting; a line goes from the region with its item, and every one with the
+ * visit, so the next visit starts afresh.
  *
- * Not built: a critical item's assertive line (`announce.withdrawal`, `announce.tamper`, §14). No
- * critical item has a source yet (CG-7, CG-8), so every item here is a warning and polite.
+ * Never polite: a critical item (`announce.withdrawal`, `announce.tamper`, §14) is said
+ * assertively, which is not built (CG-7, CG-8: no critical item has a source), so it is skipped.
  */
 export function useStripAnnouncements(strip: readonly AdminStripItem[] | undefined): void {
-  const reads = useAdminSelector(readsOf);
+  const arriving = useAdminSelector(filling);
+  const unread = useAdminSelector(stripUnread);
   const withdrawn = useAdminSelector(denial) !== null;
   const visitRef = useRef<Visit>({
     present: null,
+    now: new Map(),
     waiting: [],
-    said: new Set(),
     timer: null,
     armedFor: null,
   });
@@ -116,31 +135,30 @@ export function useStripAnnouncements(strip: readonly AdminStripItem[] | undefin
   useEffect(() => {
     const visit = visitRef.current;
     if (withdrawn) {
-      cancel(visit); // the page these items pointed from is gone (SCR-154 N-2)
+      end(visit); // the page these items pointed from is gone (SCR-154 N-2)
       return;
     }
-    if (reads === "loading") return; // what the strip settles on is the arrival
+    if (arriving) return; // what the strip settles on is the arrival
     const items = strip ?? [];
-    const ids = new Set(items.map((item) => item.id));
+    visit.now = new Map(items.map((item) => [item.id, item]));
     const before = visit.present;
     if (before === null) {
-      visit.present = ids;
+      visit.present = new Set(visit.now.keys());
       return;
     }
-    if (strip !== undefined && reads === "complete") {
-      for (const id of before) {
-        if (ids.has(id)) continue;
-        forget(keyOf(id)); // its condition ended: coming back, it is new
-        visit.said.delete(id);
-      }
-      visit.waiting = visit.waiting.filter((item) => ids.has(item.id));
-      visit.present = ids;
-    } else {
-      visit.present = new Set([...before, ...ids]);
+    // Absent, an item has left only if its own source was read; else it is not known to have.
+    const unreadIds = new Set(unread);
+    const kept = new Set(visit.now.keys());
+    for (const id of before) {
+      if (visit.now.has(id) || unreadIds.has(id)) kept.add(id);
+      else clearAnnouncements(keyOf(id)); // its condition ended: its line goes, and it is new again
     }
-    visit.waiting.push(...sortAdminStrip(items.filter((item) => !before.has(item.id))));
+    visit.present = kept;
+    // Never politely (handoff:298): a critical item's assertive line is not built (CG-7, CG-8)
+    const fresh = items.filter((item) => item.severity !== "critical" && !before.has(item.id));
+    visit.waiting.push(...sortAdminStrip(fresh).map((item) => item.id));
     if (visit.timer === null) sayNext(visit);
-  }, [strip, reads, withdrawn]);
+  }, [strip, arriving, unread, withdrawn]);
 
   useEffect(() => {
     const visit = visitRef.current;

@@ -23,14 +23,14 @@ const count = (fields: Fields | undefined, name: string): number | undefined => 
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 };
 
-/**
- * The items, ordered by CMP-087; `[]` when both reads answered `ok` and nothing needs the owner;
- * and `undefined` (no strip) while a source is unread or failed and nothing else needs the owner:
- * an unread source or a kept count is never "Nothing needs your action" (D03 OV-2, D02 D4;
- * A-5330-06). No item is timed: a slice's `generated_at` is when it was read, not when its
- * condition was raised, and would reorder the items between re-reads (C-5330-08).
- */
-export function stripItems(s: AdminReadState, env: Env): AdminStripItem[] | undefined {
+/** What the strip reads from the current answers. */
+interface StripRead {
+  readonly items: AdminStripItem[];
+  /** The ids of the items whose own source was unread: their absence from `items` means nothing. */
+  readonly unread: string[];
+}
+
+function readStrip(s: AdminReadState, env: Env): StripRead {
   const overview = s.overview.phase === "ok" ? s.overview.data : undefined;
   const capacity = s.capacity.phase === "ok" ? s.capacity.data : undefined;
   const users = overview?.users as Fields | undefined;
@@ -38,7 +38,7 @@ export function stripItems(s: AdminReadState, env: Env): AdminStripItem[] | unde
   const subaccounts = capacity?.subaccounts as Fields | undefined;
   const scoped = env === "unknown" ? {} : { env };
   const items: AdminStripItem[] = [];
-  let unread = false;
+  const unread: string[] = [];
   const add = (
     id: string,
     label: string,
@@ -49,26 +49,48 @@ export function stripItems(s: AdminReadState, env: Env): AdminStripItem[] | unde
     if (href === undefined) return; // no table entry: no link, so no item
     items.push({ id, label, href, kind: "other", severity: "warning", ...more });
   };
-  const counted = (fields: Fields | undefined, name: string): number => {
+  const counted = (id: string, fields: Fields | undefined, name: string): number => {
     const n = count(fields, name);
-    if (n === undefined) unread = true;
+    if (n === undefined) unread.push(id);
     return n ?? 0;
   };
 
-  const noMfa = counted(users, "without_mfa");
+  const noMfa = counted("no_mfa", users, "without_mfa");
   if (noMfa > 0) add("no_mfa", COPY.strip.noMfa(noMfa), "users");
-  const expiring = counted(accounts, "keys_expiring_30d");
+  const expiring = counted("key_expiry", accounts, "keys_expiring_30d");
   if (expiring > 0) add("key_expiry", COPY.strip.keyExpiry(expiring), "accounts", scoped);
-  const invalid = counted(accounts, "keys_invalid");
+  const invalid = counted("keys_invalid", accounts, "keys_invalid");
   if (invalid > 0) add("keys_invalid", COPY.strip.keysInvalid(invalid), "accounts", scoped);
   const tierSource = subaccounts?.["tier_source"];
   if (tierSource === "unrecorded") {
     add("tier", COPY.strip.tier, "users");
   } else if (tierSource !== "recorded") {
-    unread = true;
+    unread.push("tier");
   }
+  return { items, unread };
+}
+
+/**
+ * The items, ordered by CMP-087; `[]` when both reads answered `ok` and nothing needs the owner;
+ * and `undefined` (no strip) while a source is unread or failed and nothing else needs the owner:
+ * an unread source or a kept count is never "Nothing needs your action" (D03 OV-2, D02 D4;
+ * A-5330-06). No item is timed: a slice's `generated_at` is when it was read, not when its
+ * condition was raised, and would reorder the items between re-reads (C-5330-08).
+ */
+export function stripItems(s: AdminReadState, env: Env): AdminStripItem[] | undefined {
+  const { items, unread } = readStrip(s, env);
   if (items.length > 0) return items;
-  return unread ? undefined : [];
+  return unread.length > 0 ? undefined : [];
+}
+
+/**
+ * The ids of the items whose own source is unread: a read that failed or is not built, a slice that
+ * errored inside an answer that otherwise succeeded (the contract omits its unread fields), or a
+ * tier the strip does not know. Such an item's absence from the strip means nothing: it is not
+ * known to have left, which is what the announcement of a new item needs to tell (C-5330-d02).
+ */
+export function stripUnread(s: AdminReadState): string[] {
+  return readStrip(s, "unknown").unread;
 }
 
 /** "Entering this area was recorded": once a strip read was answered `2xx` (D03 §4, D27). */
