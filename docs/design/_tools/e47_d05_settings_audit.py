@@ -28,8 +28,9 @@ mutations).
    and CMP-019), G-PUBLIC (no URL, host, local path, worker name or secret-shaped string), G-PENDING
    (the heading names the ruling; BQ-0 … BQ-13 once each, "default built"; BQ-0 … BQ-10 open with
    "RULED (<ruling>)", BQ-11 … BQ-13 never say RULED), G-BOARDS
-   (at most ten, every board pending, twins at most a third, the not-drawn paragraph, the hand-off's
-   board plan the same boards), G-HEUR, G-WALK (at most ten), G-OWNER (G-ledger owners are tickets
+   (at most ten, every board pending or drawn with its board id, PNG, size, frames, nodes and its
+   theme's gate, twins at most a third, the not-drawn paragraph, the hand-off's board plan the same
+   boards), G-HEUR, G-WALK (at most ten), G-OWNER (G-ledger owners are tickets
    or owners, never an agent), G-UNTOUCHED (only this ticket's files differ from the merge base with
    origin/main), G-BUDGET, G-MUTLIST.
 4. **Pins (G-RULED-PIN).** A whole-document default-deny pin set over every unit of both documents
@@ -68,7 +69,11 @@ HAND_REL = "docs/design/E47/E47-D05-handoff.md"
 TOOL_REL = "docs/design/_tools/e47_d05_settings_audit.py"
 PIN_REL = "docs/design/_tools/e47_d05_ruled_pins.txt"
 OWN = (SPEC_REL, HAND_REL, TOOL_REL, PIN_REL)
-OWN_BOARDS = re.compile(r"docs/design/E47/img/E47-D05-\d\d-[a-z0-9-]+\.png")
+# the boards PR: the PNGs, the sheet kit, its MANIFEST lines and its .prettierignore entry
+OWN_BOARDS = re.compile(
+    r"docs/design/E47/img/E47-D05-\d\d-[a-z0-9-]+\.png|\.prettierignore"
+    r"|docs/design/_tools/sheets/(?:e47-d05/[A-Za-z0-9._/-]+|MANIFEST\.sha256)"
+)
 SPEC_BUDGET = 460
 HAND_BUDGET = 150
 
@@ -82,10 +87,10 @@ class Pin:
     pr: int
 
 
-# The in-flight blockers, read at their PR heads (R6); re-pinned to the merge commit at merge.
+# The blockers, read at their PR heads (R6), re-pinned to their merge commits (same texts).
 PINS = (
-    Pin("D03", "10eb2a345", "docs/design/E47/E47-D03.md", "design/e47-themes-contrast", 5392),
-    Pin("D04", "1ff5d8cb9", "docs/design/E47/E47-D04.md", "design/e47-d04-focus-landmarks", 5387),
+    Pin("D03", "73fefc62b", "docs/design/E47/E47-D03.md", "design/e47-themes-contrast", 5392),
+    Pin("D04", "48c711e64", "docs/design/E47/E47-D04.md", "design/e47-d04-focus-landmarks", 5387),
 )
 
 PLAN = {
@@ -120,6 +125,14 @@ BQ_IDS = tuple(f"BQ-{n}" for n in range(14))
 BQ_RULED = frozenset(f"BQ-{n}" for n in range(11))  # the ruling names BQ-0 … BQ-10 only
 BQ_DEFAULT = "default built"
 PENDING_CELL = "pending: drawn later in this PR"
+DRAWN_CELL = re.compile(
+    r"drawn: board id `[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`, "
+    r"`docs/design/E47/img/E47-D05-(?P<nn>\d\d)-(?P<slug>[a-z0-9-]+)\.png` \(\d+ × \d+\), "
+    r"\d+ frames?, [\d,]+ nodes; (?P<gate>dark|light|high-contrast) gate PASS "
+    r"\(own [\d,]+ px, other [\d,]+ px\)"
+)
+# a drawn cell's gate is its row's theme
+GATE_OF = {"dark": "dark", "light": "light", "hc": "high-contrast"}
 THEMES = ("dark", "light", "hc", "mixed")
 
 KEYS_SPAN = (23351, 23358)  # `22`'s accessibility subtree at BASE
@@ -425,12 +438,12 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     _m(
         "M-2",
-        "mark board 03 drawn in §0",
+        "give board 03 another theme's gate in §0",
         "G-BOARDS",
         "spec",
         "## 0.",
-        "| hc    | pending: drawn later in this PR",
-        "| hc    | drawn",
+        "nodes; high-contrast gate PASS",
+        "nodes; dark gate PASS",
     ),
     _m(
         "M-3",
@@ -565,8 +578,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-PIN",
         "spec",
         "",
-        "`1ff5d8cb9` (E47-D04, PR #5387)",
-        "`1ff5d8cb8` (E47-D04, PR #5387)",
+        "`48c711e64` (E47-D04, PR #5387)",
+        "`48c711e63` (E47-D04, PR #5387)",
     ),
     _m(
         "M-18",
@@ -941,8 +954,14 @@ def g_boards(t: Texts) -> list[Finding]:
     if [r[0] for r in rows] != [f"{n:02d}" for n in range(1, len(rows) + 1)]:
         bad.append("the boards are not numbered 01 onward")
     for r in rows:
-        if r[3] not in THEMES or r[4] != PENDING_CELL or not r[2]:
-            bad.append(f"board {r[0]} is not a pending board with a theme and a draw list")
+        name = re.fullmatch(r"`E47-D05 / (\d\d) ([a-z0-9-]+)`", r[1])
+        drawn = DRAWN_CELL.fullmatch(r[4])
+        if r[3] not in THEMES or not r[2] or not name or name.group(1) != r[0]:
+            bad.append(f"board {r[0]} has no theme, draw list or board name")
+        elif r[4] != PENDING_CELL and not (drawn and (drawn["nn"], drawn["slug"]) == name.groups()):
+            bad.append(f"board {r[0]} is neither pending nor drawn with its own PNG")
+        elif drawn and drawn["gate"] != GATE_OF.get(r[3]):
+            bad.append(f"board {r[0]}'s drawn cell names another theme's gate")
     if 3 * sum(1 for r in rows if r[3] != "dark") > len(rows):
         bad.append("twins exceed a third")
     if not any(
