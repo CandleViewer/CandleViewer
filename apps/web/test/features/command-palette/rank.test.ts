@@ -102,3 +102,22 @@ describe("E10-S05 rank.ts: the empty query's sections", () => {
     });
   });
 });
+
+describe("E10-S05 the admin drop is structural (orchestrator read 6552062861)", () => {
+  const adminRow: PaletteRow = {
+    id: "fake:admin",
+    label: "Fake admin page",
+    group: "Navigate",
+    target: { kind: "route", path: "/admin/users" },
+  };
+  const fake = source("fake-source", [adminRow, row("fake:other", "Navigate")]);
+
+  it("drops an /admin route from any source without admin:read", () => {
+    expect(buildIndex([fake], CTX).map((r) => r.id)).toEqual(["fake:other"]);
+  });
+
+  it("keeps it with admin:read", () => {
+    const ctx = { ...CTX, claims: { ...CTX.claims, permissions: ["admin:read"] } };
+    expect(buildIndex([fake], ctx).map((r) => r.id)).toEqual(["fake:admin", "fake:other"]);
+  });
+});

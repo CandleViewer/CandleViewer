@@ -61,7 +61,7 @@ export interface PaletteSource {
 
 /** `14` §0.5 rule 5 step 1: an `/admin/*` destination needs `admin:read`, whatever the manifest's `access` says. */
 export const ADMIN_READ = "admin:read";
-const isAdminPath = (path: string): boolean => path === "/admin" || path.startsWith("/admin/");
+export const isAdminPath = (path: string): boolean => path === "/admin" || path.startsWith("/admin/");
 
 /**
  * Manifest entries that are not places to go: Sign out (an action that ends the session, R-004), the lock screen
