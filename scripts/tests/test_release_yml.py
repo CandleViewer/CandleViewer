@@ -290,7 +290,7 @@ def test_dispatch_is_refused_off_main_or_with_invalid_inputs(
     rc, out, output = _bash(tmp_path, step["run"], env)
     assert (rc == 0) == ok, out
     if ok:
-        assert output == f"candidate={SHA}\ndry_run=true\nallow_1_0_0=false\n"
+        assert output == f"requested={SHA}\ndry_run=true\nallow_1_0_0=false\n"
     else:
         assert "::error::CI-REL-005" in out and "candidate=" not in output
 
@@ -322,6 +322,80 @@ def test_classify_greps_only_the_candidate_line_into_the_outputs(
     assert got_rc == expected_rc, out
     assert output == expected_output
     assert stdout.splitlines()[0] in out  # the tool's own output is still shown
+
+
+def test_a_dispatch_classifies_the_given_candidate_s_own_change() -> None:
+    # The dispatched sha is never the candidate by itself: only classify names it.
+    assert JOBS["classify"]["outputs"]["candidate"] == (
+        "${{ steps.dispatch.outputs.candidate || steps.classify.outputs.candidate }}"
+    )
+    step = _step("classify", "Classify the dispatched candidate")
+    assert step["id"] == "dispatch" and step["if"] == "github.event_name == 'workflow_dispatch'"
+    assert step["env"] == {"REQUESTED": "${{ steps.inputs.outputs.requested }}"}
+    run = step["run"]
+    assert 'prepare_release.py --classify --rev "$REQUESTED" "${before[@]}"' in run
+    assert 'git rev-parse -q --verify "$REQUESTED^1"' in run
+    assert 'before=(--before "$parent")' in run
+    # Both paths need the repository and Python: the checkout and setup steps are unconditional.
+    for step in _steps("classify"):
+        if "uses" in step:
+            assert "if" not in step, step["uses"]
+
+
+DISPATCH_FAKE_PYTHON = """import os, sys
+with open(os.environ["ARGV_LOG"], "w", encoding="utf-8") as fh:
+    fh.write(" ".join(sys.argv[1:]))
+print(os.environ["FAKE_OUT"])
+sys.exit(int(os.environ.get("FAKE_RC", "0")))
+"""
+DISPATCH_FAKE_GIT = """import os, sys
+parent = os.environ.get("FAKE_PARENT", "")
+if parent:
+    print(parent)
+sys.exit(0 if parent else 1)
+"""
+
+
+@pytest.mark.parametrize(
+    ("stdout", "rc", "ok"),
+    [
+        (f"candidate={SHA}", 0, True),
+        ("candidate=", 0, False),  # the given commit is not a prep merge
+        (f"candidate={'c' * 40}", 0, False),  # classify names another commit
+        (f"candidate={'c' * 40}\ncandidate={SHA}", 0, False),
+        (f"::error::x%0Acandidate={SHA}", 0, False),  # no strict key line
+        ("::error::CI-REL-005: 2 release candidates in one push", 1, False),
+    ],
+)
+def test_dispatch_fails_when_classify_s_candidate_differs_from_the_input(
+    tmp_path: Path, stdout: str, rc: int, ok: bool
+) -> None:
+    step = _step("classify", "Classify the dispatched candidate")
+    log = tmp_path / "argv"
+    env = {"REQUESTED": SHA, "FAKE_OUT": stdout, "FAKE_RC": str(rc), "ARGV_LOG": str(log)}
+    env |= {"FAKE_PARENT": "b" * 40}
+    fakes = {"python": DISPATCH_FAKE_PYTHON, "git": DISPATCH_FAKE_GIT}
+    got_rc, out, output = _bash(tmp_path, step["run"], env, fakes)
+    assert (got_rc == 0) == ok, out
+    assert log.read_text(encoding="utf-8") == (
+        f"tools/ci/prepare_release.py --classify --rev {SHA} --before {'b' * 40}"
+    )
+    if ok:
+        assert output == f"candidate={SHA}\n"
+    else:
+        assert output == ""
+        if rc == 0:
+            assert "::error::CI-REL-005" in out
+
+
+def test_dispatch_classifies_a_root_candidate_alone(tmp_path: Path) -> None:
+    step = _step("classify", "Classify the dispatched candidate")
+    log = tmp_path / "argv"
+    env = {"REQUESTED": SHA, "FAKE_OUT": f"candidate={SHA}", "ARGV_LOG": str(log)}
+    fakes = {"python": DISPATCH_FAKE_PYTHON, "git": DISPATCH_FAKE_GIT}
+    got_rc, out, output = _bash(tmp_path, step["run"], env | {"FAKE_PARENT": ""}, fakes)
+    assert got_rc == 0 and output == f"candidate={SHA}\n", out
+    assert log.read_text(encoding="utf-8") == f"tools/ci/prepare_release.py --classify --rev {SHA}"
 
 
 def test_verify_greps_only_the_version_line_into_the_outputs(tmp_path: Path) -> None:

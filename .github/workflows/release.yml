@@ -10,8 +10,10 @@ name: release
 #
 # - classify: a push to main touching CHANGELOG.md or version.txt names its one candidate
 #   (`prepare_release.py --classify` over the push's first-parent commits); none ends the run
-#   green, two or more is CI-REL-005. A dispatch from main names C itself (`candidate`, 40
-#   lowercase hex), with `dry_run` (default true) and the owner's 1.0.0 declaration (C-15.9).
+#   green, two or more is CI-REL-005. A dispatch from main gives C (`candidate`, 40 lowercase
+#   hex), with `dry_run` (default true) and the owner's 1.0.0 declaration (C-15.9); classify
+#   runs over C's own first-parent change (C^..C; C alone for a root commit) and refuses it with
+#   CI-REL-005 unless it names exactly C, so a dispatch can only re-run a release candidate.
 # - verify: `prepare_release.py --verify` (identity, tag history, version, completeness, C
 #   reachable from origin/main) and C GitHub-verified (04 §12.3); CI-REL-005 / CI-REL-002.
 # - e2e: _job-e2e.yml checked out at C (C-9.1 #8, C-15.8), e2e-electron included.
@@ -71,7 +73,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      candidate: ${{ steps.inputs.outputs.candidate || steps.classify.outputs.candidate }}
+      candidate: ${{ steps.dispatch.outputs.candidate || steps.classify.outputs.candidate }}
       dry_run: ${{ steps.inputs.outputs.dry_run }}
       allow_1_0_0: ${{ steps.inputs.outputs.allow_1_0_0 }}
     steps:
@@ -104,19 +106,17 @@ jobs:
             esac
           done
           {
-            echo "candidate=$IN_CANDIDATE"
+            echo "requested=$IN_CANDIDATE"
             echo "dry_run=$IN_DRY_RUN"
             echo "allow_1_0_0=$IN_ALLOW"
           } >> "$GITHUB_OUTPUT"
 
-      - if: github.event_name == 'push'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - if: github.event_name == 'push'
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -134,6 +134,30 @@ jobs:
           cat "$RUNNER_TEMP/classify.out"
           [ "$rc" -eq 0 ] || exit "$rc"
           grep -E '^candidate=([0-9a-f]{40})?$' "$RUNNER_TEMP/classify.out" >> "$GITHUB_OUTPUT"
+
+      - name: Classify the dispatched candidate's own change (CI-REL-005 unless it names it)
+        id: dispatch
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REQUESTED: ${{ steps.inputs.outputs.requested }}
+        run: |
+          set -euo pipefail
+          before=()
+          if parent="$(git rev-parse -q --verify "$REQUESTED^1")"; then
+            before=(--before "$parent")
+          fi
+          rc=0
+          python tools/ci/prepare_release.py --classify --rev "$REQUESTED" "${before[@]}" \
+            > "$RUNNER_TEMP/classify.out" || rc=$?
+          cat "$RUNNER_TEMP/classify.out"
+          [ "$rc" -eq 0 ] || exit "$rc"
+          found="$(grep -E '^candidate=([0-9a-f]{40})?$' "$RUNNER_TEMP/classify.out" || true)"
+          if [ -z "$REQUESTED" ] || [ "$found" != "candidate=$REQUESTED" ]; then
+            echo "::error::CI-REL-005: classify does not name $REQUESTED as the candidate of its" \
+              "own change (got '${found:-nothing}'): a dispatch re-runs only a prep merge"
+            exit 1
+          fi
+          printf '%s\n' "$found" >> "$GITHUB_OUTPUT"
 
   verify:
     name: verify

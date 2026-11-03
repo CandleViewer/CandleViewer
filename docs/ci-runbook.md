@@ -1332,12 +1332,15 @@ carries a warning annotation titled `regression-guard (non-required)`, and the j
   line is the same race with a bigger bump. Remedy: fix on `main` if needed,
   open a new `[Release prep]` issue, run the prepare command (`AGENTS.md`
   §4) on `main`'s fresh tip and merge the prep PR alone; its merge is a
-  candidate again. A same-version re-prep that was mis-titled does not
-  start the run: dispatch `release.yml` from `main` with `candidate=<sha>`
-  (the full 40-hex sha) and `dry_run=false`, the release run command in
-  `AGENTS.md` §4 (`dry_run` defaults to `true`, which verifies and runs the
-  e2e gate and the SBOMs but creates nothing). A candidate that is not
-  GitHub-verified is refused too. A re-run on the candidate of a published
+  candidate again. To re-run a candidate, dispatch `release.yml` from
+  `main` with `candidate=<sha>` (the full 40-hex sha) and `dry_run=false`,
+  the release run command in `AGENTS.md` §4 (`dry_run` defaults to `true`,
+  which verifies and runs the e2e gate and the SBOMs but creates nothing).
+  The run classifies that commit's own first-parent change and refuses it
+  (`classify does not name <sha>`) unless classify names exactly that
+  commit: its subject is the prep title or it changes `version.txt`. A
+  mis-titled same-version re-prep is therefore no candidate: re-prep under
+  the prep title. A candidate that is not GitHub-verified is refused too. A re-run on the candidate of a published
   release is refused (`release vX.Y.Z is published`) before anything is
   rebuilt or replaced: published assets are immutable (C-15.7), so the fix
   ships as a new release. A rogue tag
