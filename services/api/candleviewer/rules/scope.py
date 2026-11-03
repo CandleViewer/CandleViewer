@@ -311,6 +311,9 @@ class ActionRequest:
     ir_hash: str  # the version's content hash
     run_id: UUID  # the fire's id, shared by its actions
     armed_by: str | None  # the row's; `None` unless the row is armed
+    #: E35-T13 (24 §11.5): the depth of the signal whose evaluation fired this action, 0 when no
+    #: signal did; an `emit_signal` action emits one level deeper.
+    signal_depth: int = 0
 
 
 ActionSink = Callable[[ActionRequest], Awaitable[None]]

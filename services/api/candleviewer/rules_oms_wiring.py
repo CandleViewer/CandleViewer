@@ -12,15 +12,18 @@ was checked against gave them, `None` when it was not read (E35-T10, BQ-5).
 `rule_switches` binds checks 2 and 3 to the two flag views and the B18 verdict the OMS takes, and
 `rule_order_budget` the SR-104 order budget, its counts rebuilt over the rules repository and its
 boot settings refused above their hard caps; `RuleAlerts` also pages the circuit breaker's trips.
+E35-T13 binds `send_notification`'s handler over the `rule.notify` outbox writer
+(`rule_notification_handler`) and refuses start above the signal chain's depth cap
+(`rule_signal_depth`).
 Outcome and severity go as their values (C-3.3 keeps `audit` from this module, as from
-`oms_stream_wiring`). Nothing here logs: the input snapshot is financial and confidential (21
+`oms_stream_wiring`). Nothing here logs an input snapshot: it is financial and confidential (21
 §3.4.3).
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Final, Literal, Protocol
 from uuid import UUID
 
@@ -30,10 +33,20 @@ from candleviewer.domain.primitives import AccountId
 from candleviewer.observability.health_probes import SystemEvent, SystemEventWriter
 from candleviewer.observability.metrics import Metrics
 from candleviewer.rules.executor.budget import DAY_S, OrderBudget
+from candleviewer.rules.executor.control import RULE_NOTIFY_TOPIC, NotificationHandler, NotifyRow
 from candleviewer.rules.executor.handlers import COUNTS_ORDERS
 from candleviewer.rules.executor.metrics import ExecutorMetrics
 from candleviewer.rules.executor.ports import ActionAuditFields, EventRow, RunRow, RunStatus
-from candleviewer.rules.limits import ORDER_BUDGET_CAPS
+from candleviewer.rules.limits import (
+    ORDER_BUDGET_CAPS,
+    RULE_NOTIFY_SWEEP_LIMIT,
+    RULE_NOTIFY_TTL_S,
+    SIGNAL_MAX_DEPTH_CAP,
+)
+from candleviewer.storage.repositories.relational_sqlalchemy import (
+    SqlAlchemyRelationalRepository,
+)
+from candleviewer.storage.repositories.rule_notify_sqlalchemy import SqlAlchemyRuleNotifyOutbox
 from candleviewer.storage.repositories.rules_sqlalchemy import (
     RuleEventInsert,
     SqlAlchemyRulesRepository,
@@ -242,6 +255,51 @@ def rule_order_budget(
             raise OrderBudgetAboveCap(f"{setting} is above its hard cap of {cap}")
     rebuild = None if repository is None else RuleBudgetRebuild(repository)
     return OrderBudget(per_minute, per_day, rebuild=rebuild)
+
+
+class NotifyWriter(Protocol):
+    """`SqlAlchemyRuleNotifyOutbox.enqueue`: the row landed once per key; how many expired."""
+
+    async def enqueue(self, dedup_key: str, payload: Mapping[str, Any]) -> int: ...
+
+
+class RuleNotifyOutbox:
+    """`NotificationOutbox` over the outbox writer (24 §11.5, 21 §3.10.4; E35-T13, BQ-8 of #5005):
+    one `rule.notify` row per action, keyed by its fire key; the rows the write dead-lettered,
+    still unclaimed past their TTL, are counted in one log line, never their payload."""
+
+    def __init__(self, writer: NotifyWriter) -> None:
+        self._writer = writer
+
+    async def enqueue(self, row: NotifyRow) -> None:
+        dead = await self._writer.enqueue(row.dedupe_key, row.payload)
+        if dead:
+            _log().info("rules.notify_rows_dead_lettered", topic=RULE_NOTIFY_TOPIC, count=dead)
+
+
+def rule_notification_handler(relational: SqlAlchemyRelationalRepository) -> NotificationHandler:
+    """`send_notification`'s handler over the outbox, for `RulesService.bind(handlers=...)`: the
+    topic, the TTL (PROPOSED, #2701) and the sweep's bound come from the rules module."""
+    writer = SqlAlchemyRuleNotifyOutbox(
+        relational, topic=RULE_NOTIFY_TOPIC, ttl_s=RULE_NOTIFY_TTL_S, limit=RULE_NOTIFY_SWEEP_LIMIT
+    )
+    return NotificationHandler(RuleNotifyOutbox(writer))
+
+
+class SignalDepthAboveCap(ValueError):
+    """The signal chain's depth setting above its hard cap: the app refuses to start."""
+
+
+def rule_signal_depth(value: int) -> int:
+    """The signal chain's depth limit from its boot setting (24 §11.5, §16.1; E35-T13 BQ-5), for
+    `RulesService.bind(signal_max_depth=...)`: `create_app` reads it whatever
+    `rules_evaluator_enabled` says, so a setting above `rules.limits.SIGNAL_MAX_DEPTH_CAP` (interim,
+    pending the owner's ratification, #2701) refuses start."""
+    if value > SIGNAL_MAX_DEPTH_CAP:
+        raise SignalDepthAboveCap(
+            f"CV_RULES_SIGNAL_MAX_DEPTH is above its hard cap of {SIGNAL_MAX_DEPTH_CAP}"
+        )
+    return value
 
 
 #: The account B18 is asked about for an action that names none (24 §11.5 check 3): no grant names

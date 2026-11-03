@@ -11,12 +11,17 @@ No handler is bound in E35-T09: check 2 blocks every type `unavailable` until it
 and check 8 refuses `widen_stop`, retired, for good as `native_sl` (24 §8.8 rule 5), bound or not
 (`rules/executor/gates.py`, E35-T10). No order path is reachable from here (C-2.6): an
 order-placing handler arrives with its slice's native-stop suite.
+
+E35-T13: this table stays unbound; the service builds a table of its own as the evaluator starts
+(`bind_handlers`), binding the engine's own handlers and those the composition root binds through
+`RulesService.bind(handlers=...)`, each checked against its type's capability. `waits_for` names
+what an unavailable type waits for, which the validator's `action_unavailable` warning quotes.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from types import MappingProxyType
 from typing import Any, Final, Literal, Protocol, get_args
@@ -61,9 +66,10 @@ TOUCHES_STOP: Final = frozenset(
 #: effect; `refused` is a definite refusal, never retried (`blocked_by` when a check of the set
 #: maps it); `pre_anchor` a refusal before the OMS anchor existed and `no_answer` a timeout or a
 #: transport failure, the two `retry_once` may retry; `in_flight` is recorded `unknown` and never
-#: re-sent; `raised` an engine-internal action that raised.
+#: re-sent; `raised` an engine-internal action that raised; `skipped` (E35-T13) a rule-control
+#: action whose target did not take the move, recorded `skipped` with its `detail`.
 AnswerClass = Literal[
-    "accepted", "refused", "pre_anchor", "no_answer", "in_flight", "done", "raised"
+    "accepted", "refused", "pre_anchor", "no_answer", "in_flight", "done", "raised", "skipped"
 ]
 
 
@@ -79,6 +85,11 @@ class HandlerAnswer:
     #: answer only, the one the ledger reads; an answer of unknown outcome (`no_answer`,
     #: `in_flight`) names none, and E35-T11 (#5003) carries what the ledger does with one.
     notional_usd: Decimal | None = None
+    #: E35-T13: a `skipped` answer's `blocked_detail`, one plain sentence (24 §11.9).
+    detail: str | None = None
+    #: E35-T13: the payload of a `rule_events` `log` row, written with the action's `action_ok` row
+    #: (`log_journal_tag`'s tag and note; 24 §11.5).
+    journal: Mapping[str, str | None] | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,8 +131,17 @@ class Handler(Protocol):
     async def send(self, prepared: Prepared, *, client_ref: str) -> HandlerAnswer: ...
 
 
+class BoundHandler(Handler, Protocol):
+    """A handler a slice binds (E35-T13; BQ-2 of #5005): `capability` names what it needs, which
+    must be its type's in the table."""
+
+    @property
+    def capability(self) -> Capability: ...
+
+
 class HandlerTableError(Exception):
-    """The table is incomplete, or a type declares neither `idempotent` nor a guard."""
+    """The table is incomplete, or a type declares neither `idempotent` nor a guard, or a handler
+    is bound where the table refuses it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +160,7 @@ class HandlerSpec:
     meets_allowance: bool = False  # an entry (`MEETS_ALLOWANCE`)
     counts_orders: bool = False  # hands an order to the OMS (`COUNTS_ORDERS`)
     touches_stop: bool = False  # a stop action (`TOUCHES_STOP`)
+    waits_for: str | None = None  # what an unavailable type waits for (E35-T13; BQ-10 of #5005)
 
     def __post_init__(self) -> None:
         if not self.idempotent and not (self.guarded and self.guard):
@@ -148,16 +169,34 @@ class HandlerSpec:
 
 @dataclass(frozen=True, slots=True)
 class HandlerBinding:
-    """The table's columns beside the catalogue's flags: never a flag of its own (BQ-10)."""
+    """The table's columns beside the catalogue's flags: never a flag of its own (BQ-10). E35-T13
+    (BQ-10 of #5005): `waits_for` names what an unavailable type waits for, one plain phrase the
+    validator's `action_unavailable` warning quotes; the change that binds the type clears it, so
+    validation answers alike in every process, and no handler binds while it is set."""
 
     capability: Capability
     bound_by: str | None
     guard: str | None = None
     refused_as: BlockedBy | None = None
+    waits_for: str | None = None
 
 
-def _b(capability: Capability, bound_by: str | None, guard: str | None = None) -> HandlerBinding:
-    return HandlerBinding(capability, bound_by, guard)
+def _b(
+    capability: Capability,
+    bound_by: str | None,
+    guard: str | None = None,
+    waits_for: str | None = None,
+) -> HandlerBinding:
+    return HandlerBinding(capability, bound_by, guard, waits_for=waits_for)
+
+
+#: What each unavailable type waits for (24 §11.5 "Actions that cannot run yet"): E29-T07 (#915)
+#: closed with `reversePosition` shipped and `setPositionTpSl` not mounted, so the pieces are named.
+_REVERSAL: Final = "a rule handler over the reverse-position operation"
+_POSITION_STOP: Final = "the position stop-loss operation (setPositionTpSl) to be mounted"
+_LOCKOUTS: Final = "the account lockouts of E39"
+_LEVERAGE: Final = "a leverage operation"
+_ALGOS: Final = "the order algorithms of E33"
 
 
 #: The anchor keeps an action's `client_ref` and `request_sha256`: a repeat answers the first.
@@ -175,14 +214,14 @@ BINDINGS: Final[Mapping[str, HandlerBinding]] = MappingProxyType(
         "modify_stop_loss": _b("oms_amend", "E35-T12"),  # a position's stop: #915
         "modify_take_profit": _b("oms_amend", "E35-T12"),
         "tighten_stop": _b("oms_amend", "E35-T12"),
-        "move_to_breakeven": _b("position_stop", "#915"),
-        "reverse_position": _b("position_stop", "#915", _ANCHOR),
-        "halt_new_orders": _b("lockouts", "E39"),
-        "resume_new_orders": _b("lockouts", "E39"),
-        "reduce_leverage": _b("leverage", None),  # no leverage operation is planned yet
-        "arm_chase_limit": _b("algos", "E33", _ANCHOR),
-        "start_iceberg_slice": _b("algos", "E33", _ANCHOR),
-        "start_twap": _b("algos", "E33", _ANCHOR),
+        "move_to_breakeven": _b("position_stop", None, waits_for=_POSITION_STOP),
+        "reverse_position": _b("position_stop", None, _ANCHOR, _REVERSAL),
+        "halt_new_orders": _b("lockouts", "E39", waits_for=_LOCKOUTS),
+        "resume_new_orders": _b("lockouts", "E39", waits_for=_LOCKOUTS),
+        "reduce_leverage": _b("leverage", None, waits_for=_LEVERAGE),  # none is planned yet
+        "arm_chase_limit": _b("algos", "E33", _ANCHOR, _ALGOS),
+        "start_iceberg_slice": _b("algos", "E33", _ANCHOR, _ALGOS),
+        "start_twap": _b("algos", "E33", _ANCHOR, _ALGOS),
         # The fire key on the alerts outbox's one row per delivery.
         "send_notification": _b("notifications", "E35-T13", "fire_key_outbox"),
         "log_journal_tag": _b("journal", "E35-T13"),
@@ -224,9 +263,26 @@ def build_handlers(
             bound_by=bound.bound_by, refused_as=bound.refused_as,
             meets_allowance=action_type in MEETS_ALLOWANCE,
             counts_orders=action_type in COUNTS_ORDERS,
-            touches_stop=action_type in TOUCHES_STOP,
+            touches_stop=action_type in TOUCHES_STOP, waits_for=bound.waits_for,
         )  # fmt: skip
     return MappingProxyType(table)
 
 
 HANDLERS: Final[Mapping[str, HandlerSpec]] = build_handlers(BINDINGS, ACTIONS, RETIRED_ACTIONS)
+
+
+def bind_handlers(
+    table: Mapping[str, HandlerSpec], handlers: Mapping[str, BoundHandler]
+) -> Mapping[str, HandlerSpec]:
+    """`table` with `handlers` bound (24 §11.5; BQ-2 of #5005), or `HandlerTableError`: a type
+    outside it, a type refused for good, a type still waiting for its operation (`waits_for`), or a
+    handler whose capability is not its type's."""
+    bound = dict(table)
+    for action_type, handler in handlers.items():
+        spec = table.get(action_type)
+        if spec is None or spec.refused_as is not None or spec.waits_for is not None:
+            raise HandlerTableError(f"{action_type} takes no handler")
+        if handler.capability != spec.capability:
+            raise HandlerTableError(f"{action_type} needs the {spec.capability} capability")
+        bound[action_type] = replace(spec, handler=handler)
+    return MappingProxyType(bound)

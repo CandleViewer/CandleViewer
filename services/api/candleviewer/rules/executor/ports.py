@@ -27,7 +27,8 @@ TriggerReason = Literal[
     "tick", "bar_close", "fill", "manual", "schedule", "position_change", "alert"
 ]
 RunStatus = Literal["running", "ok", "error", "aborted", "throttled"]
-EventKind = Literal["action_start", "action_ok", "action_fail"]
+#: E35-T13: `log`, a `log_journal_tag` action's tag, written with its `action_ok` row.
+EventKind = Literal["action_start", "action_ok", "action_fail", "log"]
 EventSeverity = Literal["info", "warning", "error"]
 SnapshotValue = str | bool | None
 

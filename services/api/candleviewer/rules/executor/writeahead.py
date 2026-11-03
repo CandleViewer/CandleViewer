@@ -12,7 +12,7 @@ hand-over never runs after one. Nothing here retries, catches a cancel or logs t
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any, Final, Literal, TypeVar
 
@@ -70,13 +70,18 @@ class FireRecords:
         await self._bounded("audit", lambda: self._audit.fired(fields))
         return await send()
 
-    async def answered(self, result: ActionResult) -> None:
+    async def answered(
+        self, result: ActionResult, journal: Mapping[str, str | None] | None = None
+    ) -> None:
         """A result's event: `action_ok` for `ok` or `simulated`, else `action_fail`, with the
-        `ActionResult` as its payload."""
+        `ActionResult` as its payload; and for an `ok` result with a `journal`, the `log` row its
+        tag rides (E35-T13, `log_journal_tag`), in the same write."""
         kind: EventKind = "action_ok" if result.outcome in ("ok", "simulated") else "action_fail"
-        await self._event(
-            kind, result.node_id, result.model_dump(mode="json"), _SEVERITY[result.outcome]
-        )
+        dump = result.model_dump(mode="json")
+        events = [(kind, result.node_id, dump, _SEVERITY[result.outcome])]
+        if journal is not None and result.outcome == "ok":
+            events.append(("log", result.node_id, dict(journal), "info"))
+        await self._events(events)
 
     async def refused(self, result: ActionResult, fields: ActionAuditFields) -> None:
         """A refusal (`blocked`, or a `mode_changed` skip): its `action_fail`, then `rules.blocked`
@@ -98,17 +103,28 @@ class FireRecords:
     async def _event(
         self, kind: EventKind, node: str, payload: dict[str, Any], severity: EventSeverity
     ) -> None:
-        """The next event: through `begin`, with the run row, until one `begin` has landed."""
-        self._seq += 1
-        event = EventRow(
-            seq=self._seq, kind=kind, node_ref=node, payload=payload, severity=severity
-        )
-        if self._begun:
-            run_id = self._run.run_id
-            await self._bounded("event", lambda: self._records.append(run_id, (event,)))
-        else:
-            await self._bounded("run", lambda: self._records.begin(self._run, event))
+        await self._events([(kind, node, payload, severity)])
+
+    async def _events(
+        self, events: Sequence[tuple[EventKind, str, dict[str, Any], EventSeverity]]
+    ) -> None:
+        """The next events, each with its own `seq`: through `begin`, with the run row, until one
+        `begin` has landed (the first event there), then appended together, in one write."""
+        rows = []
+        for kind, node, payload, severity in events:
+            self._seq += 1
+            rows.append(
+                EventRow(
+                    seq=self._seq, kind=kind, node_ref=node, payload=payload, severity=severity
+                )
+            )
+        if not self._begun:
+            first, rows = rows[0], rows[1:]
+            await self._bounded("run", lambda: self._records.begin(self._run, first))
             self._begun = True
+        if rows:
+            run_id = self._run.run_id
+            await self._bounded("event", lambda: self._records.append(run_id, tuple(rows)))
 
     async def _bounded(self, write: WriteKind, start: Callable[[], Awaitable[None]]) -> None:
         """`start()` under its bound. A failure is raised outside the handler, so the error that

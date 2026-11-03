@@ -4,6 +4,11 @@ Pure and synchronous: ``validate_rule(rule, registry)`` -> ``RuleValidationResul
 caller: no permission changes what it refuses, so no rule loosens a stop (24 §8.8 rule 5).
 Errors block saving; warnings do not, but *safety-class* warnings block arming
 (``PUT /rules/{id}/mode``). The IR is data: nothing here evaluates or parses expressions.
+
+An action whose downstream operation has not shipped is the safety-class warning
+``action_unavailable``, naming what it waits for (24 §11.5; E35-T13, BQ-10 of #5005): read from the
+handler table's static ``waits_for`` column, never from a process's bound handlers, so every
+process and every caller gets the same answer, before any start.
 """
 
 # ruff: noqa: E501
@@ -15,6 +20,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
+from candleviewer.rules.executor.handlers import HANDLERS
 from candleviewer.rules.ir import (
     BooleanNode,
     Comparison,
@@ -192,6 +198,8 @@ class _Validator:
             for req in spec.params_schema.get("required", []):
                 if a.params.get(req) is None:
                     self.err(f"{base}.params.{req}", "missing_action_param", f"Action {i + 1} ({spec.title}) is missing '{req}'.")  # fmt: skip
+            if (waits := HANDLERS[a.type].waits_for) is not None:
+                self.warn(f"{base}.type", "action_unavailable", f"Action {i + 1} ({spec.title}) is not available yet: it waits for {waits}.", "safety")  # fmt: skip
             if a.type in _STOP_ACTIONS and a.params.get("only_tighten", True) is not True:
                 self.loosens(f"{base}.params.only_tighten", i)
             if (a.type in _STOP_ACTIONS and (a.params.get("remove") or a.params.get("cancel"))) or (

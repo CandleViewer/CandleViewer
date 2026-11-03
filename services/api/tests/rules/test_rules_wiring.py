@@ -85,6 +85,18 @@ def test_create_app_binds_postgres_rule_store_not_in_memory() -> None:
     assert isinstance(app.state.app_context.rules._store, PostgresRuleStore)
 
 
+def test_create_app_binds_the_signal_depth_and_the_notification_handler() -> None:
+    """E35-T13 (#5005): the composition root hands the rules service the depth setting it took
+    (`CV_RULES_SIGNAL_MAX_DEPTH`, within its cap) and binds `send_notification`'s handler, the one
+    type of the ticket that reaches past the engine (24 §11.5)."""
+    from candleviewer.rules.executor.control import NotificationHandler
+    from candleviewer.settings import Settings
+
+    rules = create_app(Settings(rules_signal_max_depth=2)).state.app_context.rules
+    assert rules._signal_depth == 2
+    assert isinstance(rules._handlers["send_notification"], NotificationHandler)
+
+
 _UID = "00000000-0000-4000-8000-000000000001"
 
 
