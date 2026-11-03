@@ -33,6 +33,7 @@ def _load(name: str, rel: str) -> Any:
 
 conf = _load("a11y_conformance_t", "tools/a11y/conformance.py")
 regpy = _load("a11y_register_t", "docs/plan/a11y/_tools/register.py")
+leak = _load("a11y_leak_patterns_t", "tools/a11y/leak_patterns.py")
 
 D13_DRY_RUN_SHA256 = "cd65248fad221cdfb581e46ffe0754c07483f95a1b7ada488697ef78a963812c"
 TODAY = dt.date(2026, 11, 3)
@@ -563,7 +564,7 @@ def test_matrix_rejects_an_impossible_sign_off_date(date: str) -> None:
 
 
 def test_sign_off_name_check_uses_the_generator_patterns() -> None:
-    assert regpy.SIGN_OFF_LEAK.pattern == conf.LEAK_RE.pattern
+    assert regpy.SIGN_OFF_LEAK.pattern == conf.LEAK_RE.pattern == leak.LEAK_RE.pattern
 
 
 @pytest.mark.parametrize(
@@ -669,3 +670,92 @@ def test_class_map_is_the_one_d13_proposed() -> None:
         "K-SR": (6, ("pass", "d12"), "verbosity"),
         "K-MANUAL": (15, ("pass",), "report"),
     }
+
+
+# --------------------------------------------------------------------------- the shared leak patterns
+
+DOT = "."
+
+
+def _probe(kind: str) -> str:
+    """Leak-shaped strings built at run time (no literal for a secret scanner to match)."""
+    parts = {
+        "email": ["ops", "@", "mail", DOT, "dev"],
+        "email-long": ["first", DOT, "last", "+tag", "@", "corp", DOT, "example", DOT, "zone"],
+        "host-dev": ["tools", DOT, "internal", DOT, "dev"],
+        "host-two": ["checker", DOT, "app"],
+        "ipv4": ["10", DOT, "20", DOT, "30", DOT, "40"],
+        "ipv6-full": ["2001", ":0db8", *[":0"] * 5, ":1"],
+        "ipv6-short": ["fe80", "::", "1"],
+        "ipv6-loop": ["::", "1"],
+    }
+    return "".join(parts[kind])
+
+
+LEAK_KINDS = [
+    "email",
+    "email-long",
+    "host-dev",
+    "host-two",
+    "ipv4",
+    "ipv6-full",
+    "ipv6-short",
+    "ipv6-loop",
+]
+SAFE_TEXT = [
+    "SC 1.4.11 and 2.4.3",
+    "WCAG 2.2",
+    "see section 6.3",
+    "\u00a76.3 of the spec",
+    "47-limitations.json",
+    "47-conformance-report.md and register.py",
+    "ADR-0045",
+    "E47-S05 #1319",
+    "Version 3.12.1",
+    "The keyboard position can jump. e.g. after a dialog closes, i.e. often.",
+    "the Owner",
+]
+
+
+@pytest.mark.parametrize("kind", LEAK_KINDS)
+def test_leak_patterns_refuse_each_class_in_a_sign_off_name(kind: str) -> None:
+    doc = _register_doc()
+    value = f"the Owner {_probe(kind)}"
+    doc["screens"][_screen_without_open_findings(doc)]["signOff"] = {
+        "verdict": "signed",
+        "by": value,
+        "date": "2026-11-03",
+    }
+    errors = regpy.validate(doc)
+    assert any("signOff" in e for e in errors)
+    assert not any(_probe(kind) in e for e in errors)
+
+
+@pytest.mark.parametrize("kind", LEAK_KINDS)
+def test_leak_patterns_refuse_each_class_in_a_limitations_leaf(tmp_path: Path, kind: str) -> None:
+    root = _tree(tmp_path)
+    value = _probe(kind)
+    _edit_limits(root, lambda d: d["limitations"][1].update(workaround=f"Ask {value}"))
+    lines, rc = _run(root, "check")
+    assert rc == 1 and any("G-CONTENT" in ln and "workaround" in ln for ln in lines), lines
+    assert not any(value in ln for ln in lines), lines
+
+
+@pytest.mark.parametrize("text", SAFE_TEXT)
+def test_leak_patterns_accept_the_safe_forms(text: str) -> None:
+    assert not leak.LEAK_RE.search(text), text
+    for rx, _ in leak.CONTENT_CHECKS[:5]:
+        assert not rx.search(text), (rx.pattern, text)
+
+
+def test_safe_forms_pass_a_sign_off_name_and_a_limitations_leaf(tmp_path: Path) -> None:
+    doc = _register_doc()
+    doc["screens"][_screen_without_open_findings(doc)]["signOff"] = {
+        "verdict": "signed",
+        "by": "the Owner",
+        "date": "2026-11-03",
+    }
+    assert regpy.validate(doc) == []
+    root = _tree(tmp_path)
+    _edit_limits(root, lambda d: d["limitations"][1].update(note="See SC 1.4.11, ADR-0045."))
+    assert not any("G-CONTENT" in ln for ln in _run(root, "check")[0])

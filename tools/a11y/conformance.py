@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import importlib.util
 import json
 import re
 import sys
@@ -187,20 +188,15 @@ TRADING_BANDS = range(50, 80)  # SCR-050..079: order flow and trading (`14` §0.
 
 # ---------------------------------------------------------------------------- content checks
 
-URL_RE = re.compile(
-    r"https?://|www\.|/home/|localhost|\.local\b|\b[a-z0-9-]+\.(?:com|io|org|net)\b"
-)
-KEYLIKE_RE = re.compile(r"[A-Za-z0-9+/=_-]{24,}")
-IMAGE_RE = re.compile(r"!\[|<img|\.png\b|\.svg\b", re.IGNORECASE)
-IDLIKE_RE = re.compile(r"\b\d{6,}\b|\bUID\b")
-#: Host, key-like or id strings: the one pattern register.py also reads for a sign-off name.
-LEAK_RE = re.compile("|".join(r.pattern for r in (URL_RE, KEYLIKE_RE, IDLIKE_RE)))
-CONTENT_CHECKS = (
-    (URL_RE, "a host"),
-    (KEYLIKE_RE, "a key-like string"),
-    (IMAGE_RE, "an image"),
-    (IDLIKE_RE, "an id"),
-)
+_LP_PATH = Path(__file__).resolve().with_name("leak_patterns.py")
+_lp_spec = importlib.util.spec_from_file_location("a11y_leak_patterns", _LP_PATH)
+assert _lp_spec and _lp_spec.loader
+_lp = importlib.util.module_from_spec(_lp_spec)
+sys.modules[_lp_spec.name] = _lp
+_lp_spec.loader.exec_module(_lp)
+URL_RE, KEYLIKE_RE, IMAGE_RE, IDLIKE_RE = _lp.URL_RE, _lp.KEYLIKE_RE, _lp.IMAGE_RE, _lp.IDLIKE_RE
+LEAK_RE = _lp.LEAK_RE  # also read by register.py's sign-off check (through leak_patterns.py)
+CONTENT_CHECKS = _lp.CONTENT_CHECKS
 SCNUM_RE = re.compile(r"\b\d\.\d{1,2}\.\d{1,2}\b")
 JARGON_RE = re.compile(
     r"\b[Aa]ria\b|aria-|\bARIA\b|\bDOM\b|\bWCAG\b|\b[Vv]iewport\b|\bCSS\b|\bpx\b|role=|\bSC\b|\bAT\b"
@@ -661,7 +657,7 @@ def content_problems(limits: str, report: str = "") -> list[str]:
             if rx.search(s):
                 out.append(f"{where}: {what}")
     for ln_no, ln in enumerate(report.split("\n"), 1):
-        for rx, what in ((URL_RE, "a host"), (IMAGE_RE, "an image")):
+        for rx, what in (*_lp.CONTENT_CHECKS[:5], (IMAGE_RE, "an image")):
             if rx.search(ln):
                 out.append(f"report line {ln_no}: {what}")
     return out

@@ -65,9 +65,9 @@ SIGN_OFF_VERDICTS = ("signed", "declined")
 
 
 def _conformance() -> Any:
-    """tools/a11y/conformance.py, loaded by path: the one home of the host / key / id patterns."""
-    path = Path(__file__).resolve().parents[4] / "tools" / "a11y" / "conformance.py"
-    spec = importlib.util.spec_from_file_location("a11y_conformance_leak", path)
+    """tools/a11y/leak_patterns.py, loaded by path: the one home of the host / address / key / id patterns."""
+    path = Path(__file__).resolve().parents[4] / "tools" / "a11y" / "leak_patterns.py"
+    spec = importlib.util.spec_from_file_location("a11y_leak_patterns_reg", path)
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod  # dataclasses read it
