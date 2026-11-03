@@ -24,12 +24,16 @@ import { SessionExpiredCard, SignOutConfirm } from "../src/features/session/Sess
 import { SessionTimeoutWarning } from "../src/features/session/SessionTimeoutWarning";
 import { SessionsSection } from "../src/features/session/SessionsSection";
 import type { SessionsApi, UserSession } from "../src/features/session/sessionsApi";
+import { RecordSymbolDialog } from "../src/features/recorder/RecordSymbolDialog";
+import { StopDialog } from "../src/features/recorder/StopDialog";
 import { StepUpDialog } from "../src/features/stepUp/StepUpDialog";
 import { VersionDialogSlot } from "../src/features/system-states/VersionDialog";
 import { resetVersionReports } from "../src/features/system-states/versionMismatch";
 import { Cheatsheet } from "../src/keymap/Cheatsheet";
 import { handleWsError } from "../src/lib/ws/errorHandler";
 import { WsErrorHost } from "../src/lib/ws/WsErrorHost";
+import { D02_ROWS } from "./features/recorder/gridFixtures";
+import { POLICY } from "./features/recorder/modelFixtures";
 import { resetShellState, setShellState } from "../src/shell/bootstrap/store";
 
 const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/playwright"))(
@@ -326,6 +330,45 @@ const ROWS: readonly Row[] = [
       onOpen: () => handleWsError({ t: "err", p: { code: "auth_failed" } }),
     }),
   },
+  {
+    id: "RecordSymbolDialog",
+    layer: true,
+    role: "dialog",
+    esc: "cancels",
+    scrim: "none",
+    mount: simple(({ open, cancel }) => (
+      <RecordSymbolDialog
+        open={open}
+        onClose={cancel}
+        rows={D02_ROWS}
+        policy={POLICY}
+        instruments={["BTCUSDT", "ETHUSDT"]}
+        onAdded={() => undefined}
+        readBack={() => undefined}
+      />
+    )),
+  },
+  {
+    id: "StopDialog",
+    layer: true,
+    role: "alertdialog",
+    esc: "cancels",
+    scrim: "none",
+    mount: simple(({ open, spies, cancel }) => (
+      <StopDialog
+        row={open ? (D02_ROWS[0] ?? null) : null}
+        policy={POLICY}
+        frameAtMs={null}
+        stale={false}
+        stop={() => {
+          spies.confirm();
+          return Promise.resolve({ ok: true, data: null } as never);
+        }}
+        onStopped={spies.confirm}
+        onClose={cancel}
+      />
+    )),
+  },
 ];
 
 const TABBABLE =
@@ -506,6 +549,8 @@ const COVERED: Readonly<Record<string, string>> = {
   "lib/ws/WsErrorHost.tsx": "matrix: WsErrorHost fatal modal",
   "features/symbol-search/SymbolSearch.tsx":
     "ui Dialog row (the mechanism); focus in and back in symbol-search/SymbolSearch.test.tsx",
+  "features/recorder/RecordSymbolDialog.tsx": "matrix: RecordSymbolDialog",
+  "features/recorder/StopDialog.tsx": "matrix: StopDialog",
   // QuickSwitcher.tsx is not listed on purpose: it only mounts SymbolSearch, which holds the one Dialog.
 };
 const DIALOG_SOURCE =
