@@ -37,6 +37,9 @@ function pairsOf(name: string): Pair[] {
     // CMP-116: neutral digits on every row fill; the accent bar on every row fill and the canvas.
     ...[...ROWS, "color.surface.app"].map((bg): Pair => ["color.text.primary", bg, 4.5]),
     ...BARS.flatMap((fg) => [...ROWS, "color.surface.app"].map((bg): Pair => [fg, bg, 3])),
+    // CMP-116's provisional tag (E29-S04; E29-D02:252): its words on the pending tag's fill, a pair the gate
+    // registers among the notice tints (tools/contrast/pairs.mjs).
+    ["color.text.primary", "color.status.info.subtle", 4.5],
     // CMP-129 display: the word on the account group header.
     ["color.text.primary", "color.surface.canvas", 4.5],
     // CMP-105: the option text, the plate's edge, the chosen plate and the active row's inset ring.

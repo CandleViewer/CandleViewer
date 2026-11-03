@@ -212,6 +212,13 @@ describe("@candleviewer/ui admin chrome molecules (E42-S01)", () => {
   });
 });
 
+describe("@candleviewer/ui CMP-116's cash direction (E29-S04)", () => {
+  it("exports PnLDirection from the package entry, paid or received (checked by the typechecker)", () => {
+    const directions: readonly Atoms.PnLDirection[] = ["paid", "received"];
+    expect(directions).toHaveLength(2);
+  });
+});
+
 describe("@candleviewer/ui positions grid and CMP-049's treegrid (E29-S01)", () => {
   it.each([
     ["PositionsGrid", Atoms.PositionsGrid],
