@@ -2961,6 +2961,55 @@ CREATE TRIGGER trg_oh_guard BEFORE UPDATE ON oms_handovers
 ALTER TABLE oms_handovers ENABLE ALWAYS TRIGGER trg_oh_guard;
 ```
 
+#### 3.3.13 `closed_pnl_records` — the venue's closed-PnL records and their composition (E29-S06)
+
+The store of `24-internal-schemas.md` §8.13 (E29-S06, #981): one row per closing order's record, keyed by its account and the venue's `orderId`, written provisional from the stored closing fills and settled in place when the venue's record is read; `22` `listClosedPnl` reads it. E29-S06's migration slice creates it, and its revision joins §9.4 then, re-parented per merge order (C-5.3).
+
+```sql
+CREATE TABLE closed_pnl_records (
+  id                  uuid PRIMARY KEY,         -- uuid5 (24 §8.13): one id, provisional to settled
+  exchange_account_id uuid NOT NULL REFERENCES exchange_accounts(id) ON DELETE RESTRICT,
+  exchange_order_id   text,                     -- the closing order's venue id; NULL: the venue wrote none
+  symbol              symbol_code NOT NULL,
+  side                text NOT NULL,            -- the closed position's
+  position_idx        smallint,                 -- the closing fills'; NULL when nothing local composes it
+  qty                 numeric(38,18),           -- the size closed
+  avg_entry_price     numeric(38,18),
+  avg_exit_price      numeric(38,18),
+  leverage            numeric(10,2),
+  closed_pnl          numeric(38,18),           -- the venue's figure; NULL while provisional
+  gross_pnl           numeric(38,18),           -- the local composition (24 §8.13); NULL: not composed
+  fee_pnl             numeric(38,18),
+  funding_pnl         numeric(38,18),
+  opened_at           timestamptz,              -- the walk's, never the venue's createdTime
+  closed_at           timestamptz NOT NULL,     -- the venue's updatedTime once read, else the last closing fill's
+  venue_created_at    timestamptz,              -- the venue's createdTime: the closing order's creation
+  settled_at          timestamptz,              -- the venue's record stored; NULL: provisional
+  divergent           boolean NOT NULL DEFAULT false,
+  audited_local_net   numeric(38,18),           -- the pair pnl.divergence_detected last recorded
+  audited_closed_pnl  numeric(38,18),
+  updated_at          timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT cpr_side    CHECK (side IN ('long','short')),
+  CONSTRAINT cpr_posidx  CHECK (position_idx IS NULL OR position_idx IN (0,1,2)),
+  CONSTRAINT cpr_order   CHECK (exchange_order_id IS NULL OR char_length(exchange_order_id) BETWEEN 1 AND 64),
+  CONSTRAINT cpr_settled CHECK ((settled_at IS NULL) = (closed_pnl IS NULL)
+                                AND (exchange_order_id IS NOT NULL OR settled_at IS NOT NULL)),
+  CONSTRAINT cpr_qty     CHECK (qty IS NULL OR qty > 0),
+  CONSTRAINT cpr_pair    CHECK ((audited_local_net IS NULL) = (audited_closed_pnl IS NULL)
+                                AND (NOT divergent OR (settled_at IS NOT NULL AND audited_closed_pnl IS NOT NULL))),
+  CONSTRAINT cpr_numbers CHECK (NOT ('NaN'::numeric IN (qty, avg_entry_price, avg_exit_price, leverage, closed_pnl,
+                                gross_pnl, fee_pnl, funding_pnl, audited_local_net, audited_closed_pnl)))
+);
+CREATE UNIQUE INDEX ux_cpr_order ON closed_pnl_records (exchange_account_id, exchange_order_id)
+  WHERE exchange_order_id IS NOT NULL;
+CREATE INDEX ix_cpr_day         ON closed_pnl_records (exchange_account_id, closed_at, id);
+CREATE INDEX ix_cpr_provisional ON closed_pnl_records (exchange_account_id) WHERE settled_at IS NULL;
+```
+
+- **Writes.** Only through the store, behind the OMS's port, account-scoped (C-12.4), each statement under `CV_OMS_STATEMENT_TIMEOUT_MS` as the order store's are (§3.3.5). The composition upserts by `id`; settling sets the venue's columns, `venue_created_at` and `settled_at` once. `trg_cpr_guard` (BEFORE UPDATE, `ENABLE ALWAYS`, SQLSTATE 23514) refuses any change to `id`, `exchange_account_id`, `exchange_order_id`, `symbol` or `side`, and, once `settled_at` is set, to the venue's columns (`qty`, the prices, `leverage`, `closed_pnl`, `closed_at`, `venue_created_at`, `settled_at`): a later venue read that differs is logged and counted, never applied. The local figures may change after settling, as a late fill composes them again; `divergent` is set only with the pair its `pnl.divergence_detected` record names, written after that record (24 §8.13).
+- **Readers.** `listClosedPnl`'s window and totals (`ix_cpr_day`, §13.1 row 53), the sync's provisional check (`ix_cpr_provisional`, row 54) and its upsert by order (`ux_cpr_order`).
+- **Grants, class and retention.** `cv_app` keeps INSERT, SELECT and UPDATE; DELETE and TRUNCATE are revoked where the role exists (the 0024 idiom), as a record is never removed: it is kept for ever, as `executions` is (§7). There is no row-level security, as scope is the OMS's and the route's (C-12.4), and a row binds its account's environment (`exchange_accounts.env`, C-2.11). Every `numeric` column is the account's financial data, class P1 with a `PII:` comment (§12, C-5.9); no column holds a credential, a name, an email or an IP.
+
 ### 3.4 Rules engine
 
 Rules compile from either editor (form or node-graph) into one **rule IR** (documented in `24-internal-schemas.md`). The IR is immutable per version; editing creates a new `rule_versions` row. `rules.active_version_id` points at the version the engine executes.
@@ -4354,6 +4403,10 @@ INSERT INTO kill_switch_state (id, scope, engaged) VALUES (gen_random_uuid(), 'g
   RK-T06 lists 0 as a way to switch enforcement off. Until D-5 is decided (#2701), E39-S02 reads 0 as the restrictive
   interim, a lockout only a person ends (`NULL`), never as no lockout; if the Owner adopts D-5's recommendation (0
   refused server-side), a later revision may tighten `rp_lockout` to match.
+- **The day boundary (E29-S06, #981).** `day_boundary_utc_offset_minutes` is the ticket key
+  `risk.day_boundary_utc_offset`: the offset, in minutes east of UTC, whose 00:00 starts the trading day, so +180
+  (UTC+3) starts it at 21:00Z, and `rp_day` bounds it to UTC−12..UTC+14. One resolver reads it for the daily-loss
+  figure and the closed-PnL window (24 §8.13), so both days start at one instant; E39-K01 (#880) confirms the reading.
 - **Three release shapes.** `rl_release` admits an active row (nothing set), a person's release (`released_at`,
   `released_by` and `release_reason` together) and a clock release (`released_at` at or after a stored `until`, no
   releaser), so an early or unattributed release cannot pass for an expiry. `released_at` is written when the release
@@ -5001,6 +5054,7 @@ Defaults seeded into `retention_policies` (scope `default`). "Hot" = QuestDB, "C
 | `recorded_stops` (PG)                 | ∞                  | —                                      | ∞             | —                            | The stops each position was protected with (SR-E29-06, §3.3.11)                   |
 | `order_events` (PG)                   | 24 mo live         | 7 y                                    | 7 y           | archive_parquet              | Monthly partitions detached                                                       |
 | `executions` (PG)                     | ∞                  | 7 y mirror                             | ∞             | archive_parquet              | Financial record                                                                  |
+| `closed_pnl_records` (PG)             | ∞                  | —                                      | ∞             | —                            | Financial record; the journal's source (§3.3.13)                                  |
 | `trade_groups`, `trade_group_legs`    | ∞                  | —                                      | ∞             | —                            | Trading history; the replay anchor answers at any age (SR-E29-07)                 |
 | `trade_group_definitions` (+members)  | ∞                  | —                                      | ∞             | —                            | Configuration; definitions are soft-deleted                                       |
 | `positions` (PG, current)             | ∞                  | —                                      | ∞             | —                            | Single row per account/symbol                                                     |
@@ -5596,6 +5650,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `oms_handovers`                                        | `record`, `payload`                     | P1         | jsonb, `payload` redacted before insert         | An order's or a fill's money values: `payload` passes `redact_exchange_payload()` before insert, as `order_events.payload`; not logged          |
 | `recorded_stops`                                       | monetary columns                        | P1         | plaintext                                       | Financial personal data, as `positions`: the stops a position was protected with (§3.3.11); `PII:` comments; never sent to third parties        |
 | `recorded_stops`                                       | `actor_user_id`                         | P0         | plaintext                                       | A user id (0043), never a name, email or IP; `ON DELETE RESTRICT` keeps the attribution, as `trade_groups.created_by`                           |
+| `closed_pnl_records`                                   | monetary columns                        | P1         | plaintext                                       | Financial personal data, as `executions`: the venue's and the local figures (§3.3.13); `PII:` comments; never sent to third parties             |
 | `system_events`                                        | `details`                               | P0         | jsonb                                           | Same redaction serializer as audit                                                                                                              |
 | `system_events` (`dms_hook_owed` rows)                 | `details`                               | P0         | jsonb                                           | Only the closed `from_state` and `reason` codes (E27-T04, §3.10.2); any other value is refused, so these rows need no redaction serializer      |
 | `system_events` (`profile_relaxed` rows)               | `details`                               | P0         | jsonb                                           | Ids, profile column names and one flag only (#906 D2, §3.10.2); any other value is refused, so these rows need no redaction serializer          |
@@ -5713,6 +5768,8 @@ Each row: the screen/job that issues the query, the query shape, the serving ind
 | 52  | Reconciliation's hand-overs   | `oms_handovers WHERE exchange_account_id = $1 AND kind = $2 ORDER BY id`               | `ix_oh_account`                                                         | < 10 ms for 1,000 entries             |
 | 53  | Order lookup by key (#2303)   | caller's `placeOrder` anchors by `client_ref = ANY($2)`, then their `orders` in scope  | `ux_ia_principal_ref`, then `orders` PK                                 | < 5 ms for 20 keys                    |
 | 54  | Order lookup by link (#2303)  | `orders WHERE order_link_id = ANY($1)`, in scope                                       | `ux_orders_link`                                                        | < 5 ms for 20 ids                     |
+| 53  | Closed PnL, the day's window  | `closed_pnl_records WHERE exchange_account_id = ANY($1)`, `closed_at` in the window    | `ix_cpr_day`                                                            | < 20 ms for a day's records           |
+| 54  | Closed-PnL settle poll        | `closed_pnl_records WHERE exchange_account_id = $1 AND settled_at IS NULL`             | `ix_cpr_provisional` (partial)                                          | < 2 ms                                |
 
 **Why partial indexes dominate:** the hot predicates in this system are almost all "the small live subset of a large historical table" (open orders, open positions, unacked alerts, unprocessed outbox, live recordings, in-flight submits). Partial indexes keep those indexes a few pages large and permanently cache-resident, which is what makes the 1 s safety loop and the per-tick rule scheduler affordable. Full indexes are reserved for time-ordered history browsing (`*_time` descending) where the planner needs a backwards scan.
 
