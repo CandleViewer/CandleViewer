@@ -359,7 +359,9 @@ async def test_concurrent_delete_of_the_last_two_gives_one_204_and_one_409(
         return_exceptions=True,
     )
     conflicts = [r for r in results if isinstance(r, WorkspaceConflictError)]
-    assert len(conflicts) == 1 and results.count(None) == 1, results
+    deleted = [r for r in results if isinstance(r, WorkspaceDeletion)]
+    assert len(conflicts) == 1 and len(deleted) == 1, results
+    assert conflicts[0].rule == "last_workspace"
     assert len(await repo.list_workspaces(a, after=None, limit=10)) == 1
 
 
