@@ -4,6 +4,7 @@ Same semantics as `_is_outage` in `api/workspaces.py` (E15-T01); `/workspaces` a
 helper in a follow-up on the E15 train. Imports no route module.
 """
 
+import re
 from typing import Final
 
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -19,6 +20,7 @@ _OUTAGE_CLASSES: Final = frozenset(
     }
 )
 _DBAPI_ERROR: Final = "sqlalchemy.exc.DBAPIError"
+_SQLSTATE_SHAPE: Final = re.compile(r"[0-9A-Z]{5}")
 
 
 #: SQLSTATE classes that mean "the database cannot serve this now, retry": connection (08),
@@ -39,6 +41,13 @@ def _sqlstate(exc: Exception) -> str | None:
             if isinstance(code, str) and len(code) == 5:
                 return code
     return None
+
+
+def sqlstate_of(exc: Exception) -> str | None:
+    """The SQLSTATE of `exc` for a log that must not carry `str(exc)`: five digits or capitals,
+    else None, so nothing but a code reaches the line."""
+    state = _sqlstate(exc)
+    return state if state is not None and _SQLSTATE_SHAPE.fullmatch(state) else None
 
 
 def is_storage_outage(exc: Exception) -> bool:
