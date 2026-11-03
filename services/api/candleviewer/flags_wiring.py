@@ -20,7 +20,9 @@ to 2000 refuses boot), ensures every flag's row, reads `desktop.backend_connecti
 (`BackendConnectionFlag`) once and starts the maintenance poll and the polls of the OMS's two
 flag views and the `trade_groups` one (`FlagView`); `stop()` cancels the polls and the flag's
 refresh. A maintenance poll that ends before `stop()` latches the gate engaged until a restart,
-and a view's poll latches its view to its fail-closed value until a restart.
+and a view's poll latches its view to its fail-closed value until a restart. The maintenance
+controller's recorder port is the runtime's `RecorderSlot`, which `create_app` binds to the
+composed recorder's hold once that exists (#5629).
 """
 
 from __future__ import annotations
@@ -44,7 +46,12 @@ from candleviewer.admin.flags.catalogue import (
     TRADING_TRADE_GROUPS,
     default_registry,
 )
-from candleviewer.admin.flags.maintenance import MaintenanceController, MaintenanceGate, chain_hooks
+from candleviewer.admin.flags.maintenance import (
+    MaintenanceController,
+    MaintenanceGate,
+    RecorderControl,
+    chain_hooks,
+)
 from candleviewer.admin.flags.metrics import (
     flag_view_stopped_total,
     order_entry_gate_poll_dead_total,
@@ -253,6 +260,35 @@ class HubSessions:
         return [Session(user, roles, push) for user, roles, push in self._hub.system_sessions()]
 
 
+class RecorderSlot:
+    """Maintenance mode's `RecorderControl` (#5629), bound by `create_app` once the recorder is
+    composed, which happens after the flags: `bind` it once, before the lifespan starts the poll.
+    Unbound (a backend with no recorder), a pause is a logged no-op, as an unbound port is in
+    `MaintenanceController`, and a resume does nothing."""
+
+    def __init__(self) -> None:
+        self._target: RecorderControl | None = None
+
+    @property
+    def bound(self) -> bool:
+        return self._target is not None
+
+    def bind(self, target: RecorderControl) -> None:
+        if self._target is not None:
+            raise RuntimeError("the maintenance recorder is bound once")
+        self._target = target
+
+    async def pause(self, reason: str) -> None:
+        if self._target is None:
+            _log().warning("maintenance_recorder_pause_unavailable")
+            return
+        await self._target.pause(reason)
+
+    async def resume(self, reason: str) -> None:
+        if self._target is not None:
+            await self._target.resume(reason)
+
+
 class FeatureFlagsRuntime:
     """The flag service, writer, push, maintenance gate and order-entry gate (module docstring)."""
 
@@ -269,6 +305,7 @@ class FeatureFlagsRuntime:
     ) -> None:
         self.registry = default_registry()  # an unsafe definition refuses boot here
         self.gate = MaintenanceGate()
+        self.recorder = RecorderSlot()  # #5629: every controller `_build` makes holds it
         self._order_entry_gate: OrderEntryGate | None = None
         self._relational, self._environment = relational, environment
         self._repository: Callable[[int], FlagRepository]
@@ -318,7 +355,11 @@ class FeatureFlagsRuntime:
         self.budget_ms = budget_ms
         push = FlagPush(self.service, self._sessions)
         self.controller = MaintenanceController(
-            self.service, self.gate, notify=push.notify_maintenance, audit=self._audit
+            self.service,
+            self.gate,
+            notify=push.notify_maintenance,
+            audit=self._audit,
+            recorder=self.recorder,
         )
         gate, effects = self.controller.gate_hook, self.controller.effects_hook
         views = [view.on_change for view in self._views]

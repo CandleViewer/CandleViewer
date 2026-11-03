@@ -33,6 +33,7 @@ from candleviewer.recorder.models import (
     RecorderCapRefused,
     RecorderSetChanged,
 )
+from candleviewer.recorder.pause import RecorderPause
 from candleviewer.recorder.policy import (
     AuditSink,
     BusPublisher,
@@ -72,6 +73,9 @@ BOUNDS: Final = RuntimeBounds(
     start_timeout_s=900, startup_timeout_s=120, tick_timeout_s=30, retry_base_s=1, retry_cap_s=60,
     max_attempts=5, gate_closed_alert_s=600,
 )  # fmt: skip
+#: #5629: the maintenance hold's own bounds, inside the controller's 1 s effect budget.
+PAUSE_FLUSH_TIMEOUT_S: Final = 0.9
+PAUSE_GAP_TIMEOUT_S: Final = 0.9
 
 
 def logger() -> structlog.stdlib.BoundLogger:
@@ -180,6 +184,7 @@ class ComposedRecorder:
     writer: StreamWriter
     runtime: RecorderRuntime
     on_ready: Callable[[], Awaitable[None]]
+    pause: RecorderPause  # #5629: maintenance mode's `RecorderControl`
     anchors: SnapshotAnchors | None = None  # #2223: the runtime's last tick step
 
 
@@ -319,4 +324,10 @@ def build_recorder(
         clock=clocks.mono_s, sleep=clocks.sleep, rng=clocks.rng, bounds=bounds, on_ready=on_ready,
         heal=open_missing, anchors=None if anchors is None else anchors.tick,
     )  # fmt: skip
-    return ComposedRecorder(policy, rows, budget, env, manager, writer, runtime, on_ready, anchors)
+    pause = RecorderPause(
+        writer, manager, now_us=wall_us,
+        flush_timeout_s=PAUSE_FLUSH_TIMEOUT_S, gap_timeout_s=PAUSE_GAP_TIMEOUT_S,
+    )  # fmt: skip
+    return ComposedRecorder(
+        policy, rows, budget, env, manager, writer, runtime, on_ready, pause, anchors
+    )

@@ -19,6 +19,7 @@ from structlog.testing import capture_logs
 
 import candleviewer.flags_wiring as wiring
 from candleviewer.admin.flags import (
+    MAINTENANCE_KEEP_RECORDER,
     MAINTENANCE_MODE,
     Category,
     FlagKind,
@@ -715,3 +716,56 @@ async def test_an_error_that_is_no_outage_passes_the_users_and_the_step_up_as_it
 def test_a_write_is_restated_from_its_validated_change_alone() -> None:
     change = FlagWrite("a.b", "v2", {_OWNER.user_id: "v1"}, _T0, _OWNER.user_id)
     assert wiring.restate_flag_write(change).action_summary.endswith("to v2, user overrides 1")
+
+
+class _Recorder:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def pause(self, reason: str) -> None:
+        self.calls.append(f"pause:{reason}")
+
+    async def resume(self, reason: str) -> None:
+        self.calls.append(f"resume:{reason}")
+
+
+def test_the_maintenance_controller_has_its_recorder_port_bound() -> None:
+    """#5629 regression: the controller was built with no recorder port, so maintenance with
+    `keep_recorder = false` never paused the recorder. The port is the runtime's slot, and a
+    rebuilt controller (another read budget at start) holds the same slot."""
+    runtime = _runtime()
+    assert runtime.controller._recorder is runtime.recorder
+    runtime._build(750)
+    assert runtime.controller._recorder is runtime.recorder
+
+
+async def test_a_bound_recorder_pauses_on_enter_and_resumes_on_exit() -> None:
+    runtime, recorder = _runtime(), _Recorder()
+    runtime.recorder.bind(recorder)
+
+    async def write(key: str, value: bool) -> None:
+        row = await runtime.service.stored(runtime.registry[key])
+        assert row is not None and row.updated_at is not None
+        await runtime.writer.set(
+            key, _OWNER, value=value, reason="drill", expected_updated_at=row.updated_at
+        )
+
+    await write(MAINTENANCE_KEEP_RECORDER, False)
+    await write(MAINTENANCE_MODE, True)
+    await write(MAINTENANCE_MODE, False)
+    assert recorder.calls == ["pause:maintenance.enabled", "resume:maintenance.disabled"]
+
+
+async def test_an_unbound_recorder_slot_logs_the_pause_it_cannot_make_and_binds_once() -> None:
+    slot = wiring.RecorderSlot()
+    with capture_logs() as logs:
+        await slot.pause("maintenance.enabled")
+        await slot.resume("maintenance.disabled")
+    assert [(e["event"], e["log_level"]) for e in logs] == [
+        ("maintenance_recorder_pause_unavailable", "warning")
+    ]
+    assert not slot.bound
+    slot.bind(_Recorder())
+    assert slot.bound
+    with pytest.raises(RuntimeError, match="bound once"):
+        slot.bind(_Recorder())
