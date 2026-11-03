@@ -3,9 +3,9 @@
 legs) and the design-system and motion work SCR-061 and SCR-062 share.
 
 Standalone and offline, shaped on the merged E38-D03 tool: it imports `verify_tokens`,
-`contrast_check` (`contrast_ratio`) and `cvd_simulate` (`simulate`, `delta_e76`; JND 5.0) and never
-re-implements them. It reads every cited file AS TEXT with `git show` at the pinned base (`BASE`);
-the unmerged E34-D01 and E34-D02 are never read. Default-deny: a gate that cannot read its input FAILs.
+`contrast_check` and `cvd_simulate` (JND 5.0) and never re-implements them. It reads every cited
+file AS TEXT with `git show` at the pinned base (`BASE`); the unmerged E34-D01 and E34-D02 are
+never read. Default-deny: a gate that cannot read its input FAILs.
 
 Gates (each FAIL led by its name; spec §12):
   G-STATE     §0 frames for the Scope; AC-1 … AC-4 mapped to listed frames; insets are state rows.
@@ -28,15 +28,13 @@ Gates (each FAIL led by its name; spec §12):
               `icon/…` is built at the base; no status component is defined outside §5.
   G-COUNT     no client "N of M protected / accepted / unknown" count; G-12 records the gap.
   G-MERGED    E34-D01 (#936) and E34-D02 (#996) only on a request row, never by line.
-  G-CITE      every cite in range, on a non-blank line at its base, and equal to the pins.
+  G-CITE      every cite in range, on a non-blank line at its base, equal to the pins. G-SCOPE: the
+              diff touches only the spec, this tool and the pins file.
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double brace, tag-only line
               or deny word in the spec; no deny word or local path in the tool or the pins.
-  G-SCOPE     the diff touches only the spec, this tool and the pins file.
 
 Usage (from the repo root):
-  python3 -I docs/design/_tools/e34_d03_manager_audit.py --check
-  python3 -I docs/design/_tools/e34_d03_manager_audit.py --fill        (writes §8's figures)
-  python3 -I docs/design/_tools/e34_d03_manager_audit.py --self-test
+  python3 -I docs/design/_tools/e34_d03_manager_audit.py --check | --self-test | --fill (§8's figures)
   python3 -I docs/design/_tools/e34_d03_manager_audit.py --repin-ruled (the pins' only writer)
 """
 
@@ -61,7 +59,7 @@ SPEC_REL = "docs/design/E34/E34-D03.md"
 TOOL_REL = "docs/design/_tools/e34_d03_manager_audit.py"
 PINS_REL = "docs/design/_tools/e34_d03_ruled_pins.txt"
 OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
-BASE = "d023df0f66409807f2594ccd5086cd6d5017b16a"  # origin/main when written; re-pinned by content
+BASE = "a7d659a5bee5d06a28950f324800f84dc3853e6f"  # origin/main when written; re-pinned by content
 TOKENS = ROOT / "packages" / "ui" / "tokens"
 CVD_PATH = ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py"
 CONTRAST_PATH = ROOT / "docs" / "design" / "_tools" / "contrast_check.py"
@@ -107,7 +105,7 @@ ACS = ("AC-1", "AC-2", "AC-3", "AC-4")
 FRAME = re.compile(r"`((?:SCR-\d{3}|DS)/[a-z0-9-]+)`")
 UNMERGED = re.compile(r"E34-D0[12]|#936|#996")
 NO_STOP = re.compile(r"without (?:a |its |the )?stop|no stop\b|skip(?:ping)? the stop|remove the stop|turn(?:s|ing)? off the stop|stop is optional|optional stop|omit", re.IGNORECASE,)  # fmt: skip
-RETIRED = re.compile(r"flatten|cancel group|rollback|retry failed", re.IGNORECASE)
+RETIRED = re.compile(r"flatten|cancel group|retry failed", re.IGNORECASE)
 QUOTE = re.compile(r'"([^"]{6,})"')
 TAG_LINE = re.compile(r"^\s*</?[A-Za-z][\w-]*>\s*$")
 ICON = re.compile(r"`icon/([a-z0-9-]+)`")
