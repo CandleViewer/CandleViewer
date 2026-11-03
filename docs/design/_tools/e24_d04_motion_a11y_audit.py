@@ -8,12 +8,14 @@ sibling tool (#245).
 
 Gates (each FAIL led by its name):
   G-MOMENT   §2's rows M-01 ... M-07, in order, each complete: a property, a token or "a cut" in
-             Duration and Easing, a reduce cell, a carrier, a cadence, a source.
+             Duration and Easing, a reduce cell, a carrier, a cadence, a source; §7 keeps its Canvas
+             calm paragraph naming M-03, M-05 and M-06.
   G-TOKEN    every `motion.*` name the spec writes resolves in `primitives.tokens.json` at the
-             base; every DUR anchor is that token's value; no prose duration as a bare ms figure.
+             base; every DUR anchor is that token's value; no prose duration as a bare ms figure
+             ("lasts", "takes", "for", "over").
   G-BUDGET   every BUD anchor derived from the cited texts and the tokens, or ruled (the ticket's
              two numbers and the PROPOSED cascade threshold are named constants); the threshold's
-             sentence says "PROPOSED to the owner".
+             sentence and C-4's tint reading say "PROPOSED to the owner".
   G-CADENCE  a §2 row whose Duration is a token and whose Cadence is "<n> ms" lasts no longer than
              n (nothing animates longer than the data's own period).
   G-LIVE     §9.2's rows LR-1 ... LR-8: a politeness of polite, assertive or off; a trigger and a
@@ -21,16 +23,30 @@ Gates (each FAIL led by its name):
              row never triggers.
   G-ANNOT    §10's rows A-01 ...: a role, a name and a tab number each; panel stops nest under
              D02 §13's groups (0)-(5) as (g) or (g).n (BQ-18: extend, never renumber); P1 ... and
-             K1 ... run without a gap ("—" for a non-stop); each row's T2 ids equal D03 §8's and
-             the T2 paragraph names them (BQ-20).
+             K1 ... run without a gap ("—" for a non-stop: a menu item or a row that says "not a
+             stop" never carries a P or K number); each row's T2 ids equal D03 §8's and the T2
+             paragraph names them (BQ-20).
   G-CITE     every cite in range and on a non-blank line at its base, and its content equal to the
              pins file's hash (a moved or edited line FAILs until re-pointed by content and
              `--repin-ruled` re-pins it); the SHA anchor is the pinned base.
   G-HYGIENE  no closing keyword, local path, URL or host, agent name, double-brace slot or
-             public-text deny word in the spec; no deny word in this tool's text or the pins file;
-             no unknown anchor key.
-  G-SCOPE    the diff against `git merge-base HEAD origin/main` touches only the spec, this tool
-             and the pins file.
+             public-text deny word in the spec; no deny word or local path in this tool's text or
+             the pins file; no unknown anchor key.
+  G-AROWS    applied mode (PR 2): `16` carries exactly one §7.n "Derivatives panel motion (E24-D04; ...)"
+             block, the last §7 block, numbered one past the block before it and named by §17's A-1;
+             its table runs M-01 ... M-07 in §2's order with each Reduce cell agreeing with §2's, each
+             Enter cell naming §2's Duration and Easing tokens as one short-form pair ("`fast` /
+             `accelerate`") or, for two cuts, reading "one frame" or "a text swap", and
+             every `motion.*` name it writes resolves; `14` carries exactly one SCR-054 pointer to the
+             spec, directly under the "Hi-fi (E24-D03)" line; neither carries a closing keyword or a
+             deny word. Both are read from the working tree.
+  G-DRAWN    the board record (§0.1, PR 2): six rows, each "drawn (rN)" with a board id (six
+             distinct ids), W x H,
+             descendants and a PNG sha256; each export docs/design/E24/img/E24-D04-NN-<slug>.png
+             exists in the working tree with exactly that sha256 and that PNG size; no other
+             E24-D04-*.png is there; the as-built paragraph names the page and its page id.
+  G-SCOPE    the diff against `git merge-base HEAD origin/main` touches only the spec, this tool,
+             the pins file, (applied mode) `16` and `14`, and the six exports.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e24_d04_motion_a11y_audit.py --check      (exit 1 on any FAIL)
@@ -57,8 +73,10 @@ SPEC_REL = "docs/design/E24/E24-D04.md"
 TOOL_REL = "docs/design/_tools/e24_d04_motion_a11y_audit.py"
 PINS_REL = "docs/design/_tools/e24_d04_ruled_pins.txt"
 OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
-BASE = "e5b286ed50d3a320d80b24df5030fb09dd405a4a"  # origin/main when written (re-pinned by content)
-E47D08_REF = "e60fe7baa545758e729fd70e061f0869b636ab22"  # #5444's head; re-pinned to main at its merge
+BASE = "0af333fa02ed0099d22e02b74591e96d70f6ba4b"  # origin/main at PR 2 (re-pinned by content)
+E47D08_REF = (
+    "e60fe7baa545758e729fd70e061f0869b636ab22"  # #5444's head; re-pinned to main at its merge
+)
 TOK_REL = "packages/ui/tokens/primitives.tokens.json"
 PATHS: dict[str, str] = {
     "05": "docs/plan/05-accessibility-standard.md",
@@ -72,22 +90,36 @@ PATHS: dict[str, str] = {
     "E11D06": "docs/design/E11/E11-D06.md",
     "E47D08": "docs/design/E47/E47-D08.md",
 }
+AROW_PATHS = (PATHS["16"], PATHS["14"])  # applied mode: §17's A-1 and A-2 (PR 2)
+AROW_HEAD = re.compile(r"^### 7\.(\d+) (.*)$", re.MULTILINE)
+AROW_TITLE = "Derivatives panel motion (E24-D04; PROPOSED until the owner's run)"
+AROW_POINTER = (
+    "- **Motion and accessibility review (E24-D04):** [E24-D04.md](../design/E24/E24-D04.md)"
+)
+AROW_HIFI = "- **Hi-fi (E24-D03):** [E24-D03.md](../design/E24/E24-D03.md)"
+IMG_DIR = "docs/design/E24/img"
+PNG_RX = re.compile(r"E24-D04-\d\d-[a-z0-9-]+\.png")
+DRAWN_RX = re.compile(
+    r"^drawn \(r\d+\): ([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}) · (\d+) × (\d+) · (\d+) · ([0-9a-f]{64})$"
+)
+PAGE_RX = re.compile(
+    r"\*\*As built \(r\d+(?:, r\d+)*\)\.\*\* Page E24-D04 Annotation layer, page id "
+    r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\."
+)
+REDUCE_AS = (
+    ("identical", "the same"),
+    ("removed", "none"),
+    ("instant", "instant"),
+    ("a cut", "a cut"),
+)
 REF_OF = {"E47D08": E47D08_REF}  # every other key is read at BASE
 T_FLASH_MAX_MS = 120  # T Scope: "value-change flash on OI/funding (<=120 ms ...)"
-T_THROTTLE_MS = (
-    5000  # T AC "Cascade announcements": "at most one summary every 5 seconds"
-)
+T_THROTTLE_MS = 5000  # T AC "Cascade announcements": "at most one summary every 5 seconds"
 CASCADE_THRESHOLD = 10  # PROPOSED here (§5, G-1): prints/s over the last 1 000 ms
-CITE = re.compile(
-    r"`(\d\d|D0[23]|E05D03|E11D06|E47D08)`:(\d+(?:–\d+)?(?:, :\d+(?:–\d+)?)*)"
-)
+CITE = re.compile(r"`(\d\d|D0[23]|E05D03|E11D06|E47D08)`:(\d+(?:–\d+)?(?:, :\d+(?:–\d+)?)*)")
 ANCHOR = re.compile(r"`?([^\s<|(`]+)`?<!--=([A-Z]+:[A-Za-z0-9.]+)-->")
-CLOSING = re.compile(
-    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE
-)
-LOCAL_PATH = re.compile(
-    "/" + "home/|/Users/|[A-Za-z]:\\\\|\\bwt-" + "notes\\b"
-)  # assembled
+CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE)
+LOCAL_PATH = re.compile("/" + "home/|/Us" + "ers/|[A-Za-z]:\\\\|\\bwt-" + "notes\\b")  # assembled
 AGENT_NAME = re.compile(r"\b[a-z]{2,4}-worker-\d\b")
 URL_OR_HOST = re.compile(r"https?://|penpot\.[a-z]|team-id=|file-id=", re.IGNORECASE)
 DENY = (
@@ -108,7 +140,7 @@ DENY = (
 )  # each entry an explicit `+` join, so the tool's own text carries none of the words
 POLITENESS = ("polite", "assertive", "off")
 PROSE_MS = re.compile(
-    r"\b(?:lasts|for|over)\s+\d[\d ]*\s?ms\b"
+    r"\b(?:lasts|takes|for|over)\s+\d[\d ]*\s?ms\b"
 )  # a duration as a bare figure (BQ-22)
 # BQ-20: each annotation row's T2 ids, and a word its D03 §8 control cell must carry (`D03`:240-247)
 T2_EXPECTED: dict[str, tuple[tuple[str, str], ...]] = {
@@ -116,7 +148,7 @@ T2_EXPECTED: dict[str, tuple[tuple[str, str], ...]] = {
     "A-07": (("T2-6", "basis"),),
     "A-08": (("T2-5", "mode toggles"),),
     "A-09": (("T2-6", "collapse chevron"),),
-    "A-13": (("T2-8", "Retry"), ("T2-3", "Recording settings")),
+    "A-13": (("T2-8", "Retry"),),
     "A-16": (("T2-5", "mode toggles"), ("T2-6", "collapse chevron")),
     "A-17": (("T2-8", "Pause"),),
     "A-19": (("T2-8", "Retry"), ("T2-3", "Recording settings")),
@@ -138,13 +170,13 @@ class Texts:
     tool: str
     changed: list[str] | None
     memo: dict[str, str | None]
+    arows: dict[str, str]
+    pngs: dict[str, bytes]
 
 
 def git(*args: str) -> str | None:
     try:
-        r = subprocess.run(
-            ["git", "-C", str(ROOT), *args], capture_output=True, check=False
-        )
+        r = subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, check=False)
     except OSError:
         return None
     return r.stdout.decode("utf-8", "surrogateescape") if r.returncode == 0 else None
@@ -312,6 +344,9 @@ def g_moment(t: Texts, vals: dict[str, str]) -> list[str]:
                            (cadence, "cadence"), (src, "source")):  # fmt: skip
             if not cell:
                 bad.append(f"{r[0]}: no {what}")
+    calm = re.search(r"\n\*\*Canvas calm\*\*[^\n]*", section(t.spec, "## 7."))
+    if not calm or not all(m in calm[0] for m in ("M-03", "M-05", "M-06")):
+        bad.append("§7 has no Canvas calm paragraph naming M-03, M-05 and M-06")
     return bad
 
 
@@ -322,9 +357,7 @@ def g_token(t: Texts, vals: dict[str, str]) -> list[str]:
     bad += anchor_problems(t, vals, "DUR:")
     for i, ln in enumerate(t.spec.split("\n"), 1):
         if PROSE_MS.search(ln):
-            bad.append(
-                f"spec:{i} writes a duration as a bare ms figure; use the token (BQ-22)"
-            )
+            bad.append(f"spec:{i} writes a duration as a bare ms figure; use the token (BQ-22)")
     return bad
 
 
@@ -332,9 +365,10 @@ def g_budget(t: Texts, vals: dict[str, str]) -> list[str]:
     bad = anchor_problems(t, vals, "BUD:")
     for ln in t.spec.split("\n"):
         if "BUD:cascade.threshold" in ln and "PROPOSED to the owner" not in ln:
-            bad.append(
-                "the cascade threshold is not marked PROPOSED to the owner (BQ-10)"
-            )
+            bad.append("the cascade threshold is not marked PROPOSED to the owner (BQ-10)")
+    c4 = table_rows(section(t.spec, "## 15."), "C-4 ")
+    if not c4 or "PROPOSED to the owner" not in c4[0][-1]:
+        bad.append("C-4's neutral tint is not marked PROPOSED to the owner (BQ-08)")
     return bad
 
 
@@ -385,7 +419,8 @@ PANEL_TAB = re.compile(r"\((\d)\)(?:\.(\d+))?")
 def g_annot(t: Texts, vals: dict[str, str]) -> list[str]:
     """Panel stops nest under D02's groups (0)-(5) as (g) or (g).n, a range written (g).a … (g).b;
     the groups never go back, every group appears, and each group's n run 1.. without a gap.
-    The popover and dialog run P1 ... and K1 ... (BQ-18)."""
+    The popover and dialog run P1 ... and K1 ... (BQ-18). The T2 paragraph's rows "under the
+    popover's one notice" (board 05's view-as column) are exactly the P-stop rows with a T2 id."""
     rows = table_rows(section(t.spec, "## 10."), "A-")
     bad: list[str] = []
     if not rows:
@@ -420,6 +455,9 @@ def g_annot(t: Texts, vals: dict[str, str]) -> list[str]:
         hits = PANEL_TAB.findall(tab)
         if tab == "—":
             continue
+        if "menuitem" in role or "not a stop" in role:
+            bad.append(f"{r[0]}: a menu item or a non-stop with tab {tab!r}, not '—'")
+            continue
         if pk:
             for pre, a, b in pk:
                 seqs.setdefault(pre, []).extend(range(int(a), int(b or a) + 1))
@@ -444,6 +482,11 @@ def g_annot(t: Texts, vals: dict[str, str]) -> list[str]:
     for pre, ns in seqs.items():
         if sorted(ns) != list(range(1, max(ns) + 1)):
             bad.append(f"the {pre} tab sequence {ns} has a gap or runs out of order")
+    one = re.search(r";\s*([^;]*?) under the popover's one notice", t2_par)
+    named = set(re.findall(r"A-\d\d", one[1])) if one else set()
+    pt2 = {r[0] for r in rows if len(r) == 8 and re.search(r"\bP\d", r[4]) and "T2-" in r[7]}
+    if par and named != pt2:
+        bad.append(f"the one notice names {sorted(named)}, not the P-stop T2 rows {sorted(pt2)}")
     return bad
 
 
@@ -452,9 +495,7 @@ def g_cite(t: Texts, vals: dict[str, str]) -> list[str]:
     pinned = parse_pins(t.pins)
     for label, h in hashes.items():
         if label not in pinned:
-            bad.append(
-                f"cite {label} is unpinned: verify it by content, then --repin-ruled"
-            )
+            bad.append(f"cite {label} is unpinned: verify it by content, then --repin-ruled")
         elif pinned[label] != h:
             bad.append(
                 f"cite {label}: the line at its base is not the pinned content (moved or edited)"
@@ -479,21 +520,140 @@ def g_hygiene(t: Texts, vals: dict[str, str]) -> list[str]:
         for i, ln in enumerate(text.split("\n"), 1):
             if any(d in ln.lower() for d in DENY):
                 bad.append(f"{label}:{i} carries a public-text deny word")
+            if LOCAL_PATH.search(ln):
+                bad.append(f"{label}:{i} carries a local path")
     for _, key in ANCHOR.findall(t.spec):
         if key not in vals:
             bad.append(f"an anchor `{key}` the tool does not compute")
     return bad
 
 
+def enter_ok(enter: str, dur: str, ease: str, known: set[str]) -> bool:
+    """`16`'s Enter cell against §2's Duration and Easing: two resolving tokens by their short forms
+    as one pair (`motion.duration.fast`, `motion.easing.accelerate` -> "`fast` / `accelerate`"); two
+    cuts read "one frame" or "a text swap". A pair mixing a token and a cut, or naming a token that
+    does not resolve, is left to G-MOMENT, G-TOKEN and G-CADENCE (it passes here)."""
+    d, e = dur.strip().strip("`"), ease.strip().strip("`")
+    if d == "a cut" and e == "a cut":
+        return "one frame" in enter or "a text swap" in enter
+    if d in known and e in known:
+        pair = f"`{d.split('.')[-1]}` / `{e.split('.')[-1]}`"  # "over `normal` / `standard`"
+        return pair in enter
+    return True
+
+
+def g_arows(t: Texts, vals: dict[str, str]) -> list[str]:
+    """Applied mode: §17's A-1 in `16` §7 and A-2 in `14` SCR-054, read from the working tree."""
+    bad: list[str] = []
+    t16, t14 = t.arows.get("16", ""), t.arows.get("14", "")
+    i, j = t16.find("\n## 7. "), t16.find("\n## 8. ")
+    sec = t16[i:j] if 0 <= i < j else ""
+    heads = [(int(n), title) for n, title in AROW_HEAD.findall(sec)]
+    ours = [n for n, title in heads if title == AROW_TITLE]
+    if len(ours) != 1:
+        return [f"`16` §7 carries {len(ours)} '{AROW_TITLE}' blocks, not 1"]
+    n = ours[0]
+    if [h for h, _ in heads] != list(range(1, len(heads) + 1)) or heads[-1][0] != n:
+        bad.append(f"`16` §7.{n} is not the last §7 block, one past the block before it")
+    if f"**A-1, `16` §7.{n}**" not in section(t.spec, "## 17."):
+        bad.append(f"§17's A-1 does not name `16` §7.{n}")
+    blk = sec[sec.find(f"### 7.{n} ") :]
+    rows = table_rows(blk, "M-0")
+    want = {r[0]: r[5] for r in moment_rows(t) if len(r) == 9}
+    durs = {r[0]: r[3] for r in moment_rows(t) if len(r) == 9}
+    eases = {r[0]: r[4] for r in moment_rows(t) if len(r) == 9}
+    if [r[0].split(" ")[0] for r in rows] != list(want):
+        bad.append(f"`16` §7.{n}'s rows are {[r[0][:4] for r in rows]}, not §2's {list(want)}")
+    for r in rows:
+        mid = r[0].split(" ")[0]
+        if not want.get(mid):
+            continue  # an empty §2 cell is G-MOMENT's
+        exp = next((v for k, v in REDUCE_AS if want.get(mid, "").startswith(k)), None)
+        if len(r) != 4 or exp is None or not r[2].startswith(exp):
+            bad.append(
+                f"`16` §7.{n} {mid}: Reduce {r[2] if len(r) > 2 else ''!r} disagrees with §2"
+            )
+        elif not enter_ok(r[1], durs.get(mid, ""), eases.get(mid, ""), tokens(t)):
+            bad.append(f"`16` §7.{n} {mid}: Enter {r[1]!r} does not carry §2's Duration and Easing")
+    for base, alts in re.findall(r"`(motion\.[a-z]+)\.\{([a-z,]+)\}`", blk):
+        for a in alts.split(","):
+            if f"{base}.{a}" not in tokens(t):
+                bad.append(f"`16` §7.{n} names `{base}.{a}`, which does not resolve")
+    k = t14.find("\n### SCR-054 ")
+    scr = t14[k : t14.find("\n### ", k + 1)] if k >= 0 else ""
+    if t14.count(AROW_POINTER) != 1 or scr.count(AROW_POINTER) != 1:
+        bad.append("`14` does not carry exactly one SCR-054 pointer to the spec")
+    else:
+        ls = scr.split("\n")
+        at_ = next(x for x, ln in enumerate(ls) if ln.startswith(AROW_POINTER))
+        if not ls[at_ - 1].startswith(AROW_HIFI):
+            bad.append("`14`'s pointer is not directly under the 'Hi-fi (E24-D03)' line")
+    for label, text in ((f"`16` §7.{n}", blk.split("\n---")[0]), ("`14`'s pointer", t14)):
+        lines = (
+            text.split("\n")
+            if label != "`14`'s pointer"
+            else [ln for ln in text.split("\n") if ln.startswith(AROW_POINTER)]
+        )
+        for ln in lines:
+            if CLOSING.search(ln) or any(d in ln.lower() for d in DENY):
+                bad.append(f"{label} carries a closing keyword or a deny word")
+    return bad
+
+
+def png_size(raw: bytes) -> tuple[int, int] | None:
+    if raw[:8] != b"\x89PNG\r\n\x1a\n" or raw[12:16] != b"IHDR":
+        return None
+    return int.from_bytes(raw[16:20], "big"), int.from_bytes(raw[20:24], "big")
+
+
+def g_drawn(t: Texts, vals: dict[str, str]) -> list[str]:
+    """§0.1's board record against the exports in the working tree (PR 2, after the draw)."""
+    i, j = t.spec.find("\n### 0.1 "), t.spec.find("\n## 1. ")
+    sec = t.spec[i:j] if 0 <= i < j else ""
+    bad: list[str] = []
+    rows = [[c.replace("`", "") for c in r] for r in table_rows(sec, "0")]
+    if [r[0] for r in rows] != [f"0{k}" for k in range(1, 7)]:
+        bad.append(f"§0.1's board rows are {[r[0] for r in rows]}, not 01 ... 06")
+    want: set[str] = set()
+    ids = [m[1] for r in rows if (m := DRAWN_RX.fullmatch(r[-1]))]
+    if len(set(ids)) != len(ids):
+        bad.append(f"§0.1 records {len(ids)} board ids, {len(set(ids))} distinct, not six")
+    for r in rows:
+        name = f"E24-D04-{r[0]}-{r[1]}.png"
+        want.add(name)
+        m = DRAWN_RX.fullmatch(r[-1])
+        if not m:
+            bad.append(
+                f"board {r[0]}: its Status is not 'drawn (rN): id · W × H · descendants · sha256'"
+            )
+            continue
+        raw = t.pngs.get(name)
+        if raw is None:
+            bad.append(f"board {r[0]}: {IMG_DIR}/{name} is missing")
+            continue
+        if hashlib.sha256(raw).hexdigest() != m[5]:
+            bad.append(f"board {r[0]}: {name}'s sha256 is not the recorded one")
+        if png_size(raw) != (int(m[2]), int(m[3])):
+            bad.append(f"board {r[0]}: {name} is {png_size(raw)}, the record says {m[2]} × {m[3]}")
+    for extra in sorted(set(t.pngs) - want):
+        bad.append(f"{IMG_DIR}/{extra} is an E24-D04 export §0.1 does not record")
+    if not PAGE_RX.search(sec.replace("`", "")):
+        bad.append("§0.1's as-built paragraph does not name the page and its page id")
+    return bad
+
+
 def g_scope(t: Texts, vals: dict[str, str]) -> list[str]:
     if t.changed is None:
         return ["cannot list the changed paths (git failed)"]
-    own = ", ".join(OWN_PATHS)
-    return [
-        f"{p} is touched; this ticket owns {own}"
-        for p in t.changed
-        if p not in OWN_PATHS
-    ]
+    allowed = OWN_PATHS + AROW_PATHS
+    own = ", ".join(allowed) + f", {IMG_DIR}/E24-D04-NN-<slug>.png"
+
+    def ok(p: str) -> bool:
+        return p in allowed or (
+            p.startswith(IMG_DIR + "/") and bool(PNG_RX.fullmatch(p[len(IMG_DIR) + 1 :]))
+        )
+
+    return [f"{p} is touched; this ticket owns {own}" for p in t.changed if not ok(p)]
 
 
 def anchor_problems(t: Texts, vals: dict[str, str], prefix: str) -> list[str]:
@@ -507,7 +667,7 @@ def anchor_problems(t: Texts, vals: dict[str, str], prefix: str) -> list[str]:
 GATES: dict[str, Callable[[Texts, dict[str, str]], list[str]]] = {
     "G-MOMENT": g_moment, "G-TOKEN": g_token, "G-BUDGET": g_budget, "G-CADENCE": g_cadence,
     "G-LIVE": g_live, "G-ANNOT": g_annot, "G-CITE": g_cite, "G-HYGIENE": g_hygiene,
-    "G-SCOPE": g_scope,
+    "G-AROWS": g_arows, "G-DRAWN": g_drawn, "G-SCOPE": g_scope,
 }  # fmt: skip
 
 
@@ -537,22 +697,31 @@ def changed_paths() -> list[str] | None:
 
 def load() -> Texts:
     spec = (ROOT / SPEC_REL).read_text(encoding="utf-8")
-    pins = (
-        (ROOT / PINS_REL).read_text(encoding="utf-8")
-        if (ROOT / PINS_REL).exists()
-        else ""
-    )
+    pins = (ROOT / PINS_REL).read_text(encoding="utf-8") if (ROOT / PINS_REL).exists() else ""
     tool = (ROOT / TOOL_REL).read_text(encoding="utf-8")
-    return Texts(spec, pins, tool, changed_paths(), {})
+    arows = {k: (ROOT / PATHS[k]).read_text(encoding="utf-8") for k in ("16", "14")}
+    img = ROOT / IMG_DIR
+    pngs = (
+        {p.name: p.read_bytes() for p in sorted(img.glob("E24-D04-*.png"))} if img.is_dir() else {}
+    )
+    return Texts(spec, pins, tool, changed_paths(), {}, arows, pngs)
 
 
 def sub(old: str, new: str) -> Callable[[Texts], Texts]:
     def f(t: Texts) -> Texts:
         if t.spec.count(old) != 1:
-            raise SystemExit(
-                f"self-test: the spec carries {old[:50]!r} {t.spec.count(old)} times"
-            )
+            raise SystemExit(f"self-test: the spec carries {old[:50]!r} {t.spec.count(old)} times")
         return replace(t, spec=t.spec.replace(old, new))
+
+    return f
+
+
+def sub_in(key: str, old: str, new: str) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        text = t.arows[key]
+        if text.count(old) != 1:
+            raise SystemExit(f"self-test: `{key}` carries {old[:50]!r} {text.count(old)} times")
+        return replace(t, arows={**t.arows, key: text.replace(old, new)})
 
     return f
 
@@ -578,22 +747,40 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-ANNOT", "remove A-09's tab number", set_cell("A-09", 4, "")),
     ("G-CITE", "re-point a `D03` cite to an unpinned line", sub("`E11D06`:94; `D03`:459", "`E11D06`:94; `D03`:465")),
     ("G-HYGIENE", "write a closing keyword against #662", sub("carries the closing line.", "carries the closing line. Closes #662.")),
-    ("G-SCOPE", "touch `16` in the diff", lambda t: replace(t, changed=[*OWN_PATHS, PATHS["16"]])),
+    ("G-SCOPE", "touch `15` in the diff", lambda t: replace(t, changed=[*OWN_PATHS, PATHS["15"]])),
     ("G-TOKEN", "write a prose duration as a bare figure", sub("The emphasis lasts `motion.duration.fast`, inside its", "The emphasis lasts 150 ms, inside its")),
     ("G-ANNOT", "drop the T2 paragraph", lambda t: replace(t, spec=re.sub(r"\n\*\*T2 rows \(BQ-20[^\n]*\n", "\n", t.spec))),
     ("G-ANNOT", "mark A-13 as T2-6", set_cell("A-13", 7, "T2-6")),
     ("G-BUDGET", "drop PROPOSED from the cascade threshold", sub("**The cascade threshold (PROPOSED to the owner, G-1).**", "**The cascade threshold (G-1).**")),
     ("G-HYGIENE", "put a deny word into the tool's own text", lambda t: replace(t, tool=t.tool + "\n# " + DENY[6] + "\n")),
+    ("G-TOKEN", "write a prose duration after 'takes'", sub("The emphasis lasts `motion.duration.fast`, inside its", "The emphasis takes 150 ms, inside its")),
+    ("G-ANNOT", "give the menu item A-24 a P number", set_cell("A-24", 4, "P11")),
+    ("G-ANNOT", "give the dialog body A-29 a K number", set_cell("A-29", 4, "K3")),
+    ("G-BUDGET", "drop PROPOSED from C-4's tint", sub("(§4), PROPOSED to the owner, unmeasured", "(§4), unmeasured")),
+    ("G-MOMENT", "rename the canvas-calm paragraph", sub("**Canvas calm** (E47-D08", "**The calm tier** (E47-D08")),
+    ("G-HYGIENE", "put a local path into the tool's own text", lambda t: replace(t, tool=t.tool + "\n# /" + "home/x\n")),
+    ("G-AROWS", "renumber `16`'s block past the next free number", sub_in("16", "### 7.4 Derivatives", "### 7.6 Derivatives")),
+    ("G-AROWS", "drop M-05 from `16`'s table", lambda t: replace(t, arows={**t.arows, "16": re.sub(r"\n\| M-05 stale[^\n]*", "", t.arows["16"])})),
+    ("G-AROWS", "give M-05 a cut in `16`'s Reduce column", sub_in("16", "| instant                                |", "| a cut                                  |")),
+    ("G-AROWS", "drop the SCR-054 pointer from `14`", lambda t: replace(t, arows={**t.arows, "14": t.arows["14"].replace(AROW_POINTER, "- **Motion:**")})),
+    ("G-DRAWN", "record a wrong sha256 for board 03", sub("`687873aff468de90569d", "`787873aff468de90569d")),
+    ("G-DRAWN", "record a wrong height for board 01", sub("· 2032 × 2443 ·", "· 2032 × 2444 ·")),
+    ("G-DRAWN", "change one byte of board 05's PNG", lambda t: replace(t, pngs={**t.pngs, "E24-D04-05-a11y-settings-t2.png": t.pngs["E24-D04-05-a11y-settings-t2.png"][:-1] + b"\0"})),
+    ("G-DRAWN", "add an E24-D04 export the record does not name", lambda t: replace(t, pngs={**t.pngs, "E24-D04-07-extra.png": b""})),
+    ("G-DRAWN", "drop the page id from the as-built paragraph", sub("page id `b96edf38-8e58-8006-8008-e2d74e25e66a`", "page id pending")),
+    ("G-AROWS", "give M-05's Enter in `16` a duration §2 does not name", sub_in("16", "data ink 1.00 → 0.85 over `normal` / `standard`", "data ink 1.00 → 0.85 over `slow` / `standard`")),
+    ("G-DRAWN", "give board 02 board 01's id", sub("drawn (r2): `b96edf38-8e58-8006-8008-e2de792f4444`", "drawn (r2): `b96edf38-8e58-8006-8008-e2de41735bab`")),
+    ("G-ANNOT", "move A-26 from the popover's one notice to rendering 2b", lambda t: sub("; A-22, A-23, A-25 (also `readonly`) and A-26 under", "; A-22, A-23 and A-25 (also `readonly`) under")(sub("A-21 and the A-16", "A-21, A-26 and the A-16")(t))),
 )  # fmt: skip
 
 
 def selftest() -> tuple[bool, list[str]]:
-    base = replace(load(), changed=list(OWN_PATHS))
+    base = replace(
+        load(), changed=[*OWN_PATHS, *AROW_PATHS, *(f"{IMG_DIR}/{p}" for p in load().pngs)]
+    )
     before = base.spec
     found = audit(base)
-    out = [f"self-test: baseline {len(found)} FAIL"] + [
-        f"  baseline {g}: {m}" for g, m in found
-    ]
+    out = [f"self-test: baseline {len(found)} FAIL"] + [f"  baseline {g}: {m}" for g, m in found]
     ok = not found
     for i, (gate, what, fn) in enumerate(MUTATIONS, 1):
         gates = sorted({g for g, _ in audit(fn(base))})
