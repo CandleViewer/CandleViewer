@@ -638,6 +638,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     const candle = shape === "bars" ? new BarSeries(ring) : new CandleSeries(ring, shape);
     const pickId = `series.${sid}`;
     const price = new SeriesPriceSource(store, ring, inst.viewport, pane);
+    price.setClosesOnly(isRibbonKind(kind)); // a line kind draws its closes alone
     const entry: SeriesEntry = {
       kind,
       pane,
@@ -817,6 +818,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       s.candle.setKind(kind, ha, s.store);
     }
     s.kind = kind;
+    s.price.setClosesOnly(line); // line, area, baseline: the drawn price is the close
     s.price.bump(); // the drawn high / low moved (26 :390): autoscale refits
     for (const h of s.candle.hosts) inst.graph.markData(h.id);
     const hosts = s.ribbon?.hosts ?? [];

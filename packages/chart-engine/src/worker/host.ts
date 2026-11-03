@@ -334,6 +334,8 @@ export interface ChartHost {
     series?: number,
   ): void;
   command(cmd: Command): void;
+  /** Test-only (E12-S11): the lanes with a batch in flight; a removed series leaves none. */
+  inFlightLanes(): number;
   /** Resolves the PNG, or null when it cannot encode; rejects `ExportUnavailableError` (BQ-92). */
   exportPng(): Promise<unknown>;
   dispose(): void;
@@ -449,6 +451,7 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
       const lane = laneOf("bars", cmd.series);
       queues.delete(lane);
       resyncAsked.delete(lane);
+      unacked.delete(lane); // an in-flight batch's late ack finds no entry and adds none
     }
   }
 
@@ -469,7 +472,9 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
       if (disposed) return;
       if (msg.t === "ack") {
         const lane = laneOf(msg.store, msg.series);
-        unacked.set(lane, Math.max(0, (unacked.get(lane) ?? 0) - 1));
+        const left = (unacked.get(lane) ?? 0) - 1;
+        if (left > 0) unacked.set(lane, left);
+        else unacked.delete(lane); // an idle lane holds no entry (a removed series' none)
         const queue = queues.get(lane);
         const next = queue?.shift();
         if (next !== undefined) send(msg.store, msg.series, next);
@@ -561,6 +566,7 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   return {
     runMode: link.runMode,
     counters: link.counters,
+    inFlightLanes: () => unacked.size,
     input(kind, row, fold): void {
       if (disposed) return;
       let r = rows.get(kind);

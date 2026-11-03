@@ -1093,6 +1093,9 @@ when given). Decisions:
   `CandleRing`: the real bars, or the Heikin-Ashi candles while HA is on (26 :390). Autoscale
   never clips what is on screen. The percent anchor reads the store's **real** close (E12-D06
   R-4: the axis labels real prices).
+- A line, area or baseline series draws its closes alone, so its source runs in closes-only mode
+  (`SeriesPriceSource.setClosesOnly`, set on `addSeries` and every kind switch): the extent and
+  the guard's minimum read the close word, and wicks the line never draws do not widen the window.
 - A series that is not the time map is read by time (its bars spanning the visible ones), and a
   series in another price frame is converted into the pane's ticks, rounded outward.
 - The runtime bumps the source's version after every applied batch and every kind switch (not

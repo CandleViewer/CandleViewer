@@ -5,12 +5,19 @@
 // reads the store's real close (E12-D06 R-4: the axis and its labels are real prices). A series
 // that is not the viewport's time map is read by time (its own bars spanning the visible ones),
 // and every value is converted into the pane's price frame (rounded outward) when its origin or
-// tick differ. The runtime bumps `version` after every applied batch and kind switch; nothing is
-// allocated per call. No DOM, no GL.
+// tick differ. A line-family series (line, area, baseline: E12-S07 PR B) draws only its closes,
+// so in `closes` mode the extent and the minimum read the close word alone. The runtime sets the
+// mode and bumps `version` after every applied batch and kind switch; nothing is allocated per
+// call. No DOM, no GL.
 import type { BarStore } from "../../model/BarStore.js";
 import type { PriceExtentSource } from "../../viewport/autoscale.js";
 import type { ViewportState } from "../../viewport/types.js";
 import { CANDLE_STRIDE, type CandleRing } from "./ring.js";
+
+/** The ring words a scan reads: high, low and close (`[open, high, low, close, meta]`). */
+const HIGH = 1;
+const LOW = 2;
+const CLOSE = 3;
 
 export class SeriesPriceSource implements PriceExtentSource {
   readonly kind = "series" as const;
@@ -19,6 +26,8 @@ export class SeriesPriceSource implements PriceExtentSource {
   private min = Number.NaN;
   /** The exclusive end of the last `first` call's slice, in this series' bars. */
   private end = 0;
+  /** Closes only (a line-family kind): the high and low words are not drawn. */
+  private closesOnly = false;
 
   constructor(
     private readonly store: BarStore,
@@ -33,12 +42,27 @@ export class SeriesPriceSource implements PriceExtentSource {
     this.version += 1;
   }
 
+  /**
+   * Price from the closes alone (line, area, baseline) or from the high and low (candles, OHLC).
+   * The caller bumps `version` afterwards (the runtime does on every kind switch).
+   */
+  setClosesOnly(on: boolean): void {
+    if (on === this.closesOnly) return;
+    this.closesOnly = on;
+    this.minAt = -1;
+  }
+
+  get closes(): boolean {
+    return this.closesOnly;
+  }
+
   extent(i0: number, i1: number, out: Float64Array): boolean {
     const a = this.first(i0, i1);
     const b = this.end;
     if (a < 0 || a >= b) return false;
     const r = this.ring;
-    scan(r.ints, r.head, r.capacity - 1, a, b, out);
+    const c = this.closesOnly;
+    scan(r.ints, r.head, r.capacity - 1, a, b, c ? CLOSE : HIGH, c ? CLOSE : LOW, out);
     out[0] = Math.floor(this.toPane(out[0] as number));
     out[1] = Math.ceil(this.toPane(out[1] as number));
     return true;
@@ -47,7 +71,7 @@ export class SeriesPriceSource implements PriceExtentSource {
   minLow(): number {
     if (this.minAt !== this.version) {
       const r = this.ring;
-      this.min = lowest(r.ints, r.head, r.capacity - 1, r.length);
+      this.min = lowest(r.ints, r.head, r.capacity - 1, r.length, this.closesOnly ? CLOSE : LOW);
       this.minAt = this.version;
     }
     return Number.isNaN(this.min) ? this.min : Math.floor(this.toPane(this.min));
@@ -77,7 +101,10 @@ export class SeriesPriceSource implements PriceExtentSource {
     return Math.max(0, this.store.timeToIndex(map.indexToTime(lo)));
   }
 
-  /** Bar i of the time map as this series' bar index; -1 when it holds none there. */
+  /**
+   * Bar i of the time map as this series' bar index: its bar at that time, else its last bar
+   * before it (`timeToIndex`, at or before); -1 when i is off the map or precedes its first bar.
+   */
   private own(i: number): number {
     const map = this.viewport.map;
     const n = this.store.length;
@@ -107,8 +134,9 @@ export class SeriesPriceSource implements PriceExtentSource {
 }
 
 /**
- * [min low, max high] of the drawn words over logical bars [a, b) into `out` (a < b). Plain
- * locals, int32 compares: the ring's `fill` pattern, so the loop stays optimised after warm-up.
+ * [min of word `lw`, max of word `hw`] of the drawn words over logical bars [a, b) into `out`
+ * (a < b): high and low, or the close twice. Plain locals, int32 compares: the ring's `fill`
+ * pattern, so the loop stays optimised after warm-up.
  */
 function scan(
   ints: Int32Array,
@@ -116,6 +144,8 @@ function scan(
   mask: number,
   a: number,
   b: number,
+  hw: number,
+  lw: number,
   out: Float64Array,
 ): void {
   const stride = CANDLE_STRIDE; // a local: an imported binding can be a getter per read
@@ -123,8 +153,8 @@ function scan(
   let hi = -0x80000000;
   for (let i = a; i < b; i += 1) {
     const w = ((head + i) & mask) * stride;
-    const h = (ints[w + 1] as number) | 0;
-    const l = (ints[w + 2] as number) | 0;
+    const h = (ints[w + hw] as number) | 0;
+    const l = (ints[w + lw] as number) | 0;
     if (h > hi) hi = h;
     if (l < lo) lo = l;
   }
@@ -132,13 +162,13 @@ function scan(
   out[1] = hi;
 }
 
-/** The lowest drawn low over the `n` bars held; NaN when there are none. */
-function lowest(ints: Int32Array, head: number, mask: number, n: number): number {
+/** The lowest drawn word `lw` (the low, or the close) over the `n` bars held; NaN when none. */
+function lowest(ints: Int32Array, head: number, mask: number, n: number, lw: number): number {
   if (n === 0) return Number.NaN;
   const stride = CANDLE_STRIDE;
   let lo = 0x7fffffff;
   for (let i = 0; i < n; i += 1) {
-    const l = (ints[((head + i) & mask) * stride + 2] as number) | 0;
+    const l = (ints[((head + i) & mask) * stride + lw] as number) | 0;
     if (l < lo) lo = l;
   }
   return lo;
