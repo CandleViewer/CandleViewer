@@ -2,7 +2,7 @@
  * Route manifest (E10-T01). One entry per route ID in
  * `docs/plan/12-sitemap.md` §2 (R-001..R-903). Consumed by:
  *  - `tree.tsx` to build the React Router data router.
- *  - the command palette (E10-S03).
+ *  - the command palette, SCR-012 (E10-S05, #5236): its Navigate group.
  *  - the E10-Q01 route-matrix test, which iterates every sitemap route ID
  *    and fails if this manifest is missing one.
  *

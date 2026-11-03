@@ -7,8 +7,7 @@
   - text: Not available in this build.
   - button "Interval" [disabled]
   - text: Not available in this build.
-  - button "Search commands, Ctrl+K" [disabled]: Search commands Ctrl+K
-  - text: The command palette is not available in this build.
+  - button "Search commands, Ctrl+K": Search commands Ctrl+K
   - 'button "Connection: Reconnecting"': Reconnecting
   - button "Sign out"
 - navigation "Primary":
