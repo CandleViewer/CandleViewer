@@ -3814,9 +3814,14 @@ export interface paths {
      *     been backfilled over the window (nothing fetched for it yet, or the fetch failed), so an
      *     empty page there means "not recorded". An empty page with `no_coverage: false` means the
      *     window was covered and no funding settled in it (a symbol listed after the window, or
-     *     before its first settlement). `gaps[]` lists each span of the covered part longer than
-     *     one `funding_interval_minutes` between consecutive settlements, so a missing settlement
-     *     is reported and never filled.
+     *     before its first settlement). `gaps[]` lists each span of the covered part in which a
+     *     settlement was due and none is stored, so a missing settlement is reported and never
+     *     filled. A gap's `from` is the stored settlement before it, or `covered_from` when none
+     *     is stored before it inside the covered part, and its `to` the stored settlement after
+     *     it, or `covered_to` when none is; both edges are exclusive (the missing settlements lie
+     *     strictly between them), and a span is a gap when `to − from` exceeds one
+     *     `funding_interval_minutes`. At most 64 gaps are listed, oldest first; past the cap the
+     *     oldest are joined into one span, which never leaves a missing settlement out.
      *
      *     The two bounds and `meta.coverage` are contract first (C-6.1): optional until the
      *     handler serves them, and a client reads an absent member as unknown, never as `0` or as
@@ -9129,9 +9134,9 @@ export interface components {
       /** @description Sitemap route id. */
       screen: string;
     };
-    /** @description One position's estimated funding charge at the next settlement (E24-S03, #778), the per-account carrier of E24-D02 G11. It is computed server-side only (C-2.12): the position's value at mark times the symbol's accruing rate (the ticker's `fundingRate`, the item `getFundingHistory` flags `predicted`), with `Decimal` arithmetic; a client formats it and never multiplies. A long pays and a short receives when the rate is positive, the reverse when it is negative. A demo position is priced at the live public rate, the only one there is. It rides the position's own read (`listPositions`, `getPosition`), so its scope is the position's: `positions:read` over the caller's granted accounts, every account for the Owner and the assigned ones for a Manager (C-12.4); no operation of its own exists and a market-data read never carries it. */
+    /** @description One position's estimated funding charge at the next settlement (E24-S03, #778), the per-account carrier of E24-D02 G11. It is computed server-side only (C-2.12): the position's value at mark times the symbol's accruing rate (the ticker's `fundingRate`, the item `getFundingHistory` flags `predicted`), with `Decimal` arithmetic; a client formats it and never multiplies. A long pays and a short receives when the rate is positive, the reverse when it is negative. A demo position is priced at the live public rate, the only one there is. It is served on the position reads (`listPositions`, `getPosition`) only, so its scope is theirs: `positions:read` over the caller's granted accounts, every account for the Owner and the assigned ones for a Manager (C-12.4); no operation of its own exists, a market-data read never carries it, and the other `Position` carriers send it absent. Annualising never applies to it: money is never annualised on the client. */
     FundingEstimate: {
-      /** @description The charge's magnitude in the settle coin (USDT), never negative; its sign is `direction`. */
+      /** @description The charge's magnitude in the settle coin (USDT), never negative; its sign is `direction`. Quantised to 8 dp, `ROUND_HALF_UP`, as funding payments are (24 §1.5). */
       amount: components["schemas"]["Decimal"];
       /**
        * Format: date-time
@@ -9151,7 +9156,7 @@ export interface components {
        */
       settles_at: string;
     };
-    /** @description `PageMeta` plus the stored coverage of the symbol's settled funding (E24-S03, #778): `LiquidationsPageMeta`'s four members and `OpenInterestPageMeta`'s `gaps[]`, each a span of the covered part longer than one funding interval between consecutive settlements. `coverage` is optional until `getFundingHistory` serves it (contract first, C-6.1). */
+    /** @description `PageMeta` plus the stored coverage of the symbol's settled funding (E24-S03, #778): `LiquidationsPageMeta`'s four members and `OpenInterestPageMeta`'s `gaps[]` (at most 64), each a span of the covered part with a missing settlement, bounded by the stored neighbour settlements or the covered edges (`getFundingHistory` defines them). `coverage` is optional until `getFundingHistory` serves it (contract first, C-6.1). */
     FundingPageMeta: components["schemas"]["PageMeta"] & {
       coverage?: {
         /** Format: date-time */
@@ -10689,7 +10694,7 @@ export interface components {
       bust_price?: components["schemas"]["Decimal"] | null;
       /** Format: uuid */
       exchange_account_id: string;
-      /** @description The charge this position meets at the symbol's next funding settlement, computed by the server (E24-S03, #778; E24-D02 G11). `null` when the position is flat or the server holds no accruing rate for the symbol, so a client shows no charge line, never a zero. Contract first (C-6.1): absent until the read serves it, which a client reads as `null`. */
+      /** @description The charge this position meets at the symbol's next funding settlement, computed by the server (E24-S03, #778; E24-D02 G11). `listPositions` and `getPosition` send it and send `null` when the position is flat or the server holds no accruing rate for the symbol, so a client shows no charge line, never a zero: unlike the "a member a row holds no value for is absent" rule of `listPositions`, `null` here is the answer "no charge". The other carriers of `Position`, the `setPositionLeverage` `200` and `AccountConsequenceSummary.open_positions`, never compute it and send it absent. Contract first (C-6.1): absent until the reads serve it, which a client reads as `null`. */
       funding_estimate?: components["schemas"]["FundingEstimate"] | null;
       /** Format: uuid */
       id: string;
@@ -12342,29 +12347,20 @@ export interface components {
         max_history_bars?: number;
         stale_badge_after_ms?: number;
       };
-      /** @description The derivatives sub-panes' display preferences (E24-D02 §10, gap G1; E24-S03, #778), presentation only: no key changes what the server computes or what a rule sees. A leaf's dotted key is `deriv.<leaf>` (`deriv.funding_style` is E24-D02's `deriv.funding.style`), one level as every group's leaves are. With no deployment default set, an unset leaf takes the client's built-in default, named on each leaf. The liquidation keys (`deriv.liq.*` in E24-D02 §10) are not here yet. */
+      /** @description The derivatives sub-panes' display preferences (E24-D02 §10, gap G1; E24-S03, #778; the basis key per the orchestrator's ruling on #783, 6612480577), presentation only: no key changes what the server computes or what a rule sees. Annualising is a display transform of a rate only; a money amount (`FundingEstimate.amount`) is never annualised on the client. A leaf's dotted key is `deriv.<leaf>` (`deriv.funding_style` is E24-D02's `deriv.funding.style`), one level as every group's leaves are. As for every group, `updateSettings` judges each patch leaf against `Settings`' leaf table and refuses an undeclared key or a value outside a leaf's enum or type with `422 validation_failed`, writing nothing. With no deployment default set, an unset leaf takes the client's built-in default, named on each leaf. */
       deriv?: {
-        /** @description Annualised basis display; client default `false` (PROPOSED in E24-D02). */
-        basis_annualised?: boolean;
         /**
-         * @description The basis readout's price, `mark − index` or `last − index`; client default `mark`.
+         * @description The basis readout's price, `last − index` or `mark − index`; client default `last` (the ruling on #783, 6612480577).
          * @enum {string}
          */
-        basis_source?: "mark" | "last";
-        /** @description Annualised funding display (E24-S04); client default `false`. */
+        basis_source?: "last" | "mark";
+        /** @description Annualised funding-rate display (E24-S04); client default `false`. */
         funding_annualised?: boolean;
         /**
          * @description The settled-history rendering, stepped line or bars; client default `line` (PROPOSED in E24-D02).
          * @enum {string}
          */
         funding_style?: "line" | "bars";
-        /**
-         * @description The OI sub-pane's mode; client default `absolute`.
-         * @enum {string}
-         */
-        oi_mode?: "absolute" | "delta";
-        /** @description The OI price/OI quadrant classification; client default `true`. */
-        oi_quadrant_colouring?: boolean;
       };
       notifications?: {
         desktop_enabled?: boolean;
