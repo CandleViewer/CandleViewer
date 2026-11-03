@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { composeStories } from "@storybook/react-vite";
-import { useState, type JSX } from "react";
+import { act, useState, type JSX } from "react";
 import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
 import { describe, it } from "vitest";
-import { Tag } from "../src/components/index.js";
+import { Tag, Tooltip } from "../src/components/index.js";
 import * as stories from "../src/components/Tag.stories.js";
 import { seriousViolations } from "./axe.js";
 import { mount } from "./theme/mount.js";
@@ -231,6 +231,46 @@ describe("Tag toggle (CMP-011 `toggle`, E29-S04; E29-D04 §2.9, E29-D02:299)", (
       <Tag variant="toggle" label="x" pressed onPressedChange={fn()} disabledReason="r" />
     );
     expect([stateless, withIcon, gated]).toHaveLength(3);
+  });
+
+  it("passes the button's attributes through: a CMP-016 Tooltip describes the chip and keeps its name", async () => {
+    const host = await mount(
+      <Tooltip content="ADL — auto-deleveraged">
+        <Tag variant="toggle" label="ADL" pressed onPressedChange={fn()} />
+      </Tooltip>,
+    );
+    const button = within(host).getByRole("button", { name: "ADL", pressed: true });
+    const tip = document.querySelector<HTMLElement>('[data-cmp="CMP-016"]');
+    expect(tip).not.toBeNull();
+    expect(button).toHaveAttribute("aria-describedby", tip?.id);
+    expect(button).toHaveAccessibleDescription("ADL — auto-deleveraged");
+    expect(button).toHaveAccessibleName("ADL");
+    // The Tooltip's focus handler reaches the chip: keyboard focus shows the description at once.
+    await act(async () => button.focus());
+    expect(tip?.hidden).toBe(false);
+  });
+
+  it("takes the button's other attributes, never a name, a press or a state of its own (type level)", () => {
+    const described = (
+      <Tag variant="toggle" label="x" pressed onPressedChange={fn()} aria-describedby="d" id="i" />
+    );
+    const renamed = (
+      // @ts-expect-error its name is its label, which never changes (E29-D02:299)
+      <Tag variant="toggle" label="x" pressed onPressedChange={fn()} aria-label="y" />
+    );
+    const clicked = (
+      // @ts-expect-error its press is onPressedChange
+      <Tag variant="toggle" label="x" pressed onPressedChange={fn()} onClick={fn()} />
+    );
+    const stated = (
+      // @ts-expect-error its state is pressed
+      <Tag variant="toggle" label="x" pressed onPressedChange={fn()} aria-pressed="mixed" />
+    );
+    // @ts-expect-error a static chip is a span, so a button attribute would be dropped
+    const titled = <Tag label="x" title="t" />;
+    // @ts-expect-error a status chip is a span too
+    const statusDescribed = <Tag variant="info" label="x" aria-describedby="d" />;
+    expect([described, renamed, clicked, stated, titled, statusDescribed]).toHaveLength(6);
   });
 
   it("the five Type chips have no serious or critical axe violation", async () => {
