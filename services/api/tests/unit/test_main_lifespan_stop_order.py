@@ -102,6 +102,16 @@ class _Pool:
         self.stops.order.append(self.name)
 
 
+class _Reads:
+    """`OmsReads`: its own pool, closed by `aclose`."""
+
+    def __init__(self, stops: _Stops) -> None:
+        self.stops = stops
+
+    async def aclose(self) -> None:
+        self.stops.order.append("oms_reads")
+
+
 class _Audits:
     def __init__(self, stops: _Stops) -> None:
         self.stops = stops
@@ -315,3 +325,15 @@ async def test_lifespan_sweeps_the_exports_once_before_serving_and_stops_before_
     async with _lifespan(app):
         assert stops.started.count("audit_exports") == 1
     assert stops.order.index("audit_exports") < stops.order.index("admin_jobs")
+
+
+async def test_lifespan_closes_the_oms_reads_pool_once_after_the_rules_module_stopped() -> None:
+    """E35-T12 (#5004): the rules' exits, and K4b's `scale_in`, read positions through the OMS
+    reads, so their pool closes once, after `stop_all` has stopped the rules module."""
+    stops = _Stops()
+    app = _app(stops)
+    app.state.oms_reads = _Reads(stops)
+    async with _lifespan(app):
+        assert "oms_reads" not in stops.order
+    assert stops.order.count("oms_reads") == 1
+    assert stops.order.index("module:rules") < stops.order.index("oms_reads")
