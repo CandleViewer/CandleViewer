@@ -1,9 +1,8 @@
 /**
- * The audit log's calls (E42-S04; E42-D04 §4 and §7; the build plan's §3): the list read and the
- * tamper check SCR-135 makes, each through `apiFetch` (the step-up module's `sendHeld`) and typed
- * from the generated contract (`docs/plan/22-api-openapi.yaml`, C-4.16); the incident read comes
- * with the integrity model, the export's calls with its job. Every answer settles as one of four
- * kinds:
+ * The audit log's calls (E42-S04; E42-D04 §4 and §7; the build plan's §3): the list read, the
+ * tamper check and the incident read SCR-135 makes, each through `apiFetch` (the step-up module's
+ * `sendHeld`) and typed from the generated contract (`docs/plan/22-api-openapi.yaml`, C-4.16);
+ * the export's calls come with its job. Every answer settles as one of four kinds:
  * - `ok`: a `2xx` whose body is vetted first. An unknown enum value or a missing or ill-shaped
  *   member is an unreadable answer, never a guessed value; members the contract does not name are
  *   dropped.
@@ -31,6 +30,7 @@ export type EntryOutcome = Schemas["AuditOutcome"];
 export type Severity = Schemas["Severity"];
 export type Environment = Schemas["Environment"];
 export type PageMeta = Schemas["PageMeta"];
+export type Incident = Schemas["Incident"];
 export type Problem = Schemas["Problem"];
 /** `queryAuditLog`'s parameters: the filter set, `limit` and `cursor`. */
 export type AuditQuery = NonNullable<Ops["queryAuditLog"]["parameters"]["query"]>;
@@ -43,6 +43,8 @@ export type VerifyBody = NonNullable<
   Ops["verifyAuditChain"]["requestBody"]
 >["content"]["application/json"];
 export type VerifyResult = Ops["verifyAuditChain"]["responses"][200]["content"]["application/json"];
+type IncidentsOk = Ops["listIncidents"]["responses"][200]["content"]["application/json"];
+export type IncidentPageBody = Pick<IncidentsOk, "meta"> & { readonly items: readonly Incident[] };
 /** A problem's field error as the client keeps it: the field and the rule, never a message. */
 export type FieldError = Required<Pick<NonNullable<Problem["errors"]>[number], "field" | "rule">>;
 
@@ -86,7 +88,7 @@ export interface CallOptions {
 }
 
 /**
- * BQ-11 (PROPOSED, as ruled): the list reads' bound (`queryAuditLog`), above
+ * BQ-11 (PROPOSED, as ruled): the list reads' bound (`queryAuditLog`, `listIncidents`), above
  * `audit_query_timeout_ms` (4,000, `22`), so the server's own `503` is what a slow query shows.
  */
 export const AUDIT_READ_TIMEOUT_MS = 6_000;
@@ -96,6 +98,13 @@ export const AUDIT_READ_TIMEOUT_MS = 6_000;
  * result; the client waits past that, so a long run is never shown as lost while it still runs.
  */
 export const VERIFY_TIMEOUT_MS = 75_000;
+/**
+ * PROPOSED: the incident read's page, newest `last_seen_at` first, every status (D04 §7). A standing
+ * break older than the newest 100 would not be read after a reload; the nightly run refreshes its
+ * `last_seen_at`, so it stays among them (C-1135P2-02).
+ */
+export const INCIDENT_LIMIT = 100;
+
 /**
  * The audit pages' cadences, set together (the orchestrator's ruling on #1135, "Polling cost"),
  * each PROPOSED. Every timed read writes audit rows, so this block is the pages' standing audit
@@ -136,6 +145,7 @@ const MAX_RETRY_AFTER_S = 86_400;
 export const AUDIT_PATHS = {
   query: "/api/v1/admin/audit", // queryAuditLog
   verify: "/api/v1/admin/audit/verify", // verifyAuditChain
+  incidents: "/api/v1/admin/incidents", // listIncidents
 } as const;
 
 const BROWSER_TIMERS: AuditTimers = {
@@ -154,6 +164,7 @@ const isInt = (raw: unknown): raw is number => typeof raw === "number" && Number
 const isCount = (raw: unknown): raw is number => isInt(raw) && raw >= 0;
 const isDate = (raw: unknown): raw is string =>
   typeof raw === "string" && Number.isFinite(Date.parse(raw));
+const isDateOrNull = (raw: unknown): raw is string | null => raw === null || isDate(raw);
 const isIntOrNull = (raw: unknown): raw is number | null => raw === null || isInt(raw);
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -172,6 +183,7 @@ const every =
 const OUTCOMES = every<EntryOutcome>()(["success", "failure", "denied"]);
 const SEVERITIES = every<Severity>()(["debug", "info", "warning", "error", "critical"]);
 const ENVIRONMENTS = every<Environment>()(["live", "demo", "testnet"]);
+const INCIDENT_STATUSES = every<Incident["status"]>()(["open", "acknowledged", "resolved"]);
 const ELIDED = every<"before" | "after">()(["before", "after"]);
 
 const member = <T extends string>(list: readonly T[], raw: unknown): raw is T =>
@@ -285,6 +297,55 @@ export function vetVerifyResult(raw: unknown): VerifyResult | null {
     anchor_hash,
     last_hash,
   };
+}
+
+/** One `Incident`, its required members checked and its texts within the contract's lengths. */
+function incidentOf(raw: unknown): Incident | null {
+  if (!isRecord(raw)) return null;
+  const { id, component, first_seen_at, last_seen_at } = raw;
+  if (!isText(id) || !isText(component) || !isDate(first_seen_at) || !isDate(last_seen_at)) {
+    return null;
+  }
+  if (!member(SEVERITIES, raw["severity"]) || !member(INCIDENT_STATUSES, raw["status"])) {
+    return null;
+  }
+  const out: Json = {
+    id,
+    component,
+    severity: raw["severity"],
+    status: raw["status"],
+    first_seen_at,
+    last_seen_at,
+  };
+  const within = (max: number) => (value: unknown) => isText(value) && value.length <= max;
+  const orNull = (ok: (value: unknown) => boolean) => (value: unknown) =>
+    value === null || ok(value);
+  const checks: readonly (readonly [string, (value: unknown) => boolean])[] = [
+    ["title", within(200)],
+    ["detail", orNull(within(2_000))],
+    ["occurrences", (value) => isInt(value) && value >= 1],
+    ["acknowledged_by", isTextOrNull],
+    ["acknowledged_at", isDateOrNull],
+    ["resolved_at", isDateOrNull],
+    ["runbook_ref", isTextOrNull],
+    ["signature", isText],
+  ];
+  for (const [name, ok] of checks) if (!optional(raw, out, name, ok)) return null;
+  return out as Incident;
+}
+
+/** `listIncidents`'s `200`: every incident readable, else the read is unreadable. */
+export function vetIncidentPage(raw: unknown): IncidentPageBody | null {
+  if (!isRecord(raw) || !Array.isArray(raw["items"])) return null;
+  const meta = metaOf(raw["meta"]);
+  if (meta === null) return null;
+  const items: Incident[] = [];
+  for (const item of raw["items"]) {
+    const incident = incidentOf(item);
+    if (incident === null) return null;
+    items.push(incident);
+  }
+  return { items, meta };
 }
 
 /**
@@ -521,4 +582,10 @@ export function verifyAuditChain(options?: CallOptions): Promise<AuditAnswer<Ver
     },
     options,
   );
+}
+
+/** `GET /admin/incidents`: the newest incidents of every status, for D04 §7's episode. */
+export function listIncidents(options?: CallOptions): Promise<AuditAnswer<IncidentPageBody>> {
+  const url = `${AUDIT_PATHS.incidents}?limit=${INCIDENT_LIMIT}`;
+  return readJson(url, vetIncidentPage, options);
 }
