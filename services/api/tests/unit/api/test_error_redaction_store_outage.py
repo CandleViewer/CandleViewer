@@ -71,7 +71,6 @@ def test_outage_reaching_global_handler_answers_503(
         PermissionError("key file"),
         FileNotFoundError("export dir"),
         TimeoutError(),
-        ConnectionRefusedError("venue"),
     ],
     ids=lambda e: f"{type(e).__name__}-{getattr(getattr(e, 'orig', None), 'sqlstate', '')}",
 )
@@ -102,3 +101,11 @@ def test_sqlstate_not_shaped_like_a_code_is_logged_as_none() -> None:
         r = _client(_db(sa_exc.OperationalError, "08a;x")).get("/boom")
     assert r.status_code == 503  # an OperationalError is an outage by its class
     assert logs[0]["sqlstate"] is None
+
+
+@pytest.mark.parametrize("exc", [ConnectionRefusedError(), ConnectionResetError()], ids=repr)
+def test_a_refused_or_reset_socket_reaching_global_handler_answers_503(exc: Exception) -> None:
+    # The unit of work lets the driver's raw socket error through while Postgres is down.
+    r = _client(exc).get("/boom")
+    assert r.status_code == 503
+    assert r.json()["code"] == "store_unavailable"

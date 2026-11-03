@@ -78,12 +78,19 @@ async def validation_error_handler(request: Request, exc: Exception) -> JSONResp
 
 def _bare_os_error(exc: Exception) -> bool:
     """An `OSError` the routers map knowing a store call raised it; here, with no such context,
-    it may be a file, venue or timeout fault (every `asyncio.timeout` expiry is one): a 500."""
-    return isinstance(exc, OSError) and not isinstance(exc, StorageTierUnavailable)
+    it may be a file or timeout fault (every `asyncio.timeout` expiry is one): a 500. A refused,
+    reset or aborted socket (`ConnectionError`) stays an outage: the relational unit of work lets
+    the driver's raise one through unwrapped while Postgres is down, and the venue clients
+    raise their own types."""
+    return (
+        isinstance(exc, OSError)
+        and not isinstance(exc, ConnectionError)
+        and not isinstance(exc, StorageTierUnavailable)
+    )
 
 
 async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
-    if is_storage_outage(exc) and not _bare_os_error(exc):
+    if not _bare_os_error(exc) and is_storage_outage(exc):
         # A store outage that no router mapped: 503, not 500. Driver text embeds bound
         # parameters, so this line carries only the class name and SQLSTATE. Starlette still
         # re-raises after the response, so the server's own traceback line is not covered here.
