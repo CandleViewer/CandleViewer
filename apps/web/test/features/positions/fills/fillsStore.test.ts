@@ -2,8 +2,8 @@
  * E29-S04 (#979) the fills store (`fillsStore.ts`) on the goldens: one row per (account, exec id)
  * whatever the source, its order and the commit window (BQ-9), the dedupe counter, newest first
  * from REST's newest-first pages and WS's oldest-first snapshot, the 5,000 bound, the directory,
- * revocation and narrowing (SR-E29-11), a failed read, the reads Retry starts afresh after a
- * revoke, and the new-fills pill (D01 D13 g).
+ * revocation and narrowing (SR-E29-11), a failed read, the reads a lifted revoke starts afresh,
+ * and the new-fills pill (D01 D13 g).
  */
 import { describe, expect, it } from "vitest";
 import { createFillsStore, MAX_FILLS } from "../../../../src/features/positions/fills/fillsStore";
@@ -593,7 +593,7 @@ describe("revocation and narrowing (SR-E29-11, E29-D05 F-02)", () => {
   });
 });
 
-describe("Retry starts the reads afresh after a revoke (S-02)", () => {
+describe("a lifted revoke starts the reads afresh (S-02)", () => {
   it("Retry after a revoke aborts the reads asked before it; the next carry a new signal", () => {
     const store = started();
     store.applyFrames([snap(snapshotBody()), reset("revoked")]);
@@ -613,12 +613,31 @@ describe("Retry starts the reads afresh after a revoke (S-02)", () => {
     expect([before.aborted, store.getSnapshot().all.length]).toEqual([true, 14]);
   });
 
+  it("a snapshot that lifts a revoke aborts the reads asked before it; a read asked after applies", () => {
+    const store = started();
+    store.applyFrames([reset("revoked")]);
+    const before = store.readSignal();
+    store.applyFrames([snap({ executions: [] })]);
+    store.applyRest(restItems()); // a read asked after the snapshot
+    store.commit();
+    expect([before.aborted, store.readSignal().aborted]).toEqual([true, false]);
+    expect(store.getSnapshot().all).toHaveLength(14);
+  });
+
   it("Retry after a failed feed or a failed read aborts nothing", () => {
     const store = started();
     const read = store.readSignal();
     store.markSnapshotFailed();
     store.setReadFailed(true);
     store.markRetrying();
+    expect(read.aborted).toBe(false);
+  });
+
+  it("a snapshot that lifts no revoke aborts nothing: a late first one, a re-snapshot", () => {
+    const store = started();
+    const read = store.readSignal();
+    store.markSnapshotFailed(); // the 5 s budget ran out: no revoke
+    store.applyFrames([snap({ executions: [] }), snap({ executions: [] })]);
     expect(read.aborted).toBe(false);
   });
 
