@@ -13,6 +13,7 @@ import {
   ShellConnectionSlot,
   ShellPanicSlot,
   ShellStatusSlot,
+  ShellViewAsSlot,
 } from "./slots";
 import { TopBarSlot } from "./TopBarSlot";
 import { useRouteFocus } from "./useRouteFocus";
@@ -42,6 +43,7 @@ export function ShellLayout(): JSX.Element {
         <AppShell
           mainId={SHELL_MAIN_ID}
           mainRef={mainRef}
+          viewAs={<ShellViewAsSlot />}
           nav={<NavRailFrame />}
           connection={<ShellConnectionSlot />}
           topBar={(connection) => <TopBarSlot connection={connection} />}

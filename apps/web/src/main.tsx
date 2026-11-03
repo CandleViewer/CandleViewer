@@ -40,6 +40,12 @@ void shell.ready.then(async () => {
     await unlockBeforeBoot(root);
     await runBootstrap();
   }
+  // E42-S03 V-8: a load into a view-as context the server ended: SCR-124's banner, whose Exit leads on
+  if (getShellState().bootstrap.kind === "held") {
+    const { showHeldBoot } = await import("./features/view-as/heldBoot");
+    showHeldBoot(root);
+    return;
+  }
   // SCR-159 (#306): a boot that found no server opens R-902 `/offline`, before the router reads the URL
   divertUnreachableBoot();
   const { App } = await import("./App");

@@ -1,0 +1,81 @@
+/*
+ * SCR-124's view-as banner (E42-S03; E42-D03 §10, D24, §13, §15): the shell's first row, above the
+ * skip link and the TopBar, `color.status.info.subtle` with a 2 px `color.status.info.strong` rule
+ * under it. It wraps at 200 % zoom and the in-app text scale, never truncates, and keeps Exit its
+ * first Tab stop (the DOM order). It appears without a slide: there is no motion here.
+ */
+.cv-view-as {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-inset-sm);
+  padding-inline-end: var(--space-inset-md);
+  background: var(--color-status-info-subtle);
+  border-block-end: 2px solid var(--color-status-info-strong);
+}
+
+.cv-view-as__message {
+  flex: 1 1 24rem;
+  min-width: 0;
+}
+
+.cv-view-as__exit {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-stack-xs);
+  padding-block: var(--space-inset-sm);
+}
+
+/* D24 (F2): the primary fill alone measures 2.72:1 against the banner (dark), so Exit takes a 1 px
+   `color.text.primary` border; CMP-001 takes no class, so the row's own class reaches it. */
+.cv-view-as__exit .cv-button {
+  border-color: var(--color-text-primary);
+}
+
+/* The countdown's text stays `color.text.primary` in every phase (D03 §10, §15). */
+.cv-view-as .cv-countdown {
+  color: var(--color-text-primary);
+}
+
+.cv-view-as__glyph {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-inline-end: var(--space-1);
+}
+
+/* V-5 and V-6: the glyph alone changes; triangle and octagon carry it in greyscale too. */
+.cv-view-as__glyph[data-glyph="warning"] {
+  color: var(--color-status-warning-strong);
+}
+
+.cv-view-as__glyph[data-glyph="danger"] {
+  color: var(--color-status-danger-strong);
+}
+
+.cv-view-as__failed {
+  margin: 0;
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+}
+
+/* Forced colours: the fill drops; the rule is a border, so it stays as CanvasText (D03 §15). Exit's
+   border rule above ties CMP-001's own forced-colours rule and loads later, and CMP-001 opts out of
+   forcing, so a theme token would be drawn there: it is ButtonText here, as CMP-001's own is. */
+@media (forced-colors: active) {
+  .cv-view-as {
+    background: Canvas;
+    border-block-end-color: CanvasText;
+  }
+
+  .cv-view-as__exit .cv-button {
+    border-color: ButtonText;
+  }
+
+  /* CMP-001's own hover and press cue, which the rule above out-ranks: Highlight, as CMP-001's. */
+  .cv-view-as__exit .cv-button:hover,
+  .cv-view-as__exit .cv-button:active {
+    border-color: Highlight;
+  }
+}

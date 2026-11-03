@@ -44,13 +44,23 @@ const retryNow = (): void => void getActiveClient()?.retryNow();
  * re-renders at 1 Hz only while the view has a clock in it. It is the one writer of E17-D02 §11
  * rows 1, 2 and 14 (the chip announces nothing), through the shell announcer, on a change of
  * reason and never per tick; it ends the Disconnected episode itself when the link is back.
+ *
+ * While the session holds a view-as context (E42-S03), a `4403` close is the server ending or
+ * holding that context (`bye` `view_as_expired`, `23` §9.6), never "Session ended": the region
+ * shows nothing and says nothing for it, and SCR-124's banner speaks (V-8).
  */
 export function ConnectionRegionSlot(): JSX.Element | null {
   const ws = useWsState();
   const privateFeedDown = useShellSelector((s) => s.degraded.privateHandedOver);
+  const viewing = useShellSelector((s) => s.viewAs.kind === "held");
   const [, tick] = useReducer((n: number) => n + 1, 0);
   // Read at render: a transition renders with the clock of that moment, never the last tick's.
-  const view = connectionRegion(ws, Date.now(), { privateFeedDown });
+  const region = connectionRegion(ws, Date.now(), { privateFeedDown });
+  // A viewer disabled while viewing gets a 4403 too (`bye user_disabled`): muted here, it is
+  // surfaced by the view-as source, whose re-read on that close the server answers 401, and the
+  // token holder routes to sign-in (`accessToken.ts`). Only that re-read failing on the network
+  // leaves the chip alone to show the loss.
+  const view = viewing && region?.reason === "session" ? null : region;
   const last = useRef<ConnectionRegionView | null>(null);
 
   useEffect(() => {

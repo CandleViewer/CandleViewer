@@ -15,11 +15,17 @@ import { REFLOW_QUERY, useReflow } from "./reflow";
  * H23; E10-D03 §1.2: the badges are never under a modal, above the reflow breakpoint), and the
  * scrim covers `main`'s band only (`useScrimInsets`); at the breakpoint a dialog fills the viewport
  * (§11.3).
+ *
+ * SCR-124's view-as row (E42-S03) comes first of all, before the skip link and above the top bar
+ * (E42-D03 D24: DOM = visual order), 0 px while the session views as no one. It is a grid row
+ * outside the scrolling canvas, so nothing ever scrolls beneath it; it stays live under a modal.
  */
 export interface AppShellProps {
   /** id of the one `main`, the skip link's target. */
   readonly mainId: string;
   readonly mainRef?: Ref<HTMLElement>;
+  /** SCR-124's view-as banner (E42-S03), the first row: it brings its own labelled region. */
+  readonly viewAs?: ReactNode;
   /** The CMP-071 rail, inside the `nav` "Primary" landmark. */
   readonly nav?: ReactNode;
   readonly connection?: ReactNode;
@@ -45,8 +51,9 @@ const FRAME: CSSProperties = {
   position: "relative",
   display: "grid",
   gridTemplateAreas:
-    '"header header header" "banner banner banner" "nav main aside" "footer footer footer"',
-  gridTemplateRows: "auto auto minmax(0, 1fr) auto",
+    '"viewas viewas viewas" "header header header" "banner banner banner" "nav main aside" ' +
+    '"footer footer footer"',
+  gridTemplateRows: "auto auto auto minmax(0, 1fr) auto",
   gridTemplateColumns: "auto minmax(0, 1fr) auto",
   height: "100vh",
   background: "var(--color-surface-app)",
@@ -65,7 +72,7 @@ const REFLOW_MAIN_MIN = "16rem";
 const FRAME_REFLOW: CSSProperties = {
   height: "auto",
   minHeight: "100vh",
-  gridTemplateRows: `auto auto minmax(${REFLOW_MAIN_MIN}, auto) auto`,
+  gridTemplateRows: `auto auto auto minmax(${REFLOW_MAIN_MIN}, auto) auto`,
 };
 const SCROLL_REFLOW: CSSProperties = { height: "auto", overflow: "visible" };
 
@@ -119,11 +126,15 @@ function useScrimInsets(mainId: string): void {
 export function AppShell(props: AppShellProps): JSX.Element {
   const { mainId, mainRef, nav, connection, panic, banner, canvasOverlay, status, children } =
     props;
-  const { rightRail, rightRailLabel } = props;
+  const { rightRail, rightRailLabel, viewAs } = props;
   useScrimInsets(mainId);
   const narrow = useReflow();
   return (
     <div style={narrow ? { ...FRAME, ...FRAME_REFLOW } : FRAME}>
+      {/* E42-D03 D24: the first row and Tab stop; above any modal's scrim, never inert */}
+      <div data-shell-slot="view-as" data-cv-inert-exempt="" style={{ gridArea: "viewas" }}>
+        {viewAs}
+      </div>
       <SkipLink targets={[{ id: mainId, label: SKIP_LINK_COPY.main }]} />
       <header data-cv-inert-exempt="" style={{ ...CHROME, gridArea: "header" }}>
         {(props.topBar ?? ((slot) => slot))(<div data-shell-slot="connection">{connection}</div>)}
