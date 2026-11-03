@@ -23,13 +23,15 @@ G-AC (the AC trace has AC 1-5 and the DoD rows, each with a known status), G-LEV
 table has the ten rows, each complete), G-PD (6-10 decisions, each with PASS/FAIL checks, a
 finding, a target ticket and PROPOSED), G-HEUR (every finding is `(heuristic)`; no participant,
 quote or timing lexicon outside the protocol), G-COMP (every competitive row has a URL and a
-fetched date, or says "unsourced observation"), G-IMG (no image is committed in the text leg),
+fetched date, or says "unsourced observation"), G-IMG (the memo embeds no image: the boards are named, not shown),
 G-MARKER (every HTML comment is an `audit:` value the tool recomputes), G-BQ (the BQ section
 names every BQ and the ruling of record, with no pending line left), G-PUBLIC (no local path,
 host or worker name), G-PIN (the memo's pin line names BASE as its 12-character short sha and the
 memo holds no 40-hex string: a full sha beside a vendor word trips the secret scanners) and
-G-UNTOUCHED (only the memo and this tool differ from BASE; no plan document: the ruling makes
-every amendment an A-row). G-PUBLIC scans the memo and this file. G-COMP checks only that a vendor row carries a
+G-BOARDS (section 0's board table: at most ten boards, each PENDING or drawn with its own PNG
+under docs/design/research/img/ at the stated size; once all are drawn the heading no longer says
+PENDING) and G-UNTOUCHED (only the ticket's files differ from `origin/main`: the memo, this tool,
+the board PNGs and the board kit; no plan document: the ruling makes every amendment an A-row). G-PUBLIC scans the memo and this file. G-COMP checks only that a vendor row carries a
 URL and a fetched date: the accuracy of a vendor quote is checked by hand, not by this tool.
 """
 
@@ -40,6 +42,7 @@ import hashlib
 import json
 import math
 import re
+import struct
 import subprocess
 import sys
 from collections.abc import Callable, Iterator
@@ -52,6 +55,12 @@ BASE = "ca49e693ae45512d77dbf7e16daf15dea79775a2"
 MEMO_REL = "docs/design/research/e19-profiles.md"
 TOOL_REL = "docs/design/_tools/e19_d01_profiles_audit.py"
 SCREENS_REL = "docs/plan/14-screens-catalogue.md"
+IMG_REL = "docs/design/research/img/"
+KIT_REL = "docs/design/_tools/sheets/e19-d01/"
+# The boards PR's files beside the memo and this tool (G-UNTOUCHED).
+ALLOWED_EXTRA = {".prettierignore", "docs/design/_tools/sheets/MANIFEST.sha256"}
+ALLOWED_PREFIXES = (IMG_REL + "E19-D01-", KIT_REL)
+DRAWN_RE = re.compile(r"drawn — `(E19-D01-(\d{2})-[a-z0-9-]+\.png)`, (\d+) × (\d+), \d+ frames?")
 MEMO = ROOT / MEMO_REL
 CORPUS = ROOT / "packages/fixtures/bybit/2026-10-05"
 TOKENS = ROOT / "packages/ui/tokens"
@@ -639,6 +648,32 @@ def g_pin(text: str) -> list[str]:
     return bad
 
 
+def g_boards(text: str) -> list[str]:
+    heading = re.search(r"^## 0\. Research boards \(Penpot\).*$", text, re.MULTILINE)
+    boards = table_rows(section(text, "0. Research boards"))
+    if not heading or not boards:
+        return ["no section 0 board table"]
+    bad = [f"{len(boards)} boards; the cap is ten"] if len(boards) > 10 else []
+    for r in boards:
+        if r[-1] == "PENDING":
+            continue
+        m = DRAWN_RE.fullmatch(r[-1])
+        if not m:
+            bad.append(f"board {r[0]} is neither PENDING nor drawn with its PNG")
+            continue
+        name, nn, w, h = m.group(1), m.group(2), int(m.group(3)), int(m.group(4))
+        png = ROOT / IMG_REL / name
+        if nn != r[0] or f"`E19-D01 / {nn} " not in r[1] or not png.is_file():
+            bad.append(f"board {r[0]}: no PNG {IMG_REL}{name}")
+            continue
+        head = png.read_bytes()[:24]
+        if head[:8] != b"\x89PNG\r\n\x1a\n" or struct.unpack(">II", head[16:24]) != (w, h):
+            bad.append(f"board {r[0]}: {name} is not a {w} × {h} PNG")
+    if all(r[-1] != "PENDING" for r in boards) and "PENDING" in heading.group(0):
+        bad.append("every board is drawn but the section 0 heading says PENDING")
+    return bad
+
+
 def _git(*args: str) -> str | None:
     res = subprocess.run(
         ["git", "-C", str(ROOT), *args], capture_output=True, text=True, check=False
@@ -647,15 +682,15 @@ def _git(*args: str) -> str | None:
 
 
 def g_untouched(git: Callable[..., str | None] = _git) -> list[str]:
-    committed = git("diff", "--name-only", f"{BASE}...HEAD")
+    committed = git("diff", "--name-only", "origin/main...HEAD")
     work = git("diff", "--name-only", "HEAD")
     untracked = git("ls-files", "--others", "--exclude-standard")
     if committed is None or work is None or untracked is None:
         return ["git call failed"]
     paths = set((committed + work + untracked).split())
     # The ruling of record: a plan-document change is an A-row in the memo, never an edit.
-    allowed = {MEMO_REL, TOOL_REL}
-    return [f"touched {p}" for p in sorted(paths - allowed)]
+    allowed = {MEMO_REL, TOOL_REL, *ALLOWED_EXTRA}
+    return [f"touched {p}" for p in sorted(paths - allowed) if not p.startswith(ALLOWED_PREFIXES)]
 
 
 def counts(text: str) -> dict[str, int]:
@@ -681,6 +716,7 @@ GATES: dict[str, Callable[[str], list[str]]] = {
     "G-BQ": g_bq,
     "G-PUBLIC": g_public,
     "G-PIN": g_pin,
+    "G-BOARDS": g_boards,
 }
 
 
@@ -777,6 +813,29 @@ MUTATIONS: tuple[tuple[str, str, Callable[[str], str]], ...] = (
     ),
     ("M-17 the pin widened to the full sha", "G-PIN", _sub(f"`{BASE[:12]}`", f"`{BASE}`")),
     ("M-18 a stale pin", "G-PIN", _sub(f"`main` `{BASE[:12]}`", "`main` `46e6acd2ddf3`")),
+    (
+        "M-19 a drawn board's size misstated",
+        "G-BOARDS",
+        _sub("2080 × 1664, 2 frames", "2080 × 1665, 2 frames"),
+    ),
+    (
+        "M-20 a drawn board names another PNG",
+        "G-BOARDS",
+        _sub("`E19-D01-02-competitive-teardown.png`, ", "`E19-D01-02-competitive-teardowns.png`, "),
+    ),
+    (
+        "M-21 the section 0 heading reverted to PENDING",
+        "G-BOARDS",
+        _sub("(Penpot) — drawn (As built: §13)", "(Penpot) — PENDING"),
+    ),
+    (
+        "M-22 an eleventh board",
+        "G-BOARDS",
+        _sub(
+            "\n| 09  | `E19-D01 / 09 ",
+            "\n| 10  | x | y | PENDING |\n| 11  | x | y | PENDING |\n| 09  | `E19-D01 / 09 ",
+        ),
+    ),
 )
 
 
@@ -795,6 +854,7 @@ UNTOUCHED_MUTATIONS: tuple[tuple[str, Callable[..., str | None]], ...] = (
         _fake_git("docs/plan/24-internal-schemas.md"),
     ),
     ("M-15 a `14` pointer line added (an A-row by the ruling)", _fake_git(SCREENS_REL)),
+    ("M-23 another ticket's board PNG", _fake_git(IMG_REL + "E19-D02-01-x.png")),
 )
 
 
@@ -814,7 +874,7 @@ def self_test() -> int:
         good = new == {gate}
         ok &= good
         print(f"{'ok  ' if good else 'FAIL'} {label} -> {sorted(new) or 'nothing'}")
-    if g_untouched(_fake_git("")):
+    if g_untouched(_fake_git(f"{IMG_REL}E19-D01-01-x.png\n{KIT_REL}BUILD.md\n.prettierignore")):
         print("FAIL G-UNTOUCHED rejects the clean fake")
         ok = False
     for label, fake in UNTOUCHED_MUTATIONS:
