@@ -33,6 +33,7 @@ import {
   type DegradedFacts,
 } from "../../features/system-states/degradedIssues.js";
 import { toLatencyIndicator, type LatencyIndicator } from "../../lib/telemetry/latencyIndicator.js";
+import { clearReassurance } from "../../features/reconciliation/reassurance.js";
 import { shellAccountSignals } from "../accountState/index.js";
 import { SHELL_PERF_MARKS, markShellStage } from "../perfMarks.js";
 import type { GpuCrash } from "../ShellPort.js";
@@ -218,11 +219,13 @@ export function applySystemUpdate(update: SystemUpdate): void {
 
 /**
  * Drops the degraded facts and row 9's hand-over timer, so a stopped shell leaves neither behind;
- * the account states go too (a stopped shell's client; the next connection replays, `23` §15.9).
+ * the account states and the reassurance verdicts go too (a stopped shell's client; the next
+ * connection replays, `23` §15.9, and reads again).
  */
 export function clearDegraded(): void {
   clearHandover();
   shellAccountSignals.clear();
+  clearReassurance();
   setShellState({ degraded: INITIAL_DEGRADED_FACTS });
 }
 
@@ -269,6 +272,7 @@ export function resetShellState(): void {
   clearHandover();
   newestGpuCrash = undefined;
   shellAccountSignals.clear();
+  clearReassurance();
   state = INITIAL_SHELL_STATE;
   for (const listener of listeners) listener();
 }
