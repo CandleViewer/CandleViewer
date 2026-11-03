@@ -34,13 +34,19 @@ The closes run as a task the hub owns (C-2.18), started eagerly so closers that 
 finish inside the `revoke` call, and `revoke` awaits it under `asyncio.shield`: a caller
 cancelled mid-loop still sees its `CancelledError`, but every socket of the revoked session is
 still closed (fail closed). Each close is bounded by `close_timeout_s`.
+
+Shed policy (C-2.18, #2814): at most `max_close_tasks` (>= 1) such tasks run at once. A batch
+revoked past that cap is neither dropped nor queued: its closes run inline in the caller,
+unshielded, so a caller cancelled mid-batch leaves the rest of that batch unclosed. Each such
+batch is one count of `ws_session_revocation_inline_batches_total` and the first in every
+`OVER_CAP_LOG_EVERY_S` is logged as a WARNING. `drain` waits (bounded) for the owned tasks at
+shutdown, and cancels any still running at the bound.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import contextvars
 import math
 import time
 from collections import OrderedDict, defaultdict
@@ -50,6 +56,7 @@ from typing import Any, Final, Literal
 import structlog
 
 from candleviewer.auth.metrics import auth_revocation_latency_seconds
+from candleviewer.observability.context import spawn
 from candleviewer.observability.metrics import Counter
 from candleviewer.ws.lifecycle import bye_frame as lifecycle_bye
 from candleviewer.ws.limits import FANOUT_SEND_TIMEOUT_S
@@ -80,6 +87,17 @@ ws_revocation_close_failures_total = Counter(
     "ws_session_revocation_close_failures_total",
     "WebSocket closes that failed during a session revocation, a user disable or a view-as "
     "context's end (the socket may remain open).",
+)
+
+#: One count per revoke batch that found the hub's close-task cap (`MAX_CLOSE_TASKS`) reached and
+#: closed its sockets inline in its caller, unshielded (#2814, C-2.18): no close is dropped, but a
+#: caller cancelled mid-batch leaves the rest of that batch's closes undone. In the catalogue,
+#: unscraped; it reads 0 unless the hub is saturated, and the throttled WARNING
+#: `ws revocation close tasks at cap` names the cap.
+ws_revocation_inline_batches_total = Counter(
+    "ws_session_revocation_inline_batches_total",
+    "Revoke batches closed inline in the caller, unshielded, because the hub's close-task cap "
+    "was reached.",
 )
 
 #: §9.5 / §13.6 closed `revoked.reason` set - no internal detail ever leaks through it.
@@ -194,7 +212,10 @@ EVICTION_LOG_EVERY_S: Final = 60.0
 CLOSE_FAILURE_LOG_EVERY_S: Final = 60.0
 #: At most this many revoke batches close at once (C-2.18). A batch over the cap is closed inline
 #: in its caller, as before the close task: no close is dropped, but that caller is not shielded.
+#: Every such batch is one count of `ws_revocation_inline_batches_total`, and the warning is
+#: logged at most this often (#2814).
 MAX_CLOSE_TASKS: Final = 256
+OVER_CAP_LOG_EVERY_S: Final = 60.0
 
 
 class RevocationHub:
@@ -212,9 +233,11 @@ class RevocationHub:
             not (math.isfinite(remember_s) and remember_s > 0)
             or not (math.isfinite(close_timeout_s) and close_timeout_s > 0)
             or max_remembered < 1
+            or max_close_tasks < 1  # 0 would run every close inline, unshielded (#2814)
         ):
             raise ValueError(
-                "remember_s and close_timeout_s must be finite and > 0, and max_remembered >= 1"
+                "remember_s and close_timeout_s must be finite and > 0, and max_remembered "
+                "and max_close_tasks >= 1"
             )
         self._sockets: dict[str, list[Closer]] = defaultdict(list)
         #: (session id, closer) -> the view-as context the socket authenticated into (#3085), set
@@ -236,6 +259,8 @@ class RevocationHub:
         #: Live entries forgotten because the cap was reached, and when that was last logged.
         self._evicted = 0
         self._evicted_logged_at: float | None = None
+        #: When the over-cap warning was last logged (monotonic), for its throttle.
+        self._over_cap_logged_at: float | None = None
 
     @property
     def remember_s(self) -> float:
@@ -346,23 +371,61 @@ class RevocationHub:
         reason = self._revoked[session_id][1]  # a remembered user_disabled wins (§9.5, 4403)
         closers = self._sockets.pop(session_id, [])
         if closers and len(self._closing) >= self._max_close_tasks:
-            await self._close_all(session_id, reason, closers)  # past the cap: inline, none dropped
+            # Shed policy (C-2.18): past the cap the batch is closed inline, in the caller and
+            # unshielded. Never dropped, never queued; counted and logged (throttled).
+            self._note_over_cap(session_id)
+            await self._close_all(session_id, reason, closers)
         elif closers:
-            # Started eagerly (`spawn` cannot): closers that never suspend, like the gateway's,
-            # finish inside this call, so a sealed close is still atomic with the revoke. Only a
-            # close that suspends leaves a task for the hub to own (C-2.18).
-            task = asyncio.Task(
-                self._close_all(session_id, reason, closers),
-                loop=asyncio.get_running_loop(),
-                name="ws-revocation-close",
-                context=contextvars.copy_context(),
-                eager_start=True,
+            # Started eagerly (`spawn(eager=True)`, the sanctioned site): closers that never
+            # suspend, like the gateway's, finish inside this call, so a sealed close is still
+            # atomic with the revoke. Only a close that suspends leaves a task for the hub to own
+            # (C-2.18).
+            task = spawn(
+                self._close_all(session_id, reason, closers), name="ws-revocation-close", eager=True
             )
             if not task.done():
                 self._closing.add(task)
                 task.add_done_callback(self._close_task_done)
             await asyncio.shield(task)
         return len(closers)
+
+    def _note_over_cap(self, session_id: str) -> None:
+        ws_revocation_inline_batches_total.inc()
+        now = self._monotonic()
+        if (
+            self._over_cap_logged_at is None
+            or now - self._over_cap_logged_at >= OVER_CAP_LOG_EVERY_S
+        ):
+            self._over_cap_logged_at = now
+            # A failing log sink must never skip the closes that follow (C-2.12).
+            with contextlib.suppress(Exception):
+                _log().warning(
+                    "ws revocation close tasks at cap; batch closed inline, unshielded",
+                    session_id=session_id,
+                    max_close_tasks=self._max_close_tasks,
+                )
+
+    async def drain(self, timeout_s: float) -> int:
+        """Wait up to `timeout_s` for the close tasks the hub owns; returns how many were still
+        running when called. Tasks still running at the bound are logged (ERROR), cancelled and
+        awaited, so their sockets may stay open: each close has its own bound, so this is only a
+        backstop for shutdown (#2814, C-2.18). A caller on an outer deadline passes what is left
+        of it, or its own deadline fires first and this cancel-and-log never runs. Safe to call
+        again; cancelling the caller cancels nothing here."""
+        pending = set(self._closing)
+        if not pending:
+            return 0
+        _, stuck = await asyncio.wait(pending, timeout=timeout_s)
+        if stuck:
+            with contextlib.suppress(Exception):
+                _log().error(
+                    "ws revocation close tasks cut off at shutdown; sockets may remain open",
+                    cut_off=len(stuck),
+                )
+            for task in stuck:
+                task.cancel()
+            await asyncio.wait(stuck)
+        return len(pending)
 
     async def _close_all(self, session_id: str, reason: str, closers: list[Closer]) -> None:
         """One latency observation per batch, in a `finally`: a batch cut off by its cancelled

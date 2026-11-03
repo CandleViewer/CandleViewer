@@ -92,7 +92,7 @@ from candleviewer.ws.limits import MACHINE_AUDIT_PENDING_MAX
 from candleviewer.ws.machines import MachineStateRegistry
 from candleviewer.ws.metrics import PRINCIPAL_LOAD_FAILURES, count_audit_failure
 from candleviewer.ws.permissions import ConnectionAuthz, ConnectionRegistry, Subscription
-from candleviewer.ws.revocation import AccountRevokedReason
+from candleviewer.ws.revocation import AccountRevokedReason, RevocationHub
 from candleviewer.ws.sequencing import (
     PRIVATE_CAUSAL_ORDER,
     SequencingHub,
@@ -116,6 +116,9 @@ def logger() -> Any:
 #: Upper bound on one principal load. A hung store denies the principal instead of holding the
 #: socket's `auth` or a role/grant change fan-out.
 PRINCIPAL_LOAD_TIMEOUT_S: Final = 5.0
+#: Left of `CLOSE_FLUSH_TIMEOUT_S` when the revocation drain starts, so its own cancel and log land
+#: before the flush bound's deadline (#2814).
+_DRAIN_MARGIN_S: Final = 0.05
 
 #: Topic family -> owning-module adapter ticket, for families whose adapter has not landed.
 PENDING_ADAPTERS: Final[Mapping[str, str]] = {
@@ -901,9 +904,11 @@ class WsRuntime:
         clock: Callable[[], float] = time.monotonic,
         machines: MachineStateRegistry | None = None,
         feeds: Sequence[_Refresher] = (),
+        revocation: RevocationHub | None = None,
     ) -> None:
         self.hub = hub
         self.upstream = upstream
+        self.revocation = revocation  # its owned close tasks are drained at stop (#2814)
         self.machines = machines
         self._settings = settings
         self._clock = clock
@@ -949,11 +954,21 @@ class WsRuntime:
                 if self.machines is not None:  # the sockets are closing, cut short or not
                     self.machines.close()
             with contextlib.suppress(TimeoutError):
-                async with asyncio.timeout(CLOSE_FLUSH_TIMEOUT_S):
+                async with asyncio.timeout(CLOSE_FLUSH_TIMEOUT_S) as bound:
                     await self.hub.wait_empty()
                     audit = None if self.machines is None else self.machines.on_revoked
                     if isinstance(audit, MachineRevocationAudit):  # before the audit writer stops
                         await audit.drain()
+                    if self.revocation is not None:  # inside the one flush bound: no new stop term
+                        # Handed what is left of that bound, less a margin, so its own cancel and
+                        # log run inside it rather than after the outer deadline (#2814).
+                        deadline = bound.when()
+                        left = (
+                            CLOSE_FLUSH_TIMEOUT_S
+                            if deadline is None
+                            else (deadline - asyncio.get_running_loop().time())
+                        )
+                        await self.revocation.drain(max(left - _DRAIN_MARGIN_S, 0.0))
         if self._sweeper is not None:
             self._sweeper.cancel()
             await asyncio.wait({self._sweeper})  # never raises; our own cancel is consumed

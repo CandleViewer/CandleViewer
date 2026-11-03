@@ -81,10 +81,18 @@ def current_request_uuid() -> uuid.UUID | None:
         return None
 
 
-def spawn[T](coro: Coroutine[Any, Any, T], *, name: str) -> asyncio.Task[T]:
-    """`create_task` that explicitly runs under a copy of the current context."""
+def spawn[T](coro: Coroutine[Any, Any, T], *, name: str, eager: bool = False) -> asyncio.Task[T]:
+    """`create_task` that explicitly runs under a copy of the current context.
+
+    `eager=True` starts the task's first step inside this call (`eager_start`), which
+    `loop.create_task` cannot do: a coroutine that never suspends is finished, and its task done,
+    when `spawn` returns. For a caller that must keep such work atomic with its own step (the
+    revocation hub's socket closes, #2814); the task is otherwise the same owned task."""
     ctx = contextvars.copy_context()
-    return asyncio.get_running_loop().create_task(coro, name=name, context=ctx)
+    loop = asyncio.get_running_loop()
+    if eager:
+        return asyncio.Task(coro, loop=loop, name=name, context=ctx, eager_start=True)
+    return loop.create_task(coro, name=name, context=ctx)
 
 
 def spawn_child[T](

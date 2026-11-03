@@ -28,7 +28,7 @@ from candleviewer.ws.revocation import (
     CLOSE_TOKEN_EXPIRED,
     CLOSE_USER_DISABLED,
     EVICTION_LOG_EVERY_S,
-    MAX_CLOSE_TASKS,
+    OVER_CAP_LOG_EVERY_S,
     REVOKED_MEMORY_S,
     Closer,
     RevocationHub,
@@ -36,6 +36,7 @@ from candleviewer.ws.revocation import (
     bye_frame,
     user_disabled_bye,
     ws_revocation_close_failures_total,
+    ws_revocation_inline_batches_total,
     ws_revoked_total,
 )
 from tests.unit.ws._auth_rig import BASE_MS, Sock
@@ -132,6 +133,14 @@ async def test_a_failing_socket_does_not_block_the_rest() -> None:
 
 async def test_unregistered_session_is_a_noop() -> None:
     assert await RevocationHub().revoke("nope") == 0
+
+
+def _saturated_hub(**kwargs: Any) -> RevocationHub:
+    """A hub whose one close-task slot is taken, so every revoke closes inline (past the cap)."""
+    hub = RevocationHub(max_close_tasks=1, **kwargs)
+    never_done: Any = asyncio.get_running_loop().create_future()  # stands in for a stalled task
+    hub._closing.add(never_done)
+    return hub
 
 
 class _Clock:
@@ -479,12 +488,12 @@ def scraped() -> Iterator[Scraped]:
         collector.close()
 
 
-@pytest.mark.parametrize("max_close_tasks", [MAX_CLOSE_TASKS, 0])  # owned task; inline past cap
+@pytest.mark.parametrize("saturated", [False, True])  # owned task; inline past the cap
 async def test_a_revoke_that_closes_sockets_is_one_scraped_latency_observation(
-    scraped: Scraped, max_close_tasks: int
+    scraped: Scraped, saturated: bool
 ) -> None:
     """#3415 (SR-029): one observation per revocation that closes sockets, however many."""
-    hub = RevocationHub(max_close_tasks=max_close_tasks)
+    hub = _saturated_hub() if saturated else RevocationHub()
     hub.register("s1", _Socket().close)
     hub.register("s1", _Socket().close)
     before = scraped("count")
@@ -529,7 +538,7 @@ async def test_an_inline_batch_cut_off_by_its_cancelled_caller_is_still_one_obse
         entered.set()
         await asyncio.Event().wait()  # never set: only the cancel ends it
 
-    hub = RevocationHub(max_close_tasks=0, close_timeout_s=60.0, monotonic=clock)
+    hub = _saturated_hub(close_timeout_s=60.0, monotonic=clock)
     hub.register("s1", stalled)
     hub.register("s1", _Socket().close)
     before = [scraped("count"), scraped("sum")]
@@ -1110,3 +1119,193 @@ async def test_a_failed_close_of_a_viewing_socket_is_logged_for_the_disabled_vie
         await registry.user_disabled(_VIEWER)
     (line,) = [e for e in logs if e["event"] == _USER_CLOSE_FAILED]
     assert line["user_id"] == str(_VIEWER)
+
+
+# --- #2814: bounds, the over-cap fallback made visible, drain, and the pinned remainder --------
+
+
+@pytest.mark.parametrize("bad", [0, -1])
+def test_a_close_task_cap_below_one_is_refused(bad: int) -> None:
+    """0 would run every close inline, unshielded: the shield silently off (#2814 item 1)."""
+    with pytest.raises(ValueError, match="max_close_tasks"):
+        RevocationHub(max_close_tasks=bad)
+
+
+def test_a_close_task_cap_of_one_is_accepted() -> None:
+    assert RevocationHub(max_close_tasks=1)._max_close_tasks == 1
+
+
+def _inline_batches() -> float:
+    return float(ws_revocation_inline_batches_total._value.get())  # type: ignore[attr-defined]
+
+
+async def test_a_batch_past_the_cap_is_counted_and_closed_inline_with_every_closer() -> None:
+    hub = _saturated_hub()
+    socks = [_Socket(), _Socket()]
+    for sock in socks:
+        hub.register("s1", sock.close)
+    before = _inline_batches()
+    assert await hub.revoke("s1") == 2
+    assert _inline_batches() == before + 1
+    assert [len(sock.closes) for sock in socks] == [1, 1]  # none dropped over the cap
+
+
+async def test_a_batch_under_the_cap_is_not_counted() -> None:
+    hub = RevocationHub()
+    hub.register("s1", _Socket().close)
+    before = _inline_batches()
+    await hub.revoke("s1")
+    assert _inline_batches() == before
+
+
+async def test_the_over_cap_warning_is_throttled_but_every_batch_is_counted() -> None:
+    clock = _Clock()
+    hub = _saturated_hub(monotonic=clock)
+    before = _inline_batches()
+    with capture_logs() as logs:
+        for i in range(3):
+            hub.register(f"s{i}", _Socket().close)
+            await hub.revoke(f"s{i}")
+        clock.now += OVER_CAP_LOG_EVERY_S
+        hub.register("s9", _Socket().close)
+        await hub.revoke("s9")
+    warnings = [e for e in logs if e["log_level"] == "warning"]
+    assert (len(warnings), _inline_batches() - before) == (2, 4)
+    assert warnings[0]["max_close_tasks"] == 1
+
+
+async def test_a_dead_log_sink_does_not_skip_the_over_cap_closes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _dead_log_sink(monkeypatch)
+    hub = _saturated_hub()
+    sock = _Socket()
+    hub.register("s1", sock.close)
+    assert await hub.revoke("s1") == 1
+    assert len(sock.closes) == 1
+
+
+async def test_a_cancelled_caller_over_the_cap_still_counts_and_is_cut_at_the_first_close() -> None:
+    """The documented cost of the shed policy: inline closes are unshielded (#2814 item 2)."""
+    hub = _saturated_hub(close_timeout_s=60.0)
+    entered = asyncio.Event()
+    later = _Socket()
+
+    async def stalled(frame: dict[str, Any], code: int) -> None:
+        entered.set()
+        await asyncio.Event().wait()
+
+    hub.register("s1", stalled)
+    hub.register("s1", later.close)
+    before = _inline_batches()
+    caller = asyncio.create_task(hub.revoke("s1"))
+    await entered.wait()
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    assert (_inline_batches() - before, later.closes) == (1, [])
+
+
+async def test_drain_waits_for_the_owned_close_tasks_and_every_closer_runs() -> None:
+    hub = RevocationHub()
+    release, blocked = asyncio.Event(), asyncio.Event()
+    survivor = _Socket()
+
+    async def stalled(frame: dict[str, Any], code: int) -> None:
+        blocked.set()
+        await release.wait()
+
+    hub.register("s1", stalled)
+    hub.register("s1", survivor.close)
+    caller = asyncio.create_task(hub.revoke("s1"))
+    await blocked.wait()
+    caller.cancel()
+    draining = asyncio.create_task(hub.drain(5.0))
+    await asyncio.sleep(0)
+    assert not draining.done()  # waiting on the task
+    release.set()
+    assert await draining == 1
+    assert (len(survivor.closes), hub._closing) == (1, set())
+
+
+async def test_drain_with_nothing_owned_returns_at_once() -> None:
+    assert await RevocationHub().drain(5.0) == 0
+
+
+async def test_drain_cancels_a_task_still_running_at_its_bound_and_logs_it() -> None:
+    hub = RevocationHub(close_timeout_s=60.0)
+    blocked = asyncio.Event()
+
+    async def stalled(frame: dict[str, Any], code: int) -> None:
+        blocked.set()
+        await asyncio.Event().wait()
+
+    hub.register("s1", stalled)
+    caller = asyncio.create_task(hub.revoke("s1"))
+    await blocked.wait()
+    (task,) = hub._closing
+    with capture_logs() as logs:
+        async with asyncio.timeout(5):
+            assert await hub.drain(0.01) == 1
+    assert (task.cancelled(), hub._closing) == (True, set())
+    assert [e["cut_off"] for e in logs if e["log_level"] == "error"] == [1]
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+
+
+async def test_a_closer_that_suspends_is_owned_in_a_named_task() -> None:
+    """`spawn` is the one creation site (#2814 item 5): the task is named and tracked."""
+    hub = RevocationHub()
+    seen: list[str] = []
+
+    async def suspends(frame: dict[str, Any], code: int) -> None:
+        seen.append(asyncio.current_task().get_name())  # type: ignore[union-attr]
+        await asyncio.sleep(0)
+
+    hub.register("s1", suspends)
+    assert await hub.revoke("s1") == 1
+    assert seen == ["ws-revocation-close"]
+
+
+async def test_a_sealing_batch_leaves_no_task_and_no_done_callback_behind() -> None:
+    """Pins `if not task.done()`: a finished eager task is never tracked."""
+    hub = RevocationHub()
+    hub.register("s1", _Socket().close)
+    await hub.revoke("s1")
+    assert hub._closing == set()
+
+
+async def test_the_done_callback_ignores_a_cancelled_task_and_a_clean_one() -> None:
+    hub = RevocationHub()
+
+    async def never() -> None:
+        await asyncio.Event().wait()
+
+    async def fine() -> None:
+        return None
+
+    cancelled = asyncio.ensure_future(never())
+    await asyncio.sleep(0)
+    cancelled.cancel()
+    await asyncio.wait([cancelled])
+    clean = asyncio.ensure_future(fine())
+    await asyncio.wait([clean])
+    hub._closing.update({cancelled, clean})
+    with capture_logs() as logs:
+        hub._close_task_done(cancelled)  # `.exception()` on a cancelled task would raise
+        hub._close_task_done(clean)
+    assert (logs, hub._closing) == ([], set())
+
+
+async def test_the_done_callback_survives_a_dead_log_sink(monkeypatch: pytest.MonkeyPatch) -> None:
+    _dead_log_sink(monkeypatch)
+    hub = RevocationHub()
+
+    async def boom() -> None:
+        raise RuntimeError("x")
+
+    task = asyncio.ensure_future(boom())
+    await asyncio.wait([task])
+    hub._closing.add(task)
+    hub._close_task_done(task)
+    assert hub._closing == set()

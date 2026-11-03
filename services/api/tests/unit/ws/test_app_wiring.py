@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 from prometheus_client import generate_latest
 from prometheus_client.parser import text_string_to_metric_families
+from structlog.testing import capture_logs
 
 import candleviewer.app as app_module
 from candleviewer.api.market_bars import make_market_bars_router
@@ -37,11 +38,14 @@ from candleviewer.ws.indicators_publish import IndicatorsPublisher
 from candleviewer.ws.indicators_source import IndicatorsSnapshotSource
 from candleviewer.ws.machines import MachineEntity, MachineStateRegistry
 from candleviewer.ws.metrics import CV_WS_NAMES
+from candleviewer.ws.permissions import ConnectionRegistry
+from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import SequencingHub
 from candleviewer.ws.upstream import UpstreamRefs
 from candleviewer.ws_wiring import (
     PENDING_ADAPTERS,
     IngestionUpstreamSink,
+    MachineRevocationAudit,
     PendingSnapshotSource,
     SnapshotRouter,
     WsEvents,
@@ -612,3 +616,78 @@ def test_every_cv_ws_metric_is_catalogued_and_served(world: tuple[TestClient, _K
         assert samples and all(x.labels["env"] == "demo" for x in samples), name
     for name in ("cv_ws_fanout_seconds", "cv_ws_frame_encode_seconds", "cv_ws_frame_bytes"):
         assert families[name].type == "histogram", name
+
+
+async def test_runtime_stop_drains_the_revocation_hubs_owned_close_tasks() -> None:
+    """#2814: a close still running when the notice ends is awaited, not abandoned."""
+    hub = RevocationHub()
+    release, blocked = asyncio.Event(), asyncio.Event()
+    done: list[str] = []
+
+    async def stalled(frame: dict[str, Any], code: int) -> None:
+        blocked.set()
+        await release.wait()
+        done.append("closed")
+
+    hub.register("s1", stalled)
+    caller = asyncio.create_task(hub.revoke("s1"))
+    await blocked.wait()
+    caller.cancel()  # the caller is gone; only the hub's task still owns the close
+    runtime = WsRuntime(GatewayHub(), UpstreamRefs(), _settings(), revocation=hub)
+    stopping = asyncio.create_task(runtime.stop())
+    for _ in range(20):  # yields until stop is parked in the drain on the stalled close
+        await asyncio.sleep(0)
+    assert not stopping.done()  # stop waits for the close
+    release.set()
+    await stopping
+    assert (done, hub._closing) == (["closed"], set())
+
+
+async def test_runtime_stop_cuts_a_stalled_close_inside_the_flush_bound_and_still_drains_audit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2814: the revocation drain gets what is left of the flush bound, so its own cancel and
+    ERROR run; the audit drain runs first, so a hung close cannot skip it."""
+    monkeypatch.setattr("candleviewer.ws_wiring.CLOSE_FLUSH_TIMEOUT_S", 0.3)
+    hub = RevocationHub()
+    blocked, cancelled = asyncio.Event(), asyncio.Event()
+
+    async def stalled(frame: dict[str, Any], code: int) -> None:
+        blocked.set()
+        try:
+            await asyncio.Event().wait()  # never released
+        finally:
+            cancelled.set()
+
+    hub.register("s1", stalled)
+    caller = asyncio.create_task(hub.revoke("s1"))
+    await blocked.wait()
+    caller.cancel()
+    conn, registry, _ = _world()
+
+    async def resolve(_user: uuid.UUID) -> PrincipalSnapshot:
+        return conn.authz.principal
+
+    audit = MachineRevocationAudit(ConnectionRegistry(resolve, lambda: 7, conn.authz.services))
+    drained: list[str] = []
+    real_drain = audit.drain
+
+    async def spy_drain() -> None:
+        drained.append("audit")
+        await real_drain()
+
+    monkeypatch.setattr(audit, "drain", spy_drain)
+    registry.on_revoked = audit
+    runtime = WsRuntime(
+        GatewayHub(), UpstreamRefs(), _settings(), machines=registry, revocation=hub
+    )
+    with capture_logs() as logs:
+        await runtime.stop()
+    assert drained == ["audit"]
+    assert cancelled.is_set() and hub._closing == set()
+    assert any(r["log_level"] == "error" and "cut off at shutdown" in r["event"] for r in logs)
+
+
+def test_create_app_hands_the_revocation_hub_to_the_ws_runtime() -> None:
+    app = create_app(_settings())
+    assert app.state.ws_runtime.revocation is app.state.revocation_hub

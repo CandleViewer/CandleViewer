@@ -1973,6 +1973,7 @@ def create_app(
         resolved,
         machines=machine_states,
         feeds=(ws_ticker, ws_revisions, ws_trades, ws_book, ws_heatmap, ws_liquidity),
+        revocation=revocation_hub,
     )
     # E17-T03 (#412): every connection's outbound budget, from the `CV_WS_*` budget settings
     # (the one outbound path since #2409 removed its flag).

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import io
 import json
 import threading
@@ -250,3 +251,27 @@ def test_single_request_id_across_path_in_json_logs() -> None:
     assert {ln["event"] for ln in lines} >= {"api.received", "oms.validate", "bybit.submit"}
     assert {ln["request_id"] for ln in lines} == {r.headers["X-Correlation-Id"]}
     assert all(ln.get("order_link_id") == "olid-1" for ln in lines if ln["event"] != "api.received")
+
+
+async def test_spawn_eager_finishes_a_non_suspending_coroutine_before_it_returns() -> None:
+    """#2814: `eager=True` is the one spelling that keeps such work atomic with the caller."""
+
+    async def quick() -> str:
+        return "done"
+
+    task = spawn(quick(), name="eager-probe", eager=True)
+    assert (task.done(), task.get_name(), task.result()) == (True, "eager-probe", "done")
+    lazy = spawn(quick(), name="lazy-probe")
+    assert not lazy.done()  # the default is unchanged: the first step waits for the loop
+    assert await lazy == "done"
+
+
+async def test_spawn_eager_still_runs_under_a_copy_of_the_context() -> None:
+    var: contextvars.ContextVar[str] = contextvars.ContextVar("probe", default="outer")
+
+    async def set_and_read() -> str:
+        var.set("inner")
+        return var.get()
+
+    assert await spawn(set_and_read(), name="ctx-probe", eager=True) == "inner"
+    assert var.get() == "outer"

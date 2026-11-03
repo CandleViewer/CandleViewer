@@ -5046,6 +5046,17 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "ws_session_revocation_inline_batches_total",
+        "counter",
+        "batches",
+        (),
+        "Revoke batches closed inline in the caller, unshielded, because the hub's close-task "
+        "cap was reached.",
+        "WARNING log ws revocation close tasks at cap (throttled); no alert, 0 unless saturated",
+        _L,
+        "E09",
+    ),
+    _s(
         "authz_denied_total",
         "counter",
         "denials",
