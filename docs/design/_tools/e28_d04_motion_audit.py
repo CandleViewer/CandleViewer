@@ -27,12 +27,12 @@ FAIL led by its code, at most one G1 FAIL per table row:
   spec, the pins file or this tool; no own file name carries a reserved word.
 - [G9-BOARDS] section 7: four dark boards, names and exports in the pattern, every one drawn;
   section 7.1 records each board's PNG (its file name, the IHDR size and the sha256 of the file in
-  the working tree), and section 7.2 embeds each PNG once, in order, every embed pinned to one
-  commit whose blob at that path has the same sha256.
+  the working tree) and its board id, and section 7.2 embeds each PNG once, in order, every embed
+  pinned to one commit whose blob at that path has the same sha256.
 - [G10-RULED] the BQ rulings (comment 6601762417): section 1 names the ruling and BQ-01 to BQ-14;
   section 3's MS-2 is the joint stale-preview sentence (JOINT) verbatim, the same in #840, #841 and
   #842; no `opacity.muted` anywhere; FR-5 and FR-12 cite E47-D04's removed-row move
-  (`E47-D04`:285); section 6.1 holds A-1 to A-4, and each of A-1 to A-3 has its Old once on its
+  (`E47-D04`:285); section 6.1 holds A-1 to A-5, and each A-row but A-4 has its Old once on its
   target line at the base.
 
 `--json` prints the numbers and findings; `--check` exits 1 on any FAIL (0 FAIL is the bar);
@@ -137,7 +137,7 @@ JOINT = (
     "press (`05`:100). The a11y floor wins over the token choice; the A-row is #840's A-1 to "
     "E28-D03 §8, cross-referenced to #5550."
 )
-AROWS = ("A-1", "A-2", "A-3", "A-4")
+AROWS = ("A-1", "A-2", "A-3", "A-4", "A-5")
 FOCUS_OWNER = "`E47-D04`:285"
 ORDER = "else the previous, else the"
 ASPIRATION = (
@@ -578,10 +578,12 @@ def gate_boards(ctx: Ctx, r: Result) -> None:
         x, facts = built.get(no), png_facts(ctx.pngs.get(rel))
         if facts:
             sums[rel] = facts[1]
-        if not x or len(x) != 4 or x[1] != f"`{Path(rel).name}`" or not facts:
+        if not x or len(x) != 5 or x[1] != f"`{Path(rel).name}`" or not facts:
             r.fail(
                 "G9-BOARDS", f"board {no}: no section 7.1 row naming {Path(rel).name}, or no PNG"
             )
+        elif not re.fullmatch(r"`[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`", x[4]):
+            r.fail("G9-BOARDS", f"board {no}: section 7.1 records no board id")
         elif (x[2], x[3]) != (facts[0], f"`{facts[1]}`"):
             r.fail(
                 "G9-BOARDS", f"board {no}: section 7.1 records {x[2]} {x[3][:12]}, the PNG differs"
@@ -595,8 +597,10 @@ def gate_boards(ctx: Ctx, r: Result) -> None:
         if rel not in sums:
             continue  # no PNG: the section 7.1 FAIL above names it
         blob = ctx.blob(sha, rel)
-        if sha != ref or blob is None or hashlib.sha256(blob).hexdigest() != sums.get(rel):
+        if blob is None or hashlib.sha256(blob).hexdigest() != sums.get(rel):
             r.fail("G9-BOARDS", f"{Path(rel).name}: the embed's commit {sha[:10]} is not the PNG")
+        elif sha != ref:
+            r.fail("G9-BOARDS", f"{Path(rel).name}: not pinned at the shared commit {ref[:10]}")
     r.numbers["embeds"] = len(embeds)
 
 
@@ -624,7 +628,7 @@ def gate_ruled(ctx: Ctx, r: Result) -> None:
     found = [x for x in rows(sec6) if x and re.fullmatch(r"A-\d+", x[0])]
     if tuple(x[0] for x in found) != AROWS:
         r.fail("G10-RULED", f"A-rows {[x[0] for x in found]}, expected {list(AROWS)}")
-    for row in found[:3]:
+    for row in (x for x in found if x[0] != "A-4"):
         m = re.fullmatch(r"`([A-Za-z0-9.-]+)`:(\d+)", row[1]) if len(row) > 4 else None
         old = row[3][1:-1] if len(row) > 4 else ""
         line = base_line(ctx, m.group(1), int(m.group(2))) if m else None
@@ -758,6 +762,11 @@ PROBES: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
             "E28-D05 §4.4 puts focus on the report and LR-09",
             "E28-D05 §4.4 puts focus on the report",
         ),
+    ),
+    ("G9-BOARDS", regex(r"^(\| 01 .*\| )`[0-9a-f-]{36}`( +\|)$", r"\1`board 01`\2")),
+    (
+        "G10-RULED",
+        sub('"with its words kept at full contrast', '"with its words kept at full-contrast'),
     ),
 )
 
