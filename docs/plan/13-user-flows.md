@@ -42,7 +42,7 @@ flowchart TD
 ## 2. Add Bybit account & API key (with permission verification)
 
 **Actor:** P4 Admin-hat. **Routes:** R-310 → R-312 (wizard) → R-320/R-321.
-**Screens:** SCR-125, SCR-126, SCR-128, SCR-149 (see `14-screens-catalogue.md`).
+**Screens:** SCR-125, SCR-126, SCR-128, SCR-006 (see `14-screens-catalogue.md`).
 
 ```mermaid
 flowchart TD
@@ -542,7 +542,7 @@ flowchart TD
 ## 18. Key rotation
 
 **Actor:** P4 Admin-hat. **Route:** R-322.
-**Screens:** SCR-127, SCR-128, SCR-149 (see `14-screens-catalogue.md`).
+**Screens:** SCR-127, SCR-128, SCR-006 (see `14-screens-catalogue.md`).
 
 ```mermaid
 flowchart TD
