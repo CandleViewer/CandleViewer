@@ -73,11 +73,13 @@ def test_mutant_swapped_high_low_is_caught(monkeypatch: pytest.MonkeyPatch) -> N
     def mutant(self: RangeBarBuilder, t: TradeEvent) -> Sequence[BarUpdate]:
         out = real(self, t)
         return [
-            u.model_copy(
-                update={"bar": u.bar.model_copy(update={"high": u.bar.low, "low": u.bar.high})}
+            (
+                u.model_copy(
+                    update={"bar": u.bar.model_copy(update={"high": u.bar.low, "low": u.bar.high})}
+                )
+                if u.kind == "close"
+                else u
             )
-            if u.kind == "close"
-            else u
             for u in out
         ]
 
@@ -85,3 +87,20 @@ def test_mutant_swapped_high_low_is_caught(monkeypatch: pytest.MonkeyPatch) -> N
     msg = _check("range:20")
     assert "first divergence: bar " in msg
     assert "field high" in msg or "field low" in msg
+
+
+def test_mutant_range_jump_gt_instead_of_ge_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Off-by-one jump boundary: a close at exactly 2 x width is not flagged (`>` not `>=`)."""
+    from candleviewer.bars.threshold_builders import RangeBarBuilder
+
+    real = RangeBarBuilder.on_trade
+
+    def mutant(self: RangeBarBuilder, t: TradeEvent) -> Sequence[BarUpdate]:
+        out = real(self, t)
+        if any(u.kind == "close" and u.bar.high - u.bar.low == self._two_widths for u in out):
+            self._gap = False  # the exact-2x close is not a jump under `>`
+        return out
+
+    monkeypatch.setattr(RangeBarBuilder, "on_trade", mutant)
+    msg = _check("range:20")
+    assert "first divergence: bar 28" in msg and "field gap_before" in msg
