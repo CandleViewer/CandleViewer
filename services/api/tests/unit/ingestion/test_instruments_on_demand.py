@@ -29,6 +29,7 @@ from candleviewer.ingestion import instruments_refresh
 from candleviewer.ingestion.instruments import CatalogueSnapshot
 from candleviewer.ingestion.metrics import instruments_refresh_total
 from candleviewer.observability import spawn
+from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 from tests._corpus import rest
 from tests.unit.ingestion._fakes import settle
 
@@ -168,9 +169,10 @@ async def test_detail_route_answers_503_at_the_deadline_and_the_refresh_runs_on(
             r = await client.get("/instruments/SOLUSDT")  # the exchange never answers
             assert r.status_code == 503
             assert r.json() == {  # the route's "not loaded" problem, unchanged
-                "type": "about:blank",
-                "title": "Service unavailable",
+                "type": "https://candleviewer.local/errors/instrument_cache_unavailable",
+                "title": ERROR_META[ErrorCode.INSTRUMENT_CACHE_UNAVAILABLE].title,
                 "status": 503,
+                "code": "instrument_cache_unavailable",
                 "detail": "instrument catalogue not loaded yet",
             }
             refresh = sched._on_demand

@@ -28,8 +28,10 @@ from typing import Any, Final, Protocol
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from candleviewer.api.problems import problem
 from candleviewer.exchange.base.models import TickerEvent
 from candleviewer.ingestion.ticker_bulk import REFRESH_S, BulkTickers, TickersUnavailable
+from candleviewer.ws._generated.error_codes import ErrorCode
 
 _REQUIRED_PERMISSION = "marketdata:read"
 #: `getTickers`: 1 to 200 symbols, a watchlist's cap, each a 22 `Symbol`.
@@ -68,14 +70,6 @@ class TickersSource(Protocol):
     async def serve(self) -> BulkTickers: ...
 
 
-def _problem(status: int, title: str, detail: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status,
-        media_type="application/problem+json",
-        content={"type": "about:blank", "title": title, "status": status, "detail": detail},
-    )
-
-
 def _dec(value: Decimal | None) -> str | None:
     return None if value is None else format(value, "f")
 
@@ -109,24 +103,24 @@ def make_ticker_router(
     @router.get("/instruments/{symbol}/ticker")
     async def get_ticker(request: Request, symbol: str) -> JSONResponse:
         if principal_resolver is None:
-            return _problem(501, "Not implemented", "no principal resolver wired")
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "no principal resolver wired")
         resolved = principal_resolver.resolve(request)
         principal: _Principal | None = await resolved if inspect.isawaitable(resolved) else resolved
         if principal is None:
-            return _problem(401, "Unauthorized", "no verified session for this request")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "no verified session for this request")
         if not (principal.has(_REQUIRED_PERMISSION)):
-            return _problem(403, "Forbidden", f"requires {_REQUIRED_PERMISSION}")
+            return problem(ErrorCode.FORBIDDEN, 403, f"requires {_REQUIRED_PERMISSION}")
         if not (4 <= len(symbol) <= 20 and symbol.isascii() and symbol.isalnum()):
-            return _problem(400, "Bad request", "invalid symbol")
+            return problem(ErrorCode.VALIDATION_FAILED, 400, "invalid symbol")
         symbol = symbol.upper()
         reader = reader_provider()
         if reader is None:
-            return _problem(503, "Service unavailable", "ticker stream not running")
+            return problem(ErrorCode.DEGRADED_DATA, 503, "ticker stream not running")
         if not reader.is_listed(symbol):
-            return _problem(404, "Not found", f"unknown instrument {symbol}")
+            return problem(ErrorCode.NOT_FOUND, 404, f"unknown instrument {symbol}")
         event = reader.latest(symbol)
         if event is None:
-            return _problem(503, "Service unavailable", f"ticker for {symbol} is warming up")
+            return problem(ErrorCode.DEGRADED_DATA, 503, f"ticker for {symbol} is warming up")
         stale = reader.phase(symbol) != "live"
         return JSONResponse(status_code=200, content=serialize_ticker(event, stale=stale))
 

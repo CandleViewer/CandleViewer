@@ -181,6 +181,7 @@ from candleviewer.api.position_close import make_position_close_router
 from candleviewer.api.position_leverage import make_position_leverage_router
 from candleviewer.api.position_reverse import make_position_reverse_router
 from candleviewer.api.preview_limiter import PreviewLimiter
+from candleviewer.api.problems import problem
 from candleviewer.api.profile_writes import SaveMeasures, make_profile_writes_router
 from candleviewer.api.profiles import make_profiles_router
 from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
@@ -544,6 +545,7 @@ from candleviewer.view_as_wiring import (
     SessionViewAsRefusals,
     build_view_as,
 )
+from candleviewer.ws._generated.error_codes import ErrorCode
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.bars_publish import BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
@@ -1348,17 +1350,15 @@ def build_ws_principal_loader(
 
 async def gateway_overloaded_handler(_request: Request, exc: Exception) -> JSONResponse:
     """Map a refused statechart inbox (E50-T15, CV-C33), or a command a degraded machine's
-    admission refused (E50-T63, `GatewayDegradedError`), to RFC 7807 HTTP 503."""
-    return JSONResponse(
-        status_code=GatewayOverloadedError.status_code,
-        content={
-            "type": "about:blank",
-            "title": "Service Unavailable",
-            "status": GatewayOverloadedError.status_code,
-            "detail": str(exc),
-        },
+    admission refused (E50-T63, `GatewayDegradedError`), to `503 lifecycle_unavailable` (#2828,
+    24 §19.97) with `Retry-After: 1`; `errors[].rule` names which of the two refused it."""
+    rule = "gateway_degraded" if isinstance(exc, GatewayDegradedError) else "gateway_overloaded"
+    return problem(
+        ErrorCode.LIFECYCLE_UNAVAILABLE,
+        GatewayOverloadedError.status_code,
+        str(exc),
+        rule=rule,
         headers={"Retry-After": "1"},
-        media_type="application/problem+json",
     )
 
 

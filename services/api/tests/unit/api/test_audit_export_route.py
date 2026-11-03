@@ -247,7 +247,7 @@ async def test_an_export_wired_without_its_step_up_fails_closed(root: Path) -> N
     made.app.include_router(make_audit_router(made, made, exports=made.exports))
     answer = await made.post()
     assert (answer.status_code, answer.json()["code"], made.jobs.tasks) == (
-        503, "service_unavailable", {}
+        503, "step_up_unavailable", {}
     )  # fmt: skip
     made.query.close()
 

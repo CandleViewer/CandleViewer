@@ -118,6 +118,7 @@ from candleviewer.api.csrf import (
 from candleviewer.api.csrf import REFRESH_COOKIE as REFRESH_COOKIE  # re-exported (contract name)
 from candleviewer.api.enrolment_guard import EnrolmentRefusals, route_refusal
 from candleviewer.api.enrolment_guard import _unavailable as _session_unchecked
+from candleviewer.api.problems import problem
 from candleviewer.api.query_allowlist import undeclared_query_refusal
 from candleviewer.api.view_as_subject import view_as_subject
 from candleviewer.audit.errors import AuditError
@@ -164,6 +165,7 @@ from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.statechart.gateway import GatewayError
 from candleviewer.storage.errors import WriteAheadTimeout
+from candleviewer.ws._generated.error_codes import ErrorCode
 
 REFRESH_COOKIE_PATH = "/api/v1/auth"
 ACCESS_TOKEN_EXPIRES_IN_S = 720  # ADR-0020: 12 min
@@ -323,31 +325,17 @@ def _iso(value: datetime | None) -> str | None:
     return None if value is None else value.isoformat()
 
 
-def _problem(status_code: int, title: str, detail: str, *, code: str | None = None) -> JSONResponse:
-    content: dict[str, object] = {
-        "type": "about:blank",
-        "title": title,
-        "status": status_code,
-        "detail": detail,
-    }
-    if code is not None:
-        content["code"] = code
-    return JSONResponse(
-        status_code=status_code, content=content, media_type="application/problem+json"
-    )
-
-
 #: `POST /auth/refresh`'s one 401 code and detail, for every cause (22 `authRefresh`).
-_REFRESH_INVALID = "refresh_token_invalid"
+_REFRESH_INVALID = ErrorCode.REFRESH_TOKEN_INVALID
 
 
 def _unauthorized(
-    detail: str = "authentication required", *, code: str = "unauthenticated"
+    detail: str = "authentication required", *, code: ErrorCode = ErrorCode.UNAUTHENTICATED
 ) -> JSONResponse:
     # One uniform 401 for unknown/expired/revoked tokens: no session oracle. Its `code` is the
     # catalogue's (22 `Problem.required`, #4751): `unauthenticated`, as `api/me.py` serves, and on
     # `POST /auth/refresh` the one `refresh_token_invalid` its operation names for every cause.
-    return _problem(401, "Unauthorized", detail, code=code)
+    return problem(code, 401, detail)
 
 
 #: SR-026: a self-service route answers only for the authenticated caller, so it takes only the
@@ -941,16 +929,19 @@ def make_session_router(
             session_id=str(record.id),
             user_id=str(record.user_id),
         )
-        return _unauthorized(_REFRESH_INVALID, code=_REFRESH_INVALID)
+        return _unauthorized(_REFRESH_INVALID.value, code=_REFRESH_INVALID)
 
     def _audit_down() -> JSONResponse:
         # Write-ahead audit failed: nothing has been mutated yet (C-2.9).
-        return _problem(503, "Service unavailable", "audit sink not active")
+        return problem(ErrorCode.AUDIT_UNAVAILABLE, 503, "audit sink not active")
 
     def _throttled(retry_after: int, what: str = "refresh") -> JSONResponse:
-        response = _problem(429, "Too many requests", f"{what} rate limit exceeded")
-        response.headers["Retry-After"] = str(retry_after)
-        return response
+        return problem(
+            ErrorCode.RATE_LIMITED,
+            429,
+            f"{what} rate limit exceeded",
+            headers={"Retry-After": str(retry_after)},
+        )
 
     async def _authenticate(
         request: Request, *, allow_locked: bool = False
@@ -1133,12 +1124,14 @@ def make_session_router(
     @router.post("/auth/refresh")
     async def refresh(request: Request) -> Response:
         if not _audit_ready():
-            return _problem(503, "Service unavailable", "audit sink not active")
+            return problem(ErrorCode.AUDIT_UNAVAILABLE, 503, "audit sink not active")
         if not auth_service.sessions_is_active:
-            return _problem(503, "Service unavailable", "session backend is not wired")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "session backend is not wired")
         if identity is None:
-            return _problem(
-                501, "Not implemented", "identity provider not wired (E09-T03); refresh disabled"
+            return problem(
+                ErrorCode.NOT_IMPLEMENTED,
+                501,
+                "identity provider not wired (E09-T03); refresh disabled",
             )
         body: dict[str, Any] = {}
         raw = await request.body()
@@ -1146,17 +1139,17 @@ def make_session_router(
             try:
                 parsed = await request.json()
             except ValueError:
-                return _problem(422, "Unprocessable", "invalid JSON body")
+                return problem(ErrorCode.VALIDATION_FAILED, 422, "invalid JSON body")
             if not isinstance(parsed, dict) or set(parsed) - {"refresh_token"}:
-                return _problem(422, "Unprocessable", "unexpected fields in body")
+                return problem(ErrorCode.VALIDATION_FAILED, 422, "unexpected fields in body")
             body = parsed
         cookie_token = request.cookies.get(REFRESH_COOKIE)
         body_token = body.get("refresh_token")
         if cookie_token is not None and not _origin_ok(request, allowed_origins):
-            return _problem(403, "Forbidden", "cross-origin refresh refused")
+            return problem(ErrorCode.FORBIDDEN, 403, "cross-origin refresh refused")
         presented = cookie_token or (body_token if isinstance(body_token, str) else None)
         if not presented:
-            return _unauthorized(_REFRESH_INVALID, code=_REFRESH_INVALID)
+            return _unauthorized(_REFRESH_INVALID.value, code=_REFRESH_INVALID)
         ip = _source_ip(request)
         ip_key = ip or "(unknown)"
         if by_ip.is_blocked(ip_key):
@@ -1165,7 +1158,7 @@ def make_session_router(
         presented_record = await auth_service.sessions.peek_refresh(presented)
         if presented_record is None:
             await _fixation_attempt(request, "refresh_cookie" if cookie_token else "refresh_body")
-            return _unauthorized(_REFRESH_INVALID, code=_REFRESH_INVALID)
+            return _unauthorized(_REFRESH_INVALID.value, code=_REFRESH_INVALID)
         session_key = str(presented_record.id)
         if by_session.is_blocked(session_key):
             return _throttled(by_session.retry_after_s(session_key))
@@ -1250,7 +1243,7 @@ def make_session_router(
                     session_ids=(presented_record.id,),
                 )
             # The service already closed every family member's sockets (#2272).
-            return _unauthorized(_REFRESH_INVALID, code=_REFRESH_INVALID)
+            return _unauthorized(_REFRESH_INVALID.value, code=_REFRESH_INVALID)
         except UserDisabled:
             # #2911: the user is disabled (or deleted); nothing was minted. Read with the row
             # before the claim, the status made the service revoke the session as
@@ -1268,14 +1261,14 @@ def make_session_router(
                 reason="user_disabled",
                 session_ids=(presented_record.id,),
             )
-            return _unauthorized(_REFRESH_INVALID, code=_REFRESH_INVALID)
+            return _unauthorized(_REFRESH_INVALID.value, code=_REFRESH_INVALID)
         except SessionIdleLocked as exc:
             # A lock that engaged after the check above: the intent record is written, and nothing
             # was rotated or revoked.
             auth_idle_locks_total.inc()
             return idle_lock.idle_locked_problem(exc.idle_locked_at)
         except (SessionNotFound, SessionRevoked):
-            return _unauthorized(_REFRESH_INVALID, code=_REFRESH_INVALID)
+            return _unauthorized(_REFRESH_INVALID.value, code=_REFRESH_INVALID)
         except asyncio.CancelledError:
             # The service commits a family's revocation before it publishes it to the sockets, so
             # a request cancelled in there (a shutdown) may have ended the family of a token the
@@ -1311,15 +1304,15 @@ def make_session_router(
     @router.get("/auth/session")
     async def get_session(request: Request) -> Response:
         if not auth_service.sessions_is_active:
-            return _problem(503, "Service unavailable", "session backend is not wired")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "session backend is not wired")
         record = await _introspected(request)
         if record is None:
             return _unauthorized()
         if (refusal := undeclared_query_refusal(request, GET_SESSION_QUERY)) is not None:
             return refusal  # SR-026: before any session data is read
         if identity is None:
-            return _problem(
-                501, "Not implemented", "identity provider not wired (E09-T03); disabled"
+            return problem(
+                ErrorCode.NOT_IMPLEMENTED, 501, "identity provider not wired (E09-T03); disabled"
             )
         try:
             verdict = SessionClass.FULL
@@ -1361,7 +1354,7 @@ def make_session_router(
         never lifts a lock and never moves `expires_at`. It sends B16 no `REQUEST`: the chart
         only records, and the row is the deadline's truth (C-2.21)."""
         if not auth_service.sessions_is_active:
-            return _problem(503, "Service unavailable", "session backend is not wired")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "session backend is not wired")
         record = await _authenticate(request)  # its activity is `touch()`, below
         if isinstance(record, JSONResponse):
             return record
@@ -1385,10 +1378,12 @@ def make_session_router(
         """SCR-005: lift the idle lock with the password only (contract `authUnlock`)."""
         authority = unlock_authority() if unlock_authority is not None else None
         if not auth_service.sessions_is_active or authority is None:
-            return _problem(503, "Service unavailable", "session backend is not wired")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "session backend is not wired")
         if identity is None:
-            return _problem(
-                501, "Not implemented", "identity provider not wired (E09-T03); unlock disabled"
+            return problem(
+                ErrorCode.NOT_IMPLEMENTED,
+                501,
+                "identity provider not wired (E09-T03); unlock disabled",
             )
         ip = _source_ip(request)
         ip_key = ip or "(unknown)"
@@ -1400,7 +1395,7 @@ def make_session_router(
             return _unauthorized()
         record, by_cookie = caller
         if by_cookie and not _origin_ok(request, allowed_origins):
-            return _problem(403, "Forbidden", "cross-origin unlock refused")  # SR-042
+            return problem(ErrorCode.FORBIDDEN, 403, "cross-origin unlock refused")  # SR-042
         if (refusal := await _csrf_refusal(request, record, ip)) is not None:
             return refusal
         at = now()
@@ -1428,7 +1423,7 @@ def make_session_router(
             return idle_lock.not_locked_problem()
         password = await _unlock_password(request)
         if password is None:
-            return _problem(422, "Unprocessable", "body must be exactly {password}")
+            return problem(ErrorCode.VALIDATION_FAILED, 422, "body must be exactly {password}")
         if not _audit_ready():
             return _audit_down()  # no password is checked
         chart = authority.chart
@@ -1436,7 +1431,7 @@ def make_session_router(
         # failed record answers 503 with the row still locked. `observe` sends no event
         # but the lock the row shows: the route never sends `REQUEST`.
         if not await _recorded("IDLE_DEADLINE", chart.observe(record, at)):
-            return _problem(503, "Service unavailable", "session record unavailable")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "session record unavailable")
         decided: list[UnlockOutcome] = []
         locked_account: list[datetime] = []
         verify, user_id = authority.verify_password, str(record.user_id)
@@ -1543,10 +1538,12 @@ def make_session_router(
         (`auth.idle_locked`, at the row's `locked_at`) when it next reads the row (INV-B16-e,
         28 B16.7; C-2.21), as for a deadline lock."""
         if not auth_service.sessions_is_active:
-            return _problem(503, "Service unavailable", "session backend is not wired")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "session backend is not wired")
         if identity is None:
-            return _problem(
-                501, "Not implemented", "identity provider not wired (E09-T03); lock disabled"
+            return problem(
+                ErrorCode.NOT_IMPLEMENTED,
+                501,
+                "identity provider not wired (E09-T03); lock disabled",
             )
         caller = await _identify(request, bearer_only=True)
         if caller is None:
@@ -1599,7 +1596,7 @@ def make_session_router(
         limit: int = Query(default=50, ge=1, le=MAX_PAGE),
     ) -> Response:
         if not auth_service.sessions_is_active:
-            return _problem(503, "Service unavailable", "session backend is not wired")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "session backend is not wired")
         record = await _authenticate(request)
         if isinstance(record, JSONResponse):
             return record
@@ -1608,9 +1605,9 @@ def make_session_router(
         try:
             offset = int(cursor) if cursor else 0
         except ValueError:
-            return _problem(422, "Unprocessable", "invalid cursor")
+            return problem(ErrorCode.INVALID_CURSOR, 422, "invalid cursor")
         if offset < 0:
-            return _problem(422, "Unprocessable", "invalid cursor")
+            return problem(ErrorCode.INVALID_CURSOR, 422, "invalid cursor")
         # Scope is always the caller's own user id (x-rbac scope: self), the target's on a
         # live view (#3085, Q10): the query is never parameterised by anything the client
         # supplies. A context the guard did not stamp is a 503 (`ViewAsUnstamped`).
@@ -1639,9 +1636,9 @@ def make_session_router(
         cookie's session). A locked session, and a cookie-identified one, may end only
         itself (#2290 ruling, rule 3b): `all_sessions` is then refused before any record."""
         if not _audit_ready():
-            return _problem(503, "Service unavailable", "audit sink not active")
+            return problem(ErrorCode.AUDIT_UNAVAILABLE, 503, "audit sink not active")
         if not auth_service.sessions_is_active:
-            return _problem(503, "Service unavailable", "session backend is not wired")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "session backend is not wired")
         caller = await _identify(request)
         if caller is None:
             return _unauthorized()
@@ -1652,7 +1649,7 @@ def make_session_router(
         ip = _source_ip(request)
         if by_cookie:
             if not _origin_ok(request, allowed_origins):
-                return _problem(403, "Forbidden", "cross-origin logout refused")  # SR-042
+                return problem(ErrorCode.FORBIDDEN, 403, "cross-origin logout refused")  # SR-042
             if (refusal := await _csrf_refusal(request, record, ip)) is not None:
                 return refusal
         if (refusal := undeclared_query_refusal(request, LOGOUT_QUERY)) is not None:
@@ -1662,12 +1659,12 @@ def make_session_router(
             try:
                 parsed = await request.json()
             except ValueError:
-                return _problem(422, "Unprocessable", "invalid JSON body")
+                return problem(ErrorCode.VALIDATION_FAILED, 422, "invalid JSON body")
             if not isinstance(parsed, dict) or set(parsed) - {"all_sessions"}:
-                return _problem(422, "Unprocessable", "unexpected fields in body")
+                return problem(ErrorCode.VALIDATION_FAILED, 422, "unexpected fields in body")
             flag = parsed.get("all_sessions", False)
             if not isinstance(flag, bool):
-                return _problem(422, "Unprocessable", "all_sessions must be boolean")
+                return problem(ErrorCode.VALIDATION_FAILED, 422, "all_sessions must be boolean")
             all_sessions = flag
         if all_sessions and record.is_idle_locked(now=at):
             # Contract "Idle lock": whoever is at a locked terminal has not proved who they
@@ -1735,9 +1732,9 @@ def make_session_router(
         request: Request, session_id: Annotated[uuid.UUID, Path(alias="sessionId")]
     ) -> Response:
         if not _audit_ready():
-            return _problem(503, "Service unavailable", "audit sink not active")
+            return problem(ErrorCode.AUDIT_UNAVAILABLE, 503, "audit sink not active")
         if not auth_service.sessions_is_active:
-            return _problem(503, "Service unavailable", "session backend is not wired")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "session backend is not wired")
         record = await _authenticate(request, allow_locked=True)
         if isinstance(record, JSONResponse):
             return record
@@ -1750,7 +1747,7 @@ def make_session_router(
         )
         if str(session_id) not in {str(v.id) for v in own}:
             await _revoke_denied(request, record, session_id)
-            return _problem(404, "Not found", "no such session")
+            return problem(ErrorCode.NOT_FOUND, 404, "no such session")
         try:
             await _audit(
                 "auth.session_revoked",

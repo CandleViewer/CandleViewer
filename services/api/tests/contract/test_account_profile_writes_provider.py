@@ -522,7 +522,7 @@ def test_a_profile_write_wired_without_its_step_up_fails_closed(
     app.include_router(make_profile_writes_router(w.writes, w.world.audit, w.world.resolver))
     monkeypatch.setattr(w.world, "client", TestClient(app, client=("127.0.0.1", 50000)))
     resp = send(w, write)
-    assert (resp.status_code, resp.json()["code"]) == (503, "service_unavailable")
+    assert (resp.status_code, resp.json()["code"]) == (503, "step_up_unavailable")
     assert (_new(w), w.rows.hooks) == ([], [])
 
 

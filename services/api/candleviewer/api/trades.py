@@ -37,12 +37,14 @@ from typing import Any, Final, Literal, Protocol
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
-from candleviewer.api.ticker import _iso, _Principal, _problem, _Resolver
+from candleviewer.api.problems import problem
+from candleviewer.api.ticker import _iso, _Principal, _Resolver
 from candleviewer.exchange.base.models import TradeEvent
 from candleviewer.orderflow import limits as L
 from candleviewer.orderflow.bigtrade_metrics import bigtrade_range_rejected_total
 from candleviewer.orderflow.bigtrade_models import BigTradeConfig, Mode
 from candleviewer.orderflow.bigtrade_tape import Options, TapeItem, tape_page
+from candleviewer.ws._generated.error_codes import ErrorCode
 
 _REQUIRED_PERMISSION = "marketdata:read"
 _ENDPOINT = "trades"
@@ -178,30 +180,30 @@ def make_trades_router(
         cluster_tolerance_ticks: int = Query(default=0, ge=0, le=L.CLUSTER_TOLERANCE_TICKS_MAX),
     ) -> JSONResponse:
         if principal_resolver is None:
-            return _problem(501, "Not implemented", "no principal resolver wired")
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "no principal resolver wired")
         resolved: Any = principal_resolver.resolve(request)
         principal: _Principal | None = await resolved if inspect.isawaitable(resolved) else resolved
         if principal is None:
-            return _problem(401, "Unauthorized", "no verified session for this request")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "no verified session for this request")
         if not principal.has(_REQUIRED_PERMISSION):
-            return _problem(403, "Forbidden", f"requires {_REQUIRED_PERMISSION}")
+            return problem(ErrorCode.FORBIDDEN, 403, f"requires {_REQUIRED_PERMISSION}")
         if not (4 <= len(symbol) <= 20 and symbol.isascii() and symbol.isalnum()):
-            return _problem(400, "Bad request", "invalid symbol")
+            return problem(ErrorCode.VALIDATION_FAILED, 400, "invalid symbol")
         try:
             start, end = _parse_ts(from_), _parse_ts(to)
             floor = None if min_size is None else Decimal(min_size)
             after = None if cursor is None else _decode_cursor(cursor)
         except (ValueError, InvalidOperation):
-            return _problem(400, "Bad request", "invalid from/to/min_size/cursor")
+            return problem(ErrorCode.VALIDATION_FAILED, 400, "invalid from/to/min_size/cursor")
         span = _window_refusal(start, end, cluster_window_ms)
         if span is not None:  # SR-E22-01, before anything is read
             return _coded(400, "invalid_time_range", span)
         symbol = symbol.upper()
         reader = reader_provider()
         if reader is None:
-            return _problem(503, "Service unavailable", "trade stream not running")
+            return problem(ErrorCode.DEGRADED_DATA, 503, "trade stream not running")
         if not reader.is_listed(symbol):
-            return _problem(404, "Not found", f"unknown instrument {symbol}")
+            return problem(ErrorCode.NOT_FOUND, 404, f"unknown instrument {symbol}")
         if floor is not None:  # SR-E22-03
             bound = min_size_floor(symbol)
             if bound is None or not floor.is_finite() or floor < bound:
@@ -209,7 +211,9 @@ def make_trades_router(
                 return _coded(400, "invalid_min_size", f"min_size is below the floor ({shown})")
         tick = reader.tick_size(symbol)
         if tick is None:
-            return _problem(503, "Service unavailable", "instrument tick size unknown")
+            return problem(
+                ErrorCode.INSTRUMENT_CACHE_UNAVAILABLE, 503, "instrument tick size unknown"
+            )
         # Demand is refreshed per request; the grace period expires it when idle.
         reader.acquire(DEMAND_CONSUMER, symbol)
         reader.release(DEMAND_CONSUMER, symbol)

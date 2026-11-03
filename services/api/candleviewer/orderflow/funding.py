@@ -38,7 +38,7 @@ from candleviewer.domain.funding import (
     resolve_funding_interval_minutes,
     settle,
 )
-from candleviewer.orderflow.errors import OrderflowError
+from candleviewer.orderflow.errors import InvalidRequestCode, OrderflowError
 from candleviewer.orderflow.funding_metrics import (
     deriv_funding_backfill_pages_total,
     deriv_funding_interval_minutes,
@@ -70,7 +70,7 @@ _US_PER_DAY: Final = 86_400 * 1_000_000
 class FundingInvalidRequest(OrderflowError):
     """Request bounds violated; `code` is the 22-api error-registry code."""
 
-    def __init__(self, code: str, detail: str) -> None:
+    def __init__(self, code: InvalidRequestCode, detail: str) -> None:
         super().__init__(detail)
         self.code = code
         self.detail = detail
@@ -275,7 +275,8 @@ class FundingService:
         start = start_us if start_us is not None else end - MAX_WINDOW_DAYS * _US_PER_DAY
         if start >= end or end - start > MAX_WINDOW_DAYS * _US_PER_DAY:
             raise FundingInvalidRequest(
-                "invalid_time_range", f"from/to must be ordered and span <= {MAX_WINDOW_DAYS} days"
+                "invalid_time_range",
+                f"from/to must be ordered and span <= {MAX_WINDOW_DAYS} days",
             )
         try:
             interval = self.interval_minutes(symbol)

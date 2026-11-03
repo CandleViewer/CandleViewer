@@ -95,6 +95,7 @@ from candleviewer.api.auth_unavailable import ACTION as MFA_UNAVAILABLE
 from candleviewer.api.auth_unavailable import auth_unavailable, unavailable_row
 from candleviewer.api.csrf import AUDIT_TIMEOUT_S, set_csrf_cookie
 from candleviewer.api.csrf import source_ip as admitted_source_ip
+from candleviewer.api.problems import problem
 from candleviewer.api.query_allowlist import undeclared_query_refusal
 from candleviewer.api.sessions import (
     REFRESH_COOKIE,
@@ -162,23 +163,18 @@ from candleviewer.auth.models import (
 from candleviewer.auth.recovery_codes import RECOVERY_CODE_COUNT
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.observability.context import current_request_uuid
+from candleviewer.ws._generated.error_codes import ErrorCode
 
 #: `sessions.revoked_reason` and audit `reason` of the sessions a confirmed enrolment ends:
 #: every session of the user, the caller's own included (rotation, SR-013) (#2295).
 ENROLLED_REASON = "mfa_enrolled"
 #: The same for the sessions a recovery sign-in ends: every session of the user (#2344).
 RECOVERED_REASON = "mfa_recovery"
-#: Titles of the catalogue codes (`x-error-codes`) the enrolment routes answer with.
-_UNAUTHENTICATED = "Missing, malformed or expired access token"
-_CONFLICT = "Concurrent modification or state conflict"
-_INVALID = "Request body or parameters failed schema validation"
 _FAILED = AuditOutcome.FAILURE
 #: #2695: `auth.account_locked`'s reasons at the second factor (`_audit_second_factor_lock`).
 _LOCK_SET, _WHILE_LOCKED = "second_factor", "second_factor_while_locked"
 #: The `detail` of a confirm whose enrolment committed but whose session rotation failed (#2295).
 _UNROTATED = "the new TOTP method is active but the session was not rotated; sign in again"
-#: The `title` of every refusal of `/auth/mfa/recovery`: its contract declares 401, never 503.
-_RECOVERY_FAILED = "Recovery failed"
 #: The row of a refused recovery whose user is disabled or gone, as `_audit_refusal` writes (#2911).
 _DISABLED: dict[str, Any] = {"severity": Severity.WARNING, "reason": "user_disabled"}
 #: The `detail` of a recovery whose commit spent the code but whose session step failed (#2344):
@@ -306,27 +302,15 @@ class AuditServiceLike(Protocol):
         ...
 
 
-def _problem(
-    status_code: int,
-    title: str,
-    detail: str,
-    *,
-    code: str | None = None,
-    retry_after_s: int | None = None,
-) -> JSONResponse:
-    content: dict[str, Any] = {"type": "about:blank", "title": title, "status": status_code}
-    if code is not None:  # the catalogue code (`x-error-codes`) and its type URI
-        content.update(type=f"https://candleviewer.local/errors/{code}", code=code)
-    if retry_after_s is not None:  # the `Problem` field and the `Retry-After` header agree
-        content["retry_after_seconds"] = retry_after_s
-    response = JSONResponse(
-        status_code=status_code,
-        content={**content, "detail": detail},
-        media_type="application/problem+json",
+def _rate_limited(detail: str, retry_after_s: int) -> JSONResponse:
+    # the `Problem` field and the `Retry-After` header agree
+    return problem(
+        ErrorCode.RATE_LIMITED,
+        429,
+        detail,
+        headers={"Retry-After": str(retry_after_s)},
+        extra={"retry_after_seconds": retry_after_s},
     )
-    if retry_after_s is not None:
-        response.headers["Retry-After"] = str(retry_after_s)
-    return response
 
 
 def _sign_in_refused() -> JSONResponse:
@@ -334,7 +318,7 @@ def _sign_in_refused() -> JSONResponse:
     SR-014, #4961): the same status, body and headers whatever the account's state, built from
     constants alone, never from an error's own message. The audit record keeps the cause."""
     detail = "Username or password is incorrect"
-    return _problem(401, "Invalid credentials", detail, code="unauthenticated")
+    return problem(ErrorCode.UNAUTHENTICATED, 401, detail)
 
 
 def _client_ip(request: Request) -> str | None:
@@ -399,12 +383,8 @@ def make_auth_router(
         if not mfa_refusals.is_blocked(key):
             return None
         _log().warning("auth.mfa_refused.over_budget")
-        return _problem(
-            429,
-            "Too many requests",
-            "too many failed attempts; retry later",
-            code="rate_limited",
-            retry_after_s=mfa_refusals.retry_after_s(key),
+        return _rate_limited(
+            "too many failed attempts; retry later", mfa_refusals.retry_after_s(key)
         )
 
     def _mfa_refused(request: Request) -> None:
@@ -563,7 +543,7 @@ def make_auth_router(
         return auth_unavailable()
 
     def _enrolment_ready(
-        *, mfa: bool, status: int = 503, title: str = "Service unavailable"
+        *, mfa: bool, status: int = 503
     ) -> tuple[AuditWriterLike, IdentityProvider] | JSONResponse:
         """The audit writer and the identity provider when every backend an enrolment-only
         sign-in (*mfa* False) or an enrolment step or recovery (*mfa* True) needs is wired, else
@@ -571,9 +551,9 @@ def make_auth_router(
         nothing here is minted or changed without its write-ahead audit record (C-2.9)."""
         wired = auth_service.is_active and auth_service.sessions_is_active
         if identity is None or not wired or (mfa and not auth_service.mfa_is_active):
-            return _problem(status, title, "enrolment backend is not wired")
+            return problem(ErrorCode.STORE_UNAVAILABLE, status, "enrolment backend is not wired")
         if audit_service is None or not audit_service.is_active:
-            return _problem(status, title, "audit sink not active")
+            return problem(ErrorCode.AUDIT_UNAVAILABLE, status, "audit sink not active")
         return audit_service.writer, identity
 
     def _signed_in(
@@ -604,7 +584,7 @@ def make_auth_router(
         if isinstance(ready := _enrolment_ready(mfa=False), JSONResponse):
             return ready
         writer, ident = ready
-        unaudited = _problem(503, "Service unavailable", "audit sink not active")
+        unaudited = problem(ErrorCode.AUDIT_UNAVAILABLE, 503, "audit sink not active")
         if not await _audit_carried_sessions(request, user_id, stage="login"):
             return unaudited
         user = await ident.user(str(user_id))
@@ -662,9 +642,7 @@ def make_auth_router(
         re-enrolment is not specified yet), and nothing changes."""
         if isinstance(ready := _enrolment_ready(mfa=True), JSONResponse):
             return ready
-        unauthenticated = _problem(
-            401, _UNAUTHENTICATED, "authentication required", code="unauthenticated"
-        )
+        unauthenticated = problem(ErrorCode.UNAUTHENTICATED, 401, "authentication required")
         if (token := _bearer(request)) is None:
             return unauthenticated
         try:
@@ -678,13 +656,13 @@ def make_auth_router(
             return unauthenticated
         if user.mfa_methods:
             detail = "a confirmed MFA method exists; re-enrolment is not available yet"
-            return _problem(409, _CONFLICT, detail, code="conflict")
+            return problem(ErrorCode.CONFLICT, 409, detail)
         return (*ready, record, user)
 
     @router.post("/auth/login")
     async def login(request: Request, body: LoginRequest) -> JSONResponse:
         if not auth_service.is_active:
-            return _problem(503, "Service unavailable", "auth backend is not wired")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "auth backend is not wired")
 
         audit_ip = _client_ip(request)
         try:
@@ -747,13 +725,7 @@ def make_auth_router(
                 outcome=AuditOutcome.DENIED,
                 reason="verify_busy",
             )
-            return _problem(
-                429,
-                "Too many requests",
-                str(exc),
-                code="rate_limited",
-                retry_after_s=exc.retry_after_s,
-            )
+            return _rate_limited(str(exc), exc.retry_after_s)
 
         if isinstance(result, EnrolmentOnlyLogin):
             return await _enrolment_only_sign_in(request, body.identifier, result.user_id)
@@ -780,7 +752,7 @@ def make_auth_router(
     @router.post("/auth/mfa/verify")
     async def mfa_verify(request: Request, body: MfaVerifyRequest) -> JSONResponse:
         if not auth_service.mfa_is_active:
-            return _problem(503, "Service unavailable", "mfa backend is not wired")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "mfa backend is not wired")
         if (over := _mfa_over_budget(request)) is not None:
             return over
         try:
@@ -790,7 +762,7 @@ def make_auth_router(
         except MfaAccountLocked as exc:  # #2695: the same answer as a wrong code (SR-014)
             _mfa_refused(request)
             await _audit_second_factor_lock(request, exc.user_id, reason=_WHILE_LOCKED)
-            return _problem(401, "MFA verification failed", "invalid or expired code")
+            return problem(ErrorCode.MFA_INVALID, 401, "invalid or expired code")
         except (MfaChallengeInvalid, MfaChallengeLocked, MfaCodeInvalid, MfaCodeReused) as exc:
             _mfa_refused(request)
             auth_login_failures_total.labels(method=body.method.value).inc()
@@ -811,11 +783,11 @@ def make_auth_router(
             # still lets a legitimate, already-authenticated client tell
             # locked apart from merely-wrong via the challenge-expiry UX
             # (SCR-002's "locked after 5 tries" state), not via this text.
-            return _problem(401, "MFA verification failed", "invalid or expired code")
+            return problem(ErrorCode.MFA_INVALID, 401, "invalid or expired code")
 
         # Fail closed (C-2.9 write-ahead): a record that cannot be written mints nothing. 401 is
         # this operation's documented refusal (its 503 is #2152's `AuthUnavailable`).
-        unaudited = _problem(401, "MFA verification failed", "audit sink not active")
+        unaudited = problem(ErrorCode.AUDIT_UNAVAILABLE, 401, "audit sink not active")
         if audit_service is not None and audit_service.is_active:
             # The mint's first write-ahead record (ADR-0037 decision 3): the writer's, never the
             # lane's (U42), so while the sink refuses nothing is minted (the step stays spent).
@@ -869,7 +841,7 @@ def make_auth_router(
             auth_login_failures_total.labels(method=body.method.value).inc()
             voided = {"voids_session_created": str(session_id)}
             await _audit_refusal(request, result.user_id, session_id=session_id, after_state=voided)
-            return _problem(401, "MFA verification failed", "account is disabled")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "account is disabled")
         except Exception as exc:  # a store failure: nothing was minted, and the 500 stands
             # Its `auth.mfa_failed` row voids the session `auth.session_created` announced (C-2.9)
             # and counts as this route's other `auth.mfa_failed` rows do (SR-125). The error log
@@ -923,7 +895,7 @@ def make_auth_router(
         names the user and the sessions, and a refusal row voids the session announced."""
         # 401 is this operation's documented refusal (its 503 is #2152's `AuthUnavailable`), as on
         # `/auth/mfa/verify`: nothing is checked or spent that could not be audited and minted.
-        ready = _enrolment_ready(mfa=True, status=401, title=_RECOVERY_FAILED)
+        ready = _enrolment_ready(mfa=True, status=401)
         if isinstance(ready, JSONResponse):
             return ready
         writer, ident = ready
@@ -934,7 +906,7 @@ def make_auth_router(
         # brute-force search. `RecoveryCodesExhausted` stays distinct: the ticket's Gherkin
         # ("Recovery codes exhausted") requires a contact-the-owner message the UI must render
         # differently.
-        refused = _problem(401, _RECOVERY_FAILED, "invalid or expired code")
+        refused = problem(ErrorCode.MFA_INVALID, 401, "invalid or expired code")
         if (over := _mfa_over_budget(request)) is not None:
             return over  # before the challenge is read or any attempt counted (#4664)
 
@@ -966,7 +938,7 @@ def make_auth_router(
             exhausted = {"actor_label": "(mfa_token)", "severity": Severity.ERROR}
             await failed("auth.recovery_codes_exhausted", AuditOutcome.DENIED, **exhausted)
             await _audit_lock_set(request, exc)
-            return _problem(401, "Recovery codes exhausted", str(exc))
+            return problem(ErrorCode.MFA_INVALID, 401, str(exc), rule="recovery_codes_exhausted")
         except MfaAccountLocked as exc:
             return await locked(exc.user_id)
         except (MfaChallengeInvalid, MfaChallengeLocked, RecoveryCodeInvalid) as exc:
@@ -1078,7 +1050,7 @@ def make_auth_router(
             )
         except UserDisabled:  # #2911: disabled since the commit; the code is spent, nothing minted
             await failed("auth.login_failed", AuditOutcome.DENIED, **_DISABLED, **mine, **created)
-            return _problem(401, _RECOVERY_FAILED, "account is disabled")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "account is disabled")
         except Exception as exc:  # any failure: the committed recovery stands, nothing is minted
             _log().error(
                 "auth.recovery.completed_unminted",
@@ -1089,7 +1061,7 @@ def make_auth_router(
             )
             # C-2.9: its row voids the session `auth.session_created` announced
             await server_failed("auth.mfa_failed", _FAILED, reason="unminted", **mine, **created)
-            return _problem(401, _RECOVERY_FAILED, _UNMINTED)
+            return problem(ErrorCode.UNAUTHENTICATED, 401, _UNMINTED)
         # U34 (RR-15): an Owner's enrolment-only session is to page; no rule yet (#2746).
         auth_enrolment_only_sessions_total.labels(
             role=normalise_role(profile.get("roles") or ())
@@ -1109,9 +1081,7 @@ def make_auth_router(
             return caller
         writer, _ident, record, user = caller
         if body.method is not MfaMethodKind.TOTP:
-            return _problem(
-                422, _INVALID, "only method=totp can be enrolled", code="validation_failed"
-            )
+            return problem(ErrorCode.VALIDATION_FAILED, 422, "only method=totp can be enrolled")
         try:  # #2152: after every refusal that needs no key, before the record and the seed
             await auth_service.mfa.require_keyring(user_id=user.id)
         except MfaKeyringUnavailable as exc:
@@ -1127,7 +1097,7 @@ def make_auth_router(
                 request_id=current_request_uuid(),
             )
         except AuditError:
-            return _problem(503, "Service unavailable", "audit sink not active")
+            return problem(ErrorCode.AUDIT_UNAVAILABLE, 503, "audit sink not active")
         try:
             result = await auth_service.mfa.enroll(str(user.id), body, account_name=user.username)
         except MfaKeyringUnavailable as exc:  # it went down since the check: no method created
@@ -1158,9 +1128,7 @@ def make_auth_router(
         writer, ident, record, user = caller
         uid, method_id, ip = str(user.id), str(body.method_id), _client_ip(request)
         mfa, sessions = auth_service.mfa, auth_service.sessions
-        invalid = _problem(
-            422, _INVALID, "invalid or expired enrolment code", code="validation_failed"
-        )
+        invalid = problem(ErrorCode.VALIDATION_FAILED, 422, "invalid or expired enrolment code")
         try:
             step = await mfa.check_enrollment(uid, method_id=method_id, code=body.code)
             profile = await ident.user(uid)  # before any change: one failure point fewer
@@ -1191,7 +1159,7 @@ def make_auth_router(
                     request_id=current_request_uuid(),
                 )
         except AuditError:
-            return _problem(503, "Service unavailable", "audit sink not active")
+            return problem(ErrorCode.AUDIT_UNAVAILABLE, 503, "audit sink not active")
         except MfaKeyringUnavailable as exc:  # #2152: after the method lookup, before the code
             return await _mfa_unavailable(request, "authMfaEnrollConfirm", exc, user.id)
         except (MfaEnrollmentNotFound, MfaCodeInvalid):  # wrong code, no such pending method
@@ -1228,9 +1196,7 @@ def make_auth_router(
             method, codes = await mfa.complete_enrollment(uid, method_id=method_id, time_step=step)
         except UserDisabled as exc:  # #2911: disabled since the read, under the user-row lock
             await uncommitted(exc, "user_disabled")
-            return _problem(
-                401, _UNAUTHENTICATED, "authentication required", code="unauthenticated"
-            )
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "authentication required")
         except MfaEnrollmentNotFound as exc:  # a concurrent confirm or enrolment won
             auth_enrolments_total.labels(result="refused").inc()
             await uncommitted(exc, "lost_race")
@@ -1257,7 +1223,7 @@ def make_auth_router(
                 new_session_id=str(new_id),
                 error=type(exc).__name__,
             )
-            return _problem(503, "Service unavailable", _UNROTATED)
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, _UNROTATED)
         activated = MfaMethodView(active=True, **method.model_dump(include=_METHOD_FIELDS))
         return _signed_in(
             request,

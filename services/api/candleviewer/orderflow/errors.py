@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
+#: The catalogued REST codes a derivatives read can refuse a request with (a subset of
+#: `ErrorCode`; typed here because `orderflow` may not import `ws`). The API converts one with
+#: `ErrorCode(code)`, so a slug outside this set fails mypy rather than raising at runtime.
+InvalidRequestCode = Literal["invalid_cursor", "validation_failed", "invalid_time_range"]
+
 
 class OrderflowError(Exception):
     """Base exception for the M9 `orderflow` module."""

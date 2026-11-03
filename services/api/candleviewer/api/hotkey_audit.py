@@ -10,11 +10,12 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from fastapi import APIRouter, Request, Response
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from candleviewer.api.problems import problem
 from candleviewer.audit.errors import AuditError
 from candleviewer.domain.text import refuse_unstorable_text
+from candleviewer.ws._generated.error_codes import ErrorCode
 
 ACTION = "hotkey.trading_binding_changed"
 _ID = r"^[a-z0-9_]+([.][a-z0-9_]+){1,3}$"
@@ -41,30 +42,22 @@ class _Resolver(Protocol):
     async def resolve(self, request: Request) -> Any: ...
 
 
-def _problem(status: int, title: str, detail: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status,
-        content={"type": "about:blank", "title": title, "status": status, "detail": detail},
-        media_type="application/problem+json",
-    )
-
-
 def make_hotkey_audit_router(emitter: _Emitter | None, resolver: _Resolver | None) -> APIRouter:
     router = APIRouter(tags=["settings"])
 
     @router.post("/settings/hotkey-audit")
     async def record(request: Request) -> Response:
         if emitter is None or resolver is None:
-            return _problem(501, "Not implemented", "hotkey audit not wired")
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "hotkey audit not wired")
         principal = await resolver.resolve(request)
         if principal is None:
-            return _problem(401, "Unauthorized", "no verified session for this request")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "no verified session for this request")
         if "settings:write" not in principal.permissions:
-            return _problem(403, "Forbidden", "settings:write required")
+            return problem(ErrorCode.FORBIDDEN, 403, "settings:write required")
         try:
             body = HotkeyBindingAuditInput.model_validate_json(await request.body())
         except ValidationError:
-            return _problem(422, "Unprocessable", "invalid hotkey audit payload")
+            return problem(ErrorCode.VALIDATION_FAILED, 422, "invalid hotkey audit payload")
         try:
             await emitter.emit(
                 ACTION,
@@ -82,7 +75,7 @@ def make_hotkey_audit_router(emitter: _Emitter | None, resolver: _Resolver | Non
                 },
             )
         except AuditError:
-            return _problem(503, "Audit unavailable", "the action could not be audited")
+            return problem(ErrorCode.AUDIT_UNAVAILABLE, 503, "the action could not be audited")
         return Response(status_code=204)
 
     return router

@@ -188,7 +188,7 @@ def test_guard_fails_closed_when_sessions_are_wired_but_step_up_is_not(root: str
         r = c.request(method, root + path, headers=_H)
         assert r.status_code == 503, path
         assert r.headers["content-type"] == "application/problem+json"
-        assert r.json()["code"] == "service_unavailable"
+        assert r.json()["code"] == "step_up_unavailable"
         assert r.json()["detail"] == "step-up not wired"
     assert c.post(root + "/exchange-accounts/a1/keys/k1/rotate").status_code == 503  # no token
     # Only the path-gated routes: ordinary writes and the kill-switch (engage

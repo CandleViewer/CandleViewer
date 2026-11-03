@@ -16,10 +16,12 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
 from candleviewer.api.onboarding_checklist import Probe, assemble
+from candleviewer.api.problems import problem
 from candleviewer.api.query_allowlist import undeclared_query_refusal
 from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.observability.context import current_request_uuid
+from candleviewer.ws._generated.error_codes import ErrorCode
 
 #: SR-026 (#2632): `getOnboardingChecklist` declares no query parameter (22-api-openapi.yaml), so
 #: any query key (a target user or a step state included) is refused, never silently ignored.
@@ -34,14 +36,6 @@ class DismissalStore(Protocol):
 
 class _Metrics(Protocol):
     def inc(self, name: str, **labels: str) -> None: ...
-
-
-def _problem(status: int, title: str, detail: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status,
-        content={"type": "about:blank", "title": title, "status": status, "detail": detail},
-        media_type="application/problem+json",
-    )
 
 
 def make_onboarding_router(
@@ -61,11 +55,11 @@ def make_onboarding_router(
     @router.get("/onboarding/checklist")
     async def get_checklist(request: Request) -> Response:
         if principal_resolver is None or store is None:
-            return _problem(501, "Not implemented", "onboarding not wired")
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "onboarding not wired")
         got = principal_resolver.resolve(request)
         principal = await got if inspect.isawaitable(got) else got
         if principal is None:
-            return _problem(401, "Unauthorized", "no verified session for this request")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "no verified session for this request")
         if (refusal := undeclared_query_refusal(request, CHECKLIST_QUERY)) is not None:
             return refusal  # before any probe runs or checklist state is read
         started = time.monotonic()
@@ -89,11 +83,11 @@ def make_onboarding_router(
     @router.post("/onboarding/checklist/dismiss")
     async def dismiss(request: Request) -> Response:
         if principal_resolver is None or store is None:
-            return _problem(501, "Not implemented", "onboarding not wired")
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "onboarding not wired")
         got = principal_resolver.resolve(request)
         principal = await got if inspect.isawaitable(got) else got
         if principal is None:
-            return _problem(401, "Unauthorized", "no verified session for this request")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "no verified session for this request")
         raw_body = await request.body()
         if raw_body.strip():
             # Self-scope only: any client-supplied target/step state is tampering.
@@ -107,10 +101,12 @@ def make_onboarding_router(
                     reason="client_supplied_state",
                     request_id=current_request_uuid(),
                 )
-            return _problem(403, "Forbidden", "the checklist accepts no client-supplied state")
+            return problem(
+                ErrorCode.FORBIDDEN, 403, "the checklist accepts no client-supplied state"
+            )
         _, complete, _raw = await assemble(principal.user_id, probes, flags, dismissed=False)
         if not complete:
-            return _problem(409, "Conflict", "the checklist is not complete")
+            return problem(ErrorCode.CONFLICT, 409, "the checklist is not complete")
         await store.dismiss(principal.user_id)
         _count("onboarding_checklist_dismissed_total")
         return Response(status_code=204)

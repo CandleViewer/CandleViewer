@@ -27,9 +27,9 @@ from candleviewer.api.funding import (
     _iso,
     _parse_time,
     _Principal,
-    _problem,
     _Resolver,
 )
+from candleviewer.api.problems import problem
 from candleviewer.orderflow.deriv_limits import (
     DEFAULT_LIMIT,
     DerivInvalidRequest,
@@ -38,6 +38,7 @@ from candleviewer.orderflow.deriv_limits import (
 from candleviewer.orderflow.funding_metrics import deriv_range_rejected_total
 from candleviewer.orderflow.open_interest import OiSeries
 from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.ws._generated.error_codes import ErrorCode
 
 _REQUIRED_PERMISSION = "marketdata:read"
 #: `limit` arrives as text and is parsed after the RBAC checks, so a malformed one is 22's
@@ -91,9 +92,9 @@ def serialize_series(series: OiSeries) -> dict[str, object]:
     }
 
 
-def _bad(code: str, detail: str) -> JSONResponse:
+def _bad(code: ErrorCode, detail: str) -> JSONResponse:
     deriv_range_rejected_total.labels(endpoint=_ENDPOINT).inc()
-    return _problem(400, code, "Bad request", detail)
+    return problem(code, 400, detail)
 
 
 def make_open_interest_router(
@@ -114,24 +115,20 @@ def make_open_interest_router(
         limit: str | None = Query(default=None),
     ) -> JSONResponse:
         if principal_resolver is None:
-            return _problem(
-                501, "not_implemented", "Not implemented", "no principal resolver wired"
-            )
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "no principal resolver wired")
         resolved = principal_resolver.resolve(request)
         principal: _Principal | None = await resolved if inspect.isawaitable(resolved) else resolved
         if principal is None:
-            return _problem(401, "unauthenticated", "Unauthorized", "no verified session")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "no verified session")
         if not principal.has(_REQUIRED_PERMISSION):
-            return _problem(403, "forbidden", "Forbidden", f"requires {_REQUIRED_PERMISSION}")
+            return problem(ErrorCode.FORBIDDEN, 403, f"requires {_REQUIRED_PERMISSION}")
         if symbol is None or not _SYMBOL_RE.fullmatch(symbol):
-            return _bad("validation_failed", "invalid symbol")
+            return _bad(ErrorCode.VALIDATION_FAILED, "invalid symbol")
         if limit is not None and not _LIMIT_RE.fullmatch(limit):
-            return _bad("validation_failed", "limit must be an integer")
+            return _bad(ErrorCode.VALIDATION_FAILED, "limit must be an integer")
         reader = reader_provider()
         if reader is None:
-            return _problem(
-                503, "service_unavailable", "Service unavailable", "open interest not wired"
-            )
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "open interest not wired")
         try:
             series = await reader.series(
                 symbol,
@@ -142,15 +139,13 @@ def make_open_interest_router(
                 cursor=cursor,
             )
         except ValueError:  # malformed from/to timestamp
-            return _bad("invalid_time_range", "invalid from/to timestamp")
+            return _bad(ErrorCode.INVALID_TIME_RANGE, "invalid from/to timestamp")
         except DerivInvalidRequest as exc:
-            return _bad(exc.code, exc.detail)
+            return _bad(ErrorCode(exc.code), exc.detail)
         except DerivSymbolUnlisted:
-            return _problem(422, "validation_failed", "Unprocessable", f"{symbol} is not listed")
+            return problem(ErrorCode.VALIDATION_FAILED, 422, f"{symbol} is not listed")
         except StorageTierUnavailable:
-            return _problem(
-                503, "service_unavailable", "Service unavailable", "hot tier unavailable"
-            )
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "hot tier unavailable")
         return JSONResponse(status_code=200, content=serialize_series(series))
 
     return router

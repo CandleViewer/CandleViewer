@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from candleviewer.orderflow.errors import OrderflowError
+from candleviewer.orderflow.errors import InvalidRequestCode, OrderflowError
 
 MAX_WINDOW_DAYS_OI: Final = 400
 MAX_WINDOW_DAYS_LIQ: Final = 31
@@ -29,7 +29,7 @@ US_PER_DAY: Final = 86_400 * 1_000_000
 class DerivInvalidRequest(OrderflowError):
     """Request bounds violated; `code` is the 22-api error-registry code (400)."""
 
-    def __init__(self, code: str, detail: str) -> None:
+    def __init__(self, code: InvalidRequestCode, detail: str) -> None:
         super().__init__(detail)
         self.code = code
         self.detail = detail

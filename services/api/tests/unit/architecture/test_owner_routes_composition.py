@@ -288,7 +288,9 @@ def test_deployed_app_refuses_a_self_target_role_change(deployed: SimpleNamespac
     owner = rbac.user_id_of("owner")
     headers = _headers(deployed.client, "owner")
     r = deployed.client.put(f"/users/{owner}/roles", json={"roles": ["viewer"]}, headers=headers)
-    assert r.status_code == 403 and r.json()["reason"] == "self_target"  # SR-055
+    body = r.json()
+    assert r.status_code == 403 and body["errors"][0]["rule"] == "self_target"  # SR-055
+    assert "reason" not in body
     assert deployed.users.roles == deployed.users.initial_roles
 
 
@@ -694,7 +696,7 @@ def test_deployed_app_onboarding_reads_and_evaluates_dismissal_on_the_callers_ow
 
         start = len(rows.calls)
         resp = client.post("/onboarding/checklist/dismiss", headers=_headers(client, "owner"))
-        assert resp.status_code == 409 and resp.json()["title"] == "Conflict", resp.text
+        assert resp.status_code == 409 and resp.json()["code"] == "conflict", resp.text
         edges = rows.calls[start:]
         assert {"has_confirmed_totp", "has_account_binding", "latest_binding_at"} <= {
             edge for edge, _ in edges

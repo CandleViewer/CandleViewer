@@ -46,6 +46,7 @@ from candleviewer.api.csrf import (
     SESSION_REFUSALS_PER_WINDOW,
     source_ip,
 )
+from candleviewer.api.problems import problem
 from candleviewer.api.step_up_challenge import ChallengeText, challenge_reason, mfa_reset_text
 from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.api.view_as_subject import view_as_subject
@@ -456,7 +457,7 @@ async def require_session_elevation(
     if session_id is None:
         return _unauthenticated()
     if not auth.step_up_is_active:
-        return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
+        return problem(ErrorCode.STEP_UP_UNAVAILABLE, 503, "step-up not wired")
     return await require_elevation_for(
         auth, str(session_id), action_class, text=text, fingerprint=fingerprint, emitter=emitter
     )
@@ -478,7 +479,7 @@ def request_elevation(auth: _AuthLike, action_class: str) -> RequestElevation:
 
     async def demand(request: Request, text: ChallengeText) -> JSONResponse | None:
         if not auth.sessions_is_active:
-            return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
+            return problem(ErrorCode.STEP_UP_UNAVAILABLE, 503, "step-up not wired")
         token = _bearer(request)
         if token is None:
             return _unauthenticated()
@@ -497,7 +498,7 @@ async def demand_elevation(
     """`elevation(request, text)`. None wired is a wiring fault, 503, never "no step-up needed"
     (C-2.21): the route stays gated."""
     if elevation is None:
-        return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
+        return problem(ErrorCode.STEP_UP_UNAVAILABLE, 503, "step-up not wired")
     return await elevation(request, text)
 
 
@@ -553,7 +554,7 @@ async def require_bound_elevation(
     if session_id is None:
         return _unauthenticated()
     if not auth.step_up_is_active:
-        return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
+        return problem(ErrorCode.STEP_UP_UNAVAILABLE, 503, "step-up not wired")
     try:
         spent = await spend_bound_grant(
             auth.step_up, emitter, str(session_id), action_class, fingerprint
@@ -588,7 +589,7 @@ def bound_request_elevation(
         request: Request, fingerprint: str, text: ChallengeText
     ) -> JSONResponse | SpentGrant:
         if not auth.sessions_is_active:
-            return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
+            return problem(ErrorCode.STEP_UP_UNAVAILABLE, 503, "step-up not wired")
         token = _bearer(request)
         if token is None:
             return _unauthenticated()
@@ -608,7 +609,7 @@ async def demand_bound_elevation(
 ) -> JSONResponse | SpentGrant:
     """`elevation(request, fingerprint, text)`; none wired is a 503, as in `demand_elevation`."""
     if elevation is None:
-        return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
+        return problem(ErrorCode.STEP_UP_UNAVAILABLE, 503, "step-up not wired")
     return await elevation(request, fingerprint, text)
 
 
@@ -799,9 +800,7 @@ def make_read_only_guard(
             return await call_next(request)
         if not auth.step_up_is_active:
             if action_class is not None:
-                return _problem(
-                    503, "service_unavailable", "Service unavailable", "step-up not wired"
-                )
+                return problem(ErrorCode.STEP_UP_UNAVAILABLE, 503, "step-up not wired")
             return await call_next(request)  # no step-up, so no read-only downgrade
         token = _bearer(request)
         if token is not None:
@@ -846,7 +845,7 @@ def make_step_up_router(
 
     async def _session(request: Request) -> SessionRecord | JSONResponse:
         if not auth.step_up_is_active or not auth.sessions_is_active:
-            return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
+            return problem(ErrorCode.STEP_UP_UNAVAILABLE, 503, "step-up not wired")
         token = _bearer(request)
         if token is None:
             return _unauthenticated()
@@ -1112,7 +1111,7 @@ def make_step_up_router(
         except ResetTargetNotFound:  # gone since the lookup: nothing changed
             return _problem(404, "not_found", "Not found", "user not found")
         except AuthServiceUnavailable:  # no reset store wired: fail closed
-            return _problem(503, "service_unavailable", "Service unavailable", "reset not wired")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "reset not wired")
         except SessionReadOnly as exc:  # downgraded after the gate, as `require_elevation_for`
             return readonly_problem(exc)
         except StepUpRequired:  # the grace window lapsed after the gate: a new challenge

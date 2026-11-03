@@ -14,9 +14,11 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from candleviewer.api.problems import problem
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.observability.log_level import LogLevelOverrides, LogLevelRequest
+from candleviewer.ws._generated.error_codes import ErrorCode
 
 ADMIN_WRITE = "admin:write"
 
@@ -29,14 +31,6 @@ class _PrincipalResolver(Protocol):
     def resolve(self, request: Request) -> AuditPrincipal | None: ...
 
 
-def _problem(status: int, title: str, detail: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status,
-        content={"type": "about:blank", "title": title, "status": status, "detail": detail},
-        media_type="application/problem+json",
-    )
-
-
 def make_log_level_router(
     overrides: LogLevelOverrides,
     audit: _Emitter | None,
@@ -47,12 +41,12 @@ def make_log_level_router(
     @router.put("/log-level")
     async def put_log_level(request: Request) -> JSONResponse:
         if principal_resolver is None:
-            return _problem(501, "Not implemented", "no principal resolver wired")
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "no principal resolver wired")
         principal = principal_resolver.resolve(request)
         if principal is None:
-            return _problem(401, "Unauthorized", "no verified session for this request")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "no verified session for this request")
         if audit is None:
-            return _problem(503, "Service unavailable", "audit backend is not wired")
+            return problem(ErrorCode.AUDIT_UNAVAILABLE, 503, "audit backend is not wired")
         common: dict[str, Any] = {
             "actor_label": principal.username,
             "actor_user_id": principal.user_id,
@@ -69,11 +63,11 @@ def make_log_level_router(
                 reason=f"missing_permission:{ADMIN_WRITE}",
                 **common,
             )
-            return _problem(403, "Forbidden", f"requires {ADMIN_WRITE}")
+            return problem(ErrorCode.FORBIDDEN, 403, f"requires {ADMIN_WRITE}")
         try:
             body = LogLevelRequest.model_validate_json(await request.body())
         except ValidationError:
-            return _problem(400, "Bad request", "invalid log-level request")
+            return problem(ErrorCode.VALIDATION_FAILED, 400, "invalid log-level request")
         # Audit write-ahead (C-2.9): refuse the change if it cannot be recorded.
         await audit.emit(
             "settings.change",

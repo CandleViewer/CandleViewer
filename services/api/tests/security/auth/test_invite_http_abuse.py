@@ -122,7 +122,7 @@ def test_ac_inv_08_invite_cannot_be_completed_with_another_invitees_totp(stack: 
     mine, theirs = _begin(stack, alice), _begin(stack, mallory)
     forged = {"method_id": theirs.json()["method_id"], "code": stack.code(_seed(theirs))}
     r = stack.client.post(f"/invites/{alice}/confirm", json=forged)
-    assert r.status_code == 422 and r.json()["code"] == "invalid_code"
+    assert r.status_code == 422 and r.json()["code"] == "mfa_invalid"
     assert stack.audit.of("users.invite_rejected")[-1]["reason"] == "enrollment_invalid"
     own = {"method_id": mine.json()["method_id"], "code": stack.code(_seed(mine))}
     assert stack.client.post(f"/invites/{alice}/confirm", json=own).status_code == 200

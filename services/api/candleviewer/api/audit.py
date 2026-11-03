@@ -82,6 +82,7 @@ from candleviewer.api.audit_verify import (
     write_verify_record,
 )
 from candleviewer.api.idempotency import IdempotencyKeyReuse, request_fingerprint
+from candleviewer.api.problems import problem as step_up_problem
 from candleviewer.api.recorder_admin import JobConflict
 from candleviewer.api.step_up import (
     SpentGrant,
@@ -119,6 +120,7 @@ from candleviewer.observability.audit_query_metrics import cv_audit_query_durati
 from candleviewer.observability.health_probes import SystemEventWriter
 from candleviewer.storage.backup_artefacts import ResolvedArtefact
 from candleviewer.storage.errors import AuditEntryTooLarge, StorageTierUnavailable
+from candleviewer.ws._generated.error_codes import ErrorCode
 
 
 def _log() -> Any:
@@ -878,9 +880,12 @@ def make_audit_router(
         if isinstance(checked, JSONResponse):
             return checked
         identity, body = checked
-        if break_ack is None or step_up is None:  # a wiring fault: nothing is lifted (C-2.21)
-            detail = "break acknowledgement not wired"
-            return _problem(503, "Service unavailable", detail, code="service_unavailable")
+        if step_up is None:  # a wiring fault: nothing is lifted (C-2.21)
+            return step_up_problem(ErrorCode.STEP_UP_UNAVAILABLE, 503, "step-up not wired")
+        if break_ack is None:  # step-up is wired; the acknowledgement store is not
+            return step_up_problem(
+                ErrorCode.STORE_UNAVAILABLE, 503, "break acknowledgement not wired"
+            )
         restated = f"Acknowledge the audit-chain break at entry {identity.object_id}"
         spent = await require_bound_elevation(
             step_up,
@@ -997,9 +1002,7 @@ def make_audit_router(
             return checked
         raw, body, key = checked
         if step_up is None:  # a wiring fault: the export stays gated (C-2.21)
-            return _problem(
-                503, "Service unavailable", "step-up not wired", code="service_unavailable"
-            )
+            return step_up_problem(ErrorCode.STEP_UP_UNAVAILABLE, 503, "step-up not wired")
         restated = export_audit_text(body.from_ts, body.to_ts, compress=body.compress)
         challenge = await require_session_elevation(
             step_up, principal.session_id, "audit", restated

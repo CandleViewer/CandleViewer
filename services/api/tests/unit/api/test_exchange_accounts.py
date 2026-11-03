@@ -274,5 +274,5 @@ async def test_the_path_guard_leaves_the_creates_keys_step_up_to_its_handler() -
 def test_a_create_wired_without_its_step_up_fails_closed_and_stores_nothing() -> None:
     store, audit = _Store(), _Audit()
     resp = _client(store, audit, elevation=None).post("/exchange-accounts", json=BODY)
-    assert (resp.status_code, resp.json()["code"]) == (503, "service_unavailable")
+    assert (resp.status_code, resp.json()["code"]) == (503, "step_up_unavailable")
     assert audit.records == [] and len(store.rows) == 1

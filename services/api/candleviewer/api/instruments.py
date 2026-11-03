@@ -39,10 +39,12 @@ from fastapi.responses import JSONResponse
 
 from candleviewer.api.market_bars import RecordingStart
 from candleviewer.api.market_response import iso_us
+from candleviewer.api.problems import problem
 from candleviewer.domain.events import Instrument
 from candleviewer.exchange.base.models import RiskLimitTier
 from candleviewer.ingestion.instruments import CatalogueSnapshot, utc_now_us
 from candleviewer.ingestion.instruments_refresh import InstrumentRefreshPendingError
+from candleviewer.ws._generated.error_codes import ErrorCode
 
 _REQUIRED_PERMISSION = "instruments:read"
 
@@ -107,14 +109,6 @@ class CatalogueReader(Protocol):
     async def ensure_symbol(self, symbol: str) -> Instrument | None: ...
 
     async def ensure_risk_limits(self, symbol: str) -> tuple[RiskLimitTier, ...] | None: ...
-
-
-def _problem(status_code: int, title: str, detail: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status_code,
-        content={"type": "about:blank", "title": title, "status": status_code, "detail": detail},
-        media_type="application/problem+json",
-    )
 
 
 def _iso(us: int | None) -> str | None:
@@ -206,13 +200,13 @@ def make_instruments_router(
 
     async def _authorize(request: Request) -> JSONResponse | None:
         if principal_resolver is None:
-            return _problem(501, "Not implemented", "no principal resolver wired")
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "no principal resolver wired")
         resolved = principal_resolver.resolve(request)
         principal = await resolved if inspect.isawaitable(resolved) else resolved
         if principal is None:
-            return _problem(401, "Unauthorized", "no verified session for this request")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "no verified session for this request")
         if not principal.has(_REQUIRED_PERMISSION):
-            return _problem(403, "Forbidden", f"requires {_REQUIRED_PERMISSION}")
+            return problem(ErrorCode.FORBIDDEN, 403, f"requires {_REQUIRED_PERMISSION}")
         return None
 
     def _snapshot() -> CatalogueSnapshot | None:
@@ -233,18 +227,20 @@ def make_instruments_router(
         if denied is not None:
             return denied
         if status is not None and status not in _STATUS_WIRE.values():
-            return _problem(400, "Bad request", f"unsupported status {status!r}")
+            return problem(ErrorCode.VALIDATION_FAILED, 400, f"unsupported status {status!r}")
         if sort != "symbol":
-            return _problem(400, "Bad request", f"sort {sort!r} is not available yet")
+            return problem(ErrorCode.VALIDATION_FAILED, 400, f"sort {sort!r} is not available yet")
         if recorded_only:
-            return _problem(400, "Bad request", "recorded_only is not available yet")
+            return problem(ErrorCode.VALIDATION_FAILED, 400, "recorded_only is not available yet")
         try:
             offset = _decode_cursor(cursor) if cursor else 0
         except ValueError:
-            return _problem(400, "Bad request", "malformed cursor")
+            return problem(ErrorCode.INVALID_CURSOR, 400, "malformed cursor")
         snap = _snapshot()
         if snap is None:
-            return _problem(503, "Service unavailable", "instrument catalogue not loaded yet")
+            return problem(
+                ErrorCode.INSTRUMENT_CACHE_UNAVAILABLE, 503, "instrument catalogue not loaded yet"
+            )
 
         if status is not None:
             rows = [i for i in snap.by_symbol.values() if _STATUS_WIRE[i.status] == status]
@@ -274,11 +270,13 @@ def make_instruments_router(
         if denied is not None:
             return denied
         if not (4 <= len(symbol) <= 20 and symbol.isascii() and symbol.isalnum()):
-            return _problem(400, "Bad request", "invalid symbol")
+            return problem(ErrorCode.VALIDATION_FAILED, 400, "invalid symbol")
         symbol = symbol.upper()
         reader = catalogue_provider()
         if reader is None:
-            return _problem(503, "Service unavailable", "instrument catalogue not loaded yet")
+            return problem(
+                ErrorCode.INSTRUMENT_CACHE_UNAVAILABLE, 503, "instrument catalogue not loaded yet"
+            )
         snap = reader.snapshot()
         instrument = snap.get(symbol) if snap is not None else None
         if instrument is None:
@@ -287,12 +285,18 @@ def make_instruments_router(
             try:
                 instrument = await reader.ensure_symbol(symbol)
             except InstrumentRefreshPendingError:  # #2702: past the deadline; it runs on
-                return _problem(503, "Service unavailable", "instrument catalogue not loaded yet")
+                return problem(
+                    ErrorCode.INSTRUMENT_CACHE_UNAVAILABLE,
+                    503,
+                    "instrument catalogue not loaded yet",
+                )
             snap = reader.snapshot() or snap
         if snap is None:  # still nothing loaded: never a false 404 for a real symbol
-            return _problem(503, "Service unavailable", "instrument catalogue not loaded yet")
+            return problem(
+                ErrorCode.INSTRUMENT_CACHE_UNAVAILABLE, 503, "instrument catalogue not loaded yet"
+            )
         if instrument is None:
-            return _problem(404, "Not found", f"unknown instrument {symbol}")
+            return problem(ErrorCode.NOT_FOUND, 404, f"unknown instrument {symbol}")
         tiers = await reader.ensure_risk_limits(symbol)
         started = await _recording_start(symbol)
         body = serialize_instrument(instrument)

@@ -327,7 +327,8 @@ def test_forbidden_manager_viewer_audited(
     client = _client(w, _principal(role, spec, grants))
     seen = [client.delete(_PATH.format(x) + "?purge=true") for x in (TARGET, MISSING)]
     assert [r.status_code for r in seen] == [403, 403] and seen[0].json() == seen[1].json()
-    assert seen[0].json()["reason"] == "forbidden_role"
+    assert seen[0].json()["errors"][0]["rule"] == "forbidden_role"
+    assert "reason" not in seen[0].json()
     _conforms(spec, seen[0])
     assert _untouched(w)
     assert [(c["action"], c["actor_user_id"]) for c in w.calls] == [("rbac.denied", CALLER)] * 2
@@ -379,7 +380,8 @@ def test_self_target_403(spec: dict[str, Any]) -> None:
     """AC6, SR-055: one's own account is refused and audited before any read, step-up or not."""
     w = _World()
     r = _client(w, _principal("owner", spec)).delete(_PATH.format(CALLER))
-    assert (r.status_code, r.json()["reason"]) == (403, "self_target")
+    assert (r.status_code, r.json()["errors"][0]["rule"]) == (403, "self_target")
+    assert "reason" not in r.json()
     _conforms(spec, r)
     assert _untouched(w) and w.log == ["rbac.denied"]
     (record,) = w.calls
@@ -490,7 +492,7 @@ def test_undeclared_query_key_422(query: str, spec: dict[str, Any]) -> None:
         ({"user_disable": None}, 501, "not_implemented"),
         ({"auth": None}, 501, "not_implemented"),
         ({"auth": SimpleNamespace(sessions_is_active=False)}, 501, "not_implemented"),
-        ({"auth": _NoStepUp([])}, 503, "service_unavailable"),
+        ({"auth": _NoStepUp([])}, 503, "step_up_unavailable"),
     ],
     ids=["no-session", "session-gone", "no-service", "no-auth", "no-session-store", "no-step-up"],
 )
@@ -506,12 +508,12 @@ def test_unauthenticated_or_unwired_is_refused_before_any_read(
 
 def test_an_unwired_step_up_answers_as_the_deployed_guard(spec: dict[str, Any]) -> None:
     """S7, one answer (the S6 review's Low 6): sessions wired without a step-up are a wiring
-    fault, `503 service_unavailable`, whether the deployed path guard answers it in front of the
+    fault, `503 step_up_unavailable`, whether the deployed path guard answers it in front of the
     route or the route's own fallback does; the bodies match and nothing is read."""
     w, owner = _World(), _principal("owner", spec)
     own = _client(w, owner, auth=_NoStepUp([])).delete(_PATH.format(TARGET))
     guard = _client(w, owner, guarded=True, auth=_NoStepUp([])).delete(_PATH.format(TARGET))
-    assert (own.status_code, own.json()["code"]) == (503, "service_unavailable")
+    assert (own.status_code, own.json()["code"]) == (503, "step_up_unavailable")
     _conforms(spec, own)
     assert own.json() == guard.json() and _untouched(w) and w.calls == []
 

@@ -211,7 +211,7 @@ async def test_actor_consume_of_a_body_that_cannot_be_bound_is_400_never_a_chall
     ("raised", "status", "code", "extra"),
     [
         (SessionReadOnly(_UNTIL), 403, "session_read_only", _READ_ONLY_EXTRA),
-        (SessionRevoked("logout"), 401, "unauthorized", {}),
+        (SessionRevoked("logout"), 401, "unauthenticated", {}),
     ],
     ids=["read-only", "revoked"],
 )

@@ -194,7 +194,9 @@ def test_obs_rbac_denial_is_audited_and_counted_on_the_scraped_registry(
     assert (denied.status_code, denied.json()["code"]) == (403, "forbidden")
     assert _rows(stack, "auth.step_up_required") == []
     ((reason, outcome, severity),) = _rows(stack, "rbac.denied")
-    assert reason.startswith(f"{denied.json()['reason']}:users:write")  # names permission
+    assert reason.startswith(
+        f"{denied.json()['errors'][0]['rule']}:users:write"
+    )  # names permission
     assert (outcome, severity) == ("denied", "warning")
     # #2612: `auth.scopes.enforce` counts the denial that writes the row: AuthzDeniedSpike can fire
     assert stack.scraped("authz_denied_total", permission=permission) - counted == 1

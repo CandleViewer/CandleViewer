@@ -377,7 +377,7 @@ async def test_a_route_wired_without_its_step_up_fails_closed_and_signs_nothing(
     route = await booted()
     route = Route(route.world, elevation=None)
     body = answer(await route.post(), 503, "Problem")
-    assert (body["code"], route.world.sent) == ("service_unavailable", [])
+    assert (body["code"], route.world.sent) == ("step_up_unavailable", [])
 
 
 async def test_with_no_principal_resolver_every_call_is_a_501() -> None:

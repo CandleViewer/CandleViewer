@@ -25,6 +25,7 @@ from candleviewer.auth.scopes import AccountGrant
 from candleviewer.observability.context import bind_context
 from candleviewer.storage.repositories import account_access_sqlalchemy as m
 from candleviewer.storage.repositories.account_access import AccessUserNotFoundError
+from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 from tests.contract.rbac import rbac_harness as rbac
 from tests.unit.admin import test_account_access_service as svc
 from tests.unit.api import test_users_account_access_get as g
@@ -33,7 +34,12 @@ from tests.unit.storage import test_account_access_sqlalchemy as st
 CALLER, TARGET, OTHER, _A, _B, _C = g.CALLER, g.TARGET, g.OTHER, st._A, st._B, st._C
 _SPEC: dict[str, Any] = load_openapi_spec()
 _HELD_A = ((_A, True, False, False, None, OTHER),)  # the target's one live grant: _A read
-_FORBIDDEN = {"type": "about:blank", "title": "Forbidden", "status": 403, "code": "forbidden"}
+_FORBIDDEN = {
+    "type": "https://candleviewer.local/errors/forbidden",
+    "title": ERROR_META[ErrorCode.FORBIDDEN].title,
+    "status": 403,
+    "code": "forbidden",
+}
 _KEYS = ("exchange_account_id", "level", "account_label", "environment", "granted_by")
 _PEER = ("192.0.2.7", 50000)  # the caller's address (RFC 5737)
 _SESSION = uuid.uuid5(rbac.user_id_of("owner"), "session")  # the owner token's session
@@ -161,7 +167,7 @@ def test_self_target_403() -> None:
     w = _World()
     w.step_up.elevated = False
     r = w.put(_body((_A, "trade")), target=CALLER, guarded=True)
-    assert r.status_code == 403 and r.json() == _FORBIDDEN | {"reason": "self_target"}
+    assert r.status_code == 403 and r.json() == _FORBIDDEN | {"errors": [{"rule": "self_target"}]}
     (record,) = w.emitter.calls
     assert (record["action"], record["reason"]) == ("rbac.denied", "self_target")
     assert record["object_id"] == str(CALLER)
@@ -187,7 +193,9 @@ def test_forbidden_manager_viewer_audited(role: str, held: Any, target: uuid.UUI
     labels = {"permission": "users:write"}
     w, before = _World(), REGISTRY.get_sample_value("authz_denied_total", labels) or 0.0
     r = w.put(_body((_A, "trade")), role=role, held=held, target=target)
-    assert r.status_code == 403 and r.json() == _FORBIDDEN | {"reason": "missing_permission"}
+    assert r.status_code == 403 and r.json() == _FORBIDDEN | {
+        "errors": [{"rule": "missing_permission"}]
+    }
     (record,) = w.emitter.calls
     assert record["action"] == "rbac.denied" and record["object_id"] == str(target)
     assert REGISTRY.get_sample_value("authz_denied_total", labels) == before + 1
@@ -206,7 +214,9 @@ def test_forbidden_caller_without_a_step_up_is_refused_not_challenged(role: str,
     w = _World()
     w.step_up.elevated = False
     r = w.put(_body((_A, "trade")), role=role, held=held, guarded=True)
-    assert r.status_code == 403 and r.json() == _FORBIDDEN | {"reason": "missing_permission"}
+    assert r.status_code == 403 and r.json() == _FORBIDDEN | {
+        "errors": [{"rule": "missing_permission"}]
+    }
     (record,) = w.emitter.calls
     assert (record["action"], record["object_id"]) == ("rbac.denied", str(TARGET))
     assert w.rel.log == [] and w.positions.asked == [] and w.unchanged()
@@ -243,7 +253,7 @@ def test_refusal_is_audited_without_a_session_when_the_peek_fails(
     w = _World()
     body = _body((_A, "trade")) if method == "PUT" else None
     r = w.client(role).request(method, g._PATH.format(target), json=body)
-    assert r.status_code == 403 and r.json() == _FORBIDDEN | {"reason": reason}
+    assert r.status_code == 403 and r.json() == _FORBIDDEN | {"errors": [{"rule": reason}]}
     (record,) = w.emitter.calls
     assert (record["action"], record["object_id"]) == ("rbac.denied", str(target))
     assert record["session_id"] is None and w.rel.log == [] and w.unchanged()
@@ -262,13 +272,13 @@ def test_stepup_and_audit_503() -> None:
     assert not w.rel.committed and not w.notifier.pushes
 
 
-def test_unwired_step_up_is_503_service_unavailable() -> None:
+def test_unwired_step_up_is_503_step_up_unavailable() -> None:
     """Sessions wired without a step-up service are a wiring fault, answered as `DELETE
-    /users/{userId}` and `require_session_elevation` answer it (503 `service_unavailable`),
+    /users/{userId}` and `require_session_elevation` answer it (503 `step_up_unavailable`),
     not 501: after RBAC and the self-target, before anything is read."""
     w = _World()
     r = w.put(_body((_A, "trade")), wired=False)
-    assert r.status_code == 503 and r.json()["code"] == "service_unavailable"
+    assert r.status_code == 503 and r.json()["code"] == "step_up_unavailable"
     assert w.rel.log == [] and w.positions.asked == [] and w.emitter.calls == [] and w.unchanged()
 
 
@@ -432,7 +442,7 @@ def test_malformed_acknowledgement_from_a_refused_caller_is_the_audited_403(
     (U25)."""
     w = _World()
     r = w.put(_body((_A, "trade")), ack=_BAD_ACK, role=role, held=held, target=target)
-    assert r.status_code == 403 and r.json() == _FORBIDDEN | {"reason": reason}
+    assert r.status_code == 403 and r.json() == _FORBIDDEN | {"errors": [{"rule": reason}]}
     (record,) = w.emitter.calls
     assert (record["action"], record["object_id"]) == ("rbac.denied", str(target))
     assert record["reason"].startswith(reason)
@@ -598,7 +608,9 @@ def test_owner_demoted_since_entry_gets_the_entry_403_and_one_record_after_the_r
     naming the target and the elevated session, then the 403 a fresh request gets at entry."""
     w = _World(st._Rel(rows=_HELD_A, actor_owner=False))
     r = w.put(_body((_A, "trade")))
-    assert r.status_code == 403 and r.json() == _FORBIDDEN | {"reason": "missing_permission"}
+    assert r.status_code == 403 and r.json() == _FORBIDDEN | {
+        "errors": [{"rule": "missing_permission"}]
+    }
     assert "challenge_id" not in r.json()
     (record,) = w.emitter.calls
     assert (record["action"], record["reason"]) == ("rbac.denied", "actor_role_revoked")

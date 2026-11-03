@@ -140,6 +140,29 @@ async def test_invite_actions_refused_with_503_before_any_change_when_audit_unav
     assert not repo.rows and "users.invited" not in em.actions()
 
 
+async def test_the_audit_down_gate_answers_the_breached_list_down_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An anonymous caller cannot tell an audit outage from a breached-list outage (#2828)."""
+    from candleviewer.auth.password_policy import BreachedListUnavailable
+
+    url = f"/invites/{'t' * 43}"
+    down, _, _, _, _, _ = await _setup(audit_ok=False)
+    gate = down.post(url, json={"password": GOOD_PW})
+    up, _, _, _, _, svc = await _setup()
+
+    async def _unavailable(*_a: object, **_k: object) -> None:
+        raise BreachedListUnavailable("breached list unreadable")
+
+    monkeypatch.setattr(svc, "begin_redemption", _unavailable)
+    breached = up.post(url, json={"password": GOOD_PW})
+
+    assert gate.status_code == breached.status_code == 503
+    assert gate.json() == breached.json()
+    assert gate.json()["code"] == "store_unavailable"
+    assert gate.json()["detail"] == "service temporarily unavailable"
+
+
 async def test_create_rejects_owner_role_and_duplicate() -> None:
     c, _, seed, clock, _, _ = await _setup()
     _elevate(c, seed, clock)
@@ -609,7 +632,7 @@ async def test_an_invite_write_wired_without_its_step_up_fails_closed() -> None:
     c.app.include_router(router)  # type: ignore[attr-defined]
     _elevate(c, seed, clock)
     r = c.post("/users", headers=_H, json=_BODY)
-    assert (r.status_code, r.json()["code"]) == (503, "service_unavailable") and not repo.rows
+    assert (r.status_code, r.json()["code"]) == (503, "step_up_unavailable") and not repo.rows
 
 
 async def test_a_reissue_wired_without_a_user_store_fails_closed() -> None:

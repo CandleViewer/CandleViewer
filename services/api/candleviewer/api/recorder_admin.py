@@ -22,16 +22,18 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import Any, Literal, Protocol, cast
+from typing import Literal, Protocol, cast
 
 import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from candleviewer.api.problems import problem
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.observability import spawn
+from candleviewer.ws._generated.error_codes import ErrorCode
 
 
 def logger() -> structlog.stdlib.BoundLogger:
@@ -247,14 +249,6 @@ class AdminJobStore:
                 pass
 
 
-def _problem(status: int, title: str, detail: str, code: str | None = None) -> JSONResponse:
-    body: dict[str, Any] = {"type": "about:blank", "title": title, "status": status}
-    body["detail"] = detail
-    if code:
-        body["code"] = code
-    return JSONResponse(status_code=status, content=body, media_type="application/problem+json")
-
-
 def make_recorder_admin_router(
     jobs: AdminJobStore,
     runner: CompactionRunner | None,
@@ -267,10 +261,10 @@ def make_recorder_admin_router(
     @router.post("/recorder/import")
     async def import_archive(request: Request) -> JSONResponse:
         if principal_resolver is None:
-            return _problem(501, "Not implemented", "no principal resolver wired")
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "no principal resolver wired")
         principal = await principal_resolver.resolve(request)
         if principal is None:
-            return _problem(401, "Unauthorized", "no verified session for this request")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "no verified session for this request")
         common: dict[str, object] = {
             "actor_label": principal.username,
             "actor_user_id": principal.user_id,
@@ -288,40 +282,39 @@ def make_recorder_admin_router(
                     reason=f"missing_permission:{RECORDING_WRITE}",
                     **common,
                 )
-            return _problem(403, "Forbidden", f"requires {RECORDING_WRITE}")
+            return problem(ErrorCode.FORBIDDEN, 403, f"requires {RECORDING_WRITE}")
         if audit is None or import_runner is None:
-            return _problem(503, "Service unavailable", "import backend is not wired")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "import backend is not wired")
         key = request.headers.get("idempotency-key", "")
         try:
             key = str(uuid.UUID(key))
         except ValueError:
-            return _problem(400, "Bad request", "Idempotency-Key (UUID) is required")
+            return problem(ErrorCode.VALIDATION_FAILED, 400, "Idempotency-Key (UUID) is required")
         try:
             raw = await request.body()
             parsed = ImportRequestBody.model_validate(json.loads(raw) if raw else {})
         except (ValidationError, ValueError):
-            return _problem(400, "Bad request", "invalid import request")
+            return problem(ErrorCode.VALIDATION_FAILED, 400, "invalid import request")
         try:
             body = parsed.checked()
         except ValueError:
-            return _problem(422, "Unprocessable", "invalid date range", "import_range_invalid")
+            return problem(ErrorCode.IMPORT_RANGE_INVALID, 422, "invalid date range")
         params = {"symbol": body.symbol, "from": body.from_.isoformat(), "to": body.to.isoformat()}
         body_hash = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()
         actor = str(principal.user_id)
         prior = jobs.by_idempotency_key(actor, key)
         if prior is not None:
             if prior[1] != body_hash:
-                return _problem(
+                return problem(
+                    ErrorCode.IDEMPOTENCY_KEY_REUSED,
                     422,
-                    "Unprocessable",
                     "Idempotency-Key reused with a different body",
-                    "idempotency_key_reused",
                 )
             return JSONResponse(status_code=202, content={"job_id": prior[0].id})
         try:
             jobs.ensure_free(IMPORT_JOB_KIND)
         except JobConflict:
-            return _problem(409, "Conflict", "an import job is already running", "job_running")
+            return problem(ErrorCode.JOB_RUNNING, 409, "an import job is already running")
         runner_ = import_runner
 
         async def work(progress: Callable[[float], None]) -> dict[str, object]:
@@ -353,27 +346,22 @@ def make_recorder_admin_router(
             )
         except Exception as exc:
             logger().error("recorder_import_audit_failed", error=type(exc).__name__)
-            return _problem(
-                503,
-                "Service unavailable",
-                "audit write failed; job not started",
-                "audit_unavailable",
-            )
+            return problem(ErrorCode.AUDIT_UNAVAILABLE, 503, "audit write failed; job not started")
         try:
             job = jobs.submit(IMPORT_JOB_KIND, (actor, key, body_hash), work, done, job_id=job_id)
         except JobConflict:
-            return _problem(409, "Conflict", "an import job is already running", "job_running")
+            return problem(ErrorCode.JOB_RUNNING, 409, "an import job is already running")
         return JSONResponse(status_code=202, content={"job_id": job.id})
 
     @router.post("/recorder/compact")
     async def compact(request: Request) -> JSONResponse:
         if principal_resolver is None:
-            return _problem(501, "Not implemented", "no principal resolver wired")
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "no principal resolver wired")
         principal = await principal_resolver.resolve(request)
         if principal is None:
-            return _problem(401, "Unauthorized", "no verified session for this request")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "no verified session for this request")
         if audit is None or runner is None:
-            return _problem(503, "Service unavailable", "compaction backend is not wired")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "compaction backend is not wired")
         common: dict[str, object] = {
             "actor_label": principal.username,
             "actor_user_id": principal.user_id,
@@ -390,34 +378,33 @@ def make_recorder_admin_router(
                 reason=f"missing_permission:{RECORDING_WRITE}",
                 **common,
             )
-            return _problem(403, "Forbidden", f"requires {RECORDING_WRITE}")
+            return problem(ErrorCode.FORBIDDEN, 403, f"requires {RECORDING_WRITE}")
         key = request.headers.get("idempotency-key", "")
         try:
             key = str(uuid.UUID(key))
         except ValueError:
-            return _problem(400, "Bad request", "Idempotency-Key (UUID) is required")
+            return problem(ErrorCode.VALIDATION_FAILED, 400, "Idempotency-Key (UUID) is required")
         try:
             raw = await request.body()
             body = CompactRequest.model_validate(json.loads(raw) if raw else {}).checked()
         except (ValidationError, ValueError):
-            return _problem(400, "Bad request", "invalid compaction request")
+            return problem(ErrorCode.VALIDATION_FAILED, 400, "invalid compaction request")
         params = {"symbols": body.symbols or [], "older_than_days": body.older_than_days or 0}
         body_hash = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()
         actor = str(principal.user_id)
         prior = jobs.by_idempotency_key(actor, key)
         if prior is not None:
             if prior[1] != body_hash:
-                return _problem(
+                return problem(
+                    ErrorCode.IDEMPOTENCY_KEY_REUSED,
                     422,
-                    "Unprocessable",
                     "Idempotency-Key reused with a different body",
-                    "idempotency_key_reused",
                 )
             return JSONResponse(status_code=202, content={"job_id": prior[0].id})
         try:
             jobs.ensure_free(JOB_KIND)
         except JobConflict:
-            return _problem(409, "Conflict", "a compaction job is already running", "job_running")
+            return problem(ErrorCode.JOB_RUNNING, 409, "a compaction job is already running")
 
         async def work(progress: Callable[[float], None]) -> dict[str, object]:
             return await runner(body.symbols, body.older_than_days, progress)
@@ -443,16 +430,11 @@ def make_recorder_admin_router(
             )
         except Exception as exc:
             logger().error("recorder_compact_audit_failed", error=type(exc).__name__)
-            return _problem(
-                503,
-                "Service unavailable",
-                "audit write failed; job not started",
-                "audit_unavailable",
-            )
+            return problem(ErrorCode.AUDIT_UNAVAILABLE, 503, "audit write failed; job not started")
         try:
             job = jobs.submit(JOB_KIND, (actor, key, body_hash), work, done, job_id=job_id)
         except JobConflict:
-            return _problem(409, "Conflict", "a compaction job is already running", "job_running")
+            return problem(ErrorCode.JOB_RUNNING, 409, "a compaction job is already running")
         return JSONResponse(status_code=202, content={"job_id": job.id})
 
     return router

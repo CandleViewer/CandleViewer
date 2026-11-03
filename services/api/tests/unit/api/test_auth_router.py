@@ -261,7 +261,7 @@ def test_invalid_credentials_returns_401_problem_json() -> None:
     assert response.status_code == 401
     assert response.json() == {
         "type": "https://candleviewer.local/errors/unauthenticated",
-        "title": "Invalid credentials",
+        "title": "Missing, malformed or expired access token",
         "status": 401,
         "code": "unauthenticated",
         "detail": "Username or password is incorrect",
@@ -390,14 +390,14 @@ def test_mfa_recovery_fails_closed_until_every_backend_is_wired() -> None:
     app.include_router(make_auth_router(unwired, csrf=_CSRF_CODEC))  # no session backend
     no_audit, no_audit_mfa = _recovery_app(check, None)
     cases = (
-        (TestClient(app), unwired.mfa, "enrolment backend is not wired"),
-        (TestClient(no_audit), no_audit_mfa, "audit sink not active"),
+        (TestClient(app), unwired.mfa, "enrolment backend is not wired", "store_unavailable"),
+        (TestClient(no_audit), no_audit_mfa, "audit sink not active", "audit_unavailable"),
     )
 
-    for client, mfa, detail in cases:
+    for client, mfa, detail, code in cases:
         response = client.post("/auth/mfa/recovery", json=_RECOVERY_BODY)
         assert (response.status_code, response.json()["detail"]) == (401, detail)
-        assert response.json()["title"] == "Recovery failed"
+        assert response.json()["code"] == code
         assert (mfa.recovery_checks, mfa.completed) == (0, [])
 
 

@@ -130,6 +130,7 @@ def test_a_body_over_the_cap_is_refused_413_declared_or_streamed() -> None:
     r = _client(counter).post("/csp-report", content=big, headers={"content-type": LEGACY})
     assert r.status_code == 413
     assert r.headers["content-type"] == "application/problem+json"
+    assert r.json()["code"] == "payload_too_large"
     assert counter.calls == []
 
     chunks = [b"x" * (MAX_BODY_BYTES // 2 + 1)] * 2  # no Content-Length: counted as it streams
@@ -158,7 +159,7 @@ def test_the_rate_limit_is_per_client_ip_with_retry_after_and_reopens() -> None:
         MAX_REPORTS_PER_WINDOW
     )
     limited = post()
-    assert limited.status_code == 429
+    assert (limited.status_code, limited.json()["code"]) == (429, "rate_limited")
     assert 1 <= int(limited.headers["retry-after"]) <= int(WINDOW_S) + 1
     clock.now += WINDOW_S
     assert post().status_code == 204
@@ -201,7 +202,7 @@ def test_a_bad_type_or_body_is_refused_and_not_counted(
 ) -> None:
     counter = _Counter()
     r = _client(counter).post("/csp-report", content=body, headers={"content-type": content_type})
-    assert r.status_code == status
+    assert (r.status_code, r.json()["code"]) == (status, "validation_failed")
     assert counter.calls == []
 
 

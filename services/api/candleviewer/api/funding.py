@@ -23,6 +23,7 @@ from typing import Any, Protocol
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
+from candleviewer.api.problems import problem
 from candleviewer.orderflow.funding import (
     DEFAULT_LIMIT,
     FundingInvalidRequest,
@@ -31,6 +32,7 @@ from candleviewer.orderflow.funding import (
 )
 from candleviewer.orderflow.funding_metrics import deriv_range_rejected_total
 from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.ws._generated.error_codes import ErrorCode
 
 _REQUIRED_PERMISSION = "marketdata:read"
 _SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,24}$")
@@ -54,20 +56,6 @@ class FundingSeriesReader(Protocol):
         limit: int,
         cursor: str | None,
     ) -> FundingSeries: ...
-
-
-def _problem(status: int, code: str, title: str, detail: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status,
-        media_type="application/problem+json",
-        content={
-            "type": f"https://candleviewer.local/errors/{code}",
-            "title": title,
-            "status": status,
-            "detail": detail,
-            "code": code,
-        },
-    )
 
 
 def _iso(us: int) -> str:
@@ -135,21 +123,19 @@ def make_funding_router(
         limit: int = Query(default=DEFAULT_LIMIT),
     ) -> JSONResponse:
         if principal_resolver is None:
-            return _problem(
-                501, "not_implemented", "Not implemented", "no principal resolver wired"
-            )
+            return problem(ErrorCode.NOT_IMPLEMENTED, 501, "no principal resolver wired")
         resolved = principal_resolver.resolve(request)
         principal: _Principal | None = await resolved if inspect.isawaitable(resolved) else resolved
         if principal is None:
-            return _problem(401, "unauthenticated", "Unauthorized", "no verified session")
+            return problem(ErrorCode.UNAUTHENTICATED, 401, "no verified session")
         if not principal.has(_REQUIRED_PERMISSION):
-            return _problem(403, "forbidden", "Forbidden", f"requires {_REQUIRED_PERMISSION}")
+            return problem(ErrorCode.FORBIDDEN, 403, f"requires {_REQUIRED_PERMISSION}")
         if not _SYMBOL_RE.fullmatch(symbol):
             deriv_range_rejected_total.labels(endpoint="funding").inc()
-            return _problem(400, "validation_failed", "Bad request", "invalid symbol")
+            return problem(ErrorCode.VALIDATION_FAILED, 400, "invalid symbol")
         reader = reader_provider()
         if reader is None:
-            return _problem(503, "service_unavailable", "Service unavailable", "funding not wired")
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "funding not wired")
         try:
             series = await reader.series(
                 symbol,
@@ -160,16 +146,14 @@ def make_funding_router(
             )
         except ValueError:  # malformed from/to timestamp
             deriv_range_rejected_total.labels(endpoint="funding").inc()
-            return _problem(400, "invalid_time_range", "Bad request", "invalid from/to timestamp")
+            return problem(ErrorCode.INVALID_TIME_RANGE, 400, "invalid from/to timestamp")
         except FundingInvalidRequest as exc:
             deriv_range_rejected_total.labels(endpoint="funding").inc()
-            return _problem(400, exc.code, "Bad request", exc.detail)
+            return problem(ErrorCode(exc.code), 400, exc.detail)
         except StorageTierUnavailable:
-            return _problem(
-                503, "service_unavailable", "Service unavailable", "hot tier unavailable"
-            )
+            return problem(ErrorCode.STORE_UNAVAILABLE, 503, "hot tier unavailable")
         except FundingSymbolUnknown:
-            return _problem(404, "not_found", "Not found", f"unknown instrument {symbol}")
+            return problem(ErrorCode.NOT_FOUND, 404, f"unknown instrument {symbol}")
         return JSONResponse(status_code=200, content=serialize_series(series))
 
     return router

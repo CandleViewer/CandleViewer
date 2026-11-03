@@ -30,6 +30,9 @@ import structlog
 from fastapi import APIRouter, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from candleviewer.api.problems import problem_body
+from candleviewer.ws._generated.error_codes import ErrorCode
+
 METRIC_NAME: Final = "cv_csp_violations_total"
 REFUSED_METRIC_NAME: Final = "cv_csp_reports_refused_total"
 REFUSAL_REASONS: Final = (
@@ -170,12 +173,17 @@ class _GlobalWindow:
 
 
 async def _respond(
-    send: Send, status: int, *, title: str | None = None, retry_after: float | None = None
+    send: Send,
+    status: int,
+    *,
+    code: ErrorCode | None = None,
+    detail: str | None = None,
+    retry_after: float | None = None,
 ) -> None:
     body = b""
     headers = [(b"cache-control", b"no-store")]
-    if title is not None:
-        body = json.dumps({"type": "about:blank", "title": title, "status": status}).encode()
+    if code is not None:
+        body = json.dumps(problem_body(code, status, detail)).encode()
         headers += [
             (b"content-type", b"application/problem+json"),
             (b"content-length", str(len(body)).encode()),
@@ -221,34 +229,40 @@ class CspReportReceiver:
         client = (scope.get("client") or ("unknown", 0))[0]
         if (retry := self._global.retry_after()) is not None:
             self._refuse("rate_global")
-            await _respond(send, 429, title="Too many reports", retry_after=retry)
+            await _respond(
+                send, 429, code=ErrorCode.RATE_LIMITED, detail="Too many reports", retry_after=retry
+            )
             return
         if (retry := self._windows.admit(str(client))) is not None:
             self._refuse("rate_ip")
-            await _respond(send, 429, title="Too many reports", retry_after=retry)
+            await _respond(
+                send, 429, code=ErrorCode.RATE_LIMITED, detail="Too many reports", retry_after=retry
+            )
             return
         self._global.record()
         headers = {k.lower(): v for k, v in scope["headers"]}
         media = headers.get(b"content-type", b"").decode("latin-1").split(";")[0].strip().lower()
         if media not in ACCEPTED_MEDIA_TYPES:
             self._refuse("bad_type")
-            await _respond(send, 415, title="Unsupported media type")
+            await _respond(
+                send, 415, code=ErrorCode.VALIDATION_FAILED, detail="Unsupported media type"
+            )
             return
         declared = headers.get(b"content-length", b"0")
         if declared.isdigit() and int(declared) > MAX_BODY_BYTES:
             self._refuse("body_too_large")
-            await _respond(send, 413, title="Report too large")
+            await _respond(send, 413, code=ErrorCode.PAYLOAD_TOO_LARGE, detail="Report too large")
             return
         body = await self._read_capped(receive)
         if body is None:
             self._refuse("body_too_large")
-            await _respond(send, 413, title="Report too large")
+            await _respond(send, 413, code=ErrorCode.PAYLOAD_TOO_LARGE, detail="Report too large")
             return
         try:
             payload = json.loads(body)
         except ValueError:  # UnicodeDecodeError is one
             self._refuse("malformed")
-            await _respond(send, 400, title="Malformed report")
+            await _respond(send, 400, code=ErrorCode.VALIDATION_FAILED, detail="Malformed report")
             return
         for directive, blocked_type, host in extract_violations(payload):
             if self._counter is not None:

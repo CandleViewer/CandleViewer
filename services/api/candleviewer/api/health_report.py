@@ -17,19 +17,13 @@ from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+from candleviewer.api.problems import problem
 from candleviewer.observability.health_probes import HealthSnapshot
+from candleviewer.ws._generated.error_codes import ErrorCode
 
 #: A readiness check returns True when the dependency is ready. Exceptions
 #: and timeouts count as not ready; they are never surfaced to the caller.
 ReadyCheck = Callable[[], Awaitable[bool]]
-
-
-def _problem(status: int, title: str, detail: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status,
-        content={"type": "about:blank", "title": title, "status": status, "detail": detail},
-        media_type="application/problem+json",
-    )
 
 
 def _iso(ts: datetime | None) -> str | None:
@@ -98,7 +92,7 @@ def make_health_report_router(
         if all(results):
             return JSONResponse({"status": "ready", "checks": outcome})
         unready = ", ".join(n for n in names if outcome[n] == "fail")
-        resp = _problem(503, "Service unavailable", f"not ready: {unready}")
+        resp = problem(ErrorCode.STORE_UNAVAILABLE, 503, f"not ready: {unready}")
         resp.headers["Retry-After"] = "5"
         return resp
 
