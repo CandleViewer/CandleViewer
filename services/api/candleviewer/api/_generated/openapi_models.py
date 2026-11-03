@@ -4156,19 +4156,19 @@ class ClosedPnlWindow(BaseModel):
     start: Annotated[
         AwareDatetime,
         Field(
-            description="The day's first instant, inclusive: 00:00 at UTC+`utc_offset_minutes`, given in UTC."
+            description="The day's first instant, inclusive, in UTC: 00:00 at UTC+`utc_offset_minutes`, except on the day an offset change takes effect, which starts where the day before it ended (24 §8.13)."
         ),
     ]
     next_start: Annotated[
         AwareDatetime,
         Field(
-            description="Exclusive: `start` + 24 h, when the next day starts and the client reads again."
+            description="Exclusive, in UTC: when the next day starts and the client reads again, taken as served and never computed; `start` + 24 h, except on the day an offset change takes effect, which ends at the new offset's first 00:00 (24 §8.13)."
         ),
     ]
     utc_offset_minutes: Annotated[
         JsonInt,
         Field(
-            description="`risk_policy.day_boundary_utc_offset_minutes` as this answer read it, east of UTC.",
+            description="The offset the day runs by, in minutes east of UTC: `risk_policy.day_boundary_utc_offset_minutes`, except for the rest of the day a change is made in, which keeps the offset it started with (24 §8.13).",
             ge=-720,
             le=840,
         ),

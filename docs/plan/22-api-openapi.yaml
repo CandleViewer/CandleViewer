@@ -8779,7 +8779,9 @@ paths:
         fills compose, and `net_pnl` is their sum. Reading the record settles the item in
         place, with the same `id`: `net_pnl` is then the venue's `closed_pnl`, authoritative,
         and `divergent` says the server's own `local_net_pnl` differs from it by more than
-        `oms.closed_pnl_tolerance_rel` allows. A client shows these figures and recomputes none.
+        `oms.closed_pnl_tolerance_rel` allows. Until the venue's record is final (24 §8.13), a
+        later read can still change a settled item's `closed_pnl` and `net_pnl`, `qty`, prices,
+        `leverage` and `closed_at`. A client shows these figures and recomputes none.
 
         **The day window.** `window=today` lists the items whose `closed_at` falls in the
         trading day that contains the request, `[start, next_start)`, from the configured day
@@ -8791,7 +8793,8 @@ paths:
         totals, never one sum (E29-D01 D3). A policy that cannot be read is
         `503 store_unavailable`, never a UTC-midnight guess; `window` with `from` or `to` is
         `400 validation_failed`, and so is a window read whose accounts, named or granted,
-        number more than 25. Without `window`, `from` and `to` bound `closed_at`.
+        number more than 25 in this server's environment. Without `window`, `from` and `to`
+        bound `closed_at`.
 
         **Order.** With `window`, items are oldest first by `closed_at`, then `id`, so a new
         close appends (E29-D02 §5.6). Without it they stay newest first, by `closed_at`, then
@@ -22915,20 +22918,20 @@ components:
           {
             type: string,
             format: date-time,
-            description: "The day's first instant, inclusive: 00:00 at UTC+`utc_offset_minutes`, given in UTC.",
+            description: "The day's first instant, inclusive, in UTC: 00:00 at UTC+`utc_offset_minutes`, except on the day an offset change takes effect, which starts where the day before it ended (24 §8.13).",
           }
         next_start:
           {
             type: string,
             format: date-time,
-            description: "Exclusive: `start` + 24 h, when the next day starts and the client reads again.",
+            description: "Exclusive, in UTC: when the next day starts and the client reads again, taken as served and never computed; `start` + 24 h, except on the day an offset change takes effect, which ends at the new offset's first 00:00 (24 §8.13).",
           }
         utc_offset_minutes:
           {
             type: integer,
             minimum: -720,
             maximum: 840,
-            description: "`risk_policy.day_boundary_utc_offset_minutes` as this answer read it, east of UTC.",
+            description: "The offset the day runs by, in minutes east of UTC: `risk_policy.day_boundary_utc_offset_minutes`, except for the rest of the day a change is made in, which keeps the offset it started with (24 §8.13).",
           }
     ClosedPnlTotals:
       type: object
