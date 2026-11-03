@@ -65,3 +65,10 @@ checked against `docs/design/_tools/sheets/tools/token-sync.json`) and their `th
    per kit, plus `docs/design/_handoff/hpe2-e47/E47-D09-render.md`: file and page {name, id}; per board: board id,
    nodes, lint counts, PNG path, pixel size and bytes, gate line; then one `SHEET-FIX E47-D09 NN <what was changed
 live, and why>` line per live fix (or `SHEET-FIX none`). `out/` stays local (never commit it).
+
+## Two live notes
+
+- Link underlines take the words' measured widths. If one is off after the render, fix it in Penpot and report it
+  as a `SHEET-FIX` line.
+- After a tab reload, the first texts drawn may not paint in the first export. Look at each PNG, and re-set any
+  blank texts (then re-export that board).

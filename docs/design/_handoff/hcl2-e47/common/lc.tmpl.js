@@ -24,7 +24,8 @@ function walk(s, clips, path) {
 }
 walk(root, [], root.name);
 const ann = root.children.find((c) => c.name === "annotations");
-const foot = root.children.find((c) => c.name === "footer · data statement");
+const FOOT = ["footer · data statement", "footer · data", "footer · synthetic"];
+const foot = root.children.find((c) => FOOT.includes(c.name));
 const annEnd = ann ? ann.y + ann.height - root.y : null;
 const footEnd = foot ? foot.y + foot.height - root.y : null;
 const want = Math.max(annEnd || 0, footEnd || 0) + 80;
