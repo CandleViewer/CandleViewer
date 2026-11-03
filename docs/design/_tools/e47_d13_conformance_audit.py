@@ -90,7 +90,6 @@ T05_OWN = (
     "docs/plan/a11y/_tools/register.py",
     "docs/plan/a11y/conformance-matrix.md",
     "docs/plan/a11y/finding-record.schema.json",
-    ".github/workflows/governance.yml",
 )
 OWN_BOARDS = re.compile(r"docs/design/E47/img/E47-D13-\d\d-[a-z0-9-]+\.png")
 SPEC_BUDGET = 560

@@ -597,16 +597,23 @@ def expired_exceptions(limits: str, today: dt.date) -> list[str]:
     return out
 
 
+def is_level_a(level: object, scs: object = None) -> bool:
+    """Level A when any level token is A ('AA / A' too), or any criterion is Level A in `SC`."""
+    if "A" in re.findall(r"[A-Za-z]+", text_of(level)):
+        return True
+    return isinstance(scs, list) and any(SC.get(x, ("", ""))[0] == "A" for x in scs)
+
+
 def open_level_a(inp: Inputs) -> list[str]:
     """Every open Level A finding, named (E47-T01 register, then E47-D02 rows not in it)."""
     out = [
         f"{text_of(f.get('id'))} (SC {text_of(f.get('wcagSc'))}): {text_of(f.get('title'))[:80]}"
         for f in inp.t01_findings()
-        if f.get("level") == "A" and f.get("status") != "fixed"
+        if is_level_a(f.get("level"), [f.get("wcagSc")]) and f.get("status") != "fixed"
     ]
     for f in inp.d02_rows():
         if (
-            f.get("level") == "A"
+            is_level_a(f.get("level"), f.get("sc"))
             and text_of(f.get("status")).startswith("open")
             and not text_of(f.get("id")).startswith("A11Y-F-")
         ):
@@ -614,24 +621,23 @@ def open_level_a(inp: Inputs) -> list[str]:
     return sorted(out)
 
 
+def _leaves(value: object, path: str) -> list[tuple[str, str]]:
+    if isinstance(value, str):
+        return [(path, value)]
+    if isinstance(value, dict):
+        return [x for k, v in value.items() for x in _leaves(v, f"{path}.{k}" if path else str(k))]
+    if isinstance(value, list):
+        return [x for i, v in enumerate(value) for x in _leaves(v, f"{path}[{i}]")]
+    return []
+
+
 def content_problems(limits: str, report: str = "") -> list[str]:
-    """BQ-10 (D13 §6.5): accessibility gaps only; no host, id, image or key material."""
-    texts: list[tuple[str, str]] = []
-    data = limits_data(limits)
-    for r in limit_rows(limits):
-        rid = text_of(r.get("id"))
-        for f in ("plain", "impact", "workaround", "note"):
-            texts.append((f"{rid}.{f}", text_of(r.get(f))))
-        d = r.get("disposition")
-        if isinstance(d, dict):
-            for f in ("compensatingControl", "decision", "owner", "note"):
-                texts.append((f"{rid}.disposition.{f}", text_of(d.get(f))))
-    cats = data.get("categories")
-    texts += [
-        (f"category {k}", text_of(v)) for k, v in (cats if isinstance(cats, dict) else {}).items()
-    ]
+    """BQ-10 (D13 §6.5): accessibility gaps only; no host, id, image or key material.
+
+    Every string leaf of the limitations register is scanned, so no rendered field escapes.
+    """
     out = []
-    for where, s in texts:
+    for where, s in _leaves(limits_data(limits), ""):
         for rx, what in CONTENT_CHECKS:
             if rx.search(s):
                 out.append(f"{where}: {what}")
@@ -640,6 +646,21 @@ def content_problems(limits: str, report: str = "") -> list[str]:
             if rx.search(ln):
                 out.append(f"report line {ln_no}: {what}")
     return out
+
+
+def field_problems(limits: str) -> list[str]:
+    """Rendered fields that must be well formed (E47-T05; the D13 gates cover them separately)."""
+    bad = []
+    for r in limit_rows(limits):
+        rid = text_of(r.get("id"))
+        dd = disposition_of(r)
+        if dd.get("kind") == "fix-ticket" and not TICKET_RE.match(text_of(dd.get("ticket"))):
+            bad.append(f"{rid}: fix ticket {text_of(dd.get('ticket'))!r} is not 'Exx-Yzz #n'")
+        if r.get("disclosure") not in ("statement", "internal"):
+            bad.append(f"{rid}: disclosure must be statement or internal")
+        if not text_of(r.get("category")):
+            bad.append(f"{rid}: category is empty")
+    return bad
 
 
 # ---------------------------------------------------------------------------- the report
@@ -869,6 +890,7 @@ def generation_problems(limits: str, inp: Inputs, report: str) -> list[Finding]:
         out.append(("G-SCHEMA", f"{LIMITS_REL} is missing, not JSON or has no rows"))
         return out
     out += [("G-SCHEMA", m) for m in limits_problems(limits, inp)]
+    out += [("G-SCHEMA", m) for m in field_problems(limits)]
     out += [("G-EXCEPTION", m) for m in exception_problems(limits)]
     out += [("G-CONTENT", m) for m in content_problems(limits, report)]
     return out

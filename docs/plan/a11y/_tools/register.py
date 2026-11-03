@@ -60,6 +60,11 @@ BANDS = (
 )
 SCREEN_KEYS = ("id", "name", "coverage", "owningTicket", "states", "evidence", "noFindings")
 SIGN_OFF_VERDICTS = ("signed", "declined")
+# The sign-off name is published in the matrix: no host, id or key-like string (E47-D13 §6.5).
+SIGN_OFF_LEAK = re.compile(
+    r"https?://|www\.|/home/|localhost|\.local\b|\b[a-z0-9-]+\.(?:com|io|org|net)\b"
+    r"|[A-Za-z0-9+/=_-]{24,}|\b\d{6,}\b|\bUID\b"
+)
 EVIDENCE_KEYS = ("automated", "keyboard", "deep", "sr")
 FINDING_KEYS = ("id", "screenId", "level", "severity", "owningTicket", "status")
 
@@ -110,6 +115,8 @@ def validate(doc: dict[str, Any]) -> list[str]:
         so = row.get("signOff")
         if so is not None and not (
             isinstance(so, dict)
+            and set(so) == {"verdict", "by", "date"}
+            and not SIGN_OFF_LEAK.search(str(so.get("by")))
             and so.get("verdict") in SIGN_OFF_VERDICTS
             and isinstance(so.get("by"), str)
             and so["by"].strip()
