@@ -8769,10 +8769,40 @@ paths:
       tags: [executions]
       operationId: listClosedPnl
       summary: Realised PnL per closed position (journal source)
-      description: >
-        Mirrors `GET /v5/position/closed-pnl`, backfilled nightly and used to seed journal
-        entries. Until that backfill lands it is served from the stored fills that carry a
-        closed PnL (#915), one item per fill, newest first by fill time: `id` is the fill's,
+      description: |
+        Mirrors `GET /v5/position/closed-pnl`: one item per venue closed-PnL record, the
+        realised PnL of one closing order (a partial close is a record of its own), composed
+        and compared on the server (24-internal-schemas.md §8.13; E29-S06, #981, contract
+        first). An item is `provisional` while the venue's record of its close is unread: its
+        figures are those the stored closing fills compose, and `net_pnl` is their sum. Reading
+        the record settles the item in place, with the same `id`: `net_pnl` is then the venue's
+        `closed_pnl`, authoritative, and `divergent` says the server's own `local_net_pnl`
+        differs from it by more than `oms.closed_pnl_tolerance_rel` allows. A client shows
+        these figures and recomputes none.
+
+        **The day window.** `window=today` lists the items whose `closed_at` falls in the
+        trading day that contains the request, `[start, next_start)`, from the configured day
+        boundary (`risk_policy.day_boundary_utc_offset_minutes`) read through the one resolver
+        the daily-loss limit reads (24 §8.13), so the view's day starts at the instant that
+        limit's day does. `meta.window` names the day, and `meta.totals` covers every item the
+        filters select in it, across all pages, never a sum of one page. A server serves one
+        environment, so a mixed view reads each environment's server and shows each one's
+        totals, never one sum (E29-D01 D3). A policy that cannot be read is
+        `503 store_unavailable`, never a UTC-midnight guess; `window` with `from` or `to` is
+        `400 validation_failed`.
+
+        **Order.** With `window`, items are oldest first by `closed_at`, then `id`, so a new
+        close appends (E29-D02 §5.6). Without it they stay newest first, by `closed_at`, then
+        `id`. A cursor continues the read it was issued for, its window included.
+
+        **Filters.** The FilterBar's chips: `exchange_account_ids`, `symbol` and
+        `trade_group_id` each take several values, which are alternatives, and the kinds,
+        `side` included, narrow together; the totals take the same filters. An item's trade
+        group is that of its closing order's leg, so an item whose closing order has no row, or
+        a row with no leg, matches no `trade_group_id`.
+
+        **As served until E29-S06's route slice (E29-T07, #915).** The stored fills that carry a
+        closed PnL, one item per fill, newest first by fill time: `id` is the fill's,
         `side` the closed position's (the fill's opposite), `avg_exit_price` the fill's price,
         `closed_at` its time, and `closed_pnl` the fill's PnL less its own fee, the closing
         fill's (the venue's figure, which the backfill serves, is net of the opening fees too).
@@ -8780,7 +8810,9 @@ paths:
         a fill recovered by REST holds no closed PnL (the venue's execution list has none), so a
         complete listing needs the venue's closed-PnL endpoint. A fill holds no entry price, closed size, entry or exit value,
         leverage or opening time, so `avg_entry_price`, `qty`, `cum_entry_value`,
-        `cum_exit_value`, `leverage` and `opened_at` are absent, never estimated.
+        `cum_exit_value`, `leverage` and `opened_at` are absent, never estimated, and so is
+        every member E29-S06 adds.
+
         An `exchange_account_ids` entry outside the caller's grants, or one that
         does not exist, refuses the whole request alike with `403 account_scope_denied`, audited
         (SR-E29-13); with none named, the list is every account the caller may view, of this
@@ -8790,7 +8822,26 @@ paths:
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/AccountIdsQuery"
-        - $ref: "#/components/parameters/SymbolQueryOptional"
+        - name: symbol
+          in: query
+          explode: true
+          description: Repeatable, at most 32; one value reads as it always has.
+          schema: { type: array, maxItems: 32, items: { $ref: "#/components/schemas/Symbol" } }
+        - name: side
+          in: query
+          description: The closed position's side; absent, both.
+          schema: { $ref: "#/components/schemas/JournalSide" }
+        - name: trade_group_id
+          in: query
+          explode: true
+          description: Repeatable, at most 32; matched through the closing order's leg.
+          schema: { type: array, maxItems: 32, items: { type: string, format: uuid } }
+        - name: window
+          in: query
+          description: >-
+            `today`: the configured trading day that contains the request (24 §8.13), oldest
+            first, with `meta.window` and `meta.totals`. Not with `from` or `to`.
+          schema: { type: string, enum: [today] }
         - $ref: "#/components/parameters/From"
         - $ref: "#/components/parameters/To"
       x-rbac: { permissions: [executions:read], scope: granted_accounts }
@@ -8805,6 +8856,79 @@ paths:
                   - type: object
                     properties:
                       items: { type: array, items: { $ref: "#/components/schemas/ClosedPnl" } }
+                      meta: { $ref: "#/components/schemas/ClosedPnlMeta" }
+              examples:
+                today:
+                  summary: "`window=today` at UTC+3: a settled divergent item and a provisional one"
+                  value:
+                    items:
+                      - {
+                          id: "12775541-ff9d-57c6-9658-505245e39c93",
+                          exchange_account_id: "a1000000-0000-4000-8000-000000000001",
+                          exchange_order_id: "5a373bfe-188d-4913-9c81-d57ab5be8068",
+                          symbol: SOLUSDT,
+                          side: long,
+                          qty: "10.0",
+                          avg_entry_price: "148.10",
+                          avg_exit_price: "150.80",
+                          closed_pnl: "25.00",
+                          gross_pnl: "27.00",
+                          fee_pnl: "-1.64",
+                          funding_pnl: "-0.32",
+                          local_net_pnl: "25.04",
+                          net_pnl: "25.00",
+                          provisional: false,
+                          divergent: true,
+                          leverage: "3",
+                          opened_at: "2026-09-14T07:09:02Z",
+                          closed_at: "2026-09-14T09:14:02Z",
+                        }
+                      - {
+                          id: "57b2e4d1-4ff2-540f-92af-4cdc494f0f38",
+                          exchange_account_id: "a1000000-0000-4000-8000-000000000002",
+                          exchange_order_id: "7c1f2a90-3b4d-4e8f-9a61-2d5c0e9b1f47",
+                          symbol: ETHUSDT,
+                          side: long,
+                          qty: "0.50",
+                          avg_entry_price: "2575.00",
+                          avg_exit_price: "2562.60",
+                          gross_pnl: "-6.20",
+                          fee_pnl: "-0.71",
+                          funding_pnl: "0",
+                          local_net_pnl: "-6.91",
+                          net_pnl: "-6.91",
+                          provisional: true,
+                          divergent: false,
+                          opened_at: "2026-09-14T13:49:58Z",
+                          closed_at: "2026-09-14T14:01:58Z",
+                        }
+                    meta:
+                      next_cursor: null
+                      has_more: false
+                      count: 2
+                      window:
+                        {
+                          start: "2026-09-13T21:00:00Z",
+                          next_start: "2026-09-14T21:00:00Z",
+                          utc_offset_minutes: 180,
+                        }
+                      totals:
+                        count: 2
+                        net_pnl: "18.09"
+                        provisional: true
+                        by_account:
+                          - {
+                              exchange_account_id: "a1000000-0000-4000-8000-000000000001",
+                              count: 1,
+                              net_pnl: "25.00",
+                              provisional: false,
+                            }
+                          - {
+                              exchange_account_id: "a1000000-0000-4000-8000-000000000002",
+                              count: 1,
+                              net_pnl: "-6.91",
+                              provisional: true,
+                            }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -22686,9 +22810,26 @@ components:
         ts: { type: string, format: date-time }
     ClosedPnl:
       type: object
+      description: >-
+        One closing order's record (24-internal-schemas.md §8.13). Every member E29-S06 adds is
+        optional: the per-fill stand-in served until its route slice carries none of them.
+      x-cv-uuid5-namespace: "3697d71d-71d6-4c1f-b0fc-9c25507038b1"
       properties:
-        id: { type: string, format: uuid }
+        id:
+          type: string
+          format: uuid
+          description: >-
+            uuid5(namespace, `<exchange_account_id>:order:<exchange_order_id>`), the namespace
+            being `x-cv-uuid5-namespace` above, so an item keeps its id from provisional to
+            settled; a record without `exchange_order_id` takes 24 §8.13's other name.
         exchange_account_id: { type: string, format: uuid }
+        exchange_order_id:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 64,
+            description: "The closing order's venue id; absent on a record the venue wrote without one.",
+          }
         symbol: { $ref: "#/components/schemas/Symbol" }
         side: { $ref: "#/components/schemas/JournalSide" }
         qty: { $ref: "#/components/schemas/Decimal" }
@@ -22697,13 +22838,116 @@ components:
         closed_pnl:
           {
             $ref: "#/components/schemas/Decimal",
-            description: "Net of fees, as the venue's closed-PnL endpoint reports it (#915).",
+            description: "The venue's figure, net of fees and funding (24 §8.13); absent while `provisional`.",
+          }
+        gross_pnl:
+          {
+            $ref: "#/components/schemas/Decimal",
+            description: "The closing fills' closed PnL, before fees; absent when not composed (24 §8.13).",
+          }
+        fee_pnl:
+          {
+            $ref: "#/components/schemas/Decimal",
+            description: "Minus the closing fees and the opening fees' pro-rata share: a fee paid is negative, a rebate positive.",
+          }
+        funding_pnl:
+          {
+            $ref: "#/components/schemas/Decimal",
+            description: "The funding the closed size carried, paid negative; 0 with no settlement in its holding period; absent while pending (E29-K01, #843).",
+          }
+        local_net_pnl:
+          {
+            $ref: "#/components/schemas/Decimal",
+            description: "`gross_pnl` + `fee_pnl` + `funding_pnl`, present when all three are: the server's own figure.",
+          }
+        net_pnl:
+          {
+            $ref: "#/components/schemas/Decimal",
+            description: "The figure shown and totalled: `closed_pnl` once settled, else the sum of the local figures present.",
+          }
+        provisional:
+          {
+            type: boolean,
+            default: false,
+            description: "True while the venue's record of this close is unread; reading it settles the item in place.",
+          }
+        divergent:
+          {
+            type: boolean,
+            default: false,
+            description: "A settled item whose `local_net_pnl` differs from `closed_pnl` by more than `oms.closed_pnl_tolerance_rel` × |`closed_pnl`|; audited (24 §15.5).",
           }
         cum_entry_value: { $ref: "#/components/schemas/Decimal" }
         cum_exit_value: { $ref: "#/components/schemas/Decimal" }
         leverage: { $ref: "#/components/schemas/Decimal" }
-        opened_at: { type: string, format: date-time }
-        closed_at: { type: string, format: date-time }
+        opened_at:
+          {
+            type: string,
+            format: date-time,
+            description: "When the position opened, from the stored fills (24 §8.13); never the venue's `createdTime`.",
+          }
+        closed_at:
+          {
+            type: string,
+            format: date-time,
+            description: "The venue's `updatedTime` once settled, else the last closing fill's time.",
+          }
+    ClosedPnlMeta:
+      description: "`PageMeta`, and on a `window` read its `window` and `totals` (24 §8.13)."
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            window: { $ref: "#/components/schemas/ClosedPnlWindow" }
+            totals: { $ref: "#/components/schemas/ClosedPnlTotals" }
+    ClosedPnlWindow:
+      type: object
+      additionalProperties: false
+      required: [start, next_start, utc_offset_minutes]
+      properties:
+        start:
+          {
+            type: string,
+            format: date-time,
+            description: "The day's first instant, inclusive: 00:00 at UTC+`utc_offset_minutes`, given in UTC.",
+          }
+        next_start:
+          {
+            type: string,
+            format: date-time,
+            description: "Exclusive: `start` + 24 h, when the next day starts and the client reads again.",
+          }
+        utc_offset_minutes:
+          {
+            type: integer,
+            minimum: -720,
+            maximum: 840,
+            description: "`risk_policy.day_boundary_utc_offset_minutes` as this answer read it, east of UTC.",
+          }
+    ClosedPnlTotals:
+      type: object
+      additionalProperties: false
+      required: [count, net_pnl, provisional, by_account]
+      description: >-
+        Every item the request's filters select in the window, across all pages, in this
+        server's environment: `net_pnl` sums their `net_pnl`, provisional items included.
+      properties:
+        count: { type: integer, minimum: 0 }
+        net_pnl: { $ref: "#/components/schemas/Decimal" }
+        provisional: { type: boolean, description: "True when a counted item is provisional." }
+        by_account:
+          type: array
+          description: One entry per account with a counted item, its items' figures alone.
+          items: { $ref: "#/components/schemas/ClosedPnlAccountTotals" }
+    ClosedPnlAccountTotals:
+      type: object
+      additionalProperties: false
+      required: [exchange_account_id, count, net_pnl, provisional]
+      properties:
+        exchange_account_id: { type: string, format: uuid }
+        count: { type: integer, minimum: 1 }
+        net_pnl: { $ref: "#/components/schemas/Decimal" }
+        provisional: { type: boolean }
     # === Rules / alerts =====================================================
     # -------------------------------------------------------------------------
     # Rule IR. This is a *projection* of the authoritative pydantic model in

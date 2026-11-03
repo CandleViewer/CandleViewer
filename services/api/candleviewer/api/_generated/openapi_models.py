@@ -4002,8 +4002,21 @@ class Execution(BaseModel):
 
 
 class ClosedPnl(BaseModel):
-    id: UUID | None = None
+    id: Annotated[
+        UUID | None,
+        Field(
+            description="uuid5(namespace, `<exchange_account_id>:order:<exchange_order_id>`), the namespace being `x-cv-uuid5-namespace` above, so an item keeps its id from provisional to settled; a record without `exchange_order_id` takes 24 §8.13's other name."
+        ),
+    ] = None
     exchange_account_id: UUID | None = None
+    exchange_order_id: Annotated[
+        str | None,
+        Field(
+            description="The closing order's venue id; absent on a record the venue wrote without one.",
+            max_length=64,
+            min_length=1,
+        ),
+    ] = None
     symbol: Annotated[
         str | None,
         Field(
@@ -4040,11 +4053,63 @@ class ClosedPnl(BaseModel):
     closed_pnl: Annotated[
         str | None,
         Field(
-            description="Net of fees, as the venue's closed-PnL endpoint reports it (#915).",
+            description="The venue's figure, net of fees and funding (24 §8.13); absent while `provisional`.",
             examples=["63120.50", "-0.0004", "0"],
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
+    gross_pnl: Annotated[
+        str | None,
+        Field(
+            description="The closing fills' closed PnL, before fees; absent when not composed (24 §8.13).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    fee_pnl: Annotated[
+        str | None,
+        Field(
+            description="Minus the closing fees and the opening fees' pro-rata share: a fee paid is negative, a rebate positive.",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    funding_pnl: Annotated[
+        str | None,
+        Field(
+            description="The funding the closed size carried, paid negative; 0 with no settlement in its holding period; absent while pending (E29-K01, #843).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    local_net_pnl: Annotated[
+        str | None,
+        Field(
+            description="`gross_pnl` + `fee_pnl` + `funding_pnl`, present when all three are: the server's own figure.",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    net_pnl: Annotated[
+        str | None,
+        Field(
+            description="The figure shown and totalled: `closed_pnl` once settled, else the sum of the local figures present.",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    provisional: Annotated[
+        StrictBool,
+        Field(
+            description="True while the venue's record of this close is unread; reading it settles the item in place."
+        ),
+    ] = False
+    divergent: Annotated[
+        StrictBool,
+        Field(
+            description="A settled item whose `local_net_pnl` differs from `closed_pnl` by more than `oms.closed_pnl_tolerance_rel` × |`closed_pnl`|; audited (24 §15.5)."
+        ),
+    ] = False
     cum_entry_value: Annotated[
         str | None,
         Field(
@@ -4069,9 +4134,62 @@ class ClosedPnl(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    opened_at: AwareDatetime | None = None
-    closed_at: AwareDatetime | None = None
-    __null_refused = field_validator("id", "exchange_account_id", "symbol", "side", "qty", "avg_entry_price", "avg_exit_price", "closed_pnl", "cum_entry_value", "cum_exit_value", "leverage", "opened_at", "closed_at", mode="before")(_refuse_null)
+    opened_at: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="When the position opened, from the stored fills (24 §8.13); never the venue's `createdTime`."
+        ),
+    ] = None
+    closed_at: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="The venue's `updatedTime` once settled, else the last closing fill's time."
+        ),
+    ] = None
+    __null_refused = field_validator("id", "exchange_account_id", "exchange_order_id", "symbol", "side", "qty", "avg_entry_price", "avg_exit_price", "closed_pnl", "gross_pnl", "fee_pnl", "funding_pnl", "local_net_pnl", "net_pnl", "cum_entry_value", "cum_exit_value", "leverage", "opened_at", "closed_at", mode="before")(_refuse_null)
+
+
+class ClosedPnlWindow(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    start: Annotated[
+        AwareDatetime,
+        Field(
+            description="The day's first instant, inclusive: 00:00 at UTC+`utc_offset_minutes`, given in UTC."
+        ),
+    ]
+    next_start: Annotated[
+        AwareDatetime,
+        Field(
+            description="Exclusive: `start` + 24 h, when the next day starts and the client reads again."
+        ),
+    ]
+    utc_offset_minutes: Annotated[
+        JsonInt,
+        Field(
+            description="`risk_policy.day_boundary_utc_offset_minutes` as this answer read it, east of UTC.",
+            ge=-720,
+            le=840,
+        ),
+    ]
+
+
+class ClosedPnlAccountTotals(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    exchange_account_id: UUID
+    count: Annotated[JsonInt, Field(ge=1)]
+    net_pnl: Annotated[
+        str,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ]
+    provisional: StrictBool
 
 
 class RuleOperand1(BaseModel):
@@ -7957,6 +8075,28 @@ class ReverseAcceptance(BaseModel):
     ] = None
 
 
+class ClosedPnlTotals(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    count: Annotated[JsonInt, Field(ge=0)]
+    net_pnl: Annotated[
+        str,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ]
+    provisional: Annotated[
+        StrictBool, Field(description="True when a counted item is provisional.")
+    ]
+    by_account: Annotated[
+        list[ClosedPnlAccountTotals],
+        Field(description="One entry per account with a counted item, its items' figures alone."),
+    ]
+
+
 class JournalTradeDetail(JournalTrade):
     mistakes: list[str] | None = None
     checklist: list[dict[str, Any]] | None = None
@@ -8419,6 +8559,12 @@ class CapacityReport(BaseModel):
 class ApiKeyWithVerification(BaseModel):
     key: ApiKey
     verification: KeyVerificationPassed
+
+
+class ClosedPnlMeta(PageMeta):
+    window: ClosedPnlWindow | None = None
+    totals: ClosedPnlTotals | None = None
+    __null_refused = field_validator("window", "totals", mode="before")(_refuse_null)
 
 
 class OrderDiagnostics(BaseModel):
