@@ -44,14 +44,16 @@ export const statusWord = (page: Page): Locator =>
 
 // --- words, as `connectionRegion.ts` writes them (E17-D02 sections 10 and 11) -------------------------------------
 export const SAID = {
+  // E29-S07 (#1028, BQ-7 ruled 6610918411): the fixture session names no account, so no stop is
+  // confirmed and the stops clause is not said (fail closed); e29-reconcile covers it kept.
   disconnected:
-    "Disconnected. New orders off. Cancel and close still work, confirmed over the server. Exchange-side stops still protect open positions.",
+    "Disconnected. New orders off. Cancel and close still work, confirmed over the server.",
   retryStopped:
     "Offline — retry stopped. New orders off. Cancel and close still work, confirmed over the server.",
   sessionEnded: "Your access was removed — contact the owner.",
   killSwitch: "Order entry off — trading frozen by the owner. Cancel still works.",
   shutdown:
-    "Order entry off — backend restarting. Cancel and close still work; exchange-side stops still protect open positions; app-managed rules are paused.",
+    "Order entry off — backend restarting. Cancel and close still work; app-managed rules are paused.",
   systemUnknown:
     "Order entry off — kill-switch status unknown until the server reports it. Cancel and close still work.",
 } as const;
