@@ -11,7 +11,7 @@
 //
 //   node bench/matrix/ci-compare.mjs --runtime chromium --report-dir <dir> \
 //        --baseline bench/matrix/baselines/chromium-ubuntu-latest.json [--summary <out.md>]
-//        [--threshold-pct 5] [--min-delta-ms 0.2] [--enforce]
+//        [--threshold-pct 5] [--min-delta-ms 0.2] [--enforce] [--json <numbers.json>]
 //
 // The threshold is 06 §7.4's 5 %. The `--min-delta-ms` floor is this job's own (not 06's): frame
 // times are quantised to the page's 0.1 ms timer, so a delta under two ticks is reported but never
@@ -23,11 +23,16 @@
 // binds only on a baseline under 4 ms (where 5 % is under two ticks); counters and memory have no
 // floor. A real-engine report (`config.page: "engine"`) also gets 26 §13's absolute gates, and
 // its per-rep p95 spread is published, never failed on; stub scenarios are listed by owner Epic.
-import { appendFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { validateReport } from "./matrix-lib.mjs";
-import { ENGINE_REPS, gateRows } from "../engine/engine-lib.mjs";
+import {
+  ENGINE_REPS,
+  ENGINE_SCENARIO_IDS,
+  ENGINE_STAGES,
+  gateRows,
+} from "../engine/engine-lib.mjs";
 import { medianOfP95 } from "../stats.mjs";
 
 export const DEFAULTS = Object.freeze({ thresholdPct: 5, minDeltaMs: 0.2, floorBelowMs: 4 });
@@ -97,10 +102,10 @@ export function comparability(a, b) {
 /**
  * Rows of { metric, baseline, current, deltaMs, deltaPct, status }. `opts.enforce` renames the
  * regression status "REGRESSION (enforced)", and a metric the baseline has but this run lacks or
- * reads as non-finite (a not-runnable cell, a NaN) "MISSING (enforced)": a gate never passes on an
- * absent figure. An imprecise memory figure is the one exception: recorded, never failing. A frame
- * time of 0 reads as missing; a zero baseline is never compared ("ZERO BASELINE (enforced)" for a
- * frame time under `enforce`).
+ * reads as non-finite (a not-runnable cell, a NaN, an imprecise memory reading against a precise
+ * baseline) "MISSING (enforced)": a gate never passes on an absent figure. Otherwise an imprecise
+ * memory figure is recorded, never failing. A frame time of 0 reads as missing; a zero baseline is
+ * never compared ("ZERO BASELINE (enforced)" for a frame time under `enforce`).
  * @param {{ thresholdPct: number, minDeltaMs: number, floorBelowMs?: number, enforce?: boolean }} [opts]
  */
 export function compareToBaseline(report, baseline, opts = DEFAULTS) {
@@ -112,11 +117,14 @@ export function compareToBaseline(report, baseline, opts = DEFAULTS) {
     // A frame time of 0 ms is no measurement (nothing rendered or marked): read as missing.
     const c = ms && !(cur[metric] > 0) ? null : cur[metric];
     if (c == null || !Number.isFinite(c)) {
-      const status = impreciseMetrics(report).has(metric)
-        ? "imprecise memory (not compared)"
-        : b != null && opts.enforce
+      // A baseline figure an enforced run cannot match fails, an imprecise reading included
+      // (E11-T06 PR-2): a precise baseline never passes on an imprecise current run.
+      const status =
+        b != null && opts.enforce
           ? "MISSING (enforced)"
-          : "missing in this run";
+          : impreciseMetrics(report).has(metric)
+            ? "imprecise memory (not compared)"
+            : "missing in this run";
       return { metric, baseline: b, current: null, status };
     }
     if (b == null)
@@ -237,6 +245,68 @@ export function renderSummary({
   return L.join("\n") + "\n";
 }
 
+/**
+ * The closed set of metric and gate names this script can emit for the real engine. It is the
+ * comment job's allow-list: engine-bench-comment.yml carries it verbatim (ci-compare.test.ts checks
+ * both that every emitted name is in it and that the workflow's copy is identical), so no text from
+ * a pull request's run ever reaches the comment.
+ */
+export const COMMENT_NAMES = Object.freeze(
+  ENGINE_SCENARIO_IDS.flatMap((id) => [
+    ...(id === "B7"
+      ? ["inline", "worker"].map((mode) => `B7 ${mode} decode p95`)
+      : id === "B9"
+        ? ["B9 cold init"]
+        : ["frame p95", "draw calls", "memory MB", "peak memory MB"].map((m) => `${id} ${m}`)),
+    ...gateRows({ scenario: id, status: "ok" }).map((g) => g.metric),
+  ]),
+);
+
+/** Every row or gate status this script can emit: the comment job's fixed status set. */
+export const COMMENT_STATUSES = Object.freeze([
+  "within threshold",
+  "improved",
+  "new",
+  "no baseline yet",
+  "missing in this run",
+  "imprecise memory (not compared)",
+  "zero baseline (not compared)",
+  "ZERO BASELINE (enforced)",
+  "REGRESSION (recorded)",
+  "REGRESSION (enforced)",
+  "MISSING (enforced)",
+  "within gate",
+  "not measured",
+  "OVER GATE (recorded)",
+  "OVER GATE (enforced)",
+]);
+
+/** The comment job's input: names, numbers and statuses only, never free text from the run. */
+export function numbersOf(rows, gates, report, enforce) {
+  const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  return {
+    schema: "cv-engine-bench-numbers/1",
+    enforce,
+    rows: rows.map((r) => ({
+      metric: r.metric,
+      baseline: num(r.baseline),
+      current: num(r.current),
+      deltaPct: num(r.deltaPct),
+      status: r.status,
+    })),
+    gates: gates.map((g) => ({ metric: g.metric, value: num(g.value), status: g.status })),
+    // AC1: the worst 06 §4.3 stage per scenario, only ever one of the nine stage names.
+    spreads: spreads(report).map((x) => {
+      const w = report.cells.find((c) => c.scenario === x.scenario)?.worstStage;
+      return {
+        scenario: x.scenario,
+        spreadPct: num(x.spreadPct),
+        worstStage: ENGINE_STAGES.includes(w) ? w : null,
+      };
+    }),
+  };
+}
+
 /** Picks the single report for `runtime` in `dir`; null when there is none. */
 export function findReport(dir, runtime) {
   if (!existsSync(dir)) return null;
@@ -247,7 +317,10 @@ export function findReport(dir, runtime) {
 }
 
 /** CLI body; returns the exit code (1 only when the run itself failed). */
-export function run(argv, io = { log: console.log, error: console.error, append: appendFileSync }) {
+export function run(
+  argv,
+  io = { log: console.log, error: console.error, append: appendFileSync, write: writeFileSync },
+) {
   const get = (flag) => {
     const i = argv.indexOf(flag);
     return i >= 0 ? argv[i + 1] : undefined;
@@ -318,6 +391,9 @@ export function run(argv, io = { log: console.log, error: console.error, append:
   io.log(md);
   const out = get("--summary");
   if (out) io.append(out, md);
+  // E11-T06 PR-2: the numbers alone, for engine-bench-comment.yml (it re-validates every field).
+  const json = get("--json");
+  if (json) io.write(json, JSON.stringify(numbersOf(rows, gates, report, enforce)));
   if (enforce && notComparable.length > 0)
     io.log(
       `::warning title=engine-matrix ${runtime}::CI-BEN-002: not like-for-like with the baseline (${notComparable.join("; ")}): regressions reported, not enforced`,

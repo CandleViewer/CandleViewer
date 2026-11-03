@@ -1,20 +1,28 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  COMMENT_NAMES,
+  COMMENT_STATUSES,
   DEFAULTS,
   absoluteGates,
   compareToBaseline,
   comparability,
   findReport,
   metrics,
+  numbersOf,
   renderSummary,
   run,
   spreads,
   unitOf,
 } from "../../../bench/matrix/ci-compare.mjs";
-import { STUB_SCENARIOS, stubCell } from "../../../bench/engine/engine-lib.mjs";
+import {
+  ENGINE_SCENARIO_IDS,
+  STUB_SCENARIOS,
+  stubCell,
+} from "../../../bench/engine/engine-lib.mjs";
 import { REPORT_SCHEMA } from "../../../bench/matrix/matrix-lib.mjs";
 
 type Obj = Record<string, unknown>;
@@ -57,13 +65,19 @@ const B7 = {
 };
 
 function io() {
-  const out = { log: [] as string[], error: [] as string[], appended: [] as string[] };
+  const out = {
+    log: [] as string[],
+    error: [] as string[],
+    appended: [] as string[],
+    written: [] as string[],
+  };
   return {
     out,
     io: {
       log: (s: string) => out.log.push(s),
       error: (s: string) => out.error.push(s),
       append: (_f: unknown, s: unknown) => void out.appended.push(String(s)),
+      write: (_f: unknown, s: unknown) => void out.written.push(String(s)),
     },
   };
 }
@@ -500,13 +514,19 @@ describe("E11-T06: the real-engine gate", () => {
     expect(code).toBe(1);
     expect(t.out.log[0]).toContain("| B1 frame p95 | 5.00 | - | - | - | MISSING (enforced) |");
   });
-  it("never fails on an imprecise memory figure, and says so (M3)", () => {
-    const imprecise = cell("B6", 10, {
-      memoryPrecision: "imprecise",
-      memoryMb: null,
-      memoryScope: "main thread only; the render worker's heap is not counted",
-    });
+  const imprecise = cell("B6", 10, {
+    memoryPrecision: "imprecise",
+    memoryMb: null,
+    memoryScope: "main thread only; the render worker's heap is not counted",
+  });
+  it("fails an enforced run whose memory is imprecise against a precise baseline (PR-2)", () => {
     const { code, t } = verdict([imprecise], [cell("B6", 10, { memoryMb: 50 })], "--enforce");
+    expect(code).toBe(1);
+    expect(t.out.error.join("\n")).toMatch(/CI-BEN-001: missing or non-finite.*B6 memory MB/);
+  });
+  it("records an imprecise memory figure without failing, and says so (M3)", () => {
+    expect(verdict([imprecise], [imprecise], "--enforce").code).toBe(0);
+    const { code, t } = verdict([imprecise], [cell("B6", 10, { memoryMb: 50 })]);
     expect(code).toBe(0);
     const md = t.out.log[0] ?? "";
     expect(md).toContain("imprecise memory (not compared)");
@@ -528,8 +548,103 @@ describe("E11-T06: the real-engine gate", () => {
     expect(md).toContain("B5 frame p95 <= 16.7 ms (26 §13) [partial]");
     expect(md).toContain("**B5 partial: candles only.**");
   });
+  it("writes the comment job's numbers with --json: names, finite numbers, statuses only", () => {
+    const dir = dirWith({
+      "chromium-1.json": eng([cell("B1", 6, { p95PerRep: [6, 6, NaN, 6, 6] })]),
+      "base.json": eng([cell("B1", 5)]),
+    });
+    const t = io();
+    run(args(dir, "--json", "numbers.json"), t.io);
+    // Written, never appended: a stale file from an earlier run is replaced.
+    expect(t.out.written).toHaveLength(1);
+    expect(t.out.appended.join("")).not.toContain("cv-engine-bench-numbers/1");
+    const out = JSON.parse(t.out.written[0] ?? "{}");
+    expect(out.schema).toBe("cv-engine-bench-numbers/1");
+    expect(out.enforce).toBe(false);
+    expect(out.rows).toContainEqual({
+      metric: "B1 frame p95",
+      baseline: 5,
+      current: null,
+      deltaPct: null,
+      status: "missing in this run",
+    });
+    expect(Object.keys(out.gates[0]).sort()).toEqual(["metric", "status", "value"]);
+    const staged = report([cell("B1", 6, { spreadPct: 2, worstStage: "paneRedraw" })], ENGINE);
+    const bogus = report([cell("B1", 6, { spreadPct: 2, worstStage: "<img src=x>" })], ENGINE);
+    expect(numbersOf([], [], staged, false).spreads).toEqual([
+      { scenario: "B1", spreadPct: 2, worstStage: "paneRedraw" },
+    ]);
+    expect(numbersOf([], [], bogus, false).spreads[0]?.worstStage).toBeNull();
+    expect(numbersOf([], [], report([]), true)).toEqual({
+      schema: "cv-engine-bench-numbers/1",
+      enforce: true,
+      rows: [],
+      gates: [],
+      spreads: [],
+    });
+  });
   it("never compares an engine report with a matrix one", () => {
     const why = comparability(report([], ENGINE), report([]));
     expect(why).toContain("config.page differs");
+  });
+});
+
+// E11-T06 PR-2 lens Minor 1 (and the PR-1 BQ-13 carry): the comment job renders only names of a
+// closed set, fixed statuses and finite numbers; its workflow carries the same lists verbatim.
+describe("E11-T06: the comment job's closed allow-lists", () => {
+  const ENGINE = {
+    config: { reps: 5, durationMs: 20000, soakMs: 1, bars: 100000, page: "engine" },
+  };
+  const WORKFLOW = readFileSync(
+    fileURLToPath(
+      new URL("../../../../../.github/workflows/engine-bench-comment.yml", import.meta.url),
+    ),
+    "utf8",
+  );
+  const setIn = (name: string): string[] => {
+    const m = new RegExp(`const ${name} = new Set\\(\\[([\\s\\S]*?)\\]\\);`).exec(WORKFLOW);
+    return JSON.parse(`[${m?.[1] ?? ""}]`) as string[];
+  };
+  // Every figure and every gate field set, on every scenario id, plus B7's two modes.
+  const full = report(
+    ENGINE_SCENARIO_IDS.map((id: string) =>
+      id === "B7"
+        ? { ...B7 }
+        : {
+            ...frame(id, 20),
+            p95PerRep: [20, 20, 20, 20, 20],
+            drawCalls: 50,
+            memoryMb: 100,
+            peakMemoryMb: 700,
+            lodChanges: 9,
+            workerCpuPct: 80,
+            coldInitToFirstFrameMs: 1000,
+            atlasFromCacheMs: 9,
+            growthPct: 9,
+            partial: "partial: <img src=x> free text",
+            memoryScope: "free text www.example.com",
+            memoryLimit: 1234,
+          },
+    ),
+    ENGINE,
+  );
+
+  it("names every metric and gate ci-compare emits, and nothing from the run", () => {
+    const rows = compareToBaseline(full, full, { ...DEFAULTS, enforce: true });
+    const gates = [...absoluteGates(full, false), ...absoluteGates(full, true)];
+    expect(rows.length).toBeGreaterThan(0);
+    expect(gates.length).toBeGreaterThan(0);
+    for (const n of [...rows.map((r) => r.metric), ...gates.map((g) => g.metric)])
+      expect(COMMENT_NAMES).toContain(n);
+    for (const st of [...rows.map((r) => r.status), ...gates.map((g) => g.status)])
+      expect(COMMENT_STATUSES).toContain(st);
+    // partial, memoryScope and memoryLimit never reach the numbers file as text.
+    const json = JSON.stringify(numbersOf(rows, gates, full, true));
+    expect(json).not.toMatch(/img|free text|example|1234/);
+  });
+  it("keeps the workflow's lists identical to the exported ones", () => {
+    expect(setIn("NAMES")).toEqual([...COMMENT_NAMES]);
+    expect(setIn("STATUS")).toEqual([...COMMENT_STATUSES]);
+    expect(WORKFLOW).not.toMatch(/const NAME = \//);
   });
 });

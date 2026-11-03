@@ -1,0 +1,179 @@
+name: engine-bench-comment
+
+# E11-T06 PR-2 (#449, ruling BQ-13): posts the real-engine numbers of a pull request's `pr` run on
+# the pull request. NOT a required name: it is not a check of the pull request and nothing waits
+# on it (ci-required never sees it). It follows `pr` through workflow_run, so it runs this file
+# from `main` and never checks out or runs pull-request code; its one input is the `pr` run's
+# engine-bench-numbers artifact, written by pull-request code, so the body is built here from
+# a closed list of metric names, fixed statuses, the nine 06 section 4.3 stage names and finite
+# numbers only. A fork's pull request gets the table as this job's summary, never a comment. A
+# merge-queue or train run is never followed (its tree may never land).
+
+on:
+  workflow_run:
+    workflows: [pr]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  comment:
+    name: engine-bench-comment
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # One comment per head repository and branch: a newer pr run supersedes an older one before
+    # both can post, and two forks with the same branch name never share a group.
+    concurrency:
+      group: >-
+        engine-bench-comment-${{ github.event.workflow_run.head_repository.full_name }}-${{
+        github.event.workflow_run.head_branch }}
+      cancel-in-progress: true
+    permissions:
+      actions: read # the `pr` run's numbers artifact
+      pull-requests: write
+    steps:
+      # A run with no engine lane, or one that failed before its comparison, has no numbers.
+      - name: Download the engine-bench numbers of the pr run
+        # Optional comment job, outside the engine-bench lane: a missing artifact only means no post.
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: engine-bench-numbers
+          path: ${{ runner.temp }}/numbers
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Render from validated numeric fields and post (a summary only on a fork)
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          NUMBERS: ${{ runner.temp }}/numbers/numbers.json
+          SAME_REPO: ${{ github.event.workflow_run.head_repository.full_name == github.repository }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+        with:
+          script: |
+            const fs = require('fs');
+            const MARKER = '### Engine bench (`engine-bench`, real engine)';
+            // The closed allow-lists: ci-compare.mjs COMMENT_NAMES and COMMENT_STATUSES, verbatim
+            // (ci-compare.test.ts fails on any drift). Nothing else from the run is rendered as text.
+            const NAMES = new Set([
+              "B1 frame p95",
+              "B1 draw calls",
+              "B1 memory MB",
+              "B1 peak memory MB",
+              "B1 frame p95 <= 12 ms (26 §13)",
+              "B1 draw calls <= 8 (26 §13)",
+              "B2 frame p95",
+              "B2 draw calls",
+              "B2 memory MB",
+              "B2 peak memory MB",
+              "B2 frame p95 <= 14 ms (26 §13)",
+              "B2 LOD changes <= 6 (26 §13)",
+              "B3 frame p95",
+              "B3 draw calls",
+              "B3 memory MB",
+              "B3 peak memory MB",
+              "B4 frame p95",
+              "B4 draw calls",
+              "B4 memory MB",
+              "B4 peak memory MB",
+              "B5 frame p95",
+              "B5 draw calls",
+              "B5 memory MB",
+              "B5 peak memory MB",
+              "B5 frame p95 <= 16.7 ms (26 §13) [partial]",
+              "B5 total draw calls <= 40 (26 §13) [partial]",
+              "B6 frame p95",
+              "B6 draw calls",
+              "B6 memory MB",
+              "B6 peak memory MB",
+              "B6 aggregate frame p95 <= 16.7 ms (26 §13) [partial]",
+              "B6 worker CPU % of one core (upper bound, sums per-frame p95s) <= 70 % (26 §13) [partial]",
+              "B7 inline decode p95",
+              "B7 worker decode p95",
+              "B8 frame p95",
+              "B8 draw calls",
+              "B8 memory MB",
+              "B8 peak memory MB",
+              "B9 cold init",
+              "B9 cold init <= 900 ms (26 §13)",
+              "B9 SDF atlas from cache <= 5 ms (26 §13)",
+              "B10 frame p95",
+              "B10 draw calls",
+              "B10 memory MB",
+              "B10 peak memory MB",
+              "B10 peak memory <= 600 MB (26 §13)",
+              "B10 growth over the soak <= 5 % (26 §13)"
+            ]);
+            const STATUS = new Set([
+              "within threshold",
+              "improved",
+              "new",
+              "no baseline yet",
+              "missing in this run",
+              "imprecise memory (not compared)",
+              "zero baseline (not compared)",
+              "ZERO BASELINE (enforced)",
+              "REGRESSION (recorded)",
+              "REGRESSION (enforced)",
+              "MISSING (enforced)",
+              "within gate",
+              "not measured",
+              "OVER GATE (recorded)",
+              "OVER GATE (enforced)"
+            ]);
+            const STAGES = new Set(['inputHandling', 'dataWindowRecompute', 'candleGeometry',
+              'footprintTextGeometry', 'heatmapUpload', 'paneRedraw', 'overlayRedraw',
+              'domMirrorSync', 'compositePresent']);
+            const num = (v, d) => (typeof v === 'number' && Number.isFinite(v) ? v.toFixed(d) : '-');
+            const name = (m) => {
+              if (typeof m !== 'string') return null;
+              // Only a name of the closed set, shown with two fixed substitutions.
+              if (!NAMES.has(m)) return null;
+              return m.replace(/<=/g, '≤').replace(/ \[partial\]$/, ' (partial)');
+            };
+            const L = [MARKER, '', 'Recorded on pull requests; enforced only on the GPU runner (merge queue, schedule, dispatch on main). The required check is `engine-bench`; this comment never gates.', ''];
+            let data = null;
+            try {
+              data = JSON.parse(fs.readFileSync(process.env.NUMBERS, 'utf8'));
+            } catch {
+              data = null;
+            }
+            let dropped = 0;
+            if (!data || data.schema !== 'cv-engine-bench-numbers/1') {
+              // No engine lane in this run, or it failed before its comparison: nothing to post.
+              await core.summary.addRaw('No engine-bench numbers in this run.\n').write();
+              return;
+            }
+            L.push('| Metric | Baseline | This run | Delta % | Status |', '| --- | --- | --- | --- | --- |');
+            for (const r of (Array.isArray(data.rows) ? data.rows : []).slice(0, 200)) {
+              const n = name(r?.metric);
+              if (!n || !STATUS.has(r.status)) { dropped += 1; continue; }
+              L.push(`| ${n} | ${num(r.baseline, 2)} | ${num(r.current, 2)} | ${num(r.deltaPct, 1)} | ${r.status} |`);
+            }
+            L.push('', '| 26 §13 gate | This run | Status |', '| --- | --- | --- |');
+            for (const g of (Array.isArray(data.gates) ? data.gates : []).slice(0, 200)) {
+              const n = name(g?.metric);
+              if (!n || !STATUS.has(g.status)) { dropped += 1; continue; }
+              L.push(`| ${n} | ${num(g.value, 2)} | ${g.status} |`);
+            }
+            L.push('', '| Scenario | Spread of the per-rep p95s % | Worst stage (06 §4.3) |', '| --- | --- | --- |');
+            for (const x of (Array.isArray(data.spreads) ? data.spreads : []).slice(0, 20)) {
+              if (typeof x?.scenario !== 'string' || !/^B(?:10|[1-9])$/.test(x.scenario)) { dropped += 1; continue; }
+              const stage = STAGES.has(x.worstStage) ? x.worstStage : '-';
+              L.push(`| ${x.scenario} | ${num(x.spreadPct, 1)} | ${stage} |`);
+            }
+            if (dropped) L.push('', `${dropped} row(s) failed validation and were dropped.`);
+            const body = L.join('\n') + '\n';
+            const issue_number = Number(process.env.PR_NUMBER);
+            if (process.env.SAME_REPO !== 'true' || !Number.isInteger(issue_number) || issue_number < 1) {
+              await core.summary.addRaw(body).write();
+              return;
+            }
+            const { owner, repo } = context.repo;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const mine = comments.find(
+              (c) => c.user?.login === 'github-actions[bot]' && c.body?.startsWith(MARKER));
+            if (mine) await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
+            else await github.rest.issues.createComment({ owner, repo, issue_number, body });

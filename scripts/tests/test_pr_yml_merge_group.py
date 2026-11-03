@@ -120,6 +120,11 @@ EVENT_CONDITIONS = {
         f"pr.yml:{lane}": f"${{{{ {filters} && !({DRAFT}) }}}}"
         for lane, filters in DRAFT_DEFERRED.items()
     },
+    # E11-T06 PR-2: B10's 30-minute soak runs on the nightly schedule of _job-engine-bench.yml
+    # only; a merge group or train never runs it (the per-PR scenarios and their gate still run).
+    "_job-engine-bench.yml:bench:B10 soak, 30 minutes (nightly schedule only)": (
+        "${{ !cancelled() && github.event_name == 'schedule' }}"
+    ),
     # The freeze proposal artifact for a dependency PR's reviewer; the freeze check still runs:
     FREEZE_UPLOAD: "${{ !cancelled() && steps.freeze.outcome == 'failure' && (github.actor == "
     "'dependabot[bot]' || contains(github.event.pull_request.labels.*.name, 'dependencies')) }}",
@@ -162,6 +167,8 @@ EVENT_VALUES = [
     ("pr.yml:ci-required", DRAFT_FLAG),  # PR_DRAFT: empty off a pull request; read on one only
     ("_job-migrations.yml:migrations", MIGRATIONS_BASE),  # the Alembic lock step
     ("_job-migrations.yml:migrations", MIGRATIONS_BASE),  # the QuestDB DDL lock step (#4014)
+    # E11-T06 PR-2: the nightly soak's longer timeout; 45 minutes on every other event.
+    ("_job-engine-bench.yml:bench", "github.event_name == 'schedule' && 90 || 45"),
 ]
 LANE = r'^\s*"?([\w-]+)"?:\s*\{\s*applicable:\s*(.+?),\s*result:\s*process\.env\.(RESULT_\w+)'
 SKIP = "CI-GATE-002: gate misconfiguration: %s applicable but skipped"

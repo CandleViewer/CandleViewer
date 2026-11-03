@@ -817,7 +817,7 @@ Benchmarks live in `packages/chart-engine/bench`, run headless (Playwright + Chr
 | B9  | Cold init to first frame with 100k bars                                 | ≤ 900 ms              | SDF atlas from cache ≤ 5 ms                     |
 | B10 | Memory soak: 30 min live feed                                           | peak ≤ 600 MB         | no monotonic growth beyond 5 %/30 min           |
 
-A regression greater than 10 % against the stored baseline fails the check; baselines are updated only with an explicit reviewer-approved commit that states the cause.
+A regression greater than 5 % against the stored baseline fails the check; baselines are updated only with an explicit reviewer-approved commit that states the cause.
 
 ---
 

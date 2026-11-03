@@ -69,8 +69,15 @@ export const ENGINE_SCENARIOS = Object.freeze({
     partial: PARTIAL_CONTENT,
     gates: [
       { metric: "p95", label: "aggregate frame p95", unit: "ms", max: 16.7 },
-      // Recorded on software GL (SwiftShader burns the CPU itself); enforced on a GPU runner.
-      { metric: "workerCpuPct", label: "worker CPU % of one core", unit: "%", max: 70 },
+      // Recorded on software GL (SwiftShader burns the CPU itself); enforced only on the GPU lane
+      // (_job-engine-bench.yml passes --enforce there alone). The figure sums each delivered
+      // frame's rolling frameTimeMsP95, so it overstates the CPU share: an upper bound (PR-2 note).
+      {
+        metric: "workerCpuPct",
+        label: "worker CPU % of one core (upper bound, sums per-frame p95s)",
+        unit: "%",
+        max: 70,
+      },
     ],
   },
   B7: { stub: "E17", what: "Live update storm: 20 data messages/s x 6 stores" },

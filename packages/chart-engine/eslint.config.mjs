@@ -107,6 +107,7 @@ export default tseslint.config(
       "bench/scenes/run-scene-c.mjs",
       "bench/scenes/scene-c.mjs",
       "bench/scenes/atlas.mjs",
+      "bench/engine/baseline-select.mjs",
     ],
     languageOptions: {
       globals: { ...globals.node },
