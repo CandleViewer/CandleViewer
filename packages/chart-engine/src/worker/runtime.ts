@@ -20,6 +20,8 @@
 // `series_incompatible_combination_total{combination}`. PR B: `line`, `area` and `baseline` draw
 // the same store's closes through a `RibbonSeries` (made on first use), the candle hosts hidden;
 // a switch between the families re-points the ring's patches at the shown hosts' buffer.
+// E12-S11 PR A1: each series is its pane's autoscale source (`SeriesPriceSource`, the drawn ring),
+// the main series first.
 import type { RenderBackend } from "../gl/backend.js";
 import { ContextLoss, type LossDetails } from "../gl/context-loss.js";
 import { type OpenedBackend, openBackend } from "../gl/open-backend.js";
@@ -34,6 +36,7 @@ import {
 } from "../hit/index.js";
 import { Gestures } from "../interaction/gestures.js";
 import { CandleRing } from "../layers/candle/ring.js";
+import { SeriesPriceSource } from "../layers/candle/price-source.js";
 import { BarSeries } from "../layers/candle/bars.js";
 import {
   type BarHit,
@@ -119,7 +122,10 @@ export interface RuntimeDeps {
   probe(): CapabilityReport;
   /** Test-only (E11-S04, BQ-111): bars for every chart's viewport until E12 wires the store. */
   readonly timeMap?: IndexTimeMap;
-  /** Internal (E11-S05, BQ-116): pane 0's price sources for autoscale until E12 attaches them. */
+  /**
+   * Test-only (E11-S05, BQ-116): pane 0's price sources, in place of the series' own (E12-S11:
+   * every `addSeries` store is its pane's source; these win when given).
+   */
   readonly priceSources?: readonly PriceExtentSource[];
   /** The atlas's font, raster and cache platform (E11-S11, BQ-261); null or absent: none here. */
   readonly text?: TextPlatform | null;
@@ -183,6 +189,8 @@ export interface SeriesEntry {
   baseTick: number | null;
   /** A bar pick's `objectId` (`series.<id>`), made once. */
   readonly pickId: string;
+  /** E12-S11: its pane's autoscale source over the drawn ring (bumped per batch and kind). */
+  readonly price: SeriesPriceSource;
 }
 
 /** `engine.resize.*` (BQ-153): backing-store reallocations and DPR changes, per chart. */
@@ -250,6 +258,8 @@ interface Instance {
   main: number;
   /** `engine.data.rejected{reason}`: a model `RejectReason`, or `decode` (F-01, the wire). */
   readonly dataRejected: Record<string, number>;
+  /** E12-S11: each pane's price sources, the main series first; rebuilt on add and remove. */
+  readonly priced: PriceExtentSource[][];
   /** E12-S06: the mounted candle series (an array: the frame loop iterates it, no iterator). */
   readonly candles: CandleSeries[];
   /** E12-S07 PR B: the mounted line-family series, likewise. */
@@ -265,6 +275,9 @@ interface Instance {
   readonly barHit: BarHit;
   readonly kinds: SeriesMetrics;
 }
+
+/** A pane without series (E12-S11): autoscale reads nothing and keeps its window. */
+const NO_SOURCES: readonly PriceExtentSource[] = [];
 
 /** The ObjectIndex's rebuild after the main series is removed (a `replace` of nothing). */
 const CLEARED: MutationRange = new RangeSlot().set("replace", 0, 0, 0);
@@ -624,6 +637,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     const shape = isRibbonKind(kind) ? "candles" : kind;
     const candle = shape === "bars" ? new BarSeries(ring) : new CandleSeries(ring, shape);
     const pickId = `series.${sid}`;
+    const price = new SeriesPriceSource(store, ring, inst.viewport, pane);
     const entry: SeriesEntry = {
       kind,
       pane,
@@ -633,6 +647,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       ribbon: null,
       baseTick: null,
       pickId,
+      price,
     };
     inst.series.set(sid, entry);
     inst.seriesList.push(entry);
@@ -645,6 +660,26 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       inst.viewport.setMap(store); // G-8: the store is the runtime's IndexTimeMap
       moved(inst, true);
     }
+    pricing(inst);
+  }
+
+  /**
+   * E12-S11: every series is its pane's autoscale source (26 §3.5), the main series first (the
+   * percent anchor reads the first close), re-pointed at the instance's viewport. Runs on add,
+   * remove and re-init only; the autoscaler then re-evaluates every pane once.
+   */
+  function pricing(inst: Instance): void {
+    const lists = inst.priced;
+    for (let p = 0; p < lists.length; p += 1) (lists[p] as PriceExtentSource[]).length = 0;
+    const main = inst.series.get(inst.main);
+    if (main !== undefined) place(inst, main);
+    for (const s of inst.seriesList) if (s !== main) place(inst, s);
+    inst.autoscale.invalidate();
+  }
+
+  function place(inst: Instance, s: SeriesEntry): void {
+    s.price.viewport = inst.viewport;
+    (inst.priced[s.pane] ??= []).push(s.price);
   }
 
   /**
@@ -782,6 +817,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       s.candle.setKind(kind, ha, s.store);
     }
     s.kind = kind;
+    s.price.bump(); // the drawn high / low moved (26 :390): autoscale refits
     for (const h of s.candle.hosts) inst.graph.markData(h.id);
     const hosts = s.ribbon?.hosts ?? [];
     for (let i = 0; i < hosts.length; i += 1) inst.graph.markData((hosts[i] as { id: string }).id);
@@ -840,11 +876,13 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       inst.graph.markTheme();
       touch(inst);
     }
-    if (sid !== inst.main) return;
-    inst.main = -1;
-    inst.viewport.setMap(deps.timeMap ?? EMPTY_TIME_MAP);
-    inst.objects.onMutation(CLEARED);
-    moved(inst, true);
+    if (sid === inst.main) {
+      inst.main = -1;
+      inst.viewport.setMap(deps.timeMap ?? EMPTY_TIME_MAP);
+      inst.objects.onMutation(CLEARED);
+      moved(inst, true);
+    }
+    pricing(inst); // E12-S11: a removed series stops contributing to its pane's autoscale
   }
 
   /** `patch` by time: the batch's first bar must be a bar the store holds (the live bar's fix). */
@@ -882,6 +920,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       else if (op === "prepend") r = store.prepend(b);
       else r = patchAt(store, b);
       s.ring.sync(store, r);
+      s.price.bump();
       const hs = s.candle.hosts;
       const dirty = s.candle.dirtyHosts();
       for (let p = 0; p < hs.length; p += 1) {
@@ -1041,7 +1080,9 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         viewport,
         uniforms: createPaneUniforms(),
         autoscale: new AutoScaler(viewport, (pane) =>
-          pane === 0 ? (deps.priceSources ?? []) : [],
+          pane === 0 && deps.priceSources !== undefined
+            ? deps.priceSources
+            : (inst.priced[pane] ?? NO_SOURCES),
         ),
         ready: false,
         viewportDirty: false,
@@ -1075,6 +1116,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         seriesList: old?.seriesList ?? [],
         main: old?.main ?? -1,
         dataRejected: old?.dataRejected ?? {},
+        priced: [],
         candles: [],
         ribbons: [],
         blocks: new Map(),
@@ -1102,6 +1144,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       }
       const main = inst.series.get(inst.main);
       if (main !== undefined) viewport.setMap(main.store);
+      pricing(inst); // E12-S11: the kept series price the fresh viewport's panes
       inst.gestures.reduce = msg.reducedMotion === true;
       charts.set(msg.id, inst);
       touch(inst);

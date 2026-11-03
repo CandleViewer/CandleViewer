@@ -18,4 +18,20 @@ describe("perf budgets: autoscale", () => {
     const median = percentile(perFit, 50) ?? Number.NaN;
     expect(median, why(median, 2)).toBeLessThanOrEqual(budget(2));
   });
+
+  // E12-S11 PR A1: the runtime's source over a BarStore's drawn ring, panned and fed (a live
+  // tick re-runs the log guard's 100 000-bar pass): the same 2 ms data-window stage.
+  for (const step of ["step", "feed"] as const) {
+    it(`series source: ${step} refits 40 000 visible bars in <= 2 ms (median of 5 runs)`, () => {
+      const perFit: number[] = [];
+      for (let r = -1; r < 5; r += 1) {
+        const bench = new AutoscaleFitBench(100_000, "series");
+        const start = performance.now();
+        for (let f = 0; f < 100; f += 1) bench[step]();
+        if (r >= 0) perFit.push((performance.now() - start) / 100); // run -1 warms up
+      }
+      const median = percentile(perFit, 50) ?? Number.NaN;
+      expect(median, why(median, 2)).toBeLessThanOrEqual(budget(2));
+    });
+  }
 });

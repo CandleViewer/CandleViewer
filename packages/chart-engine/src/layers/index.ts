@@ -14,3 +14,4 @@ export * from "./candle/seams.js";
 export * from "./candle/marks.js";
 export * from "./ribbon/geometry.js";
 export * from "./ribbon/series.js";
+export * from "./candle/price-source.js";
