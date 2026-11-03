@@ -42,8 +42,11 @@ across page boundaries. Every stored bar carries `index` and `generation` when t
 Coverage holes (#5396, 24 §19.81): a closed bar the server did not store (`bars.write_holes`) is
 listed in `meta.coverage_holes` while it is not stored: the recorded ranges inside the page's span
 (from the page's first position to the next page's, or to `to`), minus the stored bars the page
-serves (a live `include_open` bar is not stored yet and fills none),
-at most `MAX_COVERAGE_HOLES` entries. The key is absent when there is none.
+serves (a live `include_open` bar is not stored yet and fills none).
+A row withheld for a failed checksum (SR-E12-11, `BarPage.withheld`) is listed there too, inside
+the page's span (#452 F9), as `[open, next open)` (`bars.reader.Withheld`): a time bar unless a
+stored bar is served at its open time, any other bar always. Both lists are joined and bounded
+together, at most `MAX_COVERAGE_HOLES` entries. The key is absent when there is none.
 """
 
 from __future__ import annotations
@@ -92,7 +95,7 @@ from candleviewer.bars.metrics import (
     record_page,
 )
 from candleviewer.bars.models import BarSpec
-from candleviewer.bars.reader import BarKey, BarPage, StoredBar, row_key, stored_bar
+from candleviewer.bars.reader import BarKey, BarPage, StoredBar, Withheld, row_key, stored_bar
 from candleviewer.bars.rows import BUILD_VERSIONS, bar_row
 from candleviewer.bars.series_store import LiveTail
 from candleviewer.bars.spec import PARAM_MAX_LEN, check_param_bounds, from_wire, qty_step_for
@@ -485,12 +488,14 @@ def make_market_bars_router(
                         symbol, spec, start_us, end_us, limit + 1 + room, after_us=after_us
                     )
                 rows = [stored_bar(r) for r in page.rows]
+                withheld = list(page.withheld)  # #452 F9: named in `meta.coverage_holes`
                 ts = page.next_cursor
                 if (spec.kind == "time" and ts is not None and len(page.rows) < SAME_OPEN_REREAD
                         and {r.ts_us for r in rows} == {ts}):  # fmt: skip
                     # m2: every row read shares one open time: re-read it alone, bounded
                     again = await reader.read_bars(symbol, spec, ts, ts + 1, SAME_OPEN_REREAD)
                     rows = [stored_bar(r) for r in again.rows] or rows
+                    withheld += again.withheld
         except (TimeoutError, OSError, ConnectionError):
             return _refused("unavailable", problem(503, "store_unavailable",
                             "Service unavailable",
@@ -552,14 +557,14 @@ def make_market_bars_router(
         record_page("bars", len(rows), sources)
         _log().info("market_bars_served", symbol=symbol, bar_type=bar_type,
                     spec_hash=spec.spec_hash, tiers=sources, rows=len(rows))  # fmt: skip
-        holes: list[dict[str, int]] | None = None
-        if write_holes is not None:
-            page_from = at_key[0] if at_key is not None else first_us
-            # A live bar is no stored bar (not written yet): it never suppresses a recorded hole.
-            stored_rows = rows[: len(rows) - len(live)]
-            holes = merge_coverage_holes(write_holes.holes_for(
-                symbol, spec.spec_hash, page_from, page_to, _present(spec, stored_rows),
-            )) or None  # fmt: skip
+        page_from = at_key[0] if at_key is not None else first_us
+        # A live bar is no stored bar (not written yet): it never suppresses a hole.
+        stored_rows = rows[: len(rows) - len(live)]
+        recorded = [] if write_holes is None else write_holes.holes_for(
+            symbol, spec.spec_hash, page_from, page_to, _present(spec, stored_rows),
+        )  # fmt: skip
+        lost = withheld_holes(spec, withheld, page_from, page_to, stored_rows, page.next_key)
+        holes = merge_coverage_holes(recorded, lost) or None
         # Live bars are tape-built, each at its own build_version: they count in provenance.
         provenance = bars_provenance(rows, spec_hash=spec.spec_hash,
                                      running=BUILD_VERSIONS[spec.kind])  # fmt: skip
@@ -572,6 +577,34 @@ def make_market_bars_router(
         )  # fmt: skip
 
     return router
+
+
+def withheld_holes(
+    spec: BarSpec, withheld: list[Withheld], page_from: int, page_to: int,
+    served: list[StoredBar], next_key: BarKey | None,
+) -> list[tuple[int, int]]:  # fmt: skip
+    """#452 F9: the ranges of the rows `read_bars` withheld for a failed checksum
+    (`Withheld`: `[open, next open)`), inside the page's span `[page_from, page_to)`. A time bar,
+    unless the page serves a stored bar at that open time (one bar per open time: the interval is
+    served, as an exchange kline fills it on `/market/klines`). Any other bar whose key is the
+    page's (below `next_key`; the next page lists the rest), whatever else is served there
+    (equal-`ts` siblings are distinct bars). Such a bar opening at the next page's first `ts`
+    (an equal-`ts` sibling before the next key, M1) keeps at least its open's microsecond, past
+    `page_to`: the next page starts after it, so this page is the only one that can name it (a
+    1 µs over-report, which the join and the cap tolerate)."""
+    opens = {r.ts_us for r in served} if spec.kind == "time" else set()
+    out: list[tuple[int, int]] = []
+    for w in withheld:
+        if spec.kind == "time" and w.start_us in opens:
+            continue
+        if spec.kind != "time" and next_key is not None and w.key >= next_key:
+            continue
+        start, end = max(w.start_us, page_from), min(w.end_us, page_to)
+        if spec.kind != "time":
+            end = max(end, start + 1)  # M1: never empty; the key is this page's
+        if start < end:
+            out.append((start, end))
+    return out
 
 
 def _present(spec: BarSpec, rows: list[StoredBar]) -> list[Present]:

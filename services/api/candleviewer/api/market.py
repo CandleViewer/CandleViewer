@@ -43,6 +43,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
+from bisect import bisect_left
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol
@@ -69,7 +70,7 @@ from candleviewer.bars.limits import DEFAULT_LIMIT, MAX_LIMIT, MAX_TIME_WINDOW_U
 from candleviewer.bars.metrics import record_page
 from candleviewer.bars.rows import BUILD_VERSIONS
 from candleviewer.bars.spec import from_wire
-from candleviewer.bars.write_holes import Present, WriteHoleLedger
+from candleviewer.bars.write_holes import Present, WriteHoleLedger, join_spans
 from candleviewer.ingestion.kline_coverage import CoverageIndex, Range
 from candleviewer.ingestion.kline_read import SOURCE_HOT, KlineReadService
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -310,6 +311,10 @@ def make_market_router(
     version lost, an exchange kline always); the list is joined and bounded by
     `market_response.merge_coverage_holes`.
 
+    #538: the ranges of the page's span the kline cache does not cover yet (`KlineRead.holes`,
+    each with a backfill started) are listed there too, minus the bars the page serves
+    (`_unserved`).
+
     S3 (#2087 security review): FastAPI parses and validates query parameters before this
     handler, so an unauthenticated caller can see a 400/422 schema error before the 401. Those
     bodies go through `api.error_redaction` and never echo input.
@@ -467,6 +472,7 @@ def make_market_router(
         # `_MAX_SLICES` slices were scanned (a long data hole: the page then ends at the last
         # scanned slice and the cursor resumes after it; `meta.coverage_holes` names the gap).
         recording_started: int | None = None
+        cache_gaps: list[Range] = []  # #538: what the kline cache does not cover yet
         bars = BarSegments()
         sources: list[str] = []
         slice_start, slices = start_us, 0
@@ -498,6 +504,7 @@ def make_market_router(
                 got = list[KlineRowLike](read.rows)
                 sources += [t for t in read.sources if t not in sources]
                 recording_started = read.recording_started_at_us
+                cache_gaps += read.holes
             else:
                 got = list(rows)
                 if got and SOURCE_HOT not in sources:
@@ -528,7 +535,8 @@ def make_market_router(
             else:
                 holes.append({"start_us": tail_start, "end_us": requested_end_us})
         lost = _write_holes(write_holes, symbol, interval, width, start_us, page_end, bars)
-        holes = merge_coverage_holes(holes, lost)
+        gaps = _unserved(cache_gaps, start_us, page_end, width, bars)
+        holes = merge_coverage_holes(holes, lost, gaps)
         served = sources if len(bars) else []  # a tier is claimed only when its bars are served
         record_page("klines", len(bars), list(served))
         meta = build_meta(
@@ -553,6 +561,32 @@ def _provenance(interval: str, bars: BarSegments) -> dict[str, object] | None:
     except BarsError:
         return None
     return bars_provenance(bars.rows(), spec_hash=spec.spec_hash, running=BUILD_VERSIONS["time"])
+
+
+def _unserved(
+    gaps: list[Range], start_us: int, end_us: int, width: int, bars: BarSegments
+) -> list[tuple[int, int]]:
+    """#538: the parts of `[start_us, end_us)` the kline cache does not cover yet
+    (`KlineRead.holes`, for which the read started a backfill), minus the intervals of the bars
+    the page serves there (a tape-built bar fills its own): what the page cannot serve, so a
+    missing range is named, never silently absent (22 `DataMeta.coverage_holes`)."""
+    spans = [(a, b) for a, b in join_spans(
+        (max(g.start_us, start_us), min(g.end_us, end_us)) for g in gaps) if a < b]  # fmt: skip
+    if not spans:
+        return []
+    served = sorted(t for t, _, _ in bars.row_versions())
+    out: list[tuple[int, int]] = []
+    for lo, hi in spans:
+        at = lo
+        for t in served[bisect_left(served, lo - width + 1) :]:
+            if t >= hi:
+                break
+            if t > at:
+                out.append((at, t))
+            at = max(at, t + width)
+        if at < hi:
+            out.append((at, hi))
+    return out
 
 
 def _write_holes(

@@ -17,8 +17,11 @@ reads no storage itself.
   record only when the `row_checksum` the writer stores for it (`rows.tape_row_checksum`, the
   value the ledger keeps for the version lost) is equal, the rule REST applies to a tape-built
   row; a version the ledger does not know suppresses nothing. Checksums are computed only for
-  the bars that open inside a recorded span, so a series with no record pays one lookup. It
-  rides in `meta`, so it is on every chunk and in either encoding.
+  the bars that open inside a recorded span, so a series with no record pays one lookup. The
+  rows the series' last read withheld for a failed checksum (`Latest.withheld`, #452 F9) are
+  listed too, as REST lists them: `[open, next open)` clipped to the span, a time bar only where
+  no bar is sent at its open time. It rides in `meta`, so it is on every chunk and in either
+  encoding.
   `stale_build: true` (#5396, 23 §13) when a closed bar sent was built below the running version
   or has no recorded one (a NULL `build_version`, which stays out of the `build_version`
   minimum); absent otherwise.
@@ -55,7 +58,7 @@ from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.rows import BUILD_VERSIONS, tape_row_checksum
 from candleviewer.bars.series_store import MAX_SERIES, SeriesStore
 from candleviewer.bars.spec import WireBarType, from_wire, to_wire
-from candleviewer.bars.write_holes import Present, WriteHoleLedger, cap_spans
+from candleviewer.bars.write_holes import Present, WriteHoleLedger, cap_spans, join_spans
 from candleviewer.ws.bars_publish import Scales
 from candleviewer.ws.bars_wire import bar_item, bars_frames, covering_scales
 from candleviewer.ws.binary import BARS, Frame, FrameEncodeError
@@ -63,6 +66,7 @@ from candleviewer.ws.sequencing import SnapshotBody
 from candleviewer.ws.topics import BARS_DEFAULTS
 
 if TYPE_CHECKING:
+    from candleviewer.bars.reader import Withheld
     from candleviewer.ws.permissions import Subscription
 
 #: `(symbol, spec, generation)` of a built snapshot: `BarsPublisher.note_generation`.
@@ -113,6 +117,26 @@ def _coverage_holes(
     return ledger.holes_for(symbol, spec.spec_hash, bars[0].open_time, _LIVE_EDGE_US, present)
 
 
+def _withheld_holes(
+    spec: BarSpec, withheld: tuple[Withheld, ...], bars: list[Bar]
+) -> list[tuple[int, int]]:
+    """#452 F9: the rows the series' last read withheld for a failed checksum (`Withheld`:
+    `[open, next open)`), clipped to the snapshot's span, from `bars[0]` to the live edge. As REST
+    (`api.market_bars.withheld_holes`): a time bar is not listed where a bar is sent at its open
+    time (one bar per open time); any other bar is always listed, since nothing trusted ties a
+    bar sent to the withheld row (its index is the tampered row's own)."""
+    if not withheld:
+        return []
+    first = bars[0].open_time
+    opens = {b.open_time for b in bars} if spec.kind == "time" else set()
+    out: list[tuple[int, int]] = []
+    for w in withheld:
+        start, end = max(w.start_us, first), min(w.end_us, _LIVE_EDGE_US)
+        if start < end and w.start_us not in opens:
+            out.append((start, end))
+    return out
+
+
 class BarsSnapshotSource:
     """The `SnapshotSource` described in the module docstring."""
 
@@ -142,8 +166,12 @@ class BarsSnapshotSource:
         meta: Item = {"spec_hash": spec.spec_hash, "build_version": build, "include_delta": flow}
         if latest.stale_build:  # §6.1, #5396: absent reads false
             meta["stale_build"] = True
-        if self._holes is not None and bars:
-            spans = _coverage_holes(self._holes, symbol, spec, latest.generation, bars)
+        if bars:
+            spans = join_spans([
+                *_withheld_holes(spec, latest.withheld, bars),
+                *([] if self._holes is None
+                  else _coverage_holes(self._holes, symbol, spec, latest.generation, bars)),
+            ])  # fmt: skip
             if spans:  # a list built per build, never changed after: the cache shares it
                 meta["coverage_holes"] = [
                     {"start_us": a, "end_us": b} for a, b in cap_spans(spans, MAX_COVERAGE_HOLES_WS)
