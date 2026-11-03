@@ -4,6 +4,7 @@ Built on the BQ defaults; rulings pending."""
 from __future__ import annotations
 
 import math
+import time
 
 import pytest
 
@@ -159,6 +160,24 @@ def _pem(kind: str, body: str, *, end: bool) -> str:
 def test_scrub_removes_every_secret_shape(raw: str, secret: str) -> None:
     out = scrub(raw)
     assert secret not in out and "[REDACTED]" in out
+
+
+@pytest.mark.parametrize("blank", ["\n" * 50_000, " \n" * 50_000, "\t\r\n" * 30_000])
+def test_scrub_is_linear_on_blank_lines(blank: str) -> None:
+    t0 = time.perf_counter()
+    assert scrub(blank + "Cookie: a=b").endswith("Cookie: [REDACTED]")
+    assert time.perf_counter() - t0 < 1.0
+
+
+def test_scrub_keeps_quotes_so_json_stays_valid() -> None:
+    import json
+
+    out = scrub('{"apiKey": "k-1", "n": 3, "token": "a\\"b c"}')
+    assert json.loads(out) == {"apiKey": "[REDACTED]", "n": 3, "token": "[REDACTED]"}
+
+
+def test_scrub_redacts_an_unterminated_quoted_value() -> None:
+    assert "oops" not in scrub('{"secret": "oops')
 
 
 def test_scrub_leaves_neighbouring_fields() -> None:
