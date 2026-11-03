@@ -9,11 +9,16 @@ the PR's own code with a token in reach (the gate the #5422 lens asked for in `p
 from __future__ import annotations
 
 import copy
+import os
 import posixpath
 import re
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -92,3 +97,79 @@ def test_changelog_preview_gate_fails_on_a_job_running_the_prs_own_tools() -> No
     persisted = copy.deepcopy(DOC)
     persisted["jobs"]["changelog-preview"]["steps"][0]["with"]["persist-credentials"] = True
     assert _offences(persisted) == ["checkout 'pr' persists credentials"]
+
+
+# #3099 (release contract (3)): the advisory verify on release-prep PRs, the untagged candidate.
+ADVISORY = "Advisory release verification of a release-prep PR (warnings only)"
+FAKE_TOOLS = """import json, os, sys
+with open(os.environ["PY_LOG"], "a", encoding="utf-8") as fh:
+    fh.write(json.dumps(sys.argv[1:]) + "\\n")
+print("::error::CI-REL-005: version 0.1.1 != expected 0.2.0")
+sys.exit(1)
+"""
+FAKE_GIT = """import os
+print(os.environ.get("CHANGED", ""))
+"""
+
+
+def _advisory(tmp_path: Path, title: str, changed: str) -> tuple[int, str, list[str]]:
+    step = next(s for s in DOC["jobs"]["changelog-preview"]["steps"] if s.get("name") == ADVISORY)
+    tool = tmp_path / "base" / "tools" / "ci" / "prepare_release.py"
+    tool.parent.mkdir(parents=True)
+    tool.write_text("", encoding="utf-8")
+    (tmp_path / "pr").mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, source in {"python": FAKE_TOOLS, "git": FAKE_GIT}.items():
+        (bin_dir / name).write_text(f"#!{sys.executable}\n{source}", encoding="utf-8")
+        (bin_dir / name).chmod(0o755)
+    log, summary = tmp_path / "py.log", tmp_path / "summary.md"
+    env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}", "PY_LOG": str(log)}
+    env |= {"TITLE": title, "CHANGED": changed, "RUNNER_TEMP": str(tmp_path)}
+    env |= {"GITHUB_STEP_SUMMARY": str(summary), "HOME": str(tmp_path)}
+    proc = subprocess.run(
+        ["bash", "-e", "-c", step["run"]],
+        cwd=tmp_path / step["working-directory"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+    return proc.returncode, proc.stdout + proc.stderr, calls
+
+
+@pytest.mark.parametrize(
+    ("title", "changed", "runs"),
+    [
+        ("chore(infra-devops): prepare release 0.2.0", "CHANGELOG.md", True),
+        ("docs(docs): sync unreleased", "CHANGELOG.md\nversion.txt", True),
+        ("docs(docs): sync unreleased", "CHANGELOG.md", False),
+        ("chore(infra-devops): prepare release 0.2.0 (#5)", "CHANGELOG.md", False),
+    ],
+)
+def test_advisory_verify_runs_on_prep_shaped_prs_and_never_fails(
+    tmp_path: Path, title: str, changed: str, runs: bool
+) -> None:
+    if not shutil.which("bash"):
+        pytest.skip("bash runs the step")
+    rc, out, calls = _advisory(tmp_path, title, changed)
+    assert rc == 0, out
+    assert bool(calls) == runs
+    if runs:
+        assert calls == [
+            '["../base/tools/ci/prepare_release.py", "--verify", "--rev", "HEAD", '
+            '"--main-ref", "HEAD"]'
+        ]
+        assert "::warning::CI-REL-005" in out and "::error::" not in out
+
+
+def test_changelog_runs_on_prs_changing_version_txt_and_names_an_untagged_candidate() -> None:
+    assert "version.txt" in DOC[True]["pull_request"]["paths"]
+    steps = DOC["jobs"]["changelog-preview"]["steps"]
+    (untagged,) = [s for s in steps if "release_run.py untagged" in str(s.get("run", ""))]
+    assert untagged["working-directory"] == "pr" and "GH_TOKEN" not in str(untagged.get("env"))
+    assert '--summary "$GITHUB_STEP_SUMMARY"' in untagged["run"]
+    advisory = next(s for s in steps if s.get("name") == ADVISORY)
+    assert advisory["env"] == {"TITLE": "${{ github.event.pull_request.title }}"}
+    assert "${{" not in advisory["run"]

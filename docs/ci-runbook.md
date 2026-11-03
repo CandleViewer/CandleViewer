@@ -97,8 +97,9 @@ scheduled (.github/workflows/governance*.yml, cold-cache.yml, a11y-, e2e- and st
 └─ storybook-nightly      → _job-a11y.yml's storybook job alone on main, non-required; a red
                             scheduled run is reported as e2e-nightly's is (CI-A11Y-002..004; below)
 
-release tag (.github/workflows/release.yml)
-└─ compute-version → finalize-and-release → build-sign-installer         (CI-REL-001..004)
+push to main touching CHANGELOG.md / version.txt, or dispatch from main (.github/workflows/release.yml)
+└─ classify → verify → e2e (_job-e2e.yml at the candidate) + sbom → tag-draft → build-sign
+                                                                          (CI-REL-002..006)
 ```
 
 **One run per PR per workflow (#3751).** Every `pull_request`-triggered workflow cancels the
@@ -1298,10 +1299,24 @@ carries a warning annotation titled `regression-guard (non-required)`, and the j
   `1.0.0` by itself. The declaration is an owner act (C-15.9): the prepare
   command's `--allow-1-0-0` and the release run's `RELEASE_ALLOW_1_0_0`.
   This is deliberate friction; never hand-edit `version.txt` to pass it.
-- **CI-REL-003** (release-binary signing parity): the Electron installer
-  signing step did not produce a signature matching the image-signing
-  parity requirement. Check the cosign keyless step log for an OIDC/identity
-  mismatch.
+- **CI-REL-003** (release installer missing or unsigned; `release.yml`
+  `build-sign`): electron-builder left no installer in `apps/desktop/release`
+  (its `directories.output`; R0 ships the Linux AppImage only), or the
+  keyless cosign signature did not verify. The verifier identity is
+  `https://github.com/<owner>/<repo>/.github/workflows/release.yml@refs/heads/main`
+  with issuer `https://token.actions.githubusercontent.com`: push and
+  dispatch runs both run on `main`. Read the `build:installer` and the
+  electron-hardening gate logs first (the gate runs on the same dists just
+  before packaging). The tag and the draft already exist. `build-sign`
+  builds from the candidate's own tree, so pick the remedy by where the fix
+  lands: a fix to the workflow or its tooling (`release.yml` runs from
+  `main`'s tip) or a transient failure, dispatch `release.yml` again with
+  the same `candidate` and `dry_run=false`, and the re-run replaces the
+  draft's assets (`--clobber`); a fix to the app or its packaging needs a
+  new prep PR and release (the CI-REL-005 remedy), because a re-run would
+  rebuild the old tree. Once the release is published, its assets are
+  immutable: the re-run refuses (CI-REL-005) and a fix ships as a new
+  release.
 - **CI-REL-004** (PRR gate unchecked): the draft release stays a draft while
   the PRR checklist item on the release-checklist issue is unchecked. This
   is not a bug — do not publish manually; complete the PRR checklist
@@ -1318,10 +1333,32 @@ carries a warning annotation titled `regression-guard (non-required)`, and the j
   open a new `[Release prep]` issue, run the prepare command (`AGENTS.md`
   §4) on `main`'s fresh tip and merge the prep PR alone; its merge is a
   candidate again. A same-version re-prep that was mis-titled does not
-  start the run: dispatch `release.yml` with `candidate=<sha>`. A rogue tag
+  start the run: dispatch `release.yml` from `main` with `candidate=<sha>`
+  (the full 40-hex sha) and `dry_run=false`, the release run command in
+  `AGENTS.md` §4 (`dry_run` defaults to `true`, which verifies and runs the
+  e2e gate and the SBOMs but creates nothing). A candidate that is not
+  GitHub-verified is refused too. A re-run on the candidate of a published
+  release is refused (`release vX.Y.Z is published`) before anything is
+  rebuilt or replaced: published assets are immutable (C-15.7), so the fix
+  ships as a new release. A rogue tag
   (reachable without its section, or outside `main`'s line) is never
   removed by the run: escalate to the owner, who removes it by hand, then
   re-run.
+- **CI-REL-006** (release SBOM missing, empty or invalid; `release.yml`
+  `sbom`, `tools/ci/validate_sbom.py --artefact`): one of the three SR-133
+  SBOMs (`api`: `services/api`; `web`: the web app's production
+  dependency closure; `desktop`: the desktop app's full build closure,
+  over-inclusive against the AppImage (it lists build tools such as
+  electron-builder); the two
+  apps staged with `pnpm deploy` at the candidate) is absent, not CycloneDX 1.x JSON,
+  or lists no component; the message names the artefact. The job runs
+  before anything is created, also in a dry run, so nothing was tagged.
+  Read the `anchore/sbom-action` step log for that artefact (a scan path
+  with no lockfile yields an empty SBOM). Fix on `main` and re-prep, or,
+  when the candidate itself is fine (a transient tool failure), dispatch
+  `release.yml` again with the same `candidate` and `dry_run=false`. The diff against the
+  previous release's SBOMs is a review aid, never a failure: the first
+  release reads "First release, no baseline".
 
 ### CI-DEP-* — dev/staging deploy (`tools/ci/deploy_dev.py`, §8)
 

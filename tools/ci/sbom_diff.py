@@ -13,6 +13,10 @@ attestation could not be fetched) every current component is reported as
 "new" and a note explains why — this is not itself a failure (SR-135 is a
 review aid, not a blocking gate; CI-IMG-003/004/005 are the blocking gates).
 
+#3099 (SR-133, the release run): `--previous PATH` diffs against a file instead, the previous
+release's attached SBOM, under `--heading`. A missing file is the first release (no baseline),
+an unreadable one is said so; either way every current component is listed as new.
+
 Stdlib only; shells out to `cosign` when a previous digest is available.
 """
 
@@ -58,15 +62,38 @@ def _fetch_previous_sbom(image: str, digest: str) -> dict[str, object] | None:
     return parsed
 
 
-def render_diff(current: dict[str, object], previous: dict[str, object] | None) -> str:
+_IMAGE_HEADING = "### SBOM diff vs previous `:dev` image (SR-135)"
+_IMAGE_NO_BASELINE = "No previous `:dev` attestation available (first build, or fetch failed)"
+FIRST_RELEASE = "First release, no baseline (no previous release SBOM for this artefact)"
+
+
+def _read_previous(path: Path) -> tuple[dict[str, object] | None, str]:
+    """The previous release's SBOM, or None and why there is no baseline."""
+    if not path.is_file():
+        return None, FIRST_RELEASE
+    try:
+        parsed: object = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        parsed = None
+    if not isinstance(parsed, dict):
+        return None, f"The previous release SBOM `{path.name}` is unreadable, no baseline"
+    return parsed, ""
+
+
+def render_diff(
+    current: dict[str, object],
+    previous: dict[str, object] | None,
+    *,
+    heading: str = _IMAGE_HEADING,
+    no_baseline: str = _IMAGE_NO_BASELINE,
+) -> str:
     current_keys = _component_keys(current)
 
-    lines = ["### SBOM diff vs previous `:dev` image (SR-135)", ""]
+    lines = [heading, ""]
 
     if previous is None:
         lines.append(
-            "_No previous `:dev` attestation available (first build, or fetch failed) — "
-            f"all {len(current_keys)} components listed as new for review._"
+            f"_{no_baseline} — all {len(current_keys)} components listed as new for review._"
         )
         lines.append("")
         for k in sorted(current_keys):
@@ -97,16 +124,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--current", required=True, type=Path, help="current build's CycloneDX SBOM"
     )
-    parser.add_argument(
-        "--previous-digest", required=True, help="previous :dev image digest, or 'none'"
+    baseline = parser.add_mutually_exclusive_group(required=True)
+    baseline.add_argument("--previous-digest", help="previous :dev image digest, or 'none'")
+    baseline.add_argument(
+        "--previous", type=Path, help="previous release's SBOM file (missing: first release)"
     )
-    parser.add_argument("--image", required=True, help="registry/repo ref, e.g. ghcr.io/org/image")
+    parser.add_argument("--image", help="with --previous-digest: registry/repo ref")
+    parser.add_argument("--heading", default=None, help="markdown heading line")
     args = parser.parse_args(argv)
+    if args.previous_digest is not None and not args.image:
+        parser.error("--previous-digest needs --image")
 
     current = json.loads(args.current.read_text(encoding="utf-8"))
+    if args.previous is not None:
+        previous, why = _read_previous(args.previous)
+        heading = args.heading or f"### SBOM diff vs `{args.previous.name}` (SR-133)"
+        print(render_diff(current, previous, heading=heading, no_baseline=why))
+        return 0
     previous = _fetch_previous_sbom(args.image, args.previous_digest)
 
-    print(render_diff(current, previous))
+    print(render_diff(current, previous, heading=args.heading or _IMAGE_HEADING))
     return 0
 
 

@@ -79,4 +79,5 @@ def test_every_job_that_launches_electron_runs_the_allowlist_runner_after_its_in
         ("_job-e2e.yml", "e2e-electron"),
         ("_job-js.yml", "build"),
         ("perf-engine-matrix.yml", "electron"),
+        ("release.yml", "build-sign"),  # #3099: the hardening gate before build:installer
     ]

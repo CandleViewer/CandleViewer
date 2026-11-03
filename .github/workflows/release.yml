@@ -1,205 +1,238 @@
 name: release
 
-# E03-T11: release-train workflow (docs/plan/07-release-and-prr.md §2-§4;
-# ADR-0013 pipeline shape "release tag -> changelog -> Electron installers
-# (signed) -> release checklist + PRR gate").
+# #3099 (the #2341 ruling's release contract; docs/plan/07-release-and-prr.md §3-§4, ADR-0013
+# "release tag -> changelog -> Electron installers (signed) -> release checklist + PRR gate").
+# Releases are cut from `main` only and roll forward. A merged release-prep PR
+# (`chore(infra-devops): prepare release X.Y.Z`, CHANGELOG.md + version.txt only) is the
+# candidate C; this run is the only creator of `v*` tags:
 #
-# Triggers: a `release/*` branch push (cut), or a `vX.Y.Z` tag push
-# (publish). Computes the semver bump from commits since the last tag,
-# enforces the 1.0.0-explicit-declaration guard (CI-REL-002), finalises
-# CHANGELOG.md's Unreleased section under the new version heading, drafts
-# a GitHub Release from it, attaches the SBOM produced by `main.yml`
-# (E03-T08) if available, builds + signs the Electron installer, and opens
-# the release-checklist issue (CI-REL-004: the release stays a draft while
-# that issue's PRR-gate item is unchecked).
+#   classify -> verify -> e2e (_job-e2e.yml at C) + sbom -> tag-draft -> build-sign
 #
-# Out of scope (ticket "Out of scope"): executing the PRR itself and the
-# Live-enablement gate (R4/E43/E44), Electron packaging *configuration*
-# (E10 — this workflow only calls `pnpm --filter @candleviewer/desktop
-# build:installer` and signs the output), deploying to prod (§4.4, a human
-# checklisted action).
+# - classify: a push to main touching CHANGELOG.md or version.txt names its one candidate
+#   (`prepare_release.py --classify` over the push's first-parent commits); none ends the run
+#   green, two or more is CI-REL-005. A dispatch from main names C itself (`candidate`, 40
+#   lowercase hex), with `dry_run` (default true) and the owner's 1.0.0 declaration (C-15.9).
+# - verify: `prepare_release.py --verify` (identity, tag history, version, completeness, C
+#   reachable from origin/main) and C GitHub-verified (04 §12.3); CI-REL-005 / CI-REL-002.
+# - e2e: _job-e2e.yml checked out at C (C-9.1 #8, C-15.8), e2e-electron included.
+# - sbom: three CycloneDX SBOMs (services/api, the web app, the desktop app) at C, validated
+#   (CI-REL-006), diffed against the previous release's (SR-133). Read-only.
+# - tag-draft: re-verifies, then tags vV at C (annotated, REST, never moved), finds or creates
+#   the `[Release]: vV checklist` issue, drafts the release from the V section, attaches the
+#   SBOMs and posts their diff to the checklist issue.
+# - build-sign: builds web + desktop at C, runs the electron-hardening gate on those dists,
+#   packages the Linux AppImage, signs it with keyless cosign (identity release.yml on
+#   refs/heads/main) and attaches it; no artefact is CI-REL-003.
 #
-# Security notes: refuses to run from a non-main/release/* ref (SR-137);
-# release tags require signed commits (branch protection, 04-security-
-# program.md §12.3).
+# A dry run verifies (reporting without failing), runs the e2e gate and the SBOMs, and skips
+# every write job. Nothing is created before verify, e2e and the SBOMs pass. The run never
+# pushes a branch and never moves or deletes a tag; every write is idempotent, so a re-run on C
+# creates no second tag, issue, release or comment and replaces a draft's assets (--clobber).
+# A published release is immutable (C-15.7): the draft step refuses it (CI-REL-005) and the
+# installer upload re-checks it is still a draft, so a re-dispatch on a shipped candidate
+# rebuilds and replaces nothing. A refused candidate in a dry run still has the e2e gate and
+# the SBOMs run at C (read-only token), by design: the dry run reports what the gate finds.
+# Publication stays manual behind the PRR gate (CI-REL-004). Inputs and computed values reach
+# scripts only through env. Out of scope: the PRR itself, Windows/macOS installers and their
+# signing secrets (owner item), prod deploy (07 §4.4).
 
 on:
   push:
-    branches: ["release/*"]
-    tags: ["v*.*.*"]
+    branches: [main]
+    paths: [CHANGELOG.md, version.txt]
   workflow_dispatch:
     inputs:
+      candidate:
+        description: "Candidate commit on main (40 lowercase hex)"
+        type: string
+        required: true
+      dry_run:
+        description: "true: verify (report only), e2e gate and SBOMs; create nothing"
+        type: choice
+        options: ["true", "false"]
+        default: "true"
       RELEASE_ALLOW_1_0_0:
-        description: "Explicitly declare the first 1.0.0 (Live-enablement only)"
-        required: false
+        description: "Declare the first 1.0.0 (an owner act, C-15.9)"
+        type: choice
+        options: ["false", "true"]
         default: "false"
 
 permissions:
   contents: read
 
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
-
 env:
   PYTHON_VERSION: "3.13"
 
 jobs:
-  compute-version:
-    name: compute-version
+  classify:
+    name: classify
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
     outputs:
-      bump: ${{ steps.bump.outputs.bump }}
-      next_version: ${{ steps.bump.outputs.next_version }}
+      candidate: ${{ steps.inputs.outputs.candidate || steps.classify.outputs.candidate }}
+      dry_run: ${{ steps.inputs.outputs.dry_run }}
+      allow_1_0_0: ${{ steps.inputs.outputs.allow_1_0_0 }}
     steps:
-      - name: Refuse to run from a non-main/release/*/tag ref (SR-137)
+      - name: Refuse a ref other than main and check the dispatch inputs (SR-137)
+        id: inputs
         env:
+          EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
+          IN_CANDIDATE: ${{ inputs.candidate }}
+          IN_DRY_RUN: ${{ inputs.dry_run }}
+          IN_ALLOW: ${{ inputs.RELEASE_ALLOW_1_0_0 }}
         run: |
-          ref="$REF"
-          case "$ref" in
-            refs/heads/release/*|refs/tags/v*) : ;;
-            *) echo "release workflow refuses to run from ref: $ref" >&2; exit 1 ;;
-          esac
+          set -euo pipefail
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::CI-REL-005: the release run runs only from refs/heads/main"
+            exit 1
+          fi
+          if [ "$EVENT" != "workflow_dispatch" ]; then
+            { echo "dry_run=false"; echo "allow_1_0_0=false"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! [[ "$IN_CANDIDATE" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::CI-REL-005: candidate must be a full commit sha (40 lowercase hex)"
+            exit 1
+          fi
+          for value in "$IN_DRY_RUN" "$IN_ALLOW"; do
+            case "$value" in
+              true | false) ;;
+              *) echo "::error::CI-REL-005: dry_run and RELEASE_ALLOW_1_0_0 take true or false"; exit 1 ;;
+            esac
+          done
+          {
+            echo "candidate=$IN_CANDIDATE"
+            echo "dry_run=$IN_DRY_RUN"
+            echo "allow_1_0_0=$IN_ALLOW"
+          } >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: github.event_name == 'push'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - if: github.event_name == 'push'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Collect commits since the last tag
-        run: |
-          set -euo pipefail
-          last_tag="$(git tag --list 'v*' --sort=-v:refname | head -n1 || true)"
-          range="${last_tag:+${last_tag}..}HEAD"
-          python - "$range" <<'PYEOF'
-          import json
-          import subprocess
-          import sys
-
-          range_ = sys.argv[1]
-          out = subprocess.run(
-              ["git", "log", range_, "--pretty=format:%H%x1f%B%x1e"],
-              capture_output=True, text=True, check=True,
-          ).stdout
-          commits = []
-          for chunk in out.split("\x1e"):
-              chunk = chunk.strip()
-              if not chunk:
-                  continue
-              sha, _, message = chunk.partition("\x1f")
-              commits.append({"sha": sha, "message": message})
-          with open("commits-since-tag.json", "w", encoding="utf-8") as fh:
-              json.dump(commits, fh)
-          PYEOF
-
-      - name: Compute next version (CI-REL-002 1.0.0 guard)
-        id: bump
+      - name: Name the push's one release candidate (none ends the run; two is CI-REL-005)
+        id: classify
+        if: github.event_name == 'push'
         env:
-          RELEASE_ALLOW_1_0_0: ${{ github.event.inputs.RELEASE_ALLOW_1_0_0 || 'false' }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
         run: |
           set -euo pipefail
-          args=(--commits-json commits-since-tag.json --current-version version.txt)
-          if [ "$RELEASE_ALLOW_1_0_0" = "true" ]; then
-            args+=(--allow-1-0-0)
-          fi
-          out="$(python tools/ci/compute_release_bump.py "${args[@]}")"
-          echo "$out"
-          echo "$out" | grep '^bump=' >> "$GITHUB_OUTPUT"
-          echo "$out" | grep '^next_version=' >> "$GITHUB_OUTPUT"
+          rc=0
+          python tools/ci/prepare_release.py --classify --rev "$AFTER" --before "$BEFORE" \
+            > "$RUNNER_TEMP/classify.out" || rc=$?
+          cat "$RUNNER_TEMP/classify.out"
+          [ "$rc" -eq 0 ] || exit "$rc"
+          grep -E '^candidate=([0-9a-f]{40})?$' "$RUNNER_TEMP/classify.out" >> "$GITHUB_OUTPUT"
 
-  finalize-and-release:
-    name: finalize-and-release
-    needs: compute-version
+  verify:
+    name: verify
+    needs: classify
+    if: needs.classify.outputs.candidate != ''
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     permissions:
-      contents: write
-      issues: write
+      contents: read
+    # No concurrency group: verify writes nothing, and a dry run (which skips both write jobs)
+    # must never enter release-<C>, where its pending job could cancel a real run's pending one.
+    outputs:
+      version: ${{ steps.decide.outputs.version }}
+      verified: ${{ steps.decide.outputs.verified }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Finalise CHANGELOG.md Unreleased section under the new version heading
-        id: finalize
+      - name: Verify the candidate (identity, tag history, version, completeness, provenance)
+        id: contract
         env:
-          NEXT_VERSION: ${{ needs.compute-version.outputs.next_version }}
+          CANDIDATE: ${{ needs.classify.outputs.candidate }}
+          ALLOW_1_0_0: ${{ needs.classify.outputs.allow_1_0_0 }}
         run: |
           set -euo pipefail
-          version="$NEXT_VERSION"
-          date="$(date -u +%Y-%m-%d)"
-          python tools/ci/finalize_changelog.py --changelog CHANGELOG.md \
-            --version "$version" --date "$date" --release-body-out release-body.md
-          echo "$version" > version.txt
+          args=(--verify --rev "$CANDIDATE" --main-ref origin/main --section-out "$RUNNER_TEMP/section.md")
+          if [ "$ALLOW_1_0_0" = "true" ]; then args+=(--allow-1-0-0); fi
+          rc=0
+          python tools/ci/prepare_release.py "${args[@]}" > "$RUNNER_TEMP/verify.out" || rc=$?
+          cat "$RUNNER_TEMP/verify.out"
+          grep -E '^version=[0-9]+\.[0-9]+\.[0-9]+$' "$RUNNER_TEMP/verify.out" >> "$GITHUB_OUTPUT" || true
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
 
-      - name: Commit finalised changelog + version.txt
+      - name: The candidate is GitHub-verified (04 §12.3)
+        id: github
         env:
-          NEXT_VERSION: ${{ needs.compute-version.outputs.next_version }}
-          REF_NAME: ${{ github.ref_name }}
+          CANDIDATE: ${{ needs.classify.outputs.candidate }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          git config user.name "candleviewer-release-bot"
-          git config user.email "release-bot@users.noreply.github.com"
-          git add CHANGELOG.md version.txt
-          git diff --cached --quiet || git commit -m "chore(infra-devops): finalise ${NEXT_VERSION} changelog"
-          git push origin "HEAD:${REF_NAME}"
+          rc=0
+          python tools/ci/release_run.py verified --candidate "$CANDIDATE" > "$RUNNER_TEMP/github.out" \
+            || rc=$?
+          cat "$RUNNER_TEMP/github.out"
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
 
-      - name: Open the release-checklist issue (CI-REL-004)
-        id: checklist
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const version = "${{ needs.compute-version.outputs.next_version }}";
-            const { data: issue } = await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `[Release]: v${version} checklist`,
-              labels: ["type/release", "priority/p1-high"],
-              body: `Release-train checklist for \`v${version}\` (docs/plan/07-release-and-prr.md §4). ` +
-                    "See .github/ISSUE_TEMPLATE/release-checklist.yml for the full item list. " +
-                    "This release stays a draft until the PRR-gate item on this issue is checked (CI-REL-004).",
-            });
-            core.setOutput("issue_number", issue.number);
-
-      - name: Draft the GitHub Release (refuses to publish while PRR gate unchecked)
+      - name: Decide (a dry run reports a refusal without failing; nothing is created either way)
+        id: decide
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NEXT_VERSION: ${{ needs.compute-version.outputs.next_version }}
-          COMMIT_SHA: ${{ github.sha }}
-          CHECKLIST_ISSUE_NUMBER: ${{ steps.checklist.outputs.issue_number }}
+          CONTRACT_RC: ${{ steps.contract.outputs.rc }}
+          GITHUB_RC: ${{ steps.github.outputs.rc }}
+          VERSION: ${{ steps.contract.outputs.version }}
+          DRY_RUN: ${{ needs.classify.outputs.dry_run }}
         run: |
           set -euo pipefail
-          version="$NEXT_VERSION"
-          gh release create "v${version}" \
-            --title "v${version}" \
-            --notes-file release-body.md \
-            --draft \
-            --target "$COMMIT_SHA"
-          echo "Draft release v${version} created; publish only after the PRR gate item on issue #${CHECKLIST_ISSUE_NUMBER} is checked (CI-REL-004)."
+          if [ "$CONTRACT_RC" = "0" ] && [ "$GITHUB_RC" = "0" ] && [ -n "$VERSION" ]; then
+            { echo "version=$VERSION"; echo "verified=true"; } >> "$GITHUB_OUTPUT"
+            echo "Candidate verified as v$VERSION."
+            exit 0
+          fi
+          echo "verified=false" >> "$GITHUB_OUTPUT"
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "::warning::CI-REL-005: dry run: this candidate would be refused (findings above)"
+            exit 0
+          fi
+          echo "::error::CI-REL-005: the candidate is refused (findings above); nothing is created"
+          exit 1
 
-  build-sign-installer:
-    name: build-sign-installer
-    needs: [compute-version, finalize-and-release]
+  e2e:
+    name: e2e
+    needs: [classify, verify]
+    if: needs.classify.outputs.candidate != ''
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_job-e2e.yml
+    with:
+      ref: ${{ needs.classify.outputs.candidate }}
+      electron: true
+
+  sbom:
+    name: sbom
+    needs: [classify, verify]
+    if: needs.classify.outputs.candidate != ''
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: write
-      id-token: write # keyless cosign signing (SR-137, matches main.yml's image-signing pattern)
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ needs.classify.outputs.candidate }}
+          fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -208,37 +241,304 @@ jobs:
       - name: Enable pnpm via corepack
         run: corepack enable && corepack prepare pnpm@12.5.1 --activate
 
-      - name: Install workspace deps
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build the Electron installer (packaging config owned by E10)
-        run: pnpm --filter @candleviewer/desktop run build:installer
+      # `pnpm deploy` writes each app's own dependency closure and lockfile (the web app's
+      # production dependencies; the desktop app declares none, so its build closure).
+      - name: Stage the web and desktop apps' dependency closures
+        run: |
+          set -euo pipefail
+          pnpm --filter @candleviewer/web deploy --prod "$RUNNER_TEMP/sbom-src/web"
+          pnpm --filter @candleviewer/desktop deploy "$RUNNER_TEMP/sbom-src/desktop"
+
+      - name: Backend SBOM (services/api, SR-133)
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: services/api
+          format: cyclonedx-json
+          output-file: sbom-api.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Web app SBOM (SR-133)
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: ${{ runner.temp }}/sbom-src/web
+          format: cyclonedx-json
+          output-file: sbom-web.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Desktop app SBOM (SR-133)
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: ${{ runner.temp }}/sbom-src/desktop
+          format: cyclonedx-json
+          output-file: sbom-desktop.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Validate the three SBOMs (CI-REL-006 names a missing, empty or invalid one)
+        run: |
+          set -euo pipefail
+          failed=0
+          for artefact in api web desktop; do
+            python tools/ci/validate_sbom.py --sbom "sbom-$artefact.cdx.json" --artefact "$artefact" \
+              || failed=1
+          done
+          exit "$failed"
+
+      - name: Find the previous release (the nearest final tag before this version)
+        id: previous
+        env:
+          CANDIDATE: ${{ needs.classify.outputs.candidate }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          exclude=()
+          if [ -n "$VERSION" ]; then exclude=(--exclude "v$VERSION"); fi
+          python tools/ci/release_run.py previous-tag --rev "$CANDIDATE" "${exclude[@]}" \
+            > "$RUNNER_TEMP/previous.out"
+          cat "$RUNNER_TEMP/previous.out"
+          grep -E '^previous=(v[0-9]+\.[0-9]+\.[0-9]+)?$' "$RUNNER_TEMP/previous.out" >> "$GITHUB_OUTPUT"
+
+      - name: Download the previous release's SBOMs (no previous release, no baseline)
+        if: steps.previous.outputs.previous != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS: ${{ steps.previous.outputs.previous }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/previous"
+          gh release download "$PREVIOUS" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'sbom-*.cdx.json' --dir "$RUNNER_TEMP/previous" \
+            || echo "::warning::no SBOM assets on release $PREVIOUS: the diff has no baseline"
+
+      - name: Diff each SBOM against the previous release's (review aid, posted on the checklist)
+        env:
+          PREVIOUS: ${{ steps.previous.outputs.previous }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## SBOM diff vs ${PREVIOUS:-no previous release} (SR-133)"
+            echo
+            for artefact in api web desktop; do
+              python tools/ci/sbom_diff.py --current "sbom-$artefact.cdx.json" \
+                --previous "$RUNNER_TEMP/previous/sbom-$artefact.cdx.json" \
+                --heading "### $artefact"
+            done
+          } > sbom-diff.md
+          cat sbom-diff.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-sboms
+          path: |
+            sbom-api.cdx.json
+            sbom-web.cdx.json
+            sbom-desktop.cdx.json
+            sbom-diff.md
+          if-no-files-found: error
+          retention-days: 7
+
+  tag-draft:
+    name: tag-draft
+    needs: [classify, verify, e2e, sbom]
+    if: needs.classify.outputs.dry_run == 'false' && needs.verify.outputs.verified == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+    concurrency:
+      group: release-${{ needs.classify.outputs.candidate }}
+      cancel-in-progress: false
+    outputs:
+      version: ${{ steps.reverify.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Re-verify the candidate right before tagging (its V section is the release body)
+        id: reverify
+        env:
+          CANDIDATE: ${{ needs.classify.outputs.candidate }}
+          ALLOW_1_0_0: ${{ needs.classify.outputs.allow_1_0_0 }}
+          VERIFIED: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          args=(--verify --rev "$CANDIDATE" --main-ref origin/main --section-out "$RUNNER_TEMP/section.md")
+          if [ "$ALLOW_1_0_0" = "true" ]; then args+=(--allow-1-0-0); fi
+          rc=0
+          python tools/ci/prepare_release.py "${args[@]}" > "$RUNNER_TEMP/verify.out" || rc=$?
+          cat "$RUNNER_TEMP/verify.out"
+          [ "$rc" -eq 0 ] || exit "$rc"
+          version="$(grep -E '^version=[0-9]+\.[0-9]+\.[0-9]+$' "$RUNNER_TEMP/verify.out" | cut -d= -f2)"
+          if [ "$version" != "$VERIFIED" ]; then
+            echo "::error::CI-REL-005: re-verify found v$version, verify found v$VERIFIED"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Tag vV at the candidate (annotated; a no-op when there, never moved)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ needs.classify.outputs.candidate }}
+          VERSION: ${{ steps.reverify.outputs.version }}
+        run: python tools/ci/release_run.py tag --candidate "$CANDIDATE" --version "$VERSION"
+
+      - name: Find or create the release-checklist issue (CI-REL-004)
+        id: checklist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.reverify.outputs.version }}
+        run: |
+          set -euo pipefail
+          python tools/ci/release_run.py checklist --version "$VERSION" > "$RUNNER_TEMP/checklist.out"
+          cat "$RUNNER_TEMP/checklist.out"
+          grep -E '^issue=[0-9]+$' "$RUNNER_TEMP/checklist.out" >> "$GITHUB_OUTPUT"
+
+      - name: Draft the release from the V section (publication stays manual, CI-REL-004)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ needs.classify.outputs.candidate }}
+          VERSION: ${{ steps.reverify.outputs.version }}
+        run: >-
+          python tools/ci/release_run.py draft --candidate "$CANDIDATE" --version "$VERSION"
+          --notes-file "$RUNNER_TEMP/section.md"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-sboms
+          path: sboms
+
+      - name: Attach the SBOMs and their diff to the draft (re-runs replace them)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.reverify.outputs.version }}
+        run: >-
+          gh release upload "v$VERSION" --repo "$GITHUB_REPOSITORY" --clobber
+          sboms/sbom-api.cdx.json sboms/sbom-web.cdx.json sboms/sbom-desktop.cdx.json
+          sboms/sbom-diff.md
+
+      - name: Post the SBOM diff on the checklist issue (one comment, edited on a re-run)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ steps.checklist.outputs.issue }}
+          VERSION: ${{ steps.reverify.outputs.version }}
+        run: >-
+          python tools/ci/release_run.py comment --issue "$ISSUE" --version "$VERSION"
+          --body-file sboms/sbom-diff.md
+
+  build-sign:
+    name: build-sign
+    needs: [classify, tag-draft]
+    if: needs.classify.outputs.dry_run == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write # keyless cosign signing (SR-137, as main.yml signs its image)
+    concurrency:
+      group: release-${{ needs.classify.outputs.candidate }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.classify.outputs.candidate }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm via corepack
+        run: corepack enable && corepack prepare pnpm@12.5.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Electron ships no postinstall: the SR-138 runner fetches its binary (#1819).
+      - name: Fetch the Electron binary (SR-138 allowlist runner)
+        run: node tools/ci/run-allowed-postinstall.mjs
+
+      - name: Build the workspace packages apps/web depends on
+        run: pnpm --filter "@candleviewer/web^..." run build
+
+      - name: "Guard: the packages apps/web imports are built (fails fast, CI-BUILD-001)"
+        run: node tools/ci/check_built_exports.mjs packages/ui packages/chart-engine packages/protocol
+
+      - name: Build the web and desktop dists the installer packages (#3518)
+        run: pnpm --filter @candleviewer/web --filter @candleviewer/desktop build
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # #3518: the gate scans exactly the dists build:installer packages, as _job-js.yml's build
+      # job runs it on its own build.
+      - name: Electron-hardening gate on these dists, right before packaging (SR-110..SR-119)
+        run: |
+          set -euo pipefail
+          xvfb-run -a node apps/desktop/scripts/collect-hardening-facts.mjs hardening-facts.json
+          python tools/ci/electron_hardening_gate.py --desktop-dist apps/desktop/dist \
+            --web-dist apps/web/dist --builder-config apps/desktop/electron-builder.yml \
+            --facts hardening-facts.json --require-runtime
+
+      # R0 ships the Linux AppImage only (owner item: Windows/macOS runners and their signing).
+      - name: Package the installer (build:installer, Linux AppImage, no publishing)
+        working-directory: apps/desktop
+        env:
+          VERSION: ${{ needs.tag-draft.outputs.version }}
+        run: |
+          set -euo pipefail
+          pkg="$(node -p "require('path').dirname(require.resolve('electron/package.json'))")"
+          pnpm run build:installer --linux AppImage --publish never \
+            -c.electronDist="$pkg/dist" -c.extraMetadata.version="$VERSION"
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
-      - name: Sign installer artefacts (keyless cosign, CI-REL-003 parity for release binaries)
+      - name: Sign and verify the installer (keyless cosign; no artefact is CI-REL-003)
         run: |
           set -euo pipefail
           shopt -s nullglob
-          artefacts=(apps/desktop/dist/*.exe apps/desktop/dist/*.dmg apps/desktop/dist/*.AppImage)
-          if [ ${#artefacts[@]} -eq 0 ]; then
-            echo "No installer artefacts produced (packaging config pending E10); skipping signing." >&2
-            exit 0
+          artefacts=(apps/desktop/release/*.AppImage)
+          if [ "${#artefacts[@]}" -eq 0 ]; then
+            echo "::error::CI-REL-003: no installer in apps/desktop/release; nothing is signed or attached"
+            exit 1
           fi
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/heads/main"
           for f in "${artefacts[@]}"; do
-            cosign sign-blob --yes --output-signature "${f}.sig" --output-certificate "${f}.pem" "$f"
+            cosign sign-blob --yes --bundle "$f.sigstore.json" "$f"
+            cosign verify-blob --bundle "$f.sigstore.json" --certificate-identity "$identity" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com "$f"
           done
 
-      - name: Attach signed installers to the draft release
+      - name: Attach the signed installer to the draft (re-runs replace it; never a published one)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.tag-draft.outputs.version }}
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          version="${{ needs.compute-version.outputs.next_version }}"
-          artefacts=(apps/desktop/dist/*.exe apps/desktop/dist/*.dmg apps/desktop/dist/*.AppImage apps/desktop/dist/*.sig apps/desktop/dist/*.pem)
-          if [ ${#artefacts[@]} -eq 0 ]; then
-            echo "No installer artefacts to attach." >&2
-            exit 0
+          draft="$(gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+          if [ "$draft" != "true" ]; then
+            echo "::error::CI-REL-005: release v$VERSION is published; its assets are immutable (C-15.7)"
+            exit 1
           fi
-          gh release upload "v${version}" "${artefacts[@]}" --clobber
+          shopt -s nullglob
+          files=(apps/desktop/release/*.AppImage apps/desktop/release/*.AppImage.sigstore.json)
+          if [ "${#files[@]}" -lt 2 ]; then
+            echo "::error::CI-REL-003: the installer or its signature bundle is missing"
+            exit 1
+          fi
+          gh release upload "v$VERSION" --repo "$GITHUB_REPOSITORY" --clobber "${files[@]}"
