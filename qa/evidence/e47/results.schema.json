@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "qa/evidence/e47/results.schema.json",
+  "title": "E47 QA gate and trend results, one sprint-NN.json per sprint (E47-Q04, BQ-02)",
+  "description": "Gate and trend results only: defects live in docs/plan/a11y/findings.json. Written by E47-Q02, Q03 and Q04. tools/a11y/store.py validates it; scripts/tests/test_a11y_store.py keeps the two in step.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "sprint", "start", "end", "results"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "sprint": { "type": "integer", "minimum": 1 },
+    "start": { "type": "string", "format": "date" },
+    "end": { "type": "string", "format": "date" },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "kind", "screen", "outcome", "metrics", "tags", "build", "recorded"],
+        "properties": {
+          "source": { "enum": ["Q02", "Q03", "Q04", "Q05", "T03"] },
+          "kind": { "enum": ["axe", "lighthouse", "keyboard", "tree", "flash", "inventory", "manual"] },
+          "screen": { "type": "string", "pattern": "^(SCR-\\d{3}|R-\\d{3}|\\*)$" },
+          "outcome": { "enum": ["pass", "fail", "blocked", "pending", "not run"] },
+          "metrics": { "type": "object", "additionalProperties": { "type": "number" } },
+          "tags": { "type": "array", "contains": { "const": "epic:E47" }, "items": { "type": "string", "pattern": "^[a-z]+:[\\w.-]+$" } },
+          "build": { "type": "string", "pattern": "^[0-9a-f]{7,40}$" },
+          "recorded": { "type": "string", "format": "date" }
+        }
+      }
+    }
+  }
+}
