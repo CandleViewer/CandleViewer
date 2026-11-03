@@ -14,7 +14,9 @@
 // uploading an empty manifest that would make every package N/A.
 
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const BACKSLASH = String.fromCharCode(92);
@@ -37,11 +39,32 @@ function main(argv) {
   }
   const outFile = argv[sep - 1];
   const filterArgs = argv.slice(sep + 1);
-  const raw = execFileSync("pnpm", ["turbo", "run", "test:cov", ...filterArgs, "--dry-run=json"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "inherit"],
-    shell: process.platform === "win32",
-  });
+  // The dry-run JSON lists every input hash of every scheduled package and outgrows Node's 1 MiB
+  // pipe buffer (ENOBUFS, #5596): turbo writes to a private temp file instead, read back after.
+  const dir = mkdtempSync(join(tmpdir(), "turbo-dry-run-"));
+  const file = join(dir, "dry-run.json");
+  let raw;
+  try {
+    const fd = openSync(file, "w");
+    try {
+      execFileSync("pnpm", ["turbo", "run", "test:cov", ...filterArgs, "--dry-run=json"], {
+        stdio: ["ignore", fd, "inherit"],
+        shell: process.platform === "win32",
+      });
+    } catch (err) {
+      const why = err.status ?? err.code ?? "unknown";
+      const bytes = readFileSync(file).length;
+      process.stderr.write(
+        `turbo-affected-packages: turbo dry-run failed (${why}; ${bytes} bytes read)\n`,
+      );
+      return 1;
+    } finally {
+      closeSync(fd);
+    }
+    raw = readFileSync(file, "utf8");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
   const dirs = affectedDirectories(JSON.parse(raw));
   writeFileSync(outFile, dirs.length ? dirs.join("\n") + "\n" : "", "utf8");
   process.stdout.write(

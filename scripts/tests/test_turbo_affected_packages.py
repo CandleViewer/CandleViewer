@@ -81,3 +81,65 @@ def test_cli_without_separator_exits_2(tmp_path: Path) -> None:
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__]))
+
+
+def _fake_pnpm(tmp_path: Path, body: str) -> dict[str, str]:
+    """An environment whose `pnpm` is a node script printing `body` (#5596)."""
+    import os
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "pnpm"
+    fake.write_text("#!/usr/bin/env node\n" + body, encoding="utf-8")
+    fake.chmod(0o755)
+    return {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the fake pnpm is a POSIX script")
+def test_a_dry_run_over_one_mebibyte_is_recorded_without_echoing_it(tmp_path: Path) -> None:
+    # Node's execFileSync pipe buffer is 1 MiB; a large affected set used to die with ENOBUFS.
+    payload = json.dumps(
+        {
+            "tasks": [
+                {"task": "test:cov", "directory": "packages/chart-engine", "hash": "a" * 600_000},
+                {"task": "test:cov", "directory": "apps/web", "hash": "b" * 600_000},
+                {"task": "build", "directory": "packages/config"},
+            ]
+        }
+    )
+    assert len(payload) > 1024 * 1024
+    data = tmp_path / "dry-run.json"
+    data.write_text(payload, encoding="utf-8")
+    env = _fake_pnpm(
+        tmp_path, f"process.stdout.write(require('fs').readFileSync({str(data)!r}, 'utf8'));\n"
+    )
+    out = tmp_path / "affected.txt"
+    proc = subprocess.run(
+        ["node", str(SCRIPT), str(out), "--", "--filter=...[origin/main]"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stderr[-500:]
+    assert out.read_text(encoding="utf-8") == "apps/web\npackages/chart-engine\n"
+    assert "a" * 100 not in proc.stdout + proc.stderr
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the fake pnpm is a POSIX script")
+def test_a_failed_turbo_dry_run_prints_one_short_line_and_exits_non_zero(tmp_path: Path) -> None:
+    env = _fake_pnpm(
+        tmp_path, "process.stdout.write('{\"tasks\": [' + 'x'.repeat(5000)); process.exit(3);\n"
+    )
+    out = tmp_path / "affected.txt"
+    proc = subprocess.run(
+        ["node", str(SCRIPT), str(out), "--", "--filter=...[origin/main]"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert proc.returncode != 0
+    assert "turbo dry-run failed (3; 5011 bytes read)" in proc.stderr
+    assert "x" * 100 not in proc.stdout + proc.stderr
+    assert not out.exists()
