@@ -86,7 +86,9 @@ def test_dev_dependency_with_disallowed_licence_reaches_the_gate(tmp_path: Path)
         "LGPL-3.0-only": [{"name": "dev-only-tool", "versions": ["2.0.0"]}],
     }
     allowlist = json.loads(
-        (Path(__file__).resolve().parents[2] / "tools/ci/licenses-allowlist.json").read_text()
+        (Path(__file__).resolve().parents[2] / "tools/ci/licenses-allowlist.json").read_text(
+            encoding="utf-8"
+        )
     )
     result = evaluate_licenses(
         _findings(from_pnpm_licenses(doc)),
@@ -106,12 +108,30 @@ def _findings(rows: list[dict[str, str]]) -> list:
 
 
 def test_security_workflow_collects_dev_and_prod_dependencies() -> None:
-    wf = (Path(__file__).resolve().parents[2] / ".github/workflows/_job-security.yml").read_text()
+    wf = (Path(__file__).resolve().parents[2] / ".github/workflows/_job-security.yml").read_text(
+        encoding="utf-8"
+    )
     lines = [ln.strip() for ln in wf.splitlines() if not ln.strip().startswith("#")]
     cmds = [ln for ln in lines if "pnpm licenses list" in ln]
     assert [("--prod" in c) for c in cmds] == [False, True]
     gates = [ln for ln in lines if "--tool license-scan" in ln]
+    reports = [g.split("--report")[1].split()[0] for g in gates]
+    assert reports == ["licenses.json", "licenses-prod.json"]
     assert [("--no-dev-only-exceptions" in g) for g in gates] == [False, True]
+    prod = [ln for ln in lines if "--out licenses-prod.json" in ln]
+    assert len(prod) == 1
+    assert "pnpm-licenses-prod.json" in prod[0] and "--require-nonempty" in prod[0]
+    full = [ln for ln in lines if "--out licenses.json" in ln]
+    assert all("pnpm-licenses.json" not in ln or "--require-nonempty" not in ln for ln in full)
+
+
+def test_require_nonempty_fails_on_an_empty_report(tmp_path: Path) -> None:
+    src = tmp_path / "pnpm.json"
+    src.write_text("{}", encoding="utf-8")
+    out = tmp_path / "out.json"
+    rc = main(["--pnpm-licenses", str(src), "--require-nonempty", "--out", str(out)])
+    assert rc == 2
+    assert not out.exists()
 
 
 @pytest.mark.parametrize(
@@ -153,7 +173,9 @@ def test_classifier_named_lgpl_reaches_the_lgpl_approval_path() -> None:
         ]
     )
     allowlist = json.loads(
-        (Path(__file__).resolve().parents[2] / "tools/ci/licenses-allowlist.json").read_text()
+        (Path(__file__).resolve().parents[2] / "tools/ci/licenses-allowlist.json").read_text(
+            encoding="utf-8"
+        )
     )
     result = evaluate_licenses(_findings(rows), allowlist, [], run_date=date(2026, 11, 3))
     assert result.blocked and result.code == "CI-SEC-003"
@@ -167,7 +189,9 @@ def test_parenthesised_conjunction_with_a_prohibited_part_stays_blocked() -> Non
 
     assert normalise_license("(MIT AND GPL-3.0)") == "MIT AND GPL-3.0"
     allowlist = json.loads(
-        (Path(__file__).resolve().parents[2] / "tools/ci/licenses-allowlist.json").read_text()
+        (Path(__file__).resolve().parents[2] / "tools/ci/licenses-allowlist.json").read_text(
+            encoding="utf-8"
+        )
     )
     rows = [{"package": "x", "version": "1", "license": normalise_license("(MIT AND GPL-3.0)")}]
     result = evaluate_licenses(_findings(rows), allowlist, [], run_date=date(2026, 11, 3))
@@ -180,7 +204,9 @@ def test_production_scan_ignores_dev_only_exceptions() -> None:
     from tools.ci.security_gate import LicenseFinding, evaluate_licenses
 
     allowlist = json.loads(
-        (Path(__file__).resolve().parents[2] / "tools/ci/licenses-allowlist.json").read_text()
+        (Path(__file__).resolve().parents[2] / "tools/ci/licenses-allowlist.json").read_text(
+            encoding="utf-8"
+        )
     )
     finding = LicenseFinding("caniuse-lite", "1.0.30001812", "CC-BY-4.0")
     run = date(2026, 11, 3)

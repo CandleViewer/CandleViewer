@@ -322,6 +322,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="collect from the running interpreter's installed distributions (importlib.metadata)",
     )
+    parser.add_argument(
+        "--require-nonempty",
+        action="store_true",
+        help="exit 2 without writing --out when no entry was collected (a silent source change)",
+    )
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
 
@@ -334,6 +339,10 @@ def main(argv: list[str] | None = None) -> int:
         combined.extend(from_license_checker(_load_json(args.license_checker)))
     if args.pnpm_licenses is not None:
         combined.extend(from_pnpm_licenses(_load_json(args.pnpm_licenses)))
+
+    if args.require_nonempty and not combined:
+        print("collect_licenses: no entries collected and --require-nonempty set", file=sys.stderr)
+        return 2
 
     args.out.write_text(
         json.dumps(combined, indent=2, sort_keys=True) + "\n", encoding="utf-8"

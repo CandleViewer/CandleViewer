@@ -542,7 +542,7 @@ jobs:
             --pnpm-licenses pnpm-licenses.json \
             --out licenses.json
           python tools/ci/security_gate.py --tool license-scan --report licenses.json
-          python tools/ci/collect_licenses.py --pnpm-licenses pnpm-licenses-prod.json --out licenses-prod.json
+          python tools/ci/collect_licenses.py --pnpm-licenses pnpm-licenses-prod.json --require-nonempty --out licenses-prod.json
           python tools/ci/security_gate.py --tool license-scan --report licenses-prod.json --no-dev-only-exceptions
 
       # `ci-required` judges this job's result (the `security` lane); this keeps it honest per scan.
