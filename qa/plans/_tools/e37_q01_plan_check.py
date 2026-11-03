@@ -3,8 +3,9 @@
 
 Standalone, offline, stdlib only; it runs under `python3 -I`, executes no repo code and starts no
 process. It reads AS TEXT the plan (`qa/plans/e37-node-editor-test-plan.md`), `11` section 20, the
-Gherkin of `E37.json`, the copy deck (`docs/design/E37/E37-D05-copy-deck.jsonl`) and the files of
-`tests/fixtures/e37/`; cases, quotes and derived tables are re-computed on every run.
+Gherkin of `E37.json`, the copy decks (`docs/design/E37/E37-D05-copy-deck.jsonl`, and E36-D05's for
+any key the E37 deck lacks) and the files of `tests/fixtures/e37/`; cases, quotes and derived tables
+are re-computed on every run.
 
 Gates (mutations in `--self-test`, each caught by its own gate only):
   G-TRACE    the 64 scenario titles equal the sources', each has a case; Cases and Auto equal
@@ -15,6 +16,8 @@ Gates (mutations in `--self-test`, each caught by its own gate only):
   G-FIX      handles defined and used; owed toggles and fixtures in Needs; fixture files exist.
   G-TAG      Auto uses the closed vocabulary; E37-Q02's ten specs each map to a case.
   G-EVENT    every event a case names is in the events table.
+  G-QUOTE    every bracketed deck key in the plan is the tail of a well-formed quote.
+  G-REFS     every case, boundary, C and Q id and every Covers scenario code resolves.
   G-HYGIENE  no placeholder, local path, agent name, URL, closing keyword or avoided word in the
              plan, the fixtures' README and this file.
 
@@ -51,6 +54,7 @@ HANDLE = re.compile(
     r"|(?<!US-)(?:RULE|FX)-[A-Z0-9]+(?:-[A-Z0-9]+)*|FT-[A-Z]+)\b"
 )
 EVENT = re.compile(r"\b(?:rule\.[a-z_]+|rbac\.denied|rule_graph_[a-z_]+)\b")
+DESIGN_ROW = re.compile(r"E37-D0[2-5](?:'s)? (?:row )?[CQ]-\d+")
 DENIED = "403 · no state change · one `rbac.denied` audit row"
 _AVOID = (
     "previous" + "ly",
@@ -74,6 +78,7 @@ HYGIENE = (
 class Texts:
     plan: str
     deck: str
+    deck36: str
     us: str
     e37: str
     files: dict[str, str]
@@ -144,6 +149,9 @@ def deck_rows(t: Texts) -> tuple[dict[str, tuple[str, str]], set[str]]:
         deck[r["key"]] = (r["text"], letter)
         if r.get("frozen") or "frozen by E36-D05" in where:
             must.add(r["key"])
+    for k, v in json.loads(t.deck36)["strings"].items():
+        m = re.search(r"string (merged|RULED|PROPOSED)", str(v.get("status", "")))
+        deck.setdefault(k, (v["text"], LETTER[m[1]] if m else ""))
     return deck, must
 
 
@@ -287,6 +295,33 @@ def g_event(t: Texts) -> list[str]:
             for e in EVENT.findall(c.cells[5]) if e not in known]  # fmt: skip
 
 
+def first_cells(t: Texts, head: str, rx: str) -> set[str]:
+    return {r[0] for r in table(section(t.plan, head)) if re.fullmatch(rx, r[0])}
+
+
+def g_quote(t: Texts) -> list[str]:
+    plan = t.plan.replace("\\|", "|")
+    loose, good = re.findall(r"\[(?:rules?|rbac)\.[^\]]*\]", plan), QUOTE.findall(plan)
+    return [f"{len(loose)} bracketed keys, {len(good)} well-formed quotes"] * (
+        len(loose) != len(good)
+    )
+
+
+def g_refs(t: Texts) -> list[str]:
+    cases = parse_cases(t.plan)
+    body = DESIGN_ROW.sub("", t.plan)
+    seen = {
+        "case": set(re.findall(r"E37-TC-[A-G]\d\d", t.plan)) - {c.id for c in cases},
+        "boundary row": set(re.findall(r"E37-NB-\d\d", t.plan))
+        - first_cells(t, "## 9. ", r"E37-NB-\d\d"),
+        "C or Q row": set(re.findall(r"\b[CQ]-\d\d\b(?!\.\d)", body))
+        - first_cells(t, "## 15. ", r"[CQ]-\d\d"),
+        "scenario": {x for c in cases for x in CODE.findall(c.cells[1])}
+        - {w[0] for w in scenarios(t)},
+    }
+    return [f"{x} is cited but not a defined {k}" for k, miss in seen.items() for x in sorted(miss)]
+
+
 def g_hygiene(t: Texts) -> list[str]:
     texts = (("plan", t.plan), ("README", t.files.get("README.md", "")), ("tool", t.tool))
     found = [
@@ -303,6 +338,8 @@ GATES: tuple[tuple[str, Callable[[Texts], list[str]]], ...] = (
     ("G-FIX", g_fix),
     ("G-TAG", g_tag),
     ("G-EVENT", g_event),
+    ("G-QUOTE", g_quote),
+    ("G-REFS", g_refs),
     ("G-HYGIENE", g_hygiene),
 )
 
@@ -315,11 +352,10 @@ def counts(t: Texts) -> str:
     cases = parse_cases(t.plan)
     by = " ".join(f"{g}{sum(c.group == g for c in cases)}" for g in "ABCDEFG")
     q = QUOTE.findall(t.plan.replace("\\|", "|"))
-    p, m = sum(x[2] == "P" for x in q), sum(len(r) == 6 for r in table(section(t.plan, "## 8. ")))
+    cells = 4 * sum(len(r) == 6 for r in table(section(t.plan, "## 8. ")) if r[0].isdigit())
     return (
-        f"counts: cases {len(cases)} ({by}); regression {sum(c.flagged for c in cases)}; "
-        f"matrix cells {4 * (m - 1)}; scenarios {len(scenarios(t))}; quotes {len(q)} (P {p}, "
-        f"{len({x[1] for x in q})} deck keys)"
+        f"counts: cases {len(cases)} ({by}); matrix cells {cells}; scenarios {len(scenarios(t))}; "
+        f"quotes {len(q)} (P {sum(x[2] == 'P' for x in q)}, {len({x[1] for x in q})} deck keys)"
     )
 
 
@@ -360,6 +396,8 @@ MUTATIONS = (
     file_text("G-FIX", "the truncated file parses", TRUNCATED, "{}"),
     sub("G-TAG", "a tag leaves the vocabulary", "Q02-10", "Q02-11", every=True),
     sub("G-EVENT", "an unknown event", "rejected` | Q02-5", "nope` | Q02-5"),
+    sub("G-QUOTE", "a quote loses its space", 'er" [rules.graph.hint.', 'er"  [rules.graph.hint.'),
+    sub("G-REFS", "a dangling case id", "| E37-TC-B04 | C2 |", "| E37-TC-F66 | C2 |"),
     sub("G-HYGIENE", "an avoided word", "# E37 node-graph", "# E37 le" + "ak node-graph"),
 )
 # fmt: on
@@ -393,7 +431,8 @@ def load() -> Texts:
     files = {p.name: p.read_text(encoding="utf-8") for p in sorted((ROOT / FIX_REL).glob("*"))}
     tool = Path(__file__).resolve().read_text(encoding="utf-8")
     us, e37 = read("docs/plan/11-user-stories.md"), read("docs/plan/backlog/E37.json")
-    return Texts(read(PLAN_REL), read(DECK_REL), us, e37, files, tool)
+    deck36 = read("docs/design/E36/E36-D05-copy-deck.json")
+    return Texts(read(PLAN_REL), read(DECK_REL), deck36, us, e37, files, tool)
 
 
 def main(argv: list[str]) -> int:
