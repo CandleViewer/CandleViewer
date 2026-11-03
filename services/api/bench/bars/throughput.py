@@ -36,7 +36,7 @@ import structlog
 
 from bench.bar_determinism.generator import TICK, GenConfig, iter_trades
 from bench.bar_determinism.invariants import STANDARD_SPECS, make_builder
-from bench.bars import HARNESS_VERSION
+from bench.bars import HARNESS_VERSION, rows
 from bench.bars.scrub import scrub
 from bench.bars.stats import (
     RUNS_PER_CONFIG,
@@ -170,6 +170,8 @@ def render(prints: int, median: RunResult, spread: float) -> str:
                 f"- peak RSS {median.peak_rss_mib:.0f} MiB; GC collections {median.gc_collections}",
                 f"- bars closed: {json.dumps(median.bars_by_kind, sort_keys=True)}",
                 f"- seed {median.seed}, harness `{median.harness}`; Decimal prices, no network",
+                "",
+                rows.render(),
             ]
         )
     )

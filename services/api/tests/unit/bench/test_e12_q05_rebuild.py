@@ -6,6 +6,7 @@ from __future__ import annotations
 import pytest
 
 from bench.bars import rebuild as rb
+from bench.bars import rows
 from bench.bars import throughput as tp
 from bench.bars.rebuild import RebuildResult
 from bench.bars.throughput import Probes
@@ -71,6 +72,7 @@ def test_render_lists_results_and_the_pending_535_rows() -> None:
     out = rb.render([(ok, 0.0), (bad, 0.1)])
     assert "| within NFR |" in out and "over: known miss #2167" in out and "FAIL" not in out
     assert out.count("pending #535") == 4 and "ADR-0033" in out
+    assert "| adr-0033 |" in out and rows.BUDGET_7 in out  # the shared rows table is appended
     assert "Lower bound on the real rebuild" in out
 
 

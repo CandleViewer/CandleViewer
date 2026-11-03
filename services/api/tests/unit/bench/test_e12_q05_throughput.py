@@ -111,6 +111,7 @@ def test_render_names_budget_and_carries_no_secret_shaped_text() -> None:
     r = tp.run_once(tp.tape(500), tp.make_builders(), probes=_probes())
     out = tp.render(500, r, 0.0)
     assert "budget #5" in out and "prints/s" in out and "[REDACTED]" not in out
+    assert "| growth |" in out and "| F3 |" in out  # the shared rows table is appended
 
 
 def test_main_prints_a_report(capsys: pytest.CaptureFixture[str]) -> None:

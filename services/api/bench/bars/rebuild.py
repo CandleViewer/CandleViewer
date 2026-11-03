@@ -26,7 +26,7 @@ from itertools import islice
 import structlog
 
 from bench.bar_determinism.generator import TICK
-from bench.bars import throughput
+from bench.bars import rows, throughput
 from bench.bars.scrub import scrub
 from bench.bars.stats import RUNS_PER_CONFIG, median_run, relative_spread
 from bench.bars.throughput import Probes
@@ -95,7 +95,7 @@ def median_rebuild(runs: list[RebuildResult]) -> tuple[RebuildResult, float]:
     return next(r for r in runs if r.elapsed_s == mid), relative_spread(secs)
 
 
-def render(rows: list[tuple[RebuildResult, float]]) -> str:
+def render(results: list[tuple[RebuildResult, float]]) -> str:
     out = [
         f"## parameter-change rebuild, offline (US-CHART-003: <= {BUDGET_S:.0f} s, median of 3)",
         "",
@@ -105,13 +105,13 @@ def render(rows: list[tuple[RebuildResult, float]]) -> str:
         "| change | prints | bars | wall s | spread | result |",
         "|---|---:|---:|---:|---:|---|",
     ]
-    for r, spread in rows:
+    for r, spread in results:
         res = "within NFR" if r.within_budget else f"over: known miss {KNOWN_MISS}"
         out.append(
             f"| {r.change} | {r.prints} | {r.bars} | {r.elapsed_s:.2f} | {spread * 100:.1f} % "
             f"| {res} |"
         )
-    out += ["", *(f"- pending: {row}" for row in PENDING)]
+    out += ["", *(f"- pending: {row}" for row in PENDING), "", rows.render()]
     return scrub("\n".join(out))
 
 
@@ -120,14 +120,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--prints", type=int, default=1_000_000)
     a = ap.parse_args(argv)
     structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(logging.ERROR))
-    rows = []
+    results = []
     for bar_type, old, new in CHANGES:
         runs = [
             rebuild_once(bar_type, new, throughput.tape(a.prints), old_param=old)
             for _ in range(RUNS_PER_CONFIG)
         ]
-        rows.append(median_rebuild(runs))
-    print(render(rows))
+        results.append(median_rebuild(runs))
+    print(render(results))
     return 0  # recorded, never green-washed: the verdict is in the table
 
 

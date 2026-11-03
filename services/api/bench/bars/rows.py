@@ -26,7 +26,7 @@ ROWS: tuple[Row, ...] = (
     Row("volume-pane", "volume sub-pane frame time, 10k and 100k bars", "pending E12-S08 (#534)"),
     Row("switching", "symbol/timeframe switching soak, no GL context after the first",
         "pending E12-S11 (#451)"),
-    Row("growth", "memory growth < 5 %/h after warm-up (C-14.2), 100k bars, 4-pane workload",
+    Row("growth", f"memory growth < 5 %/h after warm-up (C-14.2); budget #7 workload: {BUDGET_7}",
         "pending engine soak driver"),
     Row("budget-8", f"backend budget #8 from soak_bars, verbatim: {BUDGET_8}", "recorded"),
     Row("adr-0033", "cancel p95 <= 250 ms under load: Decimal builders, PGWire with cursor "
