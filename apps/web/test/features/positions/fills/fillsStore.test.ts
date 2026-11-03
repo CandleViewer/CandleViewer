@@ -185,6 +185,16 @@ describe("No double counting inside one commit window (SR-E29-11's drops and the
     expect([keys(store).length, new Set(keys(store)).size]).toEqual([14, 14]);
   });
 
+  it("an account set over the cap and back inside one commit window is one row a fill", () => {
+    const store = started();
+    store.applyFrames([snap(snapshotBody())]); // no commit: the 12 wait in this window
+    store.setOverCap([SUB1]);
+    store.setOverCap([]);
+    store.applyRest(restItems());
+    store.commit();
+    expect([keys(store).length, new Set(keys(store)).size]).toEqual([14, 14]);
+  });
+
   it("a fill revoked inside the commit window is never published", () => {
     const store = started();
     store.applyFrames([snap(snapshotBody())]);
@@ -434,6 +444,17 @@ describe("revocation and narrowing (SR-E29-11, E29-D05 F-02)", () => {
     store.setAccounts(withoutSub2);
     expect(store.takeSettled()).toBe(true);
     expect(store.takeSettled()).toBe(false);
+  });
+
+  it("a narrowing bars every directory account: a late read cannot bring one back", () => {
+    const store = started();
+    const mainOnly = snapshotBody().executions.filter((i) => i.exchange_account_id === MAIN);
+    store.applyFrames([snap({ executions: mainOnly })]);
+    store.commit();
+    store.applyFrames([reset("narrowed")]);
+    store.applyRest(restItems()); // a read in flight: Sub-1 and Sub-2 held no rows to name them
+    store.commit();
+    expect(accountsOf(store).size).toBe(0);
   });
 
   it("a snapshot serving every candidate settles the narrowing too", () => {

@@ -21,6 +21,7 @@ import {
   BACKFILL_PAGES,
   COMMIT_INTERVAL_MS,
   FILLS_PANE_ID,
+  MAX_QUEUED,
   SNAPSHOT_BUDGET_MS,
   startFillsFeed,
   type FillsFeed,
@@ -89,12 +90,14 @@ function heldApi(): FillsApi & {
 }
 
 /** `n` fills of one account, each its own exec id. */
-const manyFills = (n: number): unknown[] =>
-  Array.from({ length: n }, (_, i) => ({
-    ...restItems()[1],
+const manyFills = (n: number): unknown[] => {
+  const base = restItems()[1];
+  return Array.from({ length: n }, (_, i) => ({
+    ...base,
     id: `0e000000-0000-4000-8000-${i.toString(16).padStart(12, "0")}`,
     exec_id: `bulk-${i}`,
   }));
+};
 
 let ws: FakeClient;
 let store: FillsStore;
@@ -304,6 +307,20 @@ describe("REST: at first paint and after each snapshot, never polled (BQ-9)", ()
     expect(store.getSnapshot().rows).toHaveLength(12);
   });
 
+  it("an older read that fails after a newer one succeeded leaves readFailed false", async () => {
+    const api = heldApi();
+    start(api);
+    await settle();
+    handle()?.push(snap(snapshotBody()));
+    await settle(FRAME_MS); // call 0 is first paint's read, which hangs; call 1 the snapshot's
+    api.calls[1]?.answer(page(restItems()));
+    await settle(FRAME_MS + COMMIT_INTERVAL_MS);
+    expect(store.getSnapshot().readFailed).toBe(false);
+    api.calls[0]?.answer({ kind: "unavailable" });
+    await settle(FRAME_MS + COMMIT_INTERVAL_MS);
+    expect(store.getSnapshot().readFailed).toBe(false);
+  });
+
   it("a failed second page keeps the first: its fills apply, and the read is readFailed", async () => {
     const api = fakeApi();
     vi.mocked(api.listExecutions)
@@ -353,6 +370,20 @@ describe("REST applies 200 fills a frame at most, inside the measure (m5)", () =
     handle()?.push(snap(snapshotBody()));
     await settle(FRAME_MS);
     expect(applyRest.mock.calls.map(([items]) => items.length)).toEqual([APPLY_SLICE - 12]);
+  });
+
+  it("the queue holds the bound's worth across reads; what is over waits for the next backfill", async () => {
+    const api = heldApi();
+    const applyRest = vi.spyOn(store, "applyRest");
+    start(api);
+    await settle();
+    handle()?.push(snap({ executions: [] }));
+    await settle(FRAME_MS); // call 0 is first paint's read, call 1 the snapshot's
+    const perRead = Math.ceil(MAX_QUEUED * 0.6); // two of them are more than the bound
+    api.calls[0]?.answer(page(manyFills(perRead)));
+    api.calls[1]?.answer(page(manyFills(perRead)));
+    await settle(FRAME_MS * (MAX_QUEUED / APPLY_SLICE + 10));
+    expect(applyRest.mock.calls.flatMap(([items]) => items)).toHaveLength(MAX_QUEUED);
   });
 });
 

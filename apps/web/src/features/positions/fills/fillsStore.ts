@@ -142,7 +142,7 @@ export function createFillsStore(): FillsStore {
   let started = false;
   const held = new Map<string, FillRowModel>();
   const perAccount = new Map<string, number>();
-  let added: FillRowModel[] = [];
+  let added: string[] = []; // the keys of the fills new since the last commit
   let sorted: FillRowModel[] = [];
   let stale = false; // a committed fill left `held`, or a copy merged: `sorted` is re-read
   let urgent = false; // a security reset waits to be published
@@ -186,7 +186,7 @@ export function createFillsStore(): FillsStore {
     if (first === undefined) {
       held.set(row.key, row);
       perAccount.set(row.accountId, (perAccount.get(row.accountId) ?? 0) + 1);
-      added.push(row);
+      added.push(row.key);
       touch();
       return;
     }
@@ -219,7 +219,7 @@ export function createFillsStore(): FillsStore {
         crossed.delete(key);
       }
     for (const id of accountIds) perAccount.delete(id);
-    added = added.filter((r) => !accountIds.has(r.accountId));
+    added = added.filter((key) => held.has(key)); // a dropped key leaves: brought again, it is one
     stale = true;
     urgent = true;
     touch();
@@ -241,7 +241,9 @@ export function createFillsStore(): FillsStore {
     const accounts = heldAccounts();
     dropAccounts(accounts);
     if (reason === "narrowed") {
-      pending = new Set([...(pending ?? []), ...accounts]);
+      // every account the directory lists is a candidate, held fills or not: a read still in
+      // flight must not bring one back before the directory or a snapshot says who stayed
+      pending = new Set([...(pending ?? []), ...accounts, ...(directory?.keys() ?? [])]);
       narrowed = true;
     } else if (everSnapped) {
       revoked = true;
@@ -269,8 +271,8 @@ export function createFillsStore(): FillsStore {
   }
 
   function build(): FillsSnapshot {
-    // each new fill as held now, a merged copy's members in (`dropAccounts` keeps `added` held)
-    const fresh = added.map((r) => held.get(r.key) ?? r).sort(newestFirst);
+    // each new fill as held now, a merged copy's members in: `held` is the only source
+    const fresh = added.flatMap((key) => held.get(key) ?? []).sort(newestFirst);
     let base = sorted;
     if (stale) {
       // the committed fills as held now: a dropped one gone, a merged one current, one dropped

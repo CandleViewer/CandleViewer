@@ -19,7 +19,7 @@
  *   `BACKFILL_INTERVAL_MS`: the backfill beyond the snapshot's 100 fills of orders, and the fills
  *   of no order, which only REST serves (D03 G20). Never polled. Past 25 accounts a read names the
  *   25 the subscription does. Every read that answers applies, a superseded one too (the store is
- *   a set), and a failed one, or a failed page, is the store's `readFailed`.
+ *   a set); a failed one, or a failed page, is the store's `readFailed` if it was asked last.
  * - **S-02:** no first `snap` within 5 s, or a refused subscription, is "Could not load"; `retry()`
  *   re-subscribes, and reads REST again after a failed read. A narrowing re-reads the directory,
  *   as the positions feed does, and the subscription is made again only when the directory changed.
@@ -31,7 +31,7 @@ import { MAX_ACCOUNT_IDS, positionsApi, type PositionsApi } from "../api";
 import { accountInfo, type AccountInfo } from "../model/rowMapping";
 import type { FeedTimers, PerformanceLike } from "../wsPositions";
 import { fillsApi, readExecutions, type FillsApi } from "./api";
-import type { FillsStore } from "./fillsStore";
+import { MAX_FILLS, type FillsStore } from "./fillsStore";
 
 /** D03 §3.9: painted at most every 200 ms (5 Hz). */
 export const COMMIT_INTERVAL_MS = 200;
@@ -46,6 +46,8 @@ export const MARK_PREFIX = "cv.fills.";
 export const MAX_MEASURES = 1_000;
 /** The fills one animation frame applies at most: WS items first, then REST's, which wait. */
 export const APPLY_SLICE = 200;
+/** The REST items that wait for a frame, at most (C-2.18): the store holds `MAX_FILLS` anyway. */
+export const MAX_QUEUED = MAX_FILLS;
 /**
  * One backfill after first paint per 10 s at most; one asked inside it reads at its end. A link
  * that flaps, or a topic re-snapshotted after each missed publish (`23` §6.2.3), would otherwise
@@ -97,7 +99,8 @@ export function startFillsFeed(options: FillsFeedOptions): FillsFeed {
   let accountIds: readonly string[] | null = null;
   let handle: TopicHandle | null = null;
   let budget: unknown;
-  const queue: unknown[] = []; // REST items to apply: 1,000 a read, gone in 5 frames (C-2.18)
+  const queue: unknown[] = []; // REST items to apply: 1,000 a read, `MAX_QUEUED` at most (C-2.18)
+  let readSeq = 0; // the reads asked so far: the last one decides `readFailed`
   let lastBackfill = Number.NEGATIVE_INFINITY;
   let owed: unknown; // the timer of a backfill asked inside the interval
   let effective: Readonly<Record<string, unknown>> | null = null;
@@ -141,10 +144,11 @@ export function startFillsFeed(options: FillsFeedOptions): FillsFeed {
       accountIds !== null && accountIds.length > MAX_ACCOUNT_IDS
         ? { accountIds: accountIds.slice(0, MAX_ACCOUNT_IDS) }
         : {};
+    const seq = (readSeq += 1);
     void readExecutions(api, named, BACKFILL_PAGES, abort.signal).then((out) => {
       if (stopped) return;
-      store.setReadFailed(out.kind !== "ok" || out.value.failure !== null);
-      if (out.kind === "ok") queue.push(...out.value.items);
+      if (seq === readSeq) store.setReadFailed(out.kind !== "ok" || out.value.failure !== null);
+      if (out.kind === "ok") queue.push(...out.value.items.slice(0, MAX_QUEUED - queue.length));
     });
   }
 
