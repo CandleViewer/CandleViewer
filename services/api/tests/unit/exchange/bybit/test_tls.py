@@ -76,15 +76,23 @@ def every_variable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 def test_the_exchange_context_matches_httpx_default_with_nothing_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With nothing set, every setting equals httpx's default context (CPython's
-    `create_default_context` on certifi's bundle), so production dials with today's settings. A
-    Python whose defaults move (3.13 adds two verify flags) fails here instead of the builder
-    drifting from them; the absolutes hold whatever the defaults."""
+    """With nothing set, every setting but the TLS floor equals httpx's default context
+    (CPython's `create_default_context` on certifi's bundle), so production dials with today's
+    settings. A Python whose defaults move (3.13 adds two verify flags) fails here instead of the
+    builder drifting from them. The floor is pinned at TLS 1.2 whatever the platform states: one
+    OpenSSL build reports its default as TLS 1.2, another leaves it at the library minimum. The
+    absolutes hold whatever the defaults."""
     clean_environment(monkeypatch)
     ours = exchange_tls_context()
     fields = settings(ours)
-    assert fields == settings(httpx.create_ssl_context())
+    default = settings(httpx.create_ssl_context())
     assert {"verify_flags", "options", "minimum_version", "keylog_filename"} <= fields.keys()
+    assert default.pop("minimum_version") in (
+        ssl.TLSVersion.TLSv1_2,
+        ssl.TLSVersion.MINIMUM_SUPPORTED,
+    )
+    assert fields.pop("minimum_version") == ssl.TLSVersion.TLSv1_2
+    assert fields == default
     keylog: str | None = ours.keylog_filename  # typeshed says `str`; unset, it is None
     assert (ours.protocol, ours.verify_mode, ours.check_hostname, keylog) == (
         ssl.PROTOCOL_TLS_CLIENT,
