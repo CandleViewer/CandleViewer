@@ -83,52 +83,11 @@ async def test_write_book_snapshot_serialises_bids_asks_as_json() -> None:
     assert json.loads(str(row["bids"])) == [["100", "1"]]
 
 
-@pytest.mark.asyncio
-async def test_write_bars_routes_by_family_to_correct_table() -> None:
-    from candleviewer.storage.repositories.rows import BarRow
-
-    writer = _FakeWriter()
-    repo = QuestDbMarketDataRepository(writer, _FakeReader())  # type: ignore[arg-type]
-    await repo.write_bars(
-        [
-            BarRow(
-                ts_us=1,
-                symbol="BTCUSDT",
-                family="time",
-                param="1m",
-                open="1",
-                high="2",
-                low="0.5",
-                close="1.5",
-                volume="10",
-            )
-        ]
-    )
-    assert "bars_time" in writer.written
-
-
-@pytest.mark.asyncio
-async def test_write_bars_rejects_unknown_family() -> None:
-    from candleviewer.storage.repositories.rows import BarRow
-
-    writer = _FakeWriter()
-    repo = QuestDbMarketDataRepository(writer, _FakeReader())  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="unknown bar family"):
-        await repo.write_bars(
-            [
-                BarRow(
-                    ts_us=1,
-                    symbol="BTCUSDT",
-                    family="bogus",
-                    param="1m",
-                    open="1",
-                    high="2",
-                    low="0.5",
-                    close="1.5",
-                    volume="10",
-                )
-            ]
-        )
+def test_repository_has_no_bars_writer() -> None:
+    """BR-05: `bars_*` rows have one writer, `bars.writer.BarWriter`; the repository only
+    reads them (the scan over every module is `tests/unit/bars/test_bars_single_writer_guard.py`).
+    """
+    assert not hasattr(QuestDbMarketDataRepository, "write_bars")
 
 
 @pytest.mark.asyncio

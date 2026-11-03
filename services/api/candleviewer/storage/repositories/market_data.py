@@ -9,6 +9,8 @@ Write methods are batch-only (`Sequence[...]`) on purpose — a per-row API
 would make the ILP batching budget of `docs/plan/20-architecture.md` Sec.4.14
 unreachable (ticket "Technical notes / design"). Every read method takes a
 `TierHint`; `"auto"` resolution lives in E07-T05's router, never here.
+
+Bars have a read method only: `bars.writer.BarWriter` is their one writer (BR-05).
 """
 
 from __future__ import annotations
@@ -56,10 +58,6 @@ class MarketDataRepository(Protocol):
 
     async def write_tickers(self, rows: Sequence[TickerRow]) -> None:
         """Append ticker updates. Dedup key: `(symbol, ts_us)`."""
-        ...
-
-    async def write_bars(self, rows: Sequence[BarRow]) -> None:
-        """Append/upsert bars. Dedup key: `(symbol, family, param, ts_us)`."""
         ...
 
     async def write_klines(self, rows: Sequence[KlineRow]) -> None:

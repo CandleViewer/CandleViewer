@@ -45,8 +45,11 @@ SOURCES: Final = ("tape", "kline", "parquet")
 #: Parquet rows are restored tape, so they rank with tape; exchange klines are cross-check only.
 SOURCE_RANK: Final = {"tape": 2, "parquet": 2, "kline": 1}
 #: Unkeyed sha256 prefix: tamper-evidence for naive edits only (no HMAC; see 21-database-schema).
-#: Rows with NULL `source` AND NULL `row_checksum` predate migration 0003 (which is the first
-#: writer of both columns) and are trusted as legacy; any other NULL checksum is "missing".
+#: Provenance cutover (BR-05), bar open time in µs: 2026-10-07T00:00:00Z, the day QuestDB
+#: migration 0003 added `source` and `row_checksum` and the bar writer began stamping both on
+#: every row. A row with NULL `source` AND NULL `row_checksum` is trusted as legacy only when it
+#: opens before this instant; from it on, and for any other NULL checksum, it is "missing".
+PROVENANCE_CUTOVER_US: Final = 1_791_331_200_000_000
 _PREFIX: Final = {
     "tick": "tick",
     "volume": "vol",

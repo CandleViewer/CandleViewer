@@ -49,7 +49,7 @@ async def test_bars_range_golden_file_round_trips() -> None:
     query: dict[str, Any] = golden["query"]
     time_range: dict[str, Any] = query["range"]
     repo = FakeMarketDataRepository()
-    await repo.write_bars([BarRow(**row) for row in golden["input_rows"]])
+    repo.seed_bars([BarRow(**row) for row in golden["input_rows"]])  # no bars writer: BR-05
     result = await repo.read_bars(
         query["symbol"],
         query["family"],

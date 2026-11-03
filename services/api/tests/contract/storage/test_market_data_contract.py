@@ -104,7 +104,16 @@ async def test_trade_totals_count_and_sum_the_symbols_prints_in_the_range(
     assert none == TradeTotals(0, Decimal(0))
 
 
-async def test_write_then_read_bars_round_trips(repo: MarketDataRepository) -> None:
+def _seed_bars(repo: MarketDataRepository, rows: list[BarRow]) -> None:
+    """Bars have no writer on the protocol (BR-05: `bars.writer.BarWriter` is the only one), so
+    each implementation under test seeds them its own way."""
+    if isinstance(repo, FakeMarketDataRepository):
+        repo.seed_bars(rows)
+        return
+    raise AssertionError(f"no bars seeding for {type(repo).__name__}")  # pragma: no cover
+
+
+async def test_seeded_bars_read_back_unchanged(repo: MarketDataRepository) -> None:
     bar = BarRow(
         ts_us=60_000_000,
         symbol="BTCUSDT",
@@ -116,7 +125,7 @@ async def test_write_then_read_bars_round_trips(repo: MarketDataRepository) -> N
         close="1.5",
         volume="10",
     )
-    await repo.write_bars([bar])
+    _seed_bars(repo, [bar])
     result = await repo.read_bars(
         "BTCUSDT", "time", "60000", TimeRange(start_us=0, end_us=120_000_000)
     )
