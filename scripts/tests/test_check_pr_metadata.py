@@ -1119,3 +1119,89 @@ def test_main_refuses_a_head_that_changes_the_changelog_and_passes_one_that_does
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     assert m.main(["--repo-root", str(root)], fetch=_fake(base, head, own)) == 1
     assert "PR-CHANGELOG-001" in capsys.readouterr().err
+
+
+# --- #3099: the release-prep PR shape (PR-CHANGELOG-001); version.txt only in it --------------
+
+PREP = "chore(infra-devops): prepare release 0.2.0"
+PREP_LOG = "# Changelog\n\n## Unreleased\n\n## 0.2.0 — 2026-11-01\n\n## 0.1.0 — 2026-10-01\n"
+
+
+def _prep_files(version: str = "0.2.0\n", changelog: str = PREP_LOG) -> dict[str, str]:
+    return {m.VERSION_PATH: version, m.CHANGELOG_PATH: changelog}
+
+
+@pytest.mark.parametrize("paths", [["CHANGELOG.md", "version.txt"], ["CHANGELOG.md"]])
+def test_changelog_edit_errors_release_prep_shape_passes(paths):
+    """A prep PR, and a same-version re-prep that changes only CHANGELOG.md, are admitted."""
+    assert m.changelog_edit_errors(PREP, paths, frozenset(), _prep_files()) == []
+
+
+def test_check_release_prep_pr_passes_every_rule():
+    errs, _ = run(
+        pr(title=PREP), rows(("3", "1", "CHANGELOG.md"), ("1", "1", "version.txt")),
+        head_files=_prep_files(),
+    )
+    assert errs == []
+
+
+@pytest.mark.parametrize(
+    ("paths", "deleted", "files", "found"),
+    [
+        (["CHANGELOG.md", "version.txt", "src/a.py"], frozenset(), _prep_files(), "['src/a.py']"),
+        (["CHANGELOG.md", "version.txt"], frozenset({"version.txt"}), _prep_files(), "deleted"),
+        (["CHANGELOG.md", "version.txt"], frozenset(), _prep_files("0.3.0\n"), "'0.3.0'"),
+        (["CHANGELOG.md"], frozenset(), _prep_files(changelog="## 0.1.0 — 2026-10-01\n"), "0.1.0"),
+        (["CHANGELOG.md"], frozenset(), {}, "version.txt 'none'"),
+    ],
+    ids=["other-file", "deleted", "version-mismatch", "heading-mismatch", "no-files"],
+)
+def test_changelog_edit_errors_prep_title_on_another_shape_fails(paths, deleted, files, found):
+    (err,) = m.changelog_edit_errors(PREP, paths, deleted, files)
+    assert err.startswith("PR-CHANGELOG-001") and "07 §4.1" in err and found in err
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "chore(infra-devops): prepare release 0.2",
+        "chore(infra-devops): prepare release v0.2.0",
+        "chore(docs): prepare release 0.2.0",
+        "chore(infra-devops): prepare release 0.2.0 (#5)",
+    ],
+)
+def test_changelog_edit_errors_near_prep_title_is_judged_as_any_other_pr(title):
+    errs = m.changelog_edit_errors(title, ["CHANGELOG.md", "version.txt"], frozenset(), _prep_files())
+    assert len(errs) == 2 and all(e.startswith("PR-CHANGELOG-001") for e in errs)
+
+
+@pytest.mark.parametrize(
+    ("title", "paths"),
+    [("feat(ui): a pane", ["src/a.py", "version.txt"]), ("docs(docs): sync", ["version.txt"])],
+)
+def test_changelog_edit_errors_version_txt_outside_a_prep_pr_fails(title, paths):
+    (err,) = m.changelog_edit_errors(title, paths)
+    assert "changes version.txt, which only a release-prep PR" in err
+
+
+def test_main_reads_the_heads_files_for_a_prep_title(repo, monkeypatch, capsys):
+    root, _ = repo
+    (root / "CHANGELOG.md").write_text("# Changelog\n\n## Unreleased\n")
+    (root / "version.txt").write_text("0.1.0\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "base files")
+    base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("PR_NUMBER", "21")
+    _git(root, "checkout", "-qb", "prep")
+    (root / "CHANGELOG.md").write_text("# Changelog\n\n## Unreleased\n\n## 0.2.0 — 2026-11-01\n")
+    (root / "version.txt").write_text("0.2.0\n")
+    _git(root, "commit", "-qam", "prep")
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    own = {**pr(title=PREP), "number": 21}
+    assert m.main(["--repo-root", str(root)], fetch=_fake(base, head, own)) == 0
+    (root / "version.txt").write_text("0.3.0\n")
+    _git(root, "commit", "-qam", "drift")
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    assert m.main(["--repo-root", str(root)], fetch=_fake(base, head, own)) == 1
+    assert "version.txt '0.3.0'" in capsys.readouterr().err

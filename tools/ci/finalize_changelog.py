@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """E03-T11: finalise CHANGELOG.md's Unreleased section under a version
-heading at release-train cut time (`docs/plan/07-release-and-prr.md` §3:
-"At release-train cut time, the Unreleased section is finalized under the
-new version heading with the release date").
+heading (`docs/plan/07-release-and-prr.md` §3). Since #3099 the release-prep
+PR does this through `tools/ci/prepare_release.py`, which imports `finalize`;
+the CLI stays for local use. The names imported from `update_changelog` keep
+their names and signatures (#2341 tool contract).
 
 Usage:
     python tools/ci/finalize_changelog.py --changelog CHANGELOG.md \\

@@ -1,7 +1,7 @@
 """#3347: commits route to the changelog's Security section (docs/plan/07-release-and-prr.md §3).
 
-A `Changelog-Security:` footer or a `security` PR label on a `feat`/`fix`/`perf` commit; the
-footer wins; a wording-guard failure fails the sync and writes nothing. Fixtures only.
+A `Changelog-Security:` footer (any type) or a `security` PR label on a `fix`/`perf` commit (never
+`feat`); the footer wins; a wording-guard failure fails the sync and writes nothing. Fixtures only.
 """
 
 from __future__ import annotations
@@ -15,7 +15,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.ci import update_changelog as uc
-from tools.ci.changelog_lib import Category, build_changelog_update, parse_commit
+from tools.ci.changelog_lib import (
+    Category,
+    build_changelog_update,
+    check_security_wording,
+    parse_commit,
+)
 
 _SHA = "abc1234" + "0" * 33
 _FOOTER = "Changelog-Security: Hardened the session check against replayed tokens"
@@ -32,10 +37,28 @@ def test_parse_commit_security_footer_routes_footer_text_to_security() -> None:
     assert entries == {Category.SECURITY: [expected]}
 
 
-@pytest.mark.parametrize("kind", ["fix", "feat", "perf"])
+@pytest.mark.parametrize("kind", ["fix", "perf"])
 def test_parse_commit_security_label_routes_generated_line_to_security(kind: str) -> None:
     entries = _entries(f"{kind}(auth-rbac): check the session (#7)", ("security",))
     assert entries == {Category.SECURITY: ["- **auth-rbac**: check the session (#7) (abc1234)"]}
+
+
+def test_parse_commit_security_label_on_feat_stays_under_features() -> None:
+    commit = parse_commit(_SHA, "feat(auth-rbac): check the session (#7)", ("security",))
+    assert commit.category == Category.FEATURES and not commit.security_label_skipped
+    expected = "- **auth-rbac**: check the session (#7) (abc1234)"
+    assert _entries(commit.subject_line, ("security",)) == {Category.FEATURES: [expected]}
+
+
+def test_parse_commit_security_footer_on_feat_routes_to_security() -> None:
+    entries = _entries(f"feat(auth-rbac): check the session (#7)\n\n{_FOOTER}", ("security",))
+    expected = "- Hardened the session check against replayed tokens (#7)"
+    assert entries == {Category.SECURITY: [expected]}
+
+
+def test_check_security_wording_poc_is_a_whole_word_match() -> None:
+    assert check_security_wording(["Bounded the epoch counter of a session (#7)"]).ok
+    assert not check_security_wording(["Fixed it, poc in the notes (#7)"]).ok
 
 
 def test_parse_commit_security_label_on_other_types_is_ignored() -> None:
@@ -164,15 +187,43 @@ def test_sync_pr_number_missing_from_labels_file_warns(
     assert "::warning::1 pending commit(s) have a PR number missing" in out and "abc1234" in out
 
 
-@pytest.mark.parametrize("content", ["not json", '[{"number": 7}]', "[7]"])
+@pytest.mark.parametrize("content", ["not json", '[{"number": 7}]', "[7]", "{}", '""'])
 def test_sync_malformed_labels_file_reports_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], content: str
 ) -> None:
     path, raw, labels = _write(tmp_path, [{"sha": _SHA, "message": "fix(a): y (#8)"}])
     labels.write_text(content, encoding="utf-8")
+    before = path.read_bytes()
     argv = ["--commits-json", str(raw), "--changelog", str(path), "--pr-labels-json", str(labels)]
     assert uc.main(argv) == 1
     assert capsys.readouterr().out.startswith("::error::")
+    assert path.read_bytes() == before
+
+
+def test_sync_missing_labels_file_reports_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path, raw, labels = _write(tmp_path, [{"sha": _SHA, "message": "fix(a): y (#8)"}])
+    labels.unlink()
+    before = path.read_bytes()
+    argv = ["--commits-json", str(raw), "--changelog", str(path), "--pr-labels-json", str(labels)]
+    assert uc.main(argv) == 1
+    assert capsys.readouterr().out.startswith("::error::")
+    assert path.read_bytes() == before
+
+
+def test_sync_refused_footer_with_security_label_stays_under_fixes_and_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    message = "fix(auth-rbac): x (#7)\n\nChangelog-Security: Fixed it, see the exploit steps"
+    (commit,) = uc._parse([{"sha": _SHA, "message": message}], {7: frozenset({"security"})})
+    assert commit.category == Category.FIXES and commit.security_rejected
+    path, raw, labels = _write(tmp_path, [{"sha": _SHA, "message": message}])
+    before = path.read_bytes()
+    argv = ["--commits-json", str(raw), "--changelog", str(path), "--pr-labels-json", str(labels)]
+    assert uc.main(argv) == 1
+    assert path.read_bytes() == before
+    assert "::error::Security changelog wording check failed" in capsys.readouterr().out
 
 
 def test_sync_refused_footer_error_names_the_unblock_path(

@@ -19,7 +19,10 @@ def _write_commits(tmp_path: Path, commits: list[dict[str, str]]) -> Path:
     return p
 
 
-def test_compute_release_bump_major_without_flag_fails(tmp_path: Path, capsys) -> None:
+def test_compute_release_bump_pre_1_0_breaking_without_flag_bumps_minor(
+    tmp_path: Path, capsys
+) -> None:
+    """C-15.5 (#3099): pre-1.0 a breaking change bumps MINOR; 1.0.0 needs the declaration."""
     commits_path = _write_commits(
         tmp_path, [{"sha": "s1", "message": "feat(auth-rbac)!: drop legacy cookie"}]
     )
@@ -27,9 +30,10 @@ def test_compute_release_bump_major_without_flag_fails(tmp_path: Path, capsys) -
     version_path.write_text("0.9.4\n", encoding="utf-8")
 
     rc = bump_main(["--commits-json", str(commits_path), "--current-version", str(version_path)])
-    assert rc == 1
+    assert rc == 0
     captured = capsys.readouterr()
-    assert "CI-REL-002" in captured.err
+    assert "next_version=0.10.0" in captured.out
+    assert "bump=major" in captured.out
 
 
 def test_compute_release_bump_major_with_flag_succeeds(tmp_path: Path, capsys) -> None:

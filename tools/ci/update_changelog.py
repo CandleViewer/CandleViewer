@@ -14,10 +14,10 @@ or a `## X.Y.Z — YYYY-MM-DD` heading ENDS with its `(sha7)` or the last `(#N)`
 (never a mid-line mention, never the header above the first `##`); any other content inside
 Unreleased raises ChangelogFormatError. `--commits-json` holds `[{"sha", "message"}]`;
 `--since-last-tag` uses `tools/ci/collect_commits.py`. `--pr-labels-json` is the merged PRs'
-labels (#3347): a `security`-labelled `feat`/`fix`/`perf` moves to Security. Produce it with
-`gh pr list --state merged --limit <N> --json number,labels > labels.json`, with `<N>` covering
-every PR since the last release tag (the default lists only 30 open PRs); a pending commit whose
-`(#N)` is missing from the file is warned about. The tool itself makes no network call.
+labels (#3347): a `security`-labelled `fix`/`perf` (never `feat`) moves to Security. Produce
+it with `gh pr list --state merged --limit <N> --json number,labels > labels.json`, with `<N>`
+covering every PR since the last release tag (the default lists only 30 open PRs); a pending
+commit whose `(#N)` is missing from the file is warned about. The tool itself makes no network call.
 
 Security wording guard (#3347, 07 §3): a sync (not `--preview`) whose Security section would hold
 a line failing `check_security_wording`, or a commit whose `Changelog-Security:` footer failed it,
@@ -112,6 +112,8 @@ def load_pr_labels(path: Path | None) -> dict[int, frozenset[str]]:
         return {}
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, list):  # `{}` or `""` would otherwise read as "no labels"
+            raise TypeError(f"top level is {type(raw).__name__}, not a list")
         return {int(pr["number"]): frozenset(lb["name"] for lb in pr["labels"]) for pr in raw}
     except (OSError, KeyError, ValueError, TypeError) as exc:
         raise PrLabelsError(f"not a gh pr list --json number,labels file ({exc!r})") from exc
