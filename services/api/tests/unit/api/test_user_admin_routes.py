@@ -58,6 +58,7 @@ from candleviewer.storage.repositories.user_lifecycle import (
     UserUpdate,
     UserUpdateAudit,
 )
+from candleviewer.storage.repositories.user_list import UserListFilter
 from candleviewer.storage.repositories.user_purge import PurgeUserAnonymisedError
 from candleviewer.ws.revocation import CLOSE_TOKEN_EXPIRED, RevocationHub
 from tests.conftest import RecordingAuditSink
@@ -146,6 +147,9 @@ class _Store:
             raise self.read_error
         found = self.users.get(user_id)
         return None if found is None else copy.deepcopy(found)
+
+    async def list_users(self, query: UserListFilter) -> list[dict[str, Any]]:
+        raise AssertionError("#5478: the list's own tests are test_user_list_route.py")
 
     def _owners(self) -> int:
         return sum(u["status"] == "active" and "owner" in u["roles"] for u in self.users.values())

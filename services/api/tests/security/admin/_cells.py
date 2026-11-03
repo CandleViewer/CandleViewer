@@ -100,6 +100,7 @@ _RECORDER = "E16's recorder administration; `recording:write`, the Owner's alone
 #: Every served admin or users route that is not on `admin_router`. Reviewed data: SR-E42-09 wants
 #: it to shrink to the users routers. The `not_executable` matrix rows are classified too.
 OWN_GUARD: dict[str, OwnGuard] = {
+    "GET /users": _ENFORCE,  # #5478: `listUsers` in `make_user_admin_router`
     "POST /users": _ENFORCE,
     "GET /users/invites": _ENFORCE,
     "POST /users/{userId}/invite": _ENFORCE,
