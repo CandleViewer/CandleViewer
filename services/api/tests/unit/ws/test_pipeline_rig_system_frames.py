@@ -21,8 +21,9 @@ frames each notice (`t`, `ch`, `s`, `ts`, `e`, `p`) and cuts it for the principa
 detector then runs over every module in `tests/unit/ws` (one added later too), by scope: each
 function that is not itself a test (`test_*`) is scanned, whatever holds it. That is a helper, a
 fixture, a method of a helper class or of a `Test*` class, a function nested in a helper or in a
-test (the removed `notify` was one), and module-level code. Only what `ALLOWED` names builds a
-`system` frame there, and that stays one `return` of a dict literal with no call in it.
+test (the removed `notify` was one), and module-level code. None builds a `system` frame there:
+there is no exception list. A test that needs an envelope (to validate a `system_view` result
+against the schema) writes it in its own body.
 
 The scan has the guard's limits: it sees a dict literal with that `ch` and a `ch=` argument, not a
 channel passed positionally or through a helper's argument. `_d("system", ...)` of
@@ -65,11 +66,6 @@ from tests.unit.ws.test_system_filter import SAMPLES
 RIG = Path(__file__).resolve().with_name("test_pipeline_outbound.py")
 #: Every module of `tests/unit/ws` (the scan of helpers reads them all, a new one too).
 WS_TESTS = RIG.parent
-#: The helpers there that build a `system` frame beside production. The scan is exact: one that is
-#: not here fails it, and so does one here that builds none. `_frame` wraps a `system_view` result
-#: in an envelope for the contract's schema (`validate`) and reaches no connection or pipeline: the
-#: scan checks that, as one `return` of a dict literal with no call in it. Tracked in #3637.
-ALLOWED = {("test_system_filter.py", "_frame")}
 #: The rig's classes: its hub, the rig itself, and the socket the handler talks to.
 RIG_CLASSES = frozenset({"_Hub", "_Rig", "_Wire"})
 #: The hub the rig had before #3198, as it was: it framed the bodies itself.
@@ -118,24 +114,6 @@ def _helper_builders(source: str) -> set[str]:
     and `<module>` for module-level code."""
     built, _ = _sites(source)
     return {scope for scope in built if not scope.split(".")[-1].startswith("test_")}
-
-
-def _returns_only_a_literal(source: str, scope: str) -> bool:
-    """Each function `scope` names in `source` is one `return` of a dict literal with no call in
-    it, so it hands a frame back and cannot queue it; and there is one."""
-    name = scope.split(".")[-1]
-    found = [
-        node
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == name
-    ]
-    return bool(found) and all(
-        len(node.body) == 1
-        and isinstance(node.body[0], ast.Return)
-        and isinstance(node.body[0].value, ast.Dict)
-        and not any(isinstance(child, ast.Call) for child in ast.walk(node))
-        for node in found
-    )
 
 
 async def test_every_system_frame_of_the_rig_is_queued_by_push_system(
@@ -307,19 +285,14 @@ def test_no_helper_in_the_ws_unit_tests_builds_a_frame_on_the_system_channel() -
     """The guard's detector over every module of `tests/unit/ws`, by scope: no function that is not
     itself a test builds a frame on `system` (a dict literal with that `ch`, or a `ch=` argument),
     be it a helper, a fixture, a method of a `Test*` class, a function nested in a test, or
-    module-level code, but what `ALLOWED` names, and that stays one `return` of a dict literal with
-    no call in it. A frame reaches a pipeline by `_Connection.push_system` or
+    module-level code. A frame reaches a pipeline by `_Connection.push_system` or
     `GatewayHub.broadcast_system` (C-12.4). What else it reports is in the module docstring."""
     found = {
         (path.relative_to(WS_TESTS).as_posix(), scope)
         for path in WS_TESTS.rglob("*.py")
         for scope in _helper_builders(path.read_text(encoding="utf-8"))
     }
-    assert found - ALLOWED == set(), "a helper frames a system frame beside push_system"
-    assert ALLOWED - found == set(), "an allowed helper builds no frame now: drop it from ALLOWED"
-    for module, scope in sorted(ALLOWED):  # the reason `ALLOWED` gives is read, not taken on trust
-        source = (WS_TESTS / module).read_text(encoding="utf-8")
-        assert _returns_only_a_literal(source, scope), f"{module}::{scope} is more than a literal"
+    assert found == set(), "a helper frames a system frame beside push_system"
 
 
 @pytest.mark.parametrize(
@@ -362,22 +335,3 @@ def test_the_scan_finds_a_frame_built_outside_the_tests_and_no_other(
     anywhere else outside a test's own body, and leaves a test, a helper that calls production
     alone."""
     assert _helper_builders(source) == found
-
-
-@pytest.mark.parametrize(
-    ("source", "literal"),
-    [
-        ('def _f(body):\n    return {"t": "d", "ch": "system", "p": body}', True),
-        ('def _f(body):\n    PIPE.push(body)\n    return {"ch": "system"}', False),
-        ('def _f(body):\n    return {"ch": "system", "p": PIPE.push(body)}', False),
-        ('def _f(body):\n    frame = {"ch": "system"}\n    return frame', False),
-        ('def _g(body):\n    return {"ch": "system"}', False),
-    ],
-    ids=["literal", "grows-a-call", "call-in-the-literal", "not-a-literal", "no-such-function"],
-)
-def test_an_allowed_helper_is_read_as_one_return_of_a_dict_literal(
-    source: str, literal: bool
-) -> None:
-    """So the check of `ALLOWED` in the scan is not vacuous: a helper that grows a call or a
-    statement, or is gone, is not what its entry says."""
-    assert _returns_only_a_literal(source, "_f") is literal

@@ -116,15 +116,11 @@ SAMPLES: dict[str, tuple[dict[str, Any], dict[str, Any] | None]] = {
 }
 
 
-def _frame(body: Any) -> dict[str, Any]:
-    return {"t": "d", "ch": "system", "s": 1, "ts": 1, "e": "j", "p": body}
-
-
 @pytest.mark.parametrize("kind", sorted(SAMPLES))
 def test_owner_receives_every_contract_kind_whole(kind: str) -> None:
     body, _ = SAMPLES[kind]
     assert system_view(body, OWNER) is body
-    validate(_frame(body))
+    validate({"t": "d", "ch": "system", "s": 1, "ts": 1, "e": "j", "p": body})
 
 
 @pytest.mark.parametrize("who", [MANAGER, VIEWER], ids=["manager", "viewer"])
@@ -138,7 +134,7 @@ def test_manager_and_viewer_receive_only_the_role_neutral_fields(
     if neutral is body:
         assert view is body  # nothing to leave out: passed on as is, never copied
     if view is not None:
-        validate(_frame(view))
+        validate({"t": "d", "ch": "system", "s": 1, "ts": 1, "e": "j", "p": view})
 
 
 @pytest.mark.parametrize(
@@ -233,7 +229,7 @@ def test_an_account_notice_reaches_a_manager_or_viewer_cut_to_its_accounts_or_no
     assert view == (None if kept is None else _ACCOUNT | {"exchange_account_ids": kept})
     assert withheld_reason(body, who) is None  # cut to nothing is the contract: nothing is counted
     if view is not None:
-        validate(_frame(view))
+        validate({"t": "d", "ch": "system", "s": 1, "ts": 1, "e": "j", "p": view})
 
 
 _NO_ACCOUNT: dict[str, dict[str, Any]] = {
@@ -616,7 +612,7 @@ def test_a_flag_frame_carries_only_the_keys_the_role_may_learn(
     }
     assert _FLAG_FRAME == before
     assert view is not None
-    validate(_frame(view))
+    validate({"t": "d", "ch": "system", "s": 1, "ts": 1, "e": "j", "p": view})
 
 
 def test_a_flag_frame_the_role_may_learn_whole_is_passed_on_as_is() -> None:
@@ -687,7 +683,7 @@ def test_a_health_frame_carries_the_flag_keys_the_role_may_learn(
     view = system_view(body, VIEWER, flag_visible=_visible)
     assert view == {"kind": "health", "health": "healthy"} | kept
     assert view is not None
-    validate(_frame(view))
+    validate({"t": "d", "ch": "system", "s": 1, "ts": 1, "e": "j", "p": view})
 
 
 def test_a_health_frame_whose_flags_the_role_may_all_learn_is_passed_on_as_is() -> None:
