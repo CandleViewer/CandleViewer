@@ -73,11 +73,12 @@ _UNDECLARED: tuple[dict[str, Any], ...] = (
 )  # fmt: skip
 
 
-def refusal(spec: HandlerSpec) -> BlockedBy | None:
+async def refusal(spec: HandlerSpec) -> BlockedBy | None:
     """What the checks that read the table refuse (E35-T10): check 2 (`unavailable` while no
     handler is bound, the rollout port on, no stand-in), then check 8 (a type refused for good)."""
     gates = Gates(switches=Switches(rollout=True))
-    return gates.before_scope(spec, None, stand_in=False) or gates.stop_check(spec, _REQ, None)
+    blocked = gates.before_scope(spec, None, stand_in=False)
+    return blocked or (await gates.stop_check(spec, _REQ, None)).refused
 
 
 class _Bound:
@@ -90,7 +91,7 @@ class _Bound:
         raise AssertionError("never reached")
 
 
-def test_every_action_type_has_a_handler_declaring_idempotent_or_a_guard() -> None:
+async def test_every_action_type_has_a_handler_declaring_idempotent_or_a_guard() -> None:
     """Scenario: Every action type has a declared handler. Each of the 25 types declares
     `idempotent` or its guard, whether it places orders and its capability, and blocks
     `unavailable` while unbound (`widen_stop` aside, below)."""
@@ -103,7 +104,7 @@ def test_every_action_type_has_a_handler_declaring_idempotent_or_a_guard() -> No
         assert spec.capability in get_args(Capability) and isinstance(spec.places_orders, bool)
         assert (spec.capability, spec.bound_by) == _OWNERS[action_type], action_type
         if action_type not in RETIRED_ACTIONS:
-            assert refusal(spec) == "unavailable", action_type
+            assert await refusal(spec) == "unavailable", action_type
 
 
 def test_a_handler_spec_without_idempotent_or_a_guard_is_refused() -> None:
@@ -147,11 +148,13 @@ def test_the_handler_flags_come_from_the_catalogue() -> None:
     assert all(rebuilt[a.type].places_orders is a.places_orders for a in flipped)
 
 
-def test_unbound_handlers_block_as_unavailable() -> None:
+async def test_unbound_handlers_block_as_unavailable() -> None:
     for action_type, spec in HANDLERS.items():
         assert spec.handler is None, action_type
-        assert refusal(spec) == ("native_sl" if action_type == "widen_stop" else "unavailable")
-    assert refusal(replace(HANDLERS["send_notification"], handler=_Bound())) is None
+        assert await refusal(spec) == (
+            "native_sl" if action_type == "widen_stop" else "unavailable"
+        )
+    assert await refusal(replace(HANDLERS["send_notification"], handler=_Bound())) is None
 
 
 def test_no_order_placing_handler_is_bound_before_its_slice() -> None:
@@ -170,16 +173,16 @@ def test_no_order_placing_handler_is_bound_before_its_slice() -> None:
         assert spec.guard == "fire_key_anchor", action_type
 
 
-def test_widen_stop_is_refused_as_native_sl_never_unavailable() -> None:
+async def test_widen_stop_is_refused_as_native_sl_never_unavailable() -> None:
     """`widen_stop` only loosens a stop (24 §8.8 rule 5): retired, refused for good as
     `native_sl`, never `unavailable`, which would read as an action still to come; check 2 lets it
     through and check 8 refuses it by type (E35-T10)."""
     spec = HANDLERS["widen_stop"]
     gates = Gates(switches=Switches(rollout=False))  # the rollout port off: still never unavailable
     assert gates.before_scope(spec, None, stand_in=False) is None
-    assert gates.stop_check(spec, _REQ, None) == "native_sl"
-    assert refusal(spec) == "native_sl"
-    assert refusal(replace(spec, handler=_Bound())) == "native_sl"  # a binding changes nothing
+    assert (await gates.stop_check(spec, _REQ, None)).refused == "native_sl"
+    assert await refusal(spec) == "native_sl"
+    assert await refusal(replace(spec, handler=_Bound())) == "native_sl"  # a binding changes none
     assert (spec.places_orders, spec.capability, spec.bound_by) == (False, "none", None)
 
 

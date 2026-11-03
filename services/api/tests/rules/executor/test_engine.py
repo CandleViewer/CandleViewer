@@ -521,12 +521,14 @@ async def test_an_executor_with_no_records_bound_hands_nothing_over() -> None:
     assert [e["write"] for e in logs if e["event"] == "rules.records_failed"] == ["run"]
 
 
-@pytest.mark.parametrize("write", ["begin", "append", "close", "fired", "blocked"])
+@pytest.mark.parametrize(
+    "write", ["begin", "append", "close", "fired", "blocked", "loosen_refused"]
+)
 async def test_the_unbound_ports_refuse_every_write(write: str) -> None:
     unbound: Any = engine_module._Unbound()
     args: dict[str, tuple[Any, ...]] = {
         "begin": (None, None), "append": (RUN, ()), "close": (RUN, "ok", 0),
-        "fired": (None,), "blocked": (None,),
+        "fired": (None,), "blocked": (None,), "loosen_refused": (None, None),
     }  # fmt: skip
     with pytest.raises(RuntimeError, match="not bound"):
         await getattr(unbound, write)(*args[write])

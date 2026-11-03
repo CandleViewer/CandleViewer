@@ -214,6 +214,11 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "sl.attached",
         "sl.modified",
         "tp.modified",
+        # E35-T12 (#5004, 24 Sec.8.8 rule 5, Sec.15.5): a rule action's loosening, refused by the
+        # executor's check 8 and written ahead of its `rules.blocked` (`native_sl`), by the
+        # executor's records adapter alone (`rules_oms_wiring`). Keyed (`writer.KEYED_ACTIONS`) by
+        # the action's `dedupe_key`, so a retried refusal lands once.
+        "sl.loosen_refused",
         # E28-T05 (#909, 24 Sec.15.5): a definition write, ahead of its commit, with its members
         # before and after (`api.trade_group_definition_writes`); no `.granted`: nothing grants one.
         "trade_group_definition.created",

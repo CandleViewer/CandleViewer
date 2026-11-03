@@ -23,6 +23,7 @@ from candleviewer.rules import manager as manager_module
 from candleviewer.rules import service as rules_service
 from candleviewer.rules.executor import control as control_module
 from candleviewer.rules.executor.control import NotificationHandler, NotifyRow
+from candleviewer.rules.executor.ports import STOP_ADMITTED, StopVerdict
 from candleviewer.rules.executor.signals import SignalBus
 from candleviewer.rules.ir.models import MetricRef
 from candleviewer.rules.manager import Actor, InMemoryRuleStore, RuleRow, RulesManager
@@ -79,9 +80,9 @@ class AskedStops:
     def __init__(self) -> None:
         self.asked: list[str] = []
 
-    def admits(self, req: ActionRequest, account_id: uuid.UUID | None) -> bool:
+    async def judge(self, req: ActionRequest, account_id: uuid.UUID | None) -> StopVerdict:
         self.asked.append(req.action_type)
-        return True
+        return STOP_ADMITTED
 
 
 class Frames:

@@ -9,11 +9,14 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import replace
+from decimal import Decimal
 from pathlib import Path
+
+import pytest
 
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.audit.writer import KEYED_ACTIONS, AuditWriter, keyed_record_id
-from candleviewer.rules.executor.ports import ActionAuditFields
+from candleviewer.rules.executor.ports import ActionAuditFields, Loosening
 from candleviewer.rules_oms_wiring import RuleActionAudit
 from tests.unit.audit.audit_fakes import FakeAuditRepository, FakeClock
 
@@ -57,3 +60,66 @@ async def test_rules_fired_and_blocked_are_registered_and_keyed(
         assert "<redacted" not in row["after_state"]  # every id survives the writer's redactor
         assert (state["ir_sha256"], state["dedupe_sha256"]) == (FIELDS.ir_hash, FIELDS.dedupe_key)
         assert (state["owner_user_id"], state["armed_by_user_id"]) == (OWNER, ARMER)
+
+
+async def test_a_rules_loosen_refusal_is_registered_keyed_critical_and_names_the_stops(
+    repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock
+) -> None:
+    """E35-T12 (24 §15.5, BQ-3): `sl.loosen_refused` is registered and keyed in a namespace of its
+    own, so a retried refusal lands once; written through the adapter and the real writer, it is
+    the rule's (no `actor_user_id`), `denied` at `critical` with the reason `native_sl`, the order
+    its object, and the stop before and after in `after_state` as plain decimal text. Only a
+    `native_sl` refusal takes one."""
+    assert "sl.loosen_refused" in AUDIT_ACTIONS and "sl.loosen_refused" in KEYED_ACTIONS
+    assert KEYED_ACTIONS["sl.loosen_refused"] not in {
+        ns for a, ns in KEYED_ACTIONS.items() if a != "sl.loosen_refused"
+    }
+    order = uuid.UUID(int=0xD1)
+    loosening = Loosening(
+        order_id=order, symbol="BTCUSDT", before=Decimal("58000"), after=Decimal("57000.50")
+    )
+    refused = replace(FIELDS, action_type="modify_stop_loss", blocked_by="native_sl")
+    writer = AuditWriter(repo, str(tmp_path / "audit.wal"), clock=clock, sleep=repo.retry_sleep)
+    await writer.start()
+    audit = RuleActionAudit(writer)
+    for _ in range(2):
+        await audit.loosen_refused(refused, loosening)
+    with pytest.raises(ValueError, match="native_sl"):
+        await audit.loosen_refused(replace(refused, blocked_by="permission"), loosening)
+    await writer.flush(5)
+    await writer.stop(1)
+    [row] = repo.rows
+    assert row["record_id"] == str(keyed_record_id("sl.loosen_refused", FIELDS.dedupe_key))
+    assert (row["action"], row["outcome"], row["severity"], row["reason"]) == (
+        "sl.loosen_refused", "denied", "critical", "native_sl",
+    )  # fmt: skip
+    assert (row["actor_label"], row["actor_user_id"]) == (f"rule:{RULE}@v3", None)
+    assert (row["object_kind"], row["object_id"]) == ("order", str(order))
+    state = json.loads(row["after_state"])
+    assert (state["stop_before"], state["stop_after"], state["symbol"]) == (
+        "58000", "57000.5", "BTCUSDT",
+    )  # fmt: skip
+    assert (state["actor_type"], state["blocked_by"], state["order_id"]) == (
+        "rule", "native_sl", str(order),
+    )  # fmt: skip
+
+
+async def test_a_loosening_that_names_no_order_keeps_the_rule_as_its_object(
+    repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock
+) -> None:
+    """`only_tighten: false` names no order (24 §15.5): the record keeps the rule as its object,
+    and the order and the stops it names are `None`, none being known."""
+    refused = replace(FIELDS, action_type="tighten_stop", blocked_by="native_sl")
+    writer = AuditWriter(repo, str(tmp_path / "audit.wal"), clock=clock, sleep=repo.retry_sleep)
+    await writer.start()
+    await RuleActionAudit(writer).loosen_refused(refused, Loosening(symbol="BTCUSDT"))
+    await writer.flush(5)
+    await writer.stop(1)
+    [row] = repo.rows
+    assert (row["action"], row["object_kind"], row["object_id"]) == (
+        "sl.loosen_refused", "rule", RULE,
+    )  # fmt: skip
+    state = json.loads(row["after_state"])
+    assert (state["order_id"], state["stop_before"], state["stop_after"], state["symbol"]) == (
+        None, None, None, "BTCUSDT",
+    )  # fmt: skip

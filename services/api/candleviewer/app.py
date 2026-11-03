@@ -279,6 +279,7 @@ from candleviewer.budget_wiring import build_disk_budget
 from candleviewer.bus.models import Topic
 from candleviewer.bus.service import BusService
 from candleviewer.domain.events import InstrumentUpdatedEvent
+from candleviewer.domain.primitives import Environment as EnvironmentName
 from candleviewer.exchange.base.instruments import InstrumentsFetcher, RiskLimitsFetcher
 from candleviewer.exchange.base.models import TickerEvent, TradeEvent
 from candleviewer.exchange.base.service import ExchangeBaseService
@@ -416,7 +417,13 @@ from candleviewer.risk.service import RiskService
 from candleviewer.rolloff_wiring import build_rolloff_job
 from candleviewer.rules.manager import REFUSED_CAPS, Actor
 from candleviewer.rules.service import RulesService
-from candleviewer.rules_oms_exits import StoredOpenPositions, rule_reduce_handlers
+from candleviewer.rules_oms_exits import (
+    RuleBreakerCancels,
+    RuleStopCheck,
+    StoredOpenPositions,
+    rule_exit_handlers,
+    rule_reduce_handlers,
+)
 from candleviewer.rules_oms_orders import StoredPositionSides, rule_order_handlers
 from candleviewer.rules_oms_principals import IdentityPrincipalSource, RulePrincipals
 from candleviewer.rules_oms_wiring import (
@@ -493,6 +500,7 @@ from candleviewer.storage.repositories.onboarding_sqlalchemy import SqlAlchemyOn
 from candleviewer.storage.repositories.order_path_symbols_sqlalchemy import (
     SqlAlchemyOrderPathSymbols,
 )
+from candleviewer.storage.repositories.orders_sqlalchemy import SqlAlchemyOrderStore
 from candleviewer.storage.repositories.owner_totp_reset_sqlalchemy import SqlAlchemyOwnerTotpReset
 from candleviewer.storage.repositories.recorder_sqlalchemy import SqlAlchemyRecorderRepository
 from candleviewer.storage.repositories.recording_reads_sqlalchemy import SqlAlchemyRecordingReads
@@ -3425,6 +3433,11 @@ def create_app(
     # E35-T09: the action executor's records written ahead (the run row and its events, and
     # `rules.fired` / `rules.blocked`), its alerts and its metrics (24 §11.5). No handler and no OMS
     # sink: every armed action ends blocked until its slice binds its handler (BQ-17).
+    rule_alerts = RuleAlerts(
+        PgSystemEventWriter(health_pg, redact_details=system_event_redactor())
+        if health_pg is not None
+        else None
+    )
     ctx.rules.bind(
         records=rule_action_records(
             SqlAlchemyRulesRepository(
@@ -3432,11 +3445,7 @@ def create_app(
             ),
             _LazyAuditEmitter(ctx.audit),
         ),
-        alerts=RuleAlerts(
-            PgSystemEventWriter(health_pg, redact_details=system_event_redactor())
-            if health_pg is not None
-            else None
-        ),
+        alerts=rule_alerts,
         metrics=rule_metrics(metrics_facade),
     )
     # E35-T10: checks 2 and 3 read the master switch's and the order-entry kill switch's views and
@@ -3501,13 +3510,41 @@ def create_app(
         # E35-T12 (#5004): the reduce-only exits over the same order port, each close the close
         # routes' own order through the pipeline, never protective (BQ-5), its positions read in
         # the owner's scope within 2 s (BQ-6).
+        open_positions = None if reads is None else StoredOpenPositions(reads)
         ctx.rules.bind(
             handlers=rule_reduce_handlers(
                 lambda: oms_runtime_of(app.state),
                 oms_enabled=feature_flags.oms_enabled,
                 principals=rule_principals,
-                positions=None if reads is None else StoredOpenPositions(reads),
+                positions=open_positions,
             )
+        )
+        # E35-T12: the rule's cancels and amends over the exit service, check 8 over the amend
+        # writer's own comparison, and the circuit breaker's cancels, each reading the rule's
+        # resting entries through its groups on a pool of its own (BQ-2, BQ-7 to BQ-10), which
+        # the lifespan disposes with the two above, after the breaker's cancels drained.
+        orders_pg = app.state.rule_orders_pg = SqlAlchemyRelationalRepository(
+            dsn, "rule_orders", pool_size=2, max_overflow=0
+        )
+        rule_entries = SqlAlchemyOrderStore(
+            orders_pg, statement_timeout_ms=resolved.oms_statement_timeout_ms
+        )
+        environment: EnvironmentName = resolved.environment.value
+        ctx.rules.bind(
+            stop_check=RuleStopCheck(rule_principals, rule_entries, open_positions, environment),
+            handlers=rule_exit_handlers(
+                lambda: oms_runtime_of(app.state),
+                principals=rule_principals,
+                entries=rule_entries,
+                environment=environment,
+            ),
+            breaker_cancels=RuleBreakerCancels(
+                lambda: oms_runtime_of(app.state),
+                rule_principals,
+                rule_entries,
+                environment,
+                rule_alerts,
+            ),
         )
     rules_actor = (
         SessionRulesActorResolver(

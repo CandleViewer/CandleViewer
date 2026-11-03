@@ -16,7 +16,13 @@ from typing import Any
 import pytest
 
 from candleviewer.rules.executor.keys import client_ref, dedupe_key
-from candleviewer.rules.executor.ports import ActionAuditFields, EventRow, RunRow, input_snapshot
+from candleviewer.rules.executor.ports import (
+    ActionAuditFields,
+    EventRow,
+    Loosening,
+    RunRow,
+    input_snapshot,
+)
 from candleviewer.rules.executor.writeahead import FireRecords
 from candleviewer.rules_oms_wiring import RuleRunRecords
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
@@ -54,6 +60,9 @@ class _Audit:
         self.log.append(fields)
 
     async def blocked(self, fields: ActionAuditFields) -> None:
+        self.log.append(fields)
+
+    async def loosen_refused(self, fields: ActionAuditFields, loosening: Loosening) -> None:
         self.log.append(fields)
 
 

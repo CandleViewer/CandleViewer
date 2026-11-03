@@ -14,6 +14,7 @@ from candleviewer.rules.executor.metrics import ExecutorMetrics
 from candleviewer.rules.executor.ports import (
     ActionAuditFields,
     EventRow,
+    Loosening,
     PrincipalView,
     RunRow,
     RunStatus,
@@ -96,13 +97,15 @@ class Principals:
 
 class Records:
     """The executor's two write-ahead ports in memory (E35-T09): the runs, their events in the
-    order written, the closes and the audit records (`rules.fired`, `rules.blocked`)."""
+    order written, the closes and the audit records (`rules.fired`, `rules.blocked`, and E35-T12's
+    `sl.loosen_refused`, whose loosening `loosened` keeps)."""
 
     def __init__(self) -> None:
         self.runs: dict[uuid.UUID, RunRow] = {}
         self.events: list[tuple[uuid.UUID, EventRow]] = []
         self.closed: dict[uuid.UUID, tuple[str, int]] = {}
         self.audits: list[tuple[str, ActionAuditFields]] = []
+        self.loosened: list[Loosening] = []
 
     async def begin(self, run: RunRow, first: EventRow) -> None:
         self.runs.setdefault(run.run_id, run)
@@ -119,6 +122,10 @@ class Records:
 
     async def blocked(self, fields: ActionAuditFields) -> None:
         self.audits.append(("rules.blocked", fields))
+
+    async def loosen_refused(self, fields: ActionAuditFields, loosening: Loosening) -> None:
+        self.audits.append(("sl.loosen_refused", fields))
+        self.loosened.append(loosening)
 
     def results(self) -> list[tuple[str, str, str | None]]:
         """`(node, outcome, blocked_by)` of each recorded result, in order."""

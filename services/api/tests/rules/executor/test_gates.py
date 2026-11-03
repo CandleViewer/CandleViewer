@@ -41,7 +41,7 @@ from candleviewer.rules.executor.handlers import (
     prepared,
 )
 from candleviewer.rules.executor.keys import dedupe_key
-from candleviewer.rules.executor.ports import PrincipalView
+from candleviewer.rules.executor.ports import STOP_ADMITTED, Loosening, PrincipalView, StopVerdict
 from candleviewer.rules.ir.models import MAX_ACTIONS, Action, ActionType, RuleLimits, RuleScope
 from candleviewer.rules.scope import (
     ActionRequest,
@@ -189,6 +189,7 @@ class Gated:
     moving: Any = True  # what the move answers: True, False, or an exception it raises
     dropped: list[tuple[str, str]] = field(default_factory=list)  # (rule, blocked_by) drops
     rows: Any = None  # a `RulesManager` check 1 reads the stored row from, else scripted verdicts
+    fire_alerts: Any = None  # the executor's alerts (AC-14, the partial fire), unbound by default
     executor: ActionExecutor = field(init=False)
 
     def __post_init__(self) -> None:
@@ -203,6 +204,7 @@ class Gated:
             records=self.records, audit=self.records, metrics=self.counted.metrics,
             handlers=bound_table(self.sent, self.answers, self.refuse), clock=self.clock,
             halts=self.halts, budget=self.budget, breaker=breaker, wall=lambda: self.wall,
+            alerts=self.fire_alerts,
         )  # fmt: skip
 
     async def move(self, rule_id: str) -> bool:
@@ -437,14 +439,18 @@ async def test_a_retry_runs_checks_2_3_and_5_again_and_a_refusal_sends_nothing(
 
 async def test_widen_stop_reads_kill_switch_while_engaged_and_native_sl_otherwise() -> None:
     """`widen_stop` is refused by type at check 8's slot, so an engaged kill switch (check 3) reads
-    first; with every switch open it is `native_sl`, and `rules.blocked` alone is written."""
+    first; with every switch open it is `native_sl`, a retired loosening recorded as any refused
+    loosening is: `sl.loosen_refused` ahead of `rules.blocked`, nothing sent (E35-T12)."""
     engaged = Gated(Switches(engaged={None}))
     await engaged.run(action("a1", "widen_stop"))
     assert engaged.results() == [("a1", "blocked", "kill_switch")]
     open_ = Gated(Switches(rollout=False))
     await open_.run(action("a1", "widen_stop"))
     assert open_.results() == [("a1", "blocked", "native_sl")]
-    assert open_.audited() == [("rules.blocked", "a1", "native_sl")] and open_.sent == []
+    assert open_.audited() == [
+        ("sl.loosen_refused", "a1", "native_sl"), ("rules.blocked", "a1", "native_sl"),
+    ]  # fmt: skip
+    assert open_.records.loosened == [Loosening(symbol="BTCUSDT")] and open_.sent == []
 
 
 async def test_an_oms_action_is_unavailable_while_the_rollout_port_reads_off() -> None:
@@ -678,6 +684,70 @@ async def test_abort_on_first_skips_the_actions_remaining_accounts() -> None:
     assert gated.sent == [("a1", str(A)), ("a1", str(B)), ("a2", str(A))]
 
 
+@pytest.mark.parametrize(
+    "action_type", ["flatten_all_positions", "cancel_all_orders", "tighten_stop"]
+)
+async def test_an_exit_tries_every_account_and_its_first_failure_decides(action_type: str) -> None:
+    """24 §11.5 "Exits": an exit (`oms_reduce`, `oms_cancel` or `oms_amend`) does not take
+    `abort_on_first`, as it only reduces risk: account A refused, accounts B and C are still
+    closed, cancelled or amended (check 8 admitting each), each recorded on its own; then the
+    first account's failure decides for the fire, so `abort_remaining` stops the next action."""
+    gated = Gated(refuse={A}, stop=_Stops({A, B, C}))
+    await gated.run(action("a1", action_type, targets="all_accounts"), action("a2"))
+    assert per_account(gated) == [
+        ("a1", str(A), "failed", None), ("a1", str(B), "ok", None),
+        ("a1", str(C), "ok", None), ("a2", str(A), "skipped", None),
+    ]  # fmt: skip
+    assert gated.sent == [("a1", str(A)), ("a1", str(B)), ("a1", str(C))]
+
+
+class _AheadFails(Records):
+    """`Records` whose first `rules.fired` write fails: the first account's write ahead."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.fired_calls = 0
+
+    async def fired(self, fields: Any) -> None:
+        self.fired_calls += 1
+        if self.fired_calls == 1:
+            raise ConnectionError("the store refused the write")
+        await super().fired(fields)
+
+
+@dataclass
+class _FireAlerts(BreakerAlerts):
+    """The executor's alerts, each write-ahead alert by the node it names (AC-14)."""
+
+    writes: list[str] = field(default_factory=list)
+
+    async def write_ahead_failed(self, rule_id: str, run_id: uuid.UUID, node_id: str) -> None:
+        self.writes.append(node_id)
+
+
+@pytest.mark.parametrize("stop", ["write", "unread"])
+async def test_an_exit_stops_its_later_accounts_at_a_failed_write_or_an_unread_row(
+    stop: str,
+) -> None:
+    """24 §11.5 ("The records written ahead", check 1): an exit tries every account past a
+    refusal, never past a stop that ends the fire whatever `on_error` says. Account A's write
+    ahead fails, or check 1 cannot read A's row (`unread`, each skip then `mode_changed`):
+    accounts B and C are `skipped`, nothing is sent for any of them, and the failed write raises
+    the write-ahead alert once."""
+    alerts = _FireAlerts()
+    gated = Gated(records=_AheadFails() if stop == "write" else Records(), fire_alerts=alerts)
+    if stop == "unread":
+        gated.verdicts["a1"] = ["unread"]
+    exit_ = action("a1", "flatten_all_positions", targets="all_accounts", on_error="continue")
+    await gated.run(exit_)
+    why = None if stop == "write" else "mode_changed"
+    assert per_account(gated) == [
+        ("a1", str(A), "failed" if stop == "write" else "skipped", why),
+        ("a1", str(B), "skipped", why), ("a1", str(C), "skipped", why),
+    ]  # fmt: skip
+    assert gated.sent == [] and alerts.writes == (["a1"] if stop == "write" else [])
+
+
 async def test_revoked_grant_blocks_action_at_runtime() -> None:
     """Scenario: Authority is the intersection of owner and armer (RE-E6). A grant revoked after
     arming blocks at runtime (RE-E1): the armer's, through the principal (`permission`); the
@@ -904,8 +974,8 @@ async def test_records_carry_both_roles_from_the_principal_snapshot() -> None:
     await gated.run(action("a3"))
     roles = [(verb, f.node_id, f.owner_role, f.armed_by_role) for verb, f in gated.records.audits]
     assert roles == [
-        ("rules.fired", "a1", "owner", "manager"), ("rules.blocked", "a2", "owner", "manager"),
-        ("rules.blocked", "a3", None, None),
+        ("rules.fired", "a1", "owner", "manager"), ("sl.loosen_refused", "a2", "owner", "manager"),
+        ("rules.blocked", "a2", "owner", "manager"), ("rules.blocked", "a3", None, None),
     ]  # fmt: skip
 
 
@@ -1042,9 +1112,9 @@ class _Stops:
     def __init__(self, admitted: set[uuid.UUID]) -> None:
         self.admitted, self.asked = admitted, list[str]()
 
-    def admits(self, req: ActionRequest, account_id: uuid.UUID | None) -> bool:
+    async def judge(self, req: ActionRequest, account_id: uuid.UUID | None) -> StopVerdict:
         self.asked.append(req.action_type)
-        return account_id in self.admitted
+        return STOP_ADMITTED if account_id in self.admitted else StopVerdict(refused="native_sl")
 
 
 async def test_an_unbound_stop_check_refuses_as_native_sl() -> None:
@@ -1053,8 +1123,8 @@ async def test_an_unbound_stop_check_refuses_as_native_sl() -> None:
     never clamped; bound, the writer's comparison decides. `rules.blocked` alone is written."""
     stopping = sorted(t for t, spec in HANDLERS.items() if spec.touches_stop)
     assert stopping == [
-        "cancel_all_orders", "cancel_order", "modify_stop_loss", "move_to_breakeven",
-        "tighten_stop",
+        "cancel_all_orders", "cancel_order", "modify_stop_loss", "modify_take_profit",
+        "move_to_breakeven", "tighten_stop",
     ]  # fmt: skip
     reqs = [action(f"a{n}", t, on_error="continue") for n, t in enumerate(stopping)]
     unbound = Gated()
@@ -1067,6 +1137,28 @@ async def test_an_unbound_stop_check_refuses_as_native_sl() -> None:
     refused = Gated(stop=_Stops(set()))
     await refused.run(*reqs)
     assert {(o, r) for _, o, r in refused.results()} == {("blocked", "native_sl")}
+
+
+class _Verdict:
+    """Check 8's port answering one verdict for every stop action."""
+
+    def __init__(self, verdict: StopVerdict) -> None:
+        self.verdict = verdict
+
+    async def judge(self, req: ActionRequest, account_id: uuid.UUID | None) -> StopVerdict:
+        return self.verdict
+
+
+async def test_a_stop_refusal_outside_check_8s_two_is_refused_as_native_sl() -> None:
+    """Fail closed (24 §11.5 check 8; E35-T12): a port answering a refusal other than its two
+    (`native_sl`, `unavailable`) is refused `native_sl`, nothing sent; `unavailable` keeps its
+    own, as check 8 answers a position's stop move."""
+    odd = Gated(stop=_Verdict(StopVerdict(refused="permission")))
+    await odd.run(action("a1", "modify_stop_loss"))
+    assert [(o, r) for _, o, r in odd.results()] == [("blocked", "native_sl")] and odd.sent == []
+    own = Gated(stop=_Verdict(StopVerdict(refused="unavailable")))
+    await own.run(action("a1", "modify_stop_loss"))
+    assert [(o, r) for _, o, r in own.results()] == [("blocked", "unavailable")] and own.sent == []
 
 
 async def test_a_confirmation_required_fire_is_blocked_and_never_executed_later() -> None:

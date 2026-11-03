@@ -24,6 +24,7 @@ from candleviewer.rules.executor.results import (
     BLOCKED_DETAIL,
     BUDGET_UNREAD,
     OUTCOMES,
+    POSITION_STOP,
     ROW_UNREAD,
     RULE_LIMITS,
     ActionResult,
@@ -101,8 +102,11 @@ def test_blocked_detail_is_one_plain_sentence_per_reason() -> None:
     """BQ-12: E35-D03's register, at most 80 characters, one sentence ending in a full stop,
     naming the condition and never data (no digit, id, account or figure; C-12.6). E35-T10: `cap`
     has one more per rule limit it names, and `order_budget` one for a count not confirmed since a
-    start, each PROPOSED as the others are."""
-    assert set(BLOCKED_DETAIL) == {*BLOCKED_BY, ROW_UNREAD, *RULE_LIMITS, BUDGET_UNREAD}
+    start, each PROPOSED as the others are. E35-T12: `unavailable` has one for a move of an open
+    position's stop (check 8), PROPOSED as well."""
+    assert set(BLOCKED_DETAIL) == {
+        *BLOCKED_BY, ROW_UNREAD, *RULE_LIMITS, BUDGET_UNREAD, POSITION_STOP,
+    }  # fmt: skip
     for reason, sentence in BLOCKED_DETAIL.items():
         assert sentence.startswith("Not done — ") and len(sentence) <= 80, reason
         assert sentence.endswith(".") and sentence.count(".") == 1, reason

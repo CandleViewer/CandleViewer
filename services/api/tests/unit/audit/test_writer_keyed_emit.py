@@ -36,6 +36,8 @@ def test_writer_keyed_actions_keep_their_namespaces_for_good() -> None:
     # E35-T09 (#5000): a rule action's records, named by the action's `dedupe_key` (24 §11.9).
     assert KEYED_ACTIONS["rules.fired"] == uuid.UUID("51f5d119-a574-4365-b206-e54224c41884")
     assert KEYED_ACTIONS["rules.blocked"] == uuid.UUID("74e6d147-d012-4f44-a891-c6fc0477a2bf")
+    # E35-T12 (#5004): a rule action's refused loosening, named by the action's `dedupe_key`.
+    assert KEYED_ACTIONS["sl.loosen_refused"] == uuid.UUID("e6d880c1-204a-4b8e-bf70-3529c7fc66ba")
     assert set(KEYED_ACTIONS) <= AUDIT_ACTIONS
     assert len(set(KEYED_ACTIONS.values())) == len(KEYED_ACTIONS)  # never two actions on one id
 

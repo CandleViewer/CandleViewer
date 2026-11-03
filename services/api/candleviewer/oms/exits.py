@@ -31,7 +31,8 @@ A cancel's reason sets the lane B1's call sends it in, registered with the cance
 "Rule-originated orders" item 3, C-12.7). A rule's own cancel and amend are the rule's records
 (`RuleOrigin`, 24 Sec.15.5), registered with the exit (`ExitWatch.origin`) so that the stop-side
 records the command port writes for the amend are the rule's too; the breaker's cancel names its
-tripped rule in its intent record's detail.
+tripped rule in its intent record's detail, and its reason and that rule in the detail of every
+other record it writes, `already_final`, a refusal and its outcome (E35-T12, #5004).
 """
 
 from __future__ import annotations
@@ -159,6 +160,20 @@ CANCEL_LANES: Final[Mapping[CancelReason, OrderLane]] = MappingProxyType(
 )
 #: The reasons whose cancel names its rule (`cancel_admitted`'s `origin`).
 _RULE_REASONS: Final = frozenset({"rule", "rule_circuit_breaker"})
+
+
+def _tripped(reason: CancelReason, origin: RuleOrigin | None) -> Mapping[str, str]:
+    """What every record of the circuit breaker's cancel names beside its intent (24 Sec.15.5;
+    E35-T12, the carry of #5003's first change): the cancel's reason and the tripped rule. Nothing
+    for any other reason."""
+    if reason != "rule_circuit_breaker" or origin is None:
+        return {}
+    return {
+        "cancel_reason": reason, "rule_id": str(origin.rule_id),
+        "rule_version": str(origin.version),
+    }  # fmt: skip
+
+
 #: The exits the in-flight guard keys (ruling Q11) and the audit names.
 type ExitOperation = Literal["amend", "cancel", "cancel_all"]
 #: The step of a refusal that its `deny` record names (24 Sec.8.4, the exit routes): a route's own,
@@ -627,10 +642,13 @@ class OrderExits:
         step: ExitStep | None = None,
         reason: str | None = None,
         origin: RuleOrigin | None = None,
+        named: Mapping[str, str] | None = None,
     ) -> ExitOutcome:
-        """`deny`, its record a rule's for a rule's request (`origin`)."""
+        """`deny`, its record a rule's for a rule's request (`origin`), its detail naming what the
+        breaker's cancel names (`named`, `_tripped`)."""
         action = DISABLED_BY_POLICY if outcome.reason is not None else _ACTIONS[operation]
         detail = {"operation": operation, "code": outcome.code, "order_link_id": row.order_link_id}
+        detail |= named or {}
         if step is not None:
             detail["step"] = step
         if reason is not None:
@@ -670,6 +688,7 @@ class OrderExits:
             return _CLOSED
         operation: ExitOperation = "cancel_all" if reason == "cancel_all" else "cancel"
         own = origin if reason == "rule" else None  # a rule's own cancel: the rule's records
+        named = _tripped(reason, origin)  # the breaker's: each record names it (E35-T12)
         state = await self._lifecycle(row)
         if not isinstance(state, ExitOutcome) and state in _SETTLING:
             try:  # D9: hop by hop (`validated`, then `submitting`), all within the one bound
@@ -687,12 +706,13 @@ class OrderExits:
                     return await self._standing(row, "unknown", state, "timeout")
                 state = _CONFLICT
         if not isinstance(state, ExitOutcome) and state in _FINAL:
-            return await self._final(row, operation, state, actor, request_id, own)
+            return await self._final(row, operation, state, actor, request_id, own, named)
         if isinstance(state, ExitOutcome) or state not in _CANCELLABLE:
             refusal = state if isinstance(state, ExitOutcome) else _CONFLICT
             return await self._deny(
-                row, operation, refusal, actor=actor, request_id=request_id, origin=own
-            )
+                row, operation, refusal, actor=actor, request_id=request_id, origin=own,
+                named=named,
+            )  # fmt: skip
         detail = {"operation": operation, "state": state, "order_link_id": row.order_link_id}
         if reason == "rule_circuit_breaker" and origin is not None:  # the tripped rule
             detail |= {"rule_id": str(origin.rule_id), "rule_version": str(origin.version)}
@@ -702,11 +722,12 @@ class OrderExits:
             return _problem(503, "audit_unavailable", "The cancel could not be recorded.")
         if self._closed:  # `aclose` ran while the intent was written: nothing starts
             return await self._deny(
-                row, operation, _CLOSED, actor=actor, request_id=request_id, origin=own
-            )
+                row, operation, _CLOSED, actor=actor, request_id=request_id, origin=own,
+                named=named,
+            )  # fmt: skip
         send = self._dispatch(
             row, operation, "CANCEL", {}, actor=actor, request_id=request_id,
-            lane=CANCEL_LANES[reason], origin=own,
+            lane=CANCEL_LANES[reason], origin=own, named=named,
         )  # fmt: skip
         return await self._shielded(send, operation)
 
@@ -718,12 +739,15 @@ class OrderExits:
         actor: SubmitActor,
         request_id: UUID | None,
         origin: RuleOrigin | None = None,
+        named: Mapping[str, str] | None = None,
     ) -> ExitOutcome:
         """A cancel of an order already final, nothing to send: the user's command is the action
         all the same (C-2.9, the orchestrator's ruling of 2026-10-24 21:47Z (2)), so it is recorded
         ahead of its `202`, `orders.cancel` with the reason `already_final` (outcome `success`: the
-        `audit_outcome` enum has no `noop`); else `503 audit_unavailable` in its place."""
+        `audit_outcome` enum has no `noop`); else `503 audit_unavailable` in its place. The
+        breaker's names its reason and its tripped rule in the detail (`named`, E35-T12)."""
         detail = {"operation": operation, "state": state, "order_link_id": row.order_link_id}
+        detail |= named or {}
         if not await self._recorded(
             row, "orders.cancel", "success", ALREADY_FINAL, detail, actor, request_id,
             origin=origin,
@@ -775,6 +799,7 @@ class OrderExits:
         terms: Mapping[str, Decimal] | None = None,
         lane: OrderLane | None = None,
         origin: RuleOrigin | None = None,
+        named: Mapping[str, str] | None = None,
     ) -> ExitOutcome:
         """The command and B1's settle (`_commanded`), its outcome recorded beside its intent
         (`_outcome`). A fault it raises, never a cancellation, is recorded there too before it goes
@@ -792,13 +817,13 @@ class OrderExits:
         except Exception as exc:
             kind, failure = _kind(operation), type(exc).__name__
             _log().error("oms_exit_fault", action=_ACTIONS[kind], failure=failure)
-            detail = {"operation": kind, "code": None, "state": None}
+            detail = {"operation": kind, "code": None, "state": None} | dict(named or {})
             await self._recorded(
                 row, _ACTIONS[kind], "failure", failure, detail, actor, request_id,
                 severity="error", origin=origin,
             )  # fmt: skip
             raise
-        return await self._outcome(row, operation, outcome, actor, request_id, origin)
+        return await self._outcome(row, operation, outcome, actor, request_id, origin, named)
 
     async def _commanded(
         self,
@@ -953,21 +978,24 @@ class OrderExits:
         actor: SubmitActor,
         request_id: UUID | None,
         origin: RuleOrigin | None = None,
+        named: Mapping[str, str] | None = None,
     ) -> ExitOutcome:
         """The exit's outcome beside its intent. A refusal is recorded before it is answered, by
         `deny` (C-2.9; 24 Sec.8.4: the command port records none of a cancel it refuses), so one
         whose record cannot be written answers `503 audit_unavailable`; an accepted or unknown
-        outcome is recorded best effort (as `orders.submit`'s)."""
+        outcome is recorded best effort (as `orders.submit`'s). Each names `named` (`_tripped`)."""
         if outcome.kind == "refused":
             return await self._deny(
-                row, operation, outcome, actor=actor, request_id=request_id, origin=origin
-            )
+                row, operation, outcome, actor=actor, request_id=request_id, origin=origin,
+                named=named,
+            )  # fmt: skip
         accepted = outcome.kind == "accepted"
         result: Literal["success", "failure"] = "success" if accepted else "failure"
         reason = outcome.lifecycle_state if accepted else None
         reason = reason or outcome.unknown_reason or outcome.code or ""
         kind = _kind(operation)
         detail = {"operation": kind, "code": outcome.code, "state": outcome.lifecycle_state}
+        detail |= named or {}
         await self._recorded(
             row, _ACTIONS[kind], result, reason, detail, actor, request_id, origin=origin
         )

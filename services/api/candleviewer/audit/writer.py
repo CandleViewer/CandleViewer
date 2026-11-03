@@ -139,6 +139,8 @@ KEYED_ACTIONS: Final[Mapping[str, uuid.UUID]] = MappingProxyType(
         # Sec.11.9), so a retried write ahead of the same action, or a refusal's, lands once.
         "rules.fired": uuid.UUID("51f5d119-a574-4365-b206-e54224c41884"),
         "rules.blocked": uuid.UUID("74e6d147-d012-4f44-a891-c6fc0477a2bf"),
+        # E35-T12 (#5004): a rule action's refused loosening, named by the action's `dedupe_key`.
+        "sl.loosen_refused": uuid.UUID("e6d880c1-204a-4b8e-bf70-3529c7fc66ba"),
     }
 )
 

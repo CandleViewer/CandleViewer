@@ -7,13 +7,14 @@ State comes from an in-memory snapshot (grants/accounts/freeze) behind ``ScopeSt
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 from uuid import UUID
 
 from candleviewer.rules.errors import ScopeForbiddenError
 from candleviewer.rules.evaluator.engine import scope_instance
+from candleviewer.rules.evaluator.snapshot import Value
 from candleviewer.rules.ir.models import Action, RuleScope
 
 SKIPPED_REASON = "scope"
@@ -314,6 +315,10 @@ class ActionRequest:
     #: E35-T13 (24 §11.5): the depth of the signal whose evaluation fired this action, 0 when no
     #: signal did; an `emit_signal` action emits one level deeper.
     signal_depth: int = 0
+    #: E35-T12 (24 §11.5 "Exits", §11.9): the fire's metric snapshot, by metric name, which an
+    #: amend's level reads (`offset_from_price`, `atr`, `structure`). Financial and confidential
+    #: (21 §3.4.3): never in a repr, so never in a log line; never compared.
+    metric_values: Mapping[str, Value] = field(default_factory=dict, repr=False, compare=False)
 
 
 ActionSink = Callable[[ActionRequest], Awaitable[None]]

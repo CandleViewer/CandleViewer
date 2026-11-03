@@ -137,12 +137,29 @@ def audit_fields(
     )  # fmt: skip
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Loosening:
+    """What a rule's refused loosening records (24 §15.5 `sl.loosen_refused`; E35-T12, BQ-3): the
+    order whose stop the action would loosen, its symbol, and the stop before and after, the stop
+    in force it would loosen and the level asked, `None` where none is known (`only_tighten:
+    false` names no level). Its repr shows no figure (C-12.6)."""
+
+    order_id: UUID | None = None
+    symbol: str | None = None
+    before: Decimal | None = field(default=None, repr=False)
+    after: Decimal | None = field(default=None, repr=False)
+
+
 class ActionAudit(Protocol):
-    """`rules.fired` and `rules.blocked`, each keyed by the action's `dedupe_key` (24 §15.5)."""
+    """`rules.fired` and `rules.blocked`, each keyed by the action's `dedupe_key` (24 §15.5), and
+    a refused loosening's `sl.loosen_refused` (E35-T12), keyed the same way in its own namespace
+    and written before the action's `rules.blocked`."""
 
     async def fired(self, fields: ActionAuditFields) -> None: ...
 
     async def blocked(self, fields: ActionAuditFields) -> None: ...
+
+    async def loosen_refused(self, fields: ActionAuditFields, loosening: Loosening) -> None: ...
 
 
 class AlertPort(Protocol):
@@ -200,13 +217,39 @@ class PrincipalRefresh(PrincipalReads, Protocol):
     async def stop(self) -> None: ...
 
 
-class StopCheck(Protocol):
-    """Check 8's read-only port to the recorded-stop writer's own comparison (24 §11.5, §8.8 rule
-    5; BQ-12): whether the stop action on that account leaves the stop in force no looser, and a
-    cancel selects no native stop-loss. E35-T12 binds it; unbound, every stop action is refused
-    (`native_sl`)."""
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StopVerdict:
+    """Check 8's answer for one stop action on one account (24 §11.5; E35-T12): `refused` `None`
+    admits it; `native_sl` refuses a loosening, `loosening` naming what its `sl.loosen_refused`
+    records (none for a cancel that would select a native stop); `unavailable` refuses a move of
+    the open position's stop. `detail` keys its `blocked_detail` (`BLOCKED_DETAIL`), else the
+    reason's own."""
 
-    def admits(self, req: ActionRequest, account_id: UUID | None) -> bool: ...
+    refused: BlockedBy | None = None
+    loosening: Loosening | None = None
+    detail: str | None = None
+
+
+#: Check 8's admission.
+STOP_ADMITTED: Final = StopVerdict()
+
+
+class StopCheck(Protocol):
+    """Check 8's read-only port to the amend writer's own comparison (24 §11.5, §8.8 rule 5;
+    BQ-12; E35-T12, BQ-2): whether the stop action on that account leaves the stop in force no
+    looser, and a cancel selects no native stop-loss. Awaited, under the executor's bound
+    (`gates.STOP_CHECK_TIMEOUT_S`): a read that fails or answers late refuses (`native_sl`), and
+    so does every stop action while it is unbound."""
+
+    async def judge(self, req: ActionRequest, account_id: UUID | None) -> StopVerdict: ...
+
+
+class BreakerCancels(Protocol):
+    """The circuit breaker's cancels of the tripped rule's resting entries (24 §11.7; E35-T12,
+    BQ-10), which the composition root binds: the rules service runs each trip's as a task it
+    tracks, after the trip's B9 move. `req` is the action whose order the budget refused."""
+
+    async def cancel_resting(self, req: ActionRequest) -> None: ...
 
 
 class NotionalRebuild(Protocol):

@@ -7,6 +7,9 @@ close, under the fire's own id) and `RuleActionAudit` over the audit writer (`ru
 `rules.blocked`, keyed by the action's `dedupe_key`). A record names the rule as its actor with no
 user id and no request id (04 SR-062), and both users' roles as the principal snapshot the action
 was checked against gave them, `None` when it was not read (E35-T10, BQ-5).
+E35-T12 adds `sl.loosen_refused` (`RuleActionAudit.loosen_refused`: keyed by the action's
+`dedupe_key` in its own namespace, at `critical`, the order its object and the stop before and
+after in `after_state`) and the breaker's cancels' count of those not done (`RuleAlerts`).
 `RuleAlerts` binds the executor's alerts to the page line and to `system_events` (BQ-7), and
 `rule_metrics` its series to the app's metrics facade (BQ-8); `app.py` binds all three. E35-T10's
 `rule_switches` binds checks 2 and 3 to the two flag views and the B18 verdict the OMS takes, and
@@ -40,7 +43,14 @@ from candleviewer.rules.executor.budget import DAY_S, OrderBudget
 from candleviewer.rules.executor.control import RULE_NOTIFY_TOPIC, NotificationHandler, NotifyRow
 from candleviewer.rules.executor.handlers import COUNTS_ORDERS
 from candleviewer.rules.executor.metrics import ExecutorMetrics
-from candleviewer.rules.executor.ports import ActionAuditFields, EventRow, RunRow, RunStatus
+from candleviewer.rules.executor.ports import (
+    ActionAuditFields,
+    EventRow,
+    Loosening,
+    RunRow,
+    RunStatus,
+)
+from candleviewer.rules.ir.canonical import dec_str
 from candleviewer.rules.limits import (
     ORDER_BUDGET_CAPS,
     RULE_NOTIFY_SWEEP_LIMIT,
@@ -137,6 +147,29 @@ class RuleActionAudit:
             severity="warning", reason=fields.blocked_by, **_entry(fields),
         )  # fmt: skip
 
+    async def loosen_refused(self, fields: ActionAuditFields, loosening: Loosening) -> None:
+        """A rule's refused loosening (24 §8.8 rule 5, §15.5; E35-T12, BQ-3): written ahead of the
+        action's `rules.blocked` (`native_sl`), at `critical`, keyed by the action's `dedupe_key`
+        in its own namespace, so a retried refusal lands once; the rule its actor with both users'
+        roles, the order whose stop it would loosen its object (the rule's, when it names none),
+        and the stop before and after as plain decimal text, `None` where none is known."""
+        if fields.blocked_by != "native_sl":
+            raise ValueError("a loosen refusal is a native_sl refusal")
+        entry = _entry(fields)
+        stops = {
+            "order_id": None if loosening.order_id is None else str(loosening.order_id),
+            "symbol": loosening.symbol,
+            "stop_before": None if loosening.before is None else dec_str(loosening.before),
+            "stop_after": None if loosening.after is None else dec_str(loosening.after),
+        }  # fmt: skip
+        entry["after_state"] = entry["after_state"] | stops
+        if loosening.order_id is not None:
+            entry |= {"object_kind": "order", "object_id": str(loosening.order_id)}
+        await self._emitter.emit_keyed(
+            "sl.loosen_refused", fields.dedupe_key, outcome="denied", severity="critical",
+            reason="native_sl", **entry,
+        )  # fmt: skip
+
 
 def _entry(fields: ActionAuditFields) -> dict[str, Any]:
     """The record's actor, object and `after_state`: ids and names only, under names the writer's
@@ -194,6 +227,18 @@ class RuleAlerts:
         never deduplicated by episode."""
         ids = {"rule_id": rule_id, "run_id": str(run_id), "node_id": node_id}
         _log().critical("rules.circuit_breaker_tripped", cv_page=True, **ids)
+
+    async def breaker_cancels(
+        self, rule_id: str, run_id: UUID, node_id: str, *, sent: int, not_done: int | None
+    ) -> None:
+        """The breaker's cancels of the rule's resting entries ended (24 §11.7; E35-T12, BQ-10):
+        logged with their counts, and, when one was not done (`None`: their selection was not
+        read), one more `critical` row of the trip's incident counting them."""
+        ids = {"rule_id": rule_id, "run_id": str(run_id), "node_id": node_id}
+        left = "unread" if not_done is None else str(not_done)
+        _log().info("rules.breaker_cancels_ended", sent=sent, not_done=left, **ids)
+        if not_done != 0:
+            await self._event("circuit_breaker", ids | {"cancels": str(sent), "not_done": left})
 
     async def breaker_moved(self, rule_id: str, run_id: UUID, node_id: str, *, moved: bool) -> None:
         """The trip's one `system_events` row, saying whether the rule was moved; a rule that was

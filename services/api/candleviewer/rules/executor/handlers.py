@@ -51,17 +51,23 @@ MEETS_ALLOWANCE: Final = frozenset(
      "start_twap"}
 )  # fmt: skip
 #: The types that hand an order to the OMS, entries and reduce-only orders alike, each counted once
-#: per OMS call per resolved account by the order budget (24 §11.7, check 7; BQ-6). Amends,
-#: cancels, lockouts, leverage and the engine's own actions never count.
+#: per resolved account of an action by the order budget, a flatten over several positions once
+#: (24 §11.7, check 7; BQ-6). Amends, cancels, lockouts, leverage and the engine's own actions never
+#: count.
 COUNTS_ORDERS: Final = frozenset(
     {"place_order", "scale_in", "scale_out", "flatten_position", "flatten_all_positions",
      "reverse_position", "arm_chase_limit", "start_iceberg_slice", "start_twap"}
 )  # fmt: skip
+#: The exits' capabilities (24 §11.5 "Exits"; E35-T12): an exit only reduces risk, so none takes
+#: `abort_on_first` across its accounts: every resolved account is tried, each recorded on its own.
+EXITS: Final[frozenset[Capability]] = frozenset({"oms_reduce", "oms_cancel", "oms_amend"})
 #: The actions that set, move or cancel a stop, which check 8 asks the stop in force about (24
-#: §11.5; BQ-12): a cancel may select a native stop-loss.
+#: §11.5; BQ-12): a cancel may select a native stop-loss; a take-profit amend sends the order's
+#: stop beside it, and check 8 finds its target as the stop moves' (E35-T12).
 TOUCHES_STOP: Final = frozenset(
-    {"modify_stop_loss", "tighten_stop", "move_to_breakeven", "cancel_order", "cancel_all_orders"}
-)
+    {"modify_stop_loss", "modify_take_profit", "tighten_stop", "move_to_breakeven",
+     "cancel_order", "cancel_all_orders"}
+)  # fmt: skip
 #: How a handler's call ended, which `on_error` reads (24 §11.9): `accepted` and `done` took
 #: effect; `refused` is a definite refusal, never retried (`blocked_by` when a check of the set
 #: maps it); `pre_anchor` a refusal before the OMS anchor existed and `no_answer` a timeout or a

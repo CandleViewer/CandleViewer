@@ -25,6 +25,7 @@ from candleviewer.rules.executor import writeahead
 from candleviewer.rules.executor.ports import (
     ActionAuditFields,
     EventRow,
+    Loosening,
     RunRow,
     RunStatus,
     input_snapshot,
@@ -78,7 +79,8 @@ class Store:
 
 
 class Audit:
-    """`ActionAudit`: logs `rules.fired` and `rules.blocked` as `(verb, fields)`."""
+    """`ActionAudit`: logs `rules.fired`, `rules.blocked` and `sl.loosen_refused` as `(verb,
+    fields)`."""
 
     def __init__(self, *, fail: str | None = None, hang: str | None = None) -> None:
         self.fail, self.hang, self.hanging = fail, hang, asyncio.Event()
@@ -97,6 +99,9 @@ class Audit:
 
     async def blocked(self, fields: ActionAuditFields) -> None:
         await self._gate("blocked", fields)
+
+    async def loosen_refused(self, fields: ActionAuditFields, loosening: Loosening) -> None:
+        await self._gate("loosen_refused", fields)
 
 
 def _fields(node: str, account: uuid.UUID | None = None) -> ActionAuditFields:
@@ -300,3 +305,29 @@ async def test_events_are_numbered_in_order_within_a_fire() -> None:
     await spending.answered(_result("a3", "skipped"))  # 4
     assert [(e.seq, e.node_ref) for e in gaps.events] == [(2, "a1"), (4, "a3")]
     assert gaps.writes == ["begin", "begin", "append", "append"]
+
+
+async def test_a_refused_loosening_writes_its_record_between_the_event_and_rules_blocked() -> None:
+    """E35-T12 (24 §15.5, BQ-3): a refusal check 8 made of a loosening writes its `action_fail`,
+    then `sl.loosen_refused`, then `rules.blocked`, each under its own bound; a loosen record that
+    does not land raises `WriteAheadFailed` (`audit`), and `rules.blocked` is not written after
+    it; a refusal with no loosening writes no loosen record."""
+    store, audit = Store(), Audit()
+    records = FireRecords(RUN_ROW, store, audit)
+    refusal = blocked_result(
+        node_id="a1", action_type="modify_stop_loss", account_id=None, resolved_accounts=(),
+        dedupe_key=_fields("a1").dedupe_key, reason="native_sl",
+    )  # fmt: skip
+    await records.refused(refusal, _fields("a1"), Loosening(symbol="BTCUSDT"))
+    assert [(v, f.blocked_by) for v, f in audit.log] == [
+        ("loosen_refused", "native_sl"), ("blocked", "native_sl"),
+    ]  # fmt: skip
+    assert [e.kind for e in store.events] == ["action_fail"]
+    failing_audit = Audit(fail="loosen_refused")
+    failing = FireRecords(RUN_ROW, Store(), failing_audit)
+    with pytest.raises(WriteAheadFailed) as failed:
+        await failing.refused(refusal, _fields("a1"), Loosening())
+    assert failed.value.write == "audit" and failing_audit.log == []
+    plain = Audit()
+    await FireRecords(RUN_ROW, Store(), plain).refused(refusal, _fields("a1"))
+    assert [v for v, _ in plain.log] == ["blocked"]
