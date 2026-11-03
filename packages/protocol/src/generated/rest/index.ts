@@ -11551,6 +11551,8 @@ export interface components {
         params_schema?: {
           [key: string]: unknown;
         };
+        /** @description True when the action can open or add to a position. The rule editors key the "places orders" word and the native-stop lines on it. */
+        places_orders?: boolean;
         required_permissions: string[];
         /** @default false */
         requires_step_up: boolean;
@@ -11599,6 +11601,11 @@ export interface components {
         };
         /** @default false */
         requires_recording: boolean;
+        /**
+         * @description What the value is about: a symbol's market, a position, an account, or the session as a whole (`global`). It is the metric descriptor's `scope`; with `dependencies` it places the metric in one of the rule editors' seven picker categories (E36-D01 R2).
+         * @enum {string}
+         */
+        scope?: "symbol" | "position" | "account" | "global";
         /** @enum {string} */
         type: "number" | "boolean" | "price" | "quantity" | "duration" | "enum";
         unavailable_reason?: string;

@@ -67,6 +67,7 @@ def _signal(d: Any, symbol: str | None, recorded: Collection[str] | None) -> dic
         "confidence": d.confidence,
         "estimated": d.confidence != "exact",
         "dependencies": sorted(d.inputs),
+        "scope": d.scope,
         "requires_recording": bool(needs),
         "when_unavailable": d.nullable_when,
         "available": True,
@@ -94,6 +95,7 @@ def _action(a: Any, perms: Collection[str]) -> dict[str, Any]:
         "targets": dict(TARGET_SEMANTICS),
         "available": not missing,
         "simulate_only": bool(simulate_only),
+        "places_orders": a.places_orders,
         "notes": a.note,
     }
     if missing:

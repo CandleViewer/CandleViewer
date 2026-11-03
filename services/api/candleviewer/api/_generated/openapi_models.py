@@ -6639,6 +6639,12 @@ class Signal1(BaseModel):
     deterministic: StrictBool | None = None
     confidence: Literal["exact", "estimated"] | None = None
     dependencies: list[str] | None = None
+    scope: Annotated[
+        Literal["symbol", "position", "account", "global"] | None,
+        Field(
+            description="What the value is about: a symbol's market, a position, an account, or the session as a whole (`global`). It is the metric descriptor's `scope`; with `dependencies` it places the metric in one of the rule editors' seven picker categories (E36-D01 R2).\n"
+        ),
+    ] = None
     when_unavailable: str | None = None
     available: StrictBool = True
     unavailable_reason: str | None = None
@@ -6666,6 +6672,12 @@ class Action1(BaseModel):
     targets: dict[str, str] | None = None
     available: StrictBool = True
     simulate_only: StrictBool = False
+    places_orders: Annotated[
+        StrictBool | None,
+        Field(
+            description='True when the action can open or add to a position. The rule editors key the "places orders" word and the native-stop lines on it.\n'
+        ),
+    ] = None
     restriction: str | None = None
     notes: str | None = None
     loosens_risk: Annotated[

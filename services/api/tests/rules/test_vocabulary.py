@@ -121,6 +121,34 @@ def test_actions_declare_permission_simulate_only() -> None:
     assert full["place_order"]["simulate_only"] is False
 
 
+#: The actions that can open or add to a position (`ActionSpec.places_orders`).
+PLACES_ORDERS = {
+    "place_order",
+    "scale_in",
+    "reverse_position",
+    "arm_chase_limit",
+    "start_iceberg_slice",
+    "start_twap",
+}
+
+
+def test_vocabulary_signals_carry_their_descriptor_scope() -> None:
+    """E37-S02 (24 section 19.118): each signal serves its descriptor's `scope`, which the rule
+    editors' picker categories read (E36-D01 R2)."""
+    served = {s["id"]: s["scope"] for s in _vocab()["signals"]}
+    assert served == {d.name: d.scope for d in default_registry()}
+    assert set(served.values()) == {"symbol", "position", "account", "global"}
+
+
+def test_vocabulary_actions_carry_places_orders() -> None:
+    """E37-S02 (24 section 19.118): every action serves `places_orders`, true for exactly the six
+    that can open or add to a position, whatever the caller holds."""
+    for perms in ((), {"orders:write"}, {"*"}):
+        acts = _vocab(permissions=perms)["actions"]
+        assert all(isinstance(a["places_orders"], bool) for a in acts), perms
+        assert {a["id"] for a in acts if a["places_orders"]} == PLACES_ORDERS, perms
+
+
 def test_no_action_offers_to_loosen_a_stop() -> None:
     """No rule loosens a stop (24-internal-schemas.md section 8.8 rule 5): `widen_stop` is not
     offered, and no action is flagged, gated or described as a way to loosen one."""
