@@ -165,3 +165,21 @@ export function hangingFetch(): AbortSignal[] {
   );
   return signals;
 }
+
+/** A document whose visibility the test sets, counting its listeners. */
+export class FakeDocument extends EventTarget {
+  visibilityState: DocumentVisibilityState = "visible";
+  listeners = 0;
+  override addEventListener(...args: Parameters<EventTarget["addEventListener"]>): void {
+    this.listeners += 1;
+    super.addEventListener(...args);
+  }
+  override removeEventListener(...args: Parameters<EventTarget["removeEventListener"]>): void {
+    this.listeners -= 1;
+    super.removeEventListener(...args);
+  }
+  show(state: DocumentVisibilityState): void {
+    this.visibilityState = state;
+    this.dispatchEvent(new Event("visibilitychange"));
+  }
+}

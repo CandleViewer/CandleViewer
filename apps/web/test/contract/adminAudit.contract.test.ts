@@ -3,7 +3,7 @@
  * `docs/plan/22-api-openapi.yaml` serves for `queryAuditLog` (`orderPlaced`) and
  * `verifyAuditChain` (`ok`, `broken`) through the generated `packages/protocol` types, each vetted
  * as served, and asks for the contract's paths. The filters' names and the page size are
- * `queryAuditLog`'s parameters.
+ * `queryAuditLog`'s parameters, and the `orderPlaced` example lands in the page model.
  */
 import { describe, expect, expectTypeOf, it } from "vitest";
 import type { generated } from "@candleviewer/protocol";
@@ -16,6 +16,7 @@ import {
   type VerifyResult,
 } from "../../src/features/admin/audit/auditReads";
 import { FILTER_NAMES, PAGE_LIMIT } from "../../src/features/admin/audit/auditFilters";
+import { createAuditPageStore, pagerOf } from "../../src/features/admin/audit/auditPageStore";
 import { example, pathBlock, specText } from "../features/admin/audit/specExamples";
 
 type Schemas = generated.rest.components["schemas"];
@@ -89,7 +90,7 @@ function queryParameters(): Map<string, string> {
   return out;
 }
 
-describe("audit log consumer contract (C-6.2): the filters", () => {
+describe("audit log consumer contract (C-6.2): the filters and the page", () => {
   it("test_contract_query_parameters_are_the_filter_names_plus_cursor_and_limit", () => {
     const names = [...queryParameters().keys()];
     expect(names.slice(0, 2)).toEqual(["cursor", "limit"]);
@@ -100,5 +101,26 @@ describe("audit log consumer contract (C-6.2): the filters", () => {
     const limit = /minimum: (\d+), maximum: (\d+)/.exec(queryParameters().get("limit") ?? "");
     expect(PAGE_LIMIT).toBeGreaterThanOrEqual(Number(limit?.[1]));
     expect(PAGE_LIMIT).toBeLessThanOrEqual(Number(limit?.[2]));
+  });
+
+  it("test_contract_orderPlaced_example_lands_in_the_page_model", async () => {
+    const body = vetAuditPage(example("/admin/audit", "orderPlaced"));
+    if (body === null) throw new Error("the example did not vet");
+    const store = createAuditPageStore({
+      now: () => 0,
+      setTimeout: () => 0,
+      clearTimeout: () => undefined,
+      document: null,
+      view: "raw",
+      ownUserId: () => null,
+      read: async () => ({ kind: "ok", body }),
+    });
+    const release = store.hold();
+    await Promise.resolve();
+    await Promise.resolve();
+    const state = store.getState();
+    expect(state).toMatchObject({ phase: "ok", rows: body.items, newCount: 0 });
+    expect(pagerOf(state)).toEqual({ atNewest: true, atOldest: false, page: 1 });
+    release();
   });
 });
