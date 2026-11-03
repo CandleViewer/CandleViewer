@@ -32,10 +32,11 @@ Gates (each FAIL led by its name):
              permission is one of its x-rbac permissions (or `self` for a self-scoped one); every
              topic is in `23`'s topic table.
   G-EVENT    §10's events are the ones the ticket's Observability names, each on a known screen;
-             the compromise event's row says it BLOCKS the build and names its request row (R6).
+             the compromise event's row says it is PROPOSED, registered by E27-S03/S04's contract
+             commit (`24` §15.5), and names its request row (R6).
   G-RULING   (full) §16.1 has the fold rows BQ-01 ... BQ-10, each opening with agreed, amended or
-             disagreed; §10 pins the registered spellings (`apikey.rotated`, `api_key.revoke` and
-             `api_key.revoked`).
+             disagreed; §10 pins the code registry's spellings (`accounts.create`, `api_key.import`,
+             `account.updated`, `api_key.rotate`, `api_key.revoke` and `api_key.revoked`).
   G-MOTION   §7's rows are D04's M rows with the same recipe; a cut is reduced to "identical".
   G-A11Y     §8.2 carries every D05 F row with its severity; §8.1's ranges are D05's.
   G-BUDGET   every BUD and COUNT anchor is computed from its source.
@@ -679,14 +680,19 @@ def g_event(t: Texts, vals: dict[str, str]) -> list[str]:
             if s not in SCREENS:
                 bad.append(f"{r[0]}: {s} is not a pack screen")
     gap = next((r for r in rows if r[0] == "`admin.key_marked_compromised`"), None)
-    if gap is None or len(gap) < 4 or "BLOCKS the build" not in gap[3] or "R6" not in gap[3]:
-        bad.append("the compromise event's row must say it BLOCKS the build and name R6")
+    need = ("PROPOSED", "E27-S03/S04", "§15.5", "R6")
+    if gap is None or len(gap) < 4 or "BLOCKS" in gap[3] or any(n not in gap[3] for n in need):
+        bad.append(
+            "the compromise event's row must say PROPOSED, E27-S03/S04's commit, `24` §15.5 and R6"
+        )
     return bad
 
 
 RULING_OPENERS = ("agreed", "amended", "disagreed")
 SPELLINGS = (
-    ("account.key_rotated", ("`apikey.rotated`",)),
+    ("account.created", ("`accounts.create`", "`api_key.import`")),
+    ("account.updated", ("`account.updated`",)),
+    ("account.key_rotated", ("`api_key.rotate`",)),
     ("account.key_revoked", ("`api_key.revoke`", "`api_key.revoked`")),
 )
 
@@ -947,9 +953,9 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts], tuple[str, ...]], ...
     ("G-INDEX", "drop a component from SCR-129's row", sub("hand", "CMP-027, CMP-044, CMP-093 (`14`:2727)", "CMP-027, CMP-093 (`14`:2727)"), FULL_ONLY),
     ("G-DATA", "give an operation a permission it lacks", sub("hand", "| `rotateApiKey` | `POST /exchange-accounts/{accountId}/keys/{keyId}/rotate` | `keys:manage` |", "| `rotateApiKey` | `POST /exchange-accounts/{accountId}/keys/{keyId}/rotate` | `keys:read` |"), FULL_ONLY),
     ("G-EVENT", "rename an event", sub("hand", "| `admin.key_test_run`  ", "| `admin.key_tested`    "), FULL_ONLY),
-    ("G-EVENT", "let the compromise row stop blocking the build", sub("hand", "BLOCKS the build: no code is registered (R6)", "the card writes none: no code is registered (R6)"), FULL_ONLY),
+    ("G-EVENT", "let the compromise row drop its proposed gate", sub("hand", "PROPOSED; registered by E27-S03/S04's contract commit (`24` §15.5), R6", "the card writes none, R6"), FULL_ONLY),
     ("G-RULING", "drop the BQ-06 fold row", sub("hand", "| BQ-06 | The design-ahead AC      |", "| BQ-6  | The design-ahead AC      |"), FULL_ONLY),
-    ("G-RULING", "change the registered rotate spelling", sub("hand", "registered: `apikey.rotated` (`24`:5360); the marker", "registered: `apikey.rotate` (`24`:5360); the marker"), FULL_ONLY),
+    ("G-RULING", "change the registered rotate spelling", sub("hand", "registered as `api_key.rotate` (code registry); `24`:5360", "registered as `apikey.rotated` (code registry); `24`:5360"), FULL_ONLY),
     ("G-MOTION", "give M-10 the wrong recipe", sub("hand", "| row 2b                           |", "| row 2a                           |"), FULL_ONLY),
     ("G-A11Y", "change a finding's severity", sub("hand", "| F-09 | Major    |", "| F-09 | Minor    |"), FULL_ONLY),
     ("G-BUDGET", "type a wrong drawer budget", sub("hand", "opens from cache in 100<!--=BUD:drawer.ms-->", "opens from cache in 200<!--=BUD:drawer.ms-->"), FULL_ONLY),
