@@ -170,7 +170,8 @@ Arrow keys are not mirrored under `dir="rtl"` (Right / Down is always "next"), a
 
 Only a neutral label truncates. A status chip never shrinks, so give it room for its whole word. A toggle chip never
 truncates either: its row wraps (E29-D02:299's Type chips), and it is a view choice, never gated or disabled
-(E29-D04 §4.2).
+(E29-D04 §4.2). It passes the button's other attributes through, so a CMP-016 Tooltip may describe it (the ADL chip's
+"ADL — auto-deleveraged") while its name stays its word.
 
 ### Badge (CMP-012, static; the `img` role when a count stands alone)
 

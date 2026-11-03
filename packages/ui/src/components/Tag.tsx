@@ -1,4 +1,4 @@
-import type { JSX } from "react";
+import type { ComponentPropsWithoutRef, JSX } from "react";
 import { Icon } from "../icons/Icon.js";
 import type { IconName } from "../icons/registry.js";
 import { useFocusRing } from "./FocusRing.js";
@@ -16,8 +16,24 @@ interface TagBase {
   density?: "comfortable" | "compact";
 }
 
+/**
+ * The native button attributes a toggle chip passes through, as CMP-001 passes its own: a CMP-016 Tooltip's
+ * `aria-describedby` and its pointer and focus handlers, an `id`, a `title`. Its look, its role, its type and its
+ * press (`onPressedChange`) stay its own, as do its name and its state (`ToggleTag`).
+ */
+type ToggleButtonAttributes = Omit<
+  ComponentPropsWithoutRef<"button">,
+  "key" | "className" | "style" | "children" | "type" | "role" | "disabled" | "onClick"
+>;
+
+/**
+ * Every other chip takes none of them: a static chip is a span and its remove control is CMP-002's, so such an
+ * attribute would be dropped without a word.
+ */
+type NoButtonAttributes = { [K in keyof ToggleButtonAttributes]?: never };
+
 /** A static neutral chip: an optional leading glyph, never focusable. */
-interface NeutralStatic extends TagBase {
+interface NeutralStatic extends TagBase, NoButtonAttributes {
   variant?: "neutral";
   icon?: IconName;
   removable?: false;
@@ -33,7 +49,7 @@ interface NeutralStatic extends TagBase {
  * next chip's remove button, else the previous one, else its input, never `<body>`. The chip never moves focus
  * itself.
  */
-interface NeutralRemovable extends TagBase {
+interface NeutralRemovable extends TagBase, NoButtonAttributes {
   variant?: "neutral";
   icon?: IconName;
   removable: true;
@@ -50,7 +66,7 @@ interface NeutralRemovable extends TagBase {
 }
 
 /** A status chip: its registry glyph always renders, so `icon` is not accepted, and it is never removable. */
-interface StatusTag extends TagBase {
+interface StatusTag extends TagBase, NoButtonAttributes {
   variant: StatusTone;
   icon?: never;
   removable?: false;
@@ -63,19 +79,26 @@ interface StatusTag extends TagBase {
 /**
  * A toggle chip (E29-D04 §2.9, E29-D02:299; D04H:266): a native button whose state is `aria-pressed`, such as the
  * Fills tab's Type chips. Its host holds the state; the label is its name and never changes. A view choice, so it is
- * never gated or disabled (E29-D04:390), and it takes no icon.
+ * never gated or disabled (E29-D04:390), and it takes no icon. The button's other attributes pass through, so a
+ * CMP-016 Tooltip can describe it ("ADL — auto-deleveraged") without renaming it.
  */
-interface ToggleTag extends TagBase {
+interface ToggleTag extends TagBase, ToggleButtonAttributes {
   variant: "toggle";
   pressed: boolean;
   /** Called with the next state on a press, `Enter` or `Space`. */
   onPressedChange: (pressed: boolean) => void;
   icon?: never;
-  removable?: false;
+  removable?: never;
   onRemove?: never;
   removeLabel?: never;
   disabled?: never;
   disabledReason?: never;
+  /** Its name is its label and its state is `pressed`: neither is set apart from them. */
+  "aria-label"?: never;
+  "aria-labelledby"?: never;
+  "aria-pressed"?: never;
+  "aria-checked"?: never;
+  "aria-disabled"?: never;
 }
 
 /*
@@ -91,14 +114,22 @@ const isStatus = (variant: TagProps["variant"]): variant is StatusTone =>
  * The `toggle` variant: CMP-039's ring on keyboard focus, and pressed drawn as the design system's pressed role
  * (`16`:59), whose 2 px ring carries the state so it never rests on the fill's hue (tag.css).
  */
-function ToggleChip({ label, density, pressed, onPressedChange }: ToggleTag): JSX.Element {
+function ToggleChip({
+  variant,
+  label,
+  density,
+  pressed,
+  onPressedChange,
+  ...button
+}: ToggleTag): JSX.Element {
   const ring = useFocusRing();
   return (
     <button
+      {...button}
       type="button"
       className={cx("cv-control", ring.className, "cv-tag")}
       data-cmp="CMP-011"
-      data-variant="toggle"
+      data-variant={variant}
       data-density={density}
       aria-pressed={pressed}
       onClick={() => onPressedChange(!pressed)}
