@@ -681,6 +681,43 @@ ran.
   report artifact, find the new violation's rule id and selector, fix the
   markup (see `docs/plan/05-accessibility-standard.md`) — never suppress a
   rule repo-wide to unblock one PR.
+- **A11Y-G008** (a mounted screen is absent from the axe report; `gates.py inventory`, inside the
+  required `a11y` check and, with `--tier full`, the nightly sweep; E47-Q04): `tools/a11y/inventory.py`
+  reads `docs/plan/a11y/findings.json`, `apps/web/src/routes/manifest.ts` and
+  `tools/a11y/inventory-hosts.json`. A row whose `coverage` is `unreachable: ...` is `pending <ticket>`
+  (counted, never failed); a `reserved` row is not counted. A `covered` or `partial` row with its own
+  route (`R-nnn ->` in its `coverageReason`) must be in `reports/a11y/axe.json`; a mounted row with no
+  route of its own is hosted, and its host (a route or a routed screen named in `inventory-hosts.json`)
+  must be in the report. Per PR the requirement applies to routes that `apps/web/e2e/a11y/screens.ts`
+  scans; the nightly full sweep requires all of them. The message names the screen id and route. A
+  screen that just landed: add its route to `PR_IDS` or `SIGNED_IN` in `screens.ts` and update its row
+  in `findings.json`; never edit the inventory to hide a screen. A broken inventory is `A11Y-INFRA`
+  (exit 3), never a pass: an unknown `coverage` value, a route id the manifest lacks, a pending row
+  without an `owningTicket`, or a hosted row with no resolvable host. Reproduce: `python -m
+tools.a11y.gates inventory reports/a11y/axe.json [--tier full]`.
+  Placement: `05` §9 items 1, 2 and 8 and C-9.2 (a red nightly blocks the next release); the gates run inside
+  the existing required `a11y` check, so C-9.1 is unchanged. Lighthouse covers the ticket's eight screens,
+  not the six of `05` §9 item 2.
+  What the gate proves: that the host route is in the report, not that the overlay or state itself
+  was scanned (the 2FA step, the session-lock dialog, the step-up modal, the cheatsheet, banners, the
+  crash fallback, the tour) until the forced-state test hooks of BQ-04 land. And while #3470 is open a
+  guarded route visited bare is bounced to `/login`, so the full tier checks only that a route key is
+  present: a bounced route still passes.
+- **A11Y-G001 baseline entry expired or incomplete** (same check): `tools/a11y/axe-baseline.json`
+  entries are `{fingerprint, finding, justification, owner, ticket, target, expiry}` in `entries` (serious/critical,
+  shrink-only) and `minor_entries` (moderate/minor, `rule|stable selector path`). The message names the
+  entry's owner and ticket (a blank `justification` fails too): the owner fixes the defect, or renews the entry with a new `expiry` (at most
+  90 days out) in a PR that names the `A11Y-F` finding id (CODEOWNERS: the Accessibility role). A new
+  moderate/minor finding above the baseline fails the same way; fix it rather than baselining it.
+- **Report redaction** (`python -m tools.a11y.redact reports/a11y`): after the gates have read the
+  reports, a step rewrites them so the artifact holds no credential-shaped value (the `.gitleaks.toml`
+  shapes: Bybit key, secret and signature fields, `cvs_`/`cvr_`/`cvi_` tokens, recovery codes, TOTP
+  secrets, plus session and token URL parameters, one-time codes beside their label, and emails), in
+  values and in JSON keys. A file it cannot read as text (an image, a trace, a link) fails the step
+  with `A11Y-INFRA`, and the upload step runs only when the redaction step succeeded, so nothing
+  unredacted is uploaded. The gate output written to the job summary and the log passes through the
+  same filter (stderr included, so an `A11Y-INFRA` message too). Redaction is pattern based: a value with no recognisable shape or label is not caught,
+  so a new kind of secret in a stub needs its shape added to `tools/a11y/redact.py`.
 - **CI-A11Y-002** (Storybook stories failed, `_job-a11y.yml`'s `storybook` job, in `pr.yml` and
   `storybook-nightly.yml`): a story's play function threw, or axe found a serious or critical
   violation in it. The log names the story, the rule and the element; the job summary counts passed
