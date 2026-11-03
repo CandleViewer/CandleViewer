@@ -79,11 +79,60 @@ describe("the precedence table (PROPOSED, E08-D09 §5.2)", () => {
   });
 });
 
+// E08-D09 §5.2 "Token tone" column, row for row, typed here from the spec (not from states.ts).
+const D09_TONES: Readonly<Record<string, string>> = {
+  "S-01": "color.status.success.strong",
+  "S-02": "color.status.warning.strong",
+  "S-03": "color.status.warning.strong",
+  "S-04": "color.status.danger.strong",
+  "S-05": "color.status.danger.strong",
+  "S-06": "color.data-confidence.disconnected.*",
+  "S-07": "color.data-confidence.reconnecting.*",
+  "S-08": "color.status.warning.strong",
+  "S-09": "color.status.warning.strong",
+  "S-10": "color.status.danger.strong",
+  "S-11": "color.status.danger.strong",
+  "S-12": "color.status.warning.strong",
+  "S-13": "CMP-015",
+  "S-14": "color.neutral.default",
+  "S-15": "color.data-confidence.stale.*",
+  "S-16": "color.status.warning.strong",
+  "S-17": "color.status.danger.strong",
+  "S-18": "color.status.danger.strong",
+  "S-19": "color.neutral.default",
+  "S-20": "color.status.warning.strong",
+};
+
+describe("the register tones (E08-D09 §5.2, §16 RULED BQ-19)", () => {
+  it.each(STATE_IDS)("%s carries the tone D09 names", (id) => {
+    expect(toneOf(id)).toBe(D09_TONES[id]);
+  });
+
+  it("covers every state and never gives a rate or clock state a data-confidence token", () => {
+    expect(Object.keys(D09_TONES)).toEqual([...STATE_IDS]);
+    const rateAndClock = ["S-02", "S-03", "S-04", "S-05", "S-08", "S-09", "S-10", "S-11", "S-12"];
+    for (const id of rateAndClock) expect(toneOf(id as "S-02")).toMatch(/^color\.status\./);
+  });
+});
+
+describe("the 900 s clock limit (D09 :271)", () => {
+  it("keeps a clock row off S-15 between its measurements", () => {
+    const clock = { asOfIsClock: true, clockOffsetMs: 0 };
+    expect(pick({ ...clock, asOfAgeMs: 5 * 60_000 })).not.toBe("S-15");
+    expect(pick({ ...clock, asOfAgeMs: THRESHOLDS.clockStaleAfterMs })).not.toBe("S-15");
+    expect(pick({ ...clock, asOfAgeMs: THRESHOLDS.clockStaleAfterMs + 1 })).toBe("S-15");
+    expect(THRESHOLDS.clockStaleAfterMs).toBe(900_000);
+  });
+
+  it("still reads a value row stale after 5 s", () => {
+    expect(pick({ asOfAgeMs: THRESHOLDS.staleAfterMs + 1 })).toBe("S-15");
+  });
+});
+
 describe("the register", () => {
-  it("gives every state a word and a tone; S-06 alone is assertive", () => {
+  it("gives every state a word; S-06 alone is assertive", () => {
     for (const id of STATE_IDS) {
       expect(wordOf(id).length).toBeGreaterThan(0);
-      expect(["ok", "warning", "danger", "stale", "neutral"]).toContain(toneOf(id));
     }
     expect(STATE_IDS.filter((id) => STATES[id].announce === "assertive")).toEqual(["S-06"]);
   });

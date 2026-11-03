@@ -12,6 +12,8 @@ export const THRESHOLDS = {
   resubscribeStormWindowMs: 5_000,
   /** D09-Q6: S-15 when a value's "as of" is more than 5 s old (PROPOSED). */
   staleAfterMs: 5_000,
+  /** D09 §5.2 S-15 (`clock`:132): a clock row's "as of" is stale only past 900 s; it is measured about every 5 minutes. */
+  clockStaleAfterMs: 900_000,
   /** D09-Q8: S-20 when a drop counter rose within the last 60 s (PROPOSED). */
   dropWindowMs: 60_000,
   /** D09-Q9: an episode ends once its state has been exited for 5 s (PROPOSED). */
@@ -25,9 +27,9 @@ export const THRESHOLDS = {
 } as const;
 
 /**
- * Highest severity first, one state per row (E08-D09 §5.2, "Precedence on one row"). PROPOSED: E08-D13 §5.4
- * carries no SCR-147 precedence of its own (S-05 over S-04 over S-03; S-10 over S-09). S-13 and the flag come
- * before the table; S-14 sits before S-19, a PROPOSED place.
+ * Highest severity first, one state per row (E08-D09 §5.2, "Precedence on one row"). The order is RULED
+ * (BQ-07, D09 :278); E08-D13 §5.4 carries none of its own. S-13 and the flag come before the table. Only
+ * S-14's place (before S-19) is PROPOSED: D09's list omits S-14.
  */
 export const PRECEDENCE: readonly StateId[] = [
   "S-05", "S-04", "S-10", "S-11", "S-06", "S-03", "S-07", "S-08", "S-20", "S-09",
@@ -65,6 +67,8 @@ export interface StateSignals {
   readonly usedPctOfSpendable?: number;
   /** Age of the "as of" in ms. */
   readonly asOfAgeMs?: number;
+  /** The "as of" belongs to the clock measurement, so S-15 waits for `clockStaleAfterMs`, not `staleAfterMs`. */
+  readonly asOfIsClock?: boolean;
   /** A drop counter rose inside `dropWindowMs`. */
   readonly dropped?: boolean;
   /** A served inspector read with this many topics. */
@@ -96,7 +100,9 @@ export function activeStates(s: StateSignals): ReadonlySet<StateId> {
   if (s.read === "error") on.add("S-17");
   if (s.read === "failed") on.add("S-18");
   if ((s.errorSlices ?? 0) > 0 && (s.okSlices ?? 0) > 0) on.add("S-16");
-  if (finite(s.asOfAgeMs) && s.asOfAgeMs > THRESHOLDS.staleAfterMs) on.add("S-15");
+  const staleLimit =
+    s.asOfIsClock === true ? THRESHOLDS.clockStaleAfterMs : THRESHOLDS.staleAfterMs;
+  if (finite(s.asOfAgeMs) && s.asOfAgeMs > staleLimit) on.add("S-15");
   if (s.inspectorTopics === 0) on.add("S-14");
   if (s.read === "unavailable" || s.read === "none") on.add("S-19");
   // Healthy only when every figure is served and the spendable share is known to sit below S-02's line.

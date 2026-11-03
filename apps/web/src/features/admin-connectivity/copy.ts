@@ -104,5 +104,5 @@ export type CopyKey = keyof typeof COPY;
 // PROPOSED words that are not in the E08-D13 pack, kept out of `COPY` so the pack comparison stays exact.
 /** The Change budget confirm button: E08-D09:379 names it "Save budget"; the pack has no entry (PROPOSED). */
 export const SAVE_BUDGET = "Save budget";
-/** An account row served without a label: the pack has no unnamed-account string (PROPOSED). */
+/** An account row served without a label: the pack has no unnamed-account string (PROPOSED; owner: the copy deck's owner, E17-D02). */
 export const UNNAMED_ACCOUNT = "Account";
