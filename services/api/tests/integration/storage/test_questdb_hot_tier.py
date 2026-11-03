@@ -188,6 +188,7 @@ async def test_ddl_runner_applies_all_tables_idempotently(
             "0005_liquidations_batch_index.sql",
             "0006_orderbook_replay_columns.sql",
             "0007_heatmap_cells_column_fields.sql",
+            "0008_bars_flag_columns.sql",
         ]
         await assert_no_schema_drift(executor, DDL_DIR)
 

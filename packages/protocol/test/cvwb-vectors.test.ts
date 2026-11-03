@@ -209,3 +209,26 @@ describe("SR-155 fuzz corpus (tests/fuzz/ws-frames)", () => {
     expect(got).toBe(s.expect);
   });
 });
+
+describe("kind-4 flag bits beyond bit0 (§3.4, #5396)", () => {
+  const named = (name: string): Vector => {
+    const v = vectors.find((x) => x.name === name);
+    if (v === undefined) throw new Error(`no ${name} vector`);
+    return v;
+  };
+  it.each([
+    ["bars_flags_gap_partial", 0b0000_1110, false],
+    ["bars_flags_reserved_bits", 0xf1, true],
+  ] as const)("%s decodes ok and reads confirmed from bit0 alone", (name, flags, confirmed) => {
+    const v = named(name);
+    expect(v.records[0]?.[11]).toBe(String(flags));
+    expect(decodeBars(bytes(v.hex)).bars.map((b) => b.confirmed)).toEqual([confirmed]);
+    expect(seeds.find((s) => s.name === `valid-${name}`)?.expect).toBe("ok");
+  });
+  it("ignores reserved bits 4-7: the bar decodes as the same record with bit0 only", () => {
+    const buf = bytes(named("bars_flags_reserved_bits").hex);
+    const plain = buf.slice();
+    plain[24 + 80] = 0b1;
+    expect(decodeBars(buf).bars).toEqual(decodeBars(plain).bars);
+  });
+});

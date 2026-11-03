@@ -70,6 +70,7 @@ async def test_run_migrations_applies_every_file_on_first_run() -> None:
         "0005_liquidations_batch_index.sql",
         "0006_orderbook_replay_columns.sql",
         "0007_heatmap_cells_column_fields.sql",
+        "0008_bars_flag_columns.sql",
     ]
 
 
@@ -102,6 +103,7 @@ async def test_applied_migrations_reflects_recorded_filenames() -> None:
         "0005_liquidations_batch_index.sql",
         "0006_orderbook_replay_columns.sql",
         "0007_heatmap_cells_column_fields.sql",
+        "0008_bars_flag_columns.sql",
     }
 
 

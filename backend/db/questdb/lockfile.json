@@ -22,6 +22,9 @@
     },
     "0007_heatmap_cells_column_fields.sql": {
       "sha256": "780f0fd45276b4e212da840abe8f8981f7cdcfc91d6dd182a0a4fca946274fee"
+    },
+    "0008_bars_flag_columns.sql": {
+      "sha256": "bcc6d710f56efb6a015f741c378fda145322a920e928b186626e0e846f9b3cf8"
     }
   }
 }

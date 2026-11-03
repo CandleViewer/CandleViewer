@@ -12,6 +12,7 @@ type Bars = generated.rest.operations["getBars"];
 type Page = Bars["responses"][200]["content"]["application/json"];
 type Bar = Schemas["Bar"];
 type WsBar = generated.ws.BarsSymbolBarTypeParam["bars"][number];
+type SnapMeta = NonNullable<generated.ws.CandleViewerWSEnvelope["meta"]>;
 type Refusals = 400 | 401 | 403 | 422 | 503;
 
 describe("klines and bars pages (consumer side, 22-api-openapi /market/klines, /market/bars)", () => {
@@ -39,6 +40,34 @@ describe("klines and bars pages (consumer side, 22-api-openapi /market/klines, /
   it("names the forming bar `confirm` on REST and on the bars topic alike", () => {
     expectTypeOf<Bar["confirm"]>().toEqualTypeOf<boolean | undefined>();
     expectTypeOf<WsBar["confirm"]>().toEqualTypeOf<boolean>();
+  });
+
+  it("reads the bar flags as booleans, false by default, on REST and WS (#5396)", () => {
+    // REST types a member with a `default` as present; the WS item keeps it optional.
+    expectTypeOf<Bar["gap_before"]>().toEqualTypeOf<boolean>();
+    expectTypeOf<Bar["partial"]>().toEqualTypeOf<boolean>();
+    expectTypeOf<Bar["tape_gap"]>().toEqualTypeOf<boolean>();
+    expectTypeOf<WsBar["gap_before"]>().toEqualTypeOf<boolean | undefined>();
+    expectTypeOf<WsBar["partial"]>().toEqualTypeOf<boolean | undefined>();
+    expectTypeOf<WsBar["tape_gap"]>().toEqualTypeOf<boolean | undefined>();
+  });
+
+  it("reads build provenance from the page meta, named as the WS snapshot's (#5396)", () => {
+    expectTypeOf<Page["meta"]>().toEqualTypeOf<Schemas["BarsMeta"]>();
+    expectTypeOf<Page["meta"]["spec_hash"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<Page["meta"]["build_version"]>().toEqualTypeOf<number | undefined>();
+    expectTypeOf<Page["meta"]["stale_build"]>().toEqualTypeOf<boolean>();
+    // One key, one meaning: REST carries no WS-style feed `stale`.
+    expectTypeOf<Page["meta"]>().not.toHaveProperty("stale");
+    expectTypeOf<Page["meta"]["coverage_holes"]>().toEqualTypeOf<
+      Schemas["DataMeta"]["coverage_holes"]
+    >();
+  });
+
+  it("reads coverage holes from a bars snapshot as from a REST page (#5396)", () => {
+    type Hole = NonNullable<Page["meta"]["coverage_holes"]>[number];
+    expectTypeOf<SnapMeta["coverage_holes"]>().toEqualTypeOf<Hole[] | undefined>();
+    expectTypeOf<Hole>().toEqualTypeOf<{ start_us: number; end_us: number }>();
   });
 
   it("reads when recording began from a no_data_recorded refusal", () => {

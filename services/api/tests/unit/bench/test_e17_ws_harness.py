@@ -507,7 +507,7 @@ def node(*args: str) -> subprocess.CompletedProcess[str]:
 def test_the_cvwb_port_decodes_every_golden_vector_as_the_production_decoder_does() -> None:
     done = node(str(LOAD / "lib" / "cvwb.check.mjs"))
     assert done.returncode == 0, done.stderr
-    assert "9 golden vectors" in done.stdout
+    assert "11 golden vectors" in done.stdout  # 9 + the two kind-4 flag vectors (#5396, §19.81)
 
 
 def test_the_cvwb_check_fails_on_a_vector_that_disagrees(tmp_path: Path) -> None:
