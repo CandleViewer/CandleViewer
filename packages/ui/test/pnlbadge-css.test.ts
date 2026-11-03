@@ -42,6 +42,21 @@ describe("pnlbadge.css contract (E29-D04 §2.3)", () => {
     expect(body).toContain("background: CanvasText");
     expect(body).toContain("forced-color-adjust: none");
   });
+
+  it("the provisional tag: text.primary on status.info.subtle in a caption pill (E29-D04:206, D02 §12)", () => {
+    const body = find(pnl.normal, ".cv-pnl-badge__tag", "background");
+    expect(body).toContain("background: var(--color-status-info-subtle)");
+    expect(body).toContain("color: var(--color-text-primary)");
+    expect(body).toContain("border-radius: var(--radius-badge)");
+    expect(body).toContain("padding-inline: var(--space-inset-xs)");
+    expect(body).toContain("--type-ui-caption-font-size");
+  });
+
+  it("forced colours: the tag keeps its shape with a CanvasText border (E29-D05 CR-13)", () => {
+    expect(find(pnl.forced, ".cv-pnl-badge__tag", "border")).toContain(
+      "border: calc(var(--border-hairline) * 1px) solid CanvasText",
+    );
+  });
 });
 
 describe("positionmode.css contract (D04H §C.4)", () => {

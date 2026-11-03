@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import { composeStories } from "@storybook/react-vite";
+import { act, type JSX } from "react";
+import { createRoot } from "react-dom/client";
 import { expect, within } from "storybook/test";
 import { describe, expectTypeOf, it } from "vitest";
 import { PnLBadge, PositionModeToggle, type PnLBadgeProps } from "../src/components/index.js";
@@ -89,6 +91,9 @@ describe("PnLBadge (CMP-116)", () => {
     { value: null, format: "r" },
     { value: null, format: "abs", nullReading: "not served yet" },
     { value: "junk", format: "abs" },
+    { value: "3.49", format: "currency", currency: "USDT", direction: "paid" },
+    { value: "0.84", currency: "USDT", direction: "received", provisional: true },
+    { value: null, nullReading: "fee not reported yet", provisional: true },
   ] satisfies PnLBadgeProps[])(
     "pnlReading(%j) is the sentence the badge's hidden node reads",
     async (props) => {
@@ -131,6 +136,115 @@ describe("PnLBadge (CMP-116)", () => {
       <div>
         <PnLBadge value="8" places={2} format="currency" currency="USDT" />
         <PnLBadge value={null} format="r" />
+      </div>,
+    );
+    expect(await seriousViolations(host)).toEqual([]);
+  });
+});
+
+describe("PnLBadge direction and provisional (CMP-116, E29-S04; D04H:111-114)", () => {
+  it.each([
+    ["3.49", "paid", "−3.49 USDT", "paid 3.49 USDT", "negative"],
+    ["-3.49", "paid", "−3.49 USDT", "paid 3.49 USDT", "negative"],
+    ["0.84", "received", "+0.84 USDT", "received 0.84 USDT", "positive"],
+    ["-0.84", "received", "+0.84 USDT", "received 0.84 USDT", "positive"],
+    ["0", "paid", "0.00 USDT", "0.00 USDT", "zero"],
+  ] as const)(
+    "%s %s shows the cash effect %j, reads %j and takes the %s bar",
+    async (value, direction, shown, reading, sign) => {
+      const host = await mount(
+        <PnLBadge
+          value={value}
+          places={2}
+          format="currency"
+          currency="USDT"
+          direction={direction}
+        />,
+      );
+      expect(visible(host)).toBe(shown);
+      expect(spoken(host)).toBe(reading);
+      expect(badgeOf(host).dataset["sign"]).toBe(sign);
+    },
+  );
+
+  it("in a cell the header carries the unit; the reading still names it, and the noun stays the host's", async () => {
+    const host = await mount(
+      <PnLBadge value="8.78" places={2} format="abs" currency="USDT" direction="paid" />,
+    );
+    expect([visible(host), spoken(host)]).toEqual(["−8.78", "paid 8.78 USDT"]);
+    expect(spoken(host)).not.toMatch(/fee|funding|profit|loss/);
+  });
+
+  it("provisional draws the tag after the figure and says it in the one sentence, never twice", async () => {
+    const host = await mount(
+      <PnLBadge value="-6.2" places={2} format="currency" currency="USDT" provisional />,
+    );
+    const tag = badgeOf(host).querySelector(".cv-pnl-badge__tag");
+    expect(visible(host)).toBe("−6.20 USDT");
+    expect(tag).toHaveTextContent("Provisional — fees pending");
+    expect(tag).toHaveAttribute("aria-hidden", "true");
+    expect(spoken(host)).toBe("loss 6.20 USDT, Provisional — fees pending");
+    // The host's region speaks for it: no live region and no label of its own.
+    expect(host.querySelector("[aria-live], [role], [aria-label]")).toBeNull();
+  });
+
+  it("the tag leaves in place when the fees settle: the same badge, a cut to the plain figure", async () => {
+    const host = document.body.appendChild(document.createElement("div"));
+    const root = createRoot(host);
+    const at = (provisional: boolean): JSX.Element => (
+      <PnLBadge
+        value="21.4"
+        places={2}
+        format="currency"
+        currency="USDT"
+        provisional={provisional}
+      />
+    );
+    try {
+      await act(async () => root.render(at(true)));
+      const before = badgeOf(host);
+      await act(async () => root.render(at(false)));
+      expect(badgeOf(host)).toBe(before);
+      expect(before.querySelector(".cv-pnl-badge__tag")).toBeNull();
+      expect(spoken(host)).toBe("profit 21.40 USDT");
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
+  it("a missing figure keeps the host's reason, and the tag still says the fees are pending", async () => {
+    const host = await mount(
+      <PnLBadge value={null} nullReading="fee not reported yet" provisional />,
+    );
+    expect([visible(host), spoken(host)]).toEqual([
+      "—",
+      "fee not reported yet, Provisional — fees pending",
+    ]);
+  });
+
+  it("the type-level contract: a direction is a money figure's alone (tsc checks this file)", () => {
+    expectTypeOf<{ value: string; direction: "paid" }>().toExtend<PnLBadgeProps>();
+    expectTypeOf<{
+      value: string;
+      format: "currency";
+      currency: string;
+      direction: "received";
+      provisional: true;
+    }>().toExtend<PnLBadgeProps>();
+    expectTypeOf<{ value: string; format: "r"; direction: "paid" }>().not.toExtend<PnLBadgeProps>();
+    expectTypeOf<{
+      value: string;
+      format: "pct";
+      direction: "received";
+    }>().not.toExtend<PnLBadgeProps>();
+    expectTypeOf<{ value: string; direction: "owed" }>().not.toExtend<PnLBadgeProps>();
+  });
+
+  it("has no serious or critical axe violation with a direction and the tag", async () => {
+    const host = await mount(
+      <div>
+        <PnLBadge value="3.49" places={2} format="currency" currency="USDT" direction="paid" />
+        <PnLBadge value="-6.2" places={2} format="currency" currency="USDT" provisional />
       </div>,
     );
     expect(await seriousViolations(host)).toEqual([]);
