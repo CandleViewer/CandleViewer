@@ -2282,6 +2282,24 @@ class LiquidationsPageMeta(PageMeta):
     coverage: Coverage
 
 
+class Gap(BaseModel):
+    from_: Annotated[AwareDatetime, Field(alias="from")]
+    to: AwareDatetime
+
+
+class Coverage1(BaseModel):
+    first_available_ts: AwareDatetime | None
+    covered_from: AwareDatetime | None
+    covered_to: AwareDatetime | None
+    no_coverage: StrictBool
+    gaps: list[Gap]
+
+
+class FundingPageMeta(PageMeta):
+    coverage: Coverage1 | None = None
+    __null_refused = field_validator("coverage", mode="before")(_refuse_null)
+
+
 class OpenInterestPoint(BaseModel):
     t: AwareDatetime
     open_interest: Annotated[
@@ -2300,12 +2318,7 @@ class OpenInterestPoint(BaseModel):
     source: Literal["ws_ticker", "rest"]
 
 
-class Gap(BaseModel):
-    from_: Annotated[AwareDatetime, Field(alias="from")]
-    to: AwareDatetime
-
-
-class Coverage1(BaseModel):
+class Coverage2(BaseModel):
     from_: Annotated[AwareDatetime | None, Field(alias="from")]
     to: AwareDatetime | None
     native_interval: Literal["1s", "5min", "15min", "30min", "1h", "4h", "1d"]
@@ -2314,7 +2327,7 @@ class Coverage1(BaseModel):
 
 
 class OpenInterestPageMeta(PageMeta):
-    coverage: Coverage1
+    coverage: Coverage2
 
 
 class Interval(BaseModel):
@@ -2325,7 +2338,7 @@ class Interval(BaseModel):
     __null_refused = field_validator("from_", "to", "tier", "rows", mode="before")(_refuse_null)
 
 
-class Gap1(BaseModel):
+class Gap2(BaseModel):
     from_: Annotated[AwareDatetime | None, Field(alias="from")] = None
     to: AwareDatetime | None = None
     reason: Annotated[
@@ -2361,7 +2374,7 @@ class Stream(BaseModel):
         | None
     ) = None
     intervals: list[Interval] | None = None
-    gaps: list[Gap1] | None = None
+    gaps: list[Gap2] | None = None
     __null_refused = field_validator("stream", "intervals", "gaps", mode="before")(_refuse_null)
 
 
@@ -3653,105 +3666,37 @@ class KillSwitchResult(BaseModel):
     __null_refused = field_validator("state", "actions", mode="before")(_refuse_null)
 
 
-class Position(BaseModel):
-    is_paper: Annotated[
-        StrictBool,
-        Field(
-            description="True when the paper matcher produced this record rather than the exchange. Orthogonal to `environment` (24-internal-schemas.md section 1.2)."
-        ),
-    ] = False
-    id: UUID
-    exchange_account_id: UUID
-    symbol: Annotated[
+class FundingEstimate(BaseModel):
+    amount: Annotated[
         str,
         Field(
-            description="Bybit USDT linear perpetual symbol. v1 accepts USDT-quoted linear symbols only.",
-            examples=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
-            pattern="^[A-Z0-9]{2,20}USDT$",
-        ),
-    ]
-    side: Literal["long", "short", "flat"]
-    position_idx: Literal[0, 1, 2] | None = None
-    size: Annotated[
-        str,
-        Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            description="The charge's magnitude in the settle coin (USDT), never negative; its sign is `direction`.",
             examples=["63120.50", "-0.0004", "0"],
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ]
-    avg_price: Annotated[
-        str | None,
+    direction: Annotated[
+        Literal["pay", "receive", "none"],
+        Field(description="`none` when the accruing rate is exactly zero (`amount` is `0`)."),
+    ]
+    funding_rate: Annotated[
+        str,
         Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            description="The accruing rate per interval the estimate used.",
             examples=["63120.50", "-0.0004", "0"],
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
-    ] = None
-    mark_price: Annotated[
-        str | None,
+    ]
+    settles_at: Annotated[
+        AwareDatetime,
+        Field(description="The settlement the estimate is for (the ticker's `nextFundingTime`)."),
+    ]
+    computed_at: Annotated[
+        AwareDatetime,
         Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
-            examples=["63120.50", "-0.0004", "0"],
-            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+            description="When the server read the mark and the rate; a client compares it with its stale threshold and marks the charge stale, never recomputing it."
         ),
-    ] = None
-    position_value: Annotated[
-        str | None,
-        Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
-            examples=["63120.50", "-0.0004", "0"],
-            pattern="^-?[0-9]+(\\.[0-9]+)?$",
-        ),
-    ] = None
-    leverage: Annotated[
-        str | None,
-        Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
-            examples=["63120.50", "-0.0004", "0"],
-            pattern="^-?[0-9]+(\\.[0-9]+)?$",
-        ),
-    ] = None
-    margin_mode: Literal["cross", "isolated", "portfolio"] | None = None
-    unrealised_pnl: Annotated[
-        str | None,
-        Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
-            examples=["63120.50", "-0.0004", "0"],
-            pattern="^-?[0-9]+(\\.[0-9]+)?$",
-        ),
-    ] = None
-    realised_pnl_session: Annotated[
-        str | None,
-        Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
-            examples=["63120.50", "-0.0004", "0"],
-            pattern="^-?[0-9]+(\\.[0-9]+)?$",
-        ),
-    ] = None
-    liq_price: Decimal | None = None
-    bust_price: Decimal | None = None
-    take_profit: Decimal | None = None
-    stop_loss: Decimal | None = None
-    trailing_stop: Annotated[
-        str | None,
-        Field(
-            description="Price distance, not a percentage (Bybit semantics).",
-            examples=["63120.50", "-0.0004", "0"],
-            pattern="^-?[0-9]+(\\.[0-9]+)?$",
-        ),
-    ] = None
-    tpsl_mode: Literal["Full", "Partial"] | None = None
-    native_stop_present: Annotated[
-        StrictBool | None,
-        Field(
-            description="False is an alarm condition; the OMS re-asserts the stop and raises a critical alert."
-        ),
-    ] = None
-    trade_group_id: UUID | None = None
-    r_multiple: Decimal | None = None
-    updated_at: AwareDatetime | None = None
-    __null_refused = field_validator("position_idx", "avg_price", "mark_price", "position_value", "leverage", "margin_mode", "unrealised_pnl", "realised_pnl_session", "trailing_stop", "tpsl_mode", "native_stop_present", "updated_at", mode="before")(_refuse_null)
+    ]
 
 
 class Account(BaseModel):
@@ -5452,6 +5397,40 @@ class Data(BaseModel):
     __null_refused = field_validator("default_depth", "stale_badge_after_ms", "max_history_bars", mode="before")(_refuse_null)
 
 
+class Deriv(BaseModel):
+    oi_mode: Annotated[
+        Literal["absolute", "delta"] | None,
+        Field(description="The OI sub-pane's mode; client default `absolute`."),
+    ] = None
+    oi_quadrant_colouring: Annotated[
+        StrictBool | None,
+        Field(description="The OI price/OI quadrant classification; client default `true`."),
+    ] = None
+    funding_style: Annotated[
+        Literal["line", "bars"] | None,
+        Field(
+            description="The settled-history rendering, stepped line or bars; client default `line` (PROPOSED in E24-D02)."
+        ),
+    ] = None
+    funding_annualised: Annotated[
+        StrictBool | None,
+        Field(description="Annualised funding display (E24-S04); client default `false`."),
+    ] = None
+    basis_source: Annotated[
+        Literal["mark", "last"] | None,
+        Field(
+            description="The basis readout's price, `mark − index` or `last − index`; client default `mark`."
+        ),
+    ] = None
+    basis_annualised: Annotated[
+        StrictBool | None,
+        Field(
+            description="Annualised basis display; client default `false` (PROPOSED in E24-D02)."
+        ),
+    ] = None
+    __null_refused = field_validator("oi_mode", "oi_quadrant_colouring", "funding_style", "funding_annualised", "basis_source", "basis_annualised", mode="before")(_refuse_null)
+
+
 class FieldMeta(BaseModel):
     overridden: list[str] | None = None
     updated_at: AwareDatetime | None = None
@@ -5469,8 +5448,14 @@ class Settings(BaseModel):
     trading: Trading | None = None
     notifications: Notifications | None = None
     data: Data | None = None
+    deriv: Annotated[
+        Deriv | None,
+        Field(
+            description="The derivatives sub-panes' display preferences (E24-D02 §10, gap G1; E24-S03, #778), presentation only: no key changes what the server computes or what a rule sees. A leaf's dotted key is `deriv.<leaf>` (`deriv.funding_style` is E24-D02's `deriv.funding.style`), one level as every group's leaves are. With no deployment default set, an unset leaf takes the client's built-in default, named on each leaf. The liquidation keys (`deriv.liq.*` in E24-D02 §10) are not here yet."
+        ),
+    ] = None
     field_meta: Annotated[FieldMeta | None, Field(alias="_meta")] = None
-    __null_refused = field_validator("appearance", "accessibility", "chart", "orderflow", "trading", "notifications", "data", "field_meta", mode="before")(_refuse_null)
+    __null_refused = field_validator("appearance", "accessibility", "chart", "orderflow", "trading", "notifications", "data", "deriv", "field_meta", mode="before")(_refuse_null)
 
 
 class SettingsPatch(BaseModel):
@@ -7521,39 +7506,6 @@ class ExchangeAccount(BaseModel):
     __null_refused = field_validator("connection_state", "key_status", "position_mode", "margin_mode", "balance_stale", "created_at", "updated_at", mode="before")(_refuse_null)
 
 
-class AccountConsequenceSummary(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    exchange_account_id: UUID
-    open_positions: Annotated[
-        list[Position], Field(description="Every open position, with its native stop-loss state.")
-    ]
-    working_orders: Annotated[JsonInt, Field(description="Orders working on the exchange.", ge=0)]
-    running_algos: Annotated[JsonInt, Field(description="Emulated algos still running.", ge=0)]
-    assigned_users: Annotated[
-        list[AssignedUser],
-        Field(description="Users granted this account through `user_account_access`."),
-    ]
-    armed_rules: Annotated[
-        list[ArmedRule],
-        Field(
-            description="Armed rules scoped to the account, listed by name; the action disarms them."
-        ),
-    ]
-
-
-class OpenExposureProblem(Problem):
-    consequences: AccountConsequenceSummary | None = None
-    remedy: Annotated[
-        Literal["leave_positions", "fix_key"] | None,
-        Field(
-            description="What the client does after `409 exposure_unknown`; `components.parameters.OpenExposure` says which applies. `leave_positions`: send the disable or the revoke again with `open_exposure=leave_positions`; a delete is not sent again, the account is disabled instead (`updateExchangeAccount` with `enabled: false`) and never deleted, and that disable must carry `open_exposure=leave_positions`: without a choice it is `409 exposure_unknown` again. `fix_key`: put the key right at the exchange, then send the request again; until then no choice proceeds. The resend is a new request with a new `Idempotency-Key`: under the same key the identical request replays the stored `409` for 24 h, and a request with another `open_exposure` is `409 idempotency_key_reuse` (the Idempotency rule of `info.description`). It advises the SCR-129 dialog: the choice stays the Owner's (SR-E27-07), and a client never sends it on its own. Closed: a new value is a breaking change (C-6.3).\n"
-        ),
-    ] = None
-    __null_refused = field_validator("consequences", "remedy", mode="before")(_refuse_null)
-
-
 class KeyVerification(BaseModel):
     passed: StrictBool
     uid: str | None = None
@@ -7955,6 +7907,113 @@ class ReverseAcceptance(BaseModel):
             description="For `entry_refused` only: the refusing check's code, the exchange rejection's mapped code, or the venue read's code (`open_exposure`, `exchange_unavailable`), from the `x-error-codes` catalogue (for example `risk_limit_breached`, `trading_disabled`, `rate_limited`, `timeout`). A code, never free text. Null for every other `outcome`, which already says what happened.\n"
         ),
     ] = None
+
+
+class Position(BaseModel):
+    is_paper: Annotated[
+        StrictBool,
+        Field(
+            description="True when the paper matcher produced this record rather than the exchange. Orthogonal to `environment` (24-internal-schemas.md section 1.2)."
+        ),
+    ] = False
+    id: UUID
+    exchange_account_id: UUID
+    symbol: Annotated[
+        str,
+        Field(
+            description="Bybit USDT linear perpetual symbol. v1 accepts USDT-quoted linear symbols only.",
+            examples=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+            pattern="^[A-Z0-9]{2,20}USDT$",
+        ),
+    ]
+    side: Literal["long", "short", "flat"]
+    position_idx: Literal[0, 1, 2] | None = None
+    size: Annotated[
+        str,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ]
+    avg_price: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    mark_price: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    position_value: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    leverage: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    margin_mode: Literal["cross", "isolated", "portfolio"] | None = None
+    unrealised_pnl: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    realised_pnl_session: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    liq_price: Decimal | None = None
+    bust_price: Decimal | None = None
+    take_profit: Decimal | None = None
+    stop_loss: Decimal | None = None
+    trailing_stop: Annotated[
+        str | None,
+        Field(
+            description="Price distance, not a percentage (Bybit semantics).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    tpsl_mode: Literal["Full", "Partial"] | None = None
+    native_stop_present: Annotated[
+        StrictBool | None,
+        Field(
+            description="False is an alarm condition; the OMS re-asserts the stop and raises a critical alert."
+        ),
+    ] = None
+    trade_group_id: UUID | None = None
+    r_multiple: Decimal | None = None
+    funding_estimate: Annotated[
+        FundingEstimate | None,
+        Field(
+            description="The charge this position meets at the symbol's next funding settlement, computed by the server (E24-S03, #778; E24-D02 G11). `null` when the position is flat or the server holds no accruing rate for the symbol, so a client shows no charge line, never a zero. Contract first (C-6.1): absent until the read serves it, which a client reads as `null`."
+        ),
+    ] = None
+    updated_at: AwareDatetime | None = None
+    __null_refused = field_validator("position_idx", "avg_price", "mark_price", "position_value", "leverage", "margin_mode", "unrealised_pnl", "realised_pnl_session", "trailing_stop", "tpsl_mode", "native_stop_present", "updated_at", mode="before")(_refuse_null)
 
 
 class JournalTradeDetail(JournalTrade):
@@ -8414,6 +8473,39 @@ class CapacityReport(BaseModel):
     rate_budget_status: AdminSliceStatus | None = None
     subaccounts: SubaccountCapacity | None = None
     __null_refused = field_validator("generated_at", "storage", "ingestion", "rate_budget", "rate_budget_status", "subaccounts", mode="before")(_refuse_null)
+
+
+class AccountConsequenceSummary(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    exchange_account_id: UUID
+    open_positions: Annotated[
+        list[Position], Field(description="Every open position, with its native stop-loss state.")
+    ]
+    working_orders: Annotated[JsonInt, Field(description="Orders working on the exchange.", ge=0)]
+    running_algos: Annotated[JsonInt, Field(description="Emulated algos still running.", ge=0)]
+    assigned_users: Annotated[
+        list[AssignedUser],
+        Field(description="Users granted this account through `user_account_access`."),
+    ]
+    armed_rules: Annotated[
+        list[ArmedRule],
+        Field(
+            description="Armed rules scoped to the account, listed by name; the action disarms them."
+        ),
+    ]
+
+
+class OpenExposureProblem(Problem):
+    consequences: AccountConsequenceSummary | None = None
+    remedy: Annotated[
+        Literal["leave_positions", "fix_key"] | None,
+        Field(
+            description="What the client does after `409 exposure_unknown`; `components.parameters.OpenExposure` says which applies. `leave_positions`: send the disable or the revoke again with `open_exposure=leave_positions`; a delete is not sent again, the account is disabled instead (`updateExchangeAccount` with `enabled: false`) and never deleted, and that disable must carry `open_exposure=leave_positions`: without a choice it is `409 exposure_unknown` again. `fix_key`: put the key right at the exchange, then send the request again; until then no choice proceeds. The resend is a new request with a new `Idempotency-Key`: under the same key the identical request replays the stored `409` for 24 h, and a request with another `open_exposure` is `409 idempotency_key_reuse` (the Idempotency rule of `info.description`). It advises the SCR-129 dialog: the choice stays the Owner's (SR-E27-07), and a client never sends it on its own. Closed: a new value is a breaking change (C-6.3).\n"
+        ),
+    ] = None
+    __null_refused = field_validator("consequences", "remedy", mode="before")(_refuse_null)
 
 
 class ApiKeyWithVerification(BaseModel):

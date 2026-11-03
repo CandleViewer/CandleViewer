@@ -3797,6 +3797,30 @@ export interface paths {
      *     interval is instrument-specific (`funding_interval_minutes`; 8 h common, some 1/2/4 h) —
      *     never assume 8 h. `predicted` marks the current unsettled rate, which Bybit exposes only
      *     through the ticker (`fundingRate`); it is flagged `estimated: "true`."
+     *
+     *     **The interval and the rate bounds come from instrument info** (E24-S03, #778; E24-D02
+     *     G5), the instruments cache's `fundingInterval`, `upperFundingRate` and
+     *     `lowerFundingRate` for the symbol, never the ticker and never the spacing of the items:
+     *     `funding_interval_minutes` is the step of the settled history and the interval a client
+     *     states (a countdown runs to the ticker's `nextFundingTime`, never to a multiple of the
+     *     interval), and `upper_funding_rate` / `lower_funding_rate` are the venue's cap and floor
+     *     on a rate, as fractions per interval like `funding_rate` (`0.005` is 0.5 %). Each bound
+     *     is `null` when the instrument info carries none; a missing bound is never served as `0`.
+     *
+     *     **`meta.coverage`** (E24-S03, #778, BQ 6) states what the store holds for the symbol, in
+     *     `LiquidationsPageMeta`'s terms plus `gaps[]`: `first_available_ts` is the first stored
+     *     settlement (`null` when none is), `covered_from` / `covered_to` the part of the requested
+     *     window the backfilled store answers for, and `no_coverage` is true when the store has not
+     *     been backfilled over the window (nothing fetched for it yet, or the fetch failed), so an
+     *     empty page there means "not recorded". An empty page with `no_coverage: false` means the
+     *     window was covered and no funding settled in it (a symbol listed after the window, or
+     *     before its first settlement). `gaps[]` lists each span of the covered part longer than
+     *     one `funding_interval_minutes` between consecutive settlements, so a missing settlement
+     *     is reported and never filled.
+     *
+     *     The two bounds and `meta.coverage` are contract first (C-6.1): optional until the
+     *     handler serves them, and a client reads an absent member as unknown, never as `0` or as
+     *     "covered".
      */
     get: operations["getFundingHistory"];
     put?: never;
@@ -4991,7 +5015,9 @@ export interface paths {
      *     `trailing_stop` of `0` is none. An `exchange_account_ids` entry outside the caller's
      *     grants, or one that does not exist, refuses the whole request alike with
      *     `403 account_scope_denied`, audited (SR-E29-13); a malformed parameter is
-     *     `400 validation_failed`.
+     *     `400 validation_failed`. A position's `funding_estimate` (`FundingEstimate`, E24-S03) is
+     *     its next funding charge, computed by the server under this same account scope; an
+     *     aggregate row carries none.
      */
     get: operations["listPositions"];
     put?: never;
@@ -9103,6 +9129,46 @@ export interface components {
       /** @description Sitemap route id. */
       screen: string;
     };
+    /** @description One position's estimated funding charge at the next settlement (E24-S03, #778), the per-account carrier of E24-D02 G11. It is computed server-side only (C-2.12): the position's value at mark times the symbol's accruing rate (the ticker's `fundingRate`, the item `getFundingHistory` flags `predicted`), with `Decimal` arithmetic; a client formats it and never multiplies. A long pays and a short receives when the rate is positive, the reverse when it is negative. A demo position is priced at the live public rate, the only one there is. It rides the position's own read (`listPositions`, `getPosition`), so its scope is the position's: `positions:read` over the caller's granted accounts, every account for the Owner and the assigned ones for a Manager (C-12.4); no operation of its own exists and a market-data read never carries it. */
+    FundingEstimate: {
+      /** @description The charge's magnitude in the settle coin (USDT), never negative; its sign is `direction`. */
+      amount: components["schemas"]["Decimal"];
+      /**
+       * Format: date-time
+       * @description When the server read the mark and the rate; a client compares it with its stale threshold and marks the charge stale, never recomputing it.
+       */
+      computed_at: string;
+      /**
+       * @description `none` when the accruing rate is exactly zero (`amount` is `0`).
+       * @enum {string}
+       */
+      direction: "pay" | "receive" | "none";
+      /** @description The accruing rate per interval the estimate used. */
+      funding_rate: components["schemas"]["Decimal"];
+      /**
+       * Format: date-time
+       * @description The settlement the estimate is for (the ticker's `nextFundingTime`).
+       */
+      settles_at: string;
+    };
+    /** @description `PageMeta` plus the stored coverage of the symbol's settled funding (E24-S03, #778): `LiquidationsPageMeta`'s four members and `OpenInterestPageMeta`'s `gaps[]`, each a span of the covered part longer than one funding interval between consecutive settlements. `coverage` is optional until `getFundingHistory` serves it (contract first, C-6.1). */
+    FundingPageMeta: components["schemas"]["PageMeta"] & {
+      coverage?: {
+        /** Format: date-time */
+        covered_from: string | null;
+        /** Format: date-time */
+        covered_to: string | null;
+        /** Format: date-time */
+        first_available_ts: string | null;
+        gaps: {
+          /** Format: date-time */
+          from: string;
+          /** Format: date-time */
+          to: string;
+        }[];
+        no_coverage: boolean;
+      };
+    };
     HealthReport: {
       alerts_active?: number;
       /** @description null until exchange time sync (E08) lands; never a fabricated 0. */
@@ -10623,6 +10689,8 @@ export interface components {
       bust_price?: components["schemas"]["Decimal"] | null;
       /** Format: uuid */
       exchange_account_id: string;
+      /** @description The charge this position meets at the symbol's next funding settlement, computed by the server (E24-S03, #778; E24-D02 G11). `null` when the position is flat or the server holds no accruing rate for the symbol, so a client shows no charge line, never a zero. Contract first (C-6.1): absent until the read serves it, which a client reads as `null`. */
+      funding_estimate?: components["schemas"]["FundingEstimate"] | null;
       /** Format: uuid */
       id: string;
       /**
@@ -12273,6 +12341,30 @@ export interface components {
         default_depth?: number;
         max_history_bars?: number;
         stale_badge_after_ms?: number;
+      };
+      /** @description The derivatives sub-panes' display preferences (E24-D02 §10, gap G1; E24-S03, #778), presentation only: no key changes what the server computes or what a rule sees. A leaf's dotted key is `deriv.<leaf>` (`deriv.funding_style` is E24-D02's `deriv.funding.style`), one level as every group's leaves are. With no deployment default set, an unset leaf takes the client's built-in default, named on each leaf. The liquidation keys (`deriv.liq.*` in E24-D02 §10) are not here yet. */
+      deriv?: {
+        /** @description Annualised basis display; client default `false` (PROPOSED in E24-D02). */
+        basis_annualised?: boolean;
+        /**
+         * @description The basis readout's price, `mark − index` or `last − index`; client default `mark`.
+         * @enum {string}
+         */
+        basis_source?: "mark" | "last";
+        /** @description Annualised funding display (E24-S04); client default `false`. */
+        funding_annualised?: boolean;
+        /**
+         * @description The settled-history rendering, stepped line or bars; client default `line` (PROPOSED in E24-D02).
+         * @enum {string}
+         */
+        funding_style?: "line" | "bars";
+        /**
+         * @description The OI sub-pane's mode; client default `absolute`.
+         * @enum {string}
+         */
+        oi_mode?: "absolute" | "delta";
+        /** @description The OI price/OI quadrant classification; client default `true`. */
+        oi_quadrant_colouring?: boolean;
       };
       notifications?: {
         desktop_enabled?: boolean;
@@ -19331,6 +19423,7 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["Page"] & {
+            /** @description The symbol's settlement interval in minutes, from instrument info (`fundingInterval`); 480 is 8 h, 240 is 4 h. */
             funding_interval_minutes?: number;
             items?: {
               /** @default false */
@@ -19341,7 +19434,12 @@ export interface operations {
               /** Format: date-time */
               t?: string;
             }[];
+            /** @description The funding floor per interval, from instrument info (`lowerFundingRate`), usually negative; `null` when it carries none. */
+            lower_funding_rate?: components["schemas"]["Decimal"] | null;
+            meta?: components["schemas"]["FundingPageMeta"];
             symbol?: components["schemas"]["Symbol"];
+            /** @description The funding cap per interval, from instrument info (`upperFundingRate`); `null` when it carries none. */
+            upper_funding_rate?: components["schemas"]["Decimal"] | null;
           };
         };
       };
