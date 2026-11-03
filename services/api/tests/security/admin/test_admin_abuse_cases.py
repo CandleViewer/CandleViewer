@@ -214,6 +214,24 @@ def test_ac_adm_15_no_route_mutates_the_audit_log(admin: AdminWorld) -> None:
     assert len(admin.audit.records) == before  # refused before any guard or handler ran
 
 
+# -- #5331: a polling Owner cannot flood the append-only log ---------------------------------
+
+
+def test_a_polling_owner_writes_one_area_row_per_route_per_window(admin: AdminWorld) -> None:
+    before = len(admin.audit.records)
+    for _ in range(6):
+        assert admin.send("owner", "GET", "/admin/overview", {}).status_code == 200
+    rows = [r for r in admin.audit.records[before:] if r["action"] == "admin.area_entered"]
+    assert [(r["object_id"], r["outcome"].value) for r in rows] == [("/admin/overview", "success")]
+    assert rows[0]["after_state"]["window_s"] == 300
+    # a refusal is never coalesced: each denied request keeps its own write-ahead row
+    before = len(admin.audit.records)
+    for _ in range(3):
+        assert admin.send("viewer", "GET", "/admin/overview", {}).status_code == 403
+    denied = [r for r in admin.audit.records[before:] if r["action"] == "admin.area_entered"]
+    assert [r["outcome"].value for r in denied] == ["denied"] * 3
+
+
 # -- Role escalation and grant self-assignment under concurrent writes ----------------------------
 
 

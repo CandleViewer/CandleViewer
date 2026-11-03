@@ -28,6 +28,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from candleviewer.admin.area_coalescer import AreaEntryCoalescer
 from candleviewer.admin.flags import (
     FlagConflictError,
     FlagService,
@@ -164,9 +165,13 @@ async def _body(request: Request) -> tuple[api.SetFeatureFlagRequest, dict[str, 
 
 
 def make_feature_flags_routers(
-    flags: FlagsRuntime, *, resolver: PrincipalResolver | None, audit: AuditEmitter
+    flags: FlagsRuntime,
+    *,
+    resolver: PrincipalResolver | None,
+    audit: AuditEmitter,
+    coalescer: AreaEntryCoalescer | None = None,
 ) -> tuple[APIRouter, APIRouter]:
-    read = admin_router(Permission.FLAGS_READ, resolver=resolver, audit=audit)
+    read = admin_router(Permission.FLAGS_READ, resolver=resolver, audit=audit, coalescer=coalescer)
     write = admin_router(Permission.FLAGS_WRITE, resolver=resolver, audit=audit)
 
     @read.get("/feature-flags")

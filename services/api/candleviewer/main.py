@@ -134,7 +134,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     audit_halt = None
     oi_runtime = None
     rolloff_task: RollOffTask | None = None
-    bars_runtime = kline_refresh = audit_flush = overrides = health_registry = None
+    bars_runtime = kline_refresh = audit_flush = coalesce_flush = overrides = health_registry = None
     account_health = ws_runtime = lost_jobs = view_as_flush = view_as_sweeper = None
     audit_exports = oms_runtime = profile_notices = None
     alert_tasks: list[Any] = []
@@ -220,6 +220,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         audit_flush = getattr(app.state, "audit_budget_flush", None)
         if audit_flush is not None:
             audit_flush.start()
+        coalesce_flush = getattr(app.state, "admin_area_coalesce_flush", None)
+        if coalesce_flush is not None:  # #5331: the admin-area read coalescer's own
+            coalesce_flush.start()
         view_as_flush = getattr(app.state, "view_as_refusal_flush", None)
         if view_as_flush is not None:  # #3085: the view-as refusal budget's own
             view_as_flush.start()
@@ -363,6 +366,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             if audit_flush is not None:
                 # Budgeted audit counts are written (bounded) before the audit module stops.
                 await teardown.run("audit_budget_flush", audit_flush.stop)
+            if coalesce_flush is not None:  # and the admin-area read summaries (#5331)
+                await teardown.run("admin_area_coalesce_flush", coalesce_flush.stop)
             if view_as_flush is not None:  # so are the view-as refusal counts (#3085)
                 await teardown.run("view_as_refusal_flush", view_as_flush.stop)
             if account_health is not None:  # its hook calls drain before `stop_all` stops modules

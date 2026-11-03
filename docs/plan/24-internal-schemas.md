@@ -5361,6 +5361,8 @@ Adding an action requires a code change plus a test; the set is closed so that d
 
 A risk-cap change is not its own action: it is a `profile.updated` whose labels carry `looser_caps` (`api/profile_audit.py`).
 
+`admin.area_entered` (#5331): the first allowed `GET`/`HEAD` of each window (per actor, subject, session, method, route template, IP and last step-up) is recorded and later reads are counted (`admin_area_coalesce_seconds`, 300 s default, 0 = every request, max 3600; 300 s is PROPOSED, as is the 4096-key cap on the open windows, a full map recording every request); its `after_state` adds `window_s`, and the next such entry of the key adds `prior_window` `{reads, first_at, last_at}` for the window it closes, or, if none comes, one entry with reason `coalesced_summary` and `after_state` `{route, reads, window_started_at, last_read_at, window_s}` is written; denials and writes are one entry per request.
+
 `audit.chain_break_halted`, `audit.chain_break_acknowledged` and `audit.chain_break_ack_denied` (#2904; the posture is `04-security-program.md` §8.1 "Enforced posture"): `object_kind` `audit_chain_break`, `object_id` `<first_bad_id>:<kind>` (the break's identity), the same two in `after_state`. `.halted` is written by `system:cv-audit-verify` (severity `critical`, reason `order_entry_halted`, `after_state.trigger` `startup`, `scheduled`, `on_demand` or `rewrite`) after the halt has engaged, never before it; it is the halt's state, which every API process rebuilds from these records (an identity whose latest record by id is `.halted` is engaged). `.acknowledged` is the Owner's (severity `critical`, the typed reason as `reason`), written ahead of any effect; `.ack_denied` records a refusal (outcome `denied`, reason `not_owner` or `not_engaged`). The host console writes them with `actor_label` `console:owner` and the Owner as `actor_user_id` (`candleviewer.audit_ack_break`).
 
 `account.disabled`, `account.deleted` and `api_key.revoke` (E27-S04, #898): an account's disable, its delete and a key's revoke, each written ahead (C-2.9). A record of an action the `accounts` step-up class gates names the `challenge_id` of the grant it spent; a revoke under `keys`, a grace class, spends none. `api_key.revoke` is the registered spelling (`audit/actions.py`) of the ticket's `account.key_revoked`; E27-S04 registers `account.disabled` and `account.deleted` with their routes.
@@ -6774,3 +6776,11 @@ The orchestrator assigned this number on #5396 (2026-11-01, 23:30Z); its ruling 
 - 22 `getWorkspace` states the same bound and the `suppressed_before` count in its description; its `404` is unchanged.
 - 22 `exportWorkspace` is refused in a live view-as context: `403 view_as_read_only` with its `admin.view_as_refused` record, as a write is, though it is a read, because a bundle is a copy of the target's workspace that leaves the view. The "View-as session" text of `info.description` gains a "Refused reads" bullet that names it, and the `Forbidden` response text names it beside the state-changing operations. A held context refuses every read already.
 - No new `x-error-codes` entry, schema member or operation, so the `openapi_pending` baselines do not move; no WS, table, column, chart or `machine_hash` change, and no migration.
+
+### 19.89 2026-11-02 — §15.5: admin-area reads coalesced per window (E42-T01, #5331)
+
+The orchestrator assigned this number on 2026-11-02 (ruling of record on #5331, BQ-1 to BQ-13).
+
+- §15.5 names `admin.area_entered` (already in the code registry): the first allowed `GET`/`HEAD` of each window is recorded and later reads are counted; the count rides the next opening row (`after_state.prior_window`) or one `coalesced_summary` row, every row an INSERT (C-5.7). Denials and mutations stay one row per request; a request with no session is never coalesced.
+- Two settings are PROPOSED to this document's owner: `admin_area_coalesce_seconds` (300 s default, 0 = record every request, max 3600) and the 4096-key bound on open windows (the oldest window's summary is written on eviction; a full map records every request).
+- No `22` change, no migration, no new action.

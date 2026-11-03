@@ -20,6 +20,7 @@ from uuid import UUID
 from fastapi import APIRouter, Path, Query, Request
 from fastapi.responses import JSONResponse
 
+from candleviewer.admin.area_coalescer import AreaEntryCoalescer
 from candleviewer.admin.errors import (
     AdminError,
     IncidentNotFound,
@@ -95,8 +96,11 @@ def make_admin_ops_router(
     *,
     resolver: PrincipalResolver | None,
     audit: AuditEmitter | None,
+    coalescer: AreaEntryCoalescer | None = None,
 ) -> APIRouter:
-    router = admin_router(Permission.ADMIN_READ, resolver=resolver, audit=audit)
+    router = admin_router(
+        Permission.ADMIN_READ, resolver=resolver, audit=audit, coalescer=coalescer
+    )
 
     @router.get("/health")
     async def get_health() -> JSONResponse:

@@ -16,6 +16,14 @@ check (RBAC server-side, deny-by-default, C-12.4):
 - an allowed caller's verified principal is left on `request.state.admin_principal`, so a write
   route can audit its actor without resolving the session again.
 
+Reads are coalesced (#5331, `admin/area_coalescer.py`): with a `coalescer`, an allowed `GET`/`HEAD`
+opens a window: the first read of each window is recorded and later reads are counted
+(`admin_area_coalesce_seconds`); the counted reads are carried into the next entry
+(`after_state.prior_window`) or a `coalesced_summary` entry. Writes and every refusal are still
+written ahead, one per request, and a refusal closes the key's window. A coalesced read needs the
+audit writer ready, else it takes the write path above (503). With `coalescer=None` every request is
+recorded, as before.
+
 `reauth_age_s` is the whole seconds from the last step-up the caller's session row records to
 the guard's `clock` (`AuditPrincipal.reauth_age_s`, #2754). It is `null` when the row records
 none: never stepped up, or the grant is gone (a spent one-shot grant, a lapsed window, an idle
@@ -39,6 +47,7 @@ import structlog
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from candleviewer.admin.area_coalescer import AreaEntryCoalescer, Key
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission
@@ -107,14 +116,31 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+async def _audit_failed(
+    exc: Exception, route: str, principal: AuditPrincipal, allowed: bool
+) -> None:
+    """Any audit failure shuts the area for an allowed caller (write-ahead, C-2.9)."""
+    _log().error(
+        "admin.area_entered.audit_failed",
+        route=route,
+        actor_user_id=principal.actor_id,
+        request_id=principal.request_id,
+        error=type(exc).__name__,
+    )
+    if allowed:
+        raise AdminAreaRefused(503, "audit record could not be written") from exc
+
+
 def admin_area(
     permission: Permission,
     resolver: PrincipalResolver | None,
     audit: AuditEmitter | None,
     clock: Callable[[], datetime] = _utc_now,
+    coalescer: AreaEntryCoalescer | None = None,
 ) -> Callable[[Request], Awaitable[AuditPrincipal]]:
     """The dependency itself: the verified principal, or an `AdminAreaRefused`. `clock` is the
-    injected time source the record's `reauth_age_s` is measured against."""
+    injected time source the record's `reauth_age_s` is measured against; `coalescer` coalesces
+    the repeated safe reads (None: every request is recorded)."""
 
     async def enter(request: Request) -> AuditPrincipal:
         if resolver is None:
@@ -128,7 +154,31 @@ def admin_area(
         allowed = principal.has(permission)
         if not allowed:  # SR-125, counted before the audit write as in `auth.scopes.enforce`
             count_authz_denial(permission, ("owner",) if principal.is_owner else ())
+        method = str(request.scope.get("method", "")).upper()  # unknown: not a safe read
+        plan: tuple[AreaEntryCoalescer, Key] | None = None  # set for a read that may coalesce
+        if coalescer is not None and coalescer.enabled:
+            key: Key = (
+                principal.actor_id, principal.user_id, principal.session_id, method, route,
+                principal.ip, principal.last_step_up_at,
+            )  # fmt: skip
+            if not allowed:
+                coalescer.close(key)  # the next allowed read writes a full row after this one
+            elif coalescer.eligible(method, principal.session_id):
+                if coalescer.coalesce(key):
+                    request.state.admin_principal = principal
+                    return principal
+                plan = (coalescer, key)
+        taken = plan[0].take_prior(plan[1]) if plan is not None else None
         try:
+            after_state: dict[str, Any] = {
+                "route": route,
+                "reauth_age_s": principal.reauth_age_s(clock()),
+            }
+            if plan is not None:
+                after_state["window_s"] = plan[0].window_s
+                prior = plan[0].prior_state(taken)
+                if prior is not None:
+                    after_state["prior_window"] = prior
             await audit.emit(
                 AREA_ENTERED,
                 actor_label=principal.actor_name,
@@ -140,19 +190,27 @@ def admin_area(
                 outcome=AuditOutcome.SUCCESS if allowed else AuditOutcome.DENIED,
                 severity=Severity.INFO if allowed else Severity.WARNING,
                 reason=None if allowed else f"missing_permission:{permission}",
-                after_state={"route": route, "reauth_age_s": principal.reauth_age_s(clock())},
+                after_state=after_state,
                 request_id=principal.request_id,
             )
-        except Exception as exc:  # any audit failure shuts the area (write-ahead, C-2.9)
-            _log().error(
-                "admin.area_entered.audit_failed",
-                route=route,
-                actor_user_id=principal.actor_id,
-                request_id=principal.request_id,
-                error=type(exc).__name__,
-            )
-            if allowed:
-                raise AdminAreaRefused(503, "audit record could not be written") from exc
+            taken = None  # the row carried its count: a later cancel must not give it back
+            if plan is not None:
+                await plan[0].open(
+                    plan[1],
+                    plan[0].new_window(
+                        actor_label=principal.actor_name,
+                        actor_user_id=principal.actor_id,
+                        ip=principal.ip,
+                        session_id=principal.session_id,
+                        route=route,
+                    ),
+                )
+        except BaseException as exc:
+            if plan is not None:
+                plan[0].restore(plan[1], taken)  # its count was not carried: give it back
+            if not isinstance(exc, Exception):
+                raise  # a cancellation is never swallowed
+            await _audit_failed(exc, route, principal, allowed)
         if not allowed:
             raise AdminAreaRefused(403, f"requires {permission}")
         request.state.admin_principal = principal
@@ -167,8 +225,9 @@ def admin_router(
     resolver: PrincipalResolver | None,
     audit: AuditEmitter | None,
     clock: Callable[[], datetime] = _utc_now,
+    coalescer: AreaEntryCoalescer | None = None,
 ) -> APIRouter:
     """An `/admin` router whose every route passes the audited admin-area check first; `clock`
-    dates the record's `reauth_age_s`."""
-    guard = Depends(admin_area(permission, resolver, audit, clock))
+    dates the record's `reauth_age_s`; `coalescer` coalesces its repeated safe reads (#5331)."""
+    guard = Depends(admin_area(permission, resolver, audit, clock, coalescer))
     return APIRouter(prefix="/admin", tags=["admin"], dependencies=[guard])
