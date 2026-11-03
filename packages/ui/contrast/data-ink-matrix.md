@@ -92,6 +92,8 @@ CVD transform: Brettel/Vienot dichromacy projection for protanopia and deuterano
 | dark | compact | color.text.tertiary on color.surface.hover | 4.79 | 4.5 | PASS |
 | dark | comfortable | color.text.primary on color.neutral.subtle | 12.22 | 4.5 | PASS |
 | dark | compact | color.text.primary on color.neutral.subtle | 12.22 | 4.5 | PASS |
+| dark | comfortable | color.text.secondary on color.neutral.subtle | 7.5 | 4.5 | PASS |
+| dark | compact | color.text.secondary on color.neutral.subtle | 7.5 | 4.5 | PASS |
 | dark | comfortable | color.text.primary on color.surface.sunken | 17.42 | 4.5 | PASS |
 | dark | compact | color.text.primary on color.surface.sunken | 17.42 | 4.5 | PASS |
 | light | comfortable | color.text.primary on color.surface.app | 17.99 | 4.5 | PASS |
@@ -148,6 +150,8 @@ CVD transform: Brettel/Vienot dichromacy projection for protanopia and deuterano
 | light | compact | color.text.tertiary on color.surface.hover | 4.86 | 4.5 | PASS |
 | light | comfortable | color.text.primary on color.neutral.subtle | 14.37 | 4.5 | PASS |
 | light | compact | color.text.primary on color.neutral.subtle | 14.37 | 4.5 | PASS |
+| light | comfortable | color.text.secondary on color.neutral.subtle | 8.26 | 4.5 | PASS |
+| light | compact | color.text.secondary on color.neutral.subtle | 8.26 | 4.5 | PASS |
 | light | comfortable | color.text.primary on color.surface.sunken | 12.82 | 4.5 | PASS |
 | light | compact | color.text.primary on color.surface.sunken | 12.82 | 4.5 | PASS |
 | high-contrast | comfortable | color.text.primary on color.surface.app | 18.18 | 7 | PASS |
@@ -204,6 +208,8 @@ CVD transform: Brettel/Vienot dichromacy projection for protanopia and deuterano
 | high-contrast | compact | color.text.tertiary on color.surface.hover | 9.54 | 7 | PASS |
 | high-contrast | comfortable | color.text.primary on color.neutral.subtle | 13.83 | 7 | PASS |
 | high-contrast | compact | color.text.primary on color.neutral.subtle | 13.83 | 7 | PASS |
+| high-contrast | comfortable | color.text.secondary on color.neutral.subtle | 12.22 | 7 | PASS |
+| high-contrast | compact | color.text.secondary on color.neutral.subtle | 12.22 | 7 | PASS |
 | high-contrast | comfortable | color.text.primary on color.surface.sunken | 19.73 | 7 | PASS |
 | high-contrast | compact | color.text.primary on color.surface.sunken | 19.73 | 7 | PASS |
 
