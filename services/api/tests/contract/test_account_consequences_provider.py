@@ -23,7 +23,7 @@ import pytest
 import candleviewer.app as appmod
 from candleviewer.accounts.consequences import ConsequenceRead, StoreReadFailed
 from candleviewer.accounts.errors import AccountNotFoundError, AccountScopeDeniedError
-from candleviewer.accounts.exposure import ExposureRead, KeyExposure, KeyReadFailed
+from candleviewer.accounts.exposure import KeyExposure, KeyReadFailed
 from candleviewer.accounts.models import (
     ApiKeyMetadata,
     AssignedUser,
@@ -37,6 +37,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
 from tests.contract._admin_support import SPEC, validate_example
+from tests.contract._frozen_budget import consequence_read
 from tests.contract.rbac.rbac_harness import (
     ABSENT,
     FOREIGN,
@@ -132,8 +133,7 @@ def _served() -> Iterator[Served]:
     ports, mp = Ports(), pytest.MonkeyPatch()
 
     def wired(*_args: Any, env: str) -> ConsequenceRead:
-        exposure = ExposureRead(ports, env=env)
-        return ConsequenceRead(ports, exposure, ports, ports, env=env)
+        return consequence_read(ports, env=env)
 
     try:
         mp.setattr(appmod, "wire_consequence_read", wired)
