@@ -71,7 +71,9 @@ async def test_s02_recovered_gap_leaves_the_bars_equal_to_the_golden(
     assert _gaps("true") == before + 1
     expected = await golden.golden_bars(golden.venue_tape(rig, SYMBOL), SPECS, SYMBOL)
     for label in SPECS:
-        golden.assert_matches_golden(expected[label], bars.bars(label), label)
+        golden.assert_matches_golden(
+            expected[label], bars.bars(label), label, kind=SPECS[label].kind
+        )
         golden.assert_monotonic(bars.bars(label), label)
 
 
@@ -110,7 +112,9 @@ async def test_s02_negative_control_a_pipeline_without_backfill_fails_the_golden
     await bars.finish()
     expected = await golden.golden_bars(golden.venue_tape(rig, SYMBOL), SPECS, SYMBOL)
     with pytest.raises(AssertionError, match="differs from the golden"):
-        golden.assert_matches_golden(expected["time:5s"], bars.bars("time:5s"), "time:5s")
+        golden.assert_matches_golden(
+            expected["time:5s"], bars.bars("time:5s"), "time:5s", kind="time"
+        )
     with pytest.raises(AssertionError, match="volume not conserved"):
         golden.assert_conserved(expected["vol:1"], bars.bars("vol:1"), "vol:1")
 
@@ -160,4 +164,6 @@ async def test_s02_dense_repeated_gaps_across_the_corpus_equal_the_golden(
     assert [g.recovered for g in rig.observe().gaps] == [True] * 4
     expected = await golden.golden_bars(golden.venue_tape(rig, SYMBOL), SPECS, SYMBOL)
     for label in SPECS:
-        golden.assert_matches_golden(expected[label], bars.bars(label), label)
+        golden.assert_matches_golden(
+            expected[label], bars.bars(label), label, kind=SPECS[label].kind
+        )

@@ -12,7 +12,8 @@ scheduled one, so the per-signal group sits on the seconds-long report job inste
 real-backend auth lane), from main only. So is perf-recorder-nightly.yml (#481, E16-Q04): its
 `recorder-perf-issue` job reports a failed recorder budget, and chaos-recorder-nightly.yml, whose
 `chaos-recorder-issue` job reports a failed `chaos-recorder` job. So is gpu-runner-health.yml
-(E03-T14): its `alert` job reports an unfit GPU bench runner, never when none is registered.
+(E03-T14): its `alert` job reports an unfit GPU bench runner, never when none is registered. So is
+chaos-bars-nightly.yml (#529, E12-Q06): its `chaos-bars-issue` job reports a failed `chaos-bars` job.
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ NIGHTLIES = (
     "perf-recorder-nightly.yml",
     "chaos-recorder-nightly.yml",
     "gpu-runner-health.yml",
+    "chaos-bars-nightly.yml",
 )
 BOT = "github-actions[bot]"
 #: Jobs that read more than `contents` and write nothing: #2825's guard lists runs and jobs.
@@ -119,6 +121,14 @@ SIGNALS = {
         "chaos-recorder",
         "chaos: recorder nightly failed",
         "qa,area/recorder-replay,priority/p1",
+    ),
+    # #529 (E12-Q06): the bars chaos suite; any failed step of its one job is the verdict.
+    ("chaos-bars-nightly.yml", "chaos-bars-issue"): (
+        "chaos-bars",
+        "${{ always() && needs.chaos-bars.result == 'failure' }}",
+        "chaos-bars",
+        "chaos: bars nightly failed",
+        "qa,area/ingestion,priority/p1",
     ),
     # #481 (E16-Q04): the recorder perf pack; a failed leg (smoke, ingest, soak, API) is a verdict.
     ("perf-recorder-nightly.yml", "recorder-perf-issue"): (
