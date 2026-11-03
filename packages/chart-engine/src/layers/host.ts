@@ -28,7 +28,7 @@ export interface HostViewport {
 export interface HostContext {
   readonly viewport: HostViewport;
   readonly theme: HostTheme;
-  instances(ring: InstanceRing, program: "candle", part: number): void;
+  instances(ring: InstanceRing, program: "candle" | "ribbon", part: number): void;
   readonly projection: SeriesProjection;
 }
 
@@ -113,7 +113,7 @@ export class SeriesHost extends ContentNode implements HostContext {
     this.plugin.onMutation?.(view, range);
   }
 
-  instances(ring: InstanceRing, program: "candle", part: number): void {
+  instances(ring: InstanceRing, program: "candle" | "ribbon", part: number): void {
     void program; // the name is the plugin's; the node's `program` number is the sort key
     const sink = this.sink;
     if (sink === null) unsupported("instances outside collect");

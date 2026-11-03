@@ -1,6 +1,6 @@
 // Render layers (26 §3): the series host node, the candle instance ring, the candle and OHLC
-// series, their gap seams (E12-S06) and forming / amended marks (E12-S10); footprint, profile,
-// CVD and heatmap layers follow.
+// series, their gap seams (E12-S06) and forming / amended marks (E12-S10); the line, area and
+// baseline series (E12-S07 PR B); footprint, profile, CVD and heatmap layers follow.
 // Internal: the package root re-exports none of it (the §8 surface test).
 export * from "./candle/ring.js";
 export * from "./candle/heikin-ashi.js";
@@ -12,3 +12,5 @@ export * from "./candle/series.js";
 export * from "./candle/bars.js";
 export * from "./candle/seams.js";
 export * from "./candle/marks.js";
+export * from "./ribbon/geometry.js";
+export * from "./ribbon/series.js";

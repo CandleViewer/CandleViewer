@@ -17,7 +17,9 @@
 // Heikin-Ashi on or off, over the same store (no data resent); Heikin-Ashi with a footprint is
 // refused (`ENGINE_SERIES_INCOMPATIBLE`) and the series keeps drawing. Two metrics:
 // `series_type_switch_duration_ms{target}` (the switch to the end of the next frame) and
-// `series_incompatible_combination_total{combination}`.
+// `series_incompatible_combination_total{combination}`. PR B: `line`, `area` and `baseline` draw
+// the same store's closes through a `RibbonSeries` (made on first use), the candle hosts hidden;
+// a switch between the families re-points the ring's patches at the shown hosts' buffer.
 import type { RenderBackend } from "../gl/backend.js";
 import { ContextLoss, type LossDetails } from "../gl/context-loss.js";
 import { type OpenedBackend, openBackend } from "../gl/open-backend.js";
@@ -40,6 +42,8 @@ import {
   createBarHit,
 } from "../layers/candle/series.js";
 import type { HostDeps, HostTheme } from "../layers/host.js";
+import { isRibbonKind, RibbonSeries, type RibbonKind } from "../layers/ribbon/series.js";
+import { RIBBON_ATTRIBUTES } from "../gl/shaders/ribbon.js";
 import type { BatchUniforms } from "../gl/submit.js";
 import { BAR_FLAG, type BarBatch, BarStore } from "../model/BarStore.js";
 import { ModelRejection, type MutationRange, RangeSlot } from "../model/counters.js";
@@ -59,6 +63,7 @@ import {
   screenToTime,
   writePaneUniforms,
 } from "../viewport/index.js";
+import { INT32_TICKS } from "../viewport/transform.js";
 import {
   BACKGROUND_TOKEN,
   DecodeError,
@@ -172,6 +177,10 @@ export interface SeriesEntry {
   readonly ring: CandleRing;
   /** The plugin drawing it: a `CandleSeries` for candles and hollow, a `BarSeries` for OHLC bars. */
   readonly candle: CandleSeries;
+  /** E12-S07 PR B: the line-family plugin, made on the first line kind; else null. */
+  ribbon: RibbonSeries | null;
+  /** BQ-9: the baseline's user base B (a tick), else null (the first visible close). */
+  baseTick: number | null;
   /** A bar pick's `objectId` (`series.<id>`), made once. */
   readonly pickId: string;
 }
@@ -243,6 +252,8 @@ interface Instance {
   readonly dataRejected: Record<string, number>;
   /** E12-S06: the mounted candle series (an array: the frame loop iterates it, no iterator). */
   readonly candles: CandleSeries[];
+  /** E12-S07 PR B: the mounted line-family series, likewise. */
+  readonly ribbons: RibbonSeries[];
   /** Node id → its batch block, read by the backend per batch (`setBatchUniforms`). */
   readonly blocks: Map<string, BatchUniforms>;
   /** The theme as plugins read it, rebuilt on `setTheme` only. */
@@ -392,6 +403,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     if (atlas?.image) backend.uploadAtlas(atlas.image);
     backend.setBatchUniforms((b) => inst.blocks.get(b.nodeId) ?? null); // E12-S06
     for (const c of inst.candles) attachCandle(backend, c);
+    for (const r of inst.ribbons) attachRibbon(backend, r);
     if (degraded !== null) {
       const { reason, message, reducedCapabilities } = degraded;
       post(ENGINE_NO_WEBGL2, message, true, { reducedCapabilities, reason }); // BQ-90
@@ -550,7 +562,8 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     for (let i = 0; i < list.length; i += 1) {
       const s = list[i] as SeriesEntry;
       if (s.pane !== 0) continue;
-      const c = s.candle;
+      const r = s.ribbon;
+      const c = r !== null && r.active ? r : s.candle;
       if (!c.hitTest(x, y, where.barIndex, u.floats, i0, t0, tol, barHit)) continue;
       if (barHit.distancePx > best) continue;
       best = barHit.distancePx;
@@ -608,12 +621,25 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     }
     const store = new BarStore();
     const ring = new CandleRing(inst.builder);
-    const candle = kind === "bars" ? new BarSeries(ring) : new CandleSeries(ring, kind);
-    const entry: SeriesEntry = { kind, pane, store, ring, candle, pickId: `series.${sid}` };
+    const shape = isRibbonKind(kind) ? "candles" : kind;
+    const candle = shape === "bars" ? new BarSeries(ring) : new CandleSeries(ring, shape);
+    const pickId = `series.${sid}`;
+    const entry: SeriesEntry = {
+      kind,
+      pane,
+      store,
+      ring,
+      candle,
+      ribbon: null,
+      baseTick: null,
+      pickId,
+    };
     inst.series.set(sid, entry);
     inst.seriesList.push(entry);
     mountCandle(inst, sid, candle);
-    themeCandle(inst, candle);
+    // A family is themed only while it draws (PR B): a line series' candles wait for a switch.
+    if (isRibbonKind(kind)) showRibbon(inst, sid, entry, kind);
+    else themeCandle(inst, candle);
     if (pane === 0 && inst.main < 0) {
       inst.main = sid;
       inst.viewport.setMap(store); // G-8: the store is the runtime's IndexTimeMap
@@ -635,6 +661,47 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     inst.candles.push(c);
     const backend = inst.gpu.backend;
     if (backend !== undefined) attachCandle(backend, c);
+  }
+
+  /**
+   * E12-S07 PR B: series `sid` drawn as line kind `kind`: its `RibbonSeries` (mounted, attached
+   * and themed on first use) shown, the candle hosts hidden, the ring plain (no hollow bits, no
+   * Heikin-Ashi: the line reads real closes, R-4) and patching the ribbon's hosts, whose buffer
+   * gets every bar again (it missed the syncs while hidden). No store mutation, no data resent.
+   */
+  function showRibbon(inst: Instance, sid: number, s: SeriesEntry, kind: RibbonKind): void {
+    let r = s.ribbon;
+    if (r === null) {
+      r = new RibbonSeries(s.ring, kind);
+      r.baseTick = s.baseTick;
+      s.ribbon = r;
+      const deps: HostDeps = { viewport: inst.viewport, pane: 0, theme: () => inst.hostTheme };
+      const hosts = r.mount(inst.graph, "main", `series.${kind}.${sid}.${inst.mounts++}`, deps);
+      for (let p = 0; p < hosts.length; p += 1) {
+        inst.blocks.set((hosts[p] as { id: string }).id, r.blocks[p] as BatchUniforms);
+      }
+      inst.ribbons.push(r);
+      const backend = inst.gpu.backend;
+      if (backend !== undefined) attachRibbon(backend, r);
+    }
+    r.setKind(kind);
+    if (s.candle.active) {
+      // From a candle kind (line ↔ area ↔ baseline is the parts only: nothing uploaded).
+      s.candle.setActive(false);
+      r.setActive(true);
+      s.ring.follow(r.hosts.map((h) => h.id)); // before the rewrite: it patches the shown hosts
+      s.ring.setMode(s.store, false, null);
+    }
+    // Themed on every activation and kind change: the palette is per kind (a line needs only
+    // color.chart.line), and a hidden ribbon was skipped by `setTheme` while candles drew.
+    themeSeries(inst, r);
+  }
+
+  function attachRibbon(backend: RenderBackend, r: RibbonSeries): void {
+    const hs = r.hosts;
+    for (let p = 0; p < hs.length; p += 1) {
+      backend.attach((hs[p] as { id: string }).id, r.source, RIBBON_ATTRIBUTES);
+    }
   }
 
   function attachCandle(backend: RenderBackend, c: CandleSeries): void {
@@ -663,6 +730,11 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
 
   /** BQ-4: a theme without a candle token is a recoverable error and no series drawn. */
   function themeCandle(inst: Instance, c: CandleSeries): void {
+    themeSeries(inst, c);
+  }
+
+  /** BQ-4 / BQ-7: a series family missing its tokens posts the refusal and stays hidden. */
+  function themeSeries(inst: Instance, c: CandleSeries | RibbonSeries): void {
     const err = c.setTheme(inst.theme);
     if (err !== null) {
       deps.post({
@@ -688,16 +760,31 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       return;
     }
     const m = inst.kinds;
-    if (ha && (inst.elements.footprint > 0 || kind === "bars")) {
-      const other = kind === "bars" ? "bars" : "footprint";
+    const line = isRibbonKind(kind);
+    if (ha && (inst.elements.footprint > 0 || kind === "bars" || line)) {
+      const other = kind === "bars" || line ? kind : "footprint";
       refuse(inst, `heikin-ashi+${other}`, `series ${sid}: Heikin-Ashi cannot draw with ${other}`);
       return;
     }
     m.pending = ha ? `${kind}+heikin-ashi` : kind;
     m.pendingAt = deps.now();
-    s.candle.setKind(kind, ha, s.store);
+    const r = s.ribbon;
+    if (line) showRibbon(inst, sid, s, kind);
+    else {
+      if (r !== null && r.active) {
+        // PR B, back from a line kind: the candle hosts patch first, so the ring's rewrite (if
+        // any) lands in their buffer, not in the hidden ribbon's.
+        r.setActive(false);
+        s.candle.setActive(true);
+        s.ring.follow(s.candle.markIds);
+        themeCandle(inst, s.candle); // skipped by `setTheme` while hidden
+      }
+      s.candle.setKind(kind, ha, s.store);
+    }
     s.kind = kind;
     for (const h of s.candle.hosts) inst.graph.markData(h.id);
+    const hosts = s.ribbon?.hosts ?? [];
+    for (let i = 0; i < hosts.length; i += 1) inst.graph.markData((hosts[i] as { id: string }).id);
     touch(inst);
   }
 
@@ -742,6 +829,14 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       c.seams.nodes.length = 0;
       c.marks.nodes.length = 0;
       inst.candles.splice(inst.candles.indexOf(c), 1);
+      const r = gone?.ribbon ?? null;
+      if (r !== null) {
+        for (const h of r.hosts) {
+          h.visible = false;
+          inst.blocks.delete(h.id);
+        }
+        inst.ribbons.splice(inst.ribbons.indexOf(r), 1);
+      }
       inst.graph.markTheme();
       touch(inst);
     }
@@ -825,7 +920,11 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       case "setTheme":
         inst.theme = cmd.theme;
         inst.hostTheme = hostTheme(cmd.theme);
-        for (const c of inst.candles) themeCandle(inst, c); // STYLE: uniforms, never an upload
+        // STYLE: uniforms, never an upload. Hidden families are themed when shown again.
+        for (const c of inst.candles) if (c.active) themeCandle(inst, c);
+        // A ribbon hidden behind candles is re-themed when it is shown again (`showRibbon`):
+        // themed now, it would post a refusal for a family that is not drawing.
+        for (const r of inst.ribbons) if (r.active) themeSeries(inst, r);
         inst.graph.markTheme();
         touch(inst);
         return;
@@ -857,9 +956,22 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       case "setSeriesOptions": {
         // BQ-12: `isTimeAligned` (default true) only switches the gap seam (and E11-S06's labels).
         const s = inst.series.get(cmd.series);
-        const opts = cmd.options as { isTimeAligned?: unknown; heikinAshi?: unknown };
+        const opts = cmd.options as {
+          isTimeAligned?: unknown;
+          heikinAshi?: unknown;
+          baseline?: unknown;
+        };
         const aligned = opts.isTimeAligned;
         if (s !== undefined && typeof aligned === "boolean") s.candle.timeAligned = aligned;
+        // E12-S07 PR B (BQ-9): the baseline's user base B, a tick inside the int32 tick window (`u_base` is a GLSL int); else ignored; null restores the default.
+        const b = opts.baseline;
+        if (
+          s !== undefined &&
+          (b === null || (Number.isSafeInteger(b) && Math.abs(b as number) < INT32_TICKS))
+        ) {
+          s.baseTick = b as number | null;
+          if (s.ribbon !== null) s.ribbon.baseTick = s.baseTick;
+        }
         // E12-S07 (BQ-5): `CandleOptions.heikinAshi` is the same switch as `setSeriesKind`.
         const ha = opts.heikinAshi;
         if (s !== undefined && typeof ha === "boolean" && ha !== s.candle.heikinAshi) {
@@ -964,6 +1076,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         main: old?.main ?? -1,
         dataRejected: old?.dataRejected ?? {},
         candles: [],
+        ribbons: [],
         blocks: new Map(),
         hostTheme: hostTheme(msg.theme),
         mounts: old?.mounts ?? 0,
@@ -980,7 +1093,12 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       for (const [sid, s] of inst.series) {
         s.ring.sink = inst.builder;
         mountCandle(inst, sid, s.candle); // the fresh scene's hosts; the backend attaches them
-        themeCandle(inst, s.candle);
+        if (s.candle.active) themeCandle(inst, s.candle);
+        // PR B: a ribbon's hosts lived in the retired scene. One that was drawing is made and
+        // mounted afresh (its first build uploads the ring in full); a hidden one waits.
+        const r = s.ribbon;
+        s.ribbon = null;
+        if (r !== null && r.active && isRibbonKind(s.kind)) showRibbon(inst, sid, s, s.kind);
       }
       const main = inst.series.get(inst.main);
       if (main !== undefined) viewport.setMap(main.store);
@@ -1070,6 +1188,17 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
           first,
           last,
           plot.plotTop,
+          plot.plotTop + plot.plotHeight,
+        );
+      }
+      const rs = inst.ribbons;
+      for (let r = 0; r < rs.length; r += 1) {
+        // B, u_batch; the base line and the area stop at the plot rect (CSS px)
+        (rs[r] as RibbonSeries).frame(
+          vp.barSpacing,
+          inst.dpr,
+          first,
+          vp.plotWidth,
           plot.plotTop + plot.plotHeight,
         );
       }
