@@ -339,6 +339,13 @@ MB = 1 << 20
         "<input " * (MB // 7),
         "https://" * (MB // 8),
         '"name":"' * (MB // 8),
+        "\n" * MB,
+        " \n" * (MB // 2),
+        '"token":[' * (MB // 9),
+        'fill("' * (MB // 6),
+        ("fill(" + "\\" * 8 + '"') * (MB // 14),
+        '["INPUT",{"k":' * (MB // 14),
+        '["TEXTAREA",{"k":"\\"' * (MB // 20),
     ],
     ids=[
         "words",
@@ -350,13 +357,46 @@ MB = 1 << 20
         "html",
         "urls",
         "records",
+        "blank-lines",
+        "blank-space-lines",
+        "key-arrays",
+        "typing-logs",
+        "deep-typing-logs",
+        "bad-attribute-maps",
+        "escaped-attribute-maps",
     ],
 )
 def test_a_megabyte_token_run_scrubs_within_a_generous_wall_budget(run: str) -> None:
-    # Unbounded key wrappers and quote depths made these quadratic (minutes per megabyte).
+    # Unbounded key wrappers and quote depths made these quadratic (minutes per megabyte), and so
+    # did a header match crossing blank lines and a fresh scan to the line's (or text's) end for
+    # each unclosed `fill("` or credential-key `[`.
     start = time.perf_counter()
     scrub_artifacts.scrub_text(run)
     assert time.perf_counter() - start < 5.0
+
+
+# Attribute maps a pair-by-pair walk can lose its place in: a key holding an escaped quote, a
+# value ending in an escaped backslash (`"a\\"`), a key ending in one, a value that is not a
+# string. Every `value` after such a pair, and a TEXTAREA's text child, must still be masked.
+SEEDED_ATTRIBUTES: list[dict[str, Any]] = [
+    {'data-x"y': "a", "value": FAKE},
+    {"title": "a\\", "value": FAKE},
+    {"a": "b", "data-k\\": "c", "value": FAKE},
+    {"checked": True, "value": FAKE},
+]
+
+
+@pytest.mark.parametrize("attrs", SEEDED_ATTRIBUTES, ids=["quote", "value-bs", "key-bs", "bool"])
+def test_a_value_after_an_escaped_or_unparsed_attribute_is_still_redacted(
+    attrs: dict[str, Any],
+) -> None:
+    nodes = [["INPUT", attrs], ["TEXTAREA", attrs, FAKE], ["P", {"title": "kept"}, "after"]]
+    raw = json.dumps({"snapshot": {"html": ["BODY", {}, *nodes]}}, separators=(",", ":"))
+    for text in (raw, json.dumps({"text": raw}), json.dumps({"text": json.dumps({"t": raw})})):
+        out = _scrubbed(text)
+        assert FAKE not in out and '"kept"' in out.replace("\\", "")
+        json.loads(out)
+    assert _scrubbed(raw).endswith(f',"{MASK}"],["P",{{"title":"kept"}},"after"]]}}}}')
 
 
 ARIA = (
