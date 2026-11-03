@@ -29,6 +29,7 @@ from candleviewer.admin.flags import (
 from candleviewer.admin.flags.maintenance import RecorderControl
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.recorder import pause as pause_mod
+from candleviewer.recorder import sessions as sessions_mod
 from candleviewer.recorder.models import RecorderSetChanged
 from candleviewer.recorder.pause import RecorderPause
 from candleviewer.recorder.sessions import DEFAULT_STREAMS, SessionManager, to_us
@@ -78,6 +79,7 @@ class _BlockingGaps(MemRecorderStore):
     def __init__(self) -> None:
         super().__init__()
         self.armed = self.broken = False
+        self.raises: BaseException | None = None
         self.entered, self.release = asyncio.Event(), asyncio.Event()
 
     async def record_gap(
@@ -92,6 +94,8 @@ class _BlockingGaps(MemRecorderStore):
     ) -> int | None:
         if self.broken:
             raise OSError("pg down")
+        if self.raises is not None:
+            raise self.raises
         if self.armed:
             self.entered.set()
             await self.release.wait()
@@ -482,6 +486,63 @@ async def test_stop_logs_every_interval_it_cannot_write_as_critical(tmp_path: Pa
     rig.clock.advance_s(5)
     store.broken = True
     with capture_logs() as logs, pytest.raises(OSError):
+        await rig.pause.stop()
+    lost = [e for e in logs if e["event"] == "recorder_pause_gap_unpersisted"]
+    assert [(e["log_level"], e["start_us"], e["end_us"]) for e in lost] == [
+        ("critical", T0, T0 + 5_000_000)
+    ]
+
+
+async def test_a_resume_and_a_stop_draining_at_once_write_each_interval_once(
+    tmp_path: Path,
+) -> None:
+    """Review A (Minor): a poll's resume can overlap the shutdown's stop. The drains run one at
+    a time, so no interval is lost and none is popped twice."""
+    store = _BlockingGaps()
+    rig = await _rig(tmp_path, store=store)
+    await rig.pause.pause("maintenance.enabled")
+    rig.clock.advance_s(10)
+    store.armed = True
+    resume = asyncio.create_task(rig.pause.resume("maintenance.disabled"))
+    await store.entered.wait()  # the resume's drain is writing
+    stop = asyncio.create_task(rig.pause.stop())
+    for _ in range(5):  # yields only: the stop reaches its drain and waits there
+        await asyncio.sleep(0)
+    assert not stop.done()
+    store.armed = False
+    store.release.set()
+    await asyncio.gather(resume, stop)
+    assert sorted(rig.store.gap_windows()) == sorted(
+        (s, T0, T0 + 10_000_000, "maintenance_pause") for s in DEFAULT_STREAMS
+    )
+
+
+async def test_a_close_the_sessions_no_longer_remember_gets_a_gap_to_the_holds_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The clamp's fallback (review B): an evicted close over-covers to the hold's end."""
+    monkeypatch.setattr(sessions_mod, "_ENDED_MAX", 0)
+    rig = await _rig(tmp_path)
+    first = rig.sessions.live_session("BTCUSDT")
+    await rig.pause.pause("maintenance.enabled")
+    rig.clock.advance_s(30)
+    await rig.sessions.on_set_changed(_set("BTCUSDT", "removed"))
+    rig.clock.advance_s(30)
+    await rig.pause.resume("maintenance.disabled")
+    ends = {to_us(g["gap_end"]) for g in rig.store.gaps if g["session_id"] == first}
+    assert ends == {T0 + 60_000_000}
+
+
+@pytest.mark.parametrize("error", [asyncio.CancelledError, TimeoutError])
+async def test_stop_logs_its_unwritten_interval_and_reraises_a_cancel_or_a_timeout(
+    tmp_path: Path, error: type[BaseException]
+) -> None:
+    store = _BlockingGaps()
+    rig = await _rig(tmp_path, store=store)
+    await rig.pause.pause("maintenance.enabled")
+    rig.clock.advance_s(5)
+    store.raises = error()
+    with capture_logs() as logs, pytest.raises(error):
         await rig.pause.stop()
     lost = [e for e in logs if e["event"] == "recorder_pause_gap_unpersisted"]
     assert [(e["log_level"], e["start_us"], e["end_us"]) for e in lost] == [

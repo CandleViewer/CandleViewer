@@ -627,4 +627,5 @@ async def test_a_stop_writes_the_holds_gaps_after_the_writer_and_before_the_sess
         await asyncio.wait_for(rig.rt.stop(0.5), 5)
     order = [n for n, _, _ in rig.m.mock_calls if n in (*STOP, "pause.stop")]
     assert order == ["writer.stop", "pause.stop", "sessions.stop", "policy.stop"]
+    rig.m.writer.stop.assert_awaited_once_with(0.5 / 5 / 2)  # five shares; the writer's half
     assert ("recorder_stop_failed", "pause") in [(e["event"], e.get("step")) for e in logs]

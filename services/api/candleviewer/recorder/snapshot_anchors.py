@@ -145,7 +145,8 @@ class SnapshotAnchors:
         except Exception as exc:  # never a CancelledError: the runtime's cancel goes through
             self._skip(symbol, "error", type(exc).__name__, quiet=quiet)
             return
-        if shed == "held":  # the hold's gap marks it; not anchored, so retried every tick
+        if shed == "held":  # the hold's gap marks it; unanchored, so retried every tick (#5629)
+            self._anchored.discard(symbol)  # anchored before the hold: the deltas since are lost
             return
         if shed is not None:
             self._skip(symbol, shed, quiet=quiet)

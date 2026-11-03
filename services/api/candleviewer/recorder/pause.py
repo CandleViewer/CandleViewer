@@ -91,6 +91,8 @@ class RecorderPause:
         #: The open hold: its start and the sessions live then; `None` while not held.
         self._open: tuple[int, tuple[LiveSession, ...]] | None = None
         self._pending: deque[_Held] = deque()
+        #: One drain at a time: a poll's resume can overlap the shutdown's stop.
+        self._drain_lock = asyncio.Lock()
 
     @property
     def paused(self) -> bool:
@@ -105,7 +107,7 @@ class RecorderPause:
         self._pending.append(held)
 
     async def _drain(self) -> None:
-        async with asyncio.timeout(self._gap_s):
+        async with asyncio.timeout(self._gap_s), self._drain_lock:
             while self._pending:
                 held = self._pending[0]
                 await self._sessions.on_maintenance_pause(held.start_us, held.end_us, held.sessions)

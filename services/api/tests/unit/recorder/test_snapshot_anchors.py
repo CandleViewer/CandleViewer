@@ -540,3 +540,24 @@ async def test_snapshot_anchors_a_held_writer_counts_no_skip_and_anchors_once_re
     clock.advance(1)
     rows = await flushed_anchors(writer, sink)
     assert rows and {str(r["symbol"]) for r in rows} == {"BTCUSDT"}
+
+
+async def test_snapshot_anchors_a_symbol_anchored_before_a_hold_is_anchored_again_after_it(
+    tmp_path: Path,
+) -> None:
+    """#5629 review A: the deltas missed while held make the pre-hold anchor stale, so a slot
+    shed as `held` unanchors the symbol and the first tick after the release anchors it."""
+    anchors, books, writer, sink, _store, clock = await rig(tmp_path)
+    books.books["BTCUSDT"] = snapshot(1)
+    await anchors.tick()  # anchored at once (first LIVE book)
+    clock.advance(1)
+    before = len(await flushed_anchors(writer, sink))
+    assert before > 0
+    writer.hold()
+    clock.advance(INTERVAL)
+    await anchors.tick()  # a slot while held
+    writer.release()
+    clock.advance(1)
+    await anchors.tick()  # between slots
+    clock.advance(1)
+    assert len(await flushed_anchors(writer, sink)) > before
