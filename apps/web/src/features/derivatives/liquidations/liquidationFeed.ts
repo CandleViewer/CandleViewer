@@ -89,7 +89,10 @@ export interface LiqFeedOptions {
 
 export interface LiqFeedHandle {
   readonly symbol: string;
+  /** The filter as sent (`feedFilter`): a hook compares it to never show another filter's feed. */
   readonly minNotionalUsd: string | null;
+  /** The read's window: a hook compares it to never show another window's feed. */
+  readonly window: LiqWindow;
   getSnapshot(): LiqSnapshot;
   subscribe(listener: () => void): () => void;
   /** The retry band's action: reads the window again; live keeps streaming meanwhile. */
@@ -101,6 +104,15 @@ export interface LiqFeedHandle {
 }
 
 const DECIMAL = /^\d{1,30}(\.\d{1,18})?$/;
+/** The server's bound on `min_notional_usd` (`23` registry): longer values are `invalid_options`. */
+export const MIN_NOTIONAL_MAX_CHARS = 32;
+
+/**
+ * `min_notional_usd` as the feed sends it: a zero floor (the ruled `deriv.liq.min_notional_usd` default "0") is no
+ * filter, so it is neither sent nor stated as "at least 0 USDT" (#5763 (a); as #5767's `feedMinNotional`).
+ */
+export const feedFilter = (value: string | null | undefined): string | null =>
+  value === null || value === undefined || /^0+(?:\.0+)?$/.test(value) ? null : value;
 
 const keyOf = (p: LiquidationPrint): string =>
   `${String(p.tsMs)}|${p.side}|${p.price}|${p.size}|${String(p.clusterSize)}`;
@@ -142,9 +154,10 @@ export function startLiquidationFeed(
   options: LiqFeedOptions,
 ): LiqFeedHandle {
   const { symbol, paneId, window } = options;
-  const minNotionalUsd = options.minNotionalUsd ?? null;
+  const minNotionalUsd = feedFilter(options.minNotionalUsd);
   if (!LIQ_SYMBOL.test(symbol)) throw new RangeError("liquidation symbol must be a USDT perpetual");
-  if (minNotionalUsd !== null && !DECIMAL.test(minNotionalUsd)) {
+  const tooLong = minNotionalUsd !== null && minNotionalUsd.length > MIN_NOTIONAL_MAX_CHARS;
+  if (minNotionalUsd !== null && (tooLong || !DECIMAL.test(minNotionalUsd))) {
     throw new RangeError("min_notional_usd must be a non-negative decimal");
   }
   if (!(window.fromMs < window.toMs)) throw new RangeError("the window must start before it ends");
@@ -224,7 +237,11 @@ export function startLiquidationFeed(
       signal: call.signal,
       keep: ring.capacity,
     };
-    void options.loadHistory(req).then((result) => {
+    // a rejected read is a failed one (#5763 (e)): never an unhandled rejection, never a stuck "loading"
+    const read = options
+      .loadHistory(req)
+      .catch((): LiqHistoryResult => ({ kind: "failed", status: null, code: null }));
+    void read.then((result) => {
       if (stopped || call.signal.aborted) return;
       if (result.kind === "ok") {
         lastSuccessAtMs = wallNow();
@@ -269,6 +286,7 @@ export function startLiquidationFeed(
   return {
     symbol,
     minNotionalUsd,
+    window,
     getSnapshot: () => snapshot,
     subscribe: (listener) => {
       listeners.add(listener);
