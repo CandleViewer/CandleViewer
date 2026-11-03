@@ -67,6 +67,10 @@ export const Exporting: Story = {
     await expect(label).toBeVisible();
     await expect(arc).toBeVisible();
     await expect(getComputedStyle(label ?? button).opacity).toBe("1");
+    // The arc is drawn in the label's colour: CMP-038's own, color.action.primary.default, is 2.58:1 on this fill.
+    await expect(getComputedStyle(arc?.querySelector("circle") ?? button).stroke).toBe(
+      getComputedStyle(label ?? button).color,
+    );
     // The arc leads the label, clear of it.
     await expect(arc?.getBoundingClientRect().right).toBeLessThanOrEqual(
       label?.getBoundingClientRect().left ?? Number.NEGATIVE_INFINITY,
