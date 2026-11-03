@@ -226,8 +226,8 @@ describe("Tag toggle (CMP-011 `toggle`, E29-S04; E29-D04 §2.9, E29-D02:299)", (
     const stateless = <Tag variant="toggle" label="x" />;
     // @ts-expect-error a toggle takes no icon (E29-D02:299)
     const withIcon = <Tag variant="toggle" label="x" pressed onPressedChange={fn()} icon="lock" />;
-    // @ts-expect-error a view choice is never gated (E29-D04:390)
     const gated = (
+      // @ts-expect-error a view choice is never gated (E29-D04:390)
       <Tag variant="toggle" label="x" pressed onPressedChange={fn()} disabledReason="r" />
     );
     expect([stateless, withIcon, gated]).toHaveLength(3);
