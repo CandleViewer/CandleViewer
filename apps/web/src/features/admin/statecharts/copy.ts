@@ -39,6 +39,12 @@ export const INSPECTOR_COPY = {
     error: (service: string): string => `when ${service} fails`,
     /** PROPOSED: an arm with no target, such as a guard's refusal arm. */
     noChange: "no state change",
+    /** PROPOSED: the drawing's region and its image (§4.4; BQ-6). */
+    diagramName: (kind: string): string => `State diagram: ${kind}`,
+    diagramTitle: (kind: string, states: number): string =>
+      `${kind} chart: ${states} states. The list after it gives every state and transition.`,
+    /** PROPOSED `machine.too_large`: a chart over the drawing's bounds (§4.3). */
+    tooLarge: "This chart is too large to draw here; the list below is complete.",
   },
   /** `machine.latched`. */
   latched: (trips: number): string => `Latched — chain trips: ${trips}`,

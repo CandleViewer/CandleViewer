@@ -1,0 +1,136 @@
+/*
+ * The statechart inspector's drawing (E42-S08 §4.4; E42-D05 §11 SI-4, §16): the chart beside its text list, the
+ * diagram region and the SVG's marks. Tokens only (no hard-coded colour or spacing). The pairs these bind are pinned
+ * at 3:1 or 4.5:1 in every theme by packages/ui/test/contrast/inspector-pairs.test.ts (axe sees no SVG stroke). No
+ * transition or animation: reduced motion needs nothing here.
+ */
+
+/* The drawing beside its text list: side by side at 2560, stacked at 1280 and at 200 % (D05 §4.2). */
+.cv-inspector-chart {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 36rem), 1fr));
+  align-items: start;
+  gap: var(--space-stack-md);
+}
+
+/* The one part of the page that scrolls, both ways, at 200 % (D05 §4.2); its text list never does. CMP-039's ring. */
+.cv-inspector-diagram {
+  overflow: auto;
+  max-inline-size: 100%;
+  max-block-size: min(70vh, 40rem);
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+  border-radius: var(--radius-control);
+}
+
+.cv-inspector-diagram__svg {
+  display: block;
+}
+
+/*
+ * A leaf: a raised box on the page, its label in the mono type, centred. Its outline, a final state's second one and
+ * a group's are the only picture of nesting and of the parallel regions, so they are text.tertiary as the edges are
+ * (3:1 on the box and on the page in every theme; border.default read 1.4 to 1.6 : 1).
+ */
+.cv-inspector-diagram__box {
+  fill: var(--color-surface-raised);
+  stroke: var(--color-text-tertiary);
+  stroke-width: 1;
+}
+
+.cv-inspector-diagram__final {
+  fill: none;
+  stroke: var(--color-text-tertiary);
+  stroke-width: 1;
+}
+
+/* A compound state or a region: an outline around its children; a parallel state's regions are dashed. */
+.cv-inspector-diagram__group {
+  fill: none;
+  stroke: var(--color-text-tertiary);
+  stroke-width: 1;
+}
+
+.cv-inspector-diagram__group[data-region] {
+  stroke-dasharray: 6 4;
+}
+
+/* The current state (SI-4; D05 §16): a 3 px border.selected border, the bold label and the word "current". */
+.cv-inspector-diagram__box[data-current],
+.cv-inspector-diagram__group[data-current] {
+  stroke: var(--color-border-selected);
+  stroke-width: 3;
+}
+
+.cv-inspector-diagram__label,
+.cv-inspector-diagram__group-label,
+.cv-inspector-diagram__current {
+  font-family: var(--type-num-sm-font-family);
+  font-size: var(--type-num-sm-font-size);
+}
+
+.cv-inspector-diagram__label,
+.cv-inspector-diagram__current {
+  dominant-baseline: middle;
+  text-anchor: middle;
+}
+
+.cv-inspector-diagram__label {
+  fill: var(--color-text-primary);
+}
+
+.cv-inspector-diagram__group-label {
+  fill: var(--color-text-secondary);
+}
+
+.cv-inspector-diagram__current,
+.cv-inspector-diagram__group-current,
+.cv-inspector-diagram__label[data-current],
+.cv-inspector-diagram__group-label[data-current] {
+  fill: var(--color-text-primary);
+  font-weight: var(--font-weight-bold);
+}
+
+/* Edges and the initial marker: text.tertiary (D05 §16; border.strong was rejected below 3:1). */
+.cv-inspector-diagram__edge {
+  fill: none;
+  stroke: var(--color-text-tertiary);
+  stroke-width: 1;
+}
+
+.cv-inspector-diagram__head,
+.cv-inspector-diagram__dot {
+  fill: var(--color-text-tertiary);
+}
+
+/*
+ * Forced colours (D05 §4.3): fills drop, every mark is CanvasText, the current state a Highlight border and its word.
+ * Every base rule that fills or strokes has its twin here, the same selector, so none outranks this block.
+ */
+@media (forced-colors: active) {
+  .cv-inspector-diagram__box {
+    fill: Canvas;
+    stroke: CanvasText;
+  }
+
+  .cv-inspector-diagram__final,
+  .cv-inspector-diagram__group,
+  .cv-inspector-diagram__edge {
+    stroke: CanvasText;
+  }
+
+  .cv-inspector-diagram__box[data-current],
+  .cv-inspector-diagram__group[data-current] {
+    stroke: Highlight;
+  }
+
+  .cv-inspector-diagram__label,
+  .cv-inspector-diagram__group-label,
+  .cv-inspector-diagram__label[data-current],
+  .cv-inspector-diagram__group-label[data-current],
+  .cv-inspector-diagram__current,
+  .cv-inspector-diagram__group-current,
+  .cv-inspector-diagram__head,
+  .cv-inspector-diagram__dot {
+    fill: CanvasText;
+  }
+}
