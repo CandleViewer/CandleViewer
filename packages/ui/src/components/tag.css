@@ -1,5 +1,7 @@
 /* CMP-011 Tag / Chip. Tokens only; the raw 1px is the D02 slice 2 §4.1 hairline constant. No motion: chips
-   render, change and are removed instantly. A chip never draws its own ring or dimming (conv. 20). */
+   render, change and are removed instantly. A static chip never draws a focus ring or dimming of its own (conv. 20):
+   only its nested remove button takes focus. The toggle chip is a button itself, so CMP-039's ring (focusring.css)
+   is its focus ring, and its pressed ring is the one drawn below. */
 .cv-tag {
   box-sizing: border-box;
   display: inline-flex;
@@ -79,7 +81,9 @@
    Pressed takes the design system's pressed role (16:59; label-on-fill.json `selected`, as CMP-002 and CMP-003 draw
    it): color.action.selected under color.text.primary, and a 2px color.border.selected ring that carries the state,
    because either selected fill sits within 1.2:1 of the rest fill. The ring is drawn on ::after, as CMP-003's is, so
-   CMP-039's ring (focusring.css) never fights it. Hover, press and release swap at frame 0 (E29-D04 Mo-8). */
+   CMP-039's ring (focusring.css) never fights it, and it is present by its width alone: 0 at rest and border.thick
+   when pressed, since forced colours repaint every border colour, a transparent one too, and would ring every chip.
+   Hover, press and release swap at frame 0 (E29-D04 Mo-8). */
 .cv-tag[data-variant="toggle"] {
   position: relative;
   border-color: var(--color-border-default);
@@ -90,7 +94,7 @@
   content: "";
   position: absolute;
   inset: calc(var(--border-hairline) * -1px);
-  border: calc(var(--border-thick) * 1px) solid transparent;
+  border: 0 solid var(--color-border-selected);
   border-radius: inherit;
   pointer-events: none;
 }
@@ -106,7 +110,7 @@
 }
 
 .cv-tag[data-variant="toggle"][aria-pressed="true"]::after {
-  border-color: var(--color-border-selected);
+  border-width: calc(var(--border-thick) * 1px);
 }
 
 @media (forced-colors: active) {
