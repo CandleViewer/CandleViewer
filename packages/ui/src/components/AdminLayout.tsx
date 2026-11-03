@@ -1,4 +1,11 @@
-import { useState, type JSX, type ReactNode } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FocusEvent,
+  type JSX,
+  type ReactNode,
+} from "react";
 import { Icon } from "../icons/Icon.js";
 import { Countdown, spokenCountdown } from "./Countdown.js";
 import { Link, type LinkRoute } from "./Link.js";
@@ -23,6 +30,8 @@ export const ADMIN_COPY = {
   stripNone: "Nothing needs your action",
   /** §6 Keys: "Attention:" prefixes every warning's accessible name. */
   attention: "Attention:",
+  /** An item's environment badge: the session's id in, its word out (CMP-210's capitals). */
+  env: { live: "LIVE", demo: "DEMO", testnet: "TESTNET" },
   /** The host's footer once an `/admin/*` read was served (D27). */
   footerAreaEntered: "Entering this area was recorded — Area entered (admin.area_entered)",
 } as const;
@@ -30,7 +39,8 @@ export const ADMIN_COPY = {
 /** §4's ordering classes: OV-9 withdrawal, OV-10 break-glass, OV-5 tamper, SH-4 lock, the rest. */
 export type AdminStripKind = "withdrawal" | "break_glass" | "tamper" | "locked" | "other";
 export type AdminStripSeverity = "critical" | "warning" | "info";
-export type AdminEnv = "LIVE" | "DEMO" | "TESTNET";
+/** The shell's `environment` id, as CMP-178's `env` takes it: one value feeds both (CR-5287-04). */
+export type AdminEnv = "live" | "demo" | "testnet";
 
 export interface AdminStripItem {
   /** A stable domain id: the list key. */
@@ -84,6 +94,18 @@ const GRACE_THRESHOLDS: readonly number[] = [60, 10];
 const rank = <T,>(order: readonly T[], a: T, b: T): number => order.indexOf(a) - order.indexOf(b);
 
 /**
+ * Focus for a restoration: a node that takes no focus of its own (the strip's line, the page's
+ * `h1`) is lent `tabindex="-1"` for the move only, as the shell's route focus does.
+ */
+function restoreFocusTo(node: HTMLElement): void {
+  if (node.tabIndex < 0 && !node.hasAttribute("tabindex")) {
+    node.setAttribute("tabindex", "-1");
+    node.addEventListener("blur", () => node.removeAttribute("tabindex"), { once: true });
+  }
+  node.focus();
+}
+
+/**
  * §4's order (D02:118): withdrawal, break-glass, tamper and the lock first, then severity, then
  * recency (untimed last). Stable, and a new array: the host's is left as it was.
  */
@@ -109,8 +131,8 @@ function StripItem({ item, linkAs }: { item: AdminStripItem; linkAs?: LinkRoute 
       {attention ? <span className="cv-visually-hidden">{`${ADMIN_COPY.attention} `}</span> : null}
       <span className="cv-adminlayout__text">{item.label}</span>
       {item.env === undefined ? null : (
-        <span className={`cv-adminlayout__env cv-adminlayout__env--${item.env.toLowerCase()}`}>
-          {` ${item.env}`}
+        <span className={`cv-adminlayout__env cv-adminlayout__env--${item.env}`}>
+          {` ${ADMIN_COPY.env[item.env]}`}
         </span>
       )}
     </>
@@ -132,14 +154,60 @@ function StripItem({ item, linkAs }: { item: AdminStripItem; linkAs?: LinkRoute 
  * CMP-087 to variant (b), per-action step-up (E42-D03 §4): the "Admin area" band (never focusable; the
  * optional grace line), its 4 px rule, the "Needs your action" strip (links, not live), the route content
  * and the footer line. Comfortable density on its subtree is one of the carriers that set the admin area
- * apart without colour. No `h1`, no `main`, no live region but CMP-035's; it never moves focus.
+ * apart without colour. No `h1`, no `main`, no live region but CMP-035's. It never moves focus,
+ * but it restores focus a re-render took out of the strip, which no user moved (E09-D09 §9.4).
  */
 export function AdminLayout(props: AdminLayoutProps): JSX.Element {
   const { routeLabel, strip, grace, onGraceExpire, linkAs, footer, now, children } = props;
   // The deadline whose line has gone: a new `expiresAt` brings the line back.
   const [expiredAt, setExpiredAt] = useState<number | null>(null);
+  const root = useRef<HTMLDivElement>(null);
+  // The strip's element holding focus, and its place among the pills at the last commit.
+  const held = useRef<{ node: HTMLElement; place: number } | null>(null);
+  const pills = (): HTMLElement[] => [
+    ...(root.current?.querySelectorAll<HTMLElement>(".cv-adminlayout__strip a") ?? []),
+  ];
+  // After each commit (A-5330-02): a pill a re-read took out while it held focus hands it to the
+  // pill now in its place (the next), else the last one, else the strip's line, else the page's
+  // `h1`, never <body>. Focus moved elsewhere on purpose is never taken back.
+  useLayoutEffect(() => {
+    const was = held.current;
+    if (was === null) return;
+    if (was.node.isConnected) {
+      was.place = pills().indexOf(was.node);
+      return;
+    }
+    held.current = null;
+    const active = document.activeElement;
+    if (active !== null && active !== document.body) return;
+    const left = pills();
+    const target =
+      left[Math.min(Math.max(was.place, 0), left.length - 1)] ??
+      root.current?.querySelector<HTMLElement>(".cv-adminlayout__title, .cv-adminlayout__none") ??
+      root.current?.querySelector<HTMLElement>("h1");
+    if (target) restoreFocusTo(target);
+  });
+  const onStripFocus = (event: FocusEvent<HTMLElement>): void => {
+    held.current = { node: event.target, place: pills().indexOf(event.target) };
+  };
+  const onStripBlur = (event: FocusEvent<HTMLElement>): void => {
+    const next = event.relatedTarget;
+    if (next !== null) {
+      if (!event.currentTarget.contains(next)) held.current = null;
+      return;
+    }
+    // Focus went nowhere: a press on the page, or the pill is being taken out. Once this event is
+    // over, a pill still in the document and no longer focused was left on purpose.
+    const node = event.target;
+    queueMicrotask(() => {
+      const was = held.current;
+      if (was?.node === node && node.isConnected && document.activeElement !== node) {
+        held.current = null;
+      }
+    });
+  };
   return (
-    <div className="cv-adminlayout" data-cmp="CMP-087" data-density="comfortable">
+    <div ref={root} className="cv-adminlayout" data-cmp="CMP-087" data-density="comfortable">
       <section className="cv-adminlayout__band" aria-label={ADMIN_COPY.bandName}>
         <span className="cv-adminlayout__label">
           <span aria-hidden="true">{ADMIN_COPY.bandGlyph}</span> {ADMIN_COPY.bandLabel(routeLabel)}
@@ -164,7 +232,12 @@ export function AdminLayout(props: AdminLayoutProps): JSX.Element {
         )}
       </section>
       {strip === undefined ? null : (
-        <section className="cv-adminlayout__strip" aria-label={ADMIN_COPY.stripName}>
+        <section
+          className="cv-adminlayout__strip"
+          aria-label={ADMIN_COPY.stripName}
+          onFocus={onStripFocus}
+          onBlur={onStripBlur}
+        >
           {strip.length === 0 ? (
             <p className="cv-adminlayout__none">{ADMIN_COPY.stripNone}</p>
           ) : (

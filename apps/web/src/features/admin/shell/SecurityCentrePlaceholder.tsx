@@ -1,10 +1,7 @@
 import type { JSX } from "react";
-import { Link as RouterLink } from "react-router";
-import { Card, Link, PageHeader, type LinkRoute } from "@candleviewer/ui";
+import { Card, Link, PageHeader } from "@candleviewer/ui";
 import { ScreenRoot } from "../../app-shell/ScreenRoot";
-
-/** CMP-021's router slot: the app's router link, given the `to` and the anchor props CMP-021 hands it. */
-const routerLink: LinkRoute = ({ to, ...anchor }) => <RouterLink to={to} {...anchor} />;
+import { routerLink } from "../routerLink";
 
 /**
  * R-354 `/admin/security` until E43-S02 mounts SCR-137 here (E42-S01, Out of scope): the ticket's

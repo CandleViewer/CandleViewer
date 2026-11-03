@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { composeStories } from "@storybook/react-vite";
 import { act, StrictMode, useState, type JSX } from "react";
+import { createRoot } from "react-dom/client";
 import { expect, userEvent, within } from "storybook/test";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import { ADMIN_COPY, AdminLayout, sortAdminStrip } from "../src/index.js";
@@ -111,7 +112,7 @@ describe("AdminLayout (CMP-087)", () => {
         </a>
       );
     }
-    const items = [item("users", { env: "DEMO" }), item("tn", { env: "TESTNET" })];
+    const items = [item("users", { env: "demo" }), item("tn", { env: "testnet" })];
     const host = await layout({ strip: items, linkAs: RouterLink });
     const [demo, testnet] = links(host);
     expect(demo).toHaveAttribute("href", "#route/admin/users");
@@ -123,9 +124,9 @@ describe("AdminLayout (CMP-087)", () => {
   it("badges an item's environment with a class modifier, never a data attribute", async () => {
     // The top bar's badge owns the attribute: its guard rejects any shipped selector that names it.
     const items = [
-      item("live", { env: "LIVE" }),
-      item("demo", { env: "DEMO" }),
-      item("tn", { env: "TESTNET" }),
+      item("live", { env: "live" }),
+      item("demo", { env: "demo" }),
+      item("tn", { env: "testnet" }),
       item("bare"),
     ];
     const host = await layout({ strip: items });
@@ -146,6 +147,15 @@ describe("AdminLayout (CMP-087)", () => {
     expect(bare?.querySelector(".cv-adminlayout__env")).toBeNull();
   });
 
+  it("takes the session's environment id, as CMP-178 does, and reads its word in capitals", async () => {
+    // CR-5287-04: one value feeds both components, the shell's `environment` ("live"), never a word.
+    expect(ADMIN_COPY.env).toEqual({ live: "LIVE", demo: "DEMO", testnet: "TESTNET" });
+    const host = await layout({ strip: [item("keys", { env: "live" })] });
+    const [keys] = links(host);
+    expect(keys).toHaveAccessibleName("Attention: Item keys LIVE");
+    expect(keys?.querySelector(".cv-adminlayout__env")).toHaveClass("cv-adminlayout__env--live");
+  });
+
   it("renders the band, the strip, the children, then the footer, and no empty footer", async () => {
     const host = await layout({ strip: [], footer: ADMIN_COPY.footerAreaEntered });
     const [first, second, third, fourth, ...rest] = [...root(host).children];
@@ -163,6 +173,47 @@ describe("AdminLayout (CMP-087)", () => {
       await userEvent.tab();
       expect(document.activeElement).toBe(stop);
     }
+  });
+
+  it("gives a removed pill's focus to the next pill, the strip's line, then the page's h1", async () => {
+    const host = document.body.appendChild(document.createElement("div"));
+    const root = createRoot(host);
+    const render = (items?: readonly AdminStripItem[]): Promise<void> =>
+      act(async () =>
+        root.render(
+          <AdminLayout routeLabel="Overview" strip={items}>
+            <h1>Overview</h1>
+          </AdminLayout>,
+        ),
+      );
+    const [a, b, c] = [item("a"), item("b"), item("c")] as const;
+    await render([a, b, c]);
+    act(() => links(host)[1]?.focus());
+    // A-5330-02: b's condition cleared, so focus goes to the pill after it, then before the last.
+    await render([a, c]);
+    expect(document.activeElement).toBe(links(host)[1]);
+    expect(document.activeElement).toHaveAccessibleName("Attention: Item c");
+    await render([a]);
+    expect(document.activeElement).toHaveAccessibleName("Attention: Item a");
+    // No pill left: the strip's one line, lent a tabindex for the move only.
+    await render([]);
+    const none = within(strip(host)).getByText(ADMIN_COPY.stripNone);
+    expect(document.activeElement).toBe(none);
+    expect(none).toHaveAttribute("tabindex", "-1");
+    // No strip at all: the page's h1, the same way.
+    await render(undefined);
+    const h1 = within(host).getByRole("heading", { level: 1 });
+    expect(document.activeElement).toBe(h1);
+    act(() => h1.blur());
+    expect(h1).not.toHaveAttribute("tabindex");
+    // Focus moved elsewhere on purpose is never taken back.
+    await render([a, b, c]);
+    const outside = document.body.appendChild(document.createElement("button"));
+    act(() => links(host)[0]?.focus());
+    act(() => outside.focus());
+    await render([b]);
+    expect(document.activeElement).toBe(outside);
+    await act(async () => root.unmount());
   });
 
   it("has no serious or critical axe violation, empty or with items and a grace", async () => {
