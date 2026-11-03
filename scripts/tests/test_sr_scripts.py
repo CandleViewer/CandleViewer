@@ -299,10 +299,17 @@ def test_order_script_carries_the_streaming_focus_steal_check_and_its_twin() -> 
     assert "E47-TC-205" in text and "E47-Q03" in text
 
 
-def test_demo_to_live_requires_a_demo_flagged_build_with_a_sandbox_target() -> None:
+def test_demo_to_live_is_demo_flagged_and_stops_at_the_typed_confirmation() -> None:
     text = (SR / "scripts" / "80-demo-to-live.md").read_text(encoding="utf-8")
     pre = " ".join(header(text)["preconditions"])
-    assert "demo-flagged" in pre and "sandbox" in pre and "Never Live" in pre
+    assert "demo-flagged" in pre and "Never Live" in pre and "sandbox" not in text.lower()
+    rows = steps(text)
+    assert "Cancel" in rows[-1][1]
+    assert not any("Confirm the switch" in r[1] for r in rows)
+    checklist = (SR / "regression-checklist.md").read_text(encoding="utf-8")
+    readme = (SR / "README.md").read_text(encoding="utf-8")
+    for doc in (checklist, readme):
+        assert "badge-change announcement" in " ".join(doc.split())
 
 
 def test_voiceover_launch_flags_are_a_required_record_field() -> None:

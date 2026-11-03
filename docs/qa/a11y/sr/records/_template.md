@@ -24,7 +24,7 @@ Required before step 1. A record with an empty field here is invalid.
 - [ ] Fresh profile, default hotkey map, default theme, default screen-reader verbosity (05 §8.2 item 1).
 - [ ] Versions copied from the pin changelog in `regression-checklist.md`, never guessed; a drift from the pin is a dated changelog entry.
 - [ ] **VoiceOver only:** `voiceover_launch_flags` above holds the exact launch command flags and how `NSAccessibility` was activated for Electron (for example whether the app was started with an accessibility flag, or VoiceOver was already running at launch), so the pass is reproducible. macOS-only defects are filed apart from their Windows equivalent.
-- [ ] Demo-flagged build, sandbox Live target for the LIV script only (BQ-08).
+- [ ] Demo-flagged build; the LIV script stops at Cancel (BQ-08).
 
 ## Matrix rows covered
 

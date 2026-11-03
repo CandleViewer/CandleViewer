@@ -14,7 +14,7 @@ Pre-stage on E47-S01 #1316, E47-S02 #1358 and E47-S03 #1317. Protocol: `docs/pla
 | `scripts/40-rule-form-editor.md`, `scripts/50-rule-node-editor.md` | RFE, RNE: SCR-081, SCR-082                                                               |
 | `scripts/60-order-ticket.md`                                       | ORD: SCR-060 limit order, SCR-076 confirm, streaming focus-steal check                   |
 | `scripts/70-flatten.md`                                            | FLT: SCR-063 and SCR-087 rule-engine flatten announcement                                |
-| `scripts/80-demo-to-live.md`                                       | LIV: SCR-074 switch and SCR-075 badge, demo-flagged build, sandbox Live target           |
+| `scripts/80-demo-to-live.md`                                       | LIV: SCR-074 switch and SCR-075 badge, demo-flagged build, stops at Cancel               |
 | `scripts/90-admin-and-alerts.md`                                   | ADA: SCR-121 and SCR-122 user creation; SCR-091 and SCR-092 alert create, fire           |
 | `regression-checklist.md`                                          | Dated pin changelog, living checklist, deferred checks, carried rows, scrub list         |
 | `records/_template.md`                                             | One pass record; copy to `qa/evidence/e47/sr/<at>-<date>/record.md`                      |
@@ -70,8 +70,9 @@ owner. Q02's execution is human and stays carried: nothing in this directory is 
   Accessibility role and written back into E47-Q01 before the main pass. The template waits for the footprint surface (E18-S11).
 - **VoiceOver** (BQ-06): the record header requires `voiceover_launch_flags`, the exact Electron launch flags and how
   `NSAccessibility` was activated.
-- **Demo to Live** (BQ-08): script LIV needs a demo-flagged build with a sandbox Live target; XC-01's rule that a Live
-  reading fails a trading script stands.
+- **Demo to Live** (BQ-08, as amended by the orchestrator): script LIV needs a demo-flagged build and stops at the typed
+  confirmation (Cancel); XC-01's rule that a Live reading fails a trading script stands. The SCR-075 badge-change
+  announcement after a completed switch is a carried human row until the owner names a safe target.
 - **Streaming focus-steal** (BQ-07, AC4) is step ORD-06 and ORD-07; its automated twin is the E47-Q03 keyboard suite,
   linked by test-plan case id (E47-TC-204, E47-TC-205).
 - Every new script is `SURFACE PENDING` against the owning tickets named in its header until they mount their surfaces.

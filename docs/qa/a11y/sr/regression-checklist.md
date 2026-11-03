@@ -71,6 +71,8 @@ The S01 to S03 rows are listed from their ticket scope; the owner or the orchest
   daily screen-reader user, the two-tester calibration on task 3 (`records/_calibration-template.md`), the OWNER FILL pin
   cells, the NVDA "2024.x" wording ruling, and the Accessibility-role sign-off of the summary. The task scripts ORD, FLT,
   LIV and ADA stay `SURFACE PENDING` until their tickets mount.
+- E47-Q02 #1355 carried row (BQ-08 ruling): the SCR-075 badge-change announcement after a completed Demo to Live switch. Script LIV
+  stops at the typed confirmation (Cancel); the owner must name a safe target before this step is written or run.
 - E47-Q02 #1355 closing rows, after the human passes: committing the transcripts under `qa/evidence/e47/sr/<at>-<date>/`;
   writing the calibration's clarified expected results back into E47-Q01; handing the pass summary to E47-T06 and
   E47-Q09; and posting it to the release-candidate checklist in `docs/plan/07-release-and-prr.md`.

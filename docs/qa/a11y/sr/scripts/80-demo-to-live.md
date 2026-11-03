@@ -1,18 +1,18 @@
-# Demo to Live switch (sandbox target)
+# Demo to Live switch (stops at Cancel)
 
 ```yaml
 script_id: LIV
-title: "Demo to Live switch (sandbox target)"
+title: "Demo to Live switch (stops at Cancel)"
 screens: [SCR-074, SCR-075]
 status: "SURFACE PENDING E38-S02, E38-S04 and E44-S02 (SCR-074 switcher, SCR-075 badge, hardened switch)"
 env: demo
-fixture: "A demo-flagged build whose Live target is a sandbox: the badge and confirm are exercised with no live trading capability. No Live credential exists on the test machine."
+fixture: "A demo-flagged build. The script stops at the typed confirmation and cancels; no switch to Live is ever completed. No Live credential exists on the test machine."
 preconditions:
   - "Fresh profile, default hotkey map, default theme, screen reader at default verbosity (05 §8.2 item 1)."
   - "Keyboard only for the whole pass; no mouse."
   - "Demo environment and synthetic accounts only. Never Live."
-  - "The build is demo-flagged and its Live target is a sandbox (BQ-08). If you cannot show that, stop: the pass is void."
-  - "The switch is run to the confirm dialog and, once, through it to the sandbox target only; never to a real Live session."
+  - "The build is demo-flagged (BQ-08). If you cannot show that, stop: the pass is void."
+  - "The script ends at the typed confirmation with Cancel. Never confirm the switch, never against Live."
 last_verified_sha: c327ed438c01c5bab9247890dd00f5dce3717f97 # a main sha; parents below are pinned as stated
 parents:
   - "E38-S04 (chrome and switch from the shell): SURFACE PENDING (unbuilt)"
@@ -33,21 +33,21 @@ dry_run: pending
 > heard; a human pass may correct it. Lag column: note any keypress-to-speech delay over about 200 ms as an E46 candidate.
 
 > **NEVER AGAINST LIVE.** Run on Demo only. If LIV-01 does not read Demo, stop: the pass is void and nothing was
-> done. Demo orders go via REST only (C-2.11). XC-01 keeps its rule: the badge is read first and a real Live reading fails the script. A sandbox target announced as Live is expected only after the confirm and is recorded, not a failure; any other Live reading before the switch fails.
+> done. Demo orders go via REST only (C-2.11). XC-01 keeps its rule: the badge is read first and a Live
+> reading fails the script. The script stops at the typed confirmation (Cancel); the badge-change announcement after a
+> completed switch is a carried human row until the owner names a safe target (orchestrator ruling on BQ-08).
 
 ## Steps
 
-| Step   | Keys                                                                                              | Expected announcement                                                                                                                                          | Source                                                | Oracle         | Heuristic       | Lag | P/F           |
-| ------ | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | -------------- | --------------- | --- | ------------- |
-| LIV-01 | [SCR-075 · SC 1.4.1 4.1.2] Tab to the top bar                                                     | `Trading environment: Demo` (read first). **Stop and fail the script if it says Live**; nothing was done                                                       | apps/web/src/features/app-shell/TopBarEnvBadge.tsx:47 | Source column  | heuristic: true |     | [ ] P / [ ] F |
-| LIV-02 | [SCR-074 · SC 4.1.2 1.4.1] Open the SCR-074 switcher (key per E38-S04; record it)                 | Record the control name, role and current value verbatim; the current environment is said as text (SURFACE PENDING E38-S04)                                    | n/a                                                   | 05 §8.2 item 3 | heuristic: true |     | [ ] P / [ ] F |
-| LIV-03 | [SCR-074 · SC 4.1.2 3.3.4] Choose the Live (sandbox) target and press the switch key              | A confirm dialog opens and is announced first; record its title and body verbatim. It says the target and the consequence (SURFACE PENDING E38-S02)            | n/a                                                   | 05 §8.2 item 3 | heuristic: true |     | [ ] P / [ ] F |
-| LIV-04 | [SCR-074 · SC 2.1.2 2.4.3] Tab inside the dialog, then `Esc`                                      | Focus is trapped; `Esc` cancels; focus returns to the switcher; the badge still reads Demo. Record what is said (SURFACE PENDING E44-S02)                      | n/a                                                   | 05 §8.2 item 3 | heuristic: true |     | [ ] P / [ ] F |
-| LIV-05 | [SCR-074 · SC 3.3.8 4.1.2] Reopen and complete the step-up (type the code with the keyboard only) | Every field has a name, role and value; record each prompt and any error verbatim; no secret is said or shown in the transcript (SURFACE PENDING E44-S02)      | n/a                                                   | 05 §8.2 item 3 | heuristic: true |     | [ ] P / [ ] F |
-| LIV-06 | [SCR-075 · SC 4.1.3 1.4.1] Confirm the switch                                                     | The environment change is announced once, assertively; record it verbatim. The badge now reads the sandbox target; focus is not lost (SURFACE PENDING E38-S04) | n/a                                                   | 05 §8.2 item 3 | heuristic: true |     | [ ] P / [ ] F |
-| LIV-07 | [SCR-075 · SC 1.4.1 1.3.1] Tab to the top bar and to a trading panel                              | Both the global badge and the panel badge read the new environment as text, repeated on every trading surface; record it verbatim (SURFACE PENDING E38-S04)    | n/a                                                   | 05 §8.2 item 3 | heuristic: true |     | [ ] P / [ ] F |
-| LIV-08 | [SCR-074 SCR-075 · SC 4.1.3] Switch back to Demo                                                  | The change back is announced once; the badge reads Demo; record verbatim (SURFACE PENDING E38-S04)                                                             | n/a                                                   | 05 §8.2 item 3 | heuristic: true |     | [ ] P / [ ] F |
+| Step   | Keys                                                                                         | Expected announcement                                                                                                                                                           | Source                                                | Oracle         | Heuristic       | Lag | P/F           |
+| ------ | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | -------------- | --------------- | --- | ------------- |
+| LIV-01 | [SCR-075 · SC 1.4.1 4.1.2] Tab to the top bar                                                | `Trading environment: Demo` (read first). **Stop and fail the script if it says Live**; nothing was done                                                                        | apps/web/src/features/app-shell/TopBarEnvBadge.tsx:47 | Source column  | heuristic: true |     | [ ] P / [ ] F |
+| LIV-02 | [SCR-074 · SC 4.1.2 1.4.1] Open the SCR-074 switcher (key per E38-S04; record it)            | Record the control name, role and current value verbatim; the current environment is said as text (SURFACE PENDING E38-S04)                                                     | n/a                                                   | 05 §8.2 item 3 | heuristic: true |     | [ ] P / [ ] F |
+| LIV-03 | [SCR-074 · SC 4.1.2 3.3.4] Choose the Live target and press the switch key                   | A confirm dialog opens and is announced first; record its title and body verbatim. It says the target and the consequence (SURFACE PENDING E38-S02)                             | n/a                                                   | 05 §8.2 item 3 | heuristic: true |     | [ ] P / [ ] F |
+| LIV-04 | [SCR-074 · SC 2.1.2 2.4.3] Tab inside the dialog                                             | Focus is trapped in the dialog; record each control name, role and value verbatim (SURFACE PENDING E44-S02)                                                                     | n/a                                                   | 05 §8.2 item 3 | heuristic: true |     | [ ] P / [ ] F |
+| LIV-05 | [SCR-074 · SC 3.3.8 4.1.2] Type the typed confirmation with the keyboard only; do not submit | The field has a name, role and value; record each prompt and any error verbatim; no secret is said or shown in the transcript (SURFACE PENDING E44-S02)                         | n/a                                                   | 05 §8.2 item 3 | heuristic: true |     | [ ] P / [ ] F |
+| LIV-06 | [SCR-074 · SC 2.1.2 2.4.3 4.1.3] Choose Cancel (button, then repeat once with `Esc`)         | The dialog closes and the cancel is announced once; focus returns to the switcher; the badge still reads `Trading environment: Demo`; record verbatim (SURFACE PENDING E44-S02) | n/a                                                   | 05 §8.2 item 3 | heuristic: true |     | [ ] P / [ ] F |
 
 ## Notes
 
-- The sandbox Live target must be named in the record header (`fixture`) without any hostname, account id or key.
+- Out of scope until the owner names a safe target: completing the switch and the SCR-075 badge-change announcement. They are a carried row in `regression-checklist.md`.
