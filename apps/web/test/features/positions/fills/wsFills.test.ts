@@ -538,6 +538,30 @@ describe("S-02, Retry, a narrowing and teardown", () => {
     expect([api.calls[0]?.signal?.aborted, store.getSnapshot().all.length]).toEqual([true, 2]);
   });
 
+  it("Retry after a revoke drops the answers still waiting for a frame", async () => {
+    const api = await startHeld();
+    api.calls[0]?.answer(page(manyFills(2 * APPLY_SLICE)));
+    handle()?.push(reset("revoked")); // the frame takes 200 of the 400; 200 wait
+    await settle(FRAME_MS);
+    feed?.retry();
+    handle()?.push(snap({ executions: [] })); // the new subscription's snapshot asks the next read
+    await settle(FRAME_MS);
+    api.calls[1]?.answer(page(restItems().slice(0, 2))); // asked after the Retry: these two apply
+    await settle(FRAME_MS + COMMIT_INTERVAL_MS);
+    expect(store.getSnapshot().all).toHaveLength(2);
+  });
+
+  it("Retry after a revoke drops a read whose second page it aborted, its first page too", async () => {
+    const api = await startHeld();
+    api.calls[0]?.answer(page(restItems(), true)); // page 1 answers and page 2 is asked
+    handle()?.push(reset("revoked"));
+    await settle(FRAME_MS);
+    feed?.retry();
+    api.calls[1]?.answer({ kind: "unavailable" }); // the aborted page 2: the read ends ok with page 1
+    await settle(FRAME_MS + COMMIT_INTERVAL_MS);
+    expect(store.getSnapshot()).toMatchObject({ all: [], readFailed: false });
+  });
+
   it("stop releases the subscription and drains no more", async () => {
     start();
     await settle(FRAME_MS);
