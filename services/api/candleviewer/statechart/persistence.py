@@ -636,6 +636,16 @@ def seal(
     return Seal(key_id=key_id, tag=tag.hexdigest())
 
 
+def _is_hex_tag(tag: object, length: int) -> bool:
+    """A tag is lowercase hex of the digest's length; shape only, nothing of the expected tag."""
+    return (
+        isinstance(tag, str)
+        and len(tag) == length
+        and tag.isascii()
+        and all(c in "0123456789abcdef" for c in tag)
+    )
+
+
 def open_sealed(
     keys: HmacKeys,
     chart: dict[str, Any],
@@ -667,6 +677,8 @@ def open_sealed(
         _mac_input(key, chart, envelope.snapshot, envelope.machine_hash, envelope.version),
         hashlib.sha256,
     ).hexdigest()
+    if not _is_hex_tag(s.tag, len(want)):
+        raise ValueError("malformed HMAC tag (CV-C53)")
     if not hmac.compare_digest(want, s.tag):
         raise ValueError("bad HMAC (CV-C53)")
     return envelope.snapshot
