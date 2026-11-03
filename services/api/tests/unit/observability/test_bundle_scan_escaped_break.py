@@ -298,3 +298,23 @@ def test_perf_the_scan_reads_escaped_doubled_quotes_before_a_backslash_run_in_li
     sizes = (20_000, 40_000, 80_000)
     ms = [_best_cpu_ms(f"password=\\{quote}\\{quote} a" + "\\" * size) for size in sizes]
     assert ms[2] < 8 * ms[0] + 2.0 and ms[2] < 100.0, ms
+
+
+#: Many labels whose values start with an escape before doubled quotes, on one line: as given, and
+#: as a list of such texts renders them (JSON for a `"`, `repr` for a `'`, its escape there).
+_ESCAPED_OPENERS: dict[str, Callable[[int], str]] = {
+    "double-raw": lambda size: 'password=\\"" a ' * (size // 16),
+    "double-json-list": lambda size: json.dumps(['password="'] * (size // 15)),
+    "single-raw": lambda size: "password=\\'' a " * (size // 16),
+    "single-repr-list": lambda size: repr(["password='", "x\"password='"] * (size // 34)),
+}
+
+
+@pytest.mark.perf
+@pytest.mark.parametrize("text", _ESCAPED_OPENERS.values(), ids=list(_ESCAPED_OPENERS))
+def test_perf_the_scan_reads_many_escaped_doubled_quote_openers_in_linear_time(
+    text: Callable[[int], str],
+) -> None:
+    sizes = (20_000, 40_000, 80_000)
+    ms = [_best_cpu_ms(text(size)) for size in sizes]
+    assert ms[2] < 8 * ms[0] + 2.0 and ms[2] < 100.0, ms

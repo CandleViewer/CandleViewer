@@ -50,9 +50,11 @@ _ESCAPED_DOUBLED: Final = (
 #: `_DOUBLED_DQ` and `_DOUBLED_SQ` as the scan reads them in a line that joins several strings (a
 #: JSON line, an event dict's `repr`): the closing run is searched for in the string that holds the
 #: opener, up to a bare quote of the other kind, which the buffer leaves bare only where it closes
-#: that string (an escaped character, `\'`, is read as a pair). The filter reads a value alone.
-_DOUBLED_DQ_IN_STRING: Final = r"""[^\s"',}\]]|[\s']*+[^\s"'](?:[^'\\\n]|\\.)*?\"\""""
-_DOUBLED_SQ_IN_STRING: Final = r"""[^\s"',}\]]|[\s"]*+[^\s"'](?:[^"\\\n]|\\.)*?''"""
+#: that string (an escaped character, `\'`, is read as a pair). A `\` before a quote of the
+#: opener's kind is read alone, so that quote can start a closing run. The filter reads a value
+#: alone.
+_DOUBLED_DQ_IN_STRING: Final = r"""[^\s"',}\]]|[\s']*+[^\s"'](?:[^'\\\n]|\\[^"\n]?+)*?\"\""""
+_DOUBLED_SQ_IN_STRING: Final = r"""[^\s"',}\]]|[\s"]*+[^\s"'](?:[^"\\\n]|\\[^'\n]?+)*?''"""
 _VALUE_LEAD: Final = (
     rf"""(?:(?<!")"{{2,}}+(?={_DOUBLED_DQ_IN_STRING})[\s']*+"""
     rf"""|(?<!')'{{2,}}+(?={_DOUBLED_SQ_IN_STRING})[\s"]*+"""
