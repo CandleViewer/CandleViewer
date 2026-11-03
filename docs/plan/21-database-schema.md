@@ -3244,13 +3244,30 @@ CREATE TABLE recording_gaps (
   stream               stream_kind NOT NULL,
   gap_start            timestamptz NOT NULL,
   gap_end              timestamptz NOT NULL,
-  cause                text NOT NULL,   -- 'ws_disconnect' | 'backpressure_drop' | 'process_restart' | 'seq_jump'
+  cause                text NOT NULL,   -- 'ws_disconnect' | 'backpressure_drop' | 'process_restart' | 'seq_jump' | 'maintenance_pause'
   backfilled           boolean NOT NULL DEFAULT false,
   backfill_source      text,
   CONSTRAINT rg_window CHECK (gap_end > gap_start),
-  CONSTRAINT rg_cause  CHECK (cause IN ('ws_disconnect','backpressure_drop','process_restart','seq_jump','exchange_outage'))
+  CONSTRAINT rg_cause  CHECK (cause IN ('ws_disconnect','backpressure_drop','process_restart','seq_jump','exchange_outage','maintenance_pause'))  -- 'maintenance_pause': 0067
 );
 CREATE INDEX ix_rg_symbol_time ON recording_gaps (symbol, gap_start DESC);
+```
+
+**`maintenance_pause` (#5629).** `0067_rg_cause_maintenance_pause` adds `maintenance_pause` to
+`rg_cause`: maintenance mode entered with `keep_recorder = false` holds the recorder's capture at
+the runtime level (the writer flushes and admits nothing new; the sessions stay open), and the held
+interval is written as one gap per live session and recorded stream with this cause when capture
+resumes (`24` §13.3). Every other cause names a fault; this one names an operator-requested hold,
+so it raises no data-loss event. Replaced `NOT VALID`, then validated; the downgrade refuses while
+a `maintenance_pause` row exists. The slot is provisional: the revision re-parents onto whatever
+lands first (C-5.3).
+
+```sql
+-- 0067_rg_cause_maintenance_pause (#5629): `maintenance_pause` in rg_cause
+ALTER TABLE recording_gaps
+  DROP CONSTRAINT rg_cause,
+  ADD CONSTRAINT rg_cause CHECK (cause IN ('ws_disconnect','backpressure_drop','process_restart','seq_jump','exchange_outage','maintenance_pause')) NOT VALID;
+ALTER TABLE recording_gaps VALIDATE CONSTRAINT rg_cause;
 ```
 
 Every replay and every profile/footprint query over a range that intersects a `recording_gaps` row must render the documented "partial history" state (see `14-screens-catalogue.md`).
@@ -5233,6 +5250,7 @@ NAMING_CONVENTION = {
 | `0061_password_history`           | `password_history` (§3.1.1a): the retired Argon2id hashes behind SR-028's reuse rule, 4 kept per user, `ph_pwd_argon` and the `SECRET:` comment of `password_hash` — **#2110 / #2330**; the downgrade refuses while any row exists; on `0060_recording_write_owner_only` (#5265)                                                                                                                        |
 | `0063_rule_version_account_refs`  | `rule_versions.account_refs`, a nullable `text[]` with no default (§3.4.2): the accounts a version's IR names, written with each version, so the scoped reads of `GET /rules` take the account dimension inside the query; NULL until computed, and no non-Owner read scope admits NULL — **#2291** (SR-051); the downgrade drops the column (derived data); on `0061_password_history` (#2110 / #2330) |
 | `0064_orders_origin`              | `orders.origin` and `origin_ref`, two nullable `text` columns, and CHECKs `ord_origin` and `ord_origin_ref`, each added `NOT VALID` then validated (§3.3.4): where a rule's order came from, read for a resumed create's rate lane (24 §8.4) — **E35-T11 #5003**; the downgrade drops both; on `0063_rule_version_account_refs` (#2291)                                                                 |
+| `0067_rg_cause_maintenance_pause` | `maintenance_pause` added to `rg_cause` (§3.6.2): the gap a maintenance-mode recorder hold writes (`24` §13.3) — **#5629**; slot 0067 provisional; on `0064_orders_origin` (#5003); the downgrade refuses while a `maintenance_pause` row exists                                                                                                                                                        |
 
 ---
 

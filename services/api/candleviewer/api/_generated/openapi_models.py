@@ -2293,10 +2293,11 @@ class Gap1(BaseModel):
             "exchange_outage",
             "backpressure_drop",
             "seq_jump",
+            "maintenance_pause",
         ]
         | None,
         Field(
-            description="`backpressure_drop`: rows dropped under write backpressure, the level-3 write gate included; `seq_jump`: an order-book update-id jump. **Open-ended for readers:** a reason a client does not know is still a gap (C-6.3)."
+            description="`backpressure_drop`: rows dropped under write backpressure, the level-3 write gate included; `seq_jump`: an order-book update-id jump; `maintenance_pause`: capture held by maintenance mode with `keep_recorder: false` (an operator-requested hold, not data loss). **Open-ended for readers:** a reason a client does not know is still a gap (C-6.3)."
         ),
     ] = None
     __null_refused = field_validator("from_", "to", "reason", mode="before")(_refuse_null)

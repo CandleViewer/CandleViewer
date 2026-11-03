@@ -4172,13 +4172,13 @@ class DataGap(BaseModel):
     gap_start: TsUs
     gap_end: TsUs
     reason: Literal["ws_disconnect","resync","process_restart","backpressure_drop",
-                    "rate_limit","unknown"]
+                    "rate_limit","maintenance_pause","unknown"]
     backfilled: bool
     backfill_source: Literal["rest_recent_trade","rest_kline","bulk_csv","none"] | None
     records_recovered: int
 ```
 
-Detection: per-stream watchdog on `last_msg_ts` (threshold = 5× expected cadence, floor 5 s); book `update_id` gaps; process-restart bracketing (`shutdown_ts` → `startup_ts`). Every gap is persisted, exposed in the API, **rendered on the chart as a hatched region**, and marks every derived bar with `tape_gap=True` (§3.1, #5396). Backfill: trades from `GET /v5/market/recent-trade` (≤1000 records — only helps for gaps of seconds), klines from `GET /v5/market/kline` (OHLCV only, no order flow), and the public bulk CSV archive at `public.bybit.com/trading/{SYMBOL}/` for whole-day gaps. **Order-book gaps cannot be backfilled at all** — the UI must say so plainly rather than showing an interpolated lie. Note the CSV timestamp-unit trap: derivatives files use fractional seconds, spot files use integer ms; the importer branches on it and the fixture suite covers both.
+Detection: per-stream watchdog on `last_msg_ts` (threshold = 5× expected cadence, floor 5 s); book `update_id` gaps; process-restart bracketing (`shutdown_ts` → `startup_ts`); maintenance-pause bracketing (#5629): maintenance mode entered with `keep_recorder = false` holds capture at the recorder runtime level (the writer flushes and admits nothing new; B11 sessions stay as they are), and on resume one `maintenance_pause` gap per live session and recorded stream covers the held interval. It is an operator-requested hold, not a fault: it raises no data-loss event. Every gap is persisted, exposed in the API, **rendered on the chart as a hatched region**, and marks every derived bar with `tape_gap=True` (§3.1, #5396). Backfill: trades from `GET /v5/market/recent-trade` (≤1000 records — only helps for gaps of seconds), klines from `GET /v5/market/kline` (OHLCV only, no order flow), and the public bulk CSV archive at `public.bybit.com/trading/{SYMBOL}/` for whole-day gaps. **Order-book gaps cannot be backfilled at all** — the UI must say so plainly rather than showing an interpolated lie. Note the CSV timestamp-unit trap: derivatives files use fractional seconds, spot files use integer ms; the importer branches on it and the fixture suite covers both.
 
 #### 13.3.1 `CoverageService` (E16-T04) — the interface downstream consumers call
 
@@ -4199,7 +4199,7 @@ Covered = session windows − gaps, merged with `COVERAGE_MERGE_TOLERANCE_MS = 1
 across a gap row). Tier from the E16-T05 roll-off watermark: older → `parquet`, newer →
 `questdb`, split at the watermark. A `backfilled` (kline) gap stays a gap: tick coverage is
 never reconstructed from bars. DB `cause` → REST `reason`: `ws_disconnect`, `exchange_outage`
-1:1; `process_restart`→`backend_restart`; `seq_jump`, `backpressure_drop` 1:1 (#2216). `reason` is
+1:1; `process_restart`→`backend_restart`; `seq_jump`, `backpressure_drop` 1:1 (#2216); `maintenance_pause` 1:1 (#5629). `reason` is
 open-ended for readers; a cause with no contract value is omitted, never relabelled.
 Reconcile (E16-FR-03, #1739): on the `real` backend the hot-tier (`questdb`) intervals of
 `orderbook_delta` and `tickers` (90 s tolerance) and `trades` (900 s) are checked against the
@@ -6871,3 +6871,13 @@ This is the number the orchestrator assigned on 2026-11-03 (08:03Z); it keeps it
 - 22 `createAlert`, `updateAlert` and `setAlertEnabled` gain `409 conflict` with `errors[].field` `enabled`, `errors[].rule` `limit_reached` and a message that names the cap, never a count (example `armedAlertCap`): a write that would leave the caller with more than 200 armed alerts (live and `enabled`, snoozed or not) is refused and nothing is written. A create arms when `enabled` is true (the default), a replace or `setAlertEnabled` when it turns a disabled alert's `enabled` true. Only arming is refused: disabling, snoozing, deleting and any write to an alert that is already armed never are. The cap is interim until the Owner ratifies it as a `LIMIT_CAPS` row (#2701).
 - The count and the write that it admits run in one transaction under a per-owner advisory lock, as the drawings quota does (#2727), so two writes at 199 never both pass. The write-ahead audit record of the write is unchanged and no action is registered or removed. A refusal is counted by `cv_alert_armed_cap_refused_total` (no labels; `20-architecture.md` §12.1).
 - No new `x-error-codes` entry, schema member or operation, so the `openapi_pending` baselines do not move; no WS, table, column, chart or `machine_hash` change, and no migration.
+
+### 19.112 2026-11-03 — §13.3, §13.3.1, 21 §3.6.2, 22 `DataCoverage`: the `maintenance_pause` gap reason (E16, #5629)
+
+The orchestrator assigned this number on #5629 (6610917597); it keeps it through its rebases.
+
+- §13.3 `DataGap.reason` gains `maintenance_pause`, and Detection gains maintenance-pause bracketing: maintenance mode entered with `keep_recorder = false` holds the recorder's capture, and the held interval is written as one gap per live session and recorded stream when capture resumes. No existing reason fits an operator-requested hold: each names a fault (BQ 5 on #5629). §13.3.1 maps the DB cause 1:1 to the REST reason.
+- 21 §3.6.2: `rg_cause` admits `maintenance_pause`, by Alembic `0067_rg_cause_maintenance_pause` (slot provisional, on `0064_orders_origin`; it re-parents if another revision lands first, C-5.3). Additive (C-5.1); the downgrade refuses while a `maintenance_pause` row exists (C-5.2).
+- 22 `DataCoverage.gaps[].reason` gains `maintenance_pause`; the enum is already open-ended for readers (C-6.3), so a client that does not know it still reads a gap.
+- **Finding, unchanged here:** the reason lists already drift between §13.3 (`resync`, `rate_limit`, `unknown`; no `seq_jump` or `exchange_outage`), the 21 `rg_cause` CHECK and 22 (`backend_restart`, `retention_purge`, `never_recorded`). This entry adds `maintenance_pause` to each list and aligns nothing else.
+- No WS frame, chart or `machine_hash` change; the pause itself (#5629 S1) records state only through this gap row and the existing `maintenance.*` audit records (C-2.9).

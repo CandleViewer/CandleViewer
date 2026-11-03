@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "E07-T02 / bugfix #1556: revision hash lock enforcing 21-database-schema.md §9.3 rule 9 (\"migrations are forward-only in production\"). Each entry pins the SHA-256 of an applied revision file's bytes; `tools/ci/verify_migration_lockfile.py` (run by the `migrations` CI job) recomputes the digest of every file listed here and fails the build with the exact rule-9 message if any applied revision has been edited. Adding a *new* revision requires adding its entry here in the same PR; the checker also fails if a versions/*.py file exists on disk with no lockfile entry, or if the down_revision chain implied by revision ids does not match the file's actual `down_revision`.",
+  "description": "E07-T02 / bugfix #1556: revision hash lock enforcing 21-database-schema.md \u00a79.3 rule 9 (\"migrations are forward-only in production\"). Each entry pins the SHA-256 of an applied revision file's bytes; `tools/ci/verify_migration_lockfile.py` (run by the `migrations` CI job) recomputes the digest of every file listed here and fails the build with the exact rule-9 message if any applied revision has been edited. Adding a *new* revision requires adding its entry here in the same PR; the checker also fails if a versions/*.py file exists on disk with no lockfile entry, or if the down_revision chain implied by revision ids does not match the file's actual `down_revision`.",
   "revisions": {
     "0001_identity_rbac_sessions_mfa": {
       "path": "services/api/candleviewer/migrations/versions/0001_identity_rbac_sessions_mfa.py",
@@ -311,6 +311,11 @@
       "path": "services/api/candleviewer/migrations/versions/0064_orders_origin.py",
       "sha256": "1de769f3e21c2d1277e88339602dacff4e28bc696500cd8c01b289669918f2de",
       "down_revision": "0063_rule_version_account_refs"
+    },
+    "0067_rg_cause_maintenance_pause": {
+      "path": "services/api/candleviewer/migrations/versions/0067_rg_cause_maintenance_pause.py",
+      "sha256": "8c628a7792ad2c30cfe5f79a78a068e736ed58f002a53ba1d78c93d7ad7d184a",
+      "down_revision": "0064_orders_origin"
     }
   }
 }

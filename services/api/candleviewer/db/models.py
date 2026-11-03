@@ -879,6 +879,8 @@ recording_sessions = Table(
     ),
 )
 
+#: `recording_gaps` (revision 0011_recorder; `maintenance_pause` in `rg_cause`, revision
+#: 0067_rg_cause_maintenance_pause, #5629).
 recording_gaps = Table(
     "recording_gaps",
     metadata,
@@ -898,7 +900,7 @@ recording_gaps = Table(
     CheckConstraint("gap_end > gap_start", name="rg_window"),
     CheckConstraint(
         "cause IN ('ws_disconnect','backpressure_drop','process_restart','seq_jump',"
-        "'exchange_outage')",
+        "'exchange_outage','maintenance_pause')",
         name="rg_cause",
     ),
     Index("ix_rg_symbol_time", "symbol", text("gap_start DESC")),

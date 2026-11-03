@@ -283,6 +283,7 @@ async def test_every_recorder_cause_maps_to_its_own_reason() -> None:
         ("exchange_outage", "exchange_outage"),
         ("ws_disconnect", "ws_disconnect"),
         ("process_restart", "backend_restart"),
+        ("maintenance_pause", "maintenance_pause"),
     ]
     gaps = await _gaps([cause for cause, _ in pairs])
     assert [g.get("reason") for g in gaps] == [reason for _, reason in pairs]
