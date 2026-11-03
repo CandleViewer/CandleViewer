@@ -159,18 +159,6 @@ export const LIVE_UNAVAILABLE = [
   "Live values unavailable — CandleViewer has reached its live-data limit.",
   "Close a chart or a watchlist symbol, then try again.",
 ] as const;
+/** PROPOSED: the T1 marker when the item is stale with no age to show (owner: E08-D06 §6). */
 export const LIVE_STALE = "Live values stale.";
 export const LIVE_CURRENT = "Live values current.";
-
-/** D06 §7: the funding countdown. */
-export const NEXT_FUNDING_UNKNOWN = "Next funding time not available";
-export const SETTLEMENT_PASSED = "Settlement time passed — waiting for an update";
-export const nextIn = (clock: string, at: string): string => `next in ${clock} · ${at} UTC`;
-export const settlesIn = (clock: string, at: string): string => `settles in ${clock} · ${at} UTC`;
-export const clockAlarmAt = (at: string, about: string): string =>
-  `at ${at} UTC (in about ${about})`;
-export const clockSkew = (ms: number): string =>
-  `Clock skew ${String(ms)} ms — the countdown may be off`;
-/** PROPOSED (the deck gives the plural; the singular "1 minute" is this layer's; owner: E08-D13). */
-export const fundingSpoken = (symbol: string, minutes: number): string =>
-  `${symbol} funding settles in ${String(minutes)} ${minutes === 1 ? "minute" : "minutes"}.`;
