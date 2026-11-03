@@ -72,7 +72,9 @@ test(`Q04-N04 C12 after a reconnect: the kill switch is what auth_ok says, never
   harness.setKillSwitch({ engaged: false, scope: "global" }); // released during the outage
   harness.restore();
   await patient.poll(() => harness.authenticated()).toBe(2);
-  // This gateway's `auth_ok` says disengaged (released during the outage): the region goes, R2 is not kept.
-  await patient(region(page)).toHaveCount(0); // M-N04-3
+  // This gateway's `auth_ok` says disengaged (released during the outage): R2 is not kept, and the
+  // slot holds the `recovered` region (E29-S07 #1028), never the read-only one.
+  await patient(region(page)).toHaveAttribute("data-state", "recovered"); // M-N04-3
+  await expect(region(page)).not.toHaveAttribute("data-reason", "R2-kill-switch");
   await expect(chip(page)).toHaveAttribute("data-status", "live"); // M-N04-4
 });
