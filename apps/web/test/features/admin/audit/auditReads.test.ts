@@ -1,46 +1,64 @@
 /**
- * E42-S04 (#1135): the audit log's read layer (E42-D04 §4, §7; the plan's §3). The list read, the
- * tamper check and the incident read go through `apiFetch`, typed from `packages/protocol`, and
- * settle as one of four answers: `ok` (the body vetted, an unknown enum or a missing field
- * unreadable), `refused` (the status, the problem's code, `Retry-After`, the Ref and the field
- * errors), `unknown` (a write that got no answer) or `failed` (a read that got none, or an answer
- * it could not read). List reads stop at 6 s (BQ-11, PROPOSED), above the server's 4 s stop; the
- * tamper check waits past its 60 s deadline (BQ-6). The orchestrator's binding cases live here too:
- * a Viewer's 403 and the view-as refusals (BQ-9).
+ * E42-S04 (#1135): the audit log's read layer (E42-D04 §4, §7, §8; the plan's §3). Each of the six
+ * operations goes through `apiFetch`, typed from `packages/protocol`, and settles as one of four
+ * answers: `ok` (the body vetted, an unknown enum or a missing field unreadable), `refused` (the
+ * status, the problem's code, `Retry-After`, the Ref, the field errors and, on the export and its
+ * download, the step-up hold), `unknown` (a write that got no answer) or `failed` (a read that got
+ * none, or an answer it could not read). List reads stop at 6 s (BQ-11, PROPOSED), above the
+ * server's 4 s stop; the tamper check waits past its 60 s deadline (BQ-6). The orchestrator's
+ * binding cases live here too: a Viewer's 403, the view-as refusals (the download's `403 forbidden`
+ * under view-as is the target's, BQ-9) and `step_up_required` on both the export and its download.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AUDIT_CADENCE,
   AUDIT_READ_TIMEOUT_MS,
+  EXPORT_TIMEOUT_MS,
   INCIDENT_LIMIT,
   VERIFY_TIMEOUT_MS,
+  downloadAuditExport,
+  exportAuditLog,
+  fileNameOf,
   forbiddenMeaning,
+  getJob,
   jobPollDelay,
   listIncidents,
   queryAuditLog,
   queryString,
+  readDownloadAnswer,
+  readExportAnswer,
   retryAfterSeconds,
   verifyAuditChain,
   vetAuditPage,
   vetIncidentPage,
+  vetJob,
   vetVerifyResult,
   type AuditAnswer,
   type AuditRefusal,
 } from "../../../../src/features/admin/audit/auditReads";
+import { holdRequest } from "../../../../src/features/stepUp/challenge";
 import {
   BROKEN,
+  JOB_ID,
   OWNER_ID,
   REF,
   T0,
   entry,
+  exportResult,
   hangingFetch,
   incident,
+  job,
   json,
   pageBody,
   problem,
+  stepUpRequired,
   stubFetch,
   verifyBody,
 } from "./fixtures";
+
+/** The caller's `Idempotency-Key` (a UUIDv4), kept for [Check again] (X11). */
+const ONCE = "4d9f0c2b-8e1a-4b7c-9d3e-2f1a0b9c8d7e";
+const WINDOW = { from: "2026-10-21T14:00:00Z", to: "2026-10-22T14:00:00Z", compress: true };
 
 afterEach(() => {
   vi.useRealTimers();
@@ -324,6 +342,246 @@ describe("verifyAuditChain", () => {
     expect(vetVerifyResult({ ...BROKEN, entries_checked: -1 })).toBeNull();
     expect(vetVerifyResult({ ...BROKEN, first_bad_id: "41207" })).toBeNull();
     expect(vetVerifyResult({ ...BROKEN, checked_at: "later" })).toBeNull();
+  });
+});
+
+describe("exportAuditLog: the shipped step-up gate holds the request (inviteApi's idiom)", () => {
+  it("test_exportAuditLog_posts_the_window_under_the_given_idempotency_id", async () => {
+    const calls = stubFetch(() => json(202, { job_id: JOB_ID, download_url: null }));
+    expect(await exportAuditLog(WINDOW, ONCE)).toEqual({
+      kind: "ok",
+      body: { job_id: JOB_ID, download_url: null },
+    });
+    const [sent] = calls;
+    expect(sent?.url).toBe("/api/v1/admin/audit/export");
+    expect(sent?.method).toBe("POST");
+    expect(sent?.headers.get("Idempotency-Key")).toBe(ONCE);
+    expect(JSON.parse(sent?.body ?? "null")).toEqual(WINDOW);
+  });
+
+  it("test_exportAuditLog_step_up_required_holds_the_request_unchanged_for_the_gate", async () => {
+    stubFetch(() => stepUpRequired());
+    const answer = refusal(await exportAuditLog(WINDOW, ONCE));
+    expect(answer.code).toBe("step_up_required");
+    expect(answer.stepUp?.challenge).toMatchObject({
+      actionClass: "audit",
+      challengeId: "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b",
+    });
+    const held = answer.stepUp?.held;
+    expect(held?.method).toBe("POST");
+    expect(held?.url).toBe("/api/v1/admin/audit/export");
+    expect(new Headers(held?.headers.map(([k, v]) => [k, v])).get("Idempotency-Key")).toBe(ONCE);
+    expect(JSON.parse(held?.body ?? "null")).toEqual(WINDOW);
+  });
+
+  it("test_readExportAnswer_reads_the_gates_resend_like_a_first_answer", async () => {
+    stubFetch(() => stepUpRequired());
+    const held = refusal(await exportAuditLog(WINDOW, ONCE)).stepUp?.held;
+    if (held === undefined) throw new Error("no hold");
+    expect(await readExportAnswer(json(202, { job_id: JOB_ID }), held)).toEqual({
+      kind: "ok",
+      body: { job_id: JOB_ID },
+    });
+    expect(refusal(await readExportAnswer(problem(409, "conflict"), held))).toMatchObject({
+      status: 409,
+      code: "conflict",
+    });
+  });
+
+  it("test_exportAuditLog_no_answer_is_unknown_and_a_job_id_not_a_uuid_is_unreadable", async () => {
+    vi.useFakeTimers();
+    hangingFetch();
+    const pending = exportAuditLog(WINDOW, ONCE);
+    await vi.advanceTimersByTimeAsync(EXPORT_TIMEOUT_MS);
+    expect(await pending).toEqual({ kind: "unknown" });
+    vi.useRealTimers();
+    stubFetch(() => json(202, { job_id: "../../x" }));
+    expect(await exportAuditLog(WINDOW, ONCE)).toEqual({ kind: "failed", reason: "unreadable" });
+  });
+
+  it("test_exportAuditLog_and_verify_view_as_refusals_are_never_a_step_up", async () => {
+    stubFetch(() => problem(403, "view_as_read_only"));
+    const exported = refusal(await exportAuditLog(WINDOW, ONCE));
+    expect(exported).toMatchObject({ status: 403, code: "view_as_read_only" });
+    expect(exported.stepUp).toBeUndefined();
+    expect(forbiddenMeaning(exported, {})).toBe("view_as");
+    stubFetch(() => problem(403, "view_as_expired"));
+    const verified = refusal(await verifyAuditChain());
+    expect(forbiddenMeaning(verified, {})).toBe("view_as");
+  });
+
+  it("test_exportAuditLog_refusals_keep_their_code_and_retry_after", async () => {
+    stubFetch(() => problem(429, "rate_limited", {}, { "Retry-After": "1200" }));
+    expect(refusal(await exportAuditLog(WINDOW, ONCE))).toMatchObject({
+      status: 429,
+      code: "rate_limited",
+      retryAfterS: 1200,
+    });
+    stubFetch(() =>
+      problem(422, "validation_failed", {
+        detail: "the window is longer than audit_export_max_range_days (31)",
+        errors: [{ field: "to", rule: "max_export_range" }],
+      }),
+    );
+    expect(refusal(await exportAuditLog(WINDOW, ONCE))).toMatchObject({
+      detail: "the window is longer than audit_export_max_range_days (31)",
+      errors: [{ field: "to", rule: "max_export_range" }],
+    });
+  });
+});
+
+describe("getJob", () => {
+  it("test_getJob_asks_the_jobs_path_and_answers_a_running_job", async () => {
+    const calls = stubFetch(() => json(200, job()));
+    expect(await getJob(JOB_ID)).toEqual({ kind: "ok", body: job() });
+    expect(calls[0]?.url).toBe(`/api/v1/admin/jobs/${JOB_ID}`);
+    expect(calls[0]?.method).toBe("GET");
+  });
+
+  it("test_getJob_is_not_a_list_read_its_bound_is_the_exports", async () => {
+    // BQ-11 as ruled: the 6 s bound is the list reads' alone
+    expect(EXPORT_TIMEOUT_MS).toBeGreaterThan(AUDIT_READ_TIMEOUT_MS);
+    vi.useFakeTimers();
+    const signals = hangingFetch();
+    const pending = getJob(JOB_ID);
+    await vi.advanceTimersByTimeAsync(AUDIT_READ_TIMEOUT_MS);
+    expect(signals[0]?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(EXPORT_TIMEOUT_MS - AUDIT_READ_TIMEOUT_MS);
+    expect(await pending).toEqual({ kind: "failed", reason: "timeout" });
+  });
+
+  it("test_vetJob_succeeded_export_needs_a_whole_result_in_its_served_shape", () => {
+    const done = job({ status: "succeeded", progress_pct: 100, result: exportResult() });
+    expect(vetJob(done)).toEqual(done);
+    for (const change of [
+      { sha256: "abc" },
+      { signature_alg: "rsa" },
+      { key_id: "k1" },
+      { row_count: -1 },
+      { expires_at: undefined },
+    ]) {
+      expect(vetJob({ ...done, result: { ...exportResult(), ...change } })).toBeNull();
+    }
+  });
+
+  it("test_vetJob_unknown_status_is_unreadable_and_an_unknown_kind_is_tolerated", () => {
+    expect(vetJob(job({ status: "paused" as "running" }))).toBeNull();
+    expect(vetJob({ ...job(), status: undefined })).toBeNull();
+    expect(vetJob(job({ progress_pct: 101 }))).toBeNull();
+    expect(vetJob(job({ kind: "future_kind" as "backup" }))?.kind).toBe("future_kind");
+  });
+
+  it("test_getJob_404_job_unknown_and_failed_jobs_keep_their_codes", async () => {
+    stubFetch(() => problem(404, "not_found", { errors: [{ rule: "job_unknown" }] }));
+    expect(refusal(await getJob(JOB_ID)).status).toBe(404);
+    stubFetch(() => json(200, job({ status: "failed", error: "export_too_large" })));
+    expect(await getJob(JOB_ID)).toMatchObject({ kind: "ok", body: { error: "export_too_large" } });
+  });
+});
+
+describe("downloadAuditExport", () => {
+  it("test_downloadAuditExport_answers_the_bytes_with_the_served_file_name", async () => {
+    const calls = stubFetch(
+      () =>
+        new Response("{}\n", {
+          status: 200,
+          headers: {
+            "Content-Type": "application/gzip",
+            "Content-Disposition": `attachment; filename="${JOB_ID}.ndjson.gz"`,
+          },
+        }),
+    );
+    const answer = await downloadAuditExport(JOB_ID);
+    if (answer.kind !== "ok") throw new Error(answer.kind);
+    expect(answer.body.fileName).toBe(`${JOB_ID}.ndjson.gz`);
+    expect(answer.body.contentType).toBe("application/gzip");
+    expect(await answer.body.blob.text()).toBe("{}\n");
+    expect(calls[0]?.url).toBe(`/api/v1/admin/audit/exports/${JOB_ID}`);
+    expect(calls[0]?.method).toBe("GET");
+  });
+
+  it("test_downloadAuditExport_step_up_holds_the_get_and_reads_the_resend", async () => {
+    stubFetch(() => stepUpRequired());
+    const answer = refusal(await downloadAuditExport(JOB_ID));
+    const held = answer.stepUp?.held;
+    if (held === undefined) throw new Error("no hold");
+    expect(held).toMatchObject({ method: "GET", body: null });
+    const resent = new Response("x", { status: 200, headers: { "Content-Type": "text/plain" } });
+    const again = await readDownloadAnswer(resent, held, JOB_ID);
+    expect(again).toMatchObject({ kind: "ok", body: { fileName: `${JOB_ID}.ndjson` } });
+  });
+
+  it.each([
+    [404, "not_found"],
+    [410, "gone"],
+    [429, "rate_limited"],
+    [503, "store_unavailable"],
+  ])("test_downloadAuditExport_%i_is_refused_with_its_code", async (status, code) => {
+    stubFetch(() => problem(status, code));
+    expect(refusal(await downloadAuditExport(JOB_ID))).toMatchObject({ status, code });
+  });
+
+  it("test_downloadAuditExport_bound_covers_the_answer_not_the_transfer", async () => {
+    vi.useFakeTimers();
+    let push: ((chunk: string) => void) | undefined;
+    let end: (() => void) | undefined;
+    stubFetch((sent) => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          push = (chunk) => controller.enqueue(new TextEncoder().encode(chunk));
+          end = () => controller.close();
+          // as a browser does: aborting the request errors its body mid-transfer
+          sent.signal?.addEventListener("abort", () =>
+            controller.error(new DOMException("aborted", "AbortError")),
+          );
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { "Content-Type": "application/x-ndjson" },
+      });
+    });
+    const pending = downloadAuditExport(JOB_ID);
+    await vi.advanceTimersByTimeAsync(EXPORT_TIMEOUT_MS * 3);
+    push?.("{}\n");
+    end?.();
+    const answer = await pending;
+    expect(answer.kind).toBe("ok");
+  });
+
+  it("test_readDownloadAnswer_a_body_that_breaks_off_is_failed_never_a_rejection", async () => {
+    // C-1135P2-01: the gate's re-send reads its own answer, so every answer settles there too
+    const broken = new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.error(new TypeError("network error"));
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/gzip" } },
+    );
+    const held = holdRequest("GET", `/api/v1/admin/audit/exports/${JOB_ID}`, {}, null);
+    await expect(readDownloadAnswer(broken, held, JOB_ID)).resolves.toEqual({
+      kind: "failed",
+      reason: "network",
+    });
+  });
+
+  it("test_fileNameOf_keeps_a_plain_served_ndjson_name_else_the_job_id", () => {
+    const gz = "application/gzip";
+    expect(fileNameOf('attachment; filename="a.ndjson"', JOB_ID, gz)).toBe("a.ndjson");
+    expect(fileNameOf("attachment; filename=b.ndjson.gz", JOB_ID, gz)).toBe("b.ndjson.gz");
+    expect(fileNameOf("attachment; filename*=UTF-8''c%20d.ndjson", JOB_ID, gz)).toBe("c_d.ndjson");
+    expect(fileNameOf('attachment; filename="../../etc/b.ndjson"', JOB_ID, gz)).toBe("b.ndjson");
+    // S-1135P2-03: a name that is not NDJSON, gzipped or not, is the job's own
+    expect(fileNameOf('attachment; filename="../../etc/passwd"', JOB_ID, gz)).toBe(
+      `${JOB_ID}.ndjson.gz`,
+    );
+    expect(fileNameOf('attachment; filename="report.exe"', JOB_ID, gz)).toBe(`${JOB_ID}.ndjson.gz`);
+    expect(fileNameOf('attachment; filename=".."', JOB_ID, gz)).toBe(`${JOB_ID}.ndjson.gz`);
+    expect(fileNameOf(null, JOB_ID, "application/x-ndjson")).toBe(`${JOB_ID}.ndjson`);
+    expect(fileNameOf(`attachment; filename="${"x".repeat(300)}"`, JOB_ID, gz)).toBe(
+      `${JOB_ID}.ndjson.gz`,
+    );
   });
 });
 

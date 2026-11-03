@@ -1,21 +1,27 @@
 /**
  * C-6.2 consumer contract (E42-S04, #1135): the audit log's read layer reads the examples
  * `docs/plan/22-api-openapi.yaml` serves for `queryAuditLog` (`orderPlaced`), `verifyAuditChain`
- * (`ok`, `broken`) and `listIncidents` (`grouped`) through the generated `packages/protocol` types,
- * each vetted as served, and asks for the contract's paths. The filters' names and the page size
- * are `queryAuditLog`'s parameters, and the `orderPlaced` and verify examples land in the page and
- * integrity models.
+ * (`ok`, `broken`), `getJob` (`running`, `done`), `downloadAuditExport` (`410 expired`) and
+ * `listIncidents` (`grouped`) through the generated `packages/protocol` types, each vetted as
+ * served, and asks for the contract's paths. The filters' names and limits are `queryAuditLog`'s
+ * parameters, and the `orderPlaced` and verify examples land in the page and integrity models.
  */
 import { describe, expect, expectTypeOf, it } from "vitest";
 import type { generated } from "@candleviewer/protocol";
 import {
   AUDIT_PATHS,
+  readDownloadAnswer,
   vetAuditPage,
+  vetExportAccepted,
   vetIncidentPage,
+  vetJob,
   vetVerifyResult,
   type AuditEntry,
   type AuditQuery,
+  type ExportAccepted,
+  type ExportBody,
   type Incident,
+  type Job,
   type VerifyResult,
 } from "../../src/features/admin/audit/auditReads";
 import { FILTER_NAMES, PAGE_LIMIT } from "../../src/features/admin/audit/auditFilters";
@@ -29,16 +35,24 @@ import { example, pathBlock, specText } from "../features/admin/audit/specExampl
 
 type Schemas = generated.rest.components["schemas"];
 type Ops = generated.rest.operations;
+const JOB = "19000000-0000-4000-8000-000000000001";
 
 describe("audit log consumer contract (C-6.2): the read layer", () => {
   it("test_contract_types_are_the_generated_ones", () => {
     expectTypeOf<AuditEntry>().toEqualTypeOf<Schemas["AuditEntry"]>();
+    expectTypeOf<Job>().toEqualTypeOf<Schemas["Job"]>();
     expectTypeOf<Incident>().toEqualTypeOf<Schemas["Incident"]>();
     expectTypeOf<AuditQuery>().toEqualTypeOf<
       NonNullable<Ops["queryAuditLog"]["parameters"]["query"]>
     >();
     expectTypeOf<VerifyResult>().toEqualTypeOf<
       Ops["verifyAuditChain"]["responses"][200]["content"]["application/json"]
+    >();
+    expectTypeOf<ExportBody>().toEqualTypeOf<
+      Ops["exportAuditLog"]["requestBody"]["content"]["application/json"]
+    >();
+    expectTypeOf<ExportAccepted>().toEqualTypeOf<
+      Ops["exportAuditLog"]["responses"][202]["content"]["application/json"]
     >();
   });
 
@@ -51,9 +65,15 @@ describe("audit log consumer contract (C-6.2): the read layer", () => {
     };
     op("/admin/audit", "get", "queryAuditLog");
     op("/admin/audit/verify", "post", "verifyAuditChain");
+    op("/admin/audit/export", "post", "exportAuditLog");
+    op("/admin/jobs/{jobId}", "get", "getJob");
+    op("/admin/audit/exports/{jobId}", "get", "downloadAuditExport");
     op("/admin/incidents", "get", "listIncidents");
     expect(AUDIT_PATHS.query).toBe("/api/v1/admin/audit");
     expect(AUDIT_PATHS.verify).toBe("/api/v1/admin/audit/verify");
+    expect(AUDIT_PATHS.export).toBe("/api/v1/admin/audit/export");
+    expect(AUDIT_PATHS.job(JOB)).toBe(`/api/v1/admin/jobs/${JOB}`);
+    expect(AUDIT_PATHS.download(JOB)).toBe(`/api/v1/admin/audit/exports/${JOB}`);
     expect(AUDIT_PATHS.incidents).toBe("/api/v1/admin/incidents");
   });
 
@@ -73,6 +93,31 @@ describe("audit log consumer contract (C-6.2): the read layer", () => {
   it.each(["ok", "broken"])("test_contract_verify_%s_example_vets_as_served", (name) => {
     const raw = example("/admin/audit/verify", name);
     expect(vetVerifyResult(raw)).toEqual(raw);
+  });
+
+  it.each(["running", "done"])("test_contract_job_%s_example_vets_as_served", (name) => {
+    const raw = example("/admin/jobs/{jobId}", name);
+    expect(vetJob(raw)).toEqual(raw);
+  });
+
+  it("test_contract_export_202_has_the_generated_shape", () => {
+    const accepted: ExportAccepted = { job_id: JOB, download_url: null };
+    expect(vetExportAccepted(accepted)).toEqual(accepted);
+  });
+
+  it("test_contract_download_410_expired_example_is_refused_gone_with_its_ref", async () => {
+    const raw = example("/admin/audit/exports/{jobId}", "expired") as Record<string, unknown>;
+    const response = new Response(JSON.stringify(raw), {
+      status: 410,
+      headers: { "Content-Type": "application/problem+json" },
+    });
+    const held = { method: "GET", url: AUDIT_PATHS.download(JOB), headers: [], body: null };
+    expect(await readDownloadAnswer(response, held, JOB)).toMatchObject({
+      kind: "refused",
+      status: 410,
+      code: "gone",
+      refId: raw["instance"],
+    });
   });
 
   it("test_contract_incidents_grouped_example_vets_as_served", () => {

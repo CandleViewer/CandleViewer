@@ -12,9 +12,12 @@ type Ops = generated.rest.operations;
 export type Entry = Schemas["AuditEntry"];
 export type Verify = Ops["verifyAuditChain"]["responses"][200]["content"]["application/json"];
 export type IncidentRow = Schemas["Incident"];
+export type JobBody = Schemas["Job"];
+export type ExportResult = Schemas["AuditExportResult"];
 
 export const OWNER_ID = "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001";
 export const ALEX_ID = "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002";
+export const JOB_ID = "19000000-0000-4000-8000-000000000001";
 export const INCIDENT_ID = "1a000000-0000-4000-8000-000000000007";
 export const REF = "urn:cv:req:0193f2bb-9c11-7a3d-88f1-0d2e3f4a5b6c";
 /** The worked example's clock: 2026-10-22 14:02:11 UTC. */
@@ -114,6 +117,40 @@ export function incident(over: Partial<IncidentRow> = {}): IncidentRow {
   };
 }
 
+export function exportResult(over: Partial<ExportResult> = {}): ExportResult {
+  return {
+    download_url: `/api/v1/admin/audit/exports/${JOB_ID}`,
+    sha256: hex("d"),
+    signature: `${"A".repeat(86)}==`,
+    signature_alg: "ed25519",
+    key_id: `cv-audit-export-v1:${"2".repeat(16)}`,
+    public_key: `${"B".repeat(43)}=`,
+    compressed: true,
+    size_bytes: 44_120_000,
+    row_count: 851_204,
+    from: "2026-08-14T00:00:00Z",
+    to: "2026-09-14T00:00:00Z",
+    first_id: 87_268_001,
+    last_id: 88_119_204,
+    expires_at: "2026-09-15T10:39:10Z",
+    ...over,
+  };
+}
+
+export function job(over: Partial<JobBody> = {}): JobBody {
+  return {
+    id: JOB_ID,
+    kind: "audit_export",
+    status: "running",
+    progress_pct: 42,
+    started_at: "2026-09-14T10:38:00Z",
+    finished_at: null,
+    result: null,
+    error: null,
+    ...over,
+  };
+}
+
 /** A JSON answer. */
 export const json = (
   status: number,
@@ -143,6 +180,16 @@ export const problem = (
     }),
     { status, headers: { "Content-Type": "application/problem+json", ...headers } },
   );
+
+/** A `403 step_up_required` for the `audit` class, as `exportAuditLog` sends it. */
+export const stepUpRequired = (): Response =>
+  problem(403, "step_up_required", {
+    action_class: "audit",
+    challenge_id: "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b",
+    challenge_expires_at: "2026-10-22T14:07:11Z",
+    action_summary: "Export the audit log from 2026-10-21 14:00 to 2026-10-22 14:00 (UTC)",
+    target: null,
+  });
 
 export interface Sent {
   readonly url: string;
