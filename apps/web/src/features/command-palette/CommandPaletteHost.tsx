@@ -101,6 +101,9 @@ export function CommandPaletteHost({
     const run = pending.current;
     pending.current = null;
     run?.();
+    // Read and clear on every close, so a route run from a focused opener cannot leave the flag set for later.
+    const wasRoute = navigated.current;
+    navigated.current = false;
     if (!openedFromBody) return;
     openedFromBody = false;
     // A route change is followed by the shell's own move to the heading; otherwise, if focus is still nowhere, `main`.
@@ -110,8 +113,7 @@ export function CommandPaletteHost({
       active === null ||
       active === document.body ||
       active.closest('[data-cmp="CMP-059"]') !== null;
-    if (!navigated.current && nowhere) mainRef?.current?.focus();
-    navigated.current = false;
+    if (!wasRoute && nowhere) mainRef?.current?.focus();
   }, [shown, mainRef]);
 
   const rows = useMemo(() => {
