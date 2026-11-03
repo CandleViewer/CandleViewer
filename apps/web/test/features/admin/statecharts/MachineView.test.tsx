@@ -6,10 +6,14 @@
  * and a store of the test's own, against a stubbed `fetch` (no network, C-13.5).
  */
 import { createRequire } from "node:module";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GatedAnnounceProvider } from "@candleviewer/ui";
 import { clearAnnouncements, ShellAnnouncer } from "../../../../src/features/app-shell/announcer";
+import type { ConsumerSpec, TopicFrame, TopicHandle } from "../../../../src/lib/ws/api";
+import { setActiveClient } from "../../../../src/lib/ws/client/activeClient";
+import type { WsClientHandle } from "../../../../src/lib/ws/client/createWsClient";
+import { resetShellState, setShellState } from "../../../../src/shell/bootstrap/store";
 import type { ReadTimers } from "../../../../src/features/admin/overview/adminReads";
 import {
   readDetail,
@@ -549,4 +553,245 @@ describe("tab order, focus and axe", { timeout: 60_000 }, () => {
       ).toEqual([]);
     },
   );
+});
+
+describe(
+  "an inline Re-read or Retry: focus stays while it exists, then waits on the heading (A-1137-02)",
+  { timeout: 30_000 },
+  () => {
+    const heading = (): HTMLElement => screen.getByRole("heading", { level: 2 });
+    /** A press on `button` from focus, as Enter on a native button gives. */
+    const press = (button: HTMLElement): void => {
+      act(() => button.focus());
+      fireEvent.click(button);
+    };
+
+    it("test_machine_view_the_machines_retry_leaves_focus_on_its_heading_and_says_it_loaded", async () => {
+      serve({ [DETAIL]: { status: 503, body: { code: "unavailable" } } });
+      show();
+      const retry = await screen.findByRole("button", { name: "Retry" }, WAIT);
+      serve(WORLD);
+      press(retry);
+      await settled();
+      expect(document.activeElement).not.toBe(document.body);
+      expect(heading()).toHaveFocus();
+      await waitFor(() => expect(polite()).toHaveTextContent("The machine loaded."), WAIT);
+    });
+
+    it("test_machine_view_the_charts_retry_leaves_focus_on_its_heading_and_says_it_loaded", async () => {
+      serve({ [DETAIL]: { body: LATCHED_DETAIL } });
+      show();
+      const retry = await screen.findByRole("button", { name: "Retry" }, WAIT);
+      serve(WORLD);
+      press(retry);
+      await settled();
+      expect(document.activeElement).not.toBe(document.body);
+      expect(heading()).toHaveFocus();
+      await waitFor(() => expect(polite()).toHaveTextContent("The chart loaded."), WAIT);
+    });
+
+    it("test_machine_view_a_machines_retry_that_fails_again_keeps_focus_on_it", async () => {
+      const requests = serve({ [DETAIL]: { status: 503, body: { code: "unavailable" } } });
+      const { store } = show();
+      const retry = await screen.findByRole("button", { name: "Retry" }, WAIT);
+      press(retry);
+      // The read fails again: the same Retry stays, and so does focus (A-1137-d04).
+      await waitFor(() => {
+        expect(requests.filter((r) => r.path === DETAIL)).toHaveLength(2);
+        expect(store.getState().machine.inFlight).toBe(false);
+      }, WAIT);
+      expect(screen.getByRole("button", { name: "Retry" })).toBe(retry);
+      expect(retry).toHaveFocus();
+    });
+
+    it("test_machine_view_a_charts_retry_that_fails_again_keeps_focus_on_it", async () => {
+      const requests = serve({ [DETAIL]: { body: LATCHED_DETAIL } });
+      const { store } = show();
+      const retry = await screen.findByRole("button", { name: "Retry" }, WAIT);
+      press(retry);
+      // Its error and Retry stay while the chart is read again, and after it fails again.
+      await waitFor(() => {
+        expect(requests.filter((r) => r.path === EXPORT)).toHaveLength(2);
+        expect(store.getState().machine.chart?.phase).toBe("unusable");
+      }, WAIT);
+      expect(screen.getByRole("button", { name: "Retry" })).toBe(retry);
+      expect(retry).toHaveFocus();
+    });
+
+    it("test_machine_view_the_changed_charts_reread_leaves_focus_on_its_heading", async () => {
+      const other = "d".repeat(64);
+      const otherExport = frozenExport("B01.order", "order", other);
+      serve({ ...WORLD, [EXPORT]: { body: otherExport } });
+      show();
+      const root = await settled();
+      const reread = within(root).getByRole("button", { name: "Re-read" });
+      // The machine was redeployed: its detail now names the export's hash, so the line goes.
+      const moved = {
+        ...LATCHED_DETAIL,
+        machine: { ...LATCHED_DETAIL.machine, machine_hash: other },
+      };
+      serve({ [DETAIL]: { body: moved }, [EXPORT]: { body: otherExport } });
+      press(reread);
+      await waitFor(
+        () =>
+          expect(
+            within(root).queryByText("This chart changed since the machine was read."),
+          ).toBeNull(),
+        WAIT,
+      );
+      expect(document.activeElement).not.toBe(document.body);
+      expect(heading()).toHaveFocus();
+    });
+  },
+);
+
+/** The latched order as its topic publishes it (`23` §15.10), with `patch`. */
+const published = (patch: Readonly<Record<string, unknown>> = {}) => ({
+  machine_kind: "order",
+  state: "triggered",
+  regions: { lifecycle: "triggered", protection: "sl_present" },
+  tags: ["protected"],
+  degraded: true,
+  machine_hash: ORDER_HASH,
+  environment: "demo",
+  updated_at_ms: Date.parse("2026-10-15T18:00:09Z"),
+  ...patch,
+});
+const frameOf = (p: unknown): TopicFrame => ({
+  kind: "d",
+  seq: 1,
+  ts: 0,
+  sp: undefined,
+  decodeMs: 0,
+  size: 0,
+  meta: undefined,
+  body: { e: "j", p },
+});
+
+/** The shell's client, one handle per topic, and the display's frames run by the test. */
+function liveWorld(environment: "demo" | "live" = "demo") {
+  const queues: TopicFrame[][] = [];
+  const specs: ConsumerSpec[] = [];
+  const client = {
+    consume: (spec: ConsumerSpec): TopicHandle => {
+      specs.push(spec);
+      const queue: TopicFrame[] = [];
+      queues.push(queue);
+      return {
+        ch: spec.ch,
+        status: "live",
+        effective: {},
+        source: "live",
+        rs: undefined,
+        read: () => queue.splice(0),
+        release: () => undefined,
+      };
+    },
+  };
+  const callbacks: ((t: number) => void)[] = [];
+  vi.stubGlobal("requestAnimationFrame", (callback: (t: number) => void) =>
+    callbacks.push(callback),
+  );
+  vi.stubGlobal("cancelAnimationFrame", () => undefined);
+  setShellState({ environment });
+  act(() => setActiveClient(client as unknown as WsClientHandle));
+  /** Publishes `p` and runs one animation frame. */
+  const publish = (p: unknown): void =>
+    act(() => {
+      queues[0]?.push(frameOf(p));
+      for (const callback of callbacks.splice(0)) callback(0);
+    });
+  return { specs, publish };
+}
+
+const assertive = (): HTMLElement | null =>
+  document.querySelector<HTMLElement>('[aria-live="assertive"] p');
+
+describe("the live state (BQ-7, §3.4)", { timeout: 30_000 }, () => {
+  afterEach(() => {
+    act(() => setActiveClient(null));
+    resetShellState();
+  });
+
+  it("test_machine_view_a_live_state_that_differs_is_a_line_with_reread_never_a_read", async () => {
+    const { specs, publish } = liveWorld();
+    const requests = serve(WORLD);
+    show();
+    const root = await settled();
+    expect(specs.map((s) => s.ch)).toEqual([`machines.${LATCHED_KEY}.state`]);
+    const asked = requests.length;
+    publish(published({ state: "filled" }));
+    const line = within(root).getByText(
+      /^Live: filled at 18:00:09 UTC\. The saved snapshot shows triggered\./,
+    );
+    expect(requests).toHaveLength(asked); // a frame never reads
+    expect(polite()).toBeNull(); // nor is it said
+    fireEvent.click(within(line).getByRole("button", { name: "Re-read" }));
+    await waitFor(() => expect(requests.filter((r) => r.path === DETAIL)).toHaveLength(2), WAIT);
+  });
+
+  it("test_machine_view_the_latch_seen_live_is_a_line_and_said_once_assertively", async () => {
+    const { publish } = liveWorld();
+    const clear = { ...LATCHED_DETAIL.machine, degraded: false, chain_trips: 0 };
+    serve({ ...WORLD, [DETAIL]: { body: { ...LATCHED_DETAIL, machine: clear } } });
+    show();
+    const root = await settled();
+    publish(published());
+    // The saved side says what differs: the latch, which it shows clear (A-1137-14).
+    expect(
+      within(root).getByText(
+        /^Live: triggered, latched at 18:00:09 UTC\. The saved snapshot shows it clear\./,
+      ),
+    ).toBeVisible();
+    await waitFor(() => expect(assertive()).toHaveTextContent(`${LATCHED_KEY} latched.`), WAIT);
+  });
+
+  it("test_machine_view_a_live_state_and_latch_that_differ_say_both_sides", async () => {
+    const { publish } = liveWorld();
+    const clear = { ...LATCHED_DETAIL.machine, degraded: false, chain_trips: 0 };
+    serve({ ...WORLD, [DETAIL]: { body: { ...LATCHED_DETAIL, machine: clear } } });
+    show();
+    const root = await settled();
+    publish(published({ state: "filled" }));
+    expect(
+      within(root).getByText(
+        /^Live: filled, latched at 18:00:09 UTC\. The saved snapshot shows triggered, clear\./,
+      ),
+    ).toBeVisible();
+  });
+
+  it("test_machine_view_the_live_lines_reread_leaves_focus_on_its_heading", async () => {
+    const { publish } = liveWorld();
+    serve(WORLD);
+    show();
+    const root = await settled();
+    publish(published({ state: "filled" }));
+    const reread = within(root).getByRole("button", { name: "Re-read" });
+    // The snapshot caught up: the re-read serves the live state, so the line and its button go.
+    const caught = { ...LATCHED_DETAIL, machine: { ...LATCHED_DETAIL.machine, state: "filled" } };
+    serve({ ...WORLD, [DETAIL]: { body: caught } });
+    act(() => reread.focus());
+    fireEvent.click(reread);
+    await waitFor(() => expect(within(root).queryByText(/^Live:/)).toBeNull(), WAIT);
+    expect(document.activeElement).not.toBe(document.body);
+    expect(screen.getByRole("heading", { level: 2 })).toHaveFocus();
+  });
+
+  it("test_machine_view_the_topics_latch_never_shows_a_clear", async () => {
+    const { publish } = liveWorld();
+    serve(WORLD);
+    show();
+    const root = await settled();
+    publish(published({ degraded: false }));
+    expect(within(root).queryByText(/^Live:/)).toBeNull();
+    expect(facts(root)).toContainEqual(["Latched", "Latched — chain trips: 2"]);
+  });
+
+  it("test_machine_view_in_another_environment_subscribes_to_nothing", async () => {
+    const { specs } = liveWorld("live");
+    serve(WORLD);
+    show();
+    await settled();
+    expect(specs).toEqual([]);
+  });
 });
