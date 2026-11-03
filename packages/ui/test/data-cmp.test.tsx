@@ -21,6 +21,7 @@ import {
   IconButton,
   InfoPanel,
   Menu,
+  MetricPickerCombobox,
   NumericStepperInput,
   PageHeader,
   Pagination,
@@ -345,5 +346,27 @@ describe("E29-S04's export bar carries its catalogue id", () => {
     const host = await mount(<PrintExportBar formats={["csv", "pdf"]} onExport={noop} />);
     expect(host.querySelectorAll('[data-cmp="CMP-099"]')).toHaveLength(1);
     expect(host.querySelectorAll('[data-cmp="CMP-001"]')).toHaveLength(2);
+  });
+});
+
+describe("E37-S02's rule-engine components carry their catalogue id", () => {
+  it("CMP-157 marks exactly one root with data-cmp", async () => {
+    const host = await mount(
+      <MetricPickerCombobox
+        aria-label="Metric"
+        value={null}
+        onChange={noop}
+        options={[]}
+        onStartRecording={noop}
+        groupLabel={(category) => category}
+        estimatedText="(estimated)"
+        estimatedName={(label) => `Estimated, ${label}`}
+        unavailableText={() => "(not available)"}
+        startRecordingText="Start recording"
+        countText={(n) => `${String(n)} metrics`}
+        noResultsText="No metrics match."
+      />,
+    );
+    expect(host.querySelectorAll('[data-cmp="CMP-157"]')).toHaveLength(1);
   });
 });
