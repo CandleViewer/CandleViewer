@@ -209,6 +209,27 @@ export function armAllows(c: KeymapCommand, arm: ArmPort): boolean {
   }
 }
 
+/**
+ * Whether new exposure is open now for the arm-gated order entries (E29-S07 #1028, BQ-3 ruled
+ * (6610918411); `features/reconciliation/newExposure.ts`). Only a `requiresArm` command consults
+ * it: no exit, protective command or arm toggle ever does (C-2.6; the ruling of record
+ * 6575172489's "Binding" line). A port that throws reads closed.
+ */
+export interface ExposurePort {
+  readonly allows: () => boolean;
+}
+/** The default for a registry built without one (a unit's own): nothing more than the arm. */
+export const EXPOSURE_OPEN: ExposurePort = { allows: () => true };
+
+export function exposureAllows(c: KeymapCommand, port: ExposurePort): boolean {
+  if (!requiresArm(c)) return true;
+  try {
+    return port.allows() === true;
+  } catch {
+    return false;
+  }
+}
+
 /** A refused registration (AC1's developer-facing error). */
 export class KeymapRegistryError extends Error {
   override readonly name = "KeymapRegistryError";
@@ -238,6 +259,7 @@ export interface CommandRegistry {
 export function createCommandRegistry(
   commands: readonly KeymapCommand[] = KEYMAP,
   arm: ArmPort = UNARMED,
+  exposure: ExposurePort = EXPOSURE_OPEN,
 ): CommandRegistry {
   const byId = new Map(commands.map((c) => [c.id, c]));
   const globals = commands.filter((c) => c.context === "Global");
@@ -277,6 +299,7 @@ export function createCommandRegistry(
       const c = byId.get(id);
       const handler = handlers.get(id);
       if (c === undefined || handler === undefined || !armAllows(c, arm)) return false;
+      if (!exposureAllows(c, exposure)) return false;
       handler.run(digit);
       return true;
     },
@@ -294,7 +317,61 @@ export function setArmPort(port: ArmPort): () => void {
 /** The app's arm: the port injected now, read at each use, so a change of the arm applies with no reload. */
 export const appArm: ArmPort = { isArmed: () => injected.isArmed() };
 
-const app = createCommandRegistry(KEYMAP, appArm);
+let exposureAccount: () => string | null = () => null;
+/**
+ * E30 injects the account its one-click entries place on (the arm's account in scope), so the
+ * guard checks that account's lock and pause; the returned function puts back "none in scope".
+ */
+export function setExposureAccount(account: () => string | null): () => void {
+  exposureAccount = account;
+  return () => {
+    if (exposureAccount === account) exposureAccount = () => null;
+  };
+}
+/** E30's account in scope for the one-click entries (`null`: none), read at each use. */
+export const exposureAccountInScope = (): string | null => exposureAccount();
+
+/**
+ * The new-exposure guard the app runs for its arm-gated entries (E29-S07 #1028), injected by the
+ * app (`features/reconciliation/newExposure.ts` `installKeymapExposureGuard`, from `App`) so this
+ * module imports neither the guard nor the WS client: a keymap import stays light.
+ * `refusal` is the reason sentence the dispatcher tells, `null` when open.
+ */
+export interface ExposureGuard {
+  readonly allows: () => boolean;
+  readonly refusal: () => string | null;
+}
+/**
+ * What a refused hotkey says while no guard is installed (`KeymapHost` mounted without `App`, as
+ * in a component's own tests): PROPOSED to E09-D09 §3.1 with the `recon.*` keys (G-T2.3: a refused
+ * press is never silent).
+ */
+export const EXPOSURE_NOT_READY = "Trading controls are not ready.";
+/**
+ * Until `App` installs the guard, nothing new runs: an arm-gated entry is refused (fail
+ * closed) and says why once. No other command, an exit's included, ever consults it (C-2.6).
+ */
+export const EXPOSURE_UNINSTALLED: ExposureGuard = {
+  allows: () => false,
+  refusal: () => EXPOSURE_NOT_READY,
+};
+let exposureGuard: ExposureGuard = EXPOSURE_UNINSTALLED;
+/** Installs the app's guard; the returned function puts back the uninstalled one. */
+export function setExposureGuard(guard: ExposureGuard): () => void {
+  exposureGuard = guard;
+  return () => {
+    if (exposureGuard === guard) exposureGuard = EXPOSURE_UNINSTALLED;
+  };
+}
+/** The app's verdict text for the dispatcher (`exposureRefusal`): the reason, or `null` when open. */
+export function appExposureRefusal(): string | null {
+  return exposureGuard.refusal();
+}
+
+/** The app's guard, read at each use: the transport legs always, the account's once E30 names it. */
+export const appExposure: ExposurePort = { allows: () => exposureGuard.allows() };
+
+const app = createCommandRegistry(KEYMAP, appArm, appExposure);
 /** The app's registry. Views import `registerCommand` from `KeymapHost.tsx`, its one path for app code. */
 export const registerCommand: CommandRegistry["register"] = (id, run, isValid) =>
   app.register(id, run, isValid);
