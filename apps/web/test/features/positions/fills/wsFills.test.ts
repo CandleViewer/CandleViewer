@@ -476,6 +476,53 @@ describe("S-02, Retry, a narrowing and teardown", () => {
     expect(store.getSnapshot().withdrawn.map((w) => w.label)).toEqual(["Sub-2"]);
   });
 
+  /** A narrowing whose directory read fails; its snapshot serves Main and Sub-1, not Sub-2. */
+  async function narrowingLost(): Promise<ReturnType<typeof directory>> {
+    const accountsApi = directory();
+    start(fakeApi(), { accounts: accountsApi });
+    await settle();
+    handle()?.push(snap(snapshotBody()));
+    await settle(BACKFILL_INTERVAL_MS);
+    accountsApi.listExchangeAccounts.mockResolvedValueOnce({ kind: "unavailable" });
+    const served = snapshotBody().executions.filter((i) => i.exchange_account_id !== SUB2);
+    handle()?.push(reset("narrowed"), snap({ executions: served }));
+    await settle(COMMIT_INTERVAL_MS * 2); // the reset is published at once, the failure next
+    return accountsApi;
+  }
+  const shows = (id: string): boolean => store.getSnapshot().rows.some((r) => r.accountId === id);
+
+  it("a narrowing whose directory read fails is Could not load while Sub-2 waits", async () => {
+    await narrowingLost();
+    expect(store.getSnapshot()).toMatchObject({ status: "live", readFailed: true });
+    expect(shows(SUB2)).toBe(false);
+  });
+
+  it("Retry then reads the directory again, and the narrowing it settles brings Sub-2 back", async () => {
+    const accountsApi = await narrowingLost();
+    feed?.retry();
+    await settle(BACKFILL_INTERVAL_MS + COMMIT_INTERVAL_MS * 2);
+    expect(accountsApi.listExchangeAccounts).toHaveBeenCalledTimes(3);
+    expect(store.getSnapshot().readFailed).toBe(false);
+    expect(shows(SUB2)).toBe(true);
+  });
+
+  it("a narrowing that settles after its failed directory read is no longer Could not load", async () => {
+    await narrowingLost();
+    handle()?.push(snap(snapshotBody())); // it serves Sub-2 as well: the narrowing settles
+    await settle(COMMIT_INTERVAL_MS * 2);
+    expect(store.getSnapshot().readFailed).toBe(false);
+  });
+
+  it("a directory read that fails after a snapshot settled its narrowing shows nothing", async () => {
+    const accountsApi = directory();
+    start(fakeApi(), { accounts: accountsApi });
+    await settle();
+    accountsApi.listExchangeAccounts.mockResolvedValueOnce({ kind: "unavailable" });
+    handle()?.push(snap(snapshotBody()), reset("narrowed"), snap(snapshotBody()));
+    await settle(COMMIT_INTERVAL_MS * 2);
+    expect(store.getSnapshot().readFailed).toBe(false);
+  });
+
   it("a revocation clears the published rows at once, inside the 200 ms window", async () => {
     start();
     await settle(COMMIT_INTERVAL_MS * 2);
