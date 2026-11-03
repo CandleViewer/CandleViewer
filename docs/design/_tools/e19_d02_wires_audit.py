@@ -11,12 +11,16 @@ Usage:
   python3 -I docs/design/_tools/e19_d02_wires_audit.py --self-test    every mutation must FAIL its gate
   python3 -I docs/design/_tools/e19_d02_wires_audit.py --repin-ruled  rewrite the BQ-section pins
 
-The memo pin (MEMO_HEAD) re-pins to the memo PR's merge commit when it merges; BASE moves with a
-rebase. The BQ list (BQ_LIST_ID) is ruled by RULING_ID (ACCEPT 15 of 16, OVERRIDE BQ-2): the spec's
-BQ heading reads RULED and `--repin-ruled` refreshes the sidecar. The BQ-2 override lets this ticket
+The memo pin (MEMO_HEAD) is the memo PR's merge commit (re-pinned from its PR head in the boards
+PR; the memo is byte-identical between them); BASE moves with a rebase. The BQ list (BQ_LIST_ID)
+is ruled by RULING_ID (ACCEPT 15 of 16, OVERRIDE BQ-2): the spec's BQ heading reads RULED and
+`--repin-ruled` refreshes the sidecar. The BQ-2 override lets this ticket
 add exactly one pointer line under SCR-038 and one under SCR-039 in `14` (POINTER_REL); G-UNTOUCHED
 checks that diff line by line against the merge-base with origin/main (BASE when that is absent),
-so the gate holds on a rebased or merged tree, not only at the pinned base.
+so the gate holds on a rebased or merged tree, not only at the pinned base. The boards PR may also
+add the board PNGs (IMG_PREFIX), the board kit (KIT_REL) and that kit's lines in ALLOWED_EXTRA.
+G-BOARDS takes a §0 row as PENDING or as drawn with its board id and its own PNG at the stated
+size; once every board is drawn, the §0 heading no longer says PENDING.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ import argparse
 import difflib
 import json
 import re
+import struct
 import subprocess
 import sys
 from collections.abc import Callable
@@ -36,13 +41,21 @@ SPEC_REL = "docs/design/E19/E19-D02.md"
 TOOL_REL = "docs/design/_tools/e19_d02_wires_audit.py"
 PIN_REL = "docs/design/_tools/e19_d02_ruled_pins.txt"
 OWN_PATHS = (SPEC_REL, TOOL_REL, PIN_REL)
+# The boards PR's files beside the three above (G-UNTOUCHED).
+IMG_PREFIX = "docs/design/E19/img/E19-D02-"
+KIT_REL = "docs/design/_tools/sheets/e19-d02/"
+ALLOWED_EXTRA = frozenset({".prettierignore", "docs/design/_tools/sheets/MANIFEST.sha256"})
+DRAWN = re.compile(
+    r"drawn: board id `[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`, "
+    r"`(docs/design/E19/img/E19-D02-(\d{2})-[a-z0-9-]+\.png)`, (\d+) × (\d+)"
+)
 POINTER_REL = "docs/plan/14-screens-catalogue.md"
 POINTER_LINE = re.compile(
     r"^- \*\*Wireframes \(E19-D02\):\*\* \[E19-D02\.md\]\(\.\./design/E19/E19-D02\.md\) "
 )
 POINTER_SCREENS = ("### SCR-038 ", "### SCR-039 ")
 BASE = "67fe8b526"
-MEMO_HEAD = "94975537511c"
+MEMO_HEAD = "b005ce610"  # PR #5381's merge commit; the PR head 94975537511c holds the same memo
 MEMO_REL = "docs/design/research/e19-profiles.md"
 BQ_LIST_ID = "6576276164"
 RULING_ID: str | None = "6576655478"
@@ -346,8 +359,8 @@ def g_pin(c: Ctx) -> list[str]:
         bad.append(f"memo_head anchor {a.get('memo_head')!r} != {MEMO_HEAD}")
     if a.get("base") != BASE:
         bad.append(f"base anchor {a.get('base')!r} != {BASE}")
-    if f"`{MEMO_HEAD}`" not in c.spec or "re-pins to its merge commit" not in c.spec:
-        bad.append("the memo head and its re-pin-at-merge sentence must be stated")
+    if f"`{MEMO_HEAD}`" not in c.spec or "re-pinned to its merge commit" not in c.spec:
+        bad.append("the memo pin and its re-pinned-to-the-merge-commit sentence must be stated")
     if "MEMO" not in c.sources:
         bad.append(f"{MEMO_REL} not readable at {MEMO_HEAD} (fetch the memo PR head)")
     for text, name in ((c.spec, "spec"), (c.pins, "pins")):
@@ -452,8 +465,24 @@ def g_boards(c: Ctx) -> list[str]:
             bad.append(f"board number {row[0]} out of sequence")
         if not row[1].startswith(f"`E19-D02 / {i:02d} "):
             bad.append(f"board {row[0]} name must be `E19-D02 / NN slug`")
-        if row[3] != "PENDING":
-            bad.append(f"board {row[0]} status {row[3]!r}; only PENDING until drawn")
+        if row[3] == "PENDING":
+            continue
+        m = DRAWN.fullmatch(row[3])
+        if not m:
+            bad.append(f"board {row[0]} status {row[3]!r}; PENDING or drawn with its PNG")
+            continue
+        rel, nn, w, h = m.group(1), m.group(2), int(m.group(3)), int(m.group(4))
+        slug = row[1].strip("`").split(" ", 3)[-1]
+        png = ROOT / rel
+        if nn != row[0] or not rel.endswith(f"-{slug}.png") or not png.is_file():
+            bad.append(f"board {row[0]}: no PNG {rel} for {row[1]}")
+            continue
+        head = png.read_bytes()[:24]
+        if head[:8] != b"\x89PNG\r\n\x1a\n" or struct.unpack(">II", head[16:24]) != (w, h):
+            bad.append(f"board {row[0]}: {rel} is not a {w} × {h} PNG")
+    heading = next((ln for ln in c.spec.splitlines() if ln.startswith("## 0.")), "")
+    if all(r[3] != "PENDING" for r in rows) and "PENDING" in heading:
+        bad.append("every board is drawn but the §0 heading says PENDING")
     twins = sum(1 for r in rows if "light" in r[1])
     if twins * 3 > len(rows):
         bad.append("light twins exceed one third")
@@ -663,6 +692,8 @@ def g_untouched(c: Ctx) -> list[str]:
     for p in c.changed:
         if p == POINTER_REL:
             bad += pointer_diff(c)
+        elif p in ALLOWED_EXTRA or p.startswith((IMG_PREFIX, KIT_REL)):
+            continue
         elif p not in OWN_PATHS:
             bad.append(f"{p} changed; this ticket writes only {', '.join(OWN_PATHS)}")
         elif p.startswith(UNTOUCHED_PREFIXES):
@@ -768,6 +799,10 @@ def add_changed(c: Ctx) -> Ctx:
     return replace(c, changed=[*c.changed, "docs/plan/22-api-openapi.yaml"])
 
 
+def other_png(c: Ctx) -> Ctx:
+    return replace(c, changed=[*c.changed, "docs/design/E19/img/E19-D03-01-x.png"])
+
+
 def extra_pointer(c: Ctx) -> Ctx:
     base, cur = c.pointer
     if not cur:
@@ -790,14 +825,14 @@ _HOST = "pen" + "pot.candle" + "viewer.example"
 _HEAD = "\n## Wh" + "at this PR fi" + "xes\n"
 
 MUTATIONS: tuple[tuple[str, str, Callable[[Ctx], Ctx]], ...] = (
-    ("M-1", "G-PIN", sub_spec("memo_head=94975537511c", "memo_head=94975537511d")),
-    ("M-2", "G-PIN", sub_spec("re-pins to its merge commit", "stays pinned")),
+    ("M-1", "G-PIN", sub_spec("memo_head=b005ce610", "memo_head=94975537511c")),
+    ("M-2", "G-PIN", sub_spec("re-pinned to its merge commit", "stays pinned")),
     ("M-3", "G-PIN", sub_spec("**Inputs pinned.**", "**Inputs pinned.** " + "ab" * 20 + ".")),
     ("M-4", "G-CITE", sub_spec("(`22`:4876; MEMO C-2)", "(`22`:99999; MEMO C-2)")),
     ("M-5", "G-CITE", drift_source),
     ("M-6", "G-BQ", sub_both("Built as: §2; D02-C5.", "Then §2; D02-C5.")),
     ("M-7", "G-RULED", set_pins),
-    ("M-8", "G-BOARDS", sub_re(r"(`SCR-038/table`\s+\| )PENDING", r"\1DRAWN  ")),
+    ("M-8", "G-BOARDS", sub_re(r"(`SCR-038/table`\s+\| )drawn: board id", r"\1DRAWN: board id")),
     ("M-9", "G-BOARDS", sub_spec("audit:boards=10 ", "audit:boards=11 ")),
     ("M-10", "G-STATES", sub_spec("`SCR-038/load-failed`, ", "")),
     (
@@ -844,6 +879,22 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Ctx], Ctx]], ...] = (
             "**BQ-2 — files, tool, owner documents.** RULED: ACCEPT.",
         ),
     ),
+    (
+        "M-32",
+        "G-BOARDS",
+        sub_spec("-07-table-and-focus.png`, 1920 × 1011", "-07-table-and-focus.png`, 1920 × 1012"),
+    ),
+    (
+        "M-33",
+        "G-BOARDS",
+        sub_spec("E19-D02-05-no-history.png`, ", "E19-D02-05-no-histories.png`, "),
+    ),
+    (
+        "M-34",
+        "G-BOARDS",
+        sub_spec("## 0. Status and the boards (drawn", "## 0. Status and the boards (PENDING"),
+    ),
+    ("M-35", "G-UNTOUCHED", other_png),
 )
 
 
