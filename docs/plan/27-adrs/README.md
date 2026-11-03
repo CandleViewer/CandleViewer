@@ -44,6 +44,7 @@ Status values: `decided` (binding now), `proposed` (decision deadline stated ins
 | [ADR-0038](ADR-0038-desktop-backend-connection.md)                | Desktop shell to backend: address, `app://` allowed origin, CORS and the CSRF token path (#3519)                              | **accepted** (ratified 2026-10-29 by main-orchestrator, #2701 ledger 2 row 37; D2, D7 open) |
 | [ADR-0039](ADR-0039-audit-export-signing-key.md)                  | Audit export signing key: Ed25519 custody in M2, the injected signer, verification and rotation (#889)                        | **accepted** (ratified 2026-10-29 by main-orchestrator, #2701 ledger 2 row 35)              |
 | [ADR-0040][adr-0040]                                              | Per-trade profile overrides and profile-change propagation to open tickets (E28-K01; ticket said ADR-0016, taken)             | **accepted** (ratified 2026-10-29 by main-orchestrator, #2701 ledger 2 row 33)              |
+| [ADR-0041](ADR-0041-backup-engine-and-artefact-key.md)            | Backup engine: the sidecar and its roles, age artefacts to an offline key, the restore halt latch (#3319)                     | **proposed** (ruled under the owner's delegation, #2701; veto pending; ratify before B1)    |
 
 [adr-0040]: ADR-0040-per-trade-overrides-and-profile-propagation.md
 
