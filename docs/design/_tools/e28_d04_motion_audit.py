@@ -136,6 +136,7 @@ JOINT = (
 )
 AROWS = ("A-1", "A-2", "A-3", "A-4")
 FOCUS_OWNER = "`E47-D04`:285"
+ORDER = "else the previous, else the"
 ASPIRATION = (
     "should",
     "ideally",
@@ -526,7 +527,7 @@ def gate_boards(ctx: Ctx, r: Result) -> None:
         m = re.fullmatch(r"`E28-D04 / (\d\d) ([a-z0-9-]+)`", b[1] if len(b) > 1 else "")
         exp = f"`docs/design/E28/img/E28-D04-{m.group(1)}-{m.group(2)}.png`" if m else ""
         ok = m and len(b) == 6 and b[0] == m.group(1) == f"{i:02d}" and b[2] == exp
-        if not ok or b[3] != "dark" or b[5] != "PENDING (commit 2)":
+        if not ok or b[3] != "dark" or b[5] != "PENDING (boards)":
             r.fail("G9-BOARDS", f"board row {b[:2]}: name, export, theme or status off the pattern")
     if len(bs) != BOARDS:
         r.fail("G9-BOARDS", f"{len(bs)} boards (proposed {BOARDS} dark, no twins)")
@@ -545,6 +546,14 @@ def gate_ruled(ctx: Ctx, r: Result) -> None:
     for n, _, text in FR.findall(sec5):
         if n in ("5", "12") and FOCUS_OWNER not in text:
             r.fail("G10-RULED", f"FR-{n} does not cite E47-D04's removed-row move {FOCUS_OWNER}")
+    for n, _, text in FR.findall(sec5):
+        flat = " ".join(text.split())
+        if n in ("5", "12") and ORDER not in flat:
+            r.fail("G10-RULED", f"FR-{n} does not pin the removed-row order {ORDER!r}")
+        if n == "2" and "first credential field" not in flat:
+            r.fail("G10-RULED", "FR-2 does not name the first credential field")
+        if n == "8" and "LR-09" not in flat:
+            r.fail("G10-RULED", "FR-8 does not hand the save report's politeness to E28-D05 LR-09")
     sec6 = section(ctx.spec, 6)
     found = [x for x in rows(sec6) if x and re.fullmatch(r"A-\d+", x[0])]
     if tuple(x[0] for x in found) != AROWS:
@@ -655,6 +664,24 @@ PROBES: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
         ),
     ),
     ("G10-RULED", sub("(`E47-D04`:285). A refused-whole", "(E47-D04). A refused-whole")),
+    (
+        "G10-RULED",
+        sub(
+            "next row in the current sort, else the previous",
+            "next row in the current sort, else the first row",
+        ),
+    ),
+    (
+        "G10-RULED",
+        sub("the first\n  credential field in the step-up", "the first\n  button in the step-up"),
+    ),
+    (
+        "G10-RULED",
+        sub(
+            "E28-D05 §4.4 puts focus on the report and LR-09",
+            "E28-D05 §4.4 puts focus on the report",
+        ),
+    ),
 )
 
 
