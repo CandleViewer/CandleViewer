@@ -234,7 +234,11 @@ procedure 3.
 ## 2. Reset a user's TOTP as Owner (US-ONB-010)
 
 Preconditions: you are signed in as an Owner. You cannot reset your own TOTP (the service refuses a
-self-reset). The reset needs a step-up for action class `users`. The target is not you.
+self-reset). The reset needs a step-up for action class `users`. The target is not you. Every write
+below also sends your session's CSRF token, `-H "X-CSRF-Token: $CSRF" -H "Cookie: __Host-cv_csrf=$CSRF"`:
+there is no bearer exemption, and without both the answer is `403 csrf_token_invalid` (SR-041). `$CSRF`
+is your own session's `__Host-cv_csrf` cookie value, re-issued by `GET $API/auth/session` when it is
+missing or no longer valid; never take it from this page.
 
 1. Preview what the reset affects:
 
@@ -252,8 +256,9 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
 
    ```bash
    curl -s -X POST "$API/auth/step-up" -H "Authorization: Bearer $TOKEN" \
+     -H "X-CSRF-Token: $CSRF" -H "Cookie: __Host-cv_csrf=$CSRF" \
      -H 'Content-Type: application/json' \
-     -d '{"password":"<your password>","code":"<your current TOTP code>"}'
+     -d '{"password":"<your password>","code":"<your current TOTP code>","challenge_id":"<from the 403>"}'
    ```
 
    Expected `200` with `elevated_until` (ISO timestamp). A wrong password or wrong code gives the
@@ -263,6 +268,8 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
    (`403 session_read_only`); sign-out and "Stay signed in" (`POST /auth/session/extend`) still
    work. Every failed step-up adds 1 to `auth_stepup_failures_total`, and the
    failure that locks your account also adds 1 to `auth_lockouts_total` (metrics listener, §1).
+   Since #2304 the step-up body also carries the `challenge_id` the `403` returned. A step-up that is refused, or
+   asked again, is explained in [`admin-reauth.md`](admin-reauth.md).
 
    Both kinds of step-up trouble are audited as `auth.step_up_failed`; `outcome` tells them apart
    (#2304). A wrong password or code (or a locked account) is outcome `failure`, reason
@@ -304,6 +311,7 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
 
    ```bash
    curl -s -X POST "$API/users/$USER_ID/mfa/reset" -H "Authorization: Bearer $TOKEN" \
+     -H "X-CSRF-Token: $CSRF" -H "Cookie: __Host-cv_csrf=$CSRF" \
      -H 'Content-Type: application/json' -d '{}'
    ```
 
