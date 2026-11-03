@@ -94,11 +94,17 @@ SCOPED_ROLES: Final = frozenset({"manager", "viewer"})
 
 
 def system_view(
-    body: object, principal: PrincipalSnapshot | None, *, flag_visible: FlagVisible | None = None
+    body: object,
+    principal: PrincipalSnapshot | None,
+    *,
+    flag_visible: FlagVisible | None = None,
+    now_ms: int | None = None,
 ) -> Mapping[str, Any] | None:
     """What `principal` receives of the `system` frame `body`: `body` itself, a copy holding only
     its role-neutral fields, or `None` for nothing. `flag_visible` decides the flag keys a Manager
-    or Viewer may learn; without it they learn none. Never changes `body`."""
+    or Viewer may learn; without it they learn none. `now_ms`, the gateway's time on receipt,
+    stamps a Manager's or Viewer's `cleared` safety frame; without it that frame is nothing
+    (#2302). Never changes `body`."""
     if principal is None or not isinstance(body, Mapping):
         return None
     kind = body.get("kind")
@@ -115,7 +121,7 @@ def system_view(
     if _is_faulty(kind, body):
         return None  # a kill-switch frame is its state, an account notice its accounts
     if kind == _SAFETY:  # its own accounts' count, since-time and state (#2302)
-        return safety_view.frame_view(body, principal)
+        return safety_view.frame_view(body, principal, now_ms=now_ms)
     view = body
     for key in body:
         if key not in fields or not _is_neutral(key, body[key], principal.roles, flag_visible):

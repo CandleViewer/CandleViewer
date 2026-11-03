@@ -4722,8 +4722,10 @@ on no other kind.
   is re-enabled).
 - `since_ms` (epoch ms, server clock): on a `raised` frame and on its count updates, the time
   the class was raised in this episode, as the connection sees it (below; unchanged by count
-  updates); on a `cleared` frame, the time it cleared. After a server restart the episode begins
-  again when the emitter re-reports it.
+  updates); on a `cleared` frame, the time it cleared: for a Manager's or Viewer's view of an
+  account-keyed class, the gateway's own time when the change that emptied its view reached it
+  (or the scope change's time, below), never the publisher's event time, which may be another
+  account's. After a server restart the episode begins again when the emitter re-reports it.
 - Each emitter keeps its existing detailed alert (`NakedPositionAlert`, B1's
   `raise_naked_position_alert`, B20's lockout alert, E34's `unwind_incomplete`, E40's
   `alerts`). This frame is a summary that records; it never enforces anything (C-2.21), and a
@@ -4769,11 +4771,14 @@ Coalescing (§8.2): per (`safety_class`, `environment`), a frame is sent on each
 raise is sent at once, never delayed. A clear waits a **dwell** of 1 000 ms: a subject cleared
 and raised again inside the dwell never left the count, so the episode and its `since_ms` go on
 and at most a count update is sent. So there is at most one `raised`/`cleared` pair per class and
-environment per 1 000 ms. Between transitions, a change of `affected_count` is a count update
-(`state` `raised` again), at most one per class and environment per 1 000 ms, last-write-wins, so
-the one sent carries the latest count; a transition discards a pending count update of its key.
-The publisher that owns the dwell and the window is `24-internal-schemas.md` §8.13; the gateway
-merges no `system` frame. Like every `system` frame, a `safety` frame rides the priority lane and
+environment per 1 000 ms. Transitions and count updates are judged per connection, on its own
+view (C-12.4): its view turning `raised` or `cleared` is a transition, and between transitions a
+change of its `affected_count` is a count update (`state` `raised` again), at most one per class
+and environment per connection per 1 000 ms, last-write-wins, so the one sent carries the latest
+count; a transition discards a pending count update of its key. So whether and when a connection
+is sent a frame follows from the accounts in its scope alone. The publisher owns the dwell and
+hands every change over at once; each connection's window is the gateway's
+(`24-internal-schemas.md` §8.13 rules 3 to 5), and the gateway merges no `system` frame. Like every `system` frame, a `safety` frame rides the priority lane and
 is never dropped by the §8.4 ladder. PROPOSED (#2302, the security review's M2): the issue's
 "one frame per raised/cleared transition per class" had no dwell.
 

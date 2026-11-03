@@ -1,11 +1,15 @@
-"""SR-188 (#3125): `_Connection.push_system` is the one place a `system` frame is queued.
+"""SR-188 (#3125): `_Connection.push_system` is the one door a `system` frame is queued through.
 
 It asks `ws/system_filter.system_view` what the socket's principal may receive, so a producer that
 queued a frame of its own on the channel, or named `push_system` outside its senders, would
 skip the per-role filter (`23-ws-protocol.md` §15.9, S15). Over every module of `candleviewer`:
 
 - a frame on the `system` channel (a dict literal whose `"ch"` is the topic, whatever its other
-  keys, or a `ch=` argument) is built only by `_Connection.push_system` in `ws/gateway.py`. A
+  keys, or a `ch=` argument) is built only by `_Connection._queue_system` in `ws/gateway.py`,
+  which takes views already cut by `system_view`, and is named only by `_Connection.push_system`
+  and, for the safety frames of #2302, `_Connection.reconcile_safety` (a change of the socket's
+  scope) and `_Connection._safety_due` (a count-update window's end), each of which cuts what it
+  hands over with `system_view` for the principal then. A
   `sub_ok` result row names the topic without being a frame: it has no `"t"`, and has `"ok"` or
   `"sub_id"`. The topic is `"system"`, `SYSTEM_TOPIC` (as an import alias too), a name or an
   attribute a module copies it to, at any scope (`TOPIC = SYSTEM_TOPIC`, `self.chan = ...`,
@@ -16,13 +20,12 @@ skip the per-role filter (`23-ws-protocol.md` §15.9, S15). Over every module of
 - `push_system` is named, called or passed on, only by `GatewayHub.broadcast_system`,
   `GatewayHub.shutdown`, `run_auth` (the `system` snap, §12.1 #4992, and the notices after the
   first `auth_ok`),
-  `GatewayHub.system_sessions` (E42-T03: it hands each socket's `push_system` to the flag push),
-  `_Connection.reconcile_safety` (#2302: a change of the socket's scope queues, through
-  `push_system`, the safety frames its new scope calls for, cut by `system_view`) and
-  `_send` in `admin/flags/push.py` (E42-T03: `FlagPush.flag_changed` and `notify_maintenance`
+  `GatewayHub.system_sessions` (E42-T03: it hands each socket's `push_system` to the flag push)
+  and `_send` in `admin/flags/push.py` (E42-T03: `FlagPush.flag_changed` and `notify_maintenance`
   resolve each session's frame, so there is no one body to broadcast; `push_system` still
   filters it, the path B3's review asked for). A new caller of `_send` is an RBAC change too.
-  The string "push_system" counts as a name (`getattr(conn, "push_system")`).
+  The string "push_system" counts as a name (`getattr(conn, "push_system")`), and so does
+  "_queue_system".
 
 A new producer calls `GatewayHub.broadcast_system`. Any other reference fails here and must be
 reviewed as an RBAC change first (C-12.4), as for `test_key_selfcheck_store_callers.py`.
@@ -52,14 +55,19 @@ import pytest
 import candleviewer
 
 PKG = Path(candleviewer.__file__).resolve().parent
-BUILDERS = {("ws/gateway.py", "_Connection.push_system")}
+BUILDERS = {("ws/gateway.py", "_Connection._queue_system")}
+#: The functions that name `_queue_system`, the builder's private door (#2302, SR-188).
+QUEUERS = {
+    ("ws/gateway.py", "_Connection.push_system"),
+    ("ws/gateway.py", "_Connection.reconcile_safety"),
+    ("ws/gateway.py", "_Connection._safety_due"),
+}
 SENDERS = {
     ("ws/gateway.py", "GatewayHub.broadcast_system"),
     ("ws/gateway.py", "GatewayHub.shutdown"),
     ("ws/gateway.py", "GatewayHub.system_sessions"),
     ("ws/gateway.py", "push_flag_snapshot"),
     ("ws/gateway.py", "run_auth"),
-    ("ws/gateway.py", "_Connection.reconcile_safety"),
     ("admin/flags/push.py", "_send"),
 }
 #: A `sub_ok` result row has no `t` and one of these.
@@ -192,16 +200,18 @@ def _builds_frame(node: ast.AST, names: set[str], chs: set[str]) -> bool:
     return isinstance(node, ast.keyword) and node.arg == "ch" and _is_system(node.value, names)
 
 
-def _names_push_system(node: ast.AST) -> bool:
+def _names(node: ast.AST, method: str = "push_system") -> bool:
     if isinstance(node, ast.Constant):  # getattr(conn, "push_system")
-        return bool(node.value == "push_system")
-    return isinstance(node, ast.Attribute) and node.attr == "push_system"
+        return bool(node.value == method)
+    return isinstance(node, ast.Attribute) and node.attr == method
 
 
-def _sites(source: str) -> tuple[set[str], set[str]]:
-    """(functions that build a frame on the system channel, functions that name `push_system`)."""
+def _sites(source: str) -> tuple[set[str], set[str], set[str]]:
+    """(functions that build a frame on the system channel, functions that name `push_system`,
+    functions that name `_queue_system`)."""
     built: set[str] = set()
     named: set[str] = set()
+    queued: set[str] = set()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SyntaxWarning)  # an applied migration may carry one
         tree = ast.parse(source)
@@ -209,30 +219,44 @@ def _sites(source: str) -> tuple[set[str], set[str]]:
     for node, scope in _scoped(tree):
         if _builds_frame(node, names, chs):
             built.add(scope)
-        elif _names_push_system(node):
+        elif _names(node):
             named.add(scope)
-    return built, named
+        elif _names(node, "_queue_system"):
+            queued.add(scope)
+    return built, named, queued
 
 
-def _scan(root: Path = PKG) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
-    built: set[tuple[str, str]] = set()
-    named: set[tuple[str, str]] = set()
+Sites = set[tuple[str, str]]
+
+
+def _scan(root: Path = PKG) -> tuple[Sites, Sites, Sites]:
+    built: Sites = set()
+    named: Sites = set()
+    queued: Sites = set()
     for path in root.rglob("*.py"):
-        found_built, found_named = _sites(path.read_text(encoding="utf-8"))
+        found_built, found_named, found_queued = _sites(path.read_text(encoding="utf-8"))
         module = path.relative_to(root).as_posix()
         built |= {(module, scope) for scope in found_built}
         named |= {(module, scope) for scope in found_named}
-    return built, named
+        queued |= {(module, scope) for scope in found_queued}
+    return built, named, queued
 
 
-def test_a_frame_on_the_system_channel_is_built_only_by_push_system() -> None:
-    built, _ = _scan()
-    assert built == BUILDERS, "a frame built beside push_system skips the SR-188 filter (C-12.4)"
+def test_a_frame_on_the_system_channel_is_built_only_by_the_queue() -> None:
+    built, _, _ = _scan()
+    assert built == BUILDERS, "a frame built beside _queue_system skips the SR-188 filter (C-12.4)"
 
 
 def test_push_system_is_named_only_by_its_senders() -> None:
-    _, named = _scan()
+    _, named, _ = _scan()
     assert named == SENDERS, "push_system named outside its senders skips the SR-188 filter"
+
+
+def test_the_queue_is_named_only_by_push_system_and_the_safety_paths() -> None:
+    """#2302: the safety frames a scope change or a window's end calls for are already cut;
+    nothing else may hand the builder a view."""
+    _, _, queued = _scan()
+    assert queued == QUEUERS, "_queue_system named outside its callers skips the SR-188 filter"
 
 
 @pytest.mark.parametrize(
@@ -318,7 +342,7 @@ def test_a_file_is_parsed_whatever_text_it_holds(tmp_path: Path) -> None:
     """No text prefilter: `"sys" "tem"` holds none of the words a search for the topic finds."""
     (tmp_path / "ws").mkdir()
     (tmp_path / "ws" / "x.py").write_text("def f(c):\n    c.push({'t': 'd', 'ch': 'sys' 'tem'})\n")
-    assert _scan(tmp_path) == ({("ws/x.py", "f")}, set())
+    assert _scan(tmp_path) == ({("ws/x.py", "f")}, set(), set())
 
 
 @pytest.mark.parametrize(
@@ -362,6 +386,18 @@ def test_a_frame_on_another_channel_or_a_result_row_is_not_found(source: str) ->
 )
 def test_a_reference_to_push_system_is_found_in_its_function(source: str, scope: str) -> None:
     assert _sites(source)[1] == {scope}
+
+
+@pytest.mark.parametrize(
+    ("source", "scope"),
+    [
+        ("class A:\n    def m(self):\n        self._queue_system([])", "A.m"),
+        ("sinks.append(conn._queue_system)", "<module>"),  # passed on, not called
+        ("send = getattr(conn, '_queue_system')", "<module>"),  # by name
+    ],
+)
+def test_a_reference_to_the_queue_is_found_in_its_function(source: str, scope: str) -> None:
+    assert _sites(source)[2] == {scope}
 
 
 def test_the_definition_and_the_hubs_own_door_are_not_references() -> None:

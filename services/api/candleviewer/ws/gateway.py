@@ -230,7 +230,12 @@ from candleviewer.ws.revocation import (
     user_disabled_bye,
     ws_revoked_total,
 )
-from candleviewer.ws.safety_view import SAFETY_CLASSES, SafetyEdges, dropped_items
+from candleviewer.ws.safety_view import (
+    SAFETY_CLASSES,
+    SafetyEdges,
+    dropped_items,
+    is_unkeyed,
+)
 from candleviewer.ws.sequencing import TopicEmitter
 from candleviewer.ws.system_filter import (
     FlagVisible,
@@ -740,8 +745,9 @@ class _Connection:
         self.system_held: deque[dict[str, Any]] = deque(maxlen=SYSTEM_HELD_MAX)
         self.system_held_overflowed = False  # one warning a socket; every drop is counted
         #: §15.9 (#2302): the safety state this socket was last sent per class and environment,
-        #: so it gets a `cleared` only after its own `raised`, and no frame that changes nothing.
-        self.safety_edges = SafetyEdges()
+        #: so it gets a `cleared` only after its own `raised`, no frame that changes nothing, and
+        #: count updates windowed on its own view. Its timers end at teardown (`stop_close_timer`).
+        self.safety_edges = SafetyEdges(call_later=self._call_later, due=self._safety_due)
         #: §15.9 (E42-T03): the flag keys a Manager or Viewer may learn; `None`, no key.
         self.flag_visible = flag_visible
         self.auth_failures = 0
@@ -885,10 +891,16 @@ class _Connection:
             self.arm_close_timer(self.tick_s if failed else CLOSE_REARM_MIN_S)
 
     def stop_close_timer(self) -> None:
-        """Teardown (C-2.18, TG5): the close and flush timers are cancelled, none armed after."""
+        """Teardown (C-2.18, TG5): the close and flush timers and the safety windows (#2302) are
+        cancelled, none armed after."""
         self.timer_stopped = True
         self.arm_close_timer()
         self.stop_flush_deadline()
+        self.safety_edges.stop()
+
+    def _call_later(self, delay: float, callback: Callable[[], None]) -> asyncio.TimerHandle:
+        """#2302: a safety window's end on the running loop; `SafetyEdges` holds and cancels it."""
+        return asyncio.get_running_loop().call_later(delay, callback)
 
     def arm_flush_deadline(self, delay: float) -> None:
         """#415: end the writer `delay` s from now (loop clock) if it still runs then: armed once,
@@ -943,13 +955,7 @@ class _Connection:
         if self.lifecycle.authenticated:
             self.push(frame)
 
-    def push_system(
-        self,
-        body: dict[str, Any],
-        *,
-        snap: bool = False,
-        rescoped: Sequence[Mapping[str, Any]] = (),
-    ) -> None:
+    def push_system(self, body: dict[str, Any], *, snap: bool = False) -> None:
         """Queue `body` on `system` as this socket's principal may see it now (SR-188, §15.9):
         whole, its role-neutral fields only, or nothing, and then it takes no `s` (S3). A frame
         left out because of what it is or who the socket is, not its role's cut, is counted by
@@ -959,15 +965,14 @@ class _Connection:
         frames held for it as deltas. Until it is queued, a frame the principal may see is held,
         not queued, so no delta ever precedes the snap. A second snap is ignored; a snap the
         principal may see none of (no role) leaves the socket unsnapped, so a later `auth_ok`
-        may send it.
+        may send it."""
+        self._queue_system(self._system_views(body, snap))
 
-        #2302 (§15.9): `rescoped` queues, in place of `body`, the safety frames a change of the
-        socket's scope calls for (`reconcile_safety`), each already cut by `system_view` for its
-        principal now."""
-        if rescoped:
-            views: list[tuple[str, Mapping[str, Any]]] = [("d", cut) for cut in rescoped]
-        else:
-            views = self._system_views(body, snap)
+    def _queue_system(self, views: Sequence[tuple[str, Mapping[str, Any]]]) -> None:
+        """SR-188: the one place a `system` frame is built, each `s` in turn. Its callers hand it
+        views already cut by `system_view` for the principal now: `push_system`, and for the
+        safety frames of #2302 only `reconcile_safety` and `_safety_due`
+        (`test_system_frame_callers.py` holds that list)."""
         for kind, cut in views:
             self.system_seq += 1  # the snap's is 1: no delta took one before it
             self.push(
@@ -985,7 +990,7 @@ class _Connection:
         self, body: dict[str, Any], snap: bool
     ) -> list[tuple[str, Mapping[str, Any]]]:
         """What `push_system` queues of `body`: the cut views, snap first, held deltas after."""
-        self.safety_edges.observe(body)  # #2302: every valid safety body, whatever the cut
+        self.safety_edges.observe(body)  # #2302: a body the fault check accepts, whatever the cut
         view = self._system_view(body)
         if view is None:
             return []
@@ -1023,21 +1028,37 @@ class _Connection:
         it no longer may (`SafetyEdges.rescope`)."""
         if not self.system_snapped or self.authz is None:
             return
-        principal = self.authz.principal
+        principal, now = self.authz.principal, self.wall_ms()
         rescoped = self.safety_edges.rescope(
-            lambda body: system_view(body, principal, flag_visible=self.flag_visible),
-            self.wall_ms(),
+            lambda body: system_view(body, principal, flag_visible=self.flag_visible, now_ms=now),
+            now,
         )
         if rescoped:  # nothing to queue is no call: a scope change with no safety state is quiet
-            self.push_system({}, rescoped=rescoped)
+            self._queue_system([("d", cut) for cut in rescoped])
+
+    def _safety_due(self, key: tuple[str, str]) -> None:
+        """§15.9 (#2302): the count-update window of `key` on this socket ended with an update
+        held (`SafetyEdges`): the latest, cut under the principal now, unless a close is under
+        way or the socket has no principal."""
+        if self.closing or self.authz is None:
+            return
+        principal, now = self.authz.principal, self.wall_ms()
+        sent = self.safety_edges.release(
+            key,
+            lambda body: system_view(body, principal, flag_visible=self.flag_visible, now_ms=now),
+        )
+        if sent is not None:
+            self._queue_system([("d", sent)])
 
     def _system_view(self, body: dict[str, Any]) -> Mapping[str, Any] | None:
         """The principal's §15.9 view of `body` now, counting a frame withheld for what it is
         or who the socket is (`withheld_reason`), never for its role's cut."""
         principal = None if self.authz is None else self.authz.principal
-        view = system_view(body, principal, flag_visible=self.flag_visible)
+        view = system_view(body, principal, flag_visible=self.flag_visible, now_ms=self.wall_ms())
         if view is None and (reason := withheld_reason(body, principal)) is not None:
             cv_ws_system_frames_withheld_total.labels(reason=reason).inc()
+        elif view is not None and is_unkeyed(view):  # #2302: no role, the Owner included
+            cv_ws_system_frames_withheld_total.labels(reason="invalid_body").inc()
         elif (
             view is not None
             and principal is not None
