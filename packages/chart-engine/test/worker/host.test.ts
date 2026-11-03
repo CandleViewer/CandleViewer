@@ -263,6 +263,21 @@ describe("backpressure", () => {
     host.dispose();
   });
 
+  it("an idle lane holds no in-flight entry, and a removed series leaves none (E12-S11)", () => {
+    const host = hostOn(workerDoc());
+    settle();
+    host.command({ k: "addSeries", series: 7, kind: "candles", pane: 0 });
+    for (let i = 0; i < 3; i += 1) host.data("bars", "append", one().layout, one().buffer, 7);
+    host.data("bars", "append", one().layout, one().buffer); // the series-less lane too
+    vi.advanceTimersByTime(0);
+    expect(host.inFlightLanes()).toBe(2); // bars#7 (two in flight, one held) and bars
+    host.command({ k: "removeSeries", series: 7 });
+    expect(host.inFlightLanes()).toBe(1); // bars#7 forgotten at once, its held batch dropped
+    settle(); // the two in-flight bars#7 batches and the bars batch are acked late
+    expect(host.inFlightLanes()).toBe(0); // no `bars#7` → 0 entry comes back, nor `bars` → 0
+    host.dispose();
+  });
+
   it("drops the oldest held-back batch beyond the queue bound", () => {
     const host = hostOn(workerDoc());
     settle();

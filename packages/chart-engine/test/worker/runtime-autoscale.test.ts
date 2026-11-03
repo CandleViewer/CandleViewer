@@ -1,7 +1,9 @@
 // E12-S11 PR A1 through the runtime: every series' `BarStore` is a price source of its pane (26
 // §3.5, :390, the "autoscale wiring"), the main series first. Autoscale fits the real data with
 // no injected `priceSources`; it fits the drawn candles (Heikin-Ashi included, refit on a kind
-// switch); a removed series stops contributing; a degraded-2d re-init keeps the wiring.
+// switch); a line kind fits its closes alone; a secondary series after the visible bars adds
+// nothing; the percent anchor stays on the real close under Heikin-Ashi (R-4); a removed series
+// stops contributing; a degraded-2d re-init keeps the wiring.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   encodeCandles,
@@ -31,6 +33,21 @@ const flat = (m: number, n: number, level: number, origin = 50_000): CandleColum
   priceOrigin: origin,
   tickSize: 0.1,
 });
+/** `n` bars from minute `m`: open = low = level, high = level + 20, close = level + 4. */
+const tall = (m: number, n: number, level: number): CandleColumns => ({
+  ...flat(m, n, level),
+  high: new Int32Array(n).fill(level + 20),
+  close: new Int32Array(n).fill(level + 4),
+});
+/** `n` bars from minute `m` with wicks 500 ticks either side and closes level + (i mod 5). */
+const wicked = (m: number, n: number, level: number): CandleColumns => ({
+  ...flat(m, n, level),
+  high: new Int32Array(n).fill(level + 500),
+  low: new Int32Array(n).fill(level - 500),
+  close: Int32Array.from({ length: n }, (_, i) => level + (i % 5)),
+});
+const anchor = (): number | null | undefined =>
+  out.filter((m): m is Viewport => m.t === "viewport").at(-1)?.anchorTick;
 const join = (a: CandleColumns, b: CandleColumns): CandleColumns => {
   const cat = <T extends Int32Array | Float64Array | Float32Array>(x: T, y: T): T => {
     const r = new (x.constructor as new (n: number) => T)(x.length + y.length);
@@ -137,6 +154,56 @@ describe("Scenario: autoscale follows the series' own data", () => {
     cmd({ k: "setSeriesKind", series: 0, kind: "candles" });
     frame();
     expect(priceWindow()[0]).toBeGreaterThan(999);
+  });
+
+  it("a line kind fits its closes alone; candles refit the wicks (closes-only mode)", () => {
+    cmd({ k: "addSeries", series: 0, kind: "candles" });
+    send(0, "replace", wicked(0, 50, 1000));
+    frame();
+    expect(priceWindow()[0]).toBeLessThanOrEqual(500); // the candles draw the wicks
+    for (const kind of ["line", "area", "baseline"]) {
+      cmd({ k: "setSeriesKind", series: 0, kind });
+      frame();
+      expect(priceWindow()[0], kind).toBeGreaterThan(990); // closes 1000..1004 only
+      expect(priceWindow()[1], kind).toBeLessThan(1015);
+    }
+    cmd({ k: "setSeriesKind", series: 0, kind: "candles" });
+    frame();
+    expect(priceWindow()[1]).toBeGreaterThanOrEqual(1500);
+  });
+
+  it("a series added as a line kind is fitted to its closes from the first batch", () => {
+    cmd({ k: "addSeries", series: 0, kind: "area" });
+    send(0, "replace", wicked(0, 50, 1000));
+    frame();
+    expect(priceWindow()[0]).toBeGreaterThan(990);
+    expect(priceWindow()[1]).toBeLessThan(1015);
+  });
+
+  it("a secondary series that starts after the visible bars does not widen the window", () => {
+    cmd({ k: "addSeries", series: 0, kind: "candles" });
+    cmd({ k: "addSeries", series: 1, kind: "candles" });
+    send(0, "replace", flat(0, 50, 1000));
+    send(1, "replace", flat(200, 10, 5000)); // minutes 200..209: past the time map's last bar
+    frame();
+    expect(priceWindow()[0]).toBeGreaterThan(999);
+    expect(priceWindow()[1]).toBeLessThan(1003);
+  });
+
+  it("the percent anchor stays on the real close with Heikin-Ashi on (R-4)", () => {
+    cmd({ k: "addSeries", series: 0, kind: "candles" });
+    // Real close 1004 from bar 150 on; there the HA close is (O + H + L + C) / 4 = 1006, and the
+    // HA opens close the gap from tick 0 by halves (the visible lows drop: HA is drawing).
+    send(0, "replace", join(flat(0, 150, 0), tall(150, 50, 1000)));
+    const from = T0 + 151 * MIN;
+    cmd({ k: "setViewport", timeStart: from, timeEnd: from + 30 * MIN });
+    cmd({ k: "setPriceScale", pane: 0, mode: "percent" });
+    frame();
+    expect(anchor()).toBe(1004);
+    cmd({ k: "setSeriesKind", series: 0, kind: "candles", heikinAshi: true });
+    frame();
+    expect(priceWindow()[0]).toBeLessThan(900); // the drawn HA candles are fitted ...
+    expect(anchor()).toBe(1004); // ... while the anchor reads the store's real close
   });
 
   it("removing the main series leaves the window where it was, then a new one is fitted", () => {

@@ -3,7 +3,9 @@
 // (1) the extent and minLow are the brute-force min / max of the DRAWN instance words (the ring:
 // real bars, or Heikin-Ashi while it is on), over the visible slice; (2) a series that is not the
 // viewport's time map is read through time, and in the pane's price frame (its own origin and
-// tick converted, rounded outward); (3) `close` is the store's real close (R-4).
+// tick converted, rounded outward), its `minLow` and `close` likewise; (3) `close` is the store's
+// real close (R-4); (4) in closes-only mode (line, area, baseline) the extent and minLow read the
+// close word alone; (5) a secondary series off the visible part of the map reads by time.
 import { describe, expect, it } from "vitest";
 import { mulberry32 } from "../../bench/fixtures/rng.mjs";
 import { CandleRing, HaRing, SeriesPriceSource } from "../../src/layers/index.js";
@@ -36,14 +38,14 @@ function seriesOf(b: BarBatch, ha: boolean): { store: BarStore; ring: CandleRing
   return { store, ring };
 }
 
-/** min low / max high of the drawn words over bars [a, b). */
-function drawn(ring: CandleRing, a: number, b: number): [number, number] | null {
+/** min low / max high (or min / max close) of the drawn words over bars [a, b). */
+function drawn(ring: CandleRing, a: number, b: number, closes = false): [number, number] | null {
   let lo = Infinity;
   let hi = -Infinity;
   for (let i = Math.max(0, a); i < Math.min(ring.length, b); i += 1) {
     const w = ringBar(ring, i);
-    lo = Math.min(lo, w[2] as number);
-    hi = Math.max(hi, w[1] as number);
+    lo = Math.min(lo, w[closes ? 3 : 2] as number);
+    hi = Math.max(hi, w[closes ? 3 : 1] as number);
   }
   return lo <= hi ? [lo, hi] : null;
 }
@@ -91,7 +93,74 @@ describe("property: SeriesPriceSource reads the drawn extent of the main series"
       const conv = (t: number): number => (49_990 + 0.2 * t - 50_000) / 0.1;
       expect(out[0]).toBe(Math.floor(conv((want as number[])[0] as number)));
       expect(out[1]).toBe(Math.ceil(conv((want as number[])[1] as number)));
+      // Cross-frame: the guard's minimum floors the drawn low; the anchor rounds the real close.
+      expect(src.minLow()).toBe(
+        Math.floor(conv((drawn(sec.ring, 0, 12) as number[])[0] as number)),
+      );
+      const k = Math.floor(rng() * 60);
+      const s = sec.store;
+      const real = s.columns.close[(s.ringHead + Math.floor(k / 5)) & (s.capacity - 1)] as number;
+      expect(src.close(k)).toBe(Math.round(conv(real)));
     }
+  });
+
+  it("closes-only mode (line, area, baseline) reads the close word alone", () => {
+    const rng = mulberry32(0xc105e);
+    const out = new Float64Array(2);
+    for (let c = 0; c < CASES; c += 1) {
+      const n = 1 + Math.floor(rng() * 120);
+      const { store, ring } = seriesOf(randomBars(rng, 0, n), false); // a line kind's ring is plain
+      const vp = new ChartViewport(store);
+      vp.setPriceInfo(0, store.priceOrigin, store.tickSize);
+      const src = new SeriesPriceSource(store, ring, vp, 0);
+      expect(src.minLow()).toBe(drawn(ring, 0, n)?.[0]); // cached in high / low mode first
+      src.setClosesOnly(true);
+      expect(src.closes).toBe(true);
+      const i0 = Math.floor(rng() * (n + 20)) - 10;
+      const i1 = i0 + Math.floor(rng() * 60);
+      const want = drawn(ring, i0, i1, true);
+      expect(src.extent(i0, i1, out), `seed case ${c}`).toBe(want !== null);
+      if (want !== null) expect([out[0], out[1]], `seed case ${c}`).toEqual(want);
+      // The mode switch drops the cached minimum by itself, before any bump.
+      expect(src.minLow(), `seed case ${c}`).toBe(drawn(ring, 0, n, true)?.[0]);
+      src.setClosesOnly(false);
+      expect(src.minLow(), `seed case ${c}`).toBe(drawn(ring, 0, n)?.[0]);
+    }
+  });
+});
+
+describe("a secondary series off the visible part of the time map", () => {
+  const out = new Float64Array(2);
+  /** A 60-bar main map (minutes 0 to 59) and a 1-minute secondary from minute `m`, `n` bars. */
+  function pair(m: number, n: number): SeriesPriceSource {
+    const main = seriesOf(bars(0, 60), false);
+    const sec = seriesOf(bars(m, n), false);
+    const vp = new ChartViewport(main.store);
+    vp.setPriceInfo(0, 50_000, 0.1);
+    return new SeriesPriceSource(sec.store, sec.ring, vp, 0);
+  }
+
+  it("one that starts after the visible bars contributes nothing there", () => {
+    const src = pair(100, 10);
+    expect(src.extent(0, 60, out)).toBe(false);
+    expect(src.close(59)).toBeNaN();
+    expect(src.minLow()).toBe(98); // the guard reads every bar held: bars(100) lows are 98 up
+  });
+
+  it("one that starts inside the visible bars reads from its first bar", () => {
+    const src = pair(30, 10); // opens 30..39: lows 28..37, highs 33..42
+    expect(src.extent(0, 20, out)).toBe(false);
+    expect(src.close(29)).toBeNaN();
+    expect(src.extent(20, 35, out)).toBe(true);
+    expect([out[0], out[1]]).toEqual([28, 37]); // its bars 0..4 (minutes 30..34)
+    expect(src.close(34)).toBe(35);
+  });
+
+  it("one that ended before the visible bars carries its last bar (timeToIndex, at or before)", () => {
+    const src = pair(-20, 10); // minutes -20..-11: opens -20..-11
+    expect(src.extent(10, 20, out)).toBe(true);
+    expect([out[0], out[1]]).toEqual([-13, -8]); // its last bar only (open -11)
+    expect(src.close(10)).toBe(-10);
   });
 });
 
