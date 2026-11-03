@@ -271,12 +271,16 @@ async def test_a_rule_entry_answer_carries_its_sized_notional(
 
 @pytest.mark.parametrize(
     "over",
-    [{"version": 0}, {"version": True}, {"node_id": ""}, {"armed_by_role": None}],
-    ids=["version-0", "version-bool", "no-node", "armer-without-role"],
-)
+    [
+        {"version": 0}, {"version": True}, {"node_id": ""}, {"armed_by_role": None},
+        {"armed_by_role": "admin"},
+    ],
+    ids=["version-0", "version-bool", "no-node", "armer-without-role", "role-outside-the-set"],
+)  # fmt: skip
 def test_a_rule_origin_names_its_version_its_node_and_its_armer(over: dict[str, Any]) -> None:
     """`RuleOrigin` is built by the server from the fire it serves: a version from 1, a node, and
-    an armer with its role or neither; anything else is a defect, refused at construction."""
+    an armer with its role, one of the closed role set (`Role`, E35-T11's carry 3), or neither;
+    anything else is a defect, refused at construction."""
     with pytest.raises(ValueError):
         replace(ORIGIN, **over)
     assert replace(ORIGIN, armed_by=None, armed_by_role=None).armed_by is None

@@ -311,19 +311,16 @@ def _runtime() -> FeatureFlagsRuntime:
 class _Views:
     rules_enabled: Callable[[], bool]
     order_entry_killed: Callable[[], bool]
-
-
-class _RolledOut(RuleSwitchesBinding):
-    """The composition root's switches with the rollout port on, as E35-T11 will bind it, so an
-    OMS action reaches the checks after check 2."""
-
-    def oms_actions(self) -> bool:
-        return True
+    #: E35-T11: the rollout flag's view, off unless a test turns it on.
+    rules_oms_actions: Callable[[], bool] = lambda: False
 
 
 def _bound(views: _Views, *, rolled_out: bool = True) -> RuleSwitchesBinding:
-    kind = _RolledOut if rolled_out else RuleSwitchesBinding
-    return kind(views, InterimKillSwitch().refusal)
+    """The composition root's switches over `views`, the rollout view on unless `rolled_out` is
+    false, so an OMS action reaches the checks after check 2 (E35-T11 reads the view)."""
+    if rolled_out:
+        views = replace(views, rules_oms_actions=lambda: True)
+    return RuleSwitchesBinding(views, InterimKillSwitch().refusal)
 
 
 async def test_an_unreadable_kill_switch_flag_blocks_as_engaged() -> None:
@@ -988,16 +985,17 @@ async def test_the_allowance_is_the_smaller_remainder_of_the_fire_and_the_utc_da
     assert days.asked == [(RULE, "2027-01-01"), (RULE, "2027-01-02")]
 
 
-async def test_only_an_accepted_answer_feeds_the_allowance_ledger() -> None:
-    """24 §11.7 (R1C2-04): the ledger reads the notional of an `accepted` answer alone, the one
-    E35-T11's handlers name it on; an answer of unknown outcome lowers no remainder, what the
-    ledger takes from one being E35-T11's carry (#5003)."""
+async def test_an_unknown_outcome_counts_at_its_allowance_never_at_a_named_notional() -> None:
+    """24 §11.7 (R1C2-04; the ledger ruling of #5003, BQ-5's cautious side): the ledger reads an
+    `accepted` answer's notional, and counts an entry whose outcome is left `unknown` at the
+    allowance it was sent under, whatever notional its answer names, as the order may stand: the
+    fire's allowance is then spent, and its next entries are refused before any hand-over."""
     unknown = HandlerAnswer("no_answer", error_code="timeout", notional_usd=Decimal("60"))
     gated = Gated(limits=RuleLimits(max_notional_per_fire=Decimal("100")),
                   answers={"place_order": [unknown, _SENT_100]})  # fmt: skip
     await gated.run(*(action(f"a{n}", on_error="continue") for n in range(3)))
-    assert gated.ceilings() == [("a0", Decimal("100")), ("a1", Decimal("100"))]
-    assert [outcome for _, outcome, _ in gated.results()] == ["unknown", "ok", "blocked"]
+    assert gated.ceilings() == [("a0", Decimal("100"))]
+    assert [outcome for _, outcome, _ in gated.results()] == ["unknown", "blocked", "blocked"]
 
 
 async def test_a_reduce_only_order_never_meets_the_notional_allowance() -> None:

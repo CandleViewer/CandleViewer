@@ -9,12 +9,12 @@ input snapshot only in the run row, which no log line carries (21 §3.4.3: finan
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from types import MappingProxyType
-from typing import Any, Final, Literal, Protocol, get_args
+from typing import Any, Final, Literal, Protocol, get_args, runtime_checkable
 from uuid import UUID
 
 from candleviewer.rules.executor.results import BlockedBy
@@ -187,6 +187,17 @@ class PrincipalReads(Protocol):
     binds them; unbound, every action that reaches check 5 is refused (`permission`)."""
 
     def principal(self, user_id: UUID) -> PrincipalView | None: ...
+
+
+@runtime_checkable
+class PrincipalRefresh(PrincipalReads, Protocol):
+    """Reads a task of their own keeps fresh (E35-T11, the composition root's `RulePrincipals`):
+    the rules service starts it with the evaluator, naming the users to read (the owners and
+    armers of the rules it evaluates), and stops it with the module."""
+
+    def start(self, users: Callable[[], Collection[UUID]]) -> None: ...
+
+    async def stop(self) -> None: ...
 
 
 class StopCheck(Protocol):

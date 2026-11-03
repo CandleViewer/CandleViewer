@@ -143,6 +143,8 @@ class _Action:
     limits: RuleLimits = field(default_factory=RuleLimits)  # its fire's
     offered_at: float = float("-inf")  # its fire's
     ceiling: Decimal | None = None  # an entry's notional allowance (check 6)
+    sent_under: Decimal | None = None  # the allowance its request was built under, once built
+    counted: Decimal | None = None  # what the ledger took for it, once: never twice (BQ-5)
     tripped: bool = False  # check 7 refused it as spent: the breaker trips after its result
     send_it: Callable[[], Awaitable[HandlerAnswer]] | None = None
     sent: bool = False
@@ -174,6 +176,11 @@ def _run_row(fire: Fire, snapshot: Mapping[str, SnapshotValue] | None = None) ->
         account_id=instance.account_id, symbol=instance.symbol, matched=True,
         input_snapshot=input_snapshot(fire.metric_values) if snapshot is None else snapshot,
     )  # fmt: skip
+
+
+def _journal(answer: HandlerAnswer | None) -> Mapping[str, str | None] | None:
+    """What an answer adds to its result's row: a journal tag's `log` row (E35-T13)."""
+    return None if answer is None else answer.journal
 
 
 def _key(req: ActionRequest, account: UUID | None) -> str:
@@ -331,8 +338,10 @@ class ActionExecutor:
                 halted = halted or result.outcome not in ("ok", "simulated")
                 results.append(result)
                 self._metrics.result(result)
-                journal = None if action.answer is None else action.answer.journal
-                if writable and not await self._keep(fire, records, result, action.fields, journal):
+                notional = self._settled(action, result)
+                if writable and not await self._keep(
+                    fire, records, result, action.fields, _journal(action.answer), notional
+                ):
                     writable = False
                     if stop in (None, "abort"):
                         stop = "write"  # a write after the answer stops the rest the same way
@@ -546,6 +555,7 @@ class ActionExecutor:
 
             return via_sink
         prepared = handler.prepare(req, action.account, max_notional_usd=action.ceiling)
+        action.sent_under = action.ceiling
         ref = client_ref(action.key)
 
         async def via_handler() -> HandlerAnswer:
@@ -556,13 +566,29 @@ class ActionExecutor:
 
     def _answered(self, action: _Action, answer: HandlerAnswer) -> ActionResult:
         if answer.answer == "accepted" and answer.notional_usd is not None:  # the ledger (BQ-11)
-            self._gates.allowance.spend(action.req.rule_id, action.req.run_id, answer.notional_usd)
-        if answer.answer == "refused" and answer.blocked_by is not None:
-            return self._blocked(action, answer.blocked_by)
+            self._count(action, answer.notional_usd)
+        if answer.answer == "refused" and answer.blocked_by is not None:  # the OMS's mapped refusal
+            return self._blocked(action, answer.blocked_by, detail=answer.detail)
         return self._result(
             action, _OUTCOME_OF[answer.answer], error_code=answer.error_code,
             order_id=answer.order_id, group_id=answer.group_id, blocked_detail=answer.detail,
         )  # fmt: skip
+
+    def _count(self, action: _Action, notional: Decimal) -> None:
+        """The ledger takes `notional` for the action, once: a later answer under the same key (a
+        `retry_once` retry's replay) never counts it twice (24 §11.7, BQ-5)."""
+        if action.counted is None:
+            action.counted = notional
+            self._gates.allowance.spend(action.req.rule_id, action.req.run_id, notional)
+
+    def _settled(self, action: _Action, result: ActionResult) -> Decimal | None:
+        """What the ledger took for the action's final result, which its row names: an accepted
+        entry's notional, or, for an outcome left `unknown` (no answer, in flight, a submit still
+        running at the action's bound), the allowance its request was built under, the cautious
+        side (24 §11.7, BQ-5 of #5003), as the order may stand."""
+        if result.outcome == "unknown" and action.sent_under is not None:
+            self._count(action, action.sent_under)
+        return action.counted
 
     def _stop_after(self, action: _Action, result: ActionResult) -> Stop | None:
         """Why the fire stops after this action: a failed write or an unconfirmed row whatever
@@ -595,11 +621,17 @@ class ActionExecutor:
         return ActionResult(**ids, outcome=outcome, duration_us=self._micros(action), **more)
 
     def _blocked(
-        self, action: _Action, reason: BlockedBy, limit: str | None = None
+        self,
+        action: _Action,
+        reason: BlockedBy,
+        limit: str | None = None,
+        *,
+        detail: str | None = None,
     ) -> ActionResult:
         return blocked_result(
-            **self._ids(action), reason=reason, duration_us=self._micros(action), limit=limit
-        )
+            **self._ids(action), reason=reason, duration_us=self._micros(action), limit=limit,
+            detail=detail,
+        )  # fmt: skip
 
     def _skipped(self, action: _Action, stop: Stop | RowVerdict | None) -> ActionResult:
         named = stop in ("mode_changed", "unread")
@@ -614,15 +646,17 @@ class ActionExecutor:
         result: ActionResult,
         fields: ActionAuditFields,
         journal: Mapping[str, str | None] | None = None,
+        notional: Decimal | None = None,
     ) -> bool:
         """The result's records: a refusal's `action_fail` and `rules.blocked`, any other's event,
-        with the `log` row of an `ok` result whose answer named one (E35-T13). False when a write
-        failed; the caller then writes nothing more for the fire but its close."""
+        with the `log` row of an `ok` result whose answer named one (E35-T13) and the notional an
+        accepted entry's answer named (E35-T11). False when a write failed; the caller then writes
+        nothing more for the fire but its close."""
         try:
             if result.blocked_by is not None:
                 await records.refused(result, fields)
             else:
-                await records.answered(result, journal)
+                await records.answered(result, journal, notional)
         except WriteAheadFailed as failed:
             self._records_failed(fire, failed)
             return False

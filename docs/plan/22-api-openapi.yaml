@@ -21881,7 +21881,7 @@ components:
       additionalProperties: false
       required: [node_id, op, operands]
       properties:
-        node_id: { type: string }
+        node_id: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" }
         op: { type: string, enum: [add, sub, mul, div, abs, min, max, neg, pct_of] }
         operands:
           {
@@ -21904,7 +21904,7 @@ components:
       additionalProperties: false
       required: [node_id, op, left]
       properties:
-        node_id: { type: string }
+        node_id: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" }
         op:
           type: string
           enum:
@@ -21940,7 +21940,7 @@ components:
       additionalProperties: false
       required: [node_id, op, children]
       properties:
-        node_id: { type: string }
+        node_id: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" }
         op: { type: string, enum: [all_of, any_of, none_of, n_of] }
         children:
           {
@@ -21955,7 +21955,7 @@ components:
       additionalProperties: false
       required: [node_id, op, child, window_ms]
       properties:
-        node_id: { type: string }
+        node_id: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" }
         op: { type: string, enum: [sustained_for, occurred_within, count_within, stable_for] }
         child: { $ref: "#/components/schemas/RuleCondition" }
         window_ms: { type: integer, minimum: 100, maximum: 86400000 }
@@ -21965,7 +21965,7 @@ components:
       additionalProperties: false
       required: [node_id, type, params]
       properties:
-        node_id: { type: string }
+        node_id: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" }
         type:
           type: string
           enum:

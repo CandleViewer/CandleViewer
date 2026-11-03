@@ -378,8 +378,9 @@ async def test_a_view_warns_when_it_turns_unread_and_logs_at_debug_while_it_stay
 
 async def test_a_demo_seed_is_insert_only_so_an_owners_write_sticks_and_every_view_polls() -> None:
     """Q3 and E28-T05 S3c (#909): a fresh demo store holds both seeds on, and a restart's `ensure`
-    leaves the Owner's `false`; `start()` reads the five views (the OMS's two, E28-T05's and the
-    rule executor's two, E35-T10) and `stop()` cancels their polls."""
+    leaves the Owner's `false`; `start()` reads the six views (the OMS's two, E28-T05's, the
+    rule executor's two, E35-T10, and its rollout flag's, E35-T11) and `stop()` cancels their
+    polls."""
     runtime = _runtime()
     for key in (_OMS, TRADING_TRADE_GROUPS):
         row = await runtime.service.stored(runtime.registry[key])
@@ -392,13 +393,13 @@ async def test_a_demo_seed_is_insert_only_so_an_owners_write_sticks_and_every_vi
     try:
         views = (
             runtime.oms_enabled, runtime.live_enabled, runtime.trade_groups,
-            runtime.rules_enabled, runtime.order_entry_killed,
+            runtime.rules_enabled, runtime.order_entry_killed, runtime.rules_oms_actions,
         )  # fmt: skip
         await asyncio.wait_for(asyncio.gather(*(view.first_read() for view in views)), 5)
-        assert [view() for view in views] == [False, False, False, True, False]  # their defaults
+        assert [view() for view in views] == [False, False, False, True, False, False]  # defaults
     finally:
         await runtime.stop()
-    assert len(polls) == 5 and all(poll.done() for poll in polls) and runtime._view_polls == []
+    assert len(polls) == 6 and all(poll.done() for poll in polls) and runtime._view_polls == []
     assert sorted(poll.get_name() for poll in polls) == sorted(
         f"feature-flag-view-{view.key}" for view in views
     )

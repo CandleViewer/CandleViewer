@@ -100,9 +100,10 @@ class Allowance:
     """Check 6's notional allowance for an entry (24 §11.7, C-12.5; BQ-11): the smaller of the
     fire's and the UTC day's remainders, refused (`cap`, naming the limit) once spent and never
     clamped, else the ceiling `Handler.prepare` gets. The ledger is fed from an accepted answer's
-    `notional_usd`; a rule's day is rebuilt through `NotionalRebuild` at its first entry of the
-    day, and while that port is unbound or its read fails or runs late, an entry of a rule with
-    `max_daily_notional` set is refused."""
+    `notional_usd`, and from an entry left `unknown` at the allowance it was sent under (the engine
+    counts each action once, 24 §11.7); a rule's day is rebuilt through `NotionalRebuild` at its
+    first entry of the day, and while that port is unbound or its read fails or runs late, an entry
+    of a rule with `max_daily_notional` set is refused."""
 
     def __init__(
         self, rebuild: NotionalRebuild | None = None, wall: Callable[[], float] = time.time
@@ -132,7 +133,8 @@ class Allowance:
         return (limit, None) if remainder <= 0 else (None, remainder)
 
     def spend(self, rule_id: str, run_id: UUID, notional: Decimal) -> None:
-        """An accepted entry's notional, on its fire and, once rebuilt, on its rule's day."""
+        """An entry's counted figure (an accepted notional, an `unknown` entry's allowance), on
+        its fire and, once rebuilt, on its rule's day."""
         self._fires[run_id] = self._fires.get(run_id, Decimal(0)) + notional
         if rule_id in self._days:
             self._days[rule_id] += notional

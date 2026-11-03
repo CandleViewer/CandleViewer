@@ -14,7 +14,9 @@ was checked against gave them, `None` when it was not read (E35-T10, BQ-5).
 boot settings refused above their hard caps; `RuleAlerts` also pages the circuit breaker's trips.
 E35-T13 binds `send_notification`'s handler over the `rule.notify` outbox writer
 (`rule_notification_handler`) and refuses start above the signal chain's depth cap
-(`rule_signal_depth`).
+(`rule_signal_depth`). E35-T11 reads the rollout port off `rules.oms_actions`' view and binds the
+day's notional rebuild (`RuleNotionalRebuild`); its principals and order handlers are
+`rules_oms_principals` and `rules_oms_orders`.
 Outcome and severity go as their values (C-3.3 keeps `audit` from this module, as from
 `oms_stream_wiring`). Nothing here logs an input snapshot: it is financial and confidential (21
 §3.4.3).
@@ -24,6 +26,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import Any, Final, Literal, Protocol
 from uuid import UUID
 
@@ -237,6 +241,19 @@ class RuleBudgetRebuild:
         return tuple(float(age) for age in ages)
 
 
+class RuleNotionalRebuild:
+    """`NotionalRebuild` over the rules repository (24 §11.7; BQ-5 of #5003): a rule's notional of
+    one UTC day, the sum of the notionals its accepted entries' `action_ok` rows name in its armed
+    runs, in one bounded read; the allowance bounds the call (2 s) and refuses while it fails."""
+
+    def __init__(self, repository: SqlAlchemyRulesRepository) -> None:
+        self._repository = repository
+
+    async def day_notional(self, rule_id: str, day: date) -> Decimal:
+        start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+        return await self._repository.day_notional(rule_id, start, start + timedelta(days=1))
+
+
 class OrderBudgetAboveCap(ValueError):
     """A boot setting of the order budget above its hard cap: the app refuses to start."""
 
@@ -310,13 +327,17 @@ GLOBAL_ACCOUNT: Final = AccountId(UUID(int=0))
 
 
 class RuleFlagViews(Protocol):
-    """The two flag views of `FeatureFlagsRuntime` checks 2 and 3 read (BQ-2)."""
+    """The flag views of `FeatureFlagsRuntime` checks 2 and 3 read (BQ-2), and E35-T11's rollout
+    view (BQ-4 of #5003)."""
 
     @property
     def rules_enabled(self) -> Callable[[], bool]: ...
 
     @property
     def order_entry_killed(self) -> Callable[[], bool]: ...
+
+    @property
+    def rules_oms_actions(self) -> Callable[[], bool]: ...
 
 
 class RuleSwitchesBinding:
@@ -326,8 +347,9 @@ class RuleSwitchesBinding:
     gate, so maintenance mode stays the OMS's `order_entry`; B18's verdict through the OMS's
     shared port (`HaltingKillSwitch`, #2904: engaged everywhere while the audit-chain break halt
     is, else `InterimKillSwitch`, which admits until #956), asked for `GLOBAL_ACCOUNT` when an
-    action names no account; and the rollout port, off until E35-T11 registers
-    `rules.oms_actions`."""
+    action names no account; and the rollout port, the `rules.oms_actions` view (E35-T11, BQ-4 of
+    #5003), read at each dispatch: off while unread, latched off if its poll dies, so a flip
+    takes effect within a poll and no restart."""
 
     def __init__(
         self, views: RuleFlagViews, kill_switch: Callable[[AccountId], object | None]
@@ -345,7 +367,7 @@ class RuleSwitchesBinding:
         return self._kill_switch(asked) is not None
 
     def oms_actions(self) -> bool:
-        return False
+        return self._views.rules_oms_actions() is True
 
 
 def rule_switches(

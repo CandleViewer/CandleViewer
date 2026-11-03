@@ -37,6 +37,10 @@ TRADING_TRADE_GROUPS = "trading.trade_groups"
 #: E35-T10 (#5002; 24 Sec.16.2): the permanent master switch of rule actions, kill-switch class,
 #: engaged at `false` (the value that is not its default), which is also its fail-closed value.
 RULES_ENABLED = "rules.enabled"
+#: E35-T11 (#5003; 24 Sec.16.2, BQ-17 of #863): the default-off rollout flag that lets rule actions
+#: reach the OMS, read at each dispatch through a view that is off while unread (BQ-4); its
+#: removal is tied to the ruling that opens live rule actions (after #956, #954, E39-S01, E30-S04).
+RULES_OMS_ACTIONS = "rules.oms_actions"
 #: Ruling Q3: the value the insert-only `ensure` gives a flag with no row in a process of an
 #: environment, where it is not the flag's default (21 10.7), so an Owner's later write sticks.
 #: Never a kill switch or the live gate (C-4.14): `flags_wiring._seeds` ignores such a seed, and
@@ -121,6 +125,16 @@ FLAGS: tuple[FlagSpec, ...] = (
         _ALL,
         is_killswitch=True,
         restrictive=True,
+    ),
+    FlagSpec(
+        RULES_OMS_ACTIONS,
+        _B,
+        "Rule actions reach the OMS (demo and testnet); owner @basiltt, removal at the ruling "
+        "that opens live rule actions",
+        _ROLLOUT,
+        False,
+        _ALL,
+        restrictive=False,
     ),
     FlagSpec(
         RULES_ENABLED,

@@ -13,6 +13,7 @@ from candleviewer.admin.flags import default_registry
 from candleviewer.admin.flags.catalogue import (
     ENVIRONMENT_SEEDS,
     RULES_ENABLED,
+    RULES_OMS_ACTIONS,
     TRADING_OMS_ENABLED,
     TRADING_TRADE_GROUPS,
 )
@@ -21,8 +22,7 @@ from candleviewer.admin.flags.registry import Category
 
 _B, _ALL, _OWN = "boolean", "all_roles", "owner_only"
 #: 10.7 as `(key, kind, default, is_killswitch, visibility)`. `engine.fallback_lightweight_charts`
-#: is left out: a third-party production chart library is out of scope (D4, C-1.2); and
-#: `rules.oms_actions` waits for E35-T11, which registers it.
+#: is left out: a third-party production chart library is out of scope (D4, C-1.2).
 _SECTION_10_7 = {
     ("trading.live_enabled", _B, False, False, _ALL),
     ("trading.one_click", _B, False, False, _ALL),
@@ -42,6 +42,7 @@ _SECTION_10_7 = {
     ("killswitch.order_entry", _B, False, True, _ALL),
     ("maintenance.mode", _B, False, True, _ALL),
     ("rules.enabled", _B, True, True, _ALL),
+    ("rules.oms_actions", _B, False, False, _ALL),
     ("maintenance.keep_recorder", _B, True, False, _OWN),
     ("desktop.backend_connection", _B, False, False, _OWN),
 }
@@ -77,6 +78,21 @@ def test_rules_enabled_is_a_kill_switch_class_master_switch_engaged_at_false() -
     assert spec.fail_closed_value is False and engaged_value(spec) is False
     assert spec.description == "Master switch of rule actions; off while unread."
     assert RULES_ENABLED not in ENVIRONMENT_SEEDS  # a kill switch takes no seed (C-4.14)
+
+
+def test_rules_oms_actions_is_an_all_roles_rollout_off() -> None:
+    """E35-T11 (24 §16.2; BQ-17 of #863, BQ-4 of #5003): the default-off rollout flag that lets
+    rule actions reach the OMS, off while the store cannot be read, readable by every role, its
+    description naming its owner and the ruling that removes it (the one that opens live rule
+    actions); never a kill switch, never evidence-gated, never seeded on (C-4.13, C-4.14)."""
+    spec = default_registry()[RULES_OMS_ACTIONS]
+    assert (spec.gates, spec.default, spec.restrictive, spec.visibility.value) == (
+        Category.FEATURE_ROLLOUT, False, False, "all_roles",
+    )  # fmt: skip
+    assert not spec.is_killswitch and not spec.requires_evidence
+    assert spec.fail_closed_value is False and RULES_OMS_ACTIONS not in ENVIRONMENT_SEEDS
+    assert "owner @basiltt" in spec.description
+    assert spec.description.endswith("removal at the ruling that opens live rule actions")
 
 
 def test_backend_connection_flag_is_an_owner_only_rollout_off_with_its_removal_ticket() -> None:

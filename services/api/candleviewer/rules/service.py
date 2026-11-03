@@ -40,6 +40,7 @@ from candleviewer.rules.executor.ports import (
     AlertPort,
     NotionalRebuild,
     PrincipalReads,
+    PrincipalRefresh,
     RuleSwitches,
     RunRecords,
     StopCheck,
@@ -83,6 +84,18 @@ OWN_TYPES: Final = frozenset(
 def _log() -> Any:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)
+
+
+def _principal_users(items: list[EvaluableRule]) -> frozenset[UUID]:
+    """The owners of `items` and the armers of the armed ones, by id; an id that is no UUID is
+    left out, so its rule's actions are refused at check 5 (fail closed)."""
+    users = {rule_owner(item.rule) for item in items}
+    for item in items:
+        try:
+            users.add(None if item.armed_by is None else UUID(str(item.armed_by)))
+        except ValueError:
+            continue
+    return frozenset(user for user in users if user is not None)
 
 
 async def _discard_actions(_req: ActionRequest) -> None:
@@ -135,6 +148,8 @@ class RulesService:
         # E35-T10: the checks' ports (unbound: each refuses, so no armed action is handed over).
         self._switches: RuleSwitches | None = None
         self._principal: PrincipalReads | None = None  # E35-T11 binds the reads
+        #: E35-T11: the users check 5 reads, as of the evaluator's last work list.
+        self._principal_users: frozenset[UUID] = frozenset()
         self._notional: NotionalRebuild | None = None  # E35-T11 binds the day's rebuild
         self._stop_check: StopCheck | None = None  # E35-T12 binds it
         #: The SR-104 order budget, from its boot settings (`create_app`); unbound, the defaults
@@ -225,6 +240,12 @@ class RulesService:
             self._audit = audit
         if broadcast is not None:
             self._broadcast = broadcast
+
+    def principal_users(self) -> frozenset[UUID]:
+        """The users check 5 reads (E35-T11): the owners of the rules the evaluator holds, so a
+        rule's owner is read before it is armed, and the armers of the armed ones, as of its last
+        work list; what a refreshed principal port (`PrincipalRefresh`) reads at each cycle."""
+        return self._principal_users
 
     def manager(self) -> RulesManager | None:
         """The store/version/mode manager while the module runs; `None` otherwise (-> 503)."""
@@ -481,6 +502,8 @@ class RulesService:
         audits = self._audits = AuditDispatch(self._shed, executor.execute)
         dispatch.start()
         audits.start()
+        if isinstance(self._principal, PrincipalRefresh):  # E35-T11: check 5's reads kept fresh
+            self._principal.start(self.principal_users)
 
         def _on_fire(
             item: EvaluableRule, result: EvaluationResult, signal: Signal | None = None
@@ -555,6 +578,7 @@ class RulesService:
             items = await manager.evaluable_rules(modes)
             # E35-T13: a rule no longer armed keeps no variable past its first evaluation after.
             variables.retain({str(i.rule.rule_id) for i in items if i.mode == "armed"})
+            self._principal_users = _principal_users(items)  # E35-T11: check 5's users
             # Revocation/freeze reach every tick (AC1/AC5).
             await self._refresh_scope_for([item.rule for item in items])
             return items
@@ -608,6 +632,8 @@ class RulesService:
         finally:
             if self._dispatch is not None and not drained:
                 await self._dispatch.stop(0.0)  # a no-op once its own stop has begun
+            if isinstance(self._principal, PrincipalRefresh):  # E35-T11: no fire left to read it
+                await self._principal.stop()  # before the audits' stop, which reads no principal
             if self._audits is not None:
                 await self._audits.stop(max(0.0, deadline - monotonic()) if drained else 0.0)
             self._dispatch = self._audits = self._executor = None

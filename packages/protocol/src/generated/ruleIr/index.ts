@@ -260,7 +260,7 @@ export const RULE_IR_SCHEMA: { readonly [key: string]: unknown } = deepFreeze({
       additionalProperties: false,
       properties: {
         dry_run_only: { default: false, title: "Dry Run Only", type: "boolean" },
-        node_id: { title: "Node Id", type: "string" },
+        node_id: { pattern: "^[A-Za-z0-9_-]{1,64}$", title: "Node Id", type: "string" },
         on_error: {
           default: "abort_remaining",
           enum: ["abort_remaining", "continue", "retry_once"],
@@ -313,7 +313,7 @@ export const RULE_IR_SCHEMA: { readonly [key: string]: unknown } = deepFreeze({
     ArithmeticNode: {
       additionalProperties: false,
       properties: {
-        node_id: { title: "Node Id", type: "string" },
+        node_id: { pattern: "^[A-Za-z0-9_-]{1,64}$", title: "Node Id", type: "string" },
         op: {
           enum: ["add", "sub", "mul", "div", "abs", "min", "max", "neg", "pct_of"],
           title: "Op",
@@ -358,7 +358,7 @@ export const RULE_IR_SCHEMA: { readonly [key: string]: unknown } = deepFreeze({
           default: null,
           title: "N",
         },
-        node_id: { title: "Node Id", type: "string" },
+        node_id: { pattern: "^[A-Za-z0-9_-]{1,64}$", title: "Node Id", type: "string" },
         op: { enum: ["all_of", "any_of", "none_of", "n_of"], title: "Op", type: "string" },
       },
       required: ["node_id", "op", "children"],
@@ -376,7 +376,7 @@ export const RULE_IR_SCHEMA: { readonly [key: string]: unknown } = deepFreeze({
           ],
           title: "Left",
         },
-        node_id: { title: "Node Id", type: "string" },
+        node_id: { pattern: "^[A-Za-z0-9_-]{1,64}$", title: "Node Id", type: "string" },
         op: {
           enum: [
             "gt",
@@ -609,7 +609,7 @@ export const RULE_IR_SCHEMA: { readonly [key: string]: unknown } = deepFreeze({
           title: "Child",
         },
         min_count: { default: 1, minimum: 1, title: "Min Count", type: "integer" },
-        node_id: { title: "Node Id", type: "string" },
+        node_id: { pattern: "^[A-Za-z0-9_-]{1,64}$", title: "Node Id", type: "string" },
         op: {
           enum: ["sustained_for", "occurred_within", "count_within", "stable_for"],
           title: "Op",

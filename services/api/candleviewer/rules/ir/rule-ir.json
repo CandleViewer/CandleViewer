@@ -9,6 +9,7 @@
           "type": "boolean"
         },
         "node_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
           "title": "Node Id",
           "type": "string"
         },
@@ -81,6 +82,7 @@
       "additionalProperties": false,
       "properties": {
         "node_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
           "title": "Node Id",
           "type": "string"
         },
@@ -163,6 +165,7 @@
           "title": "N"
         },
         "node_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
           "title": "Node Id",
           "type": "string"
         },
@@ -203,6 +206,7 @@
           "title": "Left"
         },
         "node_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
           "title": "Node Id",
           "type": "string"
         },
@@ -616,6 +620,7 @@
           "type": "integer"
         },
         "node_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
           "title": "Node Id",
           "type": "string"
         },
