@@ -95,16 +95,16 @@ Boards are on the page `E27-D03 Accounts and key vault hi-fi` (page id `2cfb7e8e
 once its PR 2 lands (`D04`:198). A screen's frames are D02's names (`SCR-nnn / <state>`), so a frame is found by name on
 any board.
 
-| Screen  | Spec sections (D02 · D03) | Boards (D03) | Deck screen | Components (`14` line, plus what D03 binds)                                                          | Consumer |
-| ------- | ------------------------- | ------------ | ----------- | ---------------------------------------------------------------------------------------------------- | -------- |
-| SCR-125 | `D02`:398 · `D03`:989     | 04, 05, 01   | SCR-125     | CMP-001, CMP-011, CMP-049, CMP-055, CMP-087, CMP-175, CMP-176 (`14`:2662); CMP-178, CMP-028          | E27-S01  |
-| SCR-126 | `D02`:505 · `D03`:1168    | 06, 03       | SCR-126     | CMP-027, CMP-034, CMP-040, CMP-065, CMP-087, CMP-093, CMP-175 (`14`:2690); CMP-201, CMP-203, CMP-033 | E27-S02  |
-| SCR-127 | `D02`:607 · `D03`:1271    | 07           | SCR-127     | CMP-027, CMP-033, CMP-034, CMP-043, CMP-066, CMP-093, CMP-175 (`14`:2703); CMP-035, CMP-201          | E27-S03  |
-| SCR-128 | `D02`:671 · `D03`:1348    | 04, 05       | SCR-128     | CMP-028, CMP-035, CMP-049, CMP-087, CMP-175, CMP-178 (`14`:2712)                                     | E27-S03  |
-| SCR-129 | `D02`:773 · `D03`:1432    | 08, 03       | SCR-129     | CMP-027, CMP-044, CMP-093 (`14`:2727); CMP-015                                                       | E27-S04  |
-| SCR-079 | `D02`:864 · `D03`:1524    | 09           | SCR-079     | CMP-036, CMP-046, CMP-104, CMP-106, CMP-116, CMP-128, CMP-129, CMP-175 (`14`:1846); CMP-178          | E27-S05  |
-| SCR-016 | `D02`:943 · `D03`:1244    | 06 (inset)   | SCR-016     | the step 3 inset of SCR-126's key step (`14`:429)                                                    | E27-S02  |
-| SCR-019 | `D02`:943 · `D03`:1524    | not drawn    | SCR-019     | the account tasks inside E09's card (`14`:493); text binding, drawn on request (`D03`:278)           | E27-S01  |
+| Screen  | Spec sections (D02 · D03) | Boards (D03) | Deck screen | Components (`14` line, plus what D03 binds)                                                                            | Consumer |
+| ------- | ------------------------- | ------------ | ----------- | ---------------------------------------------------------------------------------------------------------------------- | -------- |
+| SCR-125 | `D02`:398 · `D03`:989     | 04, 05, 01   | SCR-125     | CMP-001, CMP-011, CMP-049, CMP-055, CMP-087, CMP-175, CMP-176 (`14`:2662); CMP-178, CMP-028; CMP-079, CMP-019          | E27-S01  |
+| SCR-126 | `D02`:505 · `D03`:1168    | 06, 03       | SCR-126     | CMP-027, CMP-034, CMP-040, CMP-065, CMP-087, CMP-093, CMP-175 (`14`:2690); CMP-201, CMP-203, CMP-033; CMP-079, CMP-019 | E27-S02  |
+| SCR-127 | `D02`:607 · `D03`:1271    | 07           | SCR-127     | CMP-027, CMP-033, CMP-034, CMP-043, CMP-066, CMP-093, CMP-175 (`14`:2703); CMP-035, CMP-201; CMP-079, CMP-019          | E27-S03  |
+| SCR-128 | `D02`:671 · `D03`:1348    | 04, 05       | SCR-128     | CMP-028, CMP-035, CMP-049, CMP-087, CMP-175, CMP-178 (`14`:2712); CMP-079, CMP-019                                     | E27-S03  |
+| SCR-129 | `D02`:773 · `D03`:1432    | 08, 03       | SCR-129     | CMP-027, CMP-044, CMP-093 (`14`:2727); CMP-015; CMP-079, CMP-019                                                       | E27-S04  |
+| SCR-079 | `D02`:864 · `D03`:1524    | 09           | SCR-079     | CMP-036, CMP-046, CMP-104, CMP-106, CMP-116, CMP-128, CMP-129, CMP-175 (`14`:1846); CMP-178; CMP-079, CMP-019          | E27-S05  |
+| SCR-016 | `D02`:943 · `D03`:1244    | 06 (inset)   | SCR-016     | the step 3 inset of SCR-126's key step (`14`:429)                                                                      | E27-S02  |
+| SCR-019 | `D02`:943 · `D03`:1524    | not drawn    | SCR-019     | the account tasks inside E09's card (`14`:493); text binding, drawn on request (`D03`:278)                             | E27-S01  |
 
 Board 10 holds the keyboard, zoom and forced-colours specimens for every screen (`D03`:228). The deck screens `shared`,
 `CMP-034` and `CMP-175` hold the strings several screens show; their first consumer is named per row.
@@ -203,7 +203,7 @@ on completion, `24`:5372). Budget: the summary within 1<!--=BUD:summary.s--> s, 
 | `updateExchangeAccount` | `PATCH /exchange-accounts/{accountId}`    | `accounts:write`  |
 
 Topics: `wallet`, `positions`, `system`. RBAC: every role sees the account's served facts; the Owner adds the key
-facts; a Manager's or a Viewer's writes are T2 with E09-D09's reasons (`D03`:1569; `D02`:900). Events:
+facts; a Manager's or a Viewer's writes are T2: the control keeps its full label, wrapped in CMP-079 RbacGate, with the CMP-019 `lock` ("Not available") leading it and E09-D09's reason beneath (the rule stated once in D03 §10, `D03`:1869; `D03`:1569; `D02`:900). Events:
 `account.detail_viewed` (analytics; its payload the viewer's role only). Budget: opens from cache in 100<!--=BUD:drawer.ms--> ms
 and refreshes in place, never a spinner over cached values (`14`:1849).
 
@@ -213,14 +213,15 @@ Every control resolves to a catalogued CMP entry; no one-off exists (`D03`:2655)
 extensions are specified in D03 §2 (`D03`:336) and carried in `16` §11.4 form by `D03H` (one block each: CMP-175
 `D03H`:15, CMP-176 `D03H`:57, CMP-034 `D03H`:100; the extended entries `D03H`:130).
 
-| Component                                   | Contract  | Storybook title and stories                        | `15` entry                    |
-| ------------------------------------------- | --------- | -------------------------------------------------- | ----------------------------- |
-| CMP-175 KeyPermissionBadge                  | `D03`:338 | `Atoms/KeyPermissionBadge`, the list at `D03`:2665 | PENDING: D03 Appendix A, PR 2 |
-| CMP-176 AccountKeyRow                       | `D03`:508 | `Molecules/AccountKeyRow`, the list at `D03`:2666  | PENDING: D03 Appendix A, PR 2 |
-| CMP-034 MaskedValue                         | `D03`:657 | `Atoms/MaskedValue`, the list at `D03`:2667        | PENDING: D03 Appendix A, PR 2 |
-| CMP-201 PasswordField (`writeOnly`)         | `D03`:702 | `Atoms/PasswordField`, the list at `D03`:2668      | PENDING: D03 Appendix A, PR 2 |
-| CMP-028, CMP-035, CMP-044, CMP-066, CMP-178 | `D03`:730 | the lists at `D03`:2669–2673                       | PENDING: D03 Appendix A, PR 2 |
-| CMP-011, CMP-203, CMP-033                   | `D03`:918 | the lists at `D03`:2674–2676                       | PENDING: D03 Appendix A, PR 2 |
+| Component                                   | Contract   | Storybook title and stories                        | `15` entry                       |
+| ------------------------------------------- | ---------- | -------------------------------------------------- | -------------------------------- |
+| CMP-175 KeyPermissionBadge                  | `D03`:338  | `Atoms/KeyPermissionBadge`, the list at `D03`:2665 | PENDING: D03 Appendix A, PR 2    |
+| CMP-176 AccountKeyRow                       | `D03`:508  | `Molecules/AccountKeyRow`, the list at `D03`:2666  | PENDING: D03 Appendix A, PR 2    |
+| CMP-034 MaskedValue                         | `D03`:657  | `Atoms/MaskedValue`, the list at `D03`:2667        | PENDING: D03 Appendix A, PR 2    |
+| CMP-201 PasswordField (`writeOnly`)         | `D03`:702  | `Atoms/PasswordField`, the list at `D03`:2668      | PENDING: D03 Appendix A, PR 2    |
+| CMP-028, CMP-035, CMP-044, CMP-066, CMP-178 | `D03`:730  | the lists at `D03`:2669–2673                       | PENDING: D03 Appendix A, PR 2    |
+| CMP-011, CMP-203, CMP-033                   | `D03`:918  | the lists at `D03`:2674–2676                       | PENDING: D03 Appendix A, PR 2    |
+| CMP-079 RbacGate, CMP-019 `lock` (T2)       | `D03`:1869 | bound on every gated control                       | catalogued (consumed, unchanged) |
 
 Every story runs in six cells, dark, light and high contrast by compact and comfortable, with axe at zero serious or
 critical findings and its keyboard path as an interaction test (`D03`:2657). **Published in the library** means two
@@ -291,20 +292,20 @@ the step-up FO-08; SCR-079 FO-10; SCR-019 FO-11. Every live region is pre-render
 
 ### 8.2 The findings and their disposition in this pack
 
-| F    | Severity | Disposition                                                                                                  |
-| ---- | -------- | ------------------------------------------------------------------------------------------------------------ |
-| F-01 | Major    | lifted: the dialog is described by the whole restatement group; deck `e27.scr129.announce.loaded` (PROPOSED) |
-| F-02 | Major    | lifted: SCR-019's account tasks show `rbac.view_as` while viewing as; `rbac.owner_only` otherwise            |
-| F-03 | Minor    | lifted: the key and secret labels say "(write-only)"; deck rows on SCR-126 and SCR-127 (PROPOSED, BQ-07)     |
-| F-04 | Minor    | lifted: LR-14's sentence first, then focus to stage 5's heading, whose name is the heading alone             |
-| F-05 | Minor    | lifted: no confirm in the DOM until the summary loads, then focusable `aria-disabled` with its hint (A-5)    |
-| F-06 | Minor    | lifted: D05 §11's numbers are the contrast record (§6; `D05`:451)                                            |
-| F-07 | Info     | recorded for E28-D03; no E27 change                                                                          |
-| F-08 | Info     | recorded (`D05`:453): the premise moved; the decision (shape and word carry the class) stands                |
-| F-09 | Major    | lifted: inside a text field or an open modal, no single-character global binding fires; `Esc` still cancels  |
-| F-10 | Minor    | lifted: heartbeat as an absolute time; deck `e27.scr125.row.health`, `e27.scr079.health` (PROPOSED)          |
-| F-11 | Minor    | lifted: the T2 lock is `aria-hidden`; the name is the visible label, "unavailable" from `aria-disabled`      |
-| F-12 | Minor    | lifted: one "{n} accounts: {state}" per episode; deck `e27.shared.announce.chips` (PROPOSED)                 |
+| F    | Severity | Disposition                                                                                                       |
+| ---- | -------- | ----------------------------------------------------------------------------------------------------------------- |
+| F-01 | Major    | lifted: the dialog is described by the whole restatement group; deck `e27.scr129.announce.loaded` (PROPOSED)      |
+| F-02 | Major    | lifted: SCR-019's account tasks show `rbac.view_as` while viewing as; `rbac.owner_only` otherwise                 |
+| F-03 | Minor    | lifted: the key and secret labels say "(write-only)"; deck rows on SCR-126 and SCR-127 (PROPOSED, BQ-07)          |
+| F-04 | Minor    | lifted: LR-14's sentence first, then focus to stage 5's heading, whose name is the heading alone                  |
+| F-05 | Minor    | lifted: no confirm in the DOM until the summary loads, then focusable `aria-disabled` with its hint (A-5)         |
+| F-06 | Minor    | lifted: D05 §11's numbers are the contrast record (§6; `D05`:451)                                                 |
+| F-07 | Info     | recorded for E28-D03; no E27 change                                                                               |
+| F-08 | Info     | recorded (`D05`:453): the premise moved; the decision (shape and word carry the class) stands                     |
+| F-09 | Major    | lifted: inside a text field or an open modal, no single-character global binding fires; `Esc` still cancels       |
+| F-10 | Minor    | lifted: heartbeat as an absolute time; deck `e27.scr125.row.health`, `e27.scr079.health` (PROPOSED)               |
+| F-11 | Minor    | lifted: the T2 lock (CMP-019) is `aria-hidden`; the name is the visible label, "unavailable" from `aria-disabled` |
+| F-12 | Minor    | lifted: one "{n} accounts: {state}" per episode; deck `e27.shared.announce.chips` (PROPOSED)                      |
 
 No Blocking row stands, so D05's hold on this ticket's sign-off is clear (`D05`:442). D05's open questions Q-01 … Q-03
 are built on their defaults (`D05`:487); the owner rules them at sign-off, and A-5 carries Q-02's answer to `15`.
