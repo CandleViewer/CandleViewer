@@ -46,7 +46,13 @@ test("SCR-063 in the shell: rows from REST, the grid reached by keyboard, axe cl
       .getByRole("gridcell")
       .first(),
   ).toBeFocused();
-  const scan = await new AxeBuilder({ page: win }).withTags([...AXE_GATE_TAGS]).analyze();
+  // legacy mode: the default run opens a blank page for axe's finishRun, and Electron's renderer
+  // refuses that (`Target.createTarget`: not supported); the shell has one document and no frame,
+  // so axe run in the page itself covers the same nodes under the same tags
+  const scan = await new AxeBuilder({ page: win })
+    .setLegacyMode(true)
+    .withTags([...AXE_GATE_TAGS])
+    .analyze();
   const serious = scan.violations
     .filter((v) => v.impact === "serious" || v.impact === "critical")
     .map((v) => `${v.id}: ${v.help}`);
