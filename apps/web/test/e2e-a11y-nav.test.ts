@@ -8,6 +8,8 @@ import {
   WRAPPED,
   type FocusStop,
 } from "../e2e/a11y-nav/trap";
+import { politeBudget } from "../e2e/a11y-nav/liveRegion";
+import { focusableCount, trapBudget } from "../e2e/a11y-nav/trapBudget";
 import { judgeFocusIndicator, parseRgba } from "../e2e/a11y-nav/focusVisibility";
 import { contrastRatio } from "../../../tools/contrast/color-math.mjs";
 
@@ -30,6 +32,7 @@ const fakePage = (): Page => {
     click: () => "clicked",
     keyboard: { press: () => "pressed" },
     frames: () => [frame],
+    frameLocator: () => ({ getByRole: () => locator, owner: () => locator }),
     context: () => context,
     waitForSelector: async () => locator,
     $: async () => locator,
@@ -76,6 +79,12 @@ describe("the mouse guard (BQ-04 (a))", () => {
     const p = guardPage(fakePage());
     expect(() => p.context().pages()[0]?.click("#x")).toThrow(/click/);
     expect(() => p.frames()[0]?.locator("a").click()).toThrow(/click/);
+  });
+
+  it("guards a frameLocator (it has no click of its own) and what it returns", () => {
+    const p = guardPage(fakePage());
+    expect(() => p.frameLocator("iframe").getByRole("button").click()).toThrow(/click/);
+    expect(() => p.frameLocator("iframe").owner().click()).toThrow(/click/);
   });
 
   it("throws on any page.mouse member", () => {
@@ -189,5 +198,33 @@ describe("the focus indicator (judgeFocusIndicator)", () => {
       ratio: null,
       ok: false,
     });
+  });
+});
+
+describe("the trap budget (BQ-07, PROPOSED)", () => {
+  const tree = [
+    "- main:",
+    '  - button "A"',
+    '  - link "B"',
+    '  - button "C" [disabled]',
+    '  - textbox "D"',
+    "  - text: x",
+  ].join("\n");
+
+  it("counts focusable nodes and skips disabled ones", () => {
+    expect(focusableCount(tree)).toBe(3);
+  });
+
+  it("is ceil(1.5 x stops) + 10, with no ceiling", () => {
+    expect(trapBudget(tree)).toBe(15);
+    expect(trapBudget(Array.from({ length: 100 }, () => '- button "x"').join("\n"))).toBe(160);
+  });
+});
+
+describe("the polite budget (s6.2)", () => {
+  it("allows one write per 2 s per field plus the opening write", () => {
+    expect(politeBudget(0)).toBe(1);
+    expect(politeBudget(2_000)).toBe(2);
+    expect(politeBudget(2_001, 5)).toBe(15);
   });
 });

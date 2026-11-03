@@ -37,7 +37,9 @@ const isThenable = (v: object): boolean => typeof (v as { then?: unknown }).then
 const isGuardable = (v: object): boolean =>
   typeof (v as { click?: unknown }).click === "function" ||
   typeof (v as { dispatchEvent?: unknown }).dispatchEvent === "function" ||
-  typeof (v as { pages?: unknown }).pages === "function";
+  typeof (v as { pages?: unknown }).pages === "function" ||
+  typeof (v as { getByRole?: unknown }).getByRole === "function" ||
+  typeof (v as { owner?: unknown }).owner === "function";
 
 /**
  * Guard what a call hands back: the awaited value of a promise, each element of an array (`locator.all()`,

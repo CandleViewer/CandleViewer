@@ -1,0 +1,254 @@
+[
+  {
+    "id": 101,
+    "scr": "SCR-010",
+    "status": "expected-fail",
+    "where": "E47-S05",
+    "note": "skip links: the shell has only the placeholder's `Skip to focus target`"
+  },
+  {
+    "id": 102,
+    "scr": "SCR-011",
+    "status": "existing",
+    "where": "e2e/shell-chrome.spec.ts",
+    "note": "rail links and Alt+1..7; the `current page` state is partial"
+  },
+  {
+    "id": 103,
+    "scr": "SCR-012",
+    "status": "expected-fail",
+    "where": "#5280",
+    "note": "Ctrl+K opens nothing until the palette lands (hotkeys.spec.ts @plan-HK-1)"
+  },
+  {
+    "id": 104,
+    "scr": "SCR-013",
+    "status": "existing",
+    "where": "e2e/hotkeys.spec.ts",
+    "note": "Ctrl+/ and Esc focus return; text-input case partial"
+  },
+  {
+    "id": 105,
+    "scr": "SCR-020 SCR-021",
+    "status": "expected-fail",
+    "where": "E15 story",
+    "note": "Ctrl+\\ (alias F6) moves focus per E15-D02 AD-7; the keymap has no F6 row, and Ctrl+Tab is never driven (reserved)"
+  },
+  {
+    "id": 106,
+    "scr": "SCR-030",
+    "status": "expected-fail",
+    "where": "E47-S01",
+    "note": "chart not mounted on any route"
+  },
+  {
+    "id": 107,
+    "scr": "SCR-037",
+    "status": "expected-fail",
+    "where": "E47-S05",
+    "note": "drawing tools and their chord are pending"
+  },
+  {
+    "id": 108,
+    "scr": "SCR-050",
+    "status": "expected-fail",
+    "where": "E47-S02",
+    "note": "ladder not mounted"
+  },
+  {
+    "id": 109,
+    "scr": "SCR-060 SCR-076",
+    "status": "expected-fail",
+    "where": "E10-S05",
+    "note": "order ticket not mounted"
+  },
+  {
+    "id": 111,
+    "scr": "SCR-081 SCR-085 SCR-086 SCR-126",
+    "status": "expected-fail",
+    "where": "E47-S03",
+    "note": "rule editor form not mounted"
+  },
+  {
+    "id": 112,
+    "scr": "SCR-082",
+    "status": "expected-fail",
+    "where": "E47-S03",
+    "note": "node graph and its non-drag connect are pending"
+  },
+  {
+    "id": 113,
+    "scr": "SCR-121 SCR-122 SCR-123 SCR-127",
+    "status": "expected-fail",
+    "where": "E47-S08",
+    "note": "admin users grid and invite form not mounted"
+  },
+  {
+    "id": 114,
+    "scr": "SCR-113",
+    "status": "existing",
+    "where": "e2e/hotkeys.spec.ts",
+    "note": "conflict classes, reserved keys, bare-key refusal"
+  },
+  {
+    "id": 116,
+    "scr": "SCR-064 SCR-072 SCR-073 SCR-074 SCR-076 SCR-129",
+    "status": "expected-fail",
+    "where": "E47-S08",
+    "note": "freeze confirmation (Ctrl+Shift+K) not mounted"
+  },
+  {
+    "id": 117,
+    "scr": "SCR-010 SCR-030 SCR-050 SCR-063",
+    "status": "journey",
+    "where": "focus-ring.journey.ts",
+    "note": "ring contrast on mounted shell surfaces; SCR-030/050/063 and target sizes wait for S01/S02 and Q04"
+  },
+  {
+    "id": 119,
+    "scr": "SCR-001..006 SCR-016 SCR-017 SCR-149",
+    "status": "existing",
+    "where": "e2e/e09-auth-a11y.spec.ts",
+    "note": "keyboard sign-in; TOTP paste and step-up partial"
+  },
+  {
+    "id": 121,
+    "scr": "Every SCR",
+    "status": "journey",
+    "where": "sweep.journey.ts",
+    "note": "trap, names and focus ring per mounted screen"
+  },
+  {
+    "id": 202,
+    "scr": "SCR-030",
+    "status": "expected-fail",
+    "where": "E47-S01",
+    "note": "chart image label; shares the chart probe with 106"
+  },
+  {
+    "id": 213,
+    "scr": "many",
+    "status": "journey",
+    "where": "sweep.journey.ts",
+    "note": "one h1 and one main per mounted screen; landmark names via the tree snapshots"
+  },
+  {
+    "id": 301,
+    "scr": "SCR-045 SCR-030",
+    "status": "expected-fail",
+    "where": "E47-S01",
+    "note": "table alternative (Alt+T) not mounted"
+  },
+  {
+    "id": 302,
+    "scr": "SCR-045 SCR-030",
+    "status": "expected-fail",
+    "where": "E47-S01",
+    "note": "table alternative (Alt+T) not mounted"
+  },
+  {
+    "id": 303,
+    "scr": "SCR-045 SCR-030",
+    "status": "expected-fail",
+    "where": "E47-S01",
+    "note": "table alternative (Alt+T) not mounted"
+  },
+  {
+    "id": 304,
+    "scr": "SCR-045 SCR-030",
+    "status": "expected-fail",
+    "where": "E47-S01",
+    "note": "table alternative (Alt+T) not mounted"
+  },
+  {
+    "id": 305,
+    "scr": "SCR-045 SCR-030",
+    "status": "expected-fail",
+    "where": "E47-S01",
+    "note": "table alternative (Alt+T) not mounted"
+  },
+  {
+    "id": 307,
+    "scr": "SCR-038 SCR-049 SCR-050 SCR-030",
+    "status": "expected-fail",
+    "where": "E47-S02",
+    "note": "table alternative not mounted"
+  },
+  {
+    "id": 308,
+    "scr": "SCR-038 SCR-049 SCR-050 SCR-030",
+    "status": "expected-fail",
+    "where": "E47-S02",
+    "note": "table alternative not mounted"
+  },
+  {
+    "id": 309,
+    "scr": "SCR-038 SCR-049 SCR-050 SCR-030",
+    "status": "expected-fail",
+    "where": "E47-S01",
+    "note": "table alternative not mounted"
+  },
+  {
+    "id": 501,
+    "scr": "SCR-030 SCR-050 SCR-053 SCR-015",
+    "status": "existing",
+    "where": "e2e/motion-reduce.spec.ts",
+    "note": "shell surfaces only; chart effects wait for E47-S04"
+  },
+  {
+    "id": 502,
+    "scr": "SCR-010",
+    "status": "existing",
+    "where": "e2e/motion-toggle.spec.ts",
+    "note": "Ctrl+Shift+M flips, says so once, persists"
+  },
+  {
+    "id": 507,
+    "scr": "SCR-097 SCR-030",
+    "status": "expected-fail",
+    "where": "E47-S04",
+    "note": "replay autoplay pause not mounted"
+  },
+  {
+    "id": 510,
+    "scr": "SCR-117",
+    "status": "existing",
+    "where": "e2e/settings-keyboard.spec.ts",
+    "note": "preference toggles; the GET /me/preferences read-back is partial"
+  },
+  {
+    "id": 601,
+    "scr": "SCR-116",
+    "status": "existing",
+    "where": "e2e/settings-keyboard.spec.ts",
+    "note": "persistence read-back is partial"
+  },
+  {
+    "id": 602,
+    "scr": "SCR-117",
+    "status": "existing",
+    "where": "e2e/settings-keyboard.spec.ts",
+    "note": "labels and states by keyboard"
+  },
+  {
+    "id": 603,
+    "scr": "SCR-117",
+    "status": "existing",
+    "where": "e2e/motion-reduce.spec.ts",
+    "note": "system default; explicit on/off override"
+  },
+  {
+    "id": 604,
+    "scr": "SCR-113 SCR-013",
+    "status": "existing",
+    "where": "e2e/hotkeys.spec.ts",
+    "note": "a rebind persists across reload"
+  },
+  {
+    "id": 609,
+    "scr": "SCR-010 SCR-119",
+    "status": "pending",
+    "where": "later slice",
+    "note": "TopBar has no Help entry yet; the same-location check needs it"
+  }
+]
