@@ -3,7 +3,9 @@ goes through `EmitRouter.emit`, which hands the same emission, in the same order
 
 Sinks are injected by the composition root, so `bars` gains no import edge: the QuestDB write
 path is `WriterSink` around E12-T02's `BarWriter` (structurally typed), and the WS publisher
-(E12-T06, not built yet) plugs in as another `BarSink`.
+(E12-T06) plugs in as another `BarSink`, and so does the series store. Besides the builders'
+opens, closes and amends, `BarBuilderSet` routes each series' forming-bar sample here (§3.2,
+#2022).
 
 Backpressure policy (20 §4.2, `Bars lane → sinks`): `emit` awaits each sink in turn, bounded by
 `timeout_s` per sink. A slow sink slows the symbol's fan-out loop and, through its `NEVER_DROP`
@@ -63,8 +65,9 @@ class BarSubmitter(Protocol):
 class WriterSink:
     """Persists `close` emissions (amended closes included; DEDUP keeps the last write).
 
-    Forming-bar `open`/`update` emissions are for the live wire only: writing one row per trade
-    would multiply the QuestDB write rate by the trade rate for no reader.
+    Forming-bar `open` emissions and `update` samples (one per series per 250 ms at most, §3.2,
+    #2022) are for the live wire and the series store only: a forming row has no reader, and its
+    bar is written when it closes.
     """
 
     name = "questdb"

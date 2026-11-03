@@ -229,11 +229,14 @@ async def test_hung_sink_times_out_counts_and_degrades_without_stalling(tmp_path
     for i in range(3):
         await bus.publish(TOPIC, trade(T0 + i, seq=i))
     for _ in range(500):  # event-driven wait: real asyncio.timeout fires, no fixed sleep
-        if len(rec.seen) == 3:
+        if any(k == "close" for _, _, k, _, _ in rec.seen):
             break
         await asyncio.sleep(0.005)
-    assert len(rec.seen) == 3  # the other sink was fed despite the hung one
-    assert _count(bar_emit_sink_errors_total, "ws_timeout") == before + 3
+    # the other sink was fed despite the hung one: the open and the close (the middle trade only
+    # extends the bar, #2022); a forming-bar sample, if the real 250 ms sampler fired between
+    # them, is fed and timed out the same way
+    assert [k for _, _, k, _, _ in rec.seen if k != "update"] == ["open", "close"]
+    assert _count(bar_emit_sink_errors_total, "ws_timeout") == before + len(rec.seen)
     report = svc.health()
     assert report.status is HealthStatus.DEGRADED and "bar_emit_sink_timeout" in report.detail
     await svc.stop(1.0)

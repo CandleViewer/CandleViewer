@@ -195,6 +195,7 @@ async def test_a_gap_queued_before_a_trade_flags_that_trade_even_if_the_gap_task
     await bus.publish(GAP_TOPIC, _gap(False, start_us=tape[0].ts_event))
     await bus.publish(TOPIC, tape[1])
     await settle(bus, s)
+    await s.sample()  # tape[1] extends the open bar: its flag goes out with the sample (#2022)
     assert [b.gap_before for _, _, b in sink.bars] == [False, True]
     await s.stop()
 
@@ -209,6 +210,7 @@ async def test_restart_and_restore_do_not_reflag(tmp_path: Path) -> None:
     await bus1.publish(GAP_TOPIC, _gap(False))
     await bus1.publish(TOPIC, tape[PRE])
     await settle(bus1, s1)
+    await s1.sample()  # the flagged bar may still be forming (#2022)
     assert any(b.gap_before for _, _, b in sink1.bars)  # flagged once, before the stop
     await s1.stop()
     bus2, sink2 = Bus(), RecordingSink()
@@ -224,6 +226,7 @@ async def test_restart_and_restore_do_not_reflag(tmp_path: Path) -> None:
     for t in tape[PRE + 1 :]:
         await bus2.publish(TOPIC, t)
     await settle(bus2, s2)
+    await s2.sample()
     await s2.stop()
     # only the bar that was flagged before the stop (still open, restored with its flag) may be
     flagged_before = {b.index for _, _, b in sink1.bars if b.gap_before}

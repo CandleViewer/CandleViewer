@@ -63,7 +63,7 @@ def _build(spec: BarSpec) -> list[Bar]:
             ups += tb.on_trade(t)
             ups += tb.on_clock(t.ts_event)
         ups += tb.on_clock(_TAPE[-1].ts_event + 60_000_000)
-        return final_bars(ups)
+        return final_bars(ups, tb)
     builder: Any
     if spec.kind == "tick":
         builder = TickBarBuilder(spec, "BTCUSDT")
@@ -77,7 +77,7 @@ def _build(spec: BarSpec) -> list[Bar]:
     out: list[BarUpdate] = []
     for t in _TAPE:
         out += builder.on_trade(t)
-    return final_bars(out)
+    return final_bars(out, builder)  # the trailing forming bar, on demand (#2022)
 
 
 def _rows() -> dict[str, list[dict[str, object]]]:

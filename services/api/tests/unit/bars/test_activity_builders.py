@@ -76,8 +76,10 @@ def test_volume_exactly_at_threshold_closes_without_split() -> None:
 def test_volume_zero_qty_trade_counts_without_volume() -> None:
     b = vol("10")
     out = feed(b, [trade(T0, qty="0", seq=1), trade(T0 + 1, "101", qty="1", seq=2)])
-    assert out[-1].kind == "update"
-    assert out[-1].bar.trade_count == 2 and out[-1].bar.volume == Decimal("1")
+    assert [u.kind for u in out] == ["open"]  # the second print only extends it (#2022)
+    forming = b.forming()
+    assert forming is not None and forming.kind == "update"
+    assert forming.bar.trade_count == 2 and forming.bar.volume == Decimal("1")
 
 
 def test_volume_fractional_threshold_is_exact_decimal() -> None:
@@ -114,7 +116,7 @@ def test_tick_block_trade_counts_as_one_tick() -> None:
 def test_first_bar_partial_marks_where_tape_begins() -> None:
     for b in (tick(2), vol("2")):
         out = feed(b, [trade(T0 + 9, seq=1), trade(T0 + 10, seq=2), trade(T0 + 11, seq=3)])
-        bars = final_bars(out)
+        bars = final_bars(out, b)
         assert bars[0].partial and bars[0].open_time == T0 + 9
         assert not bars[1].partial
         assert not any(x.gap_before for x in bars)
@@ -149,6 +151,7 @@ def test_snapshot_restore_mid_split_resumes_identically() -> None:
     b = vol("5")
     b.restore(snap)
     assert feed(a, tail) == feed(b, tail)
+    assert a.forming() == b.forming() is not None
 
 
 @pytest.mark.parametrize(

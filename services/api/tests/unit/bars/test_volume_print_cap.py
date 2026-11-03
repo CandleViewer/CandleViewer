@@ -176,8 +176,9 @@ def test_volume_refusal_keeps_the_forming_bar_and_its_index() -> None:
     b.on_trade(trade(T0, qty="4", seq=1))
     with pytest.raises(BarsError):
         b.on_trade(trade(T0 + 1, qty="100000", seq=2))
-    (up,) = b.on_trade(trade(T0 + 2, qty="3", seq=3))
-    assert (up.kind, up.bar.index) == ("update", 0)
+    assert b.on_trade(trade(T0 + 2, qty="3", seq=3)) == ()  # extends the open bar (#2022)
+    up = b.forming()
+    assert up is not None and (up.kind, up.bar.index) == ("update", 0)
     assert (up.bar.volume, up.bar.trade_count) == (Decimal(7), 2)
 
 

@@ -42,16 +42,28 @@ def _equal(a: dict[str, list[str]], b: dict[str, list[str]]) -> None:
 
 
 def _updates_equal(tape: list[TradeEvent]) -> None:
-    """The FULL emitted update sequence (kind, amended, bar) must be identical for every
-    trade-driven kind: the lane applies one trade at a time whatever the publish burst size.
+    """The FULL sequence of builder emissions (kind, amended, bar: every open, close and amend)
+    must be identical for every trade-driven kind: the lane applies one trade at a time whatever
+    the publish burst size. Forming-bar samples (`update`) follow the sampling clock, which the
+    runner drives once per burst, so their number is not part of BI-4 (24 §3.2, #2022); each
+    must still be a bar of the series, never one sampled after its close (below).
     Time bars are compared on final bars only: their `close` updates are emitted by the clock
     tick, which the runner drives once per burst, so bursts legitimately differ in WHEN a bar
     closes (never in its content)."""
     one = asyncio.run(cf.run_full(tape, SPECS, SYM, chunk=1))[1]
     many = asyncio.run(cf.run_full(tape, SPECS, SYM, chunk=10_000))[1]
     for label, spec in SPECS.items():
+        for seq in (one[label], many[label]):
+            closed: set[str] = set()
+            for kind, _, row in seq:
+                index = json.loads(row)["index"]
+                assert kind != "update" or index not in closed, f"{label}: sample after close"
+                if kind == "close":
+                    closed.add(index)
         if spec.kind != "time":
-            assert one[label] == many[label], f"{label}: update sequence differs"
+            built_one = [u for u in one[label] if u[0] != "update"]
+            built_many = [u for u in many[label] if u[0] != "update"]
+            assert built_one == built_many, f"{label}: update sequence differs"
 
 
 def test_streaming_equals_batch_on_dense_prefix() -> None:
@@ -127,7 +139,8 @@ def test_late_print_after_close_within_window_amends_the_closed_bar() -> None:
     bars = _bars(tape, spec)
     assert [b.volume for b in bars[:2]] == [Decimal(3), Decimal(2)]  # late 2 landed in closed bar 0
     assert bars[0].high == Decimal(105) and bars[0].closed
-    kind, amended, row = _full(tape, spec)[-1]  # the late print's own emission
+    built = [u for u in _full(tape, spec) if u[0] != "update"]  # not the burst's sample (#2022)
+    kind, amended, row = built[-1]  # the late print's own emission
     assert (kind, amended) == ("close", True)
     assert json.loads(row)["index"] == "0" and json.loads(row)["high"] == "105"
 

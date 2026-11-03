@@ -25,27 +25,27 @@ fix lands, so the fix removes the marker.
 
 ## Scenario table
 
-| # | Scenario | C-13.6 | PR | Observed | Negative control |
-|---|---|---|---|---|---|
-| 1 | Process or WS drop mid-bar: resume from store, or marked gapped | #1, #12 | PR-2 | - | - |
-| 2 | Tape gap (REST backfill ok / down) | #1, #3 | PR-1 | recovered: bars == golden ✅; unrecovered: `GapEvent`, `trade_gaps_total`, health ✅; bar marked (`gap_before`) ✅ (#529 gap-marking fix) | no-backfill run fails the golden |
-| 3 | Out-of-order and duplicate prints | #3 | PR-1 | dup suppressed upstream ✅; reorder amends the closed bar ✅; > 60 s dropped, counted, logged ✅ | a duplicate leaking into a builder breaks conservation |
-| 4 | 5xx and 10018 during kline backfill | #5 | PR-2 | - | - |
-| 5 | Store restart / write failure | #10 | PR-2 | - | - |
-| 6 | Host clock jumps +-2 s, +-2 min | #6 | PR-1 | bars == golden, no drops, no amends, alarm ✅ (#529 fix: bars on the exchange-corrected clock) | the raw host clock drops prints (+2 min) and re-emits amended bars (+2 s) |
-| 7 | Kill mid renko rebuild | #12 (extension) | PR-2 | blocked by #535 (no rebuild exists) | - |
-| 8 | Delisted or halted symbol | none (extension of #1) | PR-2 | - | - |
+| #   | Scenario                                                        | C-13.6                 | PR   | Observed                                                                                                                                  | Negative control                                                          |
+| --- | --------------------------------------------------------------- | ---------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| 1   | Process or WS drop mid-bar: resume from store, or marked gapped | #1, #12                | PR-2 | -                                                                                                                                         | -                                                                         |
+| 2   | Tape gap (REST backfill ok / down)                              | #1, #3                 | PR-1 | recovered: bars == golden ✅; unrecovered: `GapEvent`, `trade_gaps_total`, health ✅; bar marked (`gap_before`) ✅ (#529 gap-marking fix) | no-backfill run fails the golden                                          |
+| 3   | Out-of-order and duplicate prints                               | #3                     | PR-1 | dup suppressed upstream ✅; reorder amends the closed bar ✅; > 60 s dropped, counted, logged ✅                                          | a duplicate leaking into a builder breaks conservation                    |
+| 4   | 5xx and 10018 during kline backfill                             | #5                     | PR-2 | -                                                                                                                                         | -                                                                         |
+| 5   | Store restart / write failure                                   | #10                    | PR-2 | -                                                                                                                                         | -                                                                         |
+| 6   | Host clock jumps +-2 s, +-2 min                                 | #6                     | PR-1 | bars == golden, no drops, no amends, alarm ✅ (#529 fix: bars on the exchange-corrected clock)                                            | the raw host clock drops prints (+2 min) and re-emits amended bars (+2 s) |
+| 7   | Kill mid renko rebuild                                          | #12 (extension)        | PR-2 | blocked by #535 (no rebuild exists)                                                                                                       | -                                                                         |
+| 8   | Delisted or halted symbol                                       | none (extension of #1) | PR-2 | -                                                                                                                                         | -                                                                         |
 
 ## Open defects (strict xfails)
 
-| Test | Why it fails today | Owner |
-|---|---|---|
+| Test                                              | Why it fails today                                                 | Owner                |
+| ------------------------------------------------- | ------------------------------------------------------------------ | -------------------- |
 | Replay after writer exhaustion (scenario 5, PR-2) | `BarWriter` drops rows after its 5 attempts; nothing re-emits them | #531 (writer replay) |
 
 ## Signals that do not exist (BQ-8)
 
-| Failure | Missing signal | Pinned by |
-|---|---|---|
+| Failure              | Missing signal                                                                                                                                    | Pinned by                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | Unrecovered tape gap | no bars-side health reason: `BarsHealthReason` has no tape-gap member, so the bars report healthy while ingestion reports `trade_gap_unrecovered` | `test_s02_unrecovered_gap_leaves_the_bars_health_unchanged` |
 
 ## Mapping to the ticket's observability names
@@ -61,7 +61,7 @@ not a colour), `trade_duplicates_suppressed_total`, `bars_amended_total`,
 
 - Virtual clock, seeded RNG and the stub transport, as in the ingestion suite.
 - The set's "now" is composed in `_rig.py` as `corrected_now_us(ClockGuard.offset_us,
-  rig.host_now_us)`, the same composition as `app.exchange_corrected_clock`, which
+rig.host_now_us)`, the same composition as `app.exchange_corrected_clock`, which
   `tests/unit/test_bars_clock_wiring.py` pins in the app. `clock="raw"` is the pre-#529
   wiring and exists only for the negative controls.
 - No QuestDB writer, WS publisher or indicator engine on the emit path (PR-2 adds the store seam).

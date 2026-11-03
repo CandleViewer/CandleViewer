@@ -50,8 +50,9 @@ def test_renko_invariants(
     raw: list[tuple[int, int, bool, int]], ticks: int, rev: int, wick: bool
 ) -> None:
     tape = _tape(raw)
-    ups = _feed(_mk(ticks, rev, wick), tape)
-    bars = final_bars(ups)
+    built = _mk(ticks, rev, wick)
+    ups = _feed(built, tape)
+    bars = final_bars(ups, built)
     w = D(ticks) / 10
     assert [x.index for x in bars] == list(range(len(bars)))
     assert sum(x.volume for x in bars) == sum(t.qty for t in tape)  # BI-1, single allocation
@@ -77,7 +78,8 @@ def test_renko_invariants(
         if not u.volume_allocated:
             assert u.bar.volume == 0 and u.bar.trade_count == 0
     # BI-4 determinism
-    assert final_bars(_feed(_mk(ticks, rev, wick), tape)) == bars
+    again = _mk(ticks, rev, wick)
+    assert final_bars(_feed(again, tape), again) == bars
 
 
 @settings(max_examples=200, deadline=None)
@@ -87,12 +89,14 @@ def test_renko_restore_at_any_cut_matches_uninterrupted(
 ) -> None:
     tape = _tape(raw)
     cut = min(cut, len(tape))
-    full = _feed(_mk(ticks, rev, wick), tape)
+    whole = _mk(ticks, rev, wick)
+    full = _feed(whole, tape)
     pre = _mk(ticks, rev, wick)
     head = _feed(pre, tape[:cut])
     post = _mk(ticks, rev, wick)
     post.restore(pre.snapshot())
     assert head + _feed(post, tape[cut:]) == full  # BI-5
+    assert post.forming() == whole.forming()  # the forming brick too (#2022)
 
 
 def test_renko_restore_cut_spanning_a_reversal() -> None:

@@ -25,7 +25,7 @@ from candleviewer.ws.bars_publish import BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
 from candleviewer.ws_wiring import SnapshotRouter
 from tests.contract.ws import _harness as h
-from tests.unit.bars._trades import final_bars
+from tests.unit.bars._trades import final_bars, per_print
 from tests.unit.bars.test_time_builder_golden import _tape
 from tests.unit.ws.test_subscriptions import _Bars
 
@@ -33,9 +33,10 @@ SPEC, CH, GEN = BarSpec(kind="time", interval_ms=60_000), "bars.BTCUSDT.time.1",
 
 
 def _prints(n: int) -> list[list[BarUpdate]]:
-    """What the real builder emits for each of the recorded tape's first `n` prints."""
+    """What the set routes for each of the recorded tape's first `n` prints through the real
+    builder, a forming-bar sample after each print (`per_print`, #2022)."""
     builder = TimeBarBuilder(SPEC, h.SYM)
-    return [list(builder.on_trade(t)) for t in _tape()[:n]]
+    return [per_print(builder, t) for t in _tape()[:n]]
 
 
 def _stored(n: int) -> TailRead:

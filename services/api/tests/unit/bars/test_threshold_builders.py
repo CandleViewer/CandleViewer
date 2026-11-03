@@ -55,16 +55,18 @@ def test_range_bar_closes_on_span_and_next_opens_at_close() -> None:
 def test_range_jump_emits_one_bar_no_phantoms_and_gap_before() -> None:
     b = _range(ticks=10)  # width 1.0
     ups = _feed(b, [trade(1, "100", seq=0), trade(2, "105", seq=1), trade(3, "105.2", seq=2)])
-    bars = final_bars(ups)
+    bars = final_bars(ups, b)
     assert [x.index for x in bars] == [0, 1]
     assert bars[0].closed and bars[0].high == D(105) and bars[0].volume == D(2)
     assert bars[1].gap_before and not bars[0].gap_before
     assert bars[1].open == D(105)  # opens at the close, the following trade is the first in it
     assert sum(x.volume for x in bars) == D(3)  # BI-1
     # the flag belongs to the bar after the jump only, and stays on it while it is open
-    assert b.on_trade(trade(4, "105.3", seq=3))[0].bar.gap_before
+    assert b.on_trade(trade(4, "105.3", seq=3)) == ()  # extends the open bar (#2022)
+    forming = b.forming()
+    assert forming is not None and forming.bar.gap_before
     nxt = _feed(b, [trade(5, "106.4", seq=4), trade(6, "106.5", seq=5)])
-    assert not nxt[-1].bar.gap_before
+    assert [u.kind for u in nxt] == ["close", "open"] and not nxt[-1].bar.gap_before
 
 
 def test_range_closure_is_inclusive_and_exact_decimal() -> None:
@@ -76,7 +78,10 @@ def test_range_late_trade_joins_open_bar_and_open_stays_pinned() -> None:
     b = _range()
     _feed(b, [trade(5, "100", seq=0), trade(6, "102", seq=1)])  # closed at 102
     _feed(b, [trade(10, "102.5", seq=2)])
-    late = b.on_trade(trade(3, "102.2", seq=3))[0].bar
+    assert b.on_trade(trade(3, "102.2", seq=3)) == ()  # joins the open bar, emits nothing
+    forming = b.forming()
+    assert forming is not None
+    late = forming.bar
     assert late.index == 1 and late.open == D("102.0") and late.trade_count == 2
 
 
@@ -171,7 +176,7 @@ def test_range_properties(raw: list[tuple[int, int, bool, int]], ticks: int) -> 
     tape = _tape(raw)
     b = _range(ticks=ticks, tick="0.1")
     ups = _feed(b, tape)
-    bars = final_bars(ups)
+    bars = final_bars(ups, b)
     width = D(ticks) / 10
     assert [x.index for x in bars] == list(range(len(bars)))
     assert all(x.trade_count >= 1 and x.volume > 0 for x in bars)  # no phantom bars
@@ -183,7 +188,8 @@ def test_range_properties(raw: list[tuple[int, int, bool, int]], ticks: int) -> 
     for prev, nxt in pairwise(bars):
         assert nxt.open == prev.close
     # BI-4 determinism
-    assert final_bars(_feed(_range(ticks=ticks, tick="0.1"), tape)) == bars
+    again = _range(ticks=ticks, tick="0.1")
+    assert final_bars(_feed(again, tape), again) == bars
 
 
 @settings(max_examples=150, deadline=None)
@@ -192,8 +198,9 @@ def test_delta_properties_and_restore_at_any_cut(
     raw: list[tuple[int, int, bool, int]], thr: int, cut: int
 ) -> None:
     tape = _tape(raw)
-    ups = _feed(_delta(str(thr)), tape)
-    bars: list[Bar] = final_bars(ups)
+    built = _delta(str(thr))
+    ups = _feed(built, tape)
+    bars: list[Bar] = final_bars(ups, built)
     assert [x.index for x in bars] == list(range(len(bars)))
     assert sum(x.volume for x in bars) == sum(t.qty for t in tape)  # BI-1: no split, no loss
     assert sum(x.trade_count for x in bars) == len(tape)  # every trade in exactly one bar
@@ -211,3 +218,4 @@ def test_delta_properties_and_restore_at_any_cut(
         post = make()
         post.restore(pre.snapshot())
         assert head + _feed(post, tape[cut_i:]) == full
+        assert post.forming() == a.forming()  # the forming bar too (#2022)

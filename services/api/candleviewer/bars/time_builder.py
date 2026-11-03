@@ -1,7 +1,9 @@
 """Time-bar builder (`24-internal-schemas.md` §3.2-§3.4, ticket E12-S01).
 
 Hot path (C-2.20): plain synchronous code, no statechart. Each trade mutates a slotted
-`_Draft`; a frozen `Bar` is materialised with `Bar.model_construct` only on emit.
+`_Draft`; a frozen `Bar` is materialised with `Bar.model_construct` only for an `open`, a `close`
+or an amended `close` (§3.2, #2022). A trade that only extends the open bar returns nothing; the
+forming bar is `forming()`, on demand, built by the same `_Draft.to_bar` as a close.
 
 Grid (§3.3): `start = floor((ts - anchor) / step) * step + anchor`, where `anchor` is
 `session_anchor_utc_min` minutes past 00:00 UTC.
@@ -280,7 +282,7 @@ class TimeBarBuilder:
             if self._gap_pending and ts > self._gap_floor:
                 cur.gap_before, self._gap_pending = True, False
             cur.apply(t)
-            return (self._emit("update", cur, closed=False),)
+            return _NONE  # folded into the forming bar: `forming()` materialises it (#2022)
         floor = cur.open_time if cur is not None else self._last_close
         if floor is not None and ts < floor:
             return self._late(t)
@@ -298,6 +300,12 @@ class TimeBarBuilder:
         self._cur = d
         out.append(self._emit("open", d, closed=False))
         return out
+
+    def forming(self) -> BarUpdate | None:
+        """The open bar as the `update` a trade extending it used to emit, or None (§3.2, #2022).
+        No state change: the draft is read through `_Draft.to_bar`, the close's own path."""
+        cur = self._cur
+        return None if cur is None else self._emit("update", cur, closed=False)
 
     def mark_gap(self, floor_us: int) -> None:
         """An unrecovered tape gap (#529): the bar taking the first print with `ts_event >

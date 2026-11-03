@@ -152,7 +152,8 @@ async def run_full(
     tick: bool = True,
 ) -> tuple[dict[str, list[Bar]], dict[str, list[Update]]]:
     """Publish `tape` to the bus in `chunk`-sized bursts; after each burst settle and (when
-    `tick`) drive the set's clock to the burst's last trade time, as the live ticker would."""
+    `tick`) drive the set's clock to the burst's last trade time, as the live ticker would, then
+    take one forming-bar sample, as the live sampler would (24 §3.2, #2022)."""
     bus, sink, clock = Bus(), _Sink(), _Clock()
     topic = Topic(env=ENV, domain="md", symbol=symbol, detail="trade")
     with tempfile.TemporaryDirectory() as root:
@@ -169,6 +170,7 @@ async def run_full(
             if tick:
                 clock.t = max(clock.t, burst[-1].ts_event)
                 await s.tick()
+            await s.sample()  # the forming bar, as the live 250 ms sampler routes it (#2022)
         await s.stop()
     finals = {
         label: [b for _, b in sorted(sink.latest.get(spec.spec_hash, {}).items())]
@@ -230,6 +232,9 @@ def explain(
         ups = list(b.on_trade(t))
         if spec.kind == "time":
             ups += b.on_clock(t.ts_event)
+        forming = b.forming()  # a print that only extends a bar emits nothing (#2022)
+        if forming is not None:
+            ups.append(forming)
         for u in ups:
             if u.bar.index == d.index and comparator.row(u.bar).get(d.field) != d.expected:
                 trigger = (

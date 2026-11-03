@@ -7,7 +7,9 @@
 Exit codes: 0 green; 1 an invariant violation or a throughput drop > 25 % vs the committed
 baseline (`baseline.json`); a drop > 10 % prints a `::warning::` line. Seeded and offline.
 Throughput is the production builder alone (`on_trade` + `on_clock` for time bars) over an
-in-memory tape; tape generation is excluded. The E12-K01 prototype figures
+in-memory tape, through `invariants.count`, which retains no emission (#2022: the timing is the
+builder's, not a list of a million updates); tape generation is excluded. The invariant sweep
+keeps the full feed. The E12-K01 prototype figures
 (`docs/research/e12/renko-rebuild-results.json`, `bench/renko_rebuild`) are reported alongside
 for continuity; they are integer-tick prototypes, so they are context, not the gate.
 """
@@ -41,7 +43,7 @@ def throughput(spec_label: str, tape: list[Any], repeats: int = 1) -> float:
     for _ in range(repeats):
         b = invariants.make_builder(spec)
         t0 = time.perf_counter()
-        invariants.feed(b, tape)
+        invariants.count(b, tape)
         best = max(best, len(tape) / (time.perf_counter() - t0))
     return best
 

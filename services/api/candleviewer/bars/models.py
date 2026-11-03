@@ -5,7 +5,8 @@ key off `spec_hash`. Money and quantity are `Decimal` throughout; conversion to 
 happens only at the storage boundary (E12-T02).
 
 Hot path: builders mutate an internal draft and materialise a frozen `Bar` with
-`Bar.model_construct(...)` on emit — validation happens once, at spec level, never per trade.
+`Bar.model_construct(...)` only for an `open`, a `close` or an amend, and the forming bar on
+demand (`forming()`, §3.2, #2022). Validation happens once, at spec level, never per trade.
 """
 
 from __future__ import annotations
@@ -191,6 +192,11 @@ class BarBuilder(Protocol):
     def on_trade(self, t: TradeEvent) -> Sequence[BarUpdate]: ...
 
     def on_clock(self, now_us: TsUs) -> Sequence[BarUpdate]: ...
+
+    def forming(self) -> BarUpdate | None:
+        """The forming bar as an `update` (`bar.closed=False`), or None; changes no state.
+        `on_trade`/`on_clock` return only an `open`, a `close` or an amended `close` (§3.2)."""
+        ...
 
     def snapshot(self) -> BuilderState: ...
 

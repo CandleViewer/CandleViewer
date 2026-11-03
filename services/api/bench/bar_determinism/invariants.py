@@ -84,15 +84,22 @@ class Violation:
         )
 
 
-def final_bars(updates: Iterable[BarUpdate]) -> list[Bar]:
-    """Latest emission per index, in index order (amendments overwrite, like the upsert)."""
+def final_bars(updates: Iterable[BarUpdate], builder: BarBuilder | None = None) -> list[Bar]:
+    """Latest emission per index, in index order (amendments overwrite, like the upsert). With
+    `builder`, its `forming()` comes last: a builder emits no `update` per trade (24 §3.2, #2022),
+    so a trailing bar still forming at the end of the tape is read on demand."""
     latest: dict[int, Bar] = {}
     for u in updates:
         latest[u.bar.index] = u.bar
+    tail = None if builder is None else builder.forming()
+    if tail is not None:
+        latest[tail.bar.index] = tail.bar
     return [latest[i] for i in sorted(latest)]
 
 
 def feed(b: BarBuilder, tape: Sequence[TradeEvent]) -> list[BarUpdate]:
+    """Every emission of `b` over `tape` (opens, closes and amends; the full feed BI-4 and the
+    invariants read)."""
     clocked = b.spec.kind == "time"
     out: list[BarUpdate] = []
     for t in tape:
@@ -100,6 +107,20 @@ def feed(b: BarBuilder, tape: Sequence[TradeEvent]) -> list[BarUpdate]:
         if clocked:
             out += b.on_clock(t.ts_event)
     return out
+
+
+def count(b: BarBuilder, tape: Sequence[TradeEvent]) -> int:
+    """The throughput path: feed `b` and retain no emission, only their number (#2022). It times
+    the builder alone, not a million retained objects; the invariants keep `feed`."""
+    on_trade, on_clock = b.on_trade, b.on_clock
+    n = 0
+    if b.spec.kind == "time":
+        for t in tape:
+            n += len(on_trade(t)) + len(on_clock(t.ts_event))
+    else:
+        for t in tape:
+            n += len(on_trade(t))
+    return n
 
 
 def flush(b: BarBuilder, tape: Sequence[TradeEvent]) -> list[BarUpdate]:
@@ -113,7 +134,7 @@ def flush(b: BarBuilder, tape: Sequence[TradeEvent]) -> list[BarUpdate]:
 def run(factory: Factory, spec: BarSpec, tape: Sequence[TradeEvent]) -> list[Bar]:
     b = factory(spec)
     ups = feed(b, tape)
-    return final_bars(ups + flush(b, tape))
+    return final_bars(ups + flush(b, tape), b)
 
 
 def fixed_cuts(factory: Factory, spec: BarSpec, tape: Sequence[TradeEvent]) -> list[int]:
@@ -152,7 +173,7 @@ def run_with_cuts(
             state = BuilderState.model_validate_json(b.snapshot().model_dump_json())
             b = factory(spec)
             b.restore(state)
-    return final_bars(ups + flush(b, tape))
+    return final_bars(ups + flush(b, tape), b)
 
 
 def _first(

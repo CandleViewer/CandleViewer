@@ -52,6 +52,7 @@ from tests.contract.test_market_bars_contract import (
     _tape_totals,
 )
 from tests.contract.ws import _harness as h
+from tests.unit.bars._trades import per_print
 from tests.unit.ws._seq_support import USER
 from tests.unit.ws.test_subscriptions import _Bars
 
@@ -275,9 +276,7 @@ def _script(name: str) -> _Script:
     bar_type, param, skip, inside = _SCRIPTS[name]
     spec = _SERIES[bar_type, param]
     builder: Any = (TimeBarBuilder if bar_type == "time" else TickBarBuilder)(spec, "BTCUSDT")
-    ems = [
-        [*builder.on_trade(t), *builder.on_clock(t.ts_event)] for t in _TAPE[: skip + inside + 3]
-    ]
+    ems = [per_print(builder, t, clock=True) for t in _TAPE[: skip + inside + 3]]  # #2022
     windows = [ems[skip : skip + 1], ems[skip + 1 : skip + 1 + inside], ems[skip + 1 + inside :]]
     return _Script(f"bars.BTCUSDT.{bar_type}.{param}", spec, windows)
 
@@ -365,7 +364,7 @@ def test_contract_bars_forming_bar_is_unconfirmed_in_every_frame_and_confirmed_e
     """The recorded tape through the real builder and emit router: each bar's frames read
     `confirm: false` until its close, which is delivered once; none follows it."""
     spec, builder, rig = _SERIES[_MINUTE], TimeBarBuilder(_SERIES[_MINUTE], "BTCUSDT"), _Rig({})
-    emissions = [[*builder.on_trade(t), *builder.on_clock(t.ts_event)] for t in _TAPE]
+    emissions = [per_print(builder, t, clock=True) for t in _TAPE]  # a sample a print (#2022)
     emissions.append([*builder.on_clock(_TAPE[-1].ts_event + 60_000_000)])  # the last boundary
     seen: dict[int, list[bool]] = {}
     with h.connect(rig.w) as c:

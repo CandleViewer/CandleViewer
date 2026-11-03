@@ -16,9 +16,10 @@ Formation, from the anchor `c` (the last brick's close) and the prevailing direc
 Volume (edge case a). One trade that completes N bricks emits N `close` bricks with identical
 `open_time`/`close_time`/`open_source_ts` and incrementing `index`. Everything the forming draft
 accumulated (volume, delta, trades, turnover) goes to the LAST brick, `volume_allocated=True`;
-the others are flat zero-volume bricks with `volume_allocated=False`. The forming brick is
-emitted as `open`/`update` (closed=False, provisional open = anchor) so BI-1 holds on
-`final_bars` at any point.
+the others are flat zero-volume bricks with `volume_allocated=False`. The forming brick
+(closed=False, provisional open = anchor) is emitted as `open` by the print that starts it; a print
+that only extends it returns nothing, and `forming()` gives it on demand through the same brick
+shaping (§3.2, #2022), so BI-1 holds on `final_bars` plus `forming()` at any point.
 
 Wicks (b). `renko_wick=False`: high/low are the brick's open/close bounds. True: the extreme
 trade prices observed while the run formed extend the trailing side of the first brick and the
@@ -128,7 +129,7 @@ class RenkoBarBuilder:
         n = int(abs(diff) // w)
         sign = 1 if diff > 0 else -1
         if n == 0 or (s == -sign and n < self._rev):
-            return (self._forming(d, c),)
+            return (self._forming(d, c, "open"),) if d.count == 1 else _NONE
         first = c
         if s == -sign:  # reversal: the first R-1 bricks of the move are its cost
             first = c + sign * (self._rev - 1) * w
@@ -149,11 +150,16 @@ class RenkoBarBuilder:
         self._built.inc(n)
         return out
 
-    def _forming(self, d: _Draft, c: Decimal) -> BarUpdate:
+    def forming(self) -> BarUpdate | None:
+        """The brick in formation as the `update` a print extending it used to emit, or None
+        (§3.2, #2022). No state change; the anchor is set whenever a run is open."""
+        d, c = self._cur, self._anchor
+        return None if d is None or c is None else self._forming(d, c, "update")
+
+    def _forming(self, d: _Draft, c: Decimal, kind: str) -> BarUpdate:
         """The brick in formation: provisional open at the anchor, carries the run's volume."""
         hi, lo = (d.high, d.low) if self._wick else (d.close, d.close)
         bar = self._bar(d, d.index, c, max(c, hi), min(c, lo), d.close, owner=True, closed=False)
-        kind = "open" if d.count == 1 else "update"
         return RenkoBarUpdate.model_construct(
             kind=kind, bar=bar, volume_allocated=True, open_source_ts=d.first_ts
         )
