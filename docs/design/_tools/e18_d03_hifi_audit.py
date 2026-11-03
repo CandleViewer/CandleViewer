@@ -8,9 +8,8 @@ texts the spec cites and the token JSON, and, from the working tree, the spec an
 `srgb_to_xyz()` and `xyz_to_lab()` of `docs/research/_tools/cvd_simulate.py`, loaded by path.
 
 Gates: G-CITE, G-QUOTE, G-VERSION, G-AC, G-BQ, G-RULED, G-BOARDS, G-PENPOT, G-TOKENS,
-G-CONTRAST, G-CVD, G-AC1, G-GLYPH, G-FORMAT, G-SAMPLES, G-T2, G-ENV, G-NOCLOSE, G-PUBLIC,
-G-UNTOUCHED and G-MUTLIST (section 16.3 equals this tool's list). Slice 1c adds G-AROWS and
-G-HANDOFF with section C and the hand-off.
+G-CONTRAST, G-CVD, G-AC1, G-GLYPH, G-FORMAT, G-SAMPLES, G-T2, G-ENV, G-AROWS, G-HANDOFF,
+G-NOCLOSE, G-PUBLIC, G-UNTOUCHED and G-MUTLIST (section 16.3 equals this tool's list).
 Pins (G-RULED): each BQ bullet's sha256[:16] in RULED_PINS below, no separate pins file (the
 hand-off-pack rule 2, R370 02b); `--repin-ruled` is the only writer, and it also prints where each
 pinned D02 line now stands (BQ-1). The BQ list is comment 6599273411 on #497, RULED by comment
@@ -176,13 +175,43 @@ SIG_STATES = (
 WEIGHTS = {"active": "3 px", "tested": "2 px", "broken": "1 px"}
 # BQ-2 (RULED): the registered patterns win where the meaning is the same (D05E11 section 7).
 STATE_IDS = {"tested": "`pattern.dashed.tested`", "broken": "`pattern.hatch.absent`"}
+REGISTERED = (
+    "pattern.dashed.tested",
+    "pattern.hatch.absent",
+    "pattern.dashed.estimated",
+    "pattern.hatch.estimated",
+    "pattern.outline.imbalance",
+)
 # 26:282: printable ASCII plus the three mono extras; the canvas never needs another glyph.
 CANVAS_GLYPHS = frozenset(chr(c) for c in range(0x20, 0x7F)) | {"×", "▲", "▼"}
 COMPACT_RE = re.compile(r"\d(?:\.\d+)?[KMB]\b")
 FORMAT_ROWS = 7
 INVALIDATIONS = 5
 MODES = ("Bid × Ask", "Volume", "Delta", "Delta / Total")
+HANDOFF_CMPS = ("CMP-109", "CMP-132", "CMP-182", "CMP-228")
+# `16` section 11.4's thirteen lines, in order (the ruling's missed row; `02`:56).
+HANDOFF_ITEMS = (
+    "**Final Penpot link**",
+    "**Variants × States matrix**",
+    "**Keyboard table**",
+    "**Accessible name / role table**",
+    "**Live data**",
+    "**Motion pair**",
+    "**Density notes**",
+    "**Essential-exceptions log**",
+    "**Tokens used**",
+    "**Data contract confirmed**",
+    "**Contrast and CVD**",
+    "**Design QA checklist (16 §12)**",
+    "**Sign-off**",
+)
+AROW_RE = re.compile(
+    r"^### (A-\d+) · (CMP-\d+|tokens) · `(15|16)`:(\d+) · (replace|insert after)$", re.MULTILINE
+)
+FENCE_RE = re.compile(r"Old:\n\n```text\n(.*?)\n```\n\nNew:\n\n```text\n(.*?)\n```", re.DOTALL)
+AROW_COUNT = 14
 BAN_RE = re.compile(r"\b(?:dash(?:ed)?|hatch(?:ed)?)\b", re.IGNORECASE)
+BAN_OK = re.compile(r"\b(?:never|no|not|nor|withdrawn|struck|reserved|retired)\b", re.IGNORECASE)
 # G-RULED: sha256[:16] of each RULED BQ bullet; `--repin-ruled` rewrites the block, nothing else.
 PINS_OPEN = 'RULED_PINS = """\n'
 PINS_CLOSE = '"""  # end of the ruled pins'
@@ -361,6 +390,18 @@ def cited_text(cell: str) -> str:
 def squash(s: str) -> str:
     """Whitespace runs as one space: prettier collapses them inside table cells."""
     return " ".join(s.split())
+
+
+def arows(spec: str) -> list[tuple[re.Match[str], str, str]]:
+    """(heading match, old, new) per section C row, in order."""
+    out = []
+    body = L.section(spec, "## §C Copy-ready A-rows")
+    heads = list(AROW_RE.finditer(body))
+    for i, h in enumerate(heads):
+        chunk = body[h.end() : heads[i + 1].start() if i + 1 < len(heads) else len(body)]
+        m = FENCE_RE.search(chunk)
+        out.append((h, m.group(1) if m else "", m.group(2) if m else ""))
+    return out
 
 
 # ---------- this spec's gates ---------------------------------------------------------------------
@@ -575,6 +616,45 @@ def g_env(t: L.Tree) -> list[str]:
     return [n for n in need if n not in r1]
 
 
+def g_arows(t: L.Tree) -> list[str]:
+    got = arows(t.text("spec"))
+    bad = [] if len(got) == AROW_COUNT else [f"{len(got)} rows, not {AROW_COUNT}"]
+    names = L.token_names(repo(), BASE)
+    for i, (h, old, new) in enumerate(got, start=1):
+        aid, doc, n = h.group(1), h.group(3), int(h.group(4))
+        if aid != f"A-{i}":
+            bad.append(f"{aid} out of order")
+        if not old or old != line_of(doc, n):
+            bad.append(f"{aid} Old is not `{doc}`:{n}")
+        if not new.strip():
+            bad.append(f"{aid} has no New")
+        bare = new
+        for rid in REGISTERED:
+            bare = bare.replace(rid, "@" * len(rid))
+        for m in BAN_RE.finditer(bare):
+            named = "@" in bare[m.end() : m.end() + 24]
+            if not named and not BAN_OK.search(bare[max(0, m.start() - 48) : m.start()]):
+                bad.append(f"{aid} draws a {m.group(0)}")
+        for line in new.split("\n"):
+            for name in L.check_token_refs(line, names):
+                if name not in PROPOSED or "PROPOSED" not in line:
+                    bad.append(f"{aid} binds {name}")
+    return bad
+
+
+def g_handoff(t: L.Tree) -> list[str]:
+    h = t.text("handoff")
+    bad = []
+    for cmp in HANDOFF_CMPS:
+        block = L.section(h, f"## Handoff checklist — {cmp} ")
+        miss = [i for i in HANDOFF_ITEMS if f"- [ ] {i}" not in block and f"- [x] {i}" not in block]
+        if not block or miss:
+            bad.append(f"{cmp}: {miss or 'no block'}")
+        if "### Table 1 — Variants × States" not in block:
+            bad.append(f"{cmp}: Table 1")
+    return bad
+
+
 def g_noclose(t: L.Tree) -> list[str]:
     return L.closing_keywords(t.named("spec", "handoff"))
 
@@ -595,8 +675,8 @@ def g_mutlist(t: L.Tree) -> list[str]:
 # fmt: off
 GATES = tuple(L.Gate("G-" + f.__name__[2:].upper(), f) for f in (
     g_cite, g_quote, g_version, g_ac, g_bq, g_ruled, g_boards, g_penpot, g_tokens, g_contrast,
-    g_cvd, g_ac1, g_glyph, g_format, g_samples, g_t2, g_env, g_noclose, g_public, g_untouched,
-    g_mutlist,
+    g_cvd, g_ac1, g_glyph, g_format, g_samples, g_t2, g_env, g_arows, g_handoff, g_noclose,
+    g_public, g_untouched, g_mutlist,
 ))
 # fmt: on
 
@@ -658,6 +738,18 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-26", "G-UNTOUCHED", "an owner document edited", "@changed",
        "", "docs/plan/15-component-catalogue.md"),
     _M("M-27", "G-MUTLIST", "the list drifts", "spec", "| M-1  | G-CITE ", "| M-1  | G-AC   "),
+    _M("M-28", "G-AROWS", "an Old drifts from its line", "spec",
+       "- **Storybook**: HighZoom(text visible), LowZoom(LOD text hidden), AllCellModes.\n```",
+       "- **Storybook**: HighZoom, LowZoom, AllCellModes.\n```"),
+    _M("M-29", "G-AROWS", "a New draws a hatch", "spec",
+       "no pattern on a cell beyond these", "a hatched cell, no pattern beyond these"),
+    _M("M-30", "G-HANDOFF", "CMP-228 loses its sign-off line", "handoff",
+       "- [ ] **Sign-off** — owner `approved` on #497 (pending, #2701); CMP-228",
+       "- [ ] **Approval** — owner `approved` on #497 (pending, #2701); CMP-228"),
+    _M("M-31", "G-NOCLOSE", "a closing keyword with no space", "handoff",
+       "## Handoff checklist — CMP-109", "Fix" + "es#497.\n\n## Handoff checklist — CMP-109"),
+    _M("M-32", "G-PUBLIC", "a local path", "handoff", "file `E18-D03 boards`",
+       "file `" + "/" + "home/x/E18-D03 boards`"),
 )
 # fmt: on
 
