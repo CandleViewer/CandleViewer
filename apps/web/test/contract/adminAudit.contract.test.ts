@@ -2,7 +2,8 @@
  * C-6.2 consumer contract (E42-S04, #1135): the audit log's read layer reads the examples
  * `docs/plan/22-api-openapi.yaml` serves for `queryAuditLog` (`orderPlaced`) and
  * `verifyAuditChain` (`ok`, `broken`) through the generated `packages/protocol` types, each vetted
- * as served, and asks for the contract's paths.
+ * as served, and asks for the contract's paths. The filters' names and the page size are
+ * `queryAuditLog`'s parameters.
  */
 import { describe, expect, expectTypeOf, it } from "vitest";
 import type { generated } from "@candleviewer/protocol";
@@ -14,6 +15,7 @@ import {
   type AuditQuery,
   type VerifyResult,
 } from "../../src/features/admin/audit/auditReads";
+import { FILTER_NAMES, PAGE_LIMIT } from "../../src/features/admin/audit/auditFilters";
 import { example, pathBlock, specText } from "../features/admin/audit/specExamples";
 
 type Schemas = generated.rest.components["schemas"];
@@ -59,5 +61,44 @@ describe("audit log consumer contract (C-6.2): the read layer", () => {
   it.each(["ok", "broken"])("test_contract_verify_%s_example_vets_as_served", (name) => {
     const raw = example("/admin/audit/verify", name);
     expect(vetVerifyResult(raw)).toEqual(raw);
+  });
+});
+
+/** The `/admin/audit` GET's parameters, each with its text, `$ref`s resolved to their names. */
+function queryParameters(): Map<string, string> {
+  const block = pathBlock("/admin/audit").join("\n");
+  const start = block.indexOf("\n      parameters:\n");
+  const end = block.indexOf("\n      x-rbac:", start);
+  const chunks = block
+    .slice(start, end)
+    .split(/\n {8}- /)
+    .slice(1);
+  const out = new Map<string, string>();
+  for (const chunk of chunks) {
+    const named = /^name: (\w+)/.exec(chunk)?.[1];
+    const ref = /^\$ref: "#\/components\/parameters\/(\w+)"/.exec(chunk)?.[1];
+    if (named !== undefined) {
+      out.set(named, chunk);
+    } else if (ref !== undefined) {
+      const rest = specText().slice(specText().indexOf(`\n    ${ref}:\n      name: `) + 1);
+      const next = rest.search(/\n {4}\S/);
+      const text = next < 0 ? rest : rest.slice(0, next);
+      out.set(/\n {6}name: (\w+)/.exec(text)?.[1] ?? ref, text);
+    }
+  }
+  return out;
+}
+
+describe("audit log consumer contract (C-6.2): the filters", () => {
+  it("test_contract_query_parameters_are_the_filter_names_plus_cursor_and_limit", () => {
+    const names = [...queryParameters().keys()];
+    expect(names.slice(0, 2)).toEqual(["cursor", "limit"]);
+    expect(names.slice(2)).toEqual(FILTER_NAMES.filter((name) => name !== "environment"));
+  });
+
+  it("test_contract_query_limit_bounds_the_page_size", () => {
+    const limit = /minimum: (\d+), maximum: (\d+)/.exec(queryParameters().get("limit") ?? "");
+    expect(PAGE_LIMIT).toBeGreaterThanOrEqual(Number(limit?.[1]));
+    expect(PAGE_LIMIT).toBeLessThanOrEqual(Number(limit?.[2]));
   });
 });
