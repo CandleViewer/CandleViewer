@@ -147,6 +147,8 @@ HEATMAP_WINDOW_ROWS_A_SIDE = 256
 def heatmap_window_cannot_hold(depth: int, price_grouping: int) -> bool:
     """23 §16.2: whether a `heatmap.*` spec's window cannot hold its `depth` levels a side, at
     `price_grouping` ticks a row; such a subscription weighs at `STRUCTURED_HEATMAP_WEIGHT`."""
+    # The edge, `depth == HEATMAP_WINDOW_ROWS_A_SIDE * price_grouping`, counts as held only while no
+    # accepted depth (`topics.DEPTHS`) sits on it; a `DEPTHS` change there moves this test to `>=`.
     return depth > HEATMAP_WINDOW_ROWS_A_SIDE * price_grouping
 
 

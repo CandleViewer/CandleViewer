@@ -155,25 +155,33 @@ def test_a_structured_heatmap_weighs_three_times_its_binary_points(opts: dict[st
 
 
 @pytest.mark.parametrize(
-    ("depth", "grouping", "factor"),
-    [(500, 1, limits.STRUCTURED_HEATMAP_WEIGHT), (500, 2, 1), (200, 1, 1), (50, 1, 1)],
+    ("opts", "points"),
+    [
+        ({"depth": 500, "price_grouping": 1, "time_bucket_ms": 100}, 240),
+        ({"depth": 500, "price_grouping": 2, "time_bucket_ms": 100}, 80),
+        ({"depth": 200, "price_grouping": 1, "time_bucket_ms": 100}, 63),
+        ({"depth": 50, "price_grouping": 1, "time_bucket_ms": 100}, 16),
+        ({"depth": 500, "time_bucket_ms": 250}, 96),  # `price_grouping` left out: §6.1's 1
+    ],
 )
 def test_a_heatmap_whose_window_cannot_hold_its_depth_weighs_at_the_structured_factor(
-    depth: int, grouping: int, factor: int
+    opts: dict[str, Any], points: int
 ) -> None:
     """23 §16.2: a `heatmap.*` whose window, the grid's rows centred on the mid at
     `price_grouping` ticks a row, cannot hold its `depth` levels a side weighs at the structured
     factor whatever its `encoding`, once; one whose window holds its depth keeps its binary weight
-    in the binary encoding. Its spec, the server's points, is the same either way."""
+    in the binary encoding. A `price_grouping` left out is §6.1's default, 1. Its spec, the
+    server's points, is the same either way."""
     assert limits.HEATMAP_WINDOW_ROWS_A_SIDE == ROWS // 2 == 256
     edge = limits.heatmap_window_cannot_hold
     assert (edge(256, 1), edge(257, 1), edge(512, 2), edge(513, 2)) == (False, True, False, True)
-    opts: dict[str, Any] = {"depth": depth, "price_grouping": grouping, "time_bucket_ms": 100}
     binary, structured = heatmap(**opts), heatmap(encoding="structured", **opts)
-    assert limits.heatmap_window_cannot_hold(depth, grouping) is (factor == 3)
-    assert binary.points == factor * column_points(depth, 100)
-    assert structured.points == limits.STRUCTURED_HEATMAP_WEIGHT * column_points(depth, 100)  # once
-    assert binary.spec == structured.spec == HeatmapSpec("BTCUSDT", depth, grouping, 100)
+    grouping, bucket = opts.get("price_grouping", 1), opts["time_bucket_ms"]
+    column = column_points(opts["depth"], bucket)
+    factor = limits.STRUCTURED_HEATMAP_WEIGHT if edge(opts["depth"], grouping) else 1
+    assert binary.points == points == factor * column
+    assert structured.points == limits.STRUCTURED_HEATMAP_WEIGHT * column  # once
+    assert binary.spec == structured.spec == HeatmapSpec("BTCUSDT", opts["depth"], grouping, bucket)
 
 
 def test_depth_500_and_a_100ms_bucket_weigh_more_than_depth_50_at_1000ms() -> None:
