@@ -6,21 +6,21 @@ Components: **CMP-059 CommandPalette** (the binding column, "unbound", the inval
 
 Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 
-| Item                     | CMP-059 CommandPalette                    | CMP-094 HotkeyOverlay         | CMP-064 (SCR-113)          | The census paths (§3)                      |
-| ------------------------ | ----------------------------------------- | ----------------------------- | -------------------------- | ------------------------------------------ |
-| Final Penpot link        | [ ] boards 05, 06, 10 pending             | [ ] board 07 pending          | [ ] board 08 pending       | [ ] boards 01–04, 09 pending               |
-| Variants × states        | [x] spec §8                               | [x] spec §9                   | [x] spec §10 (RL-1 … RL-5) | [x] spec §2, §3                            |
-| Keyboard table           | [x] CMP-059's, unchanged                  | [x] spec §9 (search)          | [x] RL-1, RL-4             | [x] spec §2, §4, §7                        |
-| Accessible name and role | [x] CMP-059's                             | [x] CMP-094's                 | [x] CMP-064's              | [x] spec §2 (select announces)             |
-| Live data                | [x] the count, once per query             | [x] the count, once per query | [x] the row's message      | [x] spec §6 (D5)                           |
-| Motion pair              | [x] none                                  | [x] none                      | [x] none                   | [x] the view follows; reduced motion snaps |
-| Density notes            | [x] E10-D03's                             | [x] E10-D03's                 | [x] none                   | [x] none                                   |
-| Essential exceptions     | [x] none                                  | [x] none                      | [x] none                   | [x] none                                   |
-| Tokens used              | [x] E10-D03 §6.1's                        | [x] E10-D03 §6.2's            | [x] CMP-064's              | [x] the pending line: §0 board 01          |
-| Data contract            | [ ] NO: D09-G5                            | [x] the registry              | [x] the registry           | [ ] NO: D09-G4, D09-G6                     |
-| Contrast                 | [ ] measured when boards 05, 10 are drawn | [ ] board 07                  | [ ] board 08               | [ ] boards 01–04                           |
-| Storybook                | [x] §D                                    | [x] §D                        | [x] §D                     | [x] §D                                     |
-| Sign-off                 | [ ] owner approval pending                | [ ] owner approval pending    | [ ] owner approval pending | [ ] owner approval pending                 |
+| Item                     | CMP-059 CommandPalette                    | CMP-094 HotkeyOverlay         | CMP-064 (SCR-113)            | The census paths (§3)                      |
+| ------------------------ | ----------------------------------------- | ----------------------------- | ---------------------------- | ------------------------------------------ |
+| Final Penpot link        | [x] boards 05, 06, 10 drawn (spec §0)     | [x] board 07 drawn (spec §0)  | [x] board 08 drawn (spec §0) | [x] boards 01–04, 09 drawn (spec §0)       |
+| Variants × states        | [x] spec §8                               | [x] spec §9                   | [x] spec §10 (RL-1 … RL-5)   | [x] spec §2, §3                            |
+| Keyboard table           | [x] CMP-059's, unchanged                  | [x] spec §9 (search)          | [x] RL-1, RL-4               | [x] spec §2, §4, §7                        |
+| Accessible name and role | [x] CMP-059's                             | [x] CMP-094's                 | [x] CMP-064's                | [x] spec §2 (select announces)             |
+| Live data                | [x] the count, once per query             | [x] the count, once per query | [x] the row's message        | [x] spec §6 (D5)                           |
+| Motion pair              | [x] none                                  | [x] none                      | [x] none                     | [x] the view follows; reduced motion snaps |
+| Density notes            | [x] E10-D03's                             | [x] E10-D03's                 | [x] none                     | [x] none                                   |
+| Essential exceptions     | [x] none                                  | [x] none                      | [x] none                     | [x] none                                   |
+| Tokens used              | [x] E10-D03 §6.1's                        | [x] E10-D03 §6.2's            | [x] CMP-064's                | [x] the pending line: §0 board 01          |
+| Data contract            | [ ] NO: D09-G5                            | [x] the registry              | [x] the registry             | [ ] NO: D09-G4, D09-G6                     |
+| Contrast                 | [ ] measured when boards 05, 10 are drawn | [ ] board 07                  | [ ] board 08                 | [ ] boards 01–04                           |
+| Storybook                | [x] §D                                    | [x] §D                        | [x] §D                       | [x] §D                                     |
+| Sign-off                 | [ ] owner approval pending                | [ ] owner approval pending    | [ ] owner approval pending   | [ ] owner approval pending                 |
 
 ## §B Who applies what
 
@@ -102,7 +102,7 @@ Old is a verbatim fragment of the cited line at its pinned commit (the tool chec
 | QA-4 | focus the journal; press `Ctrl+Enter`                                                                       | one non-modal status message names the Ticket view; focus is unchanged; nothing else ran; a second press within 5 s adds no toast while the first is shown; a press after 5 s shows it again; SCR-014's log holds it |
 | QA-5 | hold `↑` on a selected stop for 3 s under a fake clock; release                                             | the polite region received at most one message per 500 ms window and a final message within 250 ms of release; the readout's state updates match; the region is `aria-live="polite"`, never assertive                |
 
-## §H The board plan (drawn later in this PR; a Penpot lane)
+## §H The board plan (drawn: spec §0 and its As built record, §21)
 
 The boards of spec §0, on page `E47-D09`; frames named `<surface>/<state> · <theme>`. Data: a seeded synthetic order, book and graph, declared synthetic on every board's face; only the instrument's tick size comes from a recorded fixture. Each board's frames:
 
@@ -123,7 +123,7 @@ Contrast: every ratio (the "unbound" word, the pending label, the lock row) is m
 
 ## §I Summary for #1308
 
-1. Text-first keyboard-operability spec + hand-off + default-deny audit tool; 10<!--=COUNT:boards--> boards pending, drawn later in this PR; `05` §3.5 is the normative expansion.
+1. Text-first keyboard-operability spec + hand-off + default-deny audit tool; 10<!--=COUNT:boards--> boards drawn in the boards PR (spec §0, §21); `05` §3.5 is the normative expansion.
 2. One grammar — select, adjust by unit (`Shift` ×10, `PageUp` / `PageDown` ×100), commit through the pointer's own path, cancel restores — with the merged twins as instances.
 3. 21<!--=COUNT:census--> census rows cover every drag- and hover-only interaction; the tool maps every `14` line that names one.
 4. The order line sends nothing until `Enter`, through the drag's confirm path; `Esc` restores; never one amend per keypress.
