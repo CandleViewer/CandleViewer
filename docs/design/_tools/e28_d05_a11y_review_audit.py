@@ -5,28 +5,8 @@ and every cited file AS TEXT at its pin with `git show`: the base on `main` (E28
 as #5463), and the boards head of #5482, PENDING. It imports, never copies:
 `contrast_check.py`'s `contrast_ratio()`, `verify_tokens.py`'s resolver,
 `docs/research/_tools/cvd_simulate.py`'s `simulate()` and `delta_e76()`, and the E30-D04 audit's
-`over()` and `grey()`. Eleven gates, each FAIL led by its letter:
-
-  A cites       every `KEY`:line resolves at its pin to a non-blank line; a `D03B` line does not
-                stand verbatim on main; pins and cites match both ways, each pin's words on its line
-  B contrast    section 10 equals the measurement; a gated cell below its bar names a High F row
-  C cvd         section 11 equals the computation; a channel "none" names a High F row
-  D findings    counts against the heading and the stamp; every row complete, one owner; High rows
-                name A-rows
-  E amendments  each Old once in its target and on its line; no New there already; its F row exists;
-                the per-target counts sentence equals the table
-  F focus       six screen tables with FO steps; every subsection names a return
-  G hygiene     the lane's public-text word list, no local path, host or URL, no hex, known stamps
-  H live        every LR row has a politeness and a rate; no "N per M s" rate above one per 2 s
-                (`05` as ruled in BQ-11); LR-04 assertive
-  I matrix      section 3's window and whole-matrix counts equal the computation; its prose names
-                VIEWPORT_H and OVERSCAN
-  J t2          section 7 quotes G-T2.1d and G-T2.6 verbatim; every T2 row names CMP-079 and the
-                `lock`; a read-only row carries PROPOSED and its three reason keys
-  K rulings     the ruling id in section 1.4; section 10 carries the joint stale-preview sentence
-                verbatim; no pre-stage "merge as is" wording; the Send reasons and DR-08 are
-                registered state strings; each Medium or Low F row's owner carries its date;
-                section 4 cites E47-D04's removed-row move
+`over()` and `grey()`. Eleven gates, A cites to K rulings, each FAIL led by its letter; the spec's
+section 18 describes each gate.
 
 usage: e28_d05_a11y_review_audit.py [--check | --self-test | --json | --tables | --write-tables
                                      | --repin]
@@ -35,6 +15,7 @@ usage: e28_d05_a11y_review_audit.py [--check | --self-test | --json | --tables |
 from __future__ import annotations
 
 import codecs
+import hashlib
 import importlib.util
 import json
 import math
@@ -507,25 +488,10 @@ def g_focus(t: Texts, p: list[str]) -> dict[str, Any]:
 
 HEX = re.compile(r"#[0-9A-Fa-f]{6}\b")
 # the lane's public-text word list, rot13-encoded so this file does not carry the words itself
-DENY = tuple(
-    codecs.decode(w, "rot13")
-    for w in (
-        "yrnx",
-        "rkcbfrq",
-        "olcnff",
-        "rkcybvg",
-        "nggnpx",
-        "benpyr",
-        "erirny",
-        "haobhaqrq",
-        "sybbq",
-        "fgnyy",
-        "qbf",
-        "nqivfbel",
-        "tufn",
-        "cer-nhgu",
-    )
+DENY_ROT13 = (
+    "yrnx rkcbfrq olcnff rkcybvg nggnpx benpyr erirny haobhaqrq sybbq fgnyy qbf nqivfbel tufn"
 )
+DENY = tuple(codecs.decode(w, "rot13") for w in (DENY_ROT13 + " cer-nhgu").split())
 # local roots, rot13-encoded so this file names none of them itself
 LOCAL = re.compile(
     "|".join(re.escape(codecs.decode(w, "rot13")) for w in ("/ubzr/", "/gzc/", "abgrf/"))
@@ -646,15 +612,8 @@ def g_t2(t: Texts, p: list[str]) -> dict[str, Any]:
 
 
 RULING = "6601763457"
-JOINT = (
-    "**Stale preview (joint ruling: #840 BQ-04, #841 BQ-10, #842 BQ-15).** The stale table's "
-    "text keeps `color.text.secondary` at full opacity, and the table carries the visible "
-    'word "Stale" with the preview\'s age (`E17-D01`:146; dimming alone was misread, '
-    "`E17-D01`:88); the muted treatment applies to decoration only, never to a word, number "
-    "or glyph. No state rests on hue or opacity alone (`05`:141), every word keeps 4.5:1 "
-    "(`05`:159), and focus moves only on a press (`05`:100). The a11y floor wins over the "
-    "token choice; the A-row is #840's A-1 to E28-D03 §8, cross-referenced to #5550."
-)
+JOINT_SHA = "0f6f2a95fc688dbc81f1e001a18bd0896bf1546b29dd4376ecbb4bee4b2d86d2"  # the joint sentence, the same in #840, #841, #842
+JOINT_RX = re.compile(r"\*\*Stale preview \(joint ruling: .*?#5550\.")
 STATE_STRINGS = ("DR-03", "DR-04", "DR-05", "DR-08")
 DATE = "by 2026-12-31"
 
@@ -662,7 +621,8 @@ DATE = "by 2026-12-31"
 def g_rulings(t: Texts, p: list[str]) -> dict[str, Any]:
     if RULING not in section(t.spec, "### 1.4 ", "## 2. "):
         p.append(f"[K] section 1.4 does not name the ruling {RULING}")
-    if JOINT not in section(t.spec, "## 10. ", "## 11. "):
+    hit = JOINT_RX.search(section(t.spec, "## 10. ", "## 11. "))
+    if not hit or hashlib.sha256(hit.group(0).encode()).hexdigest() != JOINT_SHA:
         p.append("[K] section 10 does not carry the joint stale-preview sentence verbatim")
     if re.search(r"merges? as is", t.spec):
         p.append("[K] pre-stage 'merge as is' wording is left")
@@ -763,57 +723,31 @@ def deny_in_prose(t: Texts) -> Texts:
     return sub("spec", "## 19. Summary for #841", f"## 19. Summary for #841 ({word})")(t)
 
 
+def sp(old: str, new: str) -> Callable[[Texts], Texts]:
+    return sub("spec", old, new)
+
+
 MUTATIONS: list[tuple[str, Callable[[Texts], Texts]]] = [
     ("A: a pin's words no longer on its line", pin_words_off),
     ("B: a measured contrast cell retyped", ct_cell_off),
     ("C: a computed colour-vision cell retyped", cv_cell_off),
-    (
-        "D: the findings stamp off by one",
-        sub("spec", "audit:f=19/0/5/8/4/2", "audit:f=19/0/5/8/4/1"),
-    ),
+    ("D: the findings stamp off by one", sp("f=19/0/5/8/4/2", "f=19/0/5/8/4/1")),
     ("D: a finding with two owners", f09_two_owners),
-    (
-        "E: an Old that is not in its target",
-        sub(
-            "spec", '"The table takes `opacity.muted` with', '"The table took `opacity.muted` with'
-        ),
-    ),
-    ("E: a per-target A count retyped", sub("spec", "nine to E28-D02.", "eight to E28-D02.")),
-    ("F: a screen loses its focus-order table", sub("spec", "### 4.5 SCR-062", "### 4.5 SCR-999")),
+    ("E: an Old not in its target", sp('"The table takes `opacity', '"The table took `opacity')),
+    ("E: a per-target A count retyped", sp("nine to E28-D02.", "eight to E28-D02.")),
+    ("F: a screen loses its focus-order table", sp("### 4.5 SCR-062", "### 4.5 SCR-999")),
     ("G: a deny word in prose", deny_in_prose),
     ("H: the preview announces once a second", lr01_twice),
     ("H: the staged-bulk line back to once a second", lr08_fast),
     ("H: the unpressed refusal turned polite", lr04_polite),
-    ("I: the window figure retyped", sub("spec", "**264 cells**", "**260 cells**")),
-    (
-        "I: the overscan prose retyped, the figures kept",
-        sub("spec", "overscan of 10 rows (PROPOSED)", "overscan of 12 rows (PROPOSED)"),
-    ),
-    (
-        "J: a T2 row loses the `lock`",
-        sub("spec", "cell; the CMP-019 `lock` (", "cell; the CMP-019 glyph ("),
-    ),
-    (
-        "J: the G-T2.1d quote loses a word",
-        sub("spec", "leads the full label (in 2b", "leads the label (in 2b"),
-    ),
-    (
-        "K: the joint stale sentence loses a word",
-        sub("spec", "applies to decoration only, never", "applies to decoration, never"),
-    ),
-    (
-        "K: a T2 reason fills data",
-        sub(
-            "spec",
-            '"Blocked: use the cell menu to allow it." (PROPOSED',
-            '"Blocked on {account}." (PROPOSED',
-        ),
-    ),
+    ("I: the window figure retyped", sp("**264 cells**", "**260 cells**")),
+    ("I: the overscan prose retyped", sp("overscan of 10 rows", "overscan of 12 rows")),
+    ("J: a T2 row loses the `lock`", sp("cell; the CMP-019 `lock` (", "cell; the CMP-019 glyph (")),
+    ("J: the G-T2.1d quote loses a word", sp("the full label (in 2b", "the label (in 2b")),
+    ("K: the joint stale sentence loses a word", sp("decoration only, never", "decoration, never")),
+    ("K: a T2 reason fills data", sp('"Blocked: use the cell', '"Blocked on {a}: use the cell')),
     ("K: a Low row logged without its date", f14_undated),
-    (
-        "K: pre-stage wording comes back",
-        sub("spec", "## 19. Summary for #841", "## 19. Summary for #841 (if #5482 merges as is)"),
-    ),
+    ("K: pre-stage wording comes back", sp("## 19. Summary", "## 19. (if #5482 merges as is)")),
 ]
 
 
