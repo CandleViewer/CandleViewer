@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from candleviewer.api.rules import make_rules_router
 from candleviewer.rules.service import RulesService
 from candleviewer.rules.vocabulary import default_registry
+from tests.rules._check_limiter import unthrottled
 from tests.rules.test_validator_endpoints import PRICE, _cmp, _doc
 
 U1, U2 = uuid.UUID(int=1), uuid.UUID(int=2)
@@ -67,6 +68,7 @@ def _app(grants: Grants) -> tuple[TestClient, RulesService, _Source]:
             principal_resolver=_Resolver(),
             scope_resolver=lambda: svc.scope_resolver,
             scope_refresh=svc.refresh_scope,
+            check_limiter=unthrottled(),
         )
     )
     return TestClient(app), svc, source

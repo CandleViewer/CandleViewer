@@ -37,6 +37,7 @@ from candleviewer.rules.ir import Rule
 from candleviewer.rules.issues import Issue, RuleCompileError
 from candleviewer.rules.manager import (
     REFUSED_CAPS,
+    RULE_IR_INVALID_TITLE,
     Actor,
     InMemoryRuleStore,
     RuleCapRefused,
@@ -44,11 +45,14 @@ from candleviewer.rules.manager import (
     RulesManager,
 )
 from candleviewer.rules.vocabulary import default_registry
+from tests.rules._check_limiter import unthrottled
 from tests.rules.test_rule_save_bounds import (
+    BOUND_ERRORS,
     BOUNDS,
     LIMITS,
     SHARED_DEEP,
     SHARED_WITHIN,
+    _errors,
     _expansion,
     _issues,
     _shared,
@@ -178,7 +182,10 @@ class _Checks:
         self.capped: list[str] = []
         who = _R(_P(*(perms or ("rules:read",))))
         router = make_rules_router(
-            lambda: REG, principal_resolver=who, on_cap_refused=self.capped.append
+            lambda: REG,
+            principal_resolver=who,
+            check_limiter=unthrottled(),
+            on_cap_refused=self.capped.append,
         )
         app = FastAPI()
         app.include_router(router)
@@ -253,7 +260,8 @@ def test_a_document_over_the_value_bound_is_not_a_node_bound_refusal(held: dict[
     with pytest.raises(RuleError) as plain:
         RulesManager.check_document(doc)
     assert not isinstance(plain.value, RuleCapRefused)  # never counted as a cap
-    assert _issues(plain.value.extra["issues"]) == BOUNDS and LIMITS in plain.value.message
+    assert _errors(plain.value.extra["errors"]) == BOUND_ERRORS
+    assert LIMITS in plain.value.extra["errors"][0]["message"]
     checks = _Checks()
     r = checks.c.post("/rules/validate", json={"ir": doc})
     assert (r.json()["valid"], _issues(r.json()["errors"]), checks.capped) == (False, BOUNDS, [])
@@ -346,7 +354,7 @@ def test_a_save_refused_for_another_reason_is_answered_unchanged_and_never_count
     assert (member.status_code, member.json()["code"]) == (422, "rule_ir_invalid")
     assert [e["rule"] for e in member.json()["errors"]] == ["unknown_field"]
     values = saves.c.post("/rules", json={"ir": _sized(MAX_ITEMS + 1)})
-    assert (values.status_code, _issues(values.json()["issues"])) == (422, BOUNDS)
+    assert (values.status_code, _errors(values.json()["errors"])) == (422, BOUND_ERRORS)
     assert saves.capped == []  # each is answered as it is for any refusal, none counted as a cap
 
 
@@ -366,7 +374,8 @@ def test_check_document_over_the_node_cap_raises_the_counted_refusal() -> None:
     capped = refused.value
     assert capped.cap == "condition_nodes"
     assert (capped.status, capped.code, capped.message) == (422, "rule_ir_invalid", SAVE_DETAIL)
-    assert capped.extra == {"errors": [SAVE_ERROR]} and isinstance(capped, RuleError)
+    assert capped.extra == {"title": RULE_IR_INVALID_TITLE, "errors": [SAVE_ERROR]}
+    assert isinstance(capped, RuleError)
     assert isinstance(capped.__cause__, ConditionNodeBoundError)
 
 

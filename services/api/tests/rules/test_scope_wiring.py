@@ -17,6 +17,7 @@ from candleviewer.rules.ir.models import RuleScope
 from candleviewer.rules.scope import ScopeInstanceRef, summarize_scope
 from candleviewer.rules.service import RulesService
 from candleviewer.rules.vocabulary import default_registry
+from tests.rules._check_limiter import unthrottled
 from tests.rules.executor.request_builders import action_request
 from tests.rules.test_validator_endpoints import PRICE, _cmp, _doc
 
@@ -63,7 +64,11 @@ def _client(svc: RulesService | None) -> TestClient:
     if svc is not None:
         kw = {"scope_resolver": svc.scope_resolver, "scope_refresh": svc.refresh_scope}
     reg = default_registry()
-    app.include_router(make_rules_router(lambda: reg, principal_resolver=Resolver(), **kw))
+    app.include_router(
+        make_rules_router(
+            lambda: reg, principal_resolver=Resolver(), check_limiter=unthrottled(), **kw
+        )
+    )
     return TestClient(app)
 
 

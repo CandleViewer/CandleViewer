@@ -111,10 +111,10 @@ def test_ac_e_loosening_a_stop_is_refused_at_save(params: dict[str, Any]) -> Non
     }
     r = e.c.post("/rules", json={"ir": _ir(actions=[stop])})
     assert r.status_code == 422 and r.json()["code"] == "rule_ir_invalid"
-    assert [i["code"] for i in r.json()["issues"]] == ["stop_loosening"]  # the Owner too (#2698)
+    assert [e["rule"] for e in r.json()["errors"]] == ["stop_loosening"]  # the Owner too (#2698)
     widen = {"node_id": "a1", "type": "widen_stop", "params": {"mode": "pct", "value": 1}}
     r = e.c.post("/rules", json={"ir": _ir(actions=[widen])})
-    assert r.status_code == 422 and [i["code"] for i in r.json()["issues"]] == ["stop_loosening"]
+    assert r.status_code == 422 and [e["rule"] for e in r.json()["errors"]] == ["stop_loosening"]
     assert _rules(e) == []
 
 
@@ -314,7 +314,7 @@ def test_ac_m_signal_loop_is_refused_at_save() -> None:
     sig = {"node_id": "a1", "type": "emit_signal", "params": {"signal_name": "s"}}
     r = e.c.post("/rules", json={"ir": _ir(trigger={"type": "on_signal"}, actions=[sig])})
     assert r.status_code == 422
-    assert any(i["code"] == "feedback_loop" for i in r.json().get("issues", [])), r.text
+    assert any(e["rule"] == "feedback_loop" for e in r.json().get("errors", [])), r.text
     assert _rules(e) == []
 
 

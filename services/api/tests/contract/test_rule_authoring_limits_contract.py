@@ -263,6 +263,7 @@ def test_the_refusal_record_budget_is_named_with_its_default_and_its_exclusions(
         "records of each in a rolling hour, the same for every role, the Owner included",
         "answered with its own status, unchanged (the scope refusal's `403` or `404`, a mode "
         "refusal's own `4xx`)",
+        "its count is carried by the user's next record of that action or, when none follows,",
         "one summary record per user, action and window",
         "(`suppressed_summary`, outside the cap), so a refusal is never dropped",
         "turns the refusal into `503 audit_unavailable`, and nothing changes",
@@ -276,10 +277,13 @@ def test_the_refusal_record_budget_is_named_with_its_default_and_its_exclusions(
     sentence = sentence.split(" never held to it.", 1)[0]
     each = "per acting user and per action, each action keeping its own count"
     assert f"`rules_refusal_budget_per_hour` {each} (default {budget} in a rolling" in sentence
-    assert "answered with its own status, unchanged (the scope refusal's `403` or `404`" in sentence
-    assert "one `suppressed_summary` record per user, action and window, outside the cap" in (
-        sentence
+    status = (
+        "answered with its own status, unchanged (the scope refusal's `403` or `404`, a mode "
+        "refusal's own `4xx`)"
     )
+    assert status in sentence
+    rides = "its count rides the user's next record of that action or one `suppressed_summary`"
+    assert f"{rides} record per user, action and window, outside the cap" in sentence
     assert "`rule.system_rule_tampered` record" in sentence
     title = r"^### 19\.(\d+) 2026-10-30 — 22 `/rules`, §15\.5: the authoring limits"
     heading = re.search(title, _RAW_24, re.MULTILINE)
@@ -287,3 +291,18 @@ def test_the_refusal_record_budget_is_named_with_its_default_and_its_exclusions(
     entry = text(_RAW_24[heading.start() :].split("\n### ", 1)[0])
     assert f"This number follows `main`'s last entry, §19.{int(heading.group(1)) - 1};" in entry
     assert f"`rules_refusal_budget_per_hour` (default {budget})" in entry
+    assert "its count carried by the next record of that action or a `suppressed_summary`" in entry
+
+
+def test_the_change_log_records_that_a_count_rides_the_next_record_of_its_action() -> None:
+    """#4834's third change: §15.5 and §19.62's bullet say the count rides the next record "of
+    that action", logged in an entry of its own under the number the orchestrator assigned."""
+    title = r"^### 19\.(\d+) 2026-10-31 — §15\.5: an over-cap refusal's count rides the next record"
+    heading = re.search(title, _RAW_24, re.MULTILINE)
+    assert heading is not None and heading.group(1) == "77"
+    entry = text(_RAW_24[heading.start() :].split("\n### ", 1)[0])
+    assert "The orchestrator assigned this number on 2026-11-01 (#2701)" in entry
+    assert "the count of a refusal over the cap rides the user's next record of that action" in (
+        entry
+    )
+    assert "`rules.scope_denied` and `rules.arm` each keep their own count" in entry

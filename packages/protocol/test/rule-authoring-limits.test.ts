@@ -2,9 +2,11 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import { generated } from "../src/index.js";
 
 // #4834 (E35 authoring limits): the client's reading of the `/rules` limits (C-6.2). 22 declares a
-// 429 on both checks, a 409 on `createRule` and a 422 on `setActiveRuleVersion`. The expectTypeOf
-// checks bind under `pnpm typecheck` (tsconfig.json includes test/), not the vitest run: an answer
-// 22 stops declaring is a type error there. The runtime expects only keep the sample values in use.
+// 429 on both checks, a 409 on `createRule` and a 422 on `setActiveRuleVersion`, and a save names
+// each issue of a refused rule document in `errors[{field, rule, message}]`, never `issues` (the
+// C-row). The expectTypeOf checks bind under `pnpm typecheck` (tsconfig.json includes test/), not
+// the vitest run: an answer 22 stops declaring is a type error there. The runtime expects only keep
+// the sample values in use.
 type Operations = generated.rest.operations;
 type Components = generated.rest.components;
 type Problem = Components["schemas"]["Problem"];
@@ -38,6 +40,14 @@ const noteTooLong = {
   errors: [{ field: "note", rule: "max_length", message: "At most 280 characters." }],
 } satisfies Problem;
 
+const stopLoosening = {
+  type: "https://candleviewer.local/errors/rule_ir_invalid",
+  title: "Rule intermediate representation failed semantic validation",
+  status: 422,
+  code: "rule_ir_invalid",
+  errors: [{ field: "actions[0].type", rule: "stop_loosening", message: "Not available." }],
+} satisfies Problem;
+
 describe("rule authoring limits (consumer side, 22-api-openapi /rules)", () => {
   it("answers 429 on both checks, with Retry-After and a problem body", () => {
     type Limited = Components["responses"]["RateLimited"];
@@ -64,5 +74,15 @@ describe("rule authoring limits (consumer side, 22-api-openapi /rules)", () => {
     expectTypeOf<Answer<"compileRule", 422>>().toEqualTypeOf<Invalid>();
     expectTypeOf<ProblemBody<Invalid>>().toEqualTypeOf<Problem>();
     expect(noteTooLong.errors.map((e) => [e.field, e.rule])).toEqual([["note", "max_length"]]);
+  });
+
+  it("reads a save's refused rule document by errors[].field and errors[].rule, never issues", () => {
+    type Refusal = NonNullable<Problem["errors"]>[number];
+    expectTypeOf<Refusal["field"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<Refusal["rule"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<Problem>().not.toHaveProperty("issues");
+    expect(stopLoosening.errors.map((e) => [e.field, e.rule])).toEqual([
+      ["actions[0].type", "stop_loosening"],
+    ]);
   });
 });
