@@ -2,40 +2,31 @@
 """E34-D03 (#997) audit: the hi-fi spec of the trade-group manager SCR-062 (open groups and their
 legs) and the design-system and motion work SCR-061 and SCR-062 share.
 
-Standalone and offline, shaped on the merged E38-D03 tool: it imports `verify_tokens`,
-`contrast_check` and `cvd_simulate` (JND 5.0) and never re-implements them. It reads every cited
-file AS TEXT with `git show` at the pinned base (`BASE`); the unmerged E34-D01 and E34-D02 are
-never read. Default-deny: a gate that cannot read its input FAILs.
+Offline, shaped on the merged E38-D03 tool: it imports `verify_tokens`, `contrast_check` and
+`cvd_simulate` (JND 5.0), never re-implementing them, and reads every cited file AS TEXT with
+`git show` at `BASE`; E34-D01 and E34-D02 are never read. A gate that cannot read its input FAILs.
 
 Gates (each FAIL led by its name; spec §12):
-  G-STATE     §0 frames for the Scope; AC-1 … AC-4 mapped to listed frames; insets are state rows.
-  G-TOKEN     every token the spec names is in a merged set.
-  G-CONTRAST  §8.1 recomputed per theme with `contrast_ratio`, at its floor, its verdict matching.
-  G-CVD       §8.2 ΔE76 per simulation recomputed, its JND column matching.
-  G-SAFETY    C-2.6: never omittable (§1); Protection from `native_sl_confirmed`; no state row, §5
-              row or copy string offers a leg without its stop; Retry's preview line carries it;
-              the closing copy keeps each stop; OQ-1 open with the whole-position copy.
-  G-T2        T2 rows name a rendering and quote an E09-D09 key or registered state; §1 item 6
-              names the `lock` and quotes G-T2.1b / 2 / 3 verbatim from `DS`; the label pair.
-  G-MOTION    a reduced-motion twin per §6 row; terminal changes and the summary are cuts.
-  G-COPY      every §7 row verbatim with a cite holding its fixed words, or PROPOSED with an owner.
-  G-VOCAB     no retired word ("Flatten", "Cancel group", …) quoted in §3, §4 or §7 rows.
-  G-RECOVERY  §3.5 RC-1 … RC-6 carry the one set of labels and confirms; the protective rows are
-              never armed and available in every state; the tone is cited; state rows use them.
-  G-PROTECT   no state row withholds Unwind, Retry unwind, Close group or Cancel working orders;
-              the unknown, stop-pending, lockout, frozen, view-as and offline rows keep them.
-  G-CMP258    §5.3 covers every leg state (words, built glyph, tokens) and the group states; every
-              `icon/…` is built at the base; no status component is defined outside §5.
-  G-COUNT     no client "N of M protected / accepted / unknown" count; G-12 records the gap.
-  G-MERGED    E34-D01 (#936) and E34-D02 (#996) only on a request row, never by line.
-  G-CITE      every cite in range, on a non-blank line at its base, equal to the pins. G-SCOPE: the
-              diff touches only the spec, this tool and the pins file.
-  G-HYGIENE   no closing keyword, local path, URL or host, agent name, double brace, tag-only line
-              or deny word in the spec; no deny word or local path in the tool or the pins.
+  G-STATE §0 frames for the Scope; AC-1 … AC-4 mapped to listed frames; insets are state rows.
+  G-TOKEN every named token merged. G-CONTRAST / G-CVD §8 recomputed, floors and verdicts held.
+  G-SAFETY C-2.6: never omittable; Protection from `native_sl_confirmed`; no row or string offers a
+    leg without its stop; Retry's preview line carries it; closing copy keeps it; OQ-1 open.
+  G-T2 T2 rows name a rendering and quote an E09-D09 key, a registered state or OD-11's reason;
+    §1 item 6 names the `lock` and quotes G-T2.1b / 2 / 3 from `DS`; the label pair is measured.
+  G-MOTION a reduced-motion twin per §6 row; terminal changes and the summary are cuts.
+  G-COPY §7 verbatim with a cite holding its words, or PROPOSED with an owner. G-VOCAB no retired
+    word quoted in §3, §4 or §7 rows. G-RECOVERY §3.5 RC-1 … RC-6, the protective ones never armed
+    and available in every state, the tone cited; the state rows use the labels.
+  G-PROTECT no state row withholds a protective action; the threat rows keep them; `frozen` splits
+    per OD-11 (Cancel passes, the closes Owner-enabled, a Manager's T2).
+  G-CELL §5.3 covers every leg and group state (words, built glyph, tokens); no status component
+    outside §5. G-COUNT no client safety count (G-12); every unserved figure or action stamped.
+  G-MERGED E34-D01 / E34-D02, and any CMP id `15` lacks, only on a request row, never by line.
+  G-CITE cites in range and pinned. G-HYGIENE no closing keyword, local path, URL, agent name,
+    double brace, tag line or deny word. G-SCOPE only the spec, this tool and the pins.
 
-Usage (from the repo root):
-  python3 -I docs/design/_tools/e34_d03_manager_audit.py --check | --self-test | --fill (§8's figures)
-  python3 -I docs/design/_tools/e34_d03_manager_audit.py --repin-ruled (the pins' only writer)
+Usage (from the repo root): python3 -I docs/design/_tools/e34_d03_manager_audit.py
+  --check | --self-test | --fill (§8's figures) | --repin-ruled (the pins' only writer)
 """
 
 from __future__ import annotations
@@ -63,19 +54,17 @@ BASE = "a7d659a5bee5d06a28950f324800f84dc3853e6f"  # origin/main when written; r
 TOKENS = ROOT / "packages" / "ui" / "tokens"
 CVD_PATH = ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py"
 CONTRAST_PATH = ROOT / "docs" / "design" / "_tools" / "contrast_check.py"
+BORROWED = {"verify_tokens": TOKENS / "tests" / "verify_tokens.py", "contrast_check": CONTRAST_PATH}  # fmt: skip
 PATHS: dict[str, str] = {
-    "05": "docs/plan/05-accessibility-standard.md", "11": "docs/plan/11-user-stories.md",
-    "14": "docs/plan/14-screens-catalogue.md", "15": "docs/plan/15-component-catalogue.md",
-    "16": "docs/plan/16-design-system-brief.md", "20": "docs/plan/20-architecture.md",
-    "22": "docs/plan/22-api-openapi.yaml", "23": "docs/plan/23-ws-protocol.md",
-    "24": "docs/plan/24-internal-schemas.md", "28": "docs/plan/28-statechart-catalogue.md",
-    "ADR8": "docs/plan/27-adrs/ADR-0008-trade-group-fanout.md",
-    "E09D09": "docs/design/E09/E09-D09.md", "E30D02": "docs/design/E30/E30-D02.md",
-    "E30D04": "docs/design/E30/E30-D04.md", "E28D03": "docs/design/E28/E28-D03.md",
-    "E39D03": "docs/design/E39/E39-D03.md", "DS": ".claude/rules/32-design-specs.md",
+    "05": "docs/plan/05-accessibility-standard.md", "11": "docs/plan/11-user-stories.md", "12": "docs/plan/12-sitemap.md", "14": "docs/plan/14-screens-catalogue.md",
+    "15": "docs/plan/15-component-catalogue.md", "16": "docs/plan/16-design-system-brief.md", "20": "docs/plan/20-architecture.md", "22": "docs/plan/22-api-openapi.yaml",
+    "23": "docs/plan/23-ws-protocol.md", "24": "docs/plan/24-internal-schemas.md", "28": "docs/plan/28-statechart-catalogue.md", "DS": ".claude/rules/32-design-specs.md",
+    "ADR8": "docs/plan/27-adrs/ADR-0008-trade-group-fanout.md", "E09D09": "docs/design/E09/E09-D09.md", "E30D02": "docs/design/E30/E30-D02.md", "E30D04": "docs/design/E30/E30-D04.md",
+    "E28D02": "docs/design/E28/E28-D02.md", "E28D03": "docs/design/E28/E28-D03.md", "E29D01": "docs/design/E29/E29-D01.md", "E29D03": "docs/design/E29/E29-D03.md",
+    "E32D06": "docs/design/E32/E32-D06.md", "E39D01": "docs/design/E39/E39-D01.md", "E39D03": "docs/design/E39/E39-D03.md",
 }  # fmt: skip
 DASH = "\u2013"  # the en dash of a cite range in the spec
-CITE = re.compile(r"`(\d\d|ADR8|E09D09|E30D0[24]|E28D03|E39D03|DS)`:(\d+(?:\u2013\d+)?(?:, :\d+(?:\u2013\d+)?)*)")  # fmt: skip
+CITE = re.compile(r"`(\d\d|ADR8|E09D09|E30D0[24]|E28D0[23]|E29D0[13]|E32D06|E39D0[13]|DS)`:(\d+(?:\u2013\d+)?(?:, :\d+(?:\u2013\d+)?)*)")  # fmt: skip
 TOKEN_NAME = re.compile(r"`((?:color|font|border|radius|type|space|size|motion|opacity)\.[a-z0-9.-]*[a-z0-9])`")  # fmt: skip
 CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE)
 # assembled, so this tool's own text carries none of the paths
@@ -113,9 +102,11 @@ COUNT = re.compile(r"(?:\b\d+|\{\w+\}) of (?:\d+|\{\w+\})(?: legs?)? (?:protecte
 PROTECTIVE = "Unwind, Retry unwind, Close group and Cancel working orders stay enabled"
 WITHHOLD = re.compile(r"(?:\bUnwind\b|Retry unwind|Close group|Cancel working orders)[^.;|]{0,40}?\b(?:gated|withheld|waits?|hidden|disabled|not offered|unavailable)\b|no (?:recovery|protective) action")  # fmt: skip
 # the rows where a leg may be unprotected and something else might tempt a gate
+OD11 = '"Frozen — the owner closes or releases"'
+STAMPED = ("M62-08", "M62-09", "M62-10", "M62-12", "M62-14", "M62-29", "RC-1", "RC-3")
 THREATS = ("M62-09", "M62-11", "M62-18", "M62-25", "M62-27", "M62-30")
 OWN_COMPONENT = re.compile(r"(?i)\b(?:new|own|second|another)\b[^|.;]{0,30}\b(?:status|state)\b[^|.;]{0,20}\b(?:component|cell|badge)\b|\bdefined here\b")  # fmt: skip
-LEG_WORDS = ("queued", "sent", "accepted", "rejected", "cancelled", "checking outcome",
+LEG_WORDS = ("queued", "sent", "accepted", "rejected", "cancelled", "Unknown — checking",
              "state unknown for", "waiting for rate budget", "unwinding", "flat",
              "closed: stop not confirmed", "divergent", "skipped", "protected", "stop pending")  # fmt: skip
 # RC row: (trigger label, confirm label), the one recovery table of §3.5
@@ -131,8 +122,8 @@ INSTANCES = (
     ("M62-06", (r"Retry sub_\d{3}\b", r"Unwind \d+ accepted legs", r"Leave as is \(\d+ open\)",
                 r"Cancel working orders \(\d+ legs?\)")),
     ("M62-08", (r"Retry unwind \(\d+ legs? not flat\)",)),
-    ("M62-17", (r"Unwind \d+ accepted legs of group tg_\d{4}",)),
-    ("M62-29", (r"Retry sub_\d{3} of group tg_\d{4}",)),
+    ("M62-17", (r"Unwind \d+ accepted legs of group …[0-9a-f]{4}",)),
+    ("M62-29", (r"Retry sub_\d{3} of group …[0-9a-f]{4}",)),
 )  # fmt: skip
 
 
@@ -183,13 +174,8 @@ _MODS: dict[str, ModuleType] = {}
 
 def mod(name: str) -> ModuleType:
     if name not in _MODS:
-        if name == "verify_tokens":
-            sys.path.insert(0, str(TOKENS / "tests"))
-            _MODS[name] = _load(TOKENS / "tests" / "verify_tokens.py", name)
-        elif name == "contrast_check":
-            _MODS[name] = _load(CONTRAST_PATH, name)
-        else:
-            _MODS[name] = _load(CVD_PATH, name)
+        sys.path.insert(0, str(TOKENS / "tests"))
+        _MODS[name] = _load(BORROWED.get(name, CVD_PATH), name)
     return _MODS[name]
 
 
@@ -250,11 +236,6 @@ def known_tokens() -> set[str]:
     return names
 
 
-def hex_rgb(h: str) -> tuple[int, int, int]:
-    h = h.lstrip("#")
-    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-
-
 def color(th: str, name: str) -> str:
     t = theme(th)
     if name not in t:
@@ -279,10 +260,8 @@ def tok(cell: str) -> str:
 
 def contrast_values(r: list[str]) -> list[str]:
     cc = mod("contrast_check")
-    fg, bg = tok(r[1]), tok(r[2])
-    return [
-        f"{cc.contrast_ratio(hex_rgb(color(th, fg)), hex_rgb(color(th, bg))):.2f}" for th in THEMES
-    ]
+    rgb = [[tuple(bytes.fromhex(color(th, tok(r[i]))[1:])) for i in (1, 2)] for th in THEMES]
+    return [f"{cc.contrast_ratio(fg, bg):.2f}" for fg, bg in rgb]
 
 
 def cvd_values(r: list[str]) -> tuple[str, str]:
@@ -334,12 +313,8 @@ def cite_hashes(t: Texts) -> tuple[dict[str, str], list[str]]:
 
 
 def parse_pins(text: str) -> dict[str, str]:
-    out = {}
-    for ln in text.split("\n"):
-        parts = ln.split("\t")
-        if len(parts) == 2 and not ln.startswith("#"):
-            out[parts[0]] = parts[1]
-    return out
+    rows = [ln.split("\t") for ln in text.split("\n") if not ln.startswith("#")]
+    return {r[0]: r[1] for r in rows if len(r) == 2}
 
 
 def g_state(t: Texts) -> list[str]:
@@ -475,6 +450,7 @@ def g_t2(t: Texts) -> list[str]:
     if not rows:
         return ["the spec has no T2 state rows"]
     keys = templates(t, "E09D09") + templates(t, "E30D02")
+    keys += [re.compile(re.escape(OD11[1:-1]) + "$")] if OD11 in at(t, "E39D01") else []
     for r in rows:
         if not RENDERING.search(r[3]):
             bad.append(f"{r[0]}: a T2 control with no rendering (2a, 2b or the sentence form)")
@@ -600,10 +576,11 @@ def g_protect(t: Texts) -> list[str]:
     for lead in THREATS:
         if not any(PROTECTIVE in " ".join(r) for r in state_rows(t) if r[0] == lead):
             bad.append(f"{lead}: does not keep the protective actions enabled")
-    if "the kill switch, `lockout`, `frozen` and view-as never do" not in norm(
-        section(t.spec, "### 3.4")
-    ):
-        bad.append("§3.4 does not say the kill switch, lockout, frozen and view-as never gate them")
+    if "`lockout` and view-as never do" not in norm(section(t.spec, "### 3.4")):
+        bad.append("§3.4 does not say a lockout and view-as never gate them")
+    frozen = " ".join(" ".join(r) for r in state_rows(t) if r[0] == "M62-25")
+    if not all(w in frozen for w in ("OD-11", "`E39D01`:455", "Owner", OD11)):
+        bad.append("M62-25: `frozen` does not split per OD-11 (Cancel passes; Owner / Manager)")
     return bad
 
 
@@ -614,8 +591,8 @@ def built_glyphs() -> set[str] | None:
     return {Path(p).name.split(".")[0] for p in out.split("\n") if p.endswith(".svg")}
 
 
-def g_cmp258(t: Texts) -> list[str]:
-    """CMP-258 defined once and completely, with built glyphs only."""
+def g_cell(t: Texts) -> list[str]:
+    """LegStatusCell defined once and completely, with built glyphs only."""
     bad = []
     five3 = section(t.spec, "### 5.3")
     legs = [r for r in table_rows(five3, "LS-") if len(r) == 6]
@@ -643,6 +620,9 @@ def g_count(t: Texts) -> list[str]:
     """Every safety count is served; none is today (G-12)."""
     bad = [f"spec:{i} counts legs in the client" for i, ln in enumerate(t.spec.split("\n"), 1)
            if COUNT.search(ln)]  # fmt: skip
+    for r in [r for r in state_rows(t) + table_rows(t.spec, "RC-") if r[0] in STAMPED]:
+        if "not served yet" not in " ".join(r):
+            bad.append(f"{r[0]}: an unserved figure or action is not stamped as not served yet")
     gap = [r for r in table_rows(t.spec, "G-12 ") if len(r) > 1]
     if not gap or not all(w in gap[0][1] for w in ("accepted", "protected", "unknown")):
         bad.append("§11.1 has no G-12 row for served accepted, protected and unknown counts")
@@ -654,7 +634,10 @@ def g_count(t: Texts) -> list[str]:
 
 def g_merged(t: Texts) -> list[str]:
     bad = []
+    built = set(re.findall(r"^### (CMP-\d{3})\b", at(t, "15"), re.MULTILINE))
     for i, ln in enumerate(t.spec.split("\n"), 1):
+        if set(re.findall(r"CMP-\d{3}", ln)) - built and not ln.startswith("| RQ-"):
+            bad.append(f"spec:{i} hard-codes a CMP id `15` lacks off a request row")
         if UNMERGED.search(ln) and not (ln.startswith("| RQ-") or "request row" in ln):
             bad.append(f"spec:{i} names an unmerged input outside a request row")
         if UNMERGED.search(ln) and re.search(r"(E34-D0[12]|#936|#996)[^|]*`:\d", ln):
@@ -706,7 +689,7 @@ def g_scope(t: Texts) -> list[str]:
 GATES: dict[str, Callable[[Texts], list[str]]] = {
     "G-STATE": g_state, "G-TOKEN": g_token, "G-CONTRAST": g_contrast, "G-CVD": g_cvd,
     "G-SAFETY": g_safety, "G-T2": g_t2, "G-MOTION": g_motion, "G-COPY": g_copy,
-    "G-VOCAB": g_vocab, "G-RECOVERY": g_recovery, "G-PROTECT": g_protect, "G-CMP258": g_cmp258,
+    "G-VOCAB": g_vocab, "G-RECOVERY": g_recovery, "G-PROTECT": g_protect, "G-CELL": g_cell,
     "G-COUNT": g_count, "G-MERGED": g_merged, "G-CITE": g_cite, "G-HYGIENE": g_hygiene,
     "G-SCOPE": g_scope,
 }  # fmt: skip
@@ -795,15 +778,15 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-CONTRAST", "type a contrast figure off", set_cell("P-01", 4, "1.00")),
     ("G-CONTRAST", "report a ui pair as structure", set_cell("P-05", 3, "structure")),
     ("G-CVD", "type a ΔE figure off", set_cell("V-01", 4, "1.00 / 1.00 / 1.00 / 1.00")),
-    ("G-SAFETY", "offer a leg without its stop", set_cell("M62-29", 3, "an order confirm with a box to send it without a stop; G-1")),
+    ("G-SAFETY", "offer a leg without its stop", set_cell("M62-29", 3, "an order confirm with a box to send it without a stop; not served yet (G-1)")),
     ("G-SAFETY", "let the cancel copy drop the stops", set_cell("`cancel.effect`", 1, '"Cancels the unfilled orders of {n} legs."')),
     ("G-SAFETY", "close OQ-1 silently", set_cell("OQ-1", 2, "the leg only")),
     ("G-SAFETY", "drop the never-omit statement", sub("never offers a way to omit, remove or turn off the stop", "shows the stop")),
     ("G-SAFETY", "drop the stop from Retry's preview line", sub('"sub_004: buy 0.060 BTCUSDT, stop 63,900.0 at the exchange"', '"sub_004: buy 0.060 BTCUSDT"')),
-    ("G-SAFETY", "a CMP-258 protection value without a stop", sub('protection "—"', 'protection "off (the leg sent without a stop)"')),
+    ("G-SAFETY", "a LegStatusCell protection value without a stop", sub('protection "—"', 'protection "off (the leg sent without a stop)"')),
     ("G-T2", "drop the Viewer's rendering", set_cell("M62-23", 3, 'T2 `rbac.permission` "Your role can\'t place orders."')),
     ("G-T2", "retype a key's text", set_cell("M62-24", 3, 'T2 "You may only look at this account."; rendering 2a')),
-    ("G-T2", "retype a registered state", set_cell("M62-25", 3, 'T2 "Trading is paused right now, try later." (registered states); rendering 2a')),
+    ("G-T2", "retype a registered state", sub('"Trading frozen by the owner at 14:02 UTC — new orders off. Cancel and close still work." (registered states) on Retry', '"Trading is paused right now, try later." (registered states) on Retry')),
     ("G-T2", "drop the lock from §1 item 6", sub("the label led by the CMP-019 `lock` glyph", "the label led by its glyph")),
     ("G-T2", "let a T2 control leave the Tab order (G-T2.1b)", sub("never the `disabled` attribute — it stays in the Tab order", "or the `disabled` attribute")),
     ("G-T2", "drop the tertiary label pair (G-T2.2)", drop_row("| P-04 ")),
@@ -818,9 +801,12 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-RECOVERY", "arm Cancel working orders", set_cell("RC-5", 4, "on LIVE")),
     ("G-PROTECT", "gate the protective actions under a lockout", set_cell("M62-25", 2, "Retry on a leg of a locked or frozen account; Close group, Cancel working orders and Unwind gated as well")),
     ("G-PROTECT", "gate every action under view-as", set_cell("M62-27", 2, "under view-as, every action")),
-    ("G-CMP258", "define a second status component in §3", sub("Group words and leg words are CMP-258's (§5.3).", "Group words and leg words are CMP-258's (§5.3); a second status component, LegBadge, is defined here.")),
-    ("G-CMP258", "draw stop pending with an unbuilt glyph", set_cell("LS-15", 4, "`icon/shield-off`")),
-    ("G-CMP258", "drop the unwinding leg state", drop_row("| LS-09 ")),
+    ("G-CELL", "define a second status component in §3", sub("Group words and leg words are LegStatusCell's (§5.3).", "Group words and leg words are LegStatusCell's (§5.3); a second status component, LegBadge, is defined here.")),
+    ("G-CELL", "draw stop pending with an unbuilt glyph", set_cell("LS-15", 4, "`icon/shield-off`")),
+    ("G-CELL", "drop the unwinding leg state", drop_row("| LS-09 ")),
+    ("G-COUNT", "drop the divergent badge's stamp", sub('the badge "not served yet" (G-5)', "the badge (G-5)")),
+    ("G-PROTECT", "let a frozen Manager close with no OD-11 split", sub("the Owner's enabled, a Manager's T2 until E39-S03 rules |", "every role enabled |")),
+    ("G-MERGED", "hard-code CMP-258 in §5.3's heading", sub("### 5.3 LegStatusCell —", "### 5.3 CMP-258 LegStatusCell —")),
     ("G-COUNT", "count protection in the client", sub('Protection "not served yet" (G-12)', '"5 of 5 protected"')),
     ("G-COUNT", "count accepted legs in the summary copy", set_cell("`group.partial`", 1, '"{k} of {n} accepted. {account} rejected: {reason}."')),
     ("G-MERGED", "name E34-D02 outside a request row", sub("**the one definition**: SCR-061 consumes it", "**the one definition**: E34-D02 consumes it")),
@@ -842,25 +828,19 @@ def selftest() -> tuple[bool, list[str]]:
         gates = sorted({g for g, _ in audit(fn(base))})
         good = gates == [gate]
         ok &= good
-        out.append(
-            f"{'ok  ' if good else 'FAIL'} M-{i} {gate}: {what} -> {', '.join(gates) or 'none'}"
-        )
+        mark = "ok  " if good else "FAIL"
+        out.append(f"{mark} M-{i} {gate}: {what} -> {', '.join(gates) or 'none'}")
     restored = load().spec == before
     ok &= restored
-    out.append(
-        f"self-test: {len(MUTATIONS)} mutations, text restored: {'yes' if restored else 'NO'}"
-    )
-    out.append(f"self-test: {'PASS' if ok else 'FAIL'}")
+    out += [f"self-test: {len(MUTATIONS)} mutations, text restored: {'yes' if restored else 'NO'}", f"self-test: {'PASS' if ok else 'FAIL'}"]  # fmt: skip
     return ok, out
 
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="E34-D03 trade-group manager audit")
     g = ap.add_mutually_exclusive_group()
-    g.add_argument("--check", action="store_true")
-    g.add_argument("--fill", action="store_true")
-    g.add_argument("--self-test", action="store_true")
-    g.add_argument("--repin-ruled", action="store_true")
+    for flag in ("--check", "--fill", "--self-test", "--repin-ruled"):
+        g.add_argument(flag, action="store_true")
     a = ap.parse_args(argv)
     if a.self_test:
         ok, lines = selftest()
