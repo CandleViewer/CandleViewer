@@ -16,6 +16,8 @@ The orchestrator's ruling of 2026-11-03 (08:03Z), as the four plan documents sta
 - Its first review's fold pins the money: the walk by side from the last flat the venue confirmed,
   each step's words, a worked example recomputed from the one docs-transcribed record, the venue's
   figure writable until the record is final, one window and one lookback for the cap and the view.
+- Its delta's fold: several records under one order taken as one, the walk at each confirmed flat
+  and after a disagreeing `closedSize`, the comparison's gates, and an offset change's first day.
 
 Nothing serves the new members yet: E29-S06's later slices implement them against this contract.
 """
@@ -219,13 +221,13 @@ def test_contract_the_example_validates_and_its_figures_add_up() -> None:
     ]
     assert _SCHEMAS["ClosedPnlTotals"]["properties"]["by_account"]["maxItems"] == 25
     window = meta["window"]
-    start = datetime.fromisoformat(window["start"])
-    assert datetime.fromisoformat(window["next_start"]) - start == timedelta(hours=24)
+    start, next_start = (datetime.fromisoformat(window[k]) for k in ("start", "next_start"))
+    assert next_start - start == timedelta(hours=24)  # no offset change takes effect that day
     local_midnight = start + timedelta(minutes=window["utc_offset_minutes"])
     assert (local_midnight.hour, local_midnight.minute, local_midnight.second) == (0, 0, 0)
     closes = [datetime.fromisoformat(i["closed_at"]) for i in page["items"]]
     assert closes == sorted(closes)  # a window read is oldest first
-    assert all(start <= at < start + timedelta(hours=24) for at in closes)
+    assert all(start <= at < next_start for at in closes)  # `next_start` as served
 
 
 def test_contract_24_states_the_day_boundary_once_and_east_positive() -> None:
@@ -327,9 +329,13 @@ def test_contract_21_declares_the_record_table_and_classifies_it() -> None:
 
 def test_contract_24_walks_the_fills_by_side_from_the_last_flat_the_venue_confirmed() -> None:
     """M-2: the order's fills that close, read by side and keyed by the order row's
-    `position_idx`; a fill the walk cannot read leaves its figures absent, never wrong."""
+    `position_idx`; a fill the walk cannot read leaves its figures absent, never wrong. The delta
+    (m-B, m-C, choice 1): no walk without a venue-confirmed flat, each such flat resets it, and a
+    disagreeing `closedSize` counts by `min` until one."""
+    text = _s813()
+    assert "else from the key's first stored fill" not in text
     missing = _missing(
-        _s813(),
+        text,
         "1. The record's closing fills are the order's fills that close: the stored fills "
         "(`executions.order_id`) of the order row whose `exchange_order_id` is the record's, of a "
         "trade type (`Trade`, `AdlTrade` or `BustTrade`), to which the walk (step 3) gives a `c` "
@@ -339,14 +345,21 @@ def test_contract_24_walks_the_fills_by_side_from_the_last_flat_the_venue_confir
         "keyed by (account, symbol, the `position_idx` of the fill's order row, as the venue's "
         "fills carry none), in `(exec_ts, exec_id)` order after the key's last flat the venue "
         "confirmed (the latest position reading of the key at size 0 dated, by the venue's time, "
-        "before the first stored fill of the record's order; 21 §3.3.7), else from the key's first "
-        "stored fill",
+        "before the first stored fill of the record's order; 21 §3.3.7, whose prune keeps each "
+        "key's latest). With no such reading the walk has no start, never the key's first stored "
+        "fill, and the record has no local figures.",
         "A fill opens when the walk is flat or holds the fill's own side: it adds its size to the "
         f"open size, its size {_X} price to the entry value and its fee to the opening fees.",
         "A fill of the other side closes `c`, the venue's `closedSize` where the fill states it "
         "(21 §3.3.6; the stream's fills do), else `min(exec_qty, open size)`, and takes "
         "`c / open size` of the entry value and of the opening fees; its remainder, "
         f"`exec_qty {_M} c`, opens the other side, and its fee is split between the two pro rata",
+        "`opened_at` is the time of the position's first opening fill since the walk was last "
+        "flat, and the walk's average entry is the entry value the record's closing fills take "
+        "over the size they close.",
+        "A flat the venue confirmed comes after every fill dated at or before it, and each one "
+        "the walk crosses is a flat of the walk, which drops there any size, entry value and "
+        "opening fees it still holds.",
         "A fill the walk cannot read makes the walk's figures (the opening fees, `opened_at`, the "
         "average entry and `funding_pnl`) absent until the walk next goes flat, counting sizes "
         "meanwhile: a fill of the other side with no closed PnL (a REST-recovered one); one larger "
@@ -355,6 +368,10 @@ def test_contract_24_walks_the_fills_by_side_from_the_last_flat_the_venue_confir
         "other side",
         "on a symbol the account holds in hedge mode (positions read with `positionIdx` 1 or 2), "
         "a fill with no order row.",
+        "After a disagreeing `closedSize`, and until a flat the venue confirmed after that fill "
+        "ends the absence (never a flat of the walk's own count), the walk counts each fill of the "
+        "other side as closing `min(exec_qty, open size)`, whatever the fill states, and a record "
+        "whose closing fills it reaches in that span has no local figures.",
     )
     assert missing == []
 
@@ -408,38 +425,54 @@ def test_contract_24_worked_example_recomputes_the_docs_record() -> None:
 
 def test_contract_24_keeps_the_venue_figure_writable_until_the_record_is_final() -> None:
     """M-1: a differing read replaces the venue's columns until the record is final; the
-    empty-orderId id is the item's side and the venue's `createdTime`, never `updatedTime`."""
+    empty-orderId id is the item's side and the venue's `createdTime`, never `updatedTime`. The
+    delta (m-A, Nit 4): several records under one `orderId` are one, and both cases are logged."""
     text = _s813()
     assert "updated_ms" not in text and "is stored once read" not in text
+    assert "logged and counted" not in text
     missing = _missing(
         text,
         'f"{account_id}:record:{symbol}:{side}:{created_ms}"',
         "so a record the venue updates keeps its id",
         "it is settled once read and never compared, and, with no order row, never final, so a "
         "later read that differs replaces its venue's columns.",
+        "A read that lists several records under one `orderId` takes them as one record, for the "
+        "cap as for the item: their sizes, `closed_pnl`, `open_fee` and `close_fee` summed (a fee "
+        "one of them omits is absent), their prices weighted by size, `closed_at` the latest "
+        "`updatedTime`, `created_at` the earliest `createdTime` and `leverage` the latest "
+        "record's; the case is logged at WARNING with the account and the order, and #843's "
+        "capture of a partly filled closing order (below) shows which shape the venue writes.",
         "The record is final once its closing order's row is terminal and the record's `qty` "
         "equals the size its stored closing fills close. Until then a read that differs replaces "
         "the venue's columns, logged, and the item is compared again, a new value pair audited if "
         "divergent, so a partly filled closing order's record follows its later fills (E29-K01, "
         "#843, captures one, read before and after them); once final they are frozen (21 "
-        "§3.3.13 `final_at`), and a later read that differs is logged and counted, never applied.",
+        "§3.3.13 `final_at`), and a later read that differs is logged at WARNING, never applied.",
     )
     assert missing == []
 
 
 def test_contract_24_counts_one_window_and_one_lookback_for_the_cap_and_the_view() -> None:
     """m-2, m-3, Nit 6: the cap and the view read one window after one lookback, converge once
-    the item settles, and an offset change never moves the day in progress."""
+    the item settles, and an offset change never moves the day in progress. The delta (m-D, Nit
+    2): the offset and bounds the resolver answers that day, as 22 serves them, and no poll for a
+    record whose order has no row."""
     text = _s813()
     for overclaim in ("takes effect at the next read", "[day_start, now)", "never count a record"):
         assert overclaim not in text, overclaim
     missing = _missing(
         text,
         "and the order path's daily-loss figure and the closed-PnL view take it.",
+        "the half-open `[day_start, next_start)`: except on the day an offset change takes effect "
+        "(below), `day_start` is the latest instant",
         "A change of the column never moves the day in progress: that day keeps the offset it "
         "started with until its `next_start`, so a loss it has counted stays counted, and the new "
         "offset takes effect there, the next day running from that `next_start` to the first "
         "instant after it whose wall time at the new offset is 00:00:00.000",
+        "The resolver answers the old offset, and that day's bounds, for the rest of the day the "
+        "change is made in, and the new offset from its `next_start`, with that one day's bounds; "
+        "a reader takes `next_start` as served, never as `day_start + 24 h`.",
+        "so the rule survives a restart: that record is carried to E39-K01 (#880).",
         'the rules vocabulary\'s `realised_pnl_today` ("since UTC midnight") and `daily_loss_pct` '
         "take it too is E39-K01's to decide",
         "the day's loss it gives the order path sums the venue's records whose `closed_at` falls "
@@ -454,14 +487,36 @@ def test_contract_24_counts_one_window_and_one_lookback_for_the_cap_and_the_view
         "before the day and closed in it, and one created earlier is missed if the venue filters "
         "on `createdTime`, a gap for E29-K01 (#843)'s captures. The poll ends for an item whose "
         "`closed_at` is older than that reach",
-        "while the account holds an item with an `exchange_order_id` that is not final",
+        "while the account holds an item with an `exchange_order_id` that is not final and whose "
+        "order has a row, and runs at startup and after a private-stream reconnect: a record whose "
+        "order has no row, such as a liquidation's, is never final, so it keeps no poll running, "
+        "as one with no `orderId` keeps none.",
     )
     assert missing == []
+    members = _SCHEMAS["ClosedPnlWindow"]["properties"]
+    window = {k: " ".join(v["description"].split()) for k, v in members.items()}
+    assert "as this answer read it" not in window["utc_offset_minutes"]
+    assert not _missing(
+        window["start"],
+        "00:00 at UTC+`utc_offset_minutes`, except on the day an offset change takes effect, "
+        "which starts where the day before it ended (24 §8.13).",
+    )
+    assert not _missing(
+        window["next_start"],
+        "when the next day starts and the client reads again, taken as served and never "
+        "computed; `start` + 24 h, except on the day an offset change takes effect,",
+    )
+    assert not _missing(
+        window["utc_offset_minutes"],
+        "except for the rest of the day a change is made in, which keeps the offset it started "
+        "with (24 §8.13).",
+    )
 
 
 def test_contract_24_defines_a_provisional_item_and_when_a_settled_one_is_compared() -> None:
     """m-4..m-7, Nit 8: the provisional item's figures, its group, the comparison again each
-    pass, the flag cleared within the bound, and the cases below the rounding step."""
+    pass, the flag cleared within the bound, and the cases below the rounding step. The delta
+    (m-C, Nit 7): the comparison's gates, and a flag no comparison clears stays."""
     missing = _missing(
         _s813(),
         "its `qty` is the size its closing fills close (their `c`, never `exec_qty`), its "
@@ -472,7 +527,13 @@ def test_contract_24_defines_a_provisional_item_and_when_a_settled_one_is_compar
         "An item's trade group is its position's: the group of the walk's opening orders' leg "
         "(the first's, when they differ), else of its closing fills' leg, else of its closing "
         "order's leg.",
-        "a later comparison within the bound clears the flag and writes no record.",
+        "A settled item is compared when `local_net_pnl` is present, the closing fills close "
+        "exactly the record's `qty`, and `|walk's average entry "
+        f"{_M} avg_entry_price| \N{LESS-THAN OR EQUAL TO} CV_OMS_CLOSED_PNL_TOLERANCE_REL {_X} "
+        "avg_entry_price`.",
+        "a later comparison within the bound clears the flag and writes no record. A composition "
+        "that compares nothing, as when it loses its local figures, leaves the flag, and the pair "
+        "it recorded, until a later comparison clears it.",
         "which each sync pass makes again for the settled items its read covers",
         "each pass compares again the settled items its read covers, idempotent by the recorded "
         "pair.",
@@ -487,7 +548,9 @@ def test_contract_24_defines_a_provisional_item_and_when_a_settled_one_is_compar
 
 def test_contract_21_guards_the_record_and_stores_the_walks_inputs() -> None:
     """M-1, M-2, Nit 9: `final_at` freezes the venue's columns, a settled row holds them all, no
-    row is deleted, and `executions` and `position_snapshots` gain the walk's two inputs."""
+    row is deleted, and `executions` and `position_snapshots` gain the walk's two inputs. The
+    delta (choice 1, Nits 1, 5 and 7): each key's latest confirmed flat outlives the prune, the
+    walk's fills have an index, the poll reads within its reach, and `divergent` stays."""
     doc = _doc("21-database-schema.md")
     table = _between(doc, "#### 3.3.13 ", "\n### 3.4 ")
     missing = _missing(
@@ -499,8 +562,8 @@ def test_contract_21_guards_the_record_and_stores_the_walks_inputs() -> None:
         "END),",
         "CONSTRAINT cpr_final CHECK (final_at IS NULL OR (settled_at IS NOT NULL AND "
         "exchange_order_id IS NOT NULL AND final_at >= settled_at)),",
-        "CREATE INDEX ix_cpr_pending ON closed_pnl_records (exchange_account_id) WHERE final_at "
-        "IS NULL AND exchange_order_id IS NOT NULL;",
+        "CREATE INDEX ix_cpr_pending ON closed_pnl_records (exchange_account_id, closed_at) WHERE "
+        "final_at IS NULL AND exchange_order_id IS NOT NULL;",
         "CREATE TRIGGER trg_cpr_no_delete BEFORE DELETE ON closed_pnl_records FOR EACH ROW EXECUTE "
         "FUNCTION forbid_mutation();",
         "CREATE TRIGGER trg_cpr_no_truncate BEFORE TRUNCATE ON closed_pnl_records FOR EACH "
@@ -511,7 +574,9 @@ def test_contract_21_guards_the_record_and_stores_the_walks_inputs() -> None:
         "`id`, `exchange_account_id`, `exchange_order_id`, `symbol` or `side`, a `settled_at` or "
         "`final_at` that changes once set, and, once `final_at` is set, any change to the venue's "
         "columns (`qty`, the prices, `leverage`, `closed_pnl`, `closed_at`, `venue_created_at`): "
-        "a later read that differs is then logged and counted, never applied.",
+        "a later read that differs is then logged, never applied.",
+        "and cleared only by a later comparison within the tolerance, so a composition that "
+        "compares nothing leaves it and its pair (24 §8.13).",
         "`cv_app` keeps INSERT, SELECT and UPDATE; DELETE and TRUNCATE are revoked where the role "
         "exists",
     )
@@ -523,6 +588,8 @@ def test_contract_21_guards_the_record_and_stores_the_walks_inputs() -> None:
         "ALTER TABLE executions ADD CONSTRAINT ex_closed CHECK (closed_size IS NULL OR "
         "closed_size BETWEEN 0 AND exec_qty) NOT VALID;",
         "every writer also sets `position_idx` from the fill's order row",
+        "CREATE INDEX CONCURRENTLY ix_exec_walk ON executions (exchange_account_id, symbol, "
+        "exec_ts, exec_id);",
     )
     assert missing == []
     flats = _between(doc, "#### 3.3.7 ", "\n#### 3.3.8 ")
@@ -532,14 +599,21 @@ def test_contract_21_guards_the_record_and_stores_the_walks_inputs() -> None:
         "CREATE INDEX CONCURRENTLY ix_psnap_flat ON position_snapshots (exchange_account_id, "
         "symbol, position_idx, exchange_updated_ts) WHERE size = 0 AND exchange_updated_ts IS NOT "
         "NULL;",
+        "The 90-day prune (§7) keeps each key's latest such row, one per `(exchange_account_id, "
+        "symbol, position_idx)`, so a position held longer keeps its walk's start; a key with none "
+        "has no walk (24 §8.13).",
     )
     assert missing == []
-    for row, index in ((54, "ix_cpr_pending"), (55, "ix_psnap_flat")):
+    kept = r"^\| `position_snapshots` \(PG\) +\| 90 d .+\| The latest flat the venue confirmed "
+    assert re.search(kept + "per key stays past 90 d", doc, re.M)
+    for row, index in ((54, "ix_cpr_pending"), (55, "ix_psnap_flat"), (56, "ix_exec_walk")):
         assert re.search(rf"^\| {row} +\| Closed-PnL [^|]+\|[^|]+\| `{index}` ", doc, re.M), row
+    assert re.search(r"^\| 54 +\| [^|]+\| [^|]+, not final, `closed_at` in reach ", doc, re.M)
 
 
 def test_contract_22_pins_the_window_parameter_the_filters_and_the_stand_in() -> None:
-    """m-1, m-4, Nits 1, 2, 4, 5, 13, 14: the operation's words a later slice serves."""
+    """m-1, m-4, Nits 1, 2, 4, 5, 13, 14: the operation's words a later slice serves. The delta
+    (Nits 3 and 6): a settled item can change until final, and the 25 accounts are one server's."""
     params = {p.get("name"): p for p in _OPERATION["parameters"]}
     assert " ".join(params["window"]["description"].split()) == (
         "`today`: the configured trading day that contains the request (24 §8.13), oldest first, "
@@ -553,8 +627,10 @@ def test_contract_22_pins_the_window_parameter_the_filters_and_the_stand_in() ->
         "Mirrors `GET /v5/position/closed-pnl`, kept by the sync of 24-internal-schemas.md §8.13, "
         "which reads the venue's records as positions close (no nightly backfill), and used to "
         "seed journal entries",
-        "and so is a window read whose accounts, named or granted, number more than 25. Without "
-        "`window`, `from` and `to` bound `closed_at`.",
+        "Until the venue's record is final (24 §8.13), a later read can still change a settled "
+        "item's `closed_pnl` and `net_pnl`, `qty`, prices, `leverage` and `closed_at`.",
+        "and so is a window read whose accounts, named or granted, number more than 25 in this "
+        "server's environment. Without `window`, `from` and `to` bound `closed_at`.",
         "a client keys rows by `id`.",
         "An item's trade group is its position's, that of its opening orders' leg, else its "
         "closing fills', else its closing order's (24 §8.13)",
