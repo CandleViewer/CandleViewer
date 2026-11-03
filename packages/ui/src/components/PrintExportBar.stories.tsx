@@ -88,6 +88,31 @@ export const ExportingReducedMotion: Story = {
   },
 };
 
+/**
+ * A narrow title bar, a column narrower than one label: each button keeps its whole label, never "Export C…", and the
+ * second format wraps under the first (E29-D03 §3.2, §8.2).
+ */
+export const Narrow: Story = {
+  args: { formats: ["csv", "pdf"] },
+  render: (args) => (
+    <div style={{ display: "grid", gridTemplateColumns: "4rem" }}>
+      <PrintExportBar {...args} />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const buttons = within(canvasElement).getAllByRole("button");
+    for (const button of buttons) {
+      const label = button.querySelector(".cv-button__label") ?? button;
+      await expect(getComputedStyle(label).textOverflow).toBe("clip");
+      await expect(getComputedStyle(button).flexShrink).toBe("0");
+      // Nothing overflows the button: it holds its whole label.
+      await expect(button.scrollWidth).toBeLessThanOrEqual(button.clientWidth);
+    }
+    const [csv, pdf] = buttons.map((button) => button.getBoundingClientRect());
+    await expect(pdf?.top).toBeGreaterThanOrEqual(csv?.bottom ?? Number.POSITIVE_INFINITY);
+  },
+};
+
 /** Idle and running, both formats, under the light and high-contrast themes; axe checks each theme. */
 const themeMatrix = (theme: string): Story => ({
   globals: { theme },

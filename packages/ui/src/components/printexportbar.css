@@ -9,6 +9,17 @@
   vertical-align: middle;
 }
 
+/* A label never truncates (`05` §5 item 7; E29-D03 §3.2, §8.2): a button keeps its whole width, so a narrow bar
+   wraps it to a new row, and CMP-001's ellipsis is lifted, as button.css lifts it for buy and sell. */
+.cv-print-export-bar > .cv-button {
+  flex: none;
+}
+
+.cv-print-export-bar > .cv-button > .cv-button__label {
+  overflow: visible;
+  text-overflow: clip;
+}
+
 /* Running (E29-D03:200): CMP-001's loading look hides the label under a centred spinner; here "Export CSV" stays
    in color.text.primary and the CMP-014 arc leads it in the label's colour (CMP-038's arc colour,
    color.action.primary.default, measures 2.58:1 on the secondary fill in dark). */
