@@ -2720,7 +2720,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Storybook**: Default, Acknowledged (every story in dark / light / high contrast × compact / comfortable; a consumed / remaining story is held until the contract gives a count, E09-D12 G-3).
 - **Tests**: unit, visual, axe, interaction (continue gated on acknowledgement).
 - **Forbidden**: codes re-rendered from storage or after the step; a remaining or consumed count (held, E09-D12 G-3); any prop logged or sent to telemetry; Continue enabled before the acknowledgement.
-- **Security**: handles secret material: rendered once per `codes` value and never from storage; `codes` never enter a route param or browser storage (TM U23, SR-054); no prop is logged or sent to telemetry; any future analytics or session-replay integration excludes the subtree (none exists, E09-D12 G-7); no on-screen masking is added.
+- **Security**: handles secret material: rendered once per `codes` value and never from storage; `codes` never enter a route param or browser storage (TM U23, SR-E09-04); no prop is logged or sent to telemetry; any future analytics or session-replay integration excludes the subtree (none exists, E09-D12 G-7); no on-screen masking is added.
 - **Performance**: no engine, no heavy animation library, no webfont beyond the core set.
 - **Observability**: emits no telemetry; the composition map (`docs/design/E09/E09-D07-composition.json`) records its screen-level event.
 
