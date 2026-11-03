@@ -5,7 +5,7 @@ Offline and default-deny. The shared gates (git, cites, pins, G-T2 vocabulary, c
 hygiene, public text, R7, G-UNTOUCHED, the runner and the mutation harness) live in
 `spec_audit_lib.py`; this file keeps only E19-D04's rows. It reads, AS TEXT at a pinned commit,
 the plan and design texts the spec cites at the base, E19-D02's spec at its merge commit (PR
-#5487 merged as is) and E19-D03's at PR #5517's head, and, from the working tree, the spec, the pins file and itself. It
+#5487 merged as is) and E19-D03's at PR #5517's rebased head, and, from the working tree, the spec, the pins file and itself. It
 runs no repo code.
 
 Gates: G-CITE, G-QUOTE, G-VERSION, G-AC, G-PRESET-OPS, G-MATRIX, G-ENV, G-KEYS, G-DELETE,
@@ -35,7 +35,7 @@ ROOT = Path(__file__).resolve().parents[3]
 BASE = "95a625b09"  # origin/main after the ruling; every plan and keyed cite is read here
 D02_HEAD = "bed73afaa"  # PR #5487 (E19-D02, #416) head as read; merged as is
 D02_MERGE = "3619e95c5"  # its merge commit, byte-identical for D02; D02 is pinned here
-D03_HEAD = "811292427"  # PR #5517 (E19-D03, #438) head read; re-pinned to its merge commit
+D03_HEAD = "35032f521"  # PR #5517 (E19-D03, #438) rebased head; D03 as read at 811292427
 D02_PR, D03_PR = "#5487", "#5517"
 BQ_LIST = "6582998807"  # the BQ list on #439
 RULING = "6585044844"  # the orchestrator's ruling of record on it
@@ -345,6 +345,12 @@ def g_t2(t: L.Tree) -> list[str]:
     legs = {r[0]: r[1] for r in rows(s14)}
     if not legs.get("The same four items, a Viewer", "").startswith("permission (step 3b)"):
         bad.append("the Viewer's permission leg (3b)")
+    scr39 = next((r for r in rows(s14) if r[0].startswith("The SCR-039 footer's")), [])
+    if len(scr39) < 4 or not (
+        "for a Viewer there is no notice, so each item carries its own reason" in scr39[2]
+        and "W-42 on each item" in scr39[3]
+    ):
+        bad.append("SCR-039's Viewer leg: each item's own reason, not the view-as notice")
     if "two gated legs, not one" not in s14 or "CMP-041 `disabledReason?`" not in s14:
         bad.append("the two legs through CMP-041 `disabledReason?`")
     for r in rows(sec(t, "## 8. States")):
@@ -432,7 +438,8 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-2", "G-QUOTE", "W-24 reworded off its line", "spec",
        '"Click a bar to anchor the profile"', '"Click a bar to anchor it"'),
     _M("M-3", "G-VERSION", "the version line drops the D03 re-pin", "spec",
-       "`811292427`, re-pinned to its merge commit", "`811292427`, kept as read"),
+       "`35032f521` (rebased; D03 byte-identical to the read `811292427`), re-pinned to",
+       "`35032f521` (rebased; D03 byte-identical to the read `811292427`), kept as read; to"),
     _M("M-4", "G-AC", "a scenario name reworded", "spec",
        '(AC "A preset name collides"', '(AC "A preset name clashes"'),
     _M("M-5", "G-PRESET-OPS", "Rename loses its T2 cell", "spec",
@@ -500,6 +507,9 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "never on a preset apply", "and on a preset apply"),
     _M("M-35", "G-DELETE", "the re-link dropped", "spec",
        "a named re-link (D04-G5", "E14's undo (D04-G5"),
+    _M("M-36", "G-T2", "the SCR-039 Viewer leg loses its per-item reason", "spec",
+       "for a Viewer there is no notice, so each item carries its own reason",
+       "for a Viewer the same notice carries the reason, so no item carries its own reason"),
 )
 # fmt: on
 
