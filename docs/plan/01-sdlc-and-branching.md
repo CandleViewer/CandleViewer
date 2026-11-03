@@ -168,6 +168,7 @@ gitGraph
 | `chore/<short>`                  | Maintenance                                                                   | `chore/bump-playwright`       |
 | `design/<epic-slug>-<short>`     | Design-system code changes (tokens, Storybook) that accompany a design ticket | `design/of-50-heatmap-tokens` |
 | `spike/<short>`                  | Spike output, may never merge to main as-is                                   | `spike/webgl-footprint-bench` |
+| `docs/<short>`                   | Documentation and ADRs only (C-4.4)                                           | `docs/adr-0007-ws-framing`    |
 | `release/<semver>`               | Cut at release-train time, stabilization only                                 | `release/1.4.0`               |
 | `hotfix/<area>-<ticket>-<short>` | Emergency fix branched from a release tag / main                              | `hotfix/oms-77-fanout-race`   |
 | `train/<yyyymmdd>-<n>`           | Merge train (§7): pushed and deleted by the orchestrator only, not a PR head  | `train/20261019-1`            |

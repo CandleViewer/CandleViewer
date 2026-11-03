@@ -8,7 +8,7 @@
 
 ## Context and problem statement
 
-Trunk `main` is protected; work happens on `feat/`, `fix/`, `chore/`, `design/` and `spike/` branches with small PRs (≤ 400 LOC preferred), conventional commits, two approvals including one code owner, and required checks. The repository is a polyglot monorepo (TypeScript apps and packages, a Python service, infra, docs) with a generated protocol package, heavyweight GPU benchmarks and a broad security tool set. The pipeline must give fast, trustworthy signal without becoming a 40-minute tax on every PR.
+Trunk `main` is protected; work happens on short-lived branches named per CONSTITUTION C-4.4 with small PRs (≤ 400 LOC preferred), conventional commits, two approvals including one code owner, and required checks. The repository is a polyglot monorepo (TypeScript apps and packages, a Python service, infra, docs) with a generated protocol package, heavyweight GPU benchmarks and a broad security tool set. The pipeline must give fast, trustworthy signal without becoming a 40-minute tax on every PR.
 
 ## Decision drivers
 

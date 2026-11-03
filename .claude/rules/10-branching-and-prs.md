@@ -8,7 +8,8 @@ Source: `CONSTITUTION.md` §4, `docs/plan/01-sdlc-and-branching.md`, `.github/PU
 ## Branches
 - Trunk-based. `main` is protected: no direct pushes, **never force-push `main` or any shared branch** (C-4.1).
 - Name: `<type>/<epic-key>-<short-slug>` — lowercase, kebab-case, ASCII, ≤60 chars (C-4.4).
-  Types: `feat`, `fix`, `design`, `chore`, `docs`, `test`, `refactor`, `perf`, `spike`, `hotfix`.
+  Types: the C-4.4 prefix table in `CONSTITUTION.md` (read it there), plus `release/` and `hotfix/`
+  from `docs/plan/01-sdlc-and-branching.md` §6.1. `test`, `refactor`, `perf` are commit types, not branch prefixes.
   Example: `feat/of-42-footprint-cells`.
 - Branch from fresh `main`; live ≤3 working days (C-4.3). Integrate via `git pull --rebase origin main`
   (C-4.12). Force-push *your own* feature branch with `--force-with-lease` only.
