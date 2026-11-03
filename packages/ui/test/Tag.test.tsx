@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { composeStories } from "@storybook/react-vite";
 import { act, useState, type JSX } from "react";
-import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
+import { expect, fireEvent, fn, userEvent, waitFor, within } from "storybook/test";
 import { describe, it } from "vitest";
 import { Tag, Tooltip } from "../src/components/index.js";
 import * as stories from "../src/components/Tag.stories.js";
@@ -231,16 +231,20 @@ describe("Tag toggle (CMP-011 `toggle`, E29-S04; E29-D04 §2.9, E29-D02:299)", (
     const stateless = <Tag variant="toggle" label="x" />;
     // @ts-expect-error a toggle takes no icon (E29-D02:299)
     const withIcon = <Tag variant="toggle" label="x" pressed onPressedChange={fn()} icon="lock" />;
+    const removable = (
+      // @ts-expect-error a toggle has no remove control (only a neutral chip is removable)
+      <Tag variant="toggle" label="x" pressed onPressedChange={fn()} removable />
+    );
     const gated = (
       // @ts-expect-error a view choice is never gated (E29-D04:390)
       <Tag variant="toggle" label="x" pressed onPressedChange={fn()} disabledReason="r" />
     );
-    expect([stateless, withIcon, gated]).toHaveLength(3);
+    expect([stateless, withIcon, removable, gated]).toHaveLength(4);
   });
 
   it("passes the button's attributes through: a CMP-016 Tooltip describes the chip and keeps its name", async () => {
     const host = await mount(
-      <Tooltip content="ADL — auto-deleveraged">
+      <Tooltip content="ADL — auto-deleveraged" delay={0}>
         <Tag variant="toggle" label="ADL" pressed onPressedChange={fn()} />
       </Tooltip>,
     );
@@ -253,6 +257,18 @@ describe("Tag toggle (CMP-011 `toggle`, E29-S04; E29-D04 §2.9, E29-D02:299)", (
     // The Tooltip's focus handler reaches the chip: keyboard focus shows the description at once.
     await act(async () => button.focus());
     expect(tip?.hidden).toBe(false);
+    // So does its blur handler: leaving the chip hides it again.
+    await act(async () => button.blur());
+    expect(tip?.hidden).toBe(true);
+    // And its pointer handlers: a hover shows the description, and leaving hides it after the grace.
+    await act(async () => {
+      fireEvent.pointerOver(button);
+    });
+    await waitFor(() => expect(tip?.hidden).toBe(false));
+    await act(async () => {
+      fireEvent.pointerOut(button);
+    });
+    await waitFor(() => expect(tip?.hidden).toBe(true));
   });
 
   it("takes the button's other attributes, never a name, a press or a state of its own (type level)", () => {
@@ -273,9 +289,20 @@ describe("Tag toggle (CMP-011 `toggle`, E29-S04; E29-D04 §2.9, E29-D02:299)", (
     );
     // @ts-expect-error a static chip is a span, so a button attribute would be dropped
     const titled = <Tag label="x" title="t" />;
+    // @ts-expect-error a removable chip is a span too
+    // (a hyphenated attribute is no excess property: only the type, NoButtonAttributes, refuses it)
+    const removableDescribed = <Tag label="x" removable onRemove={fn()} aria-describedby="d" />;
     // @ts-expect-error a status chip is a span too
     const statusDescribed = <Tag variant="info" label="x" aria-describedby="d" />;
-    expect([described, renamed, clicked, stated, titled, statusDescribed]).toHaveLength(6);
+    expect([
+      described,
+      renamed,
+      clicked,
+      stated,
+      titled,
+      removableDescribed,
+      statusDescribed,
+    ]).toHaveLength(7);
   });
 
   it("the five Type chips have no serious or critical axe violation", async () => {
