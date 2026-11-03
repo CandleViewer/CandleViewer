@@ -108,6 +108,11 @@ before commit.
   E29-D02 §6.2's values (no capture: an order row is the OMS's own), through the shipped topic and REST mappers; one
   contract-valid extension file. Provenance, the mapper commits and regeneration: `golden/orders/README.md` and its
   `manifest.json`.
+- `golden/executions/` — E29-S04 web fills goldens: the `executions` snapshot and one delta, the
+  `listExecutions` body and five `getOrder?include_events=true` bodies. Source: the recorded
+  `bybit/2026-10-05/ws/private-execution.jsonl` push with E29-D03 §3.4's values through the shipped
+  adapter, fill step and mappers, and one ADL fill through reconciliation's store path. Provenance,
+  the mapper commits and regeneration: `golden/executions/README.md` and its `manifest.json`.
 
 ## Scripts
 

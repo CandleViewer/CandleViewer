@@ -1,0 +1,75 @@
+{
+  "note": "GENERATED - do not hand-edit. Regenerate from services/api with `CV_REGEN_GOLDEN=1 uv run pytest tests/unit/oms/test_executions_web_golden.py` and review the diff.",
+  "story": "E29-S04 (#979), BQ-18",
+  "sources": {
+    "capture": "packages/fixtures/bybit/2026-10-05/ws/private-execution.jsonl, line 1 (a Market `execution` push), the frame every fill of an order starts from",
+    "no_order": "packages/fixtures/bybit/2026-10-05/rest/trading-execution-list.json, its one row, the ADL fill reconciliation stores with no order",
+    "values": "docs/design/E29/E29-D03.md §3.4, boards 02, 04 and 05 (board 02's maker fill split in two: four executions); the market order's fill keeps the capture's values"
+  },
+  "accounts": {
+    "a1000000-0000-4000-8000-000000000001": "Main",
+    "a1000000-0000-4000-8000-000000000002": "Sub-1",
+    "a1000000-0000-4000-8000-000000000003": "Sub-2"
+  },
+  "environment": "live",
+  "mappers": [
+    {
+      "function": "candleviewer.exchange.bybit.private_parse.read_push",
+      "path": "services/api/candleviewer/exchange/bybit/private_parse.py",
+      "commit": "064aa16b9b7d427f2e87133a4ad3c87290b2f5b8"
+    },
+    {
+      "function": "candleviewer.exchange.bybit.trading_parse.to_execution",
+      "path": "services/api/candleviewer/exchange/bybit/trading_parse.py",
+      "commit": "064aa16b9b7d427f2e87133a4ad3c87290b2f5b8"
+    },
+    {
+      "function": "candleviewer.oms.push_mapping.exec_payload",
+      "path": "services/api/candleviewer/oms/push_mapping.py",
+      "commit": "65d74e28206fd0469c36ad65acc4a47003fc5463"
+    },
+    {
+      "function": "candleviewer.oms.execution.apply_execution",
+      "path": "services/api/candleviewer/oms/execution.py",
+      "commit": "667d368e4460a11efcc7afbc100f8916af096e92"
+    },
+    {
+      "function": "candleviewer.oms.order_steps._fill",
+      "path": "services/api/candleviewer/oms/order_steps.py",
+      "commit": "cd0f0497029848804057a7c889ae7b21c3f3e195"
+    },
+    {
+      "function": "candleviewer.oms.reconciler.new_execution",
+      "path": "services/api/candleviewer/oms/reconciler.py",
+      "commit": "06c53b0a6278414439d58ce1340abe8aa4d05589"
+    },
+    {
+      "function": "candleviewer.oms.ws_topics.execution_item",
+      "path": "services/api/candleviewer/oms/ws_topics.py",
+      "commit": "cd0f0497029848804057a7c889ae7b21c3f3e195"
+    },
+    {
+      "function": "candleviewer.api.oms_reads.execution_document",
+      "path": "services/api/candleviewer/api/oms_reads.py",
+      "commit": "56f3a4c3be6a44605290e2ec407fc15156c8ed36"
+    }
+  ],
+  "files": [
+    {
+      "name": "rest_get_order.json",
+      "sha256": "aec2dbd1423166771fecf778cd577a700649f85d46c85dfea75684c4695142c8"
+    },
+    {
+      "name": "rest_list_executions.json",
+      "sha256": "147adc15da963e5e48bf33e5a63bfc230086b9ec77e6d0da20d7167dbbd09a4c"
+    },
+    {
+      "name": "ws_executions_deltas.json",
+      "sha256": "a2b250db97953e8a803ce4661dcfbc26e6a623cedb254153d4fedcf246877040"
+    },
+    {
+      "name": "ws_executions_snapshot.json",
+      "sha256": "17ac286caa852587b08bca8e6f27dbc21d5d2f6c5973cddd523d8eaa574ae097"
+    }
+  ]
+}
