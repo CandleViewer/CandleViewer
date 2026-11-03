@@ -6,8 +6,9 @@ A must-record event (one whose B16 transition writes an audit record) that a cha
 already past the state it must reach, raises `SessionChartUnrecorded`, and the chart is dropped, to
 be rebuilt from the session's row on its next use. `SessionChart.revoke` drops the chart however
 its record ends, in a bounded `try/finally`. The stale chart here is one revoked over a live row.
-Over the real B16 chart (factory, gateway, bindings) with a recording sink; `LoopClock` moves the
-loop's clock, no network, no sleeps.
+A lock or a revocation already recorded is not refused: the reach check reads the chart's state
+from the receipt. Over the real B16 chart (factory, gateway, bindings) with a recording sink;
+`LoopClock` moves the loop's clock, no network, no sleeps.
 """
 
 from __future__ import annotations
@@ -173,6 +174,65 @@ async def test_an_idle_lock_on_a_stale_chart_raises_and_the_retry_records_it(
         await chart.observe(locked, _T0)
         assert chart.in_state(sid, "idle_locked")
         assert b16_audit.actions()[mark:] == ["auth.idle_locked"]
+    finally:
+        await chart.stop()
+
+
+async def test_a_lock_already_recorded_is_not_refused(b16_audit: RecordingAuditSink) -> None:
+    """Each read of the locked row returns and the chart is kept: the lock is written once."""
+    row, chart = _session(uuid.uuid4()), SessionChart()
+    sid = str(row.id)
+    locked = row.model_copy(update={"last_seen_at": _T0 - timedelta(minutes=16)})
+    try:
+        await chart.record(row, _T0, "REQUEST", replay=True)  # built from the row
+        reads = await asyncio.gather(
+            chart.observe(locked, _T0), chart.observe(locked, _T0), return_exceptions=True
+        )
+        assert reads == [None, None]
+        await chart.observe(locked, _T0)
+        assert chart.in_state(sid, "idle_locked")
+        assert b16_audit.actions() == ["auth.idle_locked"]
+    finally:
+        await chart.stop()
+
+
+async def test_a_reach_already_recorded_is_not_refused(b16_audit: RecordingAuditSink) -> None:
+    """The reach check reads the chart's state from the receipt: the lock and the revocation
+    each return, and each is written once."""
+    row, chart = _session(uuid.uuid4()), SessionChart()
+    locked = row.model_copy(update={"last_seen_at": _T0 - timedelta(minutes=16)})
+    try:
+        await chart.record(row, _T0, "REQUEST", replay=True)  # built from the row
+        sent = await asyncio.gather(
+            chart.observe(locked, _T0), chart.revoke(row, _T0, "admin"), return_exceptions=True
+        )
+        assert sent == [None, None]
+        assert b16_audit.actions() == ["auth.idle_locked", "auth.session_revoked"]
+        assert chart.interpreter(str(row.id)) is None
+    finally:
+        await chart.stop()
+
+
+async def test_a_revocation_already_recorded_is_not_refused(
+    b16_audit: RecordingAuditSink,
+) -> None:
+    """The reach check reads the chart's state from the receipt: the revocation returns, written
+    once, and a `STEP_UP_OK` the chart holds still raises."""
+    row = _session(uuid.uuid4()).model_copy(
+        update={"step_up_failures": 3, "readonly_until": _T0 + timedelta(minutes=5)}
+    )
+    chart = SessionChart()
+    try:
+        await chart.record(row, _T0, "REQUEST", replay=True)  # hydrated: three strikes
+        held, revoked = await asyncio.gather(
+            chart.record(row, _T0, "STEP_UP_OK", **_PAYLOADS["STEP_UP_OK"]),
+            chart.revoke(row, _T0, "admin"),
+            return_exceptions=True,
+        )
+        assert isinstance(held, SessionChartUnrecorded) and held.reason == "deferred"
+        assert revoked is None
+        assert b16_audit.actions() == ["auth.session_revoked"]
+        assert chart.interpreter(str(row.id)) is None
     finally:
         await chart.stop()
 
