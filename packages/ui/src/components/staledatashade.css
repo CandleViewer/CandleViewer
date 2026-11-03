@@ -1,0 +1,126 @@
+/*
+ * CMP-078 StaleDataShade (E17-D02 §7; `15` CMP-078; E29-D03 §4.4's account scope). The panel keeps its last values
+ * under a dim (stale, escalated) or a scrim (disconnected); the words sit above it at full opacity. Tokens only and
+ * static: the state is a flip (E08-D11 D11's settle is not built), so reduced motion holds by construction.
+ *
+ * PROPOSED to E05 (E17-D02 §14.4 CR-1; E29-D04 DR-5): `color.overlay.stale`, the alias of
+ * `color.data-confidence.stale.surface` composited at 0.15. Until E05 ships it, the dim composites that surface at
+ * the 0.15 the alias names, scoped to this component as `--cv-stale-shade-dim`; no other file reads it.
+ */
+.cv-stale-shade {
+  --cv-stale-shade-dim: 0.15;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+}
+
+.cv-stale-shade__body {
+  position: relative;
+  min-block-size: 0;
+  flex: 1 1 auto;
+}
+
+/* The dim: pointer events pass through, so the panel stays scrollable and readable underneath (E04-D01). */
+.cv-stale-shade__dim {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--color-data-confidence-stale-surface);
+  opacity: var(--cv-stale-shade-dim);
+}
+
+/* Disconnected: the held last frame under the scrim, `color.surface.overlay` at `opacity.scrim` (CR-2). */
+.cv-stale-shade--disconnected .cv-stale-shade__dim {
+  background: var(--color-surface-overlay);
+  opacity: var(--opacity-scrim);
+  pointer-events: auto;
+}
+
+/* The words: above the dim at full opacity, `type.ui.caption`, `color.text.primary` (E08-D11 D13). */
+.cv-stale-shade__text {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  margin: 0;
+  padding: var(--space-inset-xs) var(--space-inset-sm);
+  color: var(--color-text-primary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+  font-variant-numeric: tabular-nums;
+}
+
+.cv-stale-shade--disconnected .cv-stale-shade__text {
+  font: var(--type-ui-body-strong-font-weight) var(--type-ui-body-strong-font-size) /
+    var(--type-ui-body-strong-line-height) var(--type-ui-body-strong-font-family);
+}
+
+/* Escalated: the header strip, `status.warning.subtle` with a `border.thick` warning edge (E17-D02 §7). */
+.cv-stale-shade__strip {
+  margin: 0;
+  padding: var(--space-inset-xs) var(--space-inset-sm);
+  border-inline-start: calc(var(--border-thick) * 1px) solid var(--color-status-warning-strong);
+  background: var(--color-status-warning-subtle);
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-strong-font-weight) var(--type-ui-body-strong-font-size) /
+    var(--type-ui-body-strong-line-height) var(--type-ui-body-strong-font-family);
+}
+
+.cv-stale-shade__strip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-inset-xs);
+}
+
+.cv-stale-shade__glyph {
+  display: inline-flex;
+  color: var(--color-status-warning-strong);
+}
+
+/* The grid-row variant: de-emphasised in place (the stale tint and text), never re-sorted. */
+.cv-stale-row.cv-stale-row--stale,
+.cv-stale-row.cv-stale-row--escalated,
+.cv-stale-row.cv-stale-row--stale-server,
+.cv-stale-row.cv-stale-row--disconnected {
+  background: var(--color-data-confidence-stale-surface);
+  color: var(--color-data-confidence-stale-text);
+}
+
+/*
+ * In a CMP-049 table the row and its cells carry their own colours (zebra, hover, `text.primary`) and table.css
+ * sorts after this file in the shipped bundle, so the variant raises its specificity on the table's own classes.
+ */
+.cv-table__row.cv-stale-row.cv-stale-row--stale,
+.cv-table__row.cv-stale-row.cv-stale-row--escalated,
+.cv-table__row.cv-stale-row.cv-stale-row--stale-server,
+.cv-table__row.cv-stale-row.cv-stale-row--disconnected {
+  background: var(--color-data-confidence-stale-surface);
+}
+
+.cv-table__row.cv-stale-row.cv-stale-row--stale > .cv-table__cell,
+.cv-table__row.cv-stale-row.cv-stale-row--escalated > .cv-table__cell,
+.cv-table__row.cv-stale-row.cv-stale-row--stale-server > .cv-table__cell,
+.cv-table__row.cv-stale-row.cv-stale-row--disconnected > .cv-table__cell {
+  color: var(--color-data-confidence-stale-text);
+}
+
+@media (forced-colors: active) {
+  /* The dim cannot be seen in forced colours: the words carry the state, and the text gets a CanvasText edge. */
+  .cv-stale-shade__dim {
+    background: transparent;
+  }
+
+  .cv-stale-shade__text,
+  .cv-stale-shade__strip {
+    border: 1px solid CanvasText;
+  }
+
+  .cv-stale-row.cv-stale-row--stale,
+  .cv-stale-row.cv-stale-row--escalated,
+  .cv-stale-row.cv-stale-row--stale-server,
+  .cv-stale-row.cv-stale-row--disconnected {
+    border-inline-start: 2px solid CanvasText;
+  }
+}
