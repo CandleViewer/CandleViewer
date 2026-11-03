@@ -104,8 +104,20 @@ describe("the client's sub frame validates (23 §13.5)", () => {
     const accounts = golden<{ items: Schemas["ExchangeAccount"][] }>(
       "rest_list_exchange_accounts.json",
     ).items;
+    // an event waiter, not a count of turns: it resolves when the feed subscribes
+    let subscribed: () => void = () => undefined;
+    const consumed = new Promise<void>((resolve) => {
+      subscribed = resolve;
+    });
     const feed = startFillsFeed({
-      client: ws.client,
+      client: {
+        ...ws.client,
+        consume: (spec, rs) => {
+          const handle = ws.client.consume(spec, rs);
+          subscribed();
+          return handle;
+        },
+      },
       store: createFillsStore(),
       api: {
         listExecutions: async () => ({
@@ -121,8 +133,7 @@ describe("the client's sub frame validates (23 §13.5)", () => {
       raf: () => 0,
       caf: () => undefined,
     });
-    await Promise.resolve();
-    await Promise.resolve();
+    await consumed;
     feed.stop();
     const [handle] = ws.handles;
     expect(handle?.ch).toBe("executions");

@@ -113,10 +113,13 @@ describe("the watermark, line 1 (SR-098, BQ-4)", () => {
     ).toBe(true);
   });
 
-  it("while viewing as someone it says so; a Viewer's role is PROPOSED", () => {
+  it("while viewing as someone it says so", () => {
     expect(watermark({ ...OWNER, viewingAs: "alex" })).toContain(
       "exported by sam (Owner), viewing as alex ·",
     );
+  });
+
+  it("a Viewer's role is PROPOSED; the Owner's is the deck's", () => {
     expect(watermark({ ...OWNER, displayName: "alex", role: "viewer" })).toContain(
       PROPOSED_TEXT.exportedByViewer.string,
     );

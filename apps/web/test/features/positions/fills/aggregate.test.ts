@@ -98,16 +98,38 @@ describe("slippage's other forms (D-7; D03 §3.4 board 05)", () => {
   it("a triggered limit order's intent is its limit; a trigger only without one (BQ-8)", () => {
     const both: OrderTerms = { order_type: "limit", price: "63420.0", trigger_price: "63500.0" };
     expect(toPlain(intentOf(both)?.price ?? dec("0"))).toBe("63420.0");
+  });
+
+  it("a market order's price is no intent: the venue may carry a protection price there", () => {
     expect(intentOf({ order_type: "market", price: "94942.5" })).toBeNull();
   });
 
-  it("no tick (getInstrument failed) or no trade reads none", () => {
-    expect(
-      slippageOf(sumFills(orderRows("limit")), "buy", intentOf(order("limit")), null),
-    ).toBeNull();
+  it("no tick (getInstrument failed) reads none", () => {
+    const sums = sumFills(orderRows("limit"));
+    expect(slippageOf(sums, "buy", intentOf(order("limit")), null)).toBeNull();
+  });
+
+  it("no trade reads none", () => {
     expect(slippageOf(NO_FILLS, "buy", intentOf(order("limit")), TICK)).toBeNull();
-    expect(pricePlaces("0.10")).toBe(2);
-    expect(pricePlaces("0")).toBeNull();
+  });
+
+  it("a price shows one decimal more than its tick; a zero tick is none", () => {
+    expect([pricePlaces("0.10"), pricePlaces("0")]).toEqual([2, null]);
+  });
+});
+
+describe("slippage's cash is from the raw sums, never the rounded price (D03:153)", () => {
+  const [first] = orderRows("limit");
+  if (first === undefined) throw new Error("golden");
+  const rows = [
+    { ...first, price: "99.9", qty: "3", key: "a" },
+    { ...first, price: "99.8", qty: "4", key: "b" },
+  ];
+  const limit: OrderTerms = { order_type: "limit", price: "100.0" };
+
+  it("3 @ 99.9 and 4 @ 99.8 against a 100.0 limit: −0.16 (1.6 ticks), 1.10 USDT better", () => {
+    // the rounded price × qty would read 1.12 (0.16 × 7); the raw Σ (p − limit) · q is 1.10
+    expect(slip(sumFills(rows), "buy", limit)).toBe(`${MINUS}0.16 1.6 1.10 better`);
   });
 });
 
@@ -144,18 +166,26 @@ describe("fees and the split never guess (D-9)", () => {
   const [first] = orderRows("limit");
   if (first === undefined) throw new Error("golden");
 
-  it("a fee received reads received; a pending fee or coin adds nothing and is counted", () => {
+  it("a fee received reads received", () => {
     const rebate = { ...first, fee: "-0.84", feeCash: "0.84" };
     expect(fees(addFill(NO_FILLS, rebate))).toEqual(["+0.84 USDT received"]);
-    const pending = addFill(addFill(NO_FILLS, { ...first, fee: null }), {
-      ...first,
-      feeCoin: null,
-    });
-    expect([pending.feesPending, feesOf(pending)]).toEqual([2, []]);
   });
 
-  it("a trade with no liquidity flag makes the split unknown; funding is no trade", () => {
+  it("a fee not reported adds nothing and is counted pending", () => {
+    const pending = addFill(NO_FILLS, { ...first, fee: null });
+    expect([pending.feesPending, feesOf(pending)]).toEqual([1, []]);
+  });
+
+  it("a fee of no coin adds nothing and is counted pending: no coin is assumed", () => {
+    const pending = addFill(NO_FILLS, { ...first, feeCoin: null });
+    expect([pending.feesPending, feesOf(pending)]).toEqual([1, []]);
+  });
+
+  it("a trade with no liquidity flag makes the split unknown", () => {
     expect(splitOf(addFill(NO_FILLS, { ...first, maker: null }))).toBeNull();
+  });
+
+  it("funding is no trade: counted a fill, with no split and no average", () => {
     const funding: FillRowModel = { ...first, type: { kind: "funding" } };
     const sums = addFill(NO_FILLS, funding);
     expect([sums.trades, sums.fills, splitOf(sums), averageOf(sums, 2)]).toEqual([

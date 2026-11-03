@@ -45,19 +45,32 @@ describe("the deck, verbatim and whole", () => {
 });
 
 describe("strings the deck does not key, each at its cited line", () => {
-  const cited: [string, CitedText][] = [
-    ...Object.entries(D03_TEXT),
-    ...Object.entries(D02_TEXT),
-    ...Object.entries(STATE_WORDS),
-  ];
-
-  it.each(cited)("%s is at its line", (_, { string, source }) => {
+  const lifted: [string, CitedText][] = [...Object.entries(D03_TEXT), ...Object.entries(D02_TEXT)];
+  const lineOf = (source: string): string => {
     const [doc = "", line = "0"] = source.split(":");
-    expect(docs[doc]?.[Number.parseInt(line, 10) - 1]).toContain(string);
+    return docs[doc]?.[Number.parseInt(line, 10) - 1] ?? "";
+  };
+
+  /** A single word (no space) must stand quoted, `"Side"` or in backticks, not inside another word. */
+  const held = (text: string): RegExp => {
+    const escaped = text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(/\s/.test(text) ? escaped : `["\`]${escaped}["\`]`);
+  };
+
+  it.each(lifted)("%s is at its line, a single word quoted there", (_, text) => {
+    expect(lineOf(text.source)).toMatch(held(text.string));
+  });
+
+  it.each(Object.entries(STATE_WORDS))("%s's word is its row of D01 D2", (state, text) => {
+    const [, key, word = ""] = lineOf(text.source)
+      .split("|")
+      .map((cell) => cell.trim());
+    expect(key).toBe(state);
+    expect(word === text.string || word.startsWith(`${text.string} `)).toBe(true);
   });
 
   it("a lifted string's bound spans are in it", () => {
-    for (const [, text] of cited)
+    for (const [, text] of lifted)
       for (const span of Object.keys(text.params ?? {})) expect(text.string).toContain(span);
   });
 
