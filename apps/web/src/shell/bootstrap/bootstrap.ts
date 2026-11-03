@@ -1,6 +1,7 @@
 /**
  * `apps/web/src/shell/bootstrap.ts` (ticket scope path): the single parallel
- * fetch of `GET /me`, `GET /me/preferences`, `GET /me/keymap` on app start.
+ * fetch of `GET /me`, `GET /me/preferences`, `GET /me/keymap` and (E42-S03)
+ * `GET /auth/session/view-as` on app start.
  * Route guards (E10-T01) and chrome (E10-S01) read the resulting cache
  * synchronously via `useShellState()` / `getShellState()` — nothing else
  * fetches these endpoints.
@@ -11,6 +12,12 @@
  * explicit" — a `/me` failure sets `bootstrap.kind = "failed"`, never a
  * silently empty shell; preferences/keymap failures are non-fatal (a broken
  * keymap must not block login).
+ *
+ * The view-as read (`22` `getViewAs`: a window reads it "before it mounts any control") is the
+ * shell's read-only state, so it is never optional: a read that fails fails the boot as `/me`'s
+ * does (fail closed), and the shell never mounts writable as if no context were held. A context
+ * the server ended refuses `/me` itself (`view_as_expired`, reads included): that boot is `held`,
+ * whose page is SCR-124's banner with Exit (`main.tsx`), never /login.
  */
 import {
   MeSignedOutError,
@@ -19,6 +26,7 @@ import {
   type MeClaimsReader,
 } from "../../lib/auth/meCache.js";
 import { accessToken } from "../../lib/auth/accessToken.js";
+import { bootViewAs } from "../../lib/auth/viewAsContext.js";
 import type { MeClaims, Role } from "../../routes/rbac.js";
 import { HttpError, HttpTimeoutError, fetchJson } from "./httpClient.js";
 import {
@@ -54,7 +62,7 @@ function meToClaims(me: Me): MeClaims {
   };
 }
 
-/** Runs the three-call parallel bootstrap. Never throws — failures are
+/** Runs the four-call parallel bootstrap. Never throws — failures are
  * recorded on the shell store, matching the ticket's "explicit failure"
  * and "non-fatal preference/keymap failure" requirements. */
 export async function runBootstrap(deps: BootstrapDeps = {}): Promise<void> {
@@ -76,17 +84,30 @@ export async function runBootstrap(deps: BootstrapDeps = {}): Promise<void> {
     timeoutMs: BOOTSTRAP_TIMEOUT_MS,
     fetchImpl,
   });
+  // E42-S03: never rejects; its answer is in the store before `/me`'s is (the keymap keys on both)
+  const viewAsPromise = bootViewAs({ fetchImpl });
 
-  const [meResult, preferencesResult, keymapResult] = await Promise.allSettled([
-    mePromise,
-    preferencesPromise,
-    keymapPromise,
+  const [[meResult, preferencesResult, keymapResult], viewAs] = await Promise.all([
+    Promise.allSettled([mePromise, preferencesPromise, keymapPromise]),
+    viewAsPromise,
   ]);
 
   clearTimeoutImpl(slowTimer);
 
+  // The server ended the context and holds it: `/me` is refused, and only Exit leads on (V-8).
+  if (viewAs.ok && viewAs.state.kind === "held" && viewAs.state.state === "expired") {
+    setShellState({ bootstrap: { kind: "held" } });
+    return;
+  }
+
   if (meResult.status === "rejected") {
-    setShellState({ bootstrap: classifyMeFailure(meResult.reason) });
+    setShellState({ bootstrap: classifyFailure(meResult.reason) });
+    return;
+  }
+
+  // Fail closed: no `204` and no context read is never "no context".
+  if (!viewAs.ok) {
+    setShellState({ bootstrap: classifyFailure(viewAs.error) });
     return;
   }
 
@@ -158,7 +179,8 @@ export function createMeClaimsReader(fetchImpl?: typeof fetch): MeClaimsReader {
   };
 }
 
-function classifyMeFailure(reason: unknown): BootstrapPhase {
+/** A `/me` or view-as read failure as the boot's phase: SCR-005, R-902 (unreached), the guards. */
+function classifyFailure(reason: unknown): BootstrapPhase {
   if (reason instanceof HttpError && reason.code === "session_idle_locked") {
     return { kind: "locked" };
   }

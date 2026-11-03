@@ -31,7 +31,7 @@ never bundled into an app; stubs only, no secret, no live backend, no exchange (
 
 | Module    | What it gives                                                                                                  |
 | --------- | -------------------------------------------------------------------------------------------------------------- |
-| `stubs`   | Network-layer API stubs (`stubSession`, `json`, the leak guard); `apps/web/e2e/support/api.ts` re-exports them |
+| `stubs`   | API stubs (`stubSession`, `stubNoViewAs`, `json`, a leak guard); `apps/web/e2e/support/api.ts` re-exports them |
 | `routes`  | `ROUTE_EXPECTATIONS`: the declared outcome of every route id × role, and the landing classifier                |
 | `outcome` | `expectSettledOutcome`: a landing classified the same three reads in a row, no fixed sleep                     |
 | `csp`     | `sr112Findings`: a policy compared with SR-112 directive by directive, plus SR-119's exchange-host ban         |

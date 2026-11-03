@@ -101,6 +101,22 @@ async function stubGet(page: Page, path: string, body: () => unknown): Promise<v
   );
 }
 
+/** `22` `getViewAs`: the shell's fourth boot read (E42-S03), read beside `/me`. */
+export const VIEW_AS_PATH = "/api/v1/auth/session/view-as";
+
+/**
+ * Answers `GET /auth/session/view-as` with `204`: the session views as no one. The shell fails its
+ * boot closed on a read it cannot take as "none" (an unstubbed one gets `vite preview`'s `404`), so
+ * a spec that boots the shell without `stubSession` calls this. A spec that needs a context
+ * registers its own answer after it, which Playwright runs first.
+ */
+export async function stubNoViewAs(page: Page): Promise<void> {
+  await page.route(
+    (url) => url.pathname === VIEW_AS_PATH,
+    (r) => (r.request().method() === "GET" ? r.fulfill({ status: 204 }) : r.fallback()),
+  );
+}
+
 /** Stub the session bootstrap calls the shell makes for an authenticated user. */
 export async function stubSession(page: Page, opts: MeOptions): Promise<void> {
   // #2712: a page load re-derives the in-memory access token from `cv_refresh` before the shell's
@@ -130,6 +146,7 @@ export async function stubSession(page: Page, opts: MeOptions): Promise<void> {
   );
   await page.route("**/api/v1/me/preferences", (r) => r.fulfill(json({})));
   await page.route("**/api/v1/me/keymap", (r) => r.fulfill(json({ bindings: [] })));
+  await stubNoViewAs(page);
   // The shell's own calls after its first paint: the settings (`PreferencesProvider`), the session
   // (`SessionLockHost`) and, every 2 s, the liveness probe (`liveness.ts`). Unstubbed, `vite preview`
   // answers each with the SPA's index.html.
@@ -191,9 +208,9 @@ const apiCall = (request: Request): string =>
  *   is not checked;
  * - a request still unsettled at the bound fails the flush, which names it;
  * - a finished request whose body cannot be read fails the flush, so "read nothing" never passes as "found
- *   nothing" (fail closed). Of the finished ones, only a redirect, which has no body, is passed over. A `304`
- *   hands the page its cached copy, which Playwright cannot read: from the API it fails the flush, and from a
- *   static file (the SPA's own build, revalidated on the next page load) it is passed over.
+ *   nothing" (fail closed). Of the finished ones, only a redirect or a `204`, neither of which has a body, is
+ *   passed over. A `304` hands the page its cached copy, which Playwright cannot read: from the API it fails the
+ *   flush, and from a static file (the SPA's own build, revalidated on the next page load) it is passed over.
  *
  * Other requests (scripts, styles) are checked once finished but not waited for: a shared worker's script never
  * finishes for the page. A flush sees only the requests started before its wait ends. Playwright reads a body
@@ -231,6 +248,7 @@ export function watchForLeaks(
         status = res?.status() ?? 0;
         const cached = status === 304 && new URL(request.url()).pathname.startsWith("/api/v1/");
         if (status >= 300 && status <= 399 && !cached) return; // a redirect, or the SPA's own file
+        if (status === 204) return; // No Content: there is no body, so nothing can leak
         if (res === null) throw new Error("no response");
         text = await res.text();
       } catch {

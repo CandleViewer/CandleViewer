@@ -1,4 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
+import { stubNoViewAs } from "./support/api";
 
 // E47-S04 AC1 e2e (#1318): "Reduced motion is honoured everywhere". With the OS asking for reduced
 // motion and no saved preference, the real shell resolves `data-motion="reduce"` and the animated
@@ -24,6 +25,7 @@ test.beforeEach(async ({ page }) => {
   );
   await page.route("**/api/v1/me/preferences", (r) => r.fulfill(json({})));
   await page.route("**/api/v1/me/keymap", (r) => r.fulfill(json({ bindings: [] })));
+  await stubNoViewAs(page); // E42-S03: the fourth boot read
 });
 
 async function openTerminal(page: Page): Promise<void> {
