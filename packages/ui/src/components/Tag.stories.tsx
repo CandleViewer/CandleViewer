@@ -28,7 +28,7 @@ export const Default: Story = {};
 
 export const WithIcon: Story = { args: { icon: "lock" } };
 
-/** Every built variant: neutral (plain, icon, removable) and the three status tones, glyph plus word. */
+/** Every built variant: neutral (plain, icon, removable), the three status tones (glyph plus word) and the toggle. */
 export const AllVariants: Story = {
   render: () => (
     <div style={col}>
@@ -41,6 +41,10 @@ export const AllVariants: Story = {
         {STATUS.map((s) => (
           <Tag key={s.variant} variant={s.variant} label={s.label} />
         ))}
+      </div>
+      <div style={row}>
+        <Tag variant="toggle" label="Trade" pressed onPressedChange={fn()} />
+        <Tag variant="toggle" label="Funding" pressed={false} onPressedChange={fn()} />
       </div>
     </div>
   ),
@@ -150,6 +154,109 @@ export const KeyboardRemove: Story = {
   },
 };
 
+/** The Fills tab's Type chips (E29-D02:299), all on by default; the host holds their state. */
+const TYPES = ["Trade", "ADL", "Liquidation", "Funding", "Settlement"];
+
+function TypeChipSet({ words = TYPES }: { words?: readonly string[] }): JSX.Element {
+  const [off, setOff] = useState<ReadonlySet<string>>(new Set());
+  const flip = (word: string, pressed: boolean): void =>
+    setOff((now) => {
+      const next = new Set(now);
+      if (pressed) next.delete(word);
+      else next.add(word);
+      return next;
+    });
+  return (
+    <div style={{ ...row, flexWrap: "wrap" }}>
+      {words.map((word) => (
+        <Tag
+          key={word}
+          variant="toggle"
+          label={word}
+          pressed={!off.has(word)}
+          onPressedChange={(pressed) => flip(word, pressed)}
+        />
+      ))}
+    </div>
+  );
+}
+
+const toggleOf = (canvas: HTMLElement, word: string): HTMLElement =>
+  within(canvas).getByRole("button", { name: word });
+
+/** The pressed ring as the browser paints it: `border.thick` of color.border.selected, or transparent at rest. */
+const ringOf = (chip: HTMLElement): { thick: boolean; transparent: boolean } => {
+  const after = getComputedStyle(chip, "::after");
+  const thick = getComputedStyle(chip).getPropertyValue("--border-thick").trim();
+  return {
+    thick: after.borderTopWidth === `${thick}px`,
+    transparent: after.borderTopColor === "rgba(0, 0, 0, 0)",
+  };
+};
+
+/** A pressed toggle chip: `aria-pressed="true"`, the action.selected fill and the 2px ring that marks it. */
+export const Toggle: Story = {
+  render: () => <Tag variant="toggle" label="Trade" pressed onPressedChange={fn()} />,
+  play: async ({ canvasElement }) => {
+    const chip = toggleOf(canvasElement, "Trade");
+    await expect(chip).toHaveAttribute("aria-pressed", "true");
+    await expect(ringOf(chip)).toEqual({ thick: true, transparent: false });
+  },
+};
+
+/** A toggle chip at rest: the neutral chip's look, `aria-pressed="false"`, no ring. */
+export const ToggleOff: Story = {
+  render: () => <Tag variant="toggle" label="Funding" pressed={false} onPressedChange={fn()} />,
+  play: async ({ canvasElement }) => {
+    const chip = toggleOf(canvasElement, "Funding");
+    await expect(chip).toHaveAttribute("aria-pressed", "false");
+    await expect(ringOf(chip).transparent).toBe(true);
+  },
+};
+
+export const ToggleHover: Story = {
+  ...ToggleOff,
+  play: async ({ canvasElement }) => userEvent.hover(toggleOf(canvasElement, "Funding")),
+};
+
+/** CMP-039's ring outside the chip, clear of the pressed ring inside it. */
+export const ToggleFocusVisible: Story = {
+  ...Toggle,
+  play: async ({ canvasElement }) => {
+    await userEvent.tab();
+    await expect(toggleOf(canvasElement, "Trade")).toHaveFocus();
+  },
+};
+
+/** The five Type chips: Space and Enter flip one, its name unchanged; each chip is its own Tab stop. */
+export const TypeChips: Story = {
+  render: () => <TypeChipSet />,
+  play: async ({ canvasElement }) => {
+    await userEvent.tab();
+    await userEvent.tab();
+    const adl = toggleOf(canvasElement, "ADL");
+    await expect(adl).toHaveFocus();
+    await userEvent.keyboard(" ");
+    await waitFor(() => expect(adl).toHaveAttribute("aria-pressed", "false"));
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(adl).toHaveAttribute("aria-pressed", "true"));
+  },
+};
+
+/** A narrow toolbar: the chips wrap to a second row and no word is ever cut. */
+export const ToggleLongText: Story = {
+  render: () => (
+    <div style={{ width: "10rem" }}>
+      <TypeChipSet />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const liquidation = toggleOf(canvasElement, "Liquidation");
+    const label = liquidation.querySelector(".cv-tag__label");
+    await expect(label?.scrollWidth).toBe(label?.clientWidth);
+  },
+};
+
 /** Every variant and state under the light and high-contrast themes; axe checks each theme. */
 const themeMatrix = (theme: string): Story => ({
   globals: { theme },
@@ -165,6 +272,8 @@ const themeMatrix = (theme: string): Story => ({
       {STATUS.map((s) => (
         <Tag key={s.variant} variant={s.variant} label={s.label} />
       ))}
+      <Tag variant="toggle" label="Trade" pressed onPressedChange={fn()} />
+      <Tag variant="toggle" label="Funding" pressed={false} onPressedChange={fn()} />
     </div>
   ),
 });

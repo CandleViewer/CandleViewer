@@ -75,6 +75,40 @@
   margin-block: -1px;
 }
 
+/* Toggle (E29-D04 §2.9, E29-D02:299, :495): a button at the control height that reads as a neutral chip at rest.
+   Pressed takes the design system's pressed role (16:59; label-on-fill.json `selected`, as CMP-002 and CMP-003 draw
+   it): color.action.selected under color.text.primary, and a 2px color.border.selected ring that carries the state,
+   because either selected fill sits within 1.2:1 of the rest fill. The ring is drawn on ::after, as CMP-003's is, so
+   CMP-039's ring (focusring.css) never fights it. Hover, press and release swap at frame 0 (E29-D04 Mo-8). */
+.cv-tag[data-variant="toggle"] {
+  position: relative;
+  border-color: var(--color-border-default);
+  cursor: pointer;
+}
+
+.cv-tag[data-variant="toggle"]::after {
+  content: "";
+  position: absolute;
+  inset: calc(var(--border-hairline) * -1px);
+  border: calc(var(--border-thick) * 1px) solid transparent;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.cv-tag[data-variant="toggle"]:hover:not([aria-pressed="true"]) {
+  background: var(--color-surface-hover);
+  color: var(--color-text-primary);
+}
+
+.cv-tag[data-variant="toggle"][aria-pressed="true"] {
+  background: var(--color-action-selected);
+  color: var(--color-text-primary);
+}
+
+.cv-tag[data-variant="toggle"][aria-pressed="true"]::after {
+  border-color: var(--color-border-selected);
+}
+
 @media (forced-colors: active) {
   /* Fills are repainted as Canvas, so every chip keeps its shape with a CanvasText border. */
   .cv-tag,
@@ -87,5 +121,20 @@
   /* The glyph shape and the word carry the tone. */
   .cv-tag__glyph {
     color: currentcolor;
+  }
+
+  /* A pressed toggle: Highlight and HighlightText, set explicitly as CMP-002 and CMP-003 set them, and the ring as a
+     CanvasText band, so pressed still differs by shape. Hover at rest gains a Highlight border. */
+  .cv-tag[data-variant="toggle"][aria-pressed="true"] {
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .cv-tag[data-variant="toggle"][aria-pressed="true"]::after {
+    border-color: CanvasText;
+  }
+
+  .cv-tag[data-variant="toggle"]:hover:not([aria-pressed="true"]) {
+    border-color: Highlight;
   }
 }
