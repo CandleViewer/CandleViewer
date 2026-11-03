@@ -475,25 +475,24 @@ def g_t2(t: Texts) -> list[str]:
 
 def g_motion(t: Texts) -> list[str]:
     bad = []
-    six = section(t.spec, "## 6.")
-    rows = table_rows(six, "MO-")
+    rows = table_rows(six := section(t.spec, "## 6."), "MO-")
     if not rows:
         return ["§6 has no motion rows"]
     for r in rows:
         if len(r) != 4 or not r[3] or r[3] in ("—", "-", "none"):
             bad.append(f"{r[0]}: no reduced-motion equivalent")
     by = {r[0]: r for r in rows}
-    for lead, what in (("MO-2", "the terminal leg change"), ("MO-3", "the summary's entrance")):
-        cut = by.get(lead)
-        if not cut or not cut[2].startswith("a cut"):
-            bad.append(f"{lead}: {what} is not a cut")
-    if "summary" not in " ".join(by.get("MO-2", [])):
-        bad.append("MO-2: the row does not say the summary keeps the eye")
-    r5 = by.get("MO-5")
-    if not r5 or "text swap" not in r5[2]:
-        bad.append("MO-5: the countdown is not a text swap")
-    if "**Never animates:**" not in six:
-        bad.append("§6 has no Never animates list")
+    for lead in ("MO-1", "MO-2", "MO-3"):
+        if not by.get(lead, [""] * 3)[2].startswith("a cut"):
+            bad.append(f"{lead}: not a cut (`16`:259: a status change never animates)")
+    pat = r"queued → sent[^\n]*(overlay|opacity|motion\.)"
+    for ok, msg in (
+        ("summary" in " ".join(by.get("MO-2", [])), "MO-2: no summary keeps the eye"),
+        (not re.search(pat, t.spec), "queued → sent animates"),
+        ("text swap" in " ".join(by.get("MO-5", [])), "MO-5: the countdown is not a text swap"),
+        ("**Never animates:**" in six, "§6 has no Never animates list"),
+    ):
+        bad += [] if ok else [msg]
     return bad
 
 
@@ -787,6 +786,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-T2", "let a T2 control leave the Tab order (G-T2.1b)", sub("never the `disabled` attribute — it stays in the Tab order", "or the `disabled` attribute")),
     ("G-T2", "drop the tertiary label pair (G-T2.2)", drop_row("| P-04 ")),
     ("G-MOTION", "drop a reduced-motion twin", set_cell("MO-1", 3, "—")),
+    ("G-MOTION", "animate queued → sent", set_cell("MO-1", 2, "an opacity overlay over `motion.duration.fast`")),
     ("G-MOTION", "animate the summary's entrance", set_cell("MO-3", 2, "a slide down over `motion.duration.normal`")),
     ("G-MOTION", "pulse the countdown", set_cell("MO-5", 2, "a pulse each second")),
     ("G-COPY", "drop a PROPOSED string's owner", set_cell("`list.empty`", 2, "PROPOSED")),
