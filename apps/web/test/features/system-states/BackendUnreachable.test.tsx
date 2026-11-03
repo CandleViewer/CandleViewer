@@ -74,8 +74,11 @@ function throwOnce(): () => void {
   });
 }
 const ME = { role: "owner", permissions: [], session: { environment: "demo" } };
+/** The server back: `/me` signed in, the view-as read `204` (E42-S03), the rest empty bodies. */
 const answering = async (url: RequestInfo | URL): Promise<Response> =>
-  new Response(JSON.stringify(String(url).endsWith("/me") ? ME : {}), { status: 200 });
+  String(url).endsWith("/auth/session/view-as")
+    ? new Response(null, { status: 204 })
+    : new Response(JSON.stringify(String(url).endsWith("/me") ? ME : {}), { status: 200 });
 const failed = (reason: "timeout" | "http_error" | "unknown", status?: number): BootstrapPhase =>
   status === undefined ? { kind: "failed", reason } : { kind: "failed", reason, status };
 
@@ -273,7 +276,7 @@ describe("R-902 /offline: the full-screen takeover", () => {
     expect(fetches()).toBe(0); // the first automatic try waits 500 ms
     await act(async () => await vi.advanceTimersByTimeAsync(500));
     await vi.waitFor(() => expect(screen.getByText(SCR159_COPY.retryIn(1))).toBeInTheDocument());
-    expect(fetches()).toBe(3); // it ran (the three bootstrap calls) and failed; the next waits 1 s
+    expect(fetches()).toBe(4); // it ran (the four bootstrap calls) and failed; the next waits 1 s
     vi.useRealTimers(); // the router commits the navigation in a scheduler task
     vi.mocked(fetch).mockImplementation(answering);
     fireEvent.click(screen.getByRole("button", { name: SCR159_COPY.retryNow }));
@@ -303,7 +306,7 @@ describe("R-902 /offline: the full-screen takeover", () => {
     fireEvent.click(screen.getByRole("button", { name: SCR159_COPY.retryNow }));
     fireEvent.click(screen.getByRole("button", { name: SCR159_COPY.retryNow })); // re-entry
     await settle();
-    expect(fetches()).toBe(3); // one bootstrap, not two
+    expect(fetches()).toBe(4); // one bootstrap, not two
     expect(page()).toHaveAttribute("aria-busy", "true");
     expect(screen.queryByText(/^Retrying in/)).toBeNull();
   });
@@ -347,11 +350,11 @@ describe("R-902 /offline: the full-screen takeover", () => {
     held.open(false);
     await settle();
     unsubscribe();
-    expect(fetches()).toBe(3);
+    expect(fetches()).toBe(4);
     expect(page()).not.toHaveAttribute("aria-busy");
     fireEvent.click(retry);
     await settle();
-    expect(fetches()).toBe(6);
+    expect(fetches()).toBe(8);
   });
 
   it("goes on retrying by itself after a try throws", async () => {
@@ -362,7 +365,7 @@ describe("R-902 /offline: the full-screen takeover", () => {
     unsubscribe();
     expect(screen.getByText(SCR159_COPY.retryIn(1))).toBeInTheDocument(); // row 2, rescheduled
     await advance(1_000);
-    expect(fetches()).toBe(6);
+    expect(fetches()).toBe(8);
   });
 
   it("records a try that throws in the crash log, by the error's class and never its message", async () => {
@@ -407,7 +410,7 @@ describe("R-902 /offline: the full-screen takeover", () => {
     divertFromPositions();
     openOffline(true);
     await act(async () => await vi.advanceTimersByTimeAsync(500));
-    expect(fetches()).toBe(3);
+    expect(fetches()).toBe(4);
   });
 
   it("opened as is: no countdown and no clock; a failed Retry now stays, a success goes to /", async () => {
@@ -416,7 +419,7 @@ describe("R-902 /offline: the full-screen takeover", () => {
     expect(vi.getTimerCount()).toBe(0);
     fireEvent.click(screen.getByRole("button", { name: SCR159_COPY.retryNow }));
     await act(async () => await vi.advanceTimersByTimeAsync(0));
-    expect(fetches()).toBe(3);
+    expect(fetches()).toBe(4);
     expect(screen.getByRole("heading", { level: 1, name: copy.heading })).toBeVisible();
     expect(screen.queryByText(/^Retrying in/)).toBeNull();
     vi.useRealTimers();

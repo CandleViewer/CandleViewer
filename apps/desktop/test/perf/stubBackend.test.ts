@@ -109,7 +109,7 @@ describe("startStubBackend", () => {
     writeFileSync(path.join(root, "index.html"), "<p>shell</p>");
     stub = await startStubBackend({
       webRoot: root,
-      rest: { "/api/v1/me": { role: "owner" } },
+      rest: { "/api/v1/me": { role: "owner" }, "/api/v1/auth/session/view-as": null },
       version: "1.2.3",
       now,
     });
@@ -130,6 +130,13 @@ describe("startStubBackend", () => {
     expect((await fetch(`${stub.origin}/assets/missing.js`)).status).toBe(404);
     expect((await fetch(`${stub.origin}/api/v1/unknown`, { method: "POST" })).status).toBe(404);
     expect(stub.unanswered()).toEqual(["POST /api/v1/unknown"]);
+  });
+
+  // E42-S03: the shell's fourth boot read fails the boot closed on anything but a 204 or a context
+  it("startStubBackend_nullEntry_answers204WithNoBody", async () => {
+    const res = await fetch(`${stub.origin}/api/v1/auth/session/view-as`);
+    expect([res.status, await res.text()]).toEqual([204, ""]);
+    expect(stub.unanswered()).not.toContain("GET /api/v1/auth/session/view-as");
   });
 
   it("startStubBackend_ws_completesTheHandshakeAndWelcomes", async () => {

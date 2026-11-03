@@ -6,10 +6,10 @@ import { watchForLeaks } from "../e2e/support/api";
 /**
  * E09-Q02 (#293), #5061's security look L2: `watchForLeaks` checks response bodies only, and fails
  * closed. A body it cannot read fails the flush (so "read nothing" never passes as "found nothing");
- * a redirect, which has no body, is passed over. Its flush first waits for the page's `/api/v1/`
- * requests to finish or fail, and fails on one still unsettled at its bound. A browser loses a body,
- * or a request, only when a navigation lands at the wrong moment, which a test cannot pick, so this
- * drives the guard with a stand-in page.
+ * a redirect or a 204, neither of which has a body, is passed over. Its flush first waits for the
+ * page's `/api/v1/` requests to finish or fail, and fails on one still unsettled at its bound. A
+ * browser loses a body, or a request, only when a navigation lands at the wrong moment, which a test
+ * cannot pick, so this drives the guard with a stand-in page.
  */
 type Listener = (request: unknown) => void;
 type PageEvent = "request" | "requestfinished" | "requestfailed";
@@ -78,6 +78,13 @@ describe("watchForLeaks", () => {
     await expect(guard.flush()).rejects.toThrow(
       "GET /api/v1/probe (200): its body was not read, so not checked",
     );
+  });
+
+  it("passes over a 204, which has no body, though reading it throws", async () => {
+    const { page, finish } = fakePage();
+    const guard = watchForLeaks(page, ["secret-value"]);
+    finish(204, new Error("No resource with given identifier found"));
+    await expect(guard.flush()).resolves.toBeUndefined();
   });
 
   it("passes over a redirect, which has no body", async () => {

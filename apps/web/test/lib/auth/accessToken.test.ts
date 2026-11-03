@@ -1189,6 +1189,10 @@ describe("the test setup takes BroadcastChannel away for the token holder alone"
       (file) =>
         /\.tsx?$/.test(file) && readFileSync(join(src, file), "utf8").includes("BroadcastChannel"),
     );
-    expect(users.map((file) => file.split(sep).join("/"))).toEqual(["lib/auth/accessToken.ts"]);
+    expect(users.map((file) => file.split(sep).join("/")).sort()).toEqual([
+      "lib/auth/accessToken.ts",
+      // E42-S03: the view-as source's `cv.view-as` channel; its tests pass one through `openChannel`
+      "lib/auth/viewAsContext.ts",
+    ]);
   });
 });
