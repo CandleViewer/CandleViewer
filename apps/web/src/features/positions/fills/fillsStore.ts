@@ -30,8 +30,8 @@
  *   and after `revoked`, a snapshot or not, no read applies until Retry. Any other reset voids the
  *   WS baseline and keeps the fills: they are records, and the next `snap` follows.
  * - **Reads.** `readSignal()` is the signal of the REST reads that feed the store, and the feed
- *   drops the answer of an aborted one. Retry after a revoke starts them afresh: the reads asked
- *   before it are aborted, and the next carry a new signal. Stop aborts them all.
+ *   drops the answer of an aborted one. A revoke lifted, by Retry or by a snapshot, starts them
+ *   afresh: the reads asked before are aborted, and the next carry a new signal. Stop aborts all.
  */
 import { useSyncExternalStore } from "react";
 import type { TopicFrame } from "../../../lib/ws/api";
@@ -96,7 +96,7 @@ export interface FillsStore {
   setReadFailed(failed: boolean): void;
   /** S-02's Retry: clears the failures; after a revoke it also starts the reads afresh. */
   markRetrying(): void;
-  /** What the REST reads carry: a Retry after a revoke, and stop, abort the ones asked before. */
+  /** What the REST reads carry: a revoke lifted, and stop, abort the ones asked before. */
   readSignal(): AbortSignal;
   /** Accounts past the 25 a subscription names (`23` §13.5): never live, so never shown. */
   setOverCap(accountIds: readonly string[]): void;
@@ -173,7 +173,7 @@ export function createFillsStore(): FillsStore {
   let asOfMs: number | null = null;
   let atTop = true;
   let anchor: FillRowModel | null = null;
-  let readAbort = new AbortController(); // the REST reads asked so far, until a Retry after a revoke
+  let readAbort = new AbortController(); // the REST reads asked so far, until a revoke is lifted
 
   const touch = (): void => {
     dirty = true;
@@ -397,6 +397,7 @@ export function createFillsStore(): FillsStore {
           baseline = true;
           everSnapped = true;
           snapshotFailed = false;
+          if (revoked) restartReads(); // a snapshot that lifts a revoke starts the reads afresh
           revoked = false;
           const items = frame.bodies.flatMap(itemsOf);
           // a narrowing's snapshot is built under the new scope: an account it serves stayed, so
