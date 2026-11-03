@@ -296,8 +296,9 @@ export function RecorderGrid({
   /** The rows whose add is in flight: their action is busy (C-5309-13), a second press sends nothing. */
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const stepUp = useStepUpHost(readBack, PAGE_TEXT.grid);
-  // The row detail's own writes (its action and Depth) run on a host of their own, whose SCR-006 is drawn inside the
-  // drawer: the modal drawer makes the page inert, so the grid's gate would be out of reach (A-5347-d01).
+  // The row detail's own writes (its action and Depth) run on a host of their own, rendered from the drawer and
+  // cleared with its openings: its SCR-006 goes over the drawer and its notices stay in it, outside the inert page
+  // (A-5347-d01).
   const detailStepUp = useStepUpHost(readBack, PAGE_TEXT.grid);
 
   // A-5347-03 (FM-02, FM-04, FM-07): where focus lands when a dialog's or the drawer's opener is gone (its row left):
@@ -383,7 +384,7 @@ export function RecorderGrid({
   /**
    * The detail's Depth (D02 §6.7): `updateRecordedSymbol` with `depth` alone, which needs no step-up (`22`). Run
    * through the detail host's `start` all the same, so a renewal after a challenge re-sends this write, never an
-   * earlier action (C-5347-08), and a challenge opens inside the drawer (A-5347-d01).
+   * earlier action (C-5347-08), and a challenge opens over the drawer (A-5347-d01).
    */
   async function changeDepth(row: RecorderRow, next: Depth): Promise<void> {
     if (depthSending.current) return;
