@@ -4,7 +4,7 @@
   (#540 comment 6610606584, BQ-01 to BQ-10). **Binding now:** the server-side clauses, which record what E14-T01
   (#357, closed) shipped: Decisions 1, 2, 3 (the tool list and its rules), 8, the server bullets of Decisions 4 to 7
   and the server values of Decision 9. **Gated:** the clauses marked _client_, taken from PR-A of E14-T02 (#5481,
-  open, head `2f4878894e2efc2f4c134d44d3d6834617ec3bfd`) and re-checked against PR-B; Decision 10, which E14-T03 and
+  open, head `da6ae62e747febe8d78523e5100fdbec526bfd29`) and re-checked against PR-B; Decision 10, which E14-T03 and
   E14-T04 still have to build; and any clause a BQ ruling changes. The Validation gate says how each is settled.
 - Date: 2026-11-03
 - Deciders: Owner (`@basiltt`) and Architect; the Security engineer for the audit-posture clause (Decision 8) and
@@ -166,8 +166,8 @@ Making `If-Match` mandatory on `PUT` is a possible later contract change, not ta
 - Sync is per layout and per symbol and never crosses symbols (US-DRAW-009 NFR, 11:1336). Panes in one client share
   the in-memory store per symbol, and one undo history per symbol (#5481 `history.ts:1-2`).
 - **Across tabs and devices, sync is REST only.** `23-ws-protocol.md` has no drawing topic and gets none. _Client:_
-  the store re-reads a symbol on mount, after any `409`, and on `visibilitychange` when its last read is older than
-  60 s (#400 BQ list; PR-B, not on #5481 yet).
+  the store re-reads a symbol on mount, after any `409`, and, PROPOSED, on `visibilitychange` when its last read is
+  older than 60 s (#400 BQ list; PR-B, not on #5481 yet).
 - RBAC: `workspaces:read` to list, `workspaces:write` to write, scope self; the owner always comes from the session
   (`router:3-6`; TM DR1; C-12.4).
 
