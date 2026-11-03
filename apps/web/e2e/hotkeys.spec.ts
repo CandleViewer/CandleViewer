@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, packTest as test } from "./ga/fixtures";
 
 // E49-S07 e2e. Session stubs are network-layer (same pattern as onboarding.spec.ts); app code is
 // not mocked, so /settings/hotkeys passes the real auth guard and every conflict class runs.
@@ -59,17 +60,21 @@ test.describe("SCR-113 conflict classes", () => {
     await expect(page.getByRole("heading", { name: "Hotkeys" })).toBeVisible();
   });
 
-  test("same-context conflict is refused with the owner named", async ({ page }) => {
+  test("same-context conflict is refused with the owner named @ga-regression @ga-area-shell @story-US-SET-002", async ({
+    page,
+  }) => {
     await bind(page, "Price zoom in", "C");
     await expect(message(page)).toContainText("already bound to");
   });
 
-  test("reserved browser/OS key is refused", async ({ page }) => {
+  test("reserved browser/OS key is refused @ga-regression @ga-area-shell @story-US-SET-002", async ({
+    page,
+  }) => {
     await bind(page, "Price zoom in", "W", ["Ctrl"]);
     await expect(message(page)).toContainText("reserved by");
   });
 
-  test("bare key on a destructive command needs explicit acknowledgement and is audited", async ({
+  test("bare key on a destructive command needs explicit acknowledgement and is audited @ga-regression @ga-area-shell @story-US-SET-002", async ({
     page,
   }) => {
     const audits: unknown[] = [];
@@ -85,7 +90,9 @@ test.describe("SCR-113 conflict classes", () => {
     expect(audits[0]).toMatchObject({ command_id: "dom.cancel_all", after: "Del" });
   });
 
-  test("audit survives a failed POST and is re-sent after reload", async ({ page }) => {
+  test("audit survives a failed POST and is re-sent after reload @ga-regression @ga-area-shell @story-US-SET-002", async ({
+    page,
+  }) => {
     await page.route("**/api/v1/settings/hotkey-audit", (r) => r.fulfill({ status: 503 }));
     await bind(page, "Cancel all working orders for symbol", "Del");
     await page.getByRole("button", { name: "I understand, bind anyway" }).click();
@@ -100,7 +107,9 @@ test.describe("SCR-113 conflict classes", () => {
     await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), OUTBOX)).toBe("[]");
   });
 
-  test("import rejects conflicting and reserved entries in a report", async ({ page }) => {
+  test("import rejects conflicting and reserved entries in a report @ga-regression @ga-area-shell @story-US-SET-002", async ({
+    page,
+  }) => {
     const box = page.getByLabel("Import keymap (JSON)");
     await box.fill(JSON.stringify({ "dom.zoom_in": "C", "dom.zoom_out": "Ctrl+W" }));
     await page.getByRole("button", { name: "Import" }).click(); // #305: applied on Import, never on blur
@@ -109,7 +118,7 @@ test.describe("SCR-113 conflict classes", () => {
     await expect(report).toContainText("dom.zoom_out");
   });
 
-  test("rebind, conflict, one-click swap, and the swap survives a reload (AC3)", async ({
+  test("rebind, conflict, one-click swap, and the swap survives a reload (AC3) @ga-regression @ga-area-shell @story-US-SET-002", async ({
     page,
   }) => {
     await bind(page, "Price zoom in", "-");
@@ -125,7 +134,9 @@ test.describe("SCR-113 conflict classes", () => {
     await expect(keyOf(page, "Price zoom out")).toHaveText("+");
   });
 
-  test("export, reset and import round-trip every binding (AC7)", async ({ page }) => {
+  test("export, reset and import round-trip every binding (AC7) @ga-regression @ga-area-shell @story-US-SET-002", async ({
+    page,
+  }) => {
     await bind(page, "Price zoom in", "J");
     await page.getByRole("button", { name: "Export" }).click();
     const exported = await page.getByLabel("Export keymap (JSON)").inputValue();
@@ -139,7 +150,9 @@ test.describe("SCR-113 conflict classes", () => {
   });
 });
 
-test("Ctrl+/ opens the cheatsheet with a Customise link", async ({ page }) => {
+test("Ctrl+/ opens the cheatsheet with a Customise link @ga-regression @ga-area-shell", async ({
+  page,
+}) => {
   await signIn(page);
   await page.goto("/terminal/last");
   await expect(page.getByRole("main")).toBeVisible();
@@ -151,7 +164,7 @@ test("Ctrl+/ opens the cheatsheet with a Customise link", async ({ page }) => {
   );
 });
 
-test("inert press of an unregistered destructive binding explains once, politely, with context", async ({
+test("inert press of an unregistered destructive binding explains once, politely, with context @ga-regression @ga-area-shell @story-US-SET-002", async ({
   page,
 }) => {
   await signIn(page);
@@ -167,7 +180,7 @@ test("inert press of an unregistered destructive binding explains once, politely
   await expect(host).toContainText("needs working orders exist");
 });
 
-test("inert press of a context-gated command (drawing selected) explains what it needs", async ({
+test("inert press of a context-gated command (drawing selected) explains what it needs @ga-regression @ga-area-shell @story-US-SET-002", async ({
   page,
 }) => {
   await signIn(page);
@@ -183,7 +196,7 @@ test("inert press of a context-gated command (drawing selected) explains what it
   }).toPass({ timeout: 10_000 });
 });
 
-test("the key field keeps its name, 'Key for <command>', once a value is typed", async ({
+test("the key field keeps its name, 'Key for <command>', once a value is typed @ga-regression @ga-area-shell", async ({
   page,
 }) => {
   await signIn(page);
@@ -194,7 +207,9 @@ test("the key field keeps its name, 'Key for <command>', once a value is typed",
   ).toHaveValue("J");
 });
 
-test("a rebind persists across reload", async ({ page }) => {
+test("a rebind persists across reload @ga-regression @ga-area-shell @story-US-SET-002", async ({
+  page,
+}) => {
   await signIn(page);
   await page.goto("/settings/hotkeys");
   await bind(page, "Price zoom in", "J");

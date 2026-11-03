@@ -1,4 +1,5 @@
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { type Locator, type Page } from "@playwright/test";
+import { expect, packTest as test } from "../ga/fixtures";
 import {
   assertNoClientSecrets,
   json,
@@ -24,7 +25,7 @@ import { installWsHarness } from "../support/wsHarness";
 // unlock and its escapes), SCR-112 (rows, revoke, sign out everywhere) and a second context's revocation.
 // The stubbed server is `support/contexts.ts`. @electron tagged tests also run in the Electron lane.
 
-test("E09-TC-C09 unauthenticated deep link redirects to /login preserving next @electron", async ({
+test("E09-TC-C09 unauthenticated deep link redirects to /login preserving next @electron @ga-regression @ga-area-primary @story-US-ONB-004", async ({
   page,
 }) => {
   await page.route("**/api/v1/me", (r) => r.fulfill(json({}, 401)));
@@ -33,7 +34,7 @@ test("E09-TC-C09 unauthenticated deep link redirects to /login preserving next @
   await expect(page.getByRole("heading", { name: "Sign in to CandleViewer" })).toBeVisible();
 });
 
-test("E09-TC-C01 authenticated bootstrap reads /me once and renders the shell @electron", async ({
+test("E09-TC-C01 authenticated bootstrap reads /me once and renders the shell @electron @ga-regression @ga-area-primary @story-US-ONB-004", async ({
   page,
 }) => {
   let meCalls = 0;
@@ -54,7 +55,7 @@ test("E09-TC-C01 authenticated bootstrap reads /me once and renders the shell @e
   expect(meCalls).toBe(1);
 });
 
-test("E09-TC-C01 sign-in leaves no password or challenge in storage, URL or DOM (SR-012)", async ({
+test("E09-TC-C01 sign-in leaves no password or challenge in storage, URL or DOM (SR-012) @ga-regression @ga-area-primary @story-US-ONB-004", async ({
   page,
 }) => {
   const guard = watchForLeaks(page, ["pw-a1"]);
@@ -71,7 +72,7 @@ test("E09-TC-C01 sign-in leaves no password or challenge in storage, URL or DOM 
   await guard.flush();
 });
 
-test("E09-TC-C01 the leak guard fails on a forbidden value in a response body (helper check)", async ({
+test("E09-TC-C01 the leak guard fails on a forbidden value in a response body (helper check) @ga-regression @ga-area-primary @story-US-ONB-004", async ({
   page,
 }) => {
   const guard = watchForLeaks(page, ["leaky-value"]);
@@ -84,7 +85,7 @@ test("E09-TC-C01 the leak guard fails on a forbidden value in a response body (h
   await expect(guard.flush()).rejects.toThrow("probe leaked a 11-char value");
 });
 
-test("E09-TC-C02 a reload into an idle-locked session shows SCR-005, not /login; unlock boots the app", async ({
+test("E09-TC-C02 a reload into an idle-locked session shows SCR-005, not /login; unlock boots the app @ga-regression @ga-area-primary @story-US-ONB-004", async ({
   page,
 }) => {
   const guard = watchForLeaks(page, ["pw-lock-1"]);
@@ -156,7 +157,7 @@ test("E09-TC-C02 a reload into an idle-locked session shows SCR-005, not /login;
 // decision itself, fatal with no refresh first, is pinned in `closePolicy.test.ts`. A revocation from another
 // device (4401 alone, no in-tab logout) does not reach SCR-001 yet; the WS client stops on it as a fatal close
 // (`connectionRegion.ts`, G12), so that is not asserted here.
-test("E09-TC-D03 SCR-112 sign out everywhere: logout all, SCR-001, no second socket on the 4401 close (best-effort)", async ({
+test("E09-TC-D03 SCR-112 sign out everywhere: logout all, SCR-001, no second socket on the 4401 close (best-effort) @ga-regression @ga-area-primary @story-US-ONB-004", async ({
   page,
 }) => {
   await stubSession(page, { role: "owner" });
@@ -253,7 +254,7 @@ async function idleToLock(page: Page, store: SessionStore): Promise<Locator> {
   return lock;
 }
 
-test("E09-TC-C02 an idle session warns at 60 s, then locks; unlock returns to the same route with the typed state kept", async ({
+test("E09-TC-C02 an idle session warns at 60 s, then locks; unlock returns to the same route with the typed state kept @ga-regression @ga-area-primary @story-US-ONB-004", async ({
   page,
 }) => {
   const store = await openIdleSession(page);
@@ -280,7 +281,7 @@ test("E09-TC-C02 an idle session warns at 60 s, then locks; unlock returns to th
   expect(unlocks(store)).toEqual([{ password: UNLOCK_PASSWORD }]); // the password only, once
 });
 
-test("E09-TC-C02 Stay signed in extends the session: it does not lock at the old deadline, and warns again 14 min on", async ({
+test("E09-TC-C02 Stay signed in extends the session: it does not lock at the old deadline, and warns again 14 min on @ga-regression @ga-area-primary @story-US-ONB-004", async ({
   page,
 }) => {
   const store = await openIdleSession(page);
@@ -297,7 +298,7 @@ test("E09-TC-C02 Stay signed in extends the session: it does not lock at the old
   expect(store.calls.filter((call) => call.path === "/auth/session/extend")).toHaveLength(1);
 });
 
-test("E09-TC-C02 SCR-005 Sign out instead: Esc goes back to the lock; Sign out ends only this session at SCR-001", async ({
+test("E09-TC-C02 SCR-005 Sign out instead: Esc goes back to the lock; Sign out ends only this session at SCR-001 @ga-regression @ga-area-primary @story-US-ONB-004", async ({
   page,
 }) => {
   const store = await openIdleSession(page);
@@ -322,7 +323,7 @@ test("E09-TC-C02 SCR-005 Sign out instead: Esc goes back to the lock; Sign out e
   expect(unlocks(store)).toEqual([]);
 });
 
-test("E09-TC-C03 the lifetime lapsing while locked: unlock shows the expiry card, whose one action is SCR-001", async ({
+test("E09-TC-C03 the lifetime lapsing while locked: unlock shows the expiry card, whose one action is SCR-001 @ga-regression @ga-area-primary @story-US-ONB-004", async ({
   page,
 }) => {
   const store = await openIdleSession(page);
@@ -344,7 +345,7 @@ test("E09-TC-C03 the lifetime lapsing while locked: unlock shows the expiry card
   await expect(page.getByRole("heading", { name: SIGN_IN })).toBeVisible();
 });
 
-test("E09-TC-C02 a wrong unlock password keeps SCR-005 with an alert and a cleared, refocused field; the fifth ends the session", async ({
+test("E09-TC-C02 a wrong unlock password keeps SCR-005 with an alert and a cleared, refocused field; the fifth ends the session @ga-regression @ga-area-primary @story-US-ONB-004", async ({
   page,
 }) => {
   const store = await openIdleSession(page);
@@ -388,7 +389,7 @@ async function openSessions(page: Page): Promise<{ store: SessionStore; table: L
   return { store, table };
 }
 
-test("E09-TC-D01 SCR-112 lists the sessions as rows, this one marked, with no token anywhere in the page", async ({
+test("E09-TC-D01 SCR-112 lists the sessions as rows, this one marked, with no token anywhere in the page @ga-regression @ga-area-primary @story-US-ONB-004", async ({
   page,
 }) => {
   const bearer = page.waitForRequest(
@@ -404,7 +405,7 @@ test("E09-TC-D01 SCR-112 lists the sessions as rows, this one marked, with no to
   await assertNoClientSecrets(page, [token]);
 });
 
-test("E09-TC-D02 SCR-112 revoke another session: its row goes and this session stays signed in", async ({
+test("E09-TC-D02 SCR-112 revoke another session: its row goes and this session stays signed in @ga-regression @ga-area-primary @story-US-ONB-004", async ({
   page,
 }) => {
   const { store, table } = await openSessions(page);
@@ -423,7 +424,7 @@ test("E09-TC-D02 SCR-112 revoke another session: its row goes and this session s
   expect(deletes).toEqual([`/me/sessions/${other?.id}`]);
 });
 
-test("E09-TC-D02 SCR-112 revoke this session: the confirm says so, and it signs out to SCR-001", async ({
+test("E09-TC-D02 SCR-112 revoke this session: the confirm says so, and it signs out to SCR-001 @ga-regression @ga-area-primary @story-US-ONB-004", async ({
   page,
 }) => {
   const { store, table } = await openSessions(page);
@@ -438,7 +439,7 @@ test("E09-TC-D02 SCR-112 revoke this session: the confirm says so, and it signs 
 });
 
 // ---- Two contexts, one user (AC3): the other browser is told by the server, not by this tab.
-test("E09-TC-D03 sign out everywhere in context A: B's socket gets bye then 4401, and B's next call lands on SCR-001", async ({
+test("E09-TC-D03 sign out everywhere in context A: B's socket gets bye then 4401, and B's next call lands on SCR-001 @ga-regression @ga-area-primary @story-US-ONB-004", async ({
   browser,
 }) => {
   const store = new SessionStore();

@@ -1,4 +1,5 @@
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { type Locator, type Page } from "@playwright/test";
+import { expect, packTest as test } from "../ga/fixtures";
 import { json, stubSession } from "../support/api";
 import { OTP_SEED, totp } from "../support/totp";
 
@@ -6,7 +7,7 @@ import { OTP_SEED, totp } from "../support/totp";
 // SCR-019 checklist card. Network stubbed; no UI invented.
 const INVITE_ID = "inv-q02";
 
-test("E09-TC-E02/E03 invite wizard: accept, password, TOTP, recovery codes shown once", async ({
+test("E09-TC-E02/E03 invite wizard: accept, password, TOTP, recovery codes shown once @ga-regression @ga-area-primary @story-US-ONB-003 @story-US-ONB-006", async ({
   page,
 }) => {
   const T = Date.UTC(2026, 0, 1);
@@ -42,7 +43,9 @@ test("E09-TC-E02/E03 invite wizard: accept, password, TOTP, recovery codes shown
   await expect(page.getByText(/viewer/i).first()).toBeVisible();
 });
 
-test("E09-TC-E04 reused or expired invite shows one uniform message", async ({ page }) => {
+test("E09-TC-E04 reused or expired invite shows one uniform message @ga-regression @ga-area-primary @story-US-ONB-003 @story-US-ONB-006", async ({
+  page,
+}) => {
   await page.route("**/api/v1/invites/**", (r) => r.fulfill(json({ detail: "x" }, 404)));
   const seen: string[] = [];
   for (const tok of ["inv-expired", "inv-reused"]) {
@@ -53,7 +56,7 @@ test("E09-TC-E04 reused or expired invite shows one uniform message", async ({ p
   expect(seen[0]).toBe(seen[1]);
 });
 
-test("E09-TC-E03 wrong TOTP code in the wizard shows an inline error and stays on step 3", async ({
+test("E09-TC-E03 wrong TOTP code in the wizard shows an inline error and stays on step 3 @ga-regression @ga-area-primary @story-US-ONB-003 @story-US-ONB-006", async ({
   page,
 }) => {
   await page.route(`**/api/v1/invites/${INVITE_ID}`, (r) =>
@@ -75,7 +78,7 @@ const items = ["tailscale", "totp", "sub_account", "api_key", "profile_limits", 
   (key) => ({ key, state: "pending", reason: null, unblock_at: null, action_route: "/settings" }),
 );
 
-test("E09-TC-E05 skip persists: dismissed checklist stays hidden after reload", async ({
+test("E09-TC-E05 skip persists: dismissed checklist stays hidden after reload @ga-regression @ga-area-primary @story-US-ONB-003 @story-US-ONB-006", async ({
   page,
 }) => {
   await stubSession(page, { role: "viewer" });
@@ -109,7 +112,7 @@ async function tabTo(page: Page, target: Locator): Promise<void> {
   await expect(target).toBeFocused();
 }
 
-test("E09-TC-E03 keyboard-only: the whole wizard is reachable and submittable with Tab, Space and Enter", async ({
+test("E09-TC-E03 keyboard-only: the whole wizard is reachable and submittable with Tab, Space and Enter @ga-regression @ga-area-primary @story-US-ONB-003 @story-US-ONB-006", async ({
   page,
 }) => {
   await page.route(`**/api/v1/invites/${INVITE_ID}`, (r) =>

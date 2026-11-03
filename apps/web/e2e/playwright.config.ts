@@ -7,6 +7,17 @@ import { defineConfig } from "@playwright/test";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FLAKY = /@flaky/u;
 const QUARANTINE = process.env["CV_E2E_QUARANTINE"] === "1";
+// E49-Q01 (#1335): the GA regression pack, `@ga-regression` tests only (tools/ga/specs.py reads
+// the same tags). Its project exists only when CV_E2E_GA=1 (ga-regression-nightly.yml, or a local
+// `CV_E2E_GA=1 pnpm exec playwright test -c e2e/playwright.config.ts --project=ga-regression`), so
+// the PR lane never runs a pack test twice. A `@flaky` pack test stays in the quarantine leg.
+// The pack runs with zero retries (#1335 ruling), so a flaky pack test fails its night; the
+// global CI retry below vs 03 section 14 is carried to the CI owner (#569 BQ-10).
+const GA = /@ga-regression/u;
+const PACK = process.env["CV_E2E_GA"] === "1";
+// The pack's own specs (e2e/ga/: the admin RBAC negatives and the carried stubs) run in the pack
+// project only, so the PR lane runs exactly the specs it ran before the pack existed.
+const GA_ONLY = /[\\/]e2e[\\/]ga[\\/]/u;
 
 // apps/web Playwright config — smoke + a11y specs only (E02-T04).
 export default defineConfig({
@@ -21,7 +32,9 @@ export default defineConfig({
   // (CV_E2E_QUARANTINE=1). It carries a P1 ticket and is fixed or deleted within 10 working days.
   projects: QUARANTINE
     ? [{ name: "flaky-nightly", grep: FLAKY }]
-    : [{ name: "chromium", grepInvert: FLAKY }],
+    : PACK
+      ? [{ name: "ga-regression", grep: GA, grepInvert: FLAKY, retries: 0 }]
+      : [{ name: "chromium", grepInvert: FLAKY, testIgnore: GA_ONLY }],
   // The JSON report next to the list: CI writes its `stats.flaky` count (passed only on retry) to
   // the job summary, so a pass-on-retry is visible on the PR (E10-Q02).
   reporter: [

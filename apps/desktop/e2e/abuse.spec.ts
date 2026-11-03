@@ -6,7 +6,7 @@ import { closeShell, launchShell } from "./support/shell";
 // E10-Q02, the Electron half of the per-PR abuse subset absorbed from E10-X03 (plan steps AB-5,
 // RM-2). Titles name the control each test holds; failures name it too.
 
-test("@abuse @plan-AB-5 context isolation: the renderer reaches no Node global and no raw IPC", async () => {
+test("@abuse @plan-AB-5 context isolation: the renderer reaches no Node global and no raw IPC @ga-regression @ga-area-admin", async () => {
   const shell = await launchShell();
   const reach = await shell.win.evaluate(() => {
     const g = globalThis as unknown as Record<string, unknown>;
@@ -35,7 +35,7 @@ const SUBSET: readonly (readonly [string, string])[] = [
 ];
 
 for (const role of ["owner", "manager", "viewer"] as const satisfies readonly Role[])
-  test(`@abuse @plan-RM-2 route guard in the shell as ${role}: one route per access class`, async () => {
+  test(`@abuse @plan-RM-2 route guard in the shell as ${role}: one route per access class @ga-regression @ga-area-admin`, async () => {
     const shell = await launchShell({ devServer: true });
     await stubSession(shell.win, { role });
     for (const [id, path] of SUBSET) {

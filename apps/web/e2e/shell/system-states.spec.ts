@@ -1,7 +1,7 @@
 import { stubSession } from "../support/api";
 import { seriousAxe } from "../support/axe";
 import { installWsHarness, type WsHarness } from "../support/wsHarness";
-import { badge, expect, test } from "./fixtures";
+import { badge, expect, test } from "../ga/fixtures";
 
 // E10-Q02 system states (plan step SS-1, SS-2) on E10-S04's surfaces, against the real web client
 // with the API stubbed and the E08-Q05 WS harness as the gateway. Through every state the badge
@@ -18,7 +18,7 @@ async function signedIn(page: Parameters<typeof stubSession>[0]): Promise<WsHarn
   return harness;
 }
 
-test("@plan-SS-1 WS dropped: the top bar says Reconnecting, then Live again after the restore", async ({
+test("@plan-SS-1 WS dropped: the top bar says Reconnecting, then Live again after the restore @ga-regression @ga-area-shell", async ({
   page,
 }) => {
   const harness = await signedIn(page);
@@ -32,7 +32,7 @@ test("@plan-SS-1 WS dropped: the top bar says Reconnecting, then Live again afte
   await expect(badge(page)).toBeVisible();
 });
 
-test("@plan-SS-2 backend killed mid-session: SCR-159's offline page takes over, the badge stays", async ({
+test("@plan-SS-2 backend killed mid-session: SCR-159's offline page takes over, the badge stays @ga-regression @ga-area-shell", async ({
   page,
 }) => {
   const harness = await signedIn(page);

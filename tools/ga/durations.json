@@ -1,0 +1,22 @@
+{
+  "_note": "E49-Q01 (#1335): serial seconds per pack spec file, the input of tools/ga/shard_plan.py. PROVISIONAL: web-chromium is one local run (2026-11-01, per-test seconds summed per file), not CI; electron has no measurement, so each file costs the planner's default until the first nightly (health.py warns on both). Refreshed weekly by a reviewed PR from the nightly's ga-durations artefact; a key naming no pack file fails health.py.",
+  "web-chromium": {
+    "e2e/auth/denied.spec.ts": 14.9,
+    "e2e/auth/enrolment.spec.ts": 12.5,
+    "e2e/auth/login.spec.ts": 47.4,
+    "e2e/auth/onboarding.spec.ts": 15.9,
+    "e2e/auth/session.spec.ts": 49.4,
+    "e2e/auth/stepup.spec.ts": 42.4,
+    "e2e/ga/admin-rbac.spec.ts": 48.4,
+    "e2e/ga/appearance.spec.ts": 7.8,
+    "e2e/hotkeys.spec.ts": 59.9,
+    "e2e/invites.spec.ts": 9.1,
+    "e2e/motion-reduce.spec.ts": 15.3,
+    "e2e/motion-toggle.spec.ts": 7.3,
+    "e2e/shell/abuse.spec.ts": 19.2,
+    "e2e/shell/hotkeys-reserved.spec.ts": 2.6,
+    "e2e/shell/role-matrix.spec.ts": 273.4,
+    "e2e/shell/system-states.spec.ts": 7.8
+  },
+  "electron": {}
+}

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import playwrightConfig from "../e2e/playwright.config";
 
 // Bug #1527 (E03-T06-B1, parent #107 AC3): Playwright must capture
@@ -17,5 +17,21 @@ describe("apps/web e2e playwright config", () => {
 
   it("enables video capture on failure", () => {
     expect(playwrightConfig.use?.video).toBe("retain-on-failure");
+  });
+
+  describe("GA regression pack project (#1335 ruling a)", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    });
+
+    it("runs the pack with zero retries and leaves the global CI retry alone", async () => {
+      vi.stubEnv("CI", "1");
+      vi.stubEnv("CV_E2E_GA", "1");
+      vi.resetModules();
+      const { default: config } = await import("../e2e/playwright.config");
+      expect(config.retries).toBe(1);
+      expect(config.projects?.map((p) => [p.name, p.retries])).toEqual([["ga-regression", 0]]);
+    });
   });
 });

@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, packTest as test } from "./ga/fixtures";
 
 // E47-S04 AC3 e2e (#1318), ruling BQ-1 (a): Ctrl+Shift+M flips the resolved motion to an explicit
 // on/off, persists it as SCR-117 does (the theme store's localStorage record, `cv.theme.v1`; no
@@ -54,7 +55,7 @@ async function watchAnnouncements(page: Page): Promise<void> {
 const said = (page: Page) =>
   page.evaluate(() => (window as unknown as { __said: string[] }).__said);
 
-test("Ctrl+Shift+M from default motion reduces motion, says so once and persists on", async ({
+test("Ctrl+Shift+M from default motion reduces motion, says so once and persists on @ga-regression @ga-area-shell @story-US-SET-007", async ({
   page,
 }) => {
   await expect(root(page)).not.toHaveAttribute("data-motion", "reduce");
@@ -67,7 +68,7 @@ test("Ctrl+Shift+M from default motion reduces motion, says so once and persists
   await expect.poll(() => stored(page)).toMatchObject({ motionOverride: "on" });
 });
 
-test("a second Ctrl+Shift+M restores full motion, says so once and persists off", async ({
+test("a second Ctrl+Shift+M restores full motion, says so once and persists off @ga-regression @ga-area-shell @story-US-SET-007", async ({
   page,
 }) => {
   await page.keyboard.press("Control+Shift+M");
@@ -80,7 +81,9 @@ test("a second Ctrl+Shift+M restores full motion, says so once and persists off"
   await expect.poll(() => stored(page)).toMatchObject({ motionOverride: "off" });
 });
 
-test("a held Ctrl+Shift+M flips once: the auto-repeats do nothing", async ({ page }) => {
+test("a held Ctrl+Shift+M flips once: the auto-repeats do nothing @ga-regression @ga-area-shell @story-US-SET-007", async ({
+  page,
+}) => {
   await watchAnnouncements(page);
   await page.keyboard.down("Control");
   await page.keyboard.down("Shift");
