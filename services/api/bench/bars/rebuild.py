@@ -7,7 +7,9 @@ and "previous series stayed served throughout" legs are rendered as `pending #53
 activated when the rebuild path and `bars_rebuild_duration_seconds` land. As in `throughput`, only
 the builder loop is timed (the tape is generated in chunks outside the window), and the clock is
 injected so the unit tests check mechanics, not speed.
-Run by hand: `python -m bench.bars.rebuild --prints 1000000 --runs 3` (exit 1 over budget).
+The figure is a LOWER BOUND on the real rebuild: it excludes the store reads of the tape, row
+decoding and persistence of the new generation (#535).
+Run by hand: `python -m bench.bars.rebuild --prints 1000000` (3 runs; exit 1 over budget).
 """
 
 from __future__ import annotations
@@ -91,6 +93,9 @@ def median_rebuild(runs: list[RebuildResult]) -> tuple[RebuildResult, float]:
 def render(rows: list[tuple[RebuildResult, float]]) -> str:
     out = [
         f"## parameter-change rebuild, offline (US-CHART-003: <= {BUDGET_S:.0f} s, median of 3)",
+        "",
+        "Lower bound on the real rebuild: builder loop only; no tape store reads, row decoding "
+        "or persistence of the new generation (#535).",
         "",
         "| change | prints | bars | wall s | spread | result |",
         "|---|---:|---:|---:|---:|---|",

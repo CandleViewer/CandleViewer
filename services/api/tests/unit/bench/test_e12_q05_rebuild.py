@@ -71,6 +71,7 @@ def test_render_lists_results_and_the_pending_535_rows() -> None:
     out = rb.render([(ok, 0.0), (bad, 0.1)])
     assert "| pass |" in out and "| FAIL |" in out
     assert out.count("pending #535") == 3
+    assert "Lower bound on the real rebuild" in out
 
 
 def test_main_exit_code_follows_the_budget(
