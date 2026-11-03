@@ -11,11 +11,12 @@
  *   shell never mounts writable as if no context were held (fail closed).
  * - `startViewAsSync` (one per shell, `startShell`) re-reads it on a `cv.view-as` broadcast
  *   (payload `changed`, posted by `announceChange` after a start or an exit in a sibling tab), when
- *   the countdown reaches `expires_at` on the server's clock, and when the socket leaves `live`
- *   or goes `offline` (a start or an end closes it: `view_as_changed`, `view_as_expired`). A
- *   re-read whose context differs from the page's (none to held, held to none, another target)
- *   reloads the page: only a full load drops every datum of the old scope. A re-read that fails
- *   changes nothing.
+ *   the countdown reaches `expires_at` on the server's clock, when the socket leaves `live` or goes
+ *   `offline` (a start or an end closes it: `view_as_changed`, `view_as_expired`), and on a server
+ *   answer `403 view_as_read_only` or `view_as_expired` that `apiFetch` sees (never on the request
+ *   guard's own refusals, which the context already explains). A re-read whose context differs
+ *   from the page's (none to held, held to none, another target) reloads the page: only a full
+ *   load drops every datum of the old scope. A re-read that fails changes nothing.
  *
  * The context names the target only; the start's reason never reaches this module, the store, a
  * log, storage or the URL.
@@ -29,6 +30,7 @@ import {
   type HeldViewAs,
   type ViewAsState,
 } from "../../shell/bootstrap/store";
+import { onServerRefusal } from "../http/viewAsGuard";
 import { accessToken } from "./accessToken";
 
 type Wire = generated.rest.components["schemas"]["ViewAsContext"];
@@ -270,6 +272,7 @@ export function startViewAsSync(ports: ViewAsSyncPorts = {}): () => void {
   if (sync !== null) return sync.stop;
   const channel = (ports.openChannel ?? openBroadcast)();
   let unsubscribe = (): void => undefined;
+  let unhear = (): void => undefined;
   const active: Sync = {
     ports,
     stopped: false,
@@ -280,6 +283,7 @@ export function startViewAsSync(ports: ViewAsSyncPorts = {}): () => void {
       if (active.stopped) return; // `stopViewAsSync`, then `startShell`'s own teardown
       active.stopped = true;
       unsubscribe();
+      unhear();
       if (channel !== null) {
         channel.onmessage = null;
         channel.close();
@@ -301,6 +305,8 @@ export function startViewAsSync(ports: ViewAsSyncPorts = {}): () => void {
     // a start or an end closes the socket (`23` §9.6): it leaves live, or never reaches it
     if (left || next === "offline") trigger();
   });
+  // a context another tab started or the server ended answers this tab's request first
+  unhear = onServerRefusal(trigger);
   if (channel !== null) {
     channel.onmessage = (event) => {
       if (event.data === VIEW_AS_CHANGED) trigger();
