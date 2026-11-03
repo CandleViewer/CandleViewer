@@ -20,7 +20,7 @@
  *   of no order, which only REST serves (D03 G20). Never polled. Past 25 accounts a read names the
  *   25 the subscription does. Every read that answers applies, a superseded one too (the store is
  *   a set); a failed one, or a failed page, is the store's `readFailed` if it was asked last.
- *   A Retry after a revoke drops the answers of the reads asked before it, waiting ones too.
+ *   A revoke lifted by Retry or a snapshot drops the answers of earlier reads, waiting ones too.
  * - **S-02:** no first `snap` within 5 s, or a refused subscription, is "Could not load"; `retry()`
  *   re-subscribes, and reads REST again after a failed read. A narrowing re-reads the directory,
  *   as the positions feed does, and the subscription is made again only when the directory changed;
@@ -101,7 +101,8 @@ export function startFillsFeed(options: FillsFeedOptions): FillsFeed {
   let accountIds: readonly string[] | null = null;
   let handle: TopicHandle | null = null;
   let budget: unknown;
-  const queue: unknown[] = []; // REST items to apply: 1,000 a read, `MAX_QUEUED` at most (C-2.18)
+  // REST items to apply, each with its read's signal: 1,000 a read, `MAX_QUEUED` at most (C-2.18)
+  const queue: { item: unknown; signal: AbortSignal }[] = [];
   let readSeq = 0; // the reads asked so far: the last one decides `readFailed`
   let readLost = false; // that last read failed, or a page of it
   let narrowing = false; // a narrowing waits for a read to say who stayed
@@ -154,12 +155,14 @@ export function startFillsFeed(options: FillsFeedOptions): FillsFeed {
         : {};
     const seq = (readSeq += 1);
     void readExecutions(api, named, BACKFILL_PAGES, signal).then((out) => {
-      if (stopped || signal.aborted) return; // a Retry after a revoke starts the reads afresh
+      if (stopped || signal.aborted) return; // a lifted revoke starts the reads afresh
       if (seq === readSeq) {
         readLost = out.kind !== "ok" || out.value.failure !== null;
         showLost();
       }
-      if (out.kind === "ok") queue.push(...out.value.items.slice(0, MAX_QUEUED - queue.length));
+      if (out.kind === "ok")
+        for (const item of out.value.items.slice(0, MAX_QUEUED - queue.length))
+          queue.push({ item, signal });
     });
   }
 
@@ -218,7 +221,9 @@ export function startFillsFeed(options: FillsFeedOptions): FillsFeed {
         }
       }
       if (queue.length > 0) {
-        const slice = queue.splice(0, Math.max(0, APPLY_SLICE - applied));
+        const taken = queue.splice(0, Math.max(0, APPLY_SLICE - applied));
+        // the items of a read the store aborted since they were queued are dropped, not applied
+        const slice = taken.filter((q) => !q.signal.aborted).map((q) => q.item);
         store.applyRest(slice);
         applied += slice.length;
       }
