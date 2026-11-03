@@ -11,7 +11,7 @@ the freeze (#2648 Q1).
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
@@ -141,3 +141,15 @@ class AccessChange:
     def removed(self) -> frozenset[uuid.UUID]:
         """The live grants the change soft-revokes."""
         return frozenset(self.before.keys() - self.after.keys())
+
+
+def grants_state(
+    levels: Mapping[uuid.UUID, AccessLevel], frozen: Collection[uuid.UUID]
+) -> list[dict[str, object]]:
+    """One side of a `users.access_change` record's `grants`: each live grant in account-id
+    order with its level and `frozen` flag (never the free-text `frozen_reason`). The one shape
+    of both writers of that action, the grant store and the account delete (#3027)."""
+    return [
+        {"exchange_account_id": str(a), "level": lvl, "frozen": a in frozen}
+        for a, lvl in sorted(levels.items())
+    ]

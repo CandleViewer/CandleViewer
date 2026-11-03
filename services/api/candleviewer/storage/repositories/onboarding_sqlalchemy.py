@@ -25,12 +25,17 @@ _TOTP = sa.text(
     "SELECT 1 FROM mfa_methods WHERE user_id = CAST(:u AS uuid) AND kind = 'totp' "
     "AND confirmed_at IS NOT NULL AND revoked_at IS NULL LIMIT 1"
 )
-# A removed grant stays as a soft revoke (`can_view = false`, E42-T08): only live ones bind.
+# A removed grant stays as a soft revoke (`can_view = false`, E42-T08), and a grant on a deleted
+# account binds nothing either (#3027): only live grants of live accounts bind.
 _BOUND = sa.text(
-    "SELECT 1 FROM user_account_access WHERE user_id = CAST(:u AS uuid) AND can_view LIMIT 1"
+    "SELECT 1 FROM user_account_access AS a "
+    "JOIN exchange_accounts AS e ON e.id = a.exchange_account_id "
+    "WHERE a.user_id = CAST(:u AS uuid) AND a.can_view AND e.deleted_at IS NULL LIMIT 1"
 )
 _LATEST_BINDING = sa.text(
-    "SELECT max(created_at) FROM user_account_access WHERE user_id = CAST(:u AS uuid) AND can_view"
+    "SELECT max(a.created_at) FROM user_account_access AS a "
+    "JOIN exchange_accounts AS e ON e.id = a.exchange_account_id "
+    "WHERE a.user_id = CAST(:u AS uuid) AND a.can_view AND e.deleted_at IS NULL"
 )
 
 

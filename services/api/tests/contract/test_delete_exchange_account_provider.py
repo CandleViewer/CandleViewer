@@ -23,6 +23,7 @@ from typing import Any
 
 import httpx
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.accounts.exposure import KeyExposure, KeyReadFailed
 from candleviewer.api.deny_by_default import served_operations
@@ -30,6 +31,9 @@ from candleviewer.api.step_up_challenge import request_fingerprint
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.errors import StepUpMismatch
+from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.repositories.account_access import grants_state
+from candleviewer.storage.repositories.accounts import GranteeRow
 from tests.contract._teardown_world import (
     KEY,
     SECOND,
@@ -95,6 +99,222 @@ def test_the_owner_deletes_a_flat_account_recorded_ahead_then_every_effect_in_or
     assert s.fx.disarmed[0]["lifecycle"] == "account_deleted"
     assert s.fx.revoked_ws == ["account_disabled"] and s.fx.counted == ["deleted:flat"]
     assert s.fx.standings.closed(GRANTED) is True
+
+
+def test_the_delete_records_each_revoked_grant_ahead_of_the_revoke(two_keys: Served) -> None:
+    """#3027: one `users.access_change` per grantee, reason `account_deleted`, before the soft
+    delete commits; the grant store's action, so no new action or reason value."""
+    s = two_keys
+    mgr = uuid.UUID("00000000-0000-4000-8000-0000000000a1")
+    s.store.grantees = (GranteeRow(mgr, "mgr", True, ((GRANTED, "trade"),)),)
+    assert delete(s, choice="flatten_first").status_code == 204
+    (record,) = records(s, "users.access_change")
+    assert (record["object_kind"], record["object_id"]) == ("user", str(mgr))
+    assert (record["outcome"], record["reason"]) == ("success", "account_deleted")
+    assert record["before_state"] == {
+        "grants": [{"exchange_account_id": str(GRANTED), "level": "trade", "frozen": False}]
+    } and record["after_state"] == {"grants": []}
+    assert s.store.deleted == {GRANTED}
+
+
+def test_the_grants_record_carries_the_grantees_whole_set_in_the_grant_stores_shape(
+    two_keys: Served,
+) -> None:
+    """The orchestrator's ruling on #5539: a grantee with several accounts keeps the others, so
+    the record names the whole live set before (every grant) and after (all but this account),
+    each with its level and `frozen` flag, exactly as the grant store writes the same action."""
+    s = two_keys
+    mgr = uuid.UUID("00000000-0000-4000-8000-0000000000a1")
+    low = uuid.UUID("00000000-0000-4000-8000-000000000001")
+    high = uuid.UUID("ffffffff-0000-4000-8000-000000000001")
+    held = ((low, "read"), (GRANTED, "trade"), (high, "trade"))
+    s.store.grantees = (GranteeRow(mgr, "mgr", True, held, frozenset({high})),)
+    assert delete(s, choice="flatten_first").status_code == 204
+    (record,) = records(s, "users.access_change")
+    # The grant store's own shape (`grants_state` writes both); the delete adds no positions
+    # decision or counts: its exposure gate ran before it.
+    assert record["before_state"] == {"grants": grants_state(dict(held), {high})}
+    assert [g["exchange_account_id"] for g in record["before_state"]["grants"]] == [
+        str(low),
+        str(GRANTED),
+        str(high),
+    ]
+    assert record["after_state"]["grants"] == [
+        {"exchange_account_id": str(low), "level": "read", "frozen": False},
+        {"exchange_account_id": str(high), "level": "trade", "frozen": True},
+    ]
+
+
+def test_a_grants_record_not_written_leaves_the_account_undeleted(
+    two_keys: Served, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    s = two_keys
+    s.store.grantees = (GranteeRow(uuid.uuid4(), "mgr", False),)
+    sink = s.world.audit
+    emit = sink.emit
+
+    async def refusing(action: str, **kw: Any) -> None:
+        if action == "users.access_change":
+            raise AuditError("the audit writer is down")
+        await emit(action, **kw)
+
+    monkeypatch.setattr(sink, "emit", refusing)
+    resp = delete(s, choice="flatten_first")
+    assert (resp.status_code, checked(resp)["code"]) == (503, "audit_unavailable")
+    assert s.store.deleted == set()  # held and switched off, so the retry finds it undeleted
+
+
+MGRS = (
+    GranteeRow(uuid.UUID("00000000-0000-4000-8000-0000000000a1"), "mgr", True),
+    GranteeRow(uuid.UUID("00000000-0000-4000-8000-0000000000a2"), "viewer", False),
+)
+
+
+def closing(s: Served) -> list[tuple[str, str]]:
+    """Each `users.access_change_failed` record's grantee and outcome."""
+    return [(r["object_id"], r["outcome"]) for r in records(s, "users.access_change_failed")]
+
+
+def test_a_delete_failing_before_its_commit_closes_each_grants_record(two_keys: Served) -> None:
+    """#3027 (C-2.9): the soft delete rolled back, so no grant was revoked; every record written
+    ahead is closed with `users.access_change_failed`, and the answer stays the outage's."""
+    s = two_keys
+    s.store.grantees, s.store.commit_fails = MGRS, StorageTierUnavailable("postgres")
+    resp = delete(s, choice="flatten_first")
+    assert (resp.status_code, checked(resp)["code"]) == (503, "store_unavailable")
+    assert s.store.deleted == set() and len(records(s, "users.access_change")) == 2
+    assert closing(s) == [(str(g.user_id), "failure") for g in MGRS]
+    assert {r["reason"] for r in records(s, "users.access_change_failed")} == {"account_deleted"}
+
+
+def test_a_grants_record_refused_midway_closes_only_the_records_written(
+    two_keys: Served, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    s = two_keys
+    s.store.grantees = MGRS
+    sink = s.world.audit
+    emit = sink.emit
+
+    async def refusing(action: str, **kw: Any) -> None:
+        if action == "users.access_change" and kw["object_id"] == str(MGRS[1].user_id):
+            raise AuditError("the audit writer is down")
+        await emit(action, **kw)
+
+    monkeypatch.setattr(sink, "emit", refusing)
+    resp = delete(s, choice="flatten_first")
+    assert (resp.status_code, checked(resp)["code"]) == (503, "audit_unavailable")
+    assert s.store.deleted == set() and closing(s) == [(str(MGRS[0].user_id), "failure")]
+
+
+@pytest.mark.parametrize(
+    ("raised", "closed"),
+    [(AuditError("the audit writer is down"), 1), (TimeoutError("the writer stalled"), 2)],
+    ids=["refused_never_written", "timeout_may_have_landed"],
+)
+def test_a_timed_out_grants_record_is_closed_but_a_refused_one_is_not(
+    two_keys: Served, monkeypatch: pytest.MonkeyPatch, raised: Exception, closed: int
+) -> None:
+    """#5539 review: a `TimeoutError` may have landed its record, so it is kept and closed with
+    the one before it; a refusal never wrote, so it is dropped. Both answer `audit_unavailable`."""
+    s = two_keys
+    s.store.grantees = MGRS
+    sink = s.world.audit
+    emit = sink.emit
+
+    async def failing(action: str, **kw: Any) -> None:
+        if action == "users.access_change" and kw["object_id"] == str(MGRS[1].user_id):
+            raise raised
+        await emit(action, **kw)
+
+    monkeypatch.setattr(sink, "emit", failing)
+    resp = delete(s, choice="flatten_first")
+    assert (resp.status_code, checked(resp)["code"]) == (503, "audit_unavailable")
+    assert s.store.deleted == set()
+    assert closing(s) == [(str(g.user_id), "failure") for g in MGRS[:closed]]
+
+
+def test_a_cancellation_before_the_commit_closes_each_record_and_propagates(
+    two_keys: Served,
+) -> None:
+    """#3027 (C-2.9): a cancelled delete closes every record written ahead, best effort, and the
+    `CancelledError` is never swallowed."""
+    s = two_keys
+    s.store.grantees, s.store.commit_fails = MGRS, asyncio.CancelledError()
+    with capture_logs() as logs:
+        resp = delete(s, choice="flatten_first")
+    # The cancellation left the route un-swallowed: the edge answers its generic 500, never a
+    # route-mapped problem such as `store_unavailable`, and logs an unhandled exception.
+    assert (resp.status_code, resp.json()["code"]) == (500, "internal_error")
+    assert any(e["event"] == "unhandled_exception" for e in logs)
+    assert s.store.deleted == set() and len(records(s, "users.access_change")) == 2
+    assert closing(s) == [(str(g.user_id), "failure") for g in MGRS]
+
+
+@pytest.mark.parametrize("cut", ["time_bound", "cancel"])
+def test_a_grants_record_cut_mid_write_is_closed_with_the_rest(
+    two_keys: Served, monkeypatch: pytest.MonkeyPatch, cut: str
+) -> None:
+    """#5539 review: a record the store's time bound or a cancel cuts mid-write may have landed,
+    so it is closed with every record before it, each exactly once (C-2.9)."""
+    s = two_keys
+    s.store.grantees, s.store.audit_timeout_s = MGRS, 0.05
+    sink = s.world.audit
+    emit = sink.emit
+
+    async def cutting(action: str, **kw: Any) -> None:
+        if action == "users.access_change" and kw["object_id"] == str(MGRS[1].user_id):
+            if cut == "cancel":
+                raise asyncio.CancelledError
+            await asyncio.Event().wait()  # never answers: the store's bound cuts it
+        await emit(action, **kw)
+
+    monkeypatch.setattr(sink, "emit", cutting)
+    resp = delete(s, choice="flatten_first")
+    expected = (503, "audit_unavailable") if cut == "time_bound" else (500, "internal_error")
+    assert (resp.status_code, resp.json()["code"]) == expected
+    assert s.store.deleted == set() and len(records(s, "users.access_change")) == 1
+    assert closing(s) == [(str(g.user_id), "failure") for g in MGRS]
+
+
+@pytest.mark.parametrize("effect", ["disarm", "close_private_streams"])
+def test_a_failure_after_the_soft_delete_commits_closes_no_grants_record(
+    two_keys: Served, monkeypatch: pytest.MonkeyPatch, effect: str
+) -> None:
+    """The grants were revoked with the delete's commit: a later effect's outage keeps its
+    `503` and the `users.access_change` records stand, never closed as failed (C-2.9)."""
+    s = two_keys
+    s.store.grantees = MGRS
+
+    async def down(*_args: Any, **_kw: Any) -> Any:
+        raise StorageTierUnavailable("postgres")
+
+    monkeypatch.setattr(s.fx, effect, down)
+    resp = delete(s, choice="flatten_first")
+    assert (resp.status_code, checked(resp)["code"]) == (503, "store_unavailable")
+    assert s.store.deleted == {GRANTED} and len(records(s, "users.access_change")) == 2
+    assert closing(s) == []
+
+
+def test_an_unwritable_closing_record_is_logged_and_the_first_failure_answers(
+    two_keys: Served, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    s = two_keys
+    s.store.grantees, s.store.commit_fails = MGRS, StorageTierUnavailable("postgres")
+    sink = s.world.audit
+    emit = sink.emit
+
+    async def refusing(action: str, **kw: Any) -> None:
+        if action == "users.access_change_failed":
+            raise AuditError("the audit writer is down")
+        await emit(action, **kw)
+
+    monkeypatch.setattr(sink, "emit", refusing)
+    with capture_logs() as logs:
+        resp = delete(s, choice="flatten_first")
+    assert (resp.status_code, checked(resp)["code"]) == (503, "store_unavailable")
+    unwritten = [e for e in logs if e["event"] == "grants_close_unwritten"]
+    assert len(unwritten) == len(MGRS) and closing(s) == []
+    assert {e["account_id"] for e in unwritten} == {str(GRANTED)}
 
 
 def test_a_key_already_revoked_is_neither_destroyed_again_nor_closed(served: Served) -> None:

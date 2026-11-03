@@ -27,7 +27,8 @@ from candleviewer.accounts.lifecycle import AccountLifecycle
 from candleviewer.accounts.models import ApiKeyMetadata, ExchangeAccount, KeyStatus
 from candleviewer.audit.writer import keyed_record_id
 from candleviewer.exchange.base.errors import PrivateStreamCloseOverran
-from candleviewer.storage.repositories.accounts import ApiKeyRow, OwnerScope
+from candleviewer.storage.repositories.accounts import ApiKeyRow, GranteeRow, OwnerScope
+from candleviewer.storage.repositories.user_roles_sqlalchemy import bounded_write_ahead
 from tests.contract._admin_support import SPEC, validate_example
 from tests.contract.rbac.rbac_harness import FOREIGN, GRANTED, World, bearer, build_world
 from tests.contract.test_update_exchange_account_provider import Effects as PatchEffects
@@ -49,6 +50,9 @@ class Store(PatchStore):
         super().reset()
         self.deleted: set[uuid.UUID] = set()
         self.soft_deletes = 0
+        self.grantees: tuple[GranteeRow, ...] = ()  # the live grants the delete revokes
+        self.commit_fails: BaseException | None = None  # the soft delete's commit, after its hook
+        self.audit_timeout_s = 2.0  # the store's bound on its write-ahead hook
         self.keys: dict[uuid.UUID, dict[uuid.UUID, str]] = {
             GRANTED: {KEY: "active"}, FOREIGN: {THEIRS: "active"},
         }  # fmt: skip
@@ -75,10 +79,17 @@ class Store(PatchStore):
             return None
         return self.row(account_id, key_id)
 
-    async def soft_delete_account(self, scope: OwnerScope, account_id: uuid.UUID) -> bool:
+    async def soft_delete_account(
+        self, scope: OwnerScope, account_id: uuid.UUID, *, write_ahead: Any = None
+    ) -> bool:
         self._owner(scope)
         if account_id in self.deleted or account_id not in self.rows:
             return False
+        if self.grantees and write_ahead is not None:
+            # Bounded as the store bounds it; raising here rolls the delete back.
+            await bounded_write_ahead(write_ahead(self.grantees), self.audit_timeout_s)
+        if self.commit_fails is not None:
+            raise self.commit_fails  # rolled back: nothing deleted, no grant revoked
         self.deleted.add(account_id)
         self.rows[account_id] = dataclasses.replace(self.rows[account_id], is_enabled=False)
         self.soft_deletes += 1

@@ -59,10 +59,12 @@ _ACTIVE_USERS_SQL = sa.text(
 )
 # `SessionInfo.account_scope`: the grant predicate of `Me.accounts` below and of
 # `auth.scopes.account_scope` (C-12.4): a view grant that is not frozen. `Me.accounts` also joins
-# the live account; this statement, as before, does not. The `/rules` and `/alerts` checks read it.
+# the live account, and so does this statement (#3027: a soft-deleted account has no scope).
+# The `/rules` and `/alerts` checks read it.
 _SCOPE_SQL = sa.text(
-    "SELECT exchange_account_id::text FROM user_account_access "
-    "WHERE user_id = CAST(:id AS uuid) AND can_view AND NOT frozen ORDER BY 1"
+    "SELECT uaa.exchange_account_id::text FROM user_account_access uaa "
+    "JOIN exchange_accounts ea ON ea.id = uaa.exchange_account_id AND ea.deleted_at IS NULL "
+    "WHERE uaa.user_id = CAST(:id AS uuid) AND uaa.can_view AND NOT uaa.frozen ORDER BY 1"
 )
 # `Me.accounts`, scoped at construction (SR-051) as `auth.scopes.account_scope` does: an owner
 # (a live `owner` role of an active, undeleted user, the account store's `_OWNER_PRED`) reaches

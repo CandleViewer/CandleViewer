@@ -54,6 +54,7 @@ from candleviewer.accounts.models import ApiKeyMetadata, ExchangeAccount, KeySta
 from candleviewer.storage.repositories.accounts import (
     AccountScope,
     ExchangeAccountPatch,
+    GrantsWriteAhead,
     OwnerScope,
 )
 
@@ -106,7 +107,13 @@ class LifecycleStore(Protocol):
         write_ahead: WriteAhead | None = None,
     ) -> ExchangeAccount: ...
 
-    async def soft_delete_account(self, scope: OwnerScope, account_id: UUID) -> None: ...
+    async def soft_delete_account(
+        self,
+        scope: OwnerScope,
+        account_id: UUID,
+        *,
+        write_ahead: GrantsWriteAhead | None = None,
+    ) -> None: ...
 
 
 class Standings(Protocol):
@@ -326,10 +333,14 @@ class AccountLifecycle:
         reason: DeleteReason,
         actor: UUID,
         role: str,
+        grants_ahead: GrantsWriteAhead | None = None,
+        grants_committed: Callable[[], None] | None = None,
     ) -> None:
         """Store the delete of `account` (read under the account's lock, after the gate and the
         exposure) and carry out its effects (module docstring). `KeyDestroyFailedError` when a
-        key was not destroyed: the account stays switched off and held, not deleted."""
+        key was not destroyed: the account stays switched off and held, not deleted.
+        `grants_committed` is called right after the soft delete commits (its grants revoked), so
+        a caller closes `grants_ahead`'s records only for a failure before it (C-2.9)."""
         if self._destroyer is None:
             raise KeyDestroyFailedError("no key destroyer is wired")
         held = False
@@ -353,7 +364,9 @@ class AccountLifecycle:
         keys = [k for k in await self._store.list_keys(owner, account.id) if k.status != _REVOKED]
         for key in keys:  # R6: every live key destroyed before the soft delete
             await destroy_key(self._destroyer, account.id, key.id, actor, role)
-        await self._store.soft_delete_account(owner, account.id)
+        await self._store.soft_delete_account(owner, account.id, write_ahead=grants_ahead)
+        if grants_committed is not None:
+            grants_committed()
         await self._subscriptions.account_revoked(account.id, "account_disabled")
         await self._disarmer.disarm(
             account.id, lifecycle="account_deleted", actor=actor, role=role, at=self._clock()
