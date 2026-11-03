@@ -27,7 +27,7 @@ export class EngineHarness {
   /** Serves `fixture` from a faked feed (`routeWebSocket`: no socket leaves the page) and waits for it. */
   async open(
     fixture: FixtureName,
-    opts: { runMode?: "worker" | "inline"; motion?: "reduce" } = {},
+    opts: { runMode?: "worker" | "inline"; motion?: "reduce"; panes?: 2 } = {},
   ): Promise<void> {
     const bars = buildFixture(fixture);
     await this.page.routeWebSocket(/\/__engine-feed$/u, (ws) => {
@@ -36,7 +36,7 @@ export class EngineHarness {
         ws.send(Buffer.from(encodeFrame(bars)));
       });
     });
-    const query = `fixture=${fixture}&runMode=${opts.runMode ?? "worker"}${opts.motion ? `&motion=${opts.motion}` : ""}`;
+    const query = `fixture=${fixture}&runMode=${opts.runMode ?? "worker"}${opts.motion ? `&motion=${opts.motion}` : ""}${opts.panes ? `&panes=${opts.panes}` : ""}`;
     await this.page.goto(new URL(`/?${query}`, this.baseURL).href);
     await this.page.waitForFunction(() =>
       window.__engineEvents?.log.some((e) => e.type === "fixtureLoaded"),

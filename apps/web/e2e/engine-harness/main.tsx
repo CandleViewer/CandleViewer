@@ -70,6 +70,7 @@ function Feed({
 function Harness(props: {
   fixture: string;
   runMode: "worker" | "inline";
+  panes: number;
   events: EngineEventLog;
 }): JSX.Element {
   const box = useRef<HTMLDivElement>(null);
@@ -80,9 +81,10 @@ function Harness(props: {
   return (
     <div ref={box} data-testid="engine-harness-chart" style={{ width: 900, height: 520 }}>
       <Chart options={{ theme: THEME, runMode: props.runMode }} label="Engine harness chart">
-        <Pane>
+        <Pane {...(props.panes > 1 ? { heightRatio: 0.7 } : {})}>
           <Feed fixture={props.fixture} events={props.events} />
         </Pane>
+        {props.panes > 1 ? <Pane heightRatio={0.3} /> : null}
         <PriceScaleMenu />
       </Chart>
     </div>
@@ -101,6 +103,7 @@ createRoot(root).render(
   <Harness
     fixture={params.get("fixture") ?? "btcusdt-1m-100k"}
     runMode={params.get("runMode") === "inline" ? "inline" : "worker"}
+    panes={params.get("panes") === "2" ? 2 : 1}
     events={events}
   />,
 );
