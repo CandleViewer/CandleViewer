@@ -58,9 +58,12 @@ def test_snooze_set_then_clear_is_audited(env: Env) -> None:
         {"until": (NOW - timedelta(seconds=1)).isoformat()},
         {"until": NOW.isoformat()},
         {"until": "2099-01-01T00:00:00"},  # no offset
+        {"until": "2099-01-01T00:00"},  # no offset, no seconds
         {},
         {"until": FUTURE, "extra": 1},
         {"until": "tomorrow"},
+        {"until": "4102444800"},  # numeric string: lax pydantic would parse it as an epoch
+        {"until": "4102444800.5"},
     ],
 )
 def test_snooze_invalid_body_is_422_and_changes_nothing(env: Env, body: dict[str, object]) -> None:
@@ -79,6 +82,9 @@ def test_snooze_other_users_alert_is_404_and_denial_audited(env: Env) -> None:
     assert r.status_code == 404
     assert env.repo.rows[aid].snoozed_until is None
     assert env.audit.actions()[-1] == "alert.denied"
+    unknown_url = "/alerts/00000000-0000-4000-8000-0000000000ff/snooze"
+    unknown = env.c.put(unknown_url, json={"until": FUTURE})
+    assert unknown.status_code == 404 and unknown.json() == r.json()
 
 
 def test_snooze_unknown_alert_404(env: Env) -> None:

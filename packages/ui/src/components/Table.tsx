@@ -275,6 +275,8 @@ export interface TableProps<T> {
   readonly selected?: ReadonlySet<string> | undefined;
   /** Renders the leading select column (a CMP-005 per row and a select-all) and asks for the next selection. */
   readonly onRowSelect?: ((selected: ReadonlySet<string>) => void) | undefined;
+  /** The select column is denied (T2, RBAC): its checkboxes are disabled and carry this reason. */
+  readonly selectDisabledReason?: string | undefined;
   /**
    * Renders the trailing actions column: an IconButton "Actions for {row}" opening a CMP-041 menu of these items;
    * `Shift+F10` or the Menu key on a focused row opens the same items as a context menu at the row, and on a row with
@@ -1044,6 +1046,7 @@ export function Table<T>({
   grid = false,
   selected,
   onRowSelect,
+  selectDisabledReason,
   rowActions,
   rowLabel,
   rowWindow,
@@ -1584,6 +1587,7 @@ export function Table<T>({
       } else if (
         event.key === " " &&
         selectable &&
+        selectDisabledReason === undefined &&
         r >= 1 &&
         r <= bodyRows &&
         !cell.hasAttribute("data-cv-widget")
@@ -1622,6 +1626,9 @@ export function Table<T>({
           <Checkbox
             label={`Select ${labelOf(row)}`}
             checked={selection.has(key)}
+            {...(selectDisabledReason === undefined
+              ? {}
+              : { disabled: true, disabledReason: selectDisabledReason })}
             onChange={(on) => setRow(key, on)}
             tabIndex={tabFor(r, c)}
           />
@@ -1889,7 +1896,10 @@ export function Table<T>({
             label="Select all rows"
             checked={allOn}
             indeterminate={someOn}
-            disabled={empty}
+            disabled={empty || selectDisabledReason !== undefined}
+            {...(selectDisabledReason === undefined
+              ? {}
+              : { disabledReason: selectDisabledReason })}
             onChange={selectAll}
             tabIndex={empty ? undefined : tabFor(0, c)}
           />
