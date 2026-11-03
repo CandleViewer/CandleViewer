@@ -17,7 +17,7 @@ from jsonschema.exceptions import ValidationError
 
 from candleviewer import oms_wiring
 from candleviewer.account_health_wiring import TRACKING_FAULT_AFTER_S
-from candleviewer.accounts.verification import Refusal
+from candleviewer.accounts.verification import Refusal, refusal_rule
 from candleviewer.api._generated import openapi_models as rest
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openapi_spec
 from candleviewer.api.orders import make_orders_router
@@ -456,7 +456,8 @@ def test_20_declares_the_oms_settings_within_the_bounds_the_code_holds() -> None
 
 def test_a_refused_credential_fails_closed_for_the_process_until_a_recorded_pass() -> None:
     """Q10 and its rider: an unlisted code or none is `unknown_key`, stricter than the self-check
-    and in memory only; a recorded pass is Q10's re-read; the durable step is #4243."""
+    and in memory only; a recorded pass is Q10's re-read; the durable step, #4243, goes through
+    the stored-key self-check, survives a restart and clears by a pass or the Owner."""
     rule = _between(_INTERNAL_DOC, "**A refused credential (§8.6 `AUTH_ERROR`;", "**8.4.1 ")
     table = {int(code): why for code, why in re.findall(r"`(\d{5})` `([a-z_]+)`", rule)}
     assert {code: refusal(map_ret_code(code, "")) for code in table} == {
@@ -468,14 +469,54 @@ def test_a_refused_credential_fails_closed_for_the_process_until_a_recorded_pass
         rule,
         "a code outside it, `10004` among them, or none is `unknown_key`, fail closed",
         "stricter than the self-check, which holds a refused signature inconclusive (SR-E27-18), "
-        "because an order cannot go on with a key it has not verified, and it holds in memory only",
+        "because an order cannot go on with a key it has not verified, and for such a code, "
+        "outside the table, it holds in memory only",
         "no later order on the account is admitted in this process until a recorded pass",
         "clears it (ruling Q10's re-read)",
         "it pages the Owner",
-        "is #4243, a follow-up of #913",
+        "marking the key and disabling the account (#4243), then follows on the serving loop, "
+        "never awaited by the order lane, through the stored-key self-check's own path "
+        "(`KeySelfCheck.credential_rejected`, E27-T03), for a venue's verdict on the key only: a "
+        "report of the create whose code the table maps, and the private-stream consumer's "
+        "`auth_refused`, which carries none",
+        "A code outside the table (`10004`, a refused signature) is held in memory and paged, "
+        "never marked or disarmed",
+        "The consumer's `key_unusable` is a local secrets fault the venue never judged (§8.12), "
+        "reported with `verdict=False`: the in-memory hold and the page, never the durable "
+        "reaction",
+        "**The account is disarmed first** (C-2.8 enforcement first)",
+        "A pass or an error whose check began before the mark neither clears nor overwrites it",
+        "then that rule in `last_error_code`, the self-check's standing failure",
+        "The key's status stays as it is, never `invalid`",
+        "with the refusal as `policy_disarm_code`",
+        "The reaction itself latches nothing system-wide, but a marked key is a standing failure: "
+        "the next check of it that has no verdict, in this process or after a restart, latches "
+        "the read-only gate `FAILED` for the whole system",
+        "one account's disarm record has one sender at a time",
+        "a recorded pass of the key whose check began after the mark clears it",
+        "only the Owner re-arms the account",
+        "so the account stays refused",
+        "never a key or the venue's message (C-12.6)",
     )
+    marks = {
+        Refusal(why): rule
+        for why, rule in re.findall(r"`([a-z_]+)` to `([a-z_]+)`", rule.split("by the rule")[1])
+    }
+    assert marks == {member: refusal_rule(member).value for member in Refusal}
+    errors = _between(_INTERNAL_DOC, "### 8.6 Error mapping", "### 8.7 ")
+    assert not _missing(
+        errors,
+        'Per §8.4 "A refused credential": held in memory, paged, then disarmed through the '
+        "self-check, each usable key given its stored failure rule, never `invalid`",
+        "Per §8.4: outside the key-verdict table, so `unknown_key` held in memory and paged only, "
+        "never marked or disarmed",
+        "Same as `10003` (§8.4)",
+    )
+    assert "Mark key `invalid`" not in errors
+    stream = _between(_INTERNAL_DOC, "### 8.12 ", "## 9. ")
+    assert 'exchange_ret_code=None, verdict=reason == "auth_refused")' in stream
     gate = _between(_INTERNAL_DOC, "**8.4.1 Account checks", "### 8.5 ")
-    assert "whose durable reaction is #4243" in gate
+    assert "whose durable reaction, #4243, marks the key and disarms the account" in gate
 
 
 def test_an_algo_waits_for_its_epics_and_held_rows_are_scanned() -> None:
