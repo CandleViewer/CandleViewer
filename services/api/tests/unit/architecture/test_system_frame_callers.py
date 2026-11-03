@@ -206,24 +206,29 @@ def _names(node: ast.AST, method: str = "push_system") -> bool:
     return isinstance(node, ast.Attribute) and node.attr == method
 
 
-def _sites(source: str) -> tuple[set[str], set[str], set[str]]:
-    """(functions that build a frame on the system channel, functions that name `push_system`,
-    functions that name `_queue_system`)."""
-    built: set[str] = set()
-    named: set[str] = set()
-    queued: set[str] = set()
+def _parse(source: str) -> ast.AST:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SyntaxWarning)  # an applied migration may carry one
-        tree = ast.parse(source)
+        return ast.parse(source)
+
+
+def _queuers(source: str) -> set[str]:
+    """The functions that name `_queue_system` (#2302)."""
+    return {scope for node, scope in _scoped(_parse(source)) if _names(node, "_queue_system")}
+
+
+def _sites(source: str) -> tuple[set[str], set[str]]:
+    """(functions that build a frame on the system channel, functions that name `push_system`)."""
+    built: set[str] = set()
+    named: set[str] = set()
+    tree = _parse(source)
     names, chs = _topic_names(tree), _held(tree, set(), _is_ch)
     for node, scope in _scoped(tree):
         if _builds_frame(node, names, chs):
             built.add(scope)
         elif _names(node):
             named.add(scope)
-        elif _names(node, "_queue_system"):
-            queued.add(scope)
-    return built, named, queued
+    return built, named
 
 
 Sites = set[tuple[str, str]]
@@ -234,11 +239,12 @@ def _scan(root: Path = PKG) -> tuple[Sites, Sites, Sites]:
     named: Sites = set()
     queued: Sites = set()
     for path in root.rglob("*.py"):
-        found_built, found_named, found_queued = _sites(path.read_text(encoding="utf-8"))
+        source = path.read_text(encoding="utf-8")
+        found_built, found_named = _sites(source)
         module = path.relative_to(root).as_posix()
         built |= {(module, scope) for scope in found_built}
         named |= {(module, scope) for scope in found_named}
-        queued |= {(module, scope) for scope in found_queued}
+        queued |= {(module, scope) for scope in _queuers(source)}
     return built, named, queued
 
 
@@ -397,7 +403,7 @@ def test_a_reference_to_push_system_is_found_in_its_function(source: str, scope:
     ],
 )
 def test_a_reference_to_the_queue_is_found_in_its_function(source: str, scope: str) -> None:
-    assert _sites(source)[2] == {scope}
+    assert _queuers(source) == {scope}
 
 
 def test_the_definition_and_the_hubs_own_door_are_not_references() -> None:
