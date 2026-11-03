@@ -379,6 +379,12 @@
       "reason": "every action/result series bound at import (admin/lifecycle_metrics.py); a guard is feasible; routed to E42 (the metric catalogue names E42 as owner)"
     },
     {
+      "alert": "WsAccountScopeDenied",
+      "series": "cv_ws_subscribe_total",
+      "class": "routed",
+      "reason": "rule-file header: each account-scoped family's account_scope_denied child is bound at import (ws/permissions.py); a guard is feasible; routed to E21 (E21-X02, #652)"
+    },
+    {
       "alert": "WsAuditWriteFailed",
       "series": "cv_ws_audit_failures_total",
       "class": "routed",
@@ -413,6 +419,12 @@
       "series": "cv_ws_closes_total",
       "class": "routed",
       "reason": "rule-file header: bound at import (ws/metrics.py); routed to E17"
+    },
+    {
+      "alert": "WsSubscriptionQuotaRefusals",
+      "series": "cv_ws_subscription_quota_rejections_total",
+      "class": "routed",
+      "reason": "rule-file header: every reason bound at import (ws/quota.py); a guard is feasible; routed to E21 (E21-X02, #652)"
     },
     {
       "alert": "WsUpstreamDesyncHigh",

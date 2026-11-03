@@ -1806,8 +1806,11 @@ Ticket (warning): `WsFanoutP95OverBudget` (p95 of `cv_ws_fanout_seconds` over 20
 only with at least 40 sampled frames in the window), `WsUpstreamDesyncHigh` (more than 5
 `upstream_desync` re-snapshots in an hour: the 23 §16.3 hard-fail line, as a gateway-wide total because
 the counter has no topic label), `WsSlowConsumerClosed` (any `slow_consumer` close in 15 min),
-`WsSequenceGapDetected` (`cv_ws_sequence_gaps_detected_total` rose in 10 min) and `WsAuditWriteFailed`
-(any WS audit row not confirmed written in 15 min, `cv_ws_audit_failures_total`; SR-186, #2174). The
+`WsSequenceGapDetected` (`cv_ws_sequence_gaps_detected_total` rose in 10 min), `WsAuditWriteFailed`
+(any WS audit row not confirmed written in 15 min, `cv_ws_audit_failures_total`; SR-186, #2174), and
+E21-X02's (#652, G-08) `WsSubscriptionQuotaRefusals` (more than 10 quota refusals in every 10 min for 15
+min, `cv_ws_subscription_quota_rejections_total`) and `WsAccountScopeDenied` (any `account_scope_denied`
+in 15 min, `cv_ws_subscribe_total`, held as the any-event tickets are). The
 E17-T06 text calls the gap alert critical, but its counter moves on a client's `resync` frame, which the
 server does not verify, and a page would also hold back the others (the page-over-ticket inhibit rule
 matches on component and env, and every one shares component `gateway`); a server-side continuity

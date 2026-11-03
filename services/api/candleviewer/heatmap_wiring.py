@@ -16,13 +16,15 @@
 - **Range.** `first_available` is the oldest stored heatmap cell, book snapshot or book delta
   of either tier (BQ-3; 22 `HeatmapResponse.first_available`).
 
+The two row conversions run on the engine's bounded fold executor (`run_fold`, E21-X02), as its
+folds do, never on the loop's default executor.
+
 Only on the `real` storage backend: one lazily opened QuestDB wire and one cold reader, both
 released by `HeatmapWiring.aclose()` when the app stops.
 """
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
@@ -36,6 +38,7 @@ from candleviewer.orderflow.heatmap_history import (
     CellRow,
     CellSpan,
     HeatmapReadLimit,
+    run_fold,
 )
 from candleviewer.settings import QUESTDB_PG_DEFAULT_PORT, Settings
 from candleviewer.storage.cold.layout import DatasetRegistry
@@ -161,7 +164,7 @@ class StoredHeatmapReader:
                     got = [c for c in got if c[0] < end]
                     if not got:
                         raise HeatmapReadLimit("one native column holds more rows than a page")
-                yield CellSpan(at, end, tier, await asyncio.to_thread(_rows, got))
+                yield CellSpan(at, end, tier, await run_fold(_rows, got))
                 at = end
 
     async def book_anchor(
@@ -184,7 +187,7 @@ class StoredHeatmapReader:
         )
         if len(events) > BOOK_CHANGE_ROWS:
             raise HeatmapReadLimit("a reconstructed minute holds more deltas than one may")
-        return await asyncio.to_thread(_changes, events)
+        return await run_fold(_changes, events)
 
 
 @dataclass(frozen=True, slots=True)

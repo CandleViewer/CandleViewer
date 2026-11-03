@@ -46,7 +46,8 @@ ALERTING: dict[str, set[str]] = {
     "cv_ws_closes_total": {"WsOriginRefusalsHigh", "WsSlowConsumerClosed"},
     "cv_ws_errors_total": set(),
     "cv_ws_revoked_total": set(),
-    "cv_ws_subscribe_total": set(),
+    # WsAccountScopeDenied reads only result="account_scope_denied" (E21-X02, #652).
+    "cv_ws_subscribe_total": {"WsAccountScopeDenied"},
     # SR-125: #2612 emits the lockout and permission-denial counters and #2319 the failed-login
     # one, so their alerts can fire.
     "auth_login_failures_total": {

@@ -3124,7 +3124,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "results",
         ("topic", "result"),
         "Client WS sub results; topic label holds the topic family, plus outcome code.",
-        "denial spike",
+        "denial spike; WsAccountScopeDenied (ticket): any account_scope_denied in 15 m",
         _L,
         "E17",
         max_series=256,
@@ -3243,7 +3243,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         ("reason",),
         "WS sub entries and ctl frames the subscription quota family refused (23 section 16.2), by "
         "limit.",
-        "sustained: a client past its quota, or a quota too tight for real use",
+        "WsSubscriptionQuotaRefusals (ticket): more than 10 in every 10 m for 15 m, a client past "
+        "its quota or a quota too tight for real use",
         _L,
         "E21",
         max_series=10,  # E21-X02: the closed `ws/quota.REASONS`, each bound at import

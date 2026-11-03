@@ -20,8 +20,10 @@ from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import WARNING_CLOSES, _Connection
 from candleviewer.ws.outbound import LadderEvent
 from candleviewer.ws.sequencing import SnapshotBody
+from tests.unit.ws._seq_support import USER
 from tests.unit.ws.test_bars_share import _BARS, _bars
 from tests.unit.ws.test_bars_share import _rig as _share_rig
+from tests.unit.ws.test_lifecycle_socket import BASE_MS
 from tests.unit.ws.test_outbound import _sub
 from tests.unit.ws.test_pipeline_ladder import _attached, _bid, _structured
 from tests.unit.ws.test_pipeline_outbound import _BOOK, _DEADLINE_S, _queued, _Rig, _Wire
@@ -265,6 +267,10 @@ async def test_a_step_1_drop_logs_one_capped_warning_per_connection_per_10_s() -
         "queue_pct_after": 0.0,
         "trigger": "budget",
         "suppressed": 0,
+        # E21-X02 (G-10): who acts on the socket, the families shed and when
+        "actor_user_id": str(USER),
+        "families": ["book"],
+        "at_ms": BASE_MS,
     }
     assert second["suppressed"] == 1
 

@@ -122,3 +122,41 @@ groups:
             or a failed auth) failed, timed out, was cancelled or was abandoned
             (`cv_ws_audit_failures_total{reason}`). What it records still happened; the runbook
             says what each reason means for the row.
+
+      - alert: WsSubscriptionQuotaRefusals
+        # E21-X02 (#652, G-08): the subscription quota (23-ws-protocol.md section 16.2) went on
+        # refusing `sub` entries and `ctl` frames: more than 10 in every 10-minute window for 15
+        # minutes. A burst lasts one window and stays silent; refusals that keep coming are a
+        # client past its quota, or a quota too tight for real use (every quota value is interim).
+        # Every reason is bound at import (ws/quota.py), so the first refusal counts.
+        expr: sum by (env) (increase(cv_ws_subscription_quota_rejections_total[10m])) > 10
+        for: 15m
+        labels:
+          severity: ticket
+          component: gateway
+        annotations:
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-wssubscriptionquotarefusals"
+          summary: "The WS subscription quota kept refusing subscriptions for 15 minutes."
+          description: >-
+            More than 10 subscriptions or `ctl` frames were refused by the subscription quota in
+            every 10-minute window for 15 minutes (`cv_ws_subscription_quota_rejections_total`, by
+            reason). A client is past its quota, or a quota is too tight for real use.
+
+      - alert: WsAccountScopeDenied
+        # E21-X02 (#652, G-08): a `sub` entry was refused `account_scope_denied`: it named only
+        # accounts outside its caller's grant (23-ws-protocol.md section 6.2). Each is audited as
+        # `ws.subscribe.denied`; this makes it seen. Each account-scoped family's child is bound
+        # at import (ws/permissions.py), so the first one counts. An event, so no `for`; held past
+        # the quiet hours like the other any-event tickets (header).
+        expr: sum by (env) (increase(cv_ws_subscribe_total{result="account_scope_denied"}[15m])) > 0
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: gateway
+        annotations:
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-wsaccountscopedenied"
+          summary: "A WS subscription named an account outside its caller's grant."
+          description: >-
+            A `sub` entry was refused `account_scope_denied` (`cv_ws_subscribe_total`): every
+            account it named is outside the caller's grant. No data of those accounts was sent; the
+            `ws.subscribe.denied` audit rows name the user and the session.

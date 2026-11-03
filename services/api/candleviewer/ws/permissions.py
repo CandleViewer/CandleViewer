@@ -160,6 +160,13 @@ cv_ws_subscribe_total = Counter(
     "WS sub results; the topic label holds the topic family.",
     labelnames=("topic", "result"),
 )
+#: E21-X02 (G-08): each account-scoped family's `account_scope_denied` child exists at 0 from the
+#: start, so `WsAccountScopeDenied` (`increase()`, which needs an earlier sample) sees the first.
+_SCOPE_DENIALS: Final = {
+    name: cv_ws_subscribe_total.labels(topic=name, result="account_scope_denied")
+    for name, fam in FAMILIES.items()
+    if fam.account_scoped
+}
 cv_ws_client_topics_depth = Histogram(
     "cv_ws_client_topics_depth",
     "Subscriptions held by a connection, observed after each sub/unsub.",
