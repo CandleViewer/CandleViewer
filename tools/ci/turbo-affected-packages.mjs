@@ -14,7 +14,15 @@
 // uploading an empty manifest that would make every package N/A.
 
 import { execFileSync } from "node:child_process";
-import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  fstatSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -45,15 +53,15 @@ function main(argv) {
   const file = join(dir, "dry-run.json");
   let raw;
   try {
-    const fd = openSync(file, "w");
+    const fd = openSync(file, "wx");
     try {
       execFileSync("pnpm", ["turbo", "run", "test:cov", ...filterArgs, "--dry-run=json"], {
         stdio: ["ignore", fd, "inherit"],
         shell: process.platform === "win32",
       });
     } catch (err) {
-      const why = err.status ?? err.code ?? "unknown";
-      const bytes = readFileSync(file).length;
+      const why = err.status ?? err.signal ?? err.code ?? "unknown";
+      const bytes = fstatSync(fd).size;
       process.stderr.write(
         `turbo-affected-packages: turbo dry-run failed (${why}; ${bytes} bytes read)\n`,
       );
@@ -65,7 +73,17 @@ function main(argv) {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-  const dirs = affectedDirectories(JSON.parse(raw));
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // never the payload: a parse error would quote it (one line can be the whole dry-run)
+    process.stderr.write(
+      `turbo-affected-packages: turbo dry-run JSON invalid (${Buffer.byteLength(raw)} bytes)\n`,
+    );
+    return 1;
+  }
+  const dirs = affectedDirectories(parsed);
   writeFileSync(outFile, dirs.length ? dirs.join("\n") + "\n" : "", "utf8");
   process.stdout.write(
     `turbo-affected-packages: ${dirs.length} package(s) scheduled for test:cov -> ${outFile}\n`,

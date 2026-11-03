@@ -17,9 +17,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "tools" / "ci" / "turbo-affected-packages.mjs"
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("node") is None, reason="node not installed"
-)
+pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 
 
 def _affected(dry_run: dict[str, object]) -> list[str]:
@@ -77,10 +75,6 @@ def test_cli_without_separator_exits_2(tmp_path: Path) -> None:
     )
     assert proc.returncode == 2
     assert "usage" in proc.stderr
-
-
-if __name__ == "__main__":
-    sys.exit(pytest.main([__file__]))
 
 
 def _fake_pnpm(tmp_path: Path, body: str) -> dict[str, str]:
@@ -143,3 +137,25 @@ def test_a_failed_turbo_dry_run_prints_one_short_line_and_exits_non_zero(tmp_pat
     assert "turbo dry-run failed (3; 5011 bytes read)" in proc.stderr
     assert "x" * 100 not in proc.stdout + proc.stderr
     assert not out.exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the fake pnpm is a POSIX script")
+def test_an_invalid_dry_run_json_is_refused_without_echoing_it(tmp_path: Path) -> None:
+    # turbo exits 0 but the output is cut short: a parse error would quote the whole line.
+    env = _fake_pnpm(tmp_path, "process.stdout.write('{\"tasks\": [' + 'y'.repeat(200000));\n")
+    out = tmp_path / "affected.txt"
+    proc = subprocess.run(
+        ["node", str(SCRIPT), str(out), "--", "--filter=...[origin/main]"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert proc.returncode != 0
+    assert "turbo dry-run JSON invalid (200011 bytes)" in proc.stderr
+    assert "y" * 100 not in proc.stdout + proc.stderr
+    assert not out.exists()
+
+
+if __name__ == "__main__":
+    sys.exit(pytest.main([__file__]))
