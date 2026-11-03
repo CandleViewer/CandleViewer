@@ -1179,10 +1179,10 @@ def g_norm(t: Texts) -> list[Finding]:
     # ruling); a later "As built" note under the table (E47-S08) is not a cell
     at_d04 = git("show", f"{D04_PIN}:{NORM_REL}")
     if norm_cells(t.norm) != norm_cells(at_d04):
-        bad.append("`05` §3.2 (the locked keymap) differs from the base")
+        bad.append(f"`05` §3.2 (the locked keymap) differs from E47-D04's merge ({D04_PIN})")
     # its prose too: every line D04's merge has stays, in order; a later note may follow
     if not kept_in_order(norm_prose(at_d04), norm_prose(t.norm)):
-        bad.append("`05` §3.2's prose differs from the base")
+        bad.append(f"`05` §3.2's prose differs from E47-D04's merge ({D04_PIN})")
     return [("G-NORM", b, "norm", "") for b in bad] + (spec_bad if unowned or not mirror else [])
 
 
