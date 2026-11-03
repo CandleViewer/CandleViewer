@@ -303,8 +303,8 @@ def test_system_filter_keeps_changed_at_ms_for_a_manager(who: PrincipalSnapshot)
     view = system_view(body, who)
     assert view == _ACCOUNT | {"exchange_account_ids": [str(ACC_A)]} | timed
     assert system_view(body, OWNER) is body
-    validate(_frame(body))
-    validate(_frame(view))
+    validate({"t": "d", "ch": "system", "s": 1, "ts": 1, "e": "j", "p": body})
+    validate({"t": "d", "ch": "system", "s": 1, "ts": 1, "e": "j", "p": view})
     assert "changed_at_ms" not in _SCHEMA["required"]
 
 
