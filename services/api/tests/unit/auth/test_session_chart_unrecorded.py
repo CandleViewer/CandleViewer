@@ -7,7 +7,9 @@ already past the state it must reach, raises `SessionChartUnrecorded`, and the c
 be rebuilt from the session's row on its next use. `SessionChart.revoke` drops the chart however
 its record ends, in a bounded `try/finally`. The stale chart here is one revoked over a live row.
 A lock or a revocation already recorded is not refused: the reach check reads the chart's state
-from the receipt. Over the real B16 chart (factory, gateway, bindings) with a recording sink;
+from the receipt. The observes of a session take turns: two reads of a locked row send its lock
+once, each lock is recorded with its own moment, and a session holds an observe lock only while an
+observe of it runs. Over the real B16 chart (factory, gateway, bindings) with a recording sink;
 `LoopClock` moves the loop's clock, no network, no sleeps.
 """
 
@@ -25,6 +27,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.api.users import CHART_DROP_TIMEOUT_S
+from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.session_chart import (
     _MUST_REACH,
@@ -35,14 +38,18 @@ from candleviewer.auth.session_chart import (
     SessionChartUnrecorded,
     to_us,
 )
-from candleviewer.auth.session_service import OWNER_REVOKE_AUDIT_TIMEOUT_S
+from candleviewer.auth.session_service import (
+    OWNER_REVOKE_AUDIT_TIMEOUT_S,
+    SessionService,
+    UnlockOutcome,
+)
 from candleviewer.statechart.bindings import b16_session
 from candleviewer.statechart.config import CV_EVENT_SCHEMAS
 from candleviewer.statechart.registry import Registry
 from tests.conftest import RecordingAuditSink
 
-from .session_fakes import LoopClock
-from .test_step_up import _T0, _session, _setup
+from .session_fakes import FakeSessionRepository, LoopClock
+from .test_step_up import _T0, _Clock, _session, _setup
 
 _CATALOGUE = Path(__file__).resolve().parents[5] / "docs" / "plan" / "28-statechart-catalogue.md"
 _TICKED = re.compile(r"`([^`]+)`")
@@ -191,6 +198,93 @@ async def test_a_lock_already_recorded_is_not_refused(b16_audit: RecordingAuditS
         assert reads == [None, None]
         await chart.observe(locked, _T0)
         assert chart.in_state(sid, "idle_locked")
+        assert b16_audit.actions() == ["auth.idle_locked"]
+    finally:
+        await chart.stop()
+
+
+async def test_each_lock_is_recorded_once_with_its_own_moment(
+    monkeypatch: pytest.MonkeyPatch, b16_audit: RecordingAuditSink
+) -> None:
+    """Two reads of the locked row send its lock once; the unlock is written ahead, as
+    `POST /auth/unlock` writes it, and the chart is `active` again; the next lock is recorded
+    with its own moment. After each step the chart is locked exactly when the row is."""
+    records: list[tuple[str, int]] = []  # each record with its moment, in order
+
+    class _Locks(RecordingAuditSink):
+        async def emit(self, action: str, **kwargs: Any) -> None:
+            records.append((action, kwargs["after_state"]["idle_locked_at_us"]))
+
+    b16_session.set_audit_sink(_Locks())
+    clock, repo, chart = _Clock(), FakeSessionRepository(), SessionChart()
+    sessions = SessionService(repo, Hasher(), clock=clock)
+    sid = str((await sessions.mint(str(uuid.uuid4()))).session_id)
+    sent, send = list[int](), chart._send  # the moment of each lock sent to the chart
+
+    async def counted(session_id: str, event: str, **payload: Any) -> None:
+        if event == "IDLE_DEADLINE":
+            sent.append(payload["idle_locked_at_us"])
+        await send(session_id, event, **payload)
+
+    async def unlocking(_outcome: UnlockOutcome) -> None:  # the route's record, written ahead
+        records.append(("auth.session_unlocked", to_us(clock.now)))
+
+    async def right(_password: str) -> bool:
+        return True
+
+    async def read() -> SessionRecord:
+        found = await repo.find_by_id(sid)
+        assert found is not None
+        return found
+
+    async def in_step() -> bool:
+        """The chart is locked exactly when the row is."""
+        locked = (await read()).is_idle_locked(now=clock.now)
+        return chart.in_state(sid, "idle_locked") is locked
+
+    monkeypatch.setattr(chart, "_send", counted)
+    try:
+        start = await read()
+        await chart.record(start, clock.now, "REQUEST", replay=True)  # built from the row
+        clock.now = start.idle_deadline() + timedelta(minutes=1)
+        first = await read()
+        await asyncio.gather(chart.observe(first, clock.now), chart.observe(first, clock.now))
+        assert sent == [to_us(first.idle_deadline())]
+        assert chart.in_state(sid, "idle_locked") and await in_step()
+        clock.now += timedelta(minutes=1)
+        lifted = await sessions.unlock(sid, password="unused", check=right, write_ahead=unlocking)
+        await chart.record(
+            first, clock.now, "UNLOCK_OK", idle_expires_at_us=to_us(lifted.idle_deadline())
+        )
+        assert chart.in_state(sid, "active") and await in_step()
+        clock.now = lifted.idle_deadline() + timedelta(minutes=1)
+        second = await read()
+        await chart.observe(second, clock.now)
+        assert chart.in_state(sid, "idle_locked") and await in_step()
+    finally:
+        await chart.stop()
+    assert sent == [to_us(first.idle_deadline()), to_us(second.idle_deadline())]
+    assert records == [
+        ("auth.idle_locked", to_us(first.idle_deadline())),
+        ("auth.session_unlocked", to_us(lifted.last_seen_at)),  # the unlock re-stamps the row
+        ("auth.idle_locked", to_us(second.idle_deadline())),
+    ]
+    assert len({moment for _action, moment in records}) == 3  # each its own moment
+
+
+async def test_a_lock_sent_to_a_chart_that_recorded_it_returns_and_keeps_the_chart(
+    b16_audit: RecordingAuditSink,
+) -> None:
+    """`_send` never refuses a lock the chart has already recorded (B16.7): the step changes
+    nothing, the same chart stays in `idle_locked`, and the lock is written once."""
+    row, chart = _session(uuid.uuid4()), SessionChart()
+    sid = str(row.id)
+    locked = row.model_copy(update={"last_seen_at": _T0 - timedelta(minutes=16)})
+    try:
+        await chart.observe(locked, _T0)
+        interp = chart.interpreter(sid)
+        await chart._send(sid, "IDLE_DEADLINE", idle_locked_at_us=to_us(locked.idle_deadline()))
+        assert chart.interpreter(sid) is interp and chart.in_state(sid, "idle_locked")
         assert b16_audit.actions() == ["auth.idle_locked"]
     finally:
         await chart.stop()
@@ -522,3 +616,46 @@ async def test_a_drop_with_no_chart_cached_leaves_a_build_of_the_same_session_re
         assert b16_audit.actions() == ["auth.step_up_granted"]
     finally:
         await chart.stop()
+
+
+# -- the observe lock of a session ----------------------------------------------------------------
+
+
+async def test_a_session_has_an_observe_lock_only_while_an_observe_of_it_runs(
+    monkeypatch: pytest.MonkeyPatch, b16_audit: RecordingAuditSink
+) -> None:
+    """C-2.18: a session is in the map of observe locks only while an observe of it holds or waits
+    on its lock, however that observe ends: the lock recorded, nothing to send, a chart that
+    refused the lock and was dropped, or the observe cancelled (which goes on)."""
+    chart = SessionChart()
+    rows = [_session(uuid.uuid4()) for _ in range(4)]
+    locked = [r.model_copy(update={"last_seen_at": _T0 - timedelta(minutes=16)}) for r in rows]
+    sid, send, parked = str(rows[3].id), chart._send, asyncio.Event()
+
+    async def parks_once(session_id: str, event: str, **payload: Any) -> None:
+        if event == "IDLE_DEADLINE" and not parked.is_set():
+            parked.set()
+            await asyncio.Event().wait()  # only a cancellation ends this
+        await send(session_id, event, **payload)
+
+    try:
+        await chart.observe(locked[0], _T0)  # the lock recorded
+        await chart.observe(rows[1], _T0)  # nothing to send
+        await _stale(chart, rows[2])
+        with pytest.raises(SessionChartUnrecorded):  # refused, and the chart dropped
+            await chart.observe(locked[2], _T0)
+        assert chart._observing == {}
+        await chart.record(rows[3], _T0, "REQUEST", replay=True)  # built from the row
+        monkeypatch.setattr(chart, "_send", parks_once)
+        first = asyncio.create_task(chart.observe(locked[3], _T0))
+        waiting = asyncio.create_task(chart.observe(locked[3], _T0))
+        await asyncio.wait_for(parked.wait(), timeout=5)
+        assert list(chart._observing) == [sid] and chart._observing[sid].users == 2
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        await asyncio.wait_for(waiting, timeout=5)
+        assert chart._observing == {} and chart.in_state(sid, "idle_locked")
+    finally:
+        await chart.stop()
+    assert b16_audit.actions() == ["auth.idle_locked", "auth.session_revoked", "auth.idle_locked"]
