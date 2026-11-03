@@ -1343,7 +1343,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "blobs",
         ("reason",),
-        "State blobs discarded on restore (corrupt, too_large, version, wrong_series, ...).",
+        "State blobs discarded on restore (corrupt, too_large, version, wrong_series, ...;"
+        " write_holes = the write-hole journal, #5396).",
         "any = cold start; investigate disk (replay_refused: see the log's error_type)",
         _L,
         "E12",
@@ -1795,6 +1796,36 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _L,
         "E12",
         max_series=2,
+        exported=True,
+    ),
+    _s(
+        "bars_write_holes_dropped_total",
+        "counter",
+        "records",
+        (),
+        "Write-hole records dropped with their series past the ledger's series cap (16 384;"
+        " #5396). An under-report: those ranges are no longer listed in meta.coverage_holes.",
+        "any = served history may be missing without a marker; bars_writer DEGRADED"
+        " (bars_write_holes_dropped)",
+        _L,
+        "E12",
+        exported=True,
+    ),
+    _s(
+        "bars_write_holes_total",
+        "counter",
+        "bars",
+        ("reason",),
+        "Closed bars not stored, recorded once each as a coverage hole and served in"
+        " meta.coverage_holes until stored (reason: sink_timeout, refused, permanent,"
+        " transient_exhausted, shutdown; #5396). An upper bound once records merge: a key new to"
+        " a merged span is told apart only while it is remembered. superseded = a later write of"
+        " a stored bar not stored: a hole too, since the served row no longer matches the tape.",
+        "any = served bar history has a recorded hole (superseded: a served bar is out of date);"
+        " heal is queued (bars.write_holes)",
+        _L,
+        "E12",
+        max_series=6,
         exported=True,
     ),
     _s(

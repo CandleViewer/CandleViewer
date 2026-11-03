@@ -9,7 +9,8 @@ Backpressure policy (20 §4.2, `Bars lane → sinks`): `emit` awaits each sink i
 `timeout_s` per sink. A slow sink slows the symbol's fan-out loop and, through its `NEVER_DROP`
 bus queue, the trade publisher, but for at most `timeout_s` per emission. After that the
 emission is skipped for that sink, counted and reported as degraded health. Trades are never
-dropped. A bar row the writer misses is healed by its next amend or by a rebuild (ADR-0033).
+dropped. A closed bar the writer does not take is recorded as a coverage hole (#5396,
+`WriterSink`), served until stored and queued for heal by a rebuild (ADR-0033).
 A sink that raises is counted (`bar_emit_sink_errors_total{reason=<sink>}`) and logged; the
 other sinks still get the emission, and
 `CancelledError` is never swallowed.
@@ -27,16 +28,23 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Final, Protocol
 
 import structlog
 
+from candleviewer.bars.errors import BarsError
 from candleviewer.bars.metrics import bar_emit_sink_errors_total
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
+from candleviewer.bars.rows import bar_param_for, tape_row_checksum
+from candleviewer.bars.write_holes import HoleKey, HoleRecorder
 
 #: Per-sink emit bound (§4.2 `Bars lane → sinks` row).
 SINK_TIMEOUT_S: Final = 5.0
+#: The per-sink bound `EmitRouter.emit` is awaiting a sink under, so a sink can tell a cancellation
+#: by the bound (`expired()`) from a stop.
+_BOUND: ContextVar[asyncio.Timeout | None] = ContextVar("bars_emit_bound", default=None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,19 +73,58 @@ class WriterSink:
 
     Forming-bar `open`/`update` emissions are for the live wire only: writing one row per trade
     would multiply the QuestDB write rate by the trade rate for no reader.
+
+    #5396: an emission whose closed bars the writer does not take has them recorded in `holes`
+    before its exception propagates: reason `sink_timeout` when the router's per-sink bound
+    cancelled it, `shutdown` for any other cancellation (a stop), `refused` otherwise. `abandon`
+    records them as `shutdown` when the router is cancelled before it reaches this sink.
+    Recording is synchronous. A bar the writer took is cleared again once it is stored.
     """
 
     name = "questdb"
 
-    def __init__(self, writer: BarSubmitter) -> None:
+    def __init__(self, writer: BarSubmitter, *, holes: HoleRecorder | None = None) -> None:
         self._writer = writer
+        self._holes = holes
 
     async def emit(self, emission: BarEmission) -> None:
         closed = [u.bar for u in emission.updates if u.kind == "close"]
-        if closed:
+        if not closed:
+            return
+        try:
             await self._writer.submit(
                 closed, emission.spec, source="tape", generation=emission.generation
             )
+        except asyncio.CancelledError:
+            bound = _BOUND.get()  # the router's per-sink bound, when it is what cancelled
+            reason = "sink_timeout" if bound is not None and bound.expired() else "shutdown"
+            self._note_unstored(closed, emission, reason)
+            raise
+        except Exception:
+            self._note_unstored(closed, emission, "refused")
+            raise
+
+    def abandon(self, emission: BarEmission) -> None:
+        """The router was cancelled before this sink got `emission`: its closed bars are holes."""
+        closed = [u.bar for u in emission.updates if u.kind == "close"]
+        if closed:
+            self._note_unstored(closed, emission, "shutdown")
+
+    # Not `_record`: the event-coverage lint keys on bare names and misreads it (#4730).
+    def _note_unstored(self, closed: list[Bar], emission: BarEmission, reason: str) -> None:
+        if self._holes is None:
+            return
+        spec, gen = emission.spec, emission.generation
+        try:
+            param = bar_param_for(spec)
+        except BarsError:  # a spec with no stored form: its key still names the series
+            param = ""
+        keys = [
+            HoleKey(b.symbol, spec.spec_hash, spec.kind, param, gen, b.index, b.open_time,
+                    b.close_time + 1, tape_row_checksum(b, spec, gen))
+            for b in closed if not b.synthetic
+        ]  # fmt: skip
+        self._holes.lost(keys, reason)
 
 
 class EmitRouter:
@@ -85,7 +132,12 @@ class EmitRouter:
     is skipped for that emission, counted as `bar_emit_sink_errors_total{reason=<sink>_timeout}`
     and logged, and `timed_out` turns on (sticky; `BarBuilderSet` reports it as DEGRADED).
     The bound protects the trade publisher: without it, one hung sink would stall the lane,
-    then the lane's `NEVER_DROP` queue, then every publisher of the symbol's trades."""
+    then the lane's `NEVER_DROP` queue, then every publisher of the symbol's trades.
+
+    A cancellation of `emit` itself (a stop of the lane or the ticker) propagates, never
+    swallowed; first every sink the emission has not reached yet that has a synchronous
+    `abandon(emission)` hook gets it, so `WriterSink` records the closed bars it will not get
+    (#5396). A hook that raises is logged and the others still run."""
 
     def __init__(self, sinks: Sequence[BarSink], *, timeout_s: float = SINK_TIMEOUT_S) -> None:
         self._sinks = tuple(sinks)
@@ -94,10 +146,17 @@ class EmitRouter:
 
     async def emit(self, spec: BarSpec, updates: Sequence[BarUpdate], generation: int) -> None:
         emission = BarEmission(spec, generation, updates)
-        for sink in self._sinks:
+        for n, sink in enumerate(self._sinks):
             try:
-                async with asyncio.timeout(self._timeout_s):
-                    await sink.emit(emission)
+                async with asyncio.timeout(self._timeout_s) as bound:
+                    token = _BOUND.set(bound)
+                    try:
+                        await sink.emit(emission)
+                    finally:
+                        _BOUND.reset(token)
+            except asyncio.CancelledError:  # not the bound: `asyncio.timeout` raises TimeoutError
+                _abandon(self._sinks[n + 1 :], emission)
+                raise
             except TimeoutError:
                 self.timed_out = True
                 bar_emit_sink_errors_total.labels(reason=f"{sink.name}_timeout").inc()
@@ -112,3 +171,17 @@ class EmitRouter:
                     spec_hash=spec.spec_hash,
                     error_type=type(exc).__name__,
                 )
+
+
+def _abandon(sinks: Sequence[BarSink], emission: BarEmission) -> None:
+    """Hand `emission` to the `abandon` hook of every sink in `sinks` that has one."""
+    for sink in sinks:
+        hook = getattr(sink, "abandon", None)
+        if hook is None:
+            continue
+        try:
+            hook(emission)
+        except Exception as exc:  # the other sinks' hooks still run
+            structlog.get_logger(__name__).error(
+                "bars_emit_abandon_failed", sink=sink.name, error_type=type(exc).__name__
+            )

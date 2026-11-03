@@ -59,17 +59,25 @@ from candleviewer.api.market_response import (
     decode_cursor,
     encode_cursor,
     kline_response,
+    merge_coverage_holes,
     problem,
 )
 from candleviewer.api.market_time import ts_us
+from candleviewer.bars.errors import BarsError
 from candleviewer.bars.limits import DEFAULT_LIMIT, MAX_LIMIT, MAX_TIME_WINDOW_US, QUERY_TIMEOUT_S
 from candleviewer.bars.metrics import record_page
+from candleviewer.bars.spec import from_wire
+from candleviewer.bars.write_holes import Present, WriteHoleLedger
 from candleviewer.ingestion.kline_coverage import CoverageIndex, Range
 from candleviewer.ingestion.kline_read import SOURCE_HOT, KlineReadService
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.models import TierHint, TimeRange
 
 _REQUIRED_PERMISSION = "marketdata:read"
+#: Row sources that are exchange klines (QuestDB `klines.source`: `ws`, `rest`; a `bars_time`
+#: kline row: `kline`). Only these fill a write hole whatever its version; any other row, one with
+#: no `source` included, is read as tape-built and compared by version (fail closed).
+_EXCHANGE_KLINE_SOURCES = frozenset({"ws", "rest", "kline"})
 
 #: `price_type` values the contract enumerates; only `trade` klines are stored today (the
 #: mark/index/premium-index kline streams are not ingested), so the others are refused 422.
@@ -253,6 +261,7 @@ def make_market_router(
     read_service_provider: Callable[[], KlineReadService | None] | None = None,
     symbol_listed: Callable[[str], bool] | None = None,
     now_us: Callable[[], int] = _wall_now_us,
+    write_holes: WriteHoleLedger | None = None,
 ) -> APIRouter:
     """Bind `GET /market/klines` to a concrete cache reader.
 
@@ -292,6 +301,12 @@ def make_market_router(
     asking for `limit + 1` rows (22-api paging rule, #2087 A1/A4). The window is bounded at
     `now_us()` (#3808): its part after now is never read or backfilled and is reported in
     `meta.coverage_holes` (the cache has no bars for it yet), so no new refusal is added.
+
+    #5396 (24 §19.81): `write_holes` adds the time series' closed bars not stored
+    (`bars.write_holes`) to `meta.coverage_holes`, inside the page's span and only where the page
+    serves no bar that suppresses it there (`_write_holes`: a tape-built row only when it is the
+    version lost, an exchange kline always); the list is joined and bounded by
+    `market_response.merge_coverage_holes`.
 
     S3 (#2087 security review): FastAPI parses and validates query parameters before this
     handler, so an unauthenticated caller can see a 400/422 schema error before the 401. Those
@@ -490,11 +505,13 @@ def make_market_router(
         more = len(bars) > limit or slice_start < end_us
         bars.truncate(limit)
         next_cursor: str | None = None
+        page_end = slice_start  # where the next page starts
         if more:
             resume = bars.last_ts_us() + width if len(bars) == limit else slice_start
             if grid is not None:
                 resume = -(-resume // grid) * grid  # round up onto the bar grid
             next_cursor = encode_cursor(cursor_scope("klines", symbol, interval), resume)
+            page_end = min(resume, slice_start)
         rng = Range(start_us, slice_start)
 
         holes: list[dict[str, int]] = []
@@ -508,6 +525,8 @@ def make_market_router(
                 holes[-1]["end_us"] = requested_end_us
             else:
                 holes.append({"start_us": tail_start, "end_us": requested_end_us})
+        lost = _write_holes(write_holes, symbol, interval, width, start_us, page_end, bars)
+        holes = merge_coverage_holes(holes, lost)
         served = sources if len(bars) else []  # a tier is claimed only when its bars are served
         record_page("klines", len(bars), list(served))
         meta = build_meta(
@@ -521,6 +540,30 @@ def make_market_router(
         )  # fmt: skip
 
     return router
+
+
+def _write_holes(
+    ledger: WriteHoleLedger | None, symbol: str, interval: str, width: int, start_us: int,
+    end_us: int, bars: BarSegments,
+) -> list[tuple[int, int]]:  # fmt: skip
+    """The time series' closed bars not stored inside `[start_us, end_us)`, minus the bars
+    `bars` serves there: a tape-built row only when it is the version lost, an exchange kline
+    always; none for an interval with no tape-built series. A cold-tier page
+    (emitted JSON) exposes no open times, so a hole under it is listed even when that page serves
+    a bar there: an over-report, never a range left out."""
+    if ledger is None:
+        return []
+    try:
+        spec = from_wire("time", interval)
+    except BarsError:
+        return []
+    served = [
+        # a tape-built row is served as the version its checksum names; any other row (an
+        # exchange kline) fills the interval whatever the tape built
+        Present(None, None, t, t + width, checksum, trusted=source in _EXCHANGE_KLINE_SOURCES)
+        for t, source, checksum in bars.row_versions()
+    ]
+    return ledger.holes_for(symbol, spec.spec_hash, start_us, end_us, served)
 
 
 __all__ = [

@@ -1710,8 +1710,10 @@ def create_app(
     )
     # #2487: quarantined, or the symbol's tape past the watchdog's trade limit (§6, §7.2).
     stale = series_stale(ctx, app.state.bars_runtime.builder_set.quarantined)
+    # #5396: closed bars not stored (a real sink only) reach REST and WS reads as coverage holes.
+    write_holes = app.state.bars_runtime.holes
     snapshot_adapters["bars"] = BarsSnapshotSource(
-        bars_series, scales, seed=publisher.note_generation, stale=stale
+        bars_series, scales, seed=publisher.note_generation, stale=stale, holes=write_holes
     )
     snapshot_adapters["indicators"] = IndicatorsSnapshotSource(indicators, stale=stale)
     if bars_reader is not None and ctx.ingestion.klines is not None:
@@ -3288,6 +3290,7 @@ def create_app(
             read_service_provider=lambda: ctx.ingestion.klines,
             # SR-E12-08: only catalogue-listed, trading symbols may start a backfill.
             symbol_listed=lambda sym: _catalogue_listed(ctx, sym),
+            write_holes=write_holes,
         )
     )
     # E12-T05: `/market/bars` over `bars_*` (503 until a real QuestDB reader is composed).
@@ -3300,6 +3303,7 @@ def create_app(
             symbol_listed=lambda sym: _catalogue_listed(ctx, sym),
             qty_step=lambda sym: _catalogue_qty_step(ctx, sym),  # SR-E12-03 volume/delta floor
             now_us=lambda: time.time_ns() // 1000,
+            write_holes=write_holes,
         )
     )
     # E16-T04: `/market/data-coverage` (503 until a CoverageService is composed).

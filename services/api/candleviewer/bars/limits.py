@@ -78,12 +78,20 @@ QTY_PARAM_MAX: Final = 10**12
 #: (BR-29: a smaller threshold emits about one bar per print). Per symbol, so it is applied by
 #: `bars.spec.check_param_bounds` once the catalogue supplies the step.
 QTY_PARAM_MIN_STEPS: Final = 10
+#: #5396: the most `meta.coverage_holes` entries one response carries (22 `DataMeta`, 23 §13
+#: `snapMeta`, 24 §19.81). Past it the oldest entries are joined into one span, which can cover
+#: bars that are served (over-report), never fewer. A WS snapshot's `meta` is bounded at 1024 bytes
+#: of JSON (23 §6.1), so the WS bound is lower: 12 entries at 19-digit values stay under it.
+MAX_COVERAGE_HOLES: Final = 64
+MAX_COVERAGE_HOLES_WS: Final = 12
 
 __all__ = [
     "DEFAULT_LIMIT",
     "HEAL_REFRESH_MARGIN_S",
     "MAX_BRICKS_PER_TRADE",
     "MAX_CONCURRENT_TAIL_READS",
+    "MAX_COVERAGE_HOLES",
+    "MAX_COVERAGE_HOLES_WS",
     "MAX_LIMIT",
     "MAX_NON_TIME_WINDOW_US",
     "MAX_REVERSAL_BRICKS",

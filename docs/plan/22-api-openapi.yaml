@@ -18760,7 +18760,16 @@ components:
                 instead of silently pretending the exchange was consulted). On
                 `/market/bars` and `/market/klines` a range of the window the server cannot
                 serve from its store is listed here too, so a missing range is named, never
-                silently absent (#5396).
+                silently absent (#5396): a closed bar the server did not store is listed, within
+                the page's span, until the version lost is stored, and never where the page serves
+                that very version, a tape-built row whose row checksum is the lost one's (another
+                version served there, such as an earlier one, is no substitute, and a bar whose
+                lost version is unknown stays listed). On `/market/klines` an exchange kline served
+                at that open time fills the interval whatever the tape built there, so the bar is
+                not listed; a range under a page served from the cold tier stays listed. Sorted,
+                overlapping and touching ranges joined, at most 64 entries: past that the oldest
+                ranges are joined into one, which may cover served bars (a range is never left
+                out).
               items:
                 type: object
                 required: [start_us, end_us]

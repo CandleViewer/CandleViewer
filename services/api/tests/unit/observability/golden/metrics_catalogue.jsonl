@@ -77,6 +77,8 @@
 ["bars_tail_scan_bounded_total", "counter", ["kind"], "live", "E12"]
 ["bars_tape_read_degraded_total", "counter", ["reason"], "live", "E12"]
 ["bars_write_failed_total", "counter", ["reason"], "live", "E12"]
+["bars_write_holes_dropped_total", "counter", [], "live", "E12"]
+["bars_write_holes_total", "counter", ["reason"], "live", "E12"]
 ["bars_write_latency_seconds", "histogram", [], "live", "E12"]
 ["bars_write_queue_depth", "gauge", [], "live", "E12"]
 ["bars_write_roundtrip_mismatch_total", "counter", [], "live", "E12"]

@@ -44,6 +44,10 @@ LEGACY_ENVELOPE_VERSION: Final = 1
 MAX_BLOB_BYTES: Final = 8 * 1024 * 1024
 _SYMBOL: Final = re.compile(r"^[A-Z0-9]{4,20}$")
 _HASH: Final = re.compile(r"^[0-9a-f]{64}$")
+#: The patterns a series' `symbol` and `spec_hash` must match before they reach a path or a
+#: journal (SR-E12-12); `bars.write_holes` validates its journal with them.
+SYMBOL_PATTERN: Final = _SYMBOL
+SPEC_HASH_PATTERN: Final = _HASH
 
 
 @dataclass(frozen=True, slots=True)

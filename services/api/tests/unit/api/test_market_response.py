@@ -101,6 +101,25 @@ def test_limits_are_the_threat_model_numbers() -> None:
     assert limits.MAX_BRICKS_PER_TRADE == 1_000
     assert limits.MAX_TAIL == 1_000  # SR-E12-07: the WS `bars` `history` maximum
     assert limits.MAX_TAIL_SCAN_ROWS == 500_000  # SR-E12-02: the WS tail read's table-row bound
+    assert limits.MAX_COVERAGE_HOLES == 64  # #5396: `meta.coverage_holes` entries per response
+    assert limits.MAX_COVERAGE_HOLES_WS == 12  # within the WS snapshot meta's 1024 bytes
+
+
+def test_merge_coverage_holes_joins_sources_and_caps_without_dropping_coverage() -> None:
+    """#5396: dicts and pairs merge, sorted, overlapping and touching ranges joined, empty ranges
+    dropped; past the cap the oldest join into one range."""
+    merged = mr.merge_coverage_holes(
+        [{"start_us": 10, "end_us": 20}, {"start_us": 50, "end_us": 50}], [(20, 30), (40, 45)]
+    )
+    assert merged == [{"start_us": 10, "end_us": 30}, {"start_us": 40, "end_us": 45}]
+    many = [(i * 10, i * 10 + 1) for i in range(70)]
+    capped = mr.merge_coverage_holes(many)
+    assert len(capped) == limits.MAX_COVERAGE_HOLES
+    assert capped[0] == {"start_us": 0, "end_us": 61} and capped[-1]["end_us"] == 691
+    assert mr.merge_coverage_holes(many, limit=2) == [
+        {"start_us": 0, "end_us": 681}, {"start_us": 690, "end_us": 691}
+    ]  # fmt: skip
+    assert mr.merge_coverage_holes() == []
 
 
 def test_decode_cursor_rejects_position_before_from() -> None:

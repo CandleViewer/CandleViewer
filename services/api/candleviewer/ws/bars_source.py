@@ -9,7 +9,16 @@ reads no storage itself.
   left pending is rebuilt on every emission, so `ws_bars_snapshot_{refused,structured}` are each
   logged once per channel until a build of it succeeds (a memory reset at `MAX_SERIES` entries).
 - **`meta`.** `spec_hash`, `build_version` (the lowest among the bars sent, else the running
-  `BUILD_VERSIONS[kind]`) and the `include_delta` echo.
+  `BUILD_VERSIONS[kind]`) and the `include_delta` echo. `coverage_holes` (#5396, 23 §13): the
+  closed bars not stored (`bars.write_holes`) from the oldest bar sent on, minus the bars sent
+  that are the version lost, at most `MAX_COVERAGE_HOLES_WS` entries; absent when there is none
+  or no bar is sent. A bar held is not trusted for being in memory: a read hydrates the stored
+  row, an earlier version than an amend whose write was lost (#5432 review). It suppresses a
+  record only when the `row_checksum` the writer stores for it (`rows.tape_row_checksum`, the
+  value the ledger keeps for the version lost) is equal, the rule REST applies to a tape-built
+  row; a version the ledger does not know suppresses nothing. Checksums are computed only for
+  the bars that open inside a recorded span, so a series with no record pays one lookup. It
+  rides in `meta`, so it is on every chunk and in either encoding.
 - **Encodings.** Only the form the subscription receives is built. Binary: kind-4 frames at the
   `covering_scales` of the bars sent (no bars: one empty frame). The whole snapshot goes structured
   when the instrument scales are unknown or a value does not fit kind 4 (§3.4's trigger, logged).
@@ -19,7 +28,8 @@ reads no storage itself.
   then counts the topic and the snapshot carries `meta.stale: true` (#3202): `SnapshotBody`
   derives the key from the flag, so it is the same in either encoding and in every chunk, where
   `BarsBatch` (§14.3) has no field and kind 4 no flag for it. `generation` is negated meanwhile,
-  so the render cache refreshes when the flag flips.
+  so the render cache refreshes when the flag flips. A change of the series' holes adds its
+  revision above bit 32 (`generation`), so the cache refreshes then too.
 - **Generation.** `generation` is the store's `version`, so the render cache refreshes on every
   change; `continuity` is False (§7.6). A build hands the generation it sent to `seed`
   (`BarsPublisher.note_generation`): it seeds an unseen series, and a baseline or seed in another
@@ -28,6 +38,7 @@ reads no storage itself.
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections.abc import Callable
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
@@ -35,11 +46,13 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from candleviewer.bars.errors import BarsError
+from candleviewer.bars.limits import MAX_COVERAGE_HOLES_WS
 from candleviewer.bars.metrics import bars_subscribe_snapshot_total, history_bucket
 from candleviewer.bars.models import Bar, BarSpec
-from candleviewer.bars.rows import BUILD_VERSIONS
+from candleviewer.bars.rows import BUILD_VERSIONS, tape_row_checksum
 from candleviewer.bars.series_store import MAX_SERIES, SeriesStore
 from candleviewer.bars.spec import WireBarType, from_wire, to_wire
+from candleviewer.bars.write_holes import Present, WriteHoleLedger, cap_spans
 from candleviewer.ws.bars_publish import Scales
 from candleviewer.ws.bars_wire import bar_item, bars_frames, covering_scales
 from candleviewer.ws.binary import BARS, Frame, FrameEncodeError
@@ -54,6 +67,8 @@ Seed = Callable[[str, BarSpec, int], None]
 #: `(symbol, spec_hash) -> bool`: `ws_wiring.series_stale` (quarantined, or the tape stalled).
 Stale = Callable[[str, str], bool]
 Item = dict[str, Any]
+#: The open end of a snapshot's span: it covers its oldest bar up to the live edge.
+_LIVE_EDGE_US = 2**62
 
 
 def _log() -> Any:
@@ -74,14 +89,36 @@ def _series(sub: Subscription) -> tuple[str, BarSpec, WireBarType, str] | None:
     return t.symbol, spec, bar_type, param
 
 
+def _coverage_holes(
+    ledger: WriteHoleLedger, symbol: str, spec: BarSpec, generation: int | None, bars: list[Bar]
+) -> list[tuple[int, int]]:
+    """The recorded holes from `bars[0]` on, minus the bars sent that are the version lost
+    (module docstring). A series with no record costs one lookup; checksums are computed
+    only for the bars that open inside a recorded span."""
+    recorded = ledger.holes_for(symbol, spec.spec_hash, bars[0].open_time, _LIVE_EDGE_US, ())
+    if not recorded or generation is None:
+        return recorded  # no generation named: no bar's version can be told
+    starts = [a for a, _ in recorded]
+    present = [
+        Present(generation, b.index, b.open_time, b.close_time + 1,
+                tape_row_checksum(b, spec, generation))
+        for b in bars
+        if (n := bisect_right(starts, b.open_time)) and b.open_time < recorded[n - 1][1]
+    ]  # fmt: skip
+    if not present:
+        return recorded
+    return ledger.holes_for(symbol, spec.spec_hash, bars[0].open_time, _LIVE_EDGE_US, present)
+
+
 class BarsSnapshotSource:
     """The `SnapshotSource` described in the module docstring."""
 
     def __init__(
         self, store: SeriesStore, scales: Scales, *, seed: Seed | None = None,
-        stale: Stale | None = None,
+        stale: Stale | None = None, holes: WriteHoleLedger | None = None,
     ) -> None:  # fmt: skip
         self._store, self._scales, self._seed, self._stale = store, scales, seed, stale
+        self._holes = holes
         self._logged: set[tuple[str, str]] = set()  # (ch, what) logged: module docstring
 
     def build(self, sub: Subscription) -> SnapshotBody | None:
@@ -99,7 +136,13 @@ class BarsSnapshotSource:
         gen = 0 if latest.generation is None else latest.generation  # None: no bar held yet
         flow = sub.effective.get("include_delta") is True
         build = BUILD_VERSIONS[spec.kind] if latest.oldest_build is None else latest.oldest_build
-        meta = {"spec_hash": spec.spec_hash, "build_version": build, "include_delta": flow}
+        meta: Item = {"spec_hash": spec.spec_hash, "build_version": build, "include_delta": flow}
+        if self._holes is not None and bars:
+            spans = _coverage_holes(self._holes, symbol, spec, latest.generation, bars)
+            if spans:  # a list built per build, never changed after: the cache shares it
+                meta["coverage_holes"] = [
+                    {"start_us": a, "end_us": b} for a, b in cap_spans(spans, MAX_COVERAGE_HOLES_WS)
+                ]
         head = {"symbol": symbol, "bar_type": bar_type, "param": param, "bars": []}
         body = None
         if sub.effective.get("encoding") == "binary":
@@ -153,7 +196,10 @@ class BarsSnapshotSource:
         series = _series(sub)
         if series is None:
             return 0
-        version = self._store.version(series[0], series[1].spec_hash)
+        symbol, spec_hash = series[0], series[1].spec_hash
+        version = self._store.version(symbol, spec_hash)
+        if self._holes is not None:  # 0 while the series never had a hole
+            version += self._holes.revision(symbol, spec_hash) << 32
         return -version if self._quarantined(series[0], series[1]) else version
 
     def continuity(self, sub: Subscription, from_ts_ms: int | None) -> bool:

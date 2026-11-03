@@ -20,6 +20,7 @@ No import of `candleviewer.storage` (C-3.1): the row dicts go to any sink with I
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from decimal import Decimal
 from typing import Final
 
@@ -136,6 +137,24 @@ def check_generation(generation: object, *, source: str) -> None:
 
 def bar_row(bar: Bar, spec: BarSpec, *, source: str = "tape", generation: int) -> dict[str, object]:
     """One ILP-ready row (designated timestamp `ts` = bar open, µs). Raises on synthetic bars."""
+    return _row(bar, spec, source, generation, to_price_double)
+
+
+def tape_row_checksum(bar: Bar, spec: BarSpec, generation: int) -> int | None:
+    """The `row_checksum` the writer stores for `bar` as a tape row of `generation`: the version
+    `bars.write_holes` compares (#5396). None when the bar has no stored form. It counts no
+    `bars_write_roundtrip_mismatch_total`: nothing is written."""
+    try:
+        value = _row(bar, spec, "tape", generation, to_double)["row_checksum"]
+    except (BarsError, ValueError):
+        return None
+    return int(str(value))
+
+
+def _row(
+    bar: Bar, spec: BarSpec, source: str, generation: int, price: Callable[[Decimal], float]
+) -> dict[str, object]:
+    """`bar_row`, with `price` turning an OHLC price into its column (both give the same value)."""
     assert_persistable(bar)
     if source not in SOURCES:
         raise BarPersistError(f"The source '{source}' is not one of {', '.join(SOURCES)}.")
@@ -146,10 +165,10 @@ def bar_row(bar: Bar, spec: BarSpec, *, source: str = "tape", generation: int) -
         "close_ts": bar.close_time,
         "symbol": bar.symbol,
         "bar_param": bar_param_for(spec),
-        "open": to_price_double(bar.open),
-        "high": to_price_double(bar.high),
-        "low": to_price_double(bar.low),
-        "close": to_price_double(bar.close),
+        "open": price(bar.open),
+        "high": price(bar.high),
+        "low": price(bar.low),
+        "close": price(bar.close),
         "volume": to_double(bar.volume),
         "buy_volume": to_double(bar.buy_volume),
         "sell_volume": to_double(bar.sell_volume),

@@ -12,6 +12,11 @@ permanently failed or exhausted table batch ARE dropped; they are counted by row
 Producers never lose rows to a full buffer (`submit()` awaits).
 `stop(timeout_s)` is bounded (mirrors IlpWriter's 30 s contract) and returns the remaining count.
 BR-34: a *new* spec is refused (`BarBufferFull`) while the buffer is saturated.
+
+#5396: with a `holes` recorder (`bars.write_holes.WriteHoleLedger`) every row reaches it at its
+terminal outcome, once: stored (`written`), or not stored (`lost`, reason `permanent`,
+`transient_exhausted`, or `shutdown` for the rows queued or in flight when `stop` ends). Each
+queue entry carries its series' `spec_hash` for that.
 """
 
 from __future__ import annotations
@@ -36,6 +41,7 @@ from candleviewer.bars.rows import (
     check_generation,
     table_for,
 )
+from candleviewer.bars.write_holes import HoleKey, HoleRecorder, hole_key_for_row
 from candleviewer.observability.context import spawn
 from candleviewer.observability.metrics import Counter, Gauge, Histogram
 
@@ -98,6 +104,15 @@ class BarBufferFull(BarsError):
     """BR-34: the write buffer is saturated; a new spec is refused (existing series still wait)."""
 
 
+#: One queued row: its table, its series' `spec_hash` and the row.
+_Entry = tuple[str, str, dict[str, object]]
+
+
+def _key(entry: _Entry) -> HoleKey:
+    table, spec_hash, row = entry
+    return hole_key_for_row(row, spec_hash, table.removeprefix("bars_"))
+
+
 class RowSink(Protocol):
     async def write_rows(
         self, table: str, rows: list[dict[str, object]], ts_us_key: str
@@ -114,16 +129,18 @@ class BarWriter:
         refuse_new_specs_at: float = 0.9,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         is_permanent: Callable[[Exception], bool] = default_is_permanent,
+        holes: HoleRecorder | None = None,
     ) -> None:
         if max_buffered < 1 or batch_rows < 1:
             raise ValueError("max_buffered and batch_rows must be >= 1")
         self._sink = sink
-        self._queue: asyncio.Queue[tuple[str, dict[str, object]]] = asyncio.Queue(max_buffered)
+        self._queue: asyncio.Queue[_Entry] = asyncio.Queue(max_buffered)
         self._batch_rows = batch_rows
         self._sleep = sleep
         self._is_permanent = is_permanent
         self.last_error: BarWritePermanentError | None = None
-        self._inflight_rows = 0
+        self._inflight: list[_Entry] = []
+        self._holes = holes
         self.degraded = False
         self._refuse_at = max(1, int(max_buffered * refuse_new_specs_at))
         self._params: dict[str, set[str]] = {}
@@ -225,29 +242,44 @@ class BarWriter:
             if self._queue.full():
                 bars_write_saturation_total.inc()
                 _log().warning("bars_write_saturated", depth=self._queue.qsize(), table=table)
-            await self._queue.put((table, row))  # awaits space - never discards
+            await self._queue.put((table, spec.spec_hash, row))  # awaits space - never discards
             # BR-34 (#2294): per row, so a stalled sink shows while its producers wait.
             bars_write_queue_depth.set(self._queue.qsize())
 
     async def _drain(self) -> None:
         while True:
-            table, row = await self._queue.get()
-            batch = {table: [row]}
+            first = await self._queue.get()
+            batch = {first[0]: [first]}
             while sum(map(len, batch.values())) < self._batch_rows and not self._queue.empty():
-                t, r = self._queue.get_nowait()
-                batch.setdefault(t, []).append(r)
-            self._inflight_rows = sum(map(len, batch.values()))
+                entry = self._queue.get_nowait()
+                batch.setdefault(entry[0], []).append(entry)
+            self._inflight = [e for entries in batch.values() for e in entries]
             try:
-                for tbl, rows in batch.items():
-                    await self._write_one(tbl, rows)
+                for tbl, entries in batch.items():
+                    await self._write_one(tbl, entries)
             finally:
-                for _ in range(self._inflight_rows):
+                for _ in range(len(self._inflight)):
                     self._queue.task_done()
-                self._inflight_rows = 0
+                self._inflight = []
                 bars_write_queue_depth.set(self._queue.qsize())
 
-    async def _write_one(self, table: str, rows: list[dict[str, object]]) -> None:
+    def _outcome(self, entries: list[_Entry], reason: str | None) -> None:
+        """Hand `entries`' terminal outcome to the hole recorder: stored when `reason` is None.
+        A recorder that raises is logged and never stops the drain."""
+        if self._holes is None or not entries:
+            return
+        try:
+            keys = [_key(e) for e in entries]
+            if reason is None:
+                self._holes.written(keys)
+            else:
+                self._holes.lost(keys, reason)
+        except Exception as exc:  # the drain goes on; a cancellation is never caught here
+            _log().error("bars_write_holes_outcome_failed", error=type(exc).__name__)
+
+    async def _write_one(self, table: str, entries: list[_Entry]) -> None:
         """One table batch, in order: retry transient errors (bounded), never reorder."""
+        rows = [row for _, _, row in entries]
         for attempt in range(1, MAX_ATTEMPTS + 1):
             started = time.monotonic()
             try:
@@ -262,11 +294,13 @@ class BarWriter:
                     _log().error(
                         "bars_write_permanent_failure", table=table, error=type(exc).__name__
                     )
+                    self._outcome(entries, "permanent")
                     return
                 if attempt == MAX_ATTEMPTS:
                     bars_write_failed_total.labels("transient_exhausted").inc(len(rows))
                     self.degraded = True
                     _log().error("bars_write_exhausted", table=table, rows=len(rows))
+                    self._outcome(entries, "transient_exhausted")
                     return
                 await self._sleep(min(BACKOFF_MAX_S, BACKOFF_BASE_S * 2 ** (attempt - 1)))
                 continue
@@ -274,18 +308,25 @@ class BarWriter:
                 self.degraded = False
             bars_write_latency_seconds.observe(time.monotonic() - started)
             bars_rows_written_total.labels(table.removeprefix("bars_")).inc(len(rows))
+            self._outcome(entries, None)
             return
 
     async def stop(self, timeout_s: float | None = DEFAULT_STOP_TIMEOUT_S) -> int:
-        """Drain within `timeout_s`; return the number of rows NOT written (0 = clean)."""
+        """Drain within `timeout_s`; return the number of rows NOT written (0 = clean). The rows
+        still queued or in flight then reach the hole recorder as `shutdown`."""
         try:
             async with asyncio.timeout(timeout_s):
                 await self._queue.join()
         except TimeoutError:
             _log().error("bars_writer_stop_timeout", remaining=self._queue.qsize())
-        remaining = self._queue.qsize() + self._inflight_rows
+        left = list(self._inflight)
         if self._task is not None:
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
             self._task = None
-        return remaining
+        while not self._queue.empty():
+            left.append(self._queue.get_nowait())
+            self._queue.task_done()
+        bars_write_queue_depth.set(0)
+        self._outcome(left, "shutdown")
+        return len(left)
