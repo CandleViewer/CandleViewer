@@ -362,11 +362,10 @@ export const PAIRS = [
   // rule and the rows' border.subtle hairline are decorative, as CMP-049's own header rule is.
   { fg: "color.text.tertiary", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
 
-  // --- Fills tab and SCR-078 atoms (E29-D04 §2.3, §2.8.9, §2.9; CMP-011 toggle, CMP-116, CMP-099) --------------
-  // The toggle chip's rest label, and its pressed ring on a toolbar on surface.canvas; label-on-fill.json's `selected`
-  // role holds the pressed fill, its label and the ring against the other surfaces. CMP-116's provisional tag
-  // (text.primary on status.info.subtle) and CMP-099's CMP-001 buttons are registered above or there. All of them are
-  // held per theme in packages/ui/test/contrast/blotter-pairs.test.ts.
+  // --- CMP-011's toggle chip, the Fills tab's Type chips (E29-D04 §2.9; E29-S04) ---------------------------------
+  // Its rest label, and its pressed ring on a toolbar on surface.canvas. label-on-fill.json holds the rest: its
+  // `selected` role the pressed fill, its label and the ring against the other surfaces, and its `secondary` role the
+  // hover fill under its label. packages/ui/test/contrast/blotter-pairs.test.ts holds the toggle's pairs per theme.
   { fg: "color.text.secondary", bg: "color.neutral.subtle", threshold: THRESHOLD.TEXT },
   { fg: "color.border.selected", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
 

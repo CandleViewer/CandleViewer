@@ -34,6 +34,7 @@ import {
   SystemHealthTile,
   Table,
   Tabs,
+  Tag,
   TextInput,
   Toast,
   Toggle,
@@ -44,7 +45,6 @@ import {
   FreshnessMarker,
   PositionsGrid,
   PrintExportBar,
-  Tag,
   WatchlistGroupTabs,
   WatchlistRow,
   watchlistColumns,
@@ -95,6 +95,8 @@ const atoms: [string, () => JSX.Element][] = [
     "CMP-010",
     () => <Slider aria-label="Level" value={1} min={0} max={5} step={1} onChange={noop} />,
   ],
+  // E29-S04's toggle chip: a button, itself the root that carries CMP-011.
+  ["CMP-011", () => <Tag variant="toggle" label="Trade" pressed onPressedChange={noop} />],
   [
     "CMP-040",
     () => (
@@ -347,11 +349,6 @@ describe("E29-S04's export bar carries its catalogue id", () => {
     const host = await mount(<PrintExportBar formats={["csv", "pdf"]} onExport={noop} />);
     expect(host.querySelectorAll('[data-cmp="CMP-099"]')).toHaveLength(1);
     expect(host.querySelectorAll('[data-cmp="CMP-001"]')).toHaveLength(2);
-  });
-
-  it("CMP-011's toggle chip is itself the root that carries the id", async () => {
-    const host = await mount(<Tag variant="toggle" label="Trade" pressed onPressedChange={noop} />);
-    expect(host.querySelectorAll('button[data-cmp="CMP-011"]')).toHaveLength(1);
   });
 });
 
