@@ -339,7 +339,8 @@ def test_contract_24_walks_the_fills_by_side_from_the_last_flat_the_venue_confir
         "keyed by (account, symbol, the `position_idx` of the fill's order row, as the venue's "
         "fills carry none), in `(exec_ts, exec_id)` order after the key's last flat the venue "
         "confirmed (the latest position reading of the key at size 0 dated, by the venue's time, "
-        "before the record's first closing fill; 21 §3.3.7), else from the key's first stored fill",
+        "before the first stored fill of the record's order; 21 §3.3.7), else from the key's first "
+        "stored fill",
         "A fill opens when the walk is flat or holds the fill's own side: it adds its size to the "
         f"open size, its size {_X} price to the entry value and its fee to the opening fees.",
         "A fill of the other side closes `c`, the venue's `closedSize` where the fill states it "
