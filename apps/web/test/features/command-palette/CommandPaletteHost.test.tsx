@@ -74,6 +74,7 @@ afterEach(() => offs.splice(0).forEach((off) => off()));
 beforeEach(() => {
   // jsdom has no layout: CMP-059 scrolls the active row into view on a key move.
   Element.prototype.scrollIntoView = vi.fn();
+  window.localStorage.clear();
   resetMeClaims();
   resetShellState();
   clearAnnouncements();
@@ -183,14 +184,17 @@ describe("E10-S05 scenario 4: an action runs through the keymap registry", () =>
   it("lists every registered, valid command except the palette and range commands (completeness)", async () => {
     await shellAt("/journal");
     pressCtrlK();
-    const listed = new Set(options());
+    const found = (label: string): boolean => {
+      fireEvent.change(input(), { target: { value: label } });
+      return screen.queryAllByRole("option").some((o) => o.getAttribute("aria-label") === label);
+    };
     const expected = KEYMAP.filter(
       (c) => isCommandValid(c.id) && c.id !== "global.palette" && !c.defaultBinding.includes(".."),
-    ).map((c) => commandMeta(c.id)?.label);
+    ).map((c) => commandMeta(c.id)?.label ?? c.id);
     expect(expected.length).toBeGreaterThan(3);
-    for (const label of expected) expect(listed).toContain(label);
-    expect(listed).not.toContain("Command palette");
-    expect(listed).not.toContain("Navigate rail item 1-9");
+    for (const label of expected) expect(found(label), label).toBe(true);
+    expect(found("Command palette")).toBe(false);
+    expect(found("Navigate rail item 1-9")).toBe(false);
   });
 
   it("every registered dangerous command has a gate row (none registered today)", async () => {
@@ -334,4 +338,106 @@ describe("E10-S05 scenario 9: a screen reader can operate it by keyboard alone",
     fireEvent.change(input(), { target: { value: "close selected" } });
     expect(active()).toBe("Close selected position (confirm), confirms");
   });
+});
+
+describe("E10-S05 scenario 1 (empty query): Recent and Suggested", () => {
+  it("first open: no Recent header, Suggested lists the session's actions", async () => {
+    await shellAt("/journal");
+    pressCtrlK();
+    expect(groups()).toEqual(["Suggested"]);
+    expect(options()).toContain("Hotkey cheatsheet");
+  });
+
+  it("Recent holds the last runs, newest first, per user on this device", async () => {
+    await shellAt("/journal");
+    for (const query of ["journal analytics", "alerts"]) {
+      pressCtrlK();
+      fireEvent.change(input(), { target: { value: query } });
+      fireEvent.keyDown(input(), { key: "Enter" });
+      await screen.findByRole("heading", { level: 1 });
+    }
+    pressCtrlK();
+    expect(groups()).toEqual(["Recent", "Suggested"]);
+    const recent = within(screen.getAllByRole("group")[0] as HTMLElement)
+      .getAllByRole("option")
+      .map((o) => o.getAttribute("aria-label"));
+    expect(recent).toEqual(["Alerts", "Journal analytics"]);
+    expect(JSON.stringify(window.localStorage)).not.toMatch(/alerts"|journal analytics/i); // ids, not queries
+    expect(window.localStorage.getItem("cv.palette-recent.v1:u-1")).toContain("route:R-190");
+  });
+});
+
+describe("E10-S05 scenario 7: empty and no-result states are honest about their sources", () => {
+  it("with only routes and actions, it says no command matches and offers a way on, once", async () => {
+    await shellAt("/journal");
+    pressCtrlK();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    fireEvent.change(input(), { target: { value: "xyz" } });
+    const sentence = "No command matches “xyz”. Try fewer letters, or use the nav rail.";
+    expect(screen.getByText(sentence)).toBeVisible();
+    expect(screen.queryByRole("group")).toBeNull(); // no headers
+    expect(status()).toBe("");
+    act(() => void vi.advanceTimersByTime(500));
+    expect(status()).toBe(sentence);
+  });
+
+  it("once a Symbol source registers, the sentence is 14's", async () => {
+    offs.push(registerPaletteSource({ id: "symbols", group: "Symbol", rows: () => [] }));
+    await shellAt("/journal");
+    pressCtrlK();
+    fireEvent.change(input(), { target: { value: "xyz" } });
+    expect(screen.getByText("No command or symbol matches “xyz”")).toBeVisible();
+  });
+});
+
+describe("E10-S05 scenario 8: reduced motion makes the close instant", () => {
+  afterEach(() => document.documentElement.removeAttribute("data-motion"));
+
+  it("with the override on, the card and scrim are gone at once and focus is back on the trigger", async () => {
+    document.documentElement.setAttribute("data-motion", "reduce");
+    await shellAt("/journal");
+    trigger().focus();
+    fireEvent.click(trigger());
+    expect(document.querySelector(".cv-dialog__scrim")).not.toBeNull();
+    fireEvent.keyDown(input(), { key: "Escape" });
+    expect(document.querySelector(".cv-dialog__scrim")).toBeNull();
+    expect(document.querySelector("[data-cv-layer]")).toBeNull();
+    expect(trigger()).toHaveFocus();
+  });
+});
+
+describe("E10-S05 axe: every palette state in three themes", () => {
+  const serious = async (): Promise<unknown[]> =>
+    (await axe.run(document.body, NO_CONTRAST)).violations.filter((v) =>
+      /serious|critical/.test(v.impact ?? ""),
+    );
+  afterEach(() => document.documentElement.removeAttribute("data-theme"));
+
+  for (const theme of ["dark", "light", "high-contrast"])
+    it(`empty query, results, no results, T2 and destructive rows: zero serious or critical (${theme})`, async () => {
+      document.documentElement.setAttribute("data-theme", theme);
+      offs.push(registerCommand("positions.close", vi.fn()));
+      offs.push(
+        registerPaletteSource({
+          id: "t2",
+          group: "Action",
+          rows: () => [
+            {
+              id: "t2:lev",
+              label: "Set leverage",
+              group: "Action",
+              target: { kind: "command", commandId: "t2.lev" },
+              disabledReason: "Your role can't change positions.",
+            },
+          ],
+        }),
+      );
+      await shellAt("/journal");
+      pressCtrlK();
+      expect(await serious()).toEqual([]); // empty query
+      for (const query of ["alerts", "zzqx", "set leverage", "close selected"]) {
+        fireEvent.change(input(), { target: { value: query } });
+        expect(await serious(), query).toEqual([]);
+      }
+    });
 });

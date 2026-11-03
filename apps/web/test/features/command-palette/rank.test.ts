@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildIndex } from "../../../src/features/command-palette/rank";
+import {
+  SUGGESTED_LIMIT,
+  buildIndex,
+  emptyQuerySections,
+} from "../../../src/features/command-palette/rank";
 import type {
   PaletteGroup,
   PaletteRow,
@@ -57,5 +61,44 @@ describe("E10-S05 rank.ts: buildIndex", () => {
     const seen: SourceContext[] = [];
     buildIndex([{ id: "spy", group: "Action", rows: (ctx) => (seen.push(ctx), []) }], CTX);
     expect(seen).toEqual([CTX]);
+  });
+});
+
+describe("E10-S05 rank.ts: the empty query's sections", () => {
+  const index: PaletteRow[] = [
+    row("route:R-190", "Navigate"),
+    row("route:R-180", "Navigate"),
+    ...["a1", "a2", "a3", "a4", "a5", "a6", "a7"].map((id) => row(`command:${id}`, "Action")),
+    { ...row("command:gated", "Action"), disabledReason: "Your role can't place orders." },
+  ];
+
+  it("Recent: newest first, resolved against this opening's index; an unknown id is dropped silently", () => {
+    const { recent } = emptyQuerySections(index, {
+      recent: ["command:a3", "route:R-300", "route:R-190"],
+      counts: {},
+    });
+    expect(recent.map((r) => r.id)).toEqual(["command:a3", "route:R-190"]);
+  });
+
+  it("Suggested: ungated actions not in Recent, most used first, ties in keymap order", () => {
+    const { suggested } = emptyQuerySections(index, {
+      recent: ["command:a1"],
+      counts: { "command:a6": 4, "command:a4": 4, "command:a7": 1, "command:gated": 9 },
+    });
+    expect(suggested.map((r) => r.id)).toEqual([
+      "command:a4",
+      "command:a6",
+      "command:a7",
+      "command:a2",
+      "command:a3",
+    ]);
+    expect(suggested).toHaveLength(SUGGESTED_LIMIT);
+  });
+
+  it("is empty for an empty index", () => {
+    expect(emptyQuerySections([], { recent: ["x"], counts: { x: 1 } })).toEqual({
+      recent: [],
+      suggested: [],
+    });
   });
 });

@@ -10,16 +10,18 @@
  */
 import { useEffect, useMemo, useRef, useSyncExternalStore, type JSX } from "react";
 import { useNavigate } from "react-router";
-import { CommandPalette, type PaletteCommand } from "@candleviewer/ui";
+import { CommandPalette, type PaletteCommand, type PaletteSection } from "@candleviewer/ui";
 import { registerCommand } from "../../keymap/KeymapHost";
 import { getBindings } from "../../keymap/profile";
+import { keymapUser } from "../../keymap/session";
 import { isCommandValid, runCommand } from "../../keymap/registry";
 import { getMeClaims } from "../../lib/auth/meCache";
 import { useShellSelector } from "../../shell/useShellSelector.js";
 import { announce, forget } from "../app-shell/announcer";
 import { countText, GROUPS, noResultsText, PALETTE_COPY, refusedText } from "./copy";
 import { reportPalette, type PaletteVia } from "./paletteEvents";
-import { buildIndex } from "./rank";
+import { buildIndex, emptyQuerySections } from "./rank";
+import { readRecent, recordRun } from "./recent";
 import {
   PALETTE_COMMAND,
   getPaletteSources,
@@ -110,6 +112,7 @@ export function CommandPaletteHost(): JSX.Element {
           announce("polite", refusedText(row.label), REFUSED_KEY);
           return;
         }
+        recordRun(keymapUser(), row.id); // ids and counts only, on this device, for this user
         reportPalette({
           name: "palette.ran",
           kind: target.kind,
@@ -133,11 +136,24 @@ export function CommandPaletteHost(): JSX.Element {
 
   const byId = useMemo(() => new Map(commands.map((c) => [c.id, c])), [commands]);
 
+  // The empty query: Recent and Suggested, read at each opening (an empty section is dropped by CMP-059).
+  const sections = useMemo((): readonly PaletteSection[] => {
+    void epoch;
+    const { recent, suggested } = emptyQuerySections(rows, readRecent(keymapUser()));
+    const pick = (list: readonly PaletteRow[]): PaletteCommand[] =>
+      list.flatMap((row) => byId.get(row.id) ?? []);
+    return [
+      { label: PALETTE_COPY.recent, commands: pick(recent) },
+      { label: PALETTE_COPY.suggested, commands: pick(suggested) },
+    ];
+  }, [epoch, rows, byId]);
+
   return (
     <CommandPalette
       open={shown}
       onOpenChange={(next) => setOpen(next)}
       commands={commands}
+      sections={sections}
       // A dangerous row: the palette closes, then `runCommand` reaches the handler, which opens its own confirm.
       onRequestConfirm={(command) => byId.get(command.id)?.onRun()}
       title={PALETTE_COPY.title}
