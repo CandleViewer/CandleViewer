@@ -287,6 +287,36 @@
     "$type": "color",
     "$value": "{palette.neutral.500}"
   },
+  "color.edge.default": {
+    "$type": "color",
+    "$value": "{color.text.tertiary}",
+    "$description": "CMP-152 edge ink, E37-D03 TP-1"
+  },
+  "color.edge.selected": {
+    "$type": "color",
+    "$value": "{color.border.selected}",
+    "$description": "CMP-152 selected edge and valid connect preview; CMP-237 active-connect source ring, E37-D03 TP-2"
+  },
+  "color.edge.invalid": {
+    "$type": "color",
+    "$value": "{color.status.danger.default}",
+    "$description": "CMP-152 invalid connect preview and cycle path, E37-D03 TP-3"
+  },
+  "color.port.ring": {
+    "$type": "color",
+    "$value": "{color.text.tertiary}",
+    "$description": "CMP-237 port ring, E37-D03 TP-4"
+  },
+  "color.port.compatible": {
+    "$type": "color",
+    "$value": "{color.focus.ring}",
+    "$description": "CMP-237 compatible-target halo, E37-D03 TP-5"
+  },
+  "color.port.incompatible": {
+    "$type": "color",
+    "$value": "{color.status.danger.default}",
+    "$description": "CMP-237 incompatible-target mark, E37-D03 TP-6"
+  },
   "color.grid.line": {
     "$type": "color",
     "$value": "{palette.neutral.150}"

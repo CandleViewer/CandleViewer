@@ -16,6 +16,11 @@ export const REQUIRED_ENCODINGS = [
   "imbalance",
   "delta-sign",
   "risk-severity",
+  // The rule graph (E37-D03 §9.4, EN-1 to EN-4).
+  "node-type",
+  "port-type",
+  "edge-validity",
+  "graph-diagnostic",
 ];
 export const CHANNELS = ["glyph", "sign", "text", "pattern", "position"];
 

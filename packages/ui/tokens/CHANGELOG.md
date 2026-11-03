@@ -26,6 +26,13 @@ The engine export is now built per theme: `build/engine/theme-uniforms.{dark,lig
 (`16` §11.1, ADR-0024), with `theme-uniforms.json` kept as the dark export. `color.cvd.` joins the
 engine prefixes (E11-D05 G16), so the thirteen CVD-safe tokens ride in every export.
 
+`color.edge.default`, `color.edge.selected`, `color.edge.invalid`, `color.port.ring`,
+`color.port.compatible` and `color.port.incompatible` — aliases of existing semantic tokens for the
+rule-graph edges (CMP-152) and ports (CMP-237) (engineering, E37-S01; design,
+`docs/design/E37/E37-D03.md` §2.1, TP-1 to TP-6). Each is declared once in `semantic-dark` and
+inherited by light and high contrast; no primitive is added and no value changes. Their contrast
+rows, and the rule graph's other PROPOSED pairs of D03 §9.4, are in `tools/contrast/pairs.mjs`.
+
 ### Fixed
 
 Light-theme status inks reach WCAG 2.2 AA on their subtle fills (#5134). `color.status.danger.strong`

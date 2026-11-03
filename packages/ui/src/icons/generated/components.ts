@@ -5,8 +5,10 @@ import type { JSX } from "react";
 import type { GlyphProps } from "../IconSvg.js";
 import type { IconName } from "../registry.js";
 import { ArrowDownIcon } from "./ArrowDownIcon.js";
+import { ArrowLeftRightIcon } from "./ArrowLeftRightIcon.js";
 import { ArrowUpIcon } from "./ArrowUpIcon.js";
 import { ArrowUpDownIcon } from "./ArrowUpDownIcon.js";
+import { BoltIcon } from "./BoltIcon.js";
 import { CalendarIcon } from "./CalendarIcon.js";
 import { CancelledIcon } from "./CancelledIcon.js";
 import { ChaseLimitIcon } from "./ChaseLimitIcon.js";
@@ -16,6 +18,7 @@ import { ChevronLeftIcon } from "./ChevronLeftIcon.js";
 import { ChevronRightIcon } from "./ChevronRightIcon.js";
 import { ChevronUpIcon } from "./ChevronUpIcon.js";
 import { ChevronsUpDownIcon } from "./ChevronsUpDownIcon.js";
+import { CircleIcon } from "./CircleIcon.js";
 import { CloseIcon } from "./CloseIcon.js";
 import { CopyIcon } from "./CopyIcon.js";
 import { CrosshairIcon } from "./CrosshairIcon.js";
@@ -31,6 +34,8 @@ import { EstimatedSmIcon } from "./EstimatedSmIcon.js";
 import { ExternalLinkIcon } from "./ExternalLinkIcon.js";
 import { FilterIcon } from "./FilterIcon.js";
 import { FlattenAllIcon } from "./FlattenAllIcon.js";
+import { GraphOnlyIcon } from "./GraphOnlyIcon.js";
+import { HashIcon } from "./HashIcon.js";
 import { HeatmapConventionSwapIcon } from "./HeatmapConventionSwapIcon.js";
 import { HelpIcon } from "./HelpIcon.js";
 import { HideIcon } from "./HideIcon.js";
@@ -55,6 +60,7 @@ import { PinIcon } from "./PinIcon.js";
 import { PlusIcon } from "./PlusIcon.js";
 import { RedoIcon } from "./RedoIcon.js";
 import { RefreshIcon } from "./RefreshIcon.js";
+import { RoundTripMismatchIcon } from "./RoundTripMismatchIcon.js";
 import { SearchIcon } from "./SearchIcon.js";
 import { SettingsIcon } from "./SettingsIcon.js";
 import { ShowIcon } from "./ShowIcon.js";
@@ -69,8 +75,10 @@ import { ZoomOutIcon } from "./ZoomOutIcon.js";
 
 export const ICON_COMPONENTS = {
   "arrow-down": ArrowDownIcon,
+  "arrow-left-right": ArrowLeftRightIcon,
   "arrow-up": ArrowUpIcon,
   "arrow-up-down": ArrowUpDownIcon,
+  bolt: BoltIcon,
   calendar: CalendarIcon,
   cancelled: CancelledIcon,
   "chase-limit": ChaseLimitIcon,
@@ -80,6 +88,7 @@ export const ICON_COMPONENTS = {
   "chevron-right": ChevronRightIcon,
   "chevron-up": ChevronUpIcon,
   "chevrons-up-down": ChevronsUpDownIcon,
+  circle: CircleIcon,
   close: CloseIcon,
   copy: CopyIcon,
   crosshair: CrosshairIcon,
@@ -94,6 +103,8 @@ export const ICON_COMPONENTS = {
   "external-link": ExternalLinkIcon,
   filter: FilterIcon,
   "flatten-all": FlattenAllIcon,
+  "graph-only": GraphOnlyIcon,
+  hash: HashIcon,
   "heatmap-convention-swap": HeatmapConventionSwapIcon,
   help: HelpIcon,
   hide: HideIcon,
@@ -118,6 +129,7 @@ export const ICON_COMPONENTS = {
   plus: PlusIcon,
   redo: RedoIcon,
   refresh: RefreshIcon,
+  "round-trip-mismatch": RoundTripMismatchIcon,
   search: SearchIcon,
   settings: SettingsIcon,
   show: ShowIcon,

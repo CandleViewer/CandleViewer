@@ -389,6 +389,32 @@ export const PAIRS = [
   { fg: "color.status.danger.default", bg: "color.surface.sunken", threshold: THRESHOLD.NON_TEXT },
   { fg: "color.status.danger.default", bg: "color.surface.hover", threshold: THRESHOLD.NON_TEXT },
   { fg: "color.text.primary", bg: "color.surface.sunken", threshold: THRESHOLD.TEXT },
+
+  // --- Rule graph: nodes, ports, edges and their surfaces (E37-D03 §9.1, §9.4) ---------
+  // D03's PROPOSED pairs P14 to P20, P22 to P24 and P33; P7, P9, P12, P31, P32 and P39 are registered
+  // above. A port or an outline straddles the card edge, so it is checked on both sides.
+  { fg: "color.focus.ring", bg: "color.status.warning.subtle", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.focus.ring", bg: "color.status.danger.subtle", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.border.selected", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.border.selected", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.border.selected", bg: "color.surface.sunken", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.border.selected", bg: "color.action.selected", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.border.selected", bg: "color.surface.hover", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.node.condition", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.node.action", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.node.logic", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.status.warning.default", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+  // The six aliases (E37-D03 §2.1, TP-1 to TP-6) under their own names: edges on the canvas, ports
+  // on the canvas and on the card.
+  { fg: "color.edge.default", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.edge.selected", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.edge.invalid", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.port.ring", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.port.ring", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.port.compatible", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.port.compatible", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.port.incompatible", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.port.incompatible", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
 ];
 
 /**

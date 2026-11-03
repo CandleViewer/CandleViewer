@@ -4,6 +4,8 @@
 // scripts/build-icons.mjs generates into `generated/` from `source/<origin>/<name>.svg` and only
 // `Icon` (CMP-019) reaches (packages/ui/README.md, "Icons"). The base set is Lucide's; the 13
 // trading glyphs of brief §5 are CandleViewer's own, drawn from E05-D02 §7.12 in `source/custom/`.
+// Six of the rule graph's port and badge glyphs (E37-D03 §9.4: GL-1, GL-2, GL-4, GL-5, GL-7 and
+// GL-8) are four Lucide glyphs and two drawn for E37-S01.
 
 /** An icon's group on the Penpot icon page and in Storybook. */
 export type IconCategory = "navigation" | "action" | "status" | "chart" | "trading" | "rule-graph";
@@ -35,6 +37,11 @@ export const ICONS = {
     source: "lucide/arrow-down",
     description: "Sorts a column descending, or moves an item down.",
   },
+  "arrow-left-right": {
+    category: "rule-graph",
+    source: "lucide/arrow-left-right",
+    description: "Side port: buy or sell (the base set has `arrow-up-down` only).",
+  },
   "arrow-up": {
     category: "navigation",
     source: "lucide/arrow-up",
@@ -44,6 +51,11 @@ export const ICONS = {
     category: "navigation",
     source: "lucide/arrow-up-down",
     description: "Marks a sortable column that is not sorted yet.",
+  },
+  bolt: {
+    category: "rule-graph",
+    source: "lucide/zap",
+    description: "Action port: runs an action.",
   },
   calendar: {
     category: "action",
@@ -90,6 +102,11 @@ export const ICONS = {
     category: "navigation",
     source: "lucide/chevrons-up-down",
     description: "Opens the options of a select or a combobox.",
+  },
+  circle: {
+    category: "rule-graph",
+    source: "lucide/circle",
+    description: "Boolean port: a true / false value.",
   },
   close: {
     category: "action",
@@ -161,6 +178,16 @@ export const ICONS = {
     source: "custom/E05-T06",
     description: "Close every position at market.",
     minimumPx: 16,
+  },
+  "graph-only": {
+    category: "rule-graph",
+    source: "custom/E37-S01",
+    description: "Graph-only: authored in the graph editor, read-only in the form.",
+  },
+  hash: {
+    category: "rule-graph",
+    source: "lucide/hash",
+    description: "Number port: a plain numeric value.",
   },
   "heatmap-convention-swap": {
     category: "chart",
@@ -284,6 +311,11 @@ export const ICONS = {
     category: "action",
     source: "lucide/refresh-cw",
     description: "Retries a failed action or reloads data.",
+  },
+  "round-trip-mismatch": {
+    category: "rule-graph",
+    source: "custom/E37-S01",
+    description: "Round-trip mismatch: the form and the graph compile to different rules.",
   },
   search: {
     category: "action",

@@ -170,6 +170,37 @@ describe("token build integration (real Style Dictionary run)", () => {
     expect(dark("color.cvd.heatmap.bid.1")).toMatch(/^#[0-9A-F]{6}$/);
   });
 
+  it("resolves the rule-graph edge and port aliases per theme (E37-D03 §2.1, TP-1 to TP-6)", () => {
+    runBuild(ui);
+    const css = (theme: string) =>
+      readFileSync(path.join(buildDir, "css", `tokens.${theme}.css`), "utf-8");
+    /** A token's value in a theme bundle: `--color-edge-default: #8B949E;` gives `#8B949E`. */
+    const valueIn = (text: string, name: string) => {
+      const at = text.indexOf(`--${name.replaceAll(".", "-")}: `);
+      return at < 0 ? undefined : text.slice(at, text.indexOf(";", at)).split(": ")[1];
+    };
+    // [alias, its target, dark, light, high-contrast]: the values D03 §2.1 records.
+    const aliases: [string, string, string, string, string][] = [
+      ["color.edge.default", "color.text.tertiary", "#8B949E", "#525C66", "#C9D1D9"],
+      ["color.edge.selected", "color.border.selected", "#4A86EE", "#2B6CE8", "#6EA1F5"],
+      ["color.edge.invalid", "color.status.danger.default", "#C93A3F", "#7A1E22", "#D8474B"],
+      ["color.port.ring", "color.text.tertiary", "#8B949E", "#525C66", "#C9D1D9"],
+      ["color.port.compatible", "color.focus.ring", "#6EA1F5", "#1F55BF", "#FFFFFF"],
+      ["color.port.incompatible", "color.status.danger.default", "#C93A3F", "#7A1E22", "#D8474B"],
+    ];
+    const themes = ["dark", "light", "high-contrast"].map(css);
+    for (const [alias, target, d, l, h] of aliases) {
+      expect(
+        themes.map((text) => valueIn(text, alias)),
+        alias,
+      ).toEqual([d, l, h]);
+      expect(
+        themes.map((text) => valueIn(text, target)),
+        target,
+      ).toEqual([d, l, h]);
+    }
+  });
+
   it("emits a flat, CSS/TS-free JSON map for the Electron main process", () => {
     runBuild(ui);
     const flat = JSON.parse(
