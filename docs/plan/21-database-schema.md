@@ -3587,6 +3587,8 @@ CREATE UNIQUE INDEX ux_ct_name ON chart_templates (coalesce(owner_user_id,'00000
 
 Drawings are per-user, per-symbol and time-anchored so they survive interval changes. Geometry is stored as JSONB (point list in price/time space), not pixels.
 
+_Decision record: ADR-0045 (`27-adrs/ADR-0045-drawing-persistence-and-geometry.md`): stored anchors are `{t, p}` only (UTC instant, decimal-string price; never pixels or bar indices), soft delete with a 90-day purge, `interval_scope` NULL-only in R1, and optimistic concurrency on `updated_at`. Per-tool geometry tables: `24` §1.7._
+
 ```sql
 CREATE TABLE drawings (
   id            uuid PRIMARY KEY,

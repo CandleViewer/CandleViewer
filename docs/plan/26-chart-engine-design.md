@@ -329,9 +329,9 @@ _Shipped (E12-S06 PR 2, package README "OHLC bars, gap seams, bar picks and `dat
 ### 3.10 Drawings
 
 - **Tools in v1**: trendline, ray, extended line, horizontal line/ray, vertical line, rectangle, ellipse, Fibonacci retracement, Fibonacci extension, measurement tool (price/%/bars/time), text note, arrow, price range, position tool (entry/SL/TP with R:R readout), and a brush/freehand for annotations.
-- **Model**: `{ id, tool, points: [{barIndex|time, price}], style, locked, visibility, magnetMode, paneId, createdBy, createdAt }`. Anchors store **both** `time` and `barIndex`; time is authoritative across bar-spec changes.
+- **Model**: `{ id, tool, points: [{barIndex|time, price}], style, locked, visibility, magnetMode, paneId, createdBy, createdAt }`. Anchors store **both** `time` and `barIndex`; time is authoritative across bar-spec changes. _Amended by ADR-0045 (Decisions 2 and 10): the persisted form is `{t, p}` only, an exact UTC instant (at most millisecond precision) and a decimal-string price; `barIndex` is never stored or sent. The engine may keep a derived `barIndex` beside `time` in its in-memory model as a projection cache, recomputed on a bar-spec change, and never written back. The tool list is the 25 of `24` §1.7._
 - **Interaction**: two-phase (place → adjust), with a magnet mode snapping to OHLC values or ticks, shift-constrained angles, and multi-select with group move. Undo/redo is a command stack of 100 entries, shared with the drawing toolbar.
-- **Persistence**: per (user, symbol, bar-spec-agnostic) in Postgres through `/api/v1/drawings`; optimistic local writes with server reconciliation; drawings are part of a saved workspace.
+- **Persistence**: per (user, symbol, bar-spec-agnostic) in Postgres through `/api/v1/drawings`; optimistic local writes with server reconciliation; drawings are part of a saved workspace. _Persistence model, conflict policy (`updated_at` token, server wins), scope and sync: ADR-0045 (`27-adrs/ADR-0045-drawing-persistence-and-geometry.md`)._
 - **Rendering**: lines as instanced quads with a geometry shader-free thick-line expansion done in the vertex shader (per-instance `p0`, `p1`, `width`, dash pattern index); dashes via a distance-along-line varying and a pattern LUT.
 
 ### 3.11 Interaction and gestures
