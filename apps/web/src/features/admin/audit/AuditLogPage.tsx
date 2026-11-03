@@ -2,19 +2,19 @@
  * SCR-135 Audit log (E42-S04; E42-D04 §4, D4 to D11, D14, AL-1 to AL-17, AL-25 to AL-28), one page
  * for two views: the Owner's raw log at R-360 inside CMP-087, and a Manager's own actions, "My
  * activity", at the same route in the plain shell (`own`, the orchestrator's BQ-8 (a)).
- * - Top to bottom: CMP-088 "Audit log" with `meta.asof` and `audit.marker`; the AL-16 line and its
- *   one notice; CMP-174; the new-entries pill (D5); the CMP-049 grid of CMP-173 rows; the paging
- *   lines and CMP-053; `audit.append_only`; SCR-136 last. The tamper banner, the footer and the
- *   view-as notice come with Run tamper check.
+ * - Top to bottom: CMP-088 "Audit log" with `meta.asof` and `audit.marker`; the view-as notice
+ *   (BQ-9); the incident banner (§7); the AL-16 line and its one notice; CMP-174; the new-entries
+ *   pill (D5); the CMP-049 grid of CMP-173 rows; the paging lines and CMP-053; `audit.append_only`;
+ *   the footer's tamper line and [Run tamper check]; SCR-136 last.
  * - The filter set is URL state (D04 §4 Filters): a change pushes a new location, a read follows,
  *   and Environment re-filters the loaded rows and reads nothing (D7). The cursor never is.
- * - Every read is the page store's (`useAuditPage`): this page only renders its state and makes no
- *   request of its own, and only `GET`s on mount (the source scan `noUnchallengedStepUp.test.tsx`
- *   walks R-360 too).
- * - Lines are said once, politely, through the shell's announcer (`usePageVoice`). A T2 press, and
- *   each record [Previous] or [Next] shows, is its own polite line there (G-T2.3: the shell's
- *   gated announcement is a no-op, so the page routes its atoms' refusals; A-1135P2-02,
- *   A-1135P2-11).
+ * - Every read is the page store's (`useAuditPage`) and the integrity store's: this page only
+ *   renders their state and makes no request of its own, and only `GET`s on mount (the source scan
+ *   `noUnchallengedStepUp.test.tsx` walks R-360 too).
+ * - Lines are said once, politely, through the shell's announcer (`usePageVoice`); the incident's
+ *   `role="alert"` is the banner's own, once per episode. A T2 press, and each record [Previous]
+ *   or [Next] shows, is its own polite line there (G-T2.3: the shell's gated announcement is a
+ *   no-op, so the page routes its atoms' refusals; A-1135P2-02, A-1135P2-11).
  * - One column that never grows past the canvas, so the page reflows at 200 % and 400 % (AL-28),
  *   and its own stacking context, so the grid's sticky header stays under SCR-136 and the dialogs
  *   (the kit-wide `.cv-table { isolation: isolate }` comes with E42-S02's PR A).
@@ -43,6 +43,7 @@ import {
   GatedAnnounceProvider,
   PageHeader,
   Pagination,
+  formatRbacReason,
   type AuditActionOption,
   type AuditActorOption,
   type AuditFilterField,
@@ -59,8 +60,21 @@ import { filtersKey, isFiltered, parseFilters, searchOf, type AuditFilters } fro
 import { NEW_CAP, pagerOf, useAuditPage, type AuditPageState } from "./auditPageStore";
 import type { AuditEntry, AuditView, FieldError } from "./auditReads";
 import { AUDIT_COPY as COPY, num, utc } from "./copy";
-import { breakEntry, recordLine, useIntegrity, type IntegrityState } from "./integrity";
+import {
+  auditIntegrity,
+  bannerModel,
+  breakEntry,
+  checkLine,
+  footerModel,
+  isSpoken,
+  recordLine,
+  useIntegrity,
+  useIntegrityHold,
+  type IntegrityState,
+} from "./integrity";
 import { usePageVoice } from "./pageVoice";
+import { TamperBanner } from "./TamperBanner";
+import { TamperFooter } from "./TamperFooter";
 import { useAuditViewAs } from "./viewAs";
 
 /** E42-Q03's measures (CG-25): mount to the first page drawn, and a filter change to its rows. */
@@ -203,10 +217,12 @@ function AuditLogScreen({ view, onWithdrawn }: AuditLogPageProps): JSX.Element {
     viewAs: viewAs !== null,
   });
   const integrity = useIntegrity(wholeState);
-  const denied = state.denied;
+  const denied = state.denied ?? (own ? null : integrity.denied);
+  useIntegrityHold(view, { active: denied === null, viewAs: viewAs !== null });
 
   const prefix = useId();
   const limitedNoticeId = useId();
+  const viewAsNoticeId = useId();
   const endLineId = useId();
   const [selected, setSelected] = useState<AuditEntry | null>(null);
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => new Set());
@@ -215,6 +231,8 @@ function AuditLogScreen({ view, onWithdrawn }: AuditLogPageProps): JSX.Element {
   const pager = pagerOf(state);
   const limited = state.phase === "limited";
   const rateLimited = limited ? COPY.admin.rateLimited : undefined;
+  const viewAsReason =
+    viewAs === null ? undefined : formatRbacReason("rbac.view_as", { user: viewAs.user });
 
   // The rows, the selection and the shown page's set, which the stable callbacks read.
   const rowsRef = useRef(state.rows);
@@ -394,6 +412,31 @@ function AuditLogScreen({ view, onWithdrawn }: AuditLogPageProps): JSX.Element {
     if (droppedOwn) say(COPY.audit.ownFilter, `audit:own-filter:${location.search}`);
   }, [droppedOwn, location.search, say]);
 
+  // Run tamper check (D10, AL-11, AL-12): its result, said once per press.
+  const runs = useRef(0);
+  const checkText = checkLine(integrity, { viewAsReason })?.text ?? null;
+  const running = integrity.check.kind === "running";
+  useEffect(() => {
+    if (runs.current === 0 || running || checkText === null) return;
+    say(checkText, `audit:check:${runs.current}`);
+  }, [checkText, running, say]);
+  const runCheck = (): void => {
+    if (auditIntegrity.runCheck()) runs.current += 1;
+  };
+
+  // The footer's re-read and incident lines, said once each (AL-10).
+  const footer = footerModel(integrity, state.page?.body ?? null, {
+    view,
+    newestPartial: state.newestPartial,
+  });
+  useEffect(() => {
+    if (state.newestPartial) say(COPY.tamper.newestPartial, `audit:newest-partial:${state.landed}`);
+  }, [state.newestPartial, state.landed, say]);
+  const incidentsDown = footer.incidents !== null;
+  useEffect(() => {
+    if (incidentsDown) say(COPY.tamper.incidentsUnavailable, "audit:incidents-unavailable");
+  }, [incidentsDown, say]);
+
   // Esc or Close returns focus to the row the drawer last showed (D04 §5 Keys). The ref is cleared
   // first: CMP-046 hands focus back to its opener before this effect runs, and that row must not
   // pick the record again (A-1135P2-01).
@@ -434,6 +477,7 @@ function AuditLogScreen({ view, onWithdrawn }: AuditLogPageProps): JSX.Element {
     onWithdrawn?.(denied.refId);
   }, [denied, onWithdrawn]);
 
+  const banner = own ? null : bannerModel(integrity);
   // My activity stays neutral: an Owner's run in this document never shows there (BQ-4)
   const afterBreak = own ? null : breakEntry(integrity);
   const pageRows = state.rows;
@@ -482,6 +526,15 @@ function AuditLogScreen({ view, onWithdrawn }: AuditLogPageProps): JSX.Element {
   const previous = selectedAt > 0 ? pageRows[selectedAt - 1] : undefined;
   const next = selectedAt >= 0 ? pageRows[selectedAt + 1] : undefined;
 
+  // One reason per control, view-as first (E09-D09 §2.1): Run tamper check's.
+  const checkReason =
+    viewAsReason ??
+    (own
+      ? formatRbacReason("rbac.owner_only", { verb: COPY.ownerOnlyVerbs.check })
+      : integrity.check.kind === "limited"
+        ? COPY.admin.rateLimited
+        : undefined);
+
   if (denied !== null) return <AdminDenied refId={denied.refId} />;
 
   return (
@@ -493,6 +546,19 @@ function AuditLogScreen({ view, onWithdrawn }: AuditLogPageProps): JSX.Element {
           marker={COPY.audit.marker}
         />
         {own ? <p style={LINE}>{COPY.audit.ownOnly}</p> : null}
+        {viewAsReason === undefined ? null : (
+          <p id={viewAsNoticeId} style={NOTICE}>
+            {viewAsReason}
+          </p>
+        )}
+        {banner === null ? null : (
+          <TamperBanner
+            key={banner.voice}
+            model={banner}
+            speak={!isSpoken(integrity, banner.voice)}
+            onSpoken={auditIntegrity.markSpoken}
+          />
+        )}
         {limited && limitedUntil !== null ? (
           <div>
             <p style={LINE}>{COPY.audit.limited(utc.hms(limitedUntil), secondsLeft)}</p>
@@ -583,6 +649,16 @@ function AuditLogScreen({ view, onWithdrawn }: AuditLogPageProps): JSX.Element {
           />
         )}
         <p style={LINE}>{COPY.audit.appendOnly}</p>
+        <TamperFooter
+          loading={noPage && !firstFailed}
+          line={footer.line}
+          incidents={footer.incidents}
+          check={own ? null : checkLine(integrity, { viewAsReason })}
+          running={running}
+          reason={checkReason}
+          reasonId={viewAsReason === undefined ? undefined : viewAsNoticeId}
+          onRun={runCheck}
+        />
       </div>
       <AuditDetailDrawer
         entry={selected}

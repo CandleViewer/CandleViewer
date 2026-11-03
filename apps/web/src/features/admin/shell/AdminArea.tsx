@@ -4,6 +4,7 @@ import { AdminInviteScreen } from "../../invites/AdminInviteScreen";
 import { StubRoute } from "../../../routes/StubRoute";
 import { ROUTE_TITLES } from "../../../routes/titles";
 import { useShellSelector } from "../../../shell/useShellSelector";
+import { AuditLogPage } from "../audit/AuditLogPage";
 import { OverviewPage } from "../overview/OverviewPage";
 import { useAdminHold, useAdminSelector } from "../overview/readStore";
 import { areaEntered, denial, STRIP_READS, stripItems } from "../overview/strip";
@@ -34,6 +35,7 @@ function pageFor(routeId: string, owner: string | null): ReactNode {
   if (routeId === "R-300") return <OverviewPage />; // SCR-120 (E42-S01)
   if (routeId === "R-303") return <AdminInviteScreen />; // SCR-123 (E09-S05)
   if (routeId === "R-354") return <SecurityCentrePlaceholder />; // until E43's SCR-137
+  if (routeId === "R-360") return <AuditLogPage view="raw" />; // SCR-135 (E42-S04)
   return <StubRoute routeId={routeId} owner={owner ?? "E42"} />;
 }
 
