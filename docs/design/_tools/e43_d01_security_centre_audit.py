@@ -2,13 +2,10 @@
 """E43-D01 (#1138) audit: the hi-fi spec of the security centre (SCR-137), its live trading gate
 (B17) and the gate's states on the two hosts (SCR-074's Live option, SCR-010's pill).
 
-Standalone and offline, shaped on the merged E38-D03 tool (`e38_d03_honesty_audit.py`): it imports
-`packages/ui/tokens/tests/verify_tokens.py` (the token loader and resolver),
-`docs/design/_tools/contrast_check.py` (`contrast_ratio`) and
-`docs/research/_tools/cvd_simulate.py` (`simulate`, `delta_e76`; JND 5.0) from the working tree
-and never re-implements them. It reads the spec and the pins file from the working tree and every
-cited file AS TEXT with `git show` at the pinned base (`BASE`). Default-deny: a gate that cannot
-read its input FAILs.
+Offline, shaped on the merged `e38_d03_honesty_audit.py`: it imports `verify_tokens`,
+`contrast_check` (`contrast_ratio`) and `cvd_simulate` (`simulate`, `delta_e76`; JND 5.0) from the
+working tree, never re-implementing them, and reads every cited file AS TEXT with `git show` at the
+pinned base (`BASE`). Default-deny: a gate that cannot read its input FAILs.
 
 Gates (each FAIL led by its name):
   G-STATE     every state the ticket's Scope names has a §0 frame row with a wireframe board
@@ -25,21 +22,16 @@ Gates (each FAIL led by its name):
               is an E09-D09 key's text at the base unless the cell marks it PROPOSED. §1 names the
               CMP-019 `lock` and CMP-079, quotes G-T2.1b, G-T2.2 and G-T2.3 verbatim from `DS` at
               the base, and §10.1 carries the G-T2.2 label pair (tertiary on raised).
-  G-GATE      the safety reading: the gate records and does not enforce (C-2.21); enabling LIVE
-              switches no session (C-2.11); the enable is a typed `ENABLE LIVE` then a fresh
-              `live_enablement` code, pinned per place (§6.3's SCR-006 bullet: bound to this one
-              request; the GATE-06 row: single-use and bound to the request; neither names a grace,
-              a window or a reuse); turning off needs no typed word and no code and is never T2 or
-              hidden: §6.4's "`enabled` or its state is unknown" rule is pinned, and the GATE-01,
-              GATE-07, GATE-08 and GATE-13 rows each draw Turn off present and never disabled,
-              hidden, absent, gated or T2; an unconfirmed turn-off (GATE-14) keeps the last
-              server-sent state, offers Retry and points at the kill switch; an enable whose outcome
-              is unknown (GATE-11b) re-reads the gate and never says "Nothing changed"; the
-              consequence is `11`'s sentence verbatim; every confirm starts on Cancel; the C-2.6
-              carve-out is stated; the withdrawal finding is fix-only, with its server-side refusal on
-              G-4; the gate rows are B17's evidence keys (`28`:7206–7211); a finding is never below
-              `info`; the skip link and the idempotent turn-off are stated; the posture never renders a
-              checkbox; a Manager's popover carries no admin link.
+  G-GATE      the safety reading, each pinned and each contradiction FAILed: only the server
+              enforces (C-2.21: "enforce" appears nowhere else); no session or demo switches by
+              itself (C-2.11); the enable is a typed `ENABLE LIVE`, then password and code
+              (`live_enablement`) bound to the request, never reused (§6.3, GATE-06); Turn off asks
+              no word or code and is never T2, hidden, absent, inert, unavailable or locked in §6.4,
+              GATE-01/07/08/13; GATE-14 keeps the last served state, Retry and the kill switch;
+              GATE-11b never says "Nothing changed"; GATE-02/09's Enable is T2, never hidden or
+              inert; `DISABLE_REQUESTED` gets no UI; the server refuses SEC-12's dismiss (G-4);
+              plus `11`'s consequence verbatim, Cancel focus, the C-2.6 carve-out, B17's evidence
+              keys, no `debug`, the skip link, the idempotent off, no checkbox, no Manager link.
   G-SECRET    no secret material: key ids only as `...` plus four characters, no IPv4 literal,
               "secret" only in §1's no-secret item, and no credential-shaped value anywhere: no run
               of 16 or more letters and digits that mixes both, no `X-BAPI-` header, no `api_key`,
@@ -457,30 +449,10 @@ T2_REASON = re.compile(r'T2(?: `[a-z_.]+`)? "([^"]{8,})"')
 STATE_LEADS = ("SEC-", "GATE-", "SW-", "SH-")
 # G-T2.1b, G-T2.2 and G-T2.3 as `DS` words them (its `**` emphasis dropped); §1 quotes each
 T2_QUOTES = (
-    (
-        "G-T2.1b",
-        (
-            '`aria-disabled="true"`, never the `disabled` attribute — it stays in the Tab'
-            " order and a menu item stays arrow-reachable"
-        ),
-    ),
-    (
-        "G-T2.2",
-        (
-            "hi-fi label `color.text.tertiary`, reason `color.text.secondary`; for primary /"
-            " buy / sell actions the fill becomes `color.surface.raised` with a"
-            " `color.border.default` hairline; never `color.text.disabled`, never"
-            " `opacity.disabled` on the label, glyph or reason"
-        ),
-    ),
-    (
-        "G-T2.3",
-        (
-            "`Enter`, `Space` or a bound hotkey on a T2 control changes nothing and re-shows"
-            " the reason inline with one polite announcement"
-        ),
-    ),
-)
+    ("G-T2.1b", '`aria-disabled="true"`, never the `disabled` attribute — it stays in the Tab order and a menu item stays arrow-reachable'),
+    ("G-T2.2", "hi-fi label `color.text.tertiary`, reason `color.text.secondary`; for primary / buy / sell actions the fill becomes `color.surface.raised` with a `color.border.default` hairline; never `color.text.disabled`, never `opacity.disabled` on the label, glyph or reason"),
+    ("G-T2.3", "`Enter`, `Space` or a bound hotkey on a T2 control changes nothing and re-shows the reason inline with one polite announcement"),
+)  # fmt: skip
 
 
 def t2_quotes(t: Texts) -> list[str]:
@@ -535,10 +507,7 @@ def story_consequence(t: Texts) -> str:
 
 GATE_TEXTS = (
     ("§1 item 2", "records and orchestrates; it does not enforce"),
-    (
-        "§1 item 2",
-        "No copy on these surfaces says the screen enforces anything",
-    ),
+    ("§1 item 2", "No copy on these surfaces says the screen enforces anything"),
     ("§1 item 3", "Enabling live makes LIVE **selectable**; it switches no session."),
     ("§6.4", "It is **never T2 and never hidden** while live may be on"),
     ("§6.4", "shows whenever the gate is `enabled` **or its state is unknown**"),
@@ -550,11 +519,8 @@ GATE_TEXTS = (
     ("§3", '**"Skip to live gate"** joins the top-of-page skip-link set'),
     ("§6.4", "**PROPOSED idempotent**"),
     ("§5.1", "`debug` is never a finding severity"),
-    (
-        "§7.2",
-        "cancel, close, flatten, reduce-only orders and setting or tightening a stop stay enabled",
-    ),
-)
+    ("§7.2", "cancel, close, flatten, reduce-only orders and setting or tightening a stop stay enabled"),
+)  # fmt: skip
 
 
 # the rows that draw Turn off live trading…, each with the phrase that keeps it present and usable
@@ -564,8 +530,8 @@ TURN_OFF_ROWS = (
     ("GATE-08", 'Confirm "Turn off live trading" enabled from the start'),
     ("GATE-13", "Turn off live trading… present and T1"),
 )
-TURN_OFF_NEG = re.compile(r"\b(?:disabled|hidden|absent|gated|T2)\b")
-NEVER = re.compile(r"\bnever (?:disabled|hidden|absent|gated|T2)\b")
+_OFF = r"(?:disabled|hidden|absent|gated|T2|inert|unavailable|(?<!`)locked(?!`))\b"
+TURN_OFF_NEG, NEVER = re.compile(r"\b" + _OFF), re.compile(r"\bnever " + _OFF)
 SEVERITIES = ("Critical", "Error", "Warning", "Info")  # BQ-05: never `debug`
 REUSE = re.compile(r"\b(?:grace|reus\w*|window|\d+ minutes?)\b", re.IGNORECASE)
 
@@ -590,7 +556,7 @@ def step_up(t: Texts) -> list[str]:
     if len(six3) != 1:
         bad.append("§6.3: no SCR-006 bullet")
     else:
-        for need in ("class `live_enablement`", "the code is bound to this one request"):
+        for need in ("class `live_enablement`", "password and code", "bound to this one request"):
             if need not in six3[0]:
                 bad.append(f"§6.3: the SCR-006 bullet lacks {need!r}")
         if REUSE.search(six3[0]):
@@ -629,6 +595,36 @@ def unconfirmed(t: Texts) -> list[str]:
     return bad
 
 
+ENFORCE_OK = ("does not enforce", "says the screen enforces any", "enforced server-side", "The server enforces", "Synchronous enforcement")  # fmt: skip
+SWITCH_NEG = re.compile(r"\b(?:[Ss]essions?|[Dd]emo)\b(?: \w+){0,3} switch(?:es)?\b(?! through| by itself)")  # fmt: skip
+NO_UI = "`DISABLE_REQUESTED` gets no UI"
+ENABLE_NEG = re.compile(r"\b(?:hidden|absent|inert|T3)\b")
+
+
+def negatives(t: Texts) -> list[str]:
+    """A contradicting sentence anywhere FAILs, not only a missing pin."""
+    bad = []
+    for i, ln in enumerate(t.spec.split("\n"), 1):
+        rest = ln
+        for ok in ENFORCE_OK:
+            rest = rest.replace(ok, "")
+        if "enforc" in rest.lower():
+            bad.append(f"spec:{i} says something other than the server enforces (C-2.21)")
+        if SWITCH_NEG.search(ln):
+            bad.append(f"spec:{i} lets a session switch by itself (C-2.11)")
+        if "`DISABLE_REQUESTED` gets" in ln.replace(NO_UI, ""):
+            bad.append(f"spec:{i} gives `DISABLE_REQUESTED` a UI (BQ-02)")
+    if t.spec.count(NO_UI) != 2:
+        bad.append("§6.4 and C-5 do not both say `DISABLE_REQUESTED` gets no UI")
+    for lead in ("GATE-02", "GATE-09"):
+        cells = row(t, lead)
+        if "Enable T2" not in cells[3] or ENABLE_NEG.search(" ; ".join(cells[2:])):
+            bad.append(f"{lead}: Enable is not drawn T2, or is drawn hidden, absent or inert")
+    if "the server refuses the dismiss" not in row(t, "SEC-12")[3]:
+        bad.append("SEC-12: the refusal is not the server's (G-4)")
+    return bad
+
+
 def g_gate(t: Texts) -> list[str]:
     """The safety reading the brief and the owners fix; each a sentence the lens can cite."""
     bad = []
@@ -647,7 +643,7 @@ def g_gate(t: Texts) -> list[str]:
             bad.append(f"{lead}: the confirm does not start with focus on Cancel")
     if "T2" in row(t, "GATE-07")[3]:
         bad.append("GATE-07: the off control is drawn gated")
-    bad += turn_off(t) + step_up(t) + unconfirmed(t)
+    bad += turn_off(t) + step_up(t) + unconfirmed(t) + negatives(t)
     wd = row(t, "Withdrawal permission detected")
     if not wd[4].startswith("no (C-2.8"):
         bad.append("§5.1: the withdrawal finding is drawn dismissible")
@@ -823,21 +819,16 @@ def set_cell(lead: str, col: int, value: str) -> Callable[[Texts], Texts]:
     return f
 
 
-def drop_row(lead: str) -> Callable[[Texts], Texts]:
-    def f(t: Texts) -> Texts:
-        return replace(
-            t,
-            spec="\n".join(ln for ln in t.spec.split("\n") if not ln.startswith(lead)),
-        )
+def drop_if(p: Callable[[str], bool]) -> Callable[[Texts], Texts]:
+    return lambda t: replace(t, spec="\n".join(x for x in t.spec.split("\n") if not p(x)))
 
-    return f
+
+def drop_row(lead: str) -> Callable[[Texts], Texts]:
+    return drop_if(lambda x: x.startswith(lead))
 
 
 def add_line(text: str) -> Callable[[Texts], Texts]:
-    def f(t: Texts) -> Texts:
-        return replace(t, spec=t.spec + "\n" + text + "\n")
-
-    return f
+    return lambda t: replace(t, spec=t.spec + "\n" + text + "\n")
 
 
 MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
@@ -850,7 +841,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-CVD", "type a ΔE figure off", set_cell("V-01", 4, "1.00 / 1.00 / 1.00 / 1.00")),
     ("G-T2", "drop the gate's reason", set_cell("GATE-02", 3, "Enable T2; rendering 2a")),
     ("G-T2", "retype a key's text", set_cell("SW-03", 3, 'T2 `rbac.env` "Live isn\'t on for you."; rendering 2a')),
-    ("G-T2", "drop a control's rendering", set_cell("SEC-12", 3, 'T2 "This finding clears only when it is fixed." (a PROPOSED key)')),
+    ("G-T2", "drop a control's rendering", set_cell("SEC-12", 3, 'T2 "This finding clears only when it is fixed." (a PROPOSED key; the server refuses the dismiss)')),
     ("G-T2", "drop the lock from §1", sub("led by the CMP-019 `lock` glyph", "led by its glyph")),
     ("G-T2", "let a T2 control leave the Tab order (G-T2.1b)", sub("never the `disabled` attribute — it stays in the Tab order", "or the `disabled` attribute")),
     ("G-T2", "dim a T2 label (G-T2.2)", sub("never `color.text.disabled`, never `opacity.disabled` on", "dimmed with `opacity.disabled` on")),
@@ -871,7 +862,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-GATE", "disable the turn-off Confirm (GATE-08)", set_cell("GATE-08", 2, "§6.4's dialog; Confirm \"Turn off live trading\" natively disabled until the summary re-reads")),
     ("G-GATE", "hide Turn off while the state is unknown (GATE-13)", set_cell("GATE-13", 2, "\"Live trading: status unknown\"; Turn off live trading… hidden")),
     ("G-GATE", "narrow §6.4's rule to `enabled` only", sub("shows whenever the gate is `enabled` **or its state is unknown**", "shows only when the gate is `enabled`")),
-    ("G-GATE", "drop §6.3's SCR-006 bullet", lambda t: replace(t, spec="\n".join(ln for ln in t.spec.split("\n") if "**Then SCR-006**" not in ln))),
+    ("G-GATE", "drop §6.3's SCR-006 bullet", drop_if(lambda x: "**Then SCR-006**" in x)),
     ("G-GATE", "drop the GATE-06 row", drop_row("| GATE-06 ")),
     ("G-GATE", "let §6.3's code be reused", sub("the code is bound to this one request", "a code from the last 15 minutes is reused")),
     ("G-GATE", "let GATE-06's code be reused", set_cell("GATE-06", 3, "E09's modal; the code is single-use and bound to the request; a code from the last 15 minutes is reused")),
@@ -884,6 +875,13 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-GATE", "give a finding the `debug` severity (BQ-05)", set_cell("Overdue rotation", 1, "Debug")),
     ("G-GATE", "drop a B17 evidence key's row", drop_row("| Runbooks signed ")),
     ("G-GATE", "drop the fix-only refusal G-row (BQ-04)", set_cell("G-4", 1, "no dismiss operation")),
+    ("G-GATE", "let the shell enforce the gate (C-2.21)", add_line("The top bar enforces the closed gate on every ticket.")),
+    ("G-GATE", "let a demo session follow the gate (C-2.11)", add_line("Once enabled, each session switches to LIVE on its next load.")),
+    ("G-GATE", "drop the password from §6.3's SCR-006 bullet", sub('"Confirm it\'s you", password and code (`E09D06`:47)', '"Confirm it\'s you", the code only (`E09D06`:47)')),
+    ("G-GATE", "give `DISABLE_REQUESTED` a control (BQ-02)", sub("`DISABLE_REQUESTED` gets no UI (C-5)", "`DISABLE_REQUESTED` gets a Request turn-off… link (C-5)")),
+    ("G-GATE", "draw GATE-09's Enable inert", set_cell("GATE-09", 3, 'one polite "Live trading turned off."; Enable inert until the server reports `eligible`')),
+    ("G-GATE", "lock Turn off while the state is unknown (GATE-13)", set_cell("GATE-13", 2, '"Live trading: status unknown" with "last read 14:02 UTC"; Turn off live trading… present, unavailable until the read')),
+    ("G-GATE", "move SEC-12's refusal to the client", sub("and the server refuses the dismiss, G-4", "and the screen refuses the dismiss, G-4")),
     ("G-SECRET", "show a full key id", add_line("The row names key ...a1B2c3D4e5 in full.")),
     ("G-SECRET", "show an allowlisted address", add_line("The allowlist expects 100.64.0.7.")),
     ("G-SECRET", "name secret material in a row", add_line("The dialog shows the API secret once.")),
@@ -927,10 +925,8 @@ def selftest() -> tuple[bool, list[str]]:
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="E43-D01 security centre audit")
     g = ap.add_mutually_exclusive_group()
-    g.add_argument("--check", action="store_true")
-    g.add_argument("--fill", action="store_true")
-    g.add_argument("--self-test", action="store_true")
-    g.add_argument("--repin-ruled", action="store_true")
+    for flag in ("--check", "--fill", "--self-test", "--repin-ruled"):
+        g.add_argument(flag, action="store_true")
     a = ap.parse_args(argv)
     if a.self_test:
         ok, lines = selftest()
