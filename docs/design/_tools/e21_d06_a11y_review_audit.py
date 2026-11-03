@@ -12,11 +12,12 @@ only repo code it runs is `contrast_ratio()` of `docs/design/_tools/contrast_che
 E21-D02's and E21-D04's audit tools, imported (never copied) by path.
 
 Gates: G-CITE, G-KEYCITE, G-VERSION, G-AC, G-INBOX, G-DECISIONS, G-KEYS, G-T2, G-LIVE, G-COLOUR,
-G-CONTRAST, G-CVD, G-VERDICT, G-FINDINGS, G-IDS, G-HANDOFF, G-WALK, G-RULING, G-RULED,
-G-NOCLOSE, G-PUBLIC, G-HYGIENE, G-HELPER, G-UNTOUCHED and G-MUTLIST (section 16.3 equals this
-tool's list). Pins (G-RULED): each BQ bullet's sha256[:16] in `e21_d06_ruled_pins.txt`;
-`--repin-ruled` is the only writer. The BQ list is comment 6596009389 on #506; its ruling is
-pending, so every bullet reads PENDING (G-RULING) until a ruling flips it.
+G-CONTRAST, G-CVD, G-VERDICT, G-FINDINGS, G-IDS, G-HANDOFF, G-WALK, G-RULING, G-RIDERS,
+G-RULED, G-NOCLOSE, G-PUBLIC, G-HYGIENE, G-HELPER, G-UNTOUCHED and G-MUTLIST (section 16.3
+equals this tool's list). Pins (G-RULED): each BQ bullet's sha256[:16] in
+`e21_d06_ruled_pins.txt`; `--repin-ruled` is the only writer. The BQ list is comment 6596009389
+on #506 and its ruling of record is comment 6599703549: every bullet reads RULED, agreed or
+amended as the ruling says (G-RULING), and every rider has its RR row (G-RIDERS).
 
 Usage (from the repo root):
   python3 -I -B docs/design/_tools/e21_d06_a11y_review_audit.py --check | --json | --self-test
@@ -41,10 +42,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import spec_audit_lib as L  # the shared helper sits beside this file
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "94b10d2c9"  # origin/main where the BQ list read every cite
+BASE = "d023df0f6"  # origin/main where the ruling of record re-checked every cite
 D03_HEAD = "c7b0d2087"  # #5518 (E21-D03, #503) head; re-pinned to its merge commit
 D05_HEAD = "031c411d8"  # #5554 (E21-D05, #505) head; re-pinned to its merge commit
-BQ_LIST = "6596009389"  # the BQ list on #506; no ruling yet
+BQ_LIST = "6596009389"  # the BQ list on #506
+RULING = "6599703549"  # the orchestrator's ruling of record on it
+AGREED = (0, 1, 2, 14, 15)  # agreed as written; every other bullet amended
+RIDERS = 25  # the RR rows: one per amendment, rider, missed row and cite note of the ruling
 HELPER_SHA = "03007e3fc2be98f7"  # sha256[:16] of the shared helper as landed
 
 SPEC_REL = "docs/design/E21/E21-D06.md"
@@ -75,6 +79,15 @@ KEYED = {
     "E08-D12": L.DocRef("docs/design/E08/E08-D12.md", BASE),
     "E09-D09": L.DocRef("docs/design/E09/E09-D09.md", BASE),
     "E27-D05": L.DocRef("docs/design/E27/E27-D05.md", BASE),
+    "E47-D03": L.DocRef("docs/design/E47/E47-D03.md", BASE),
+    "E47-D04": L.DocRef("docs/design/E47/E47-D04.md", BASE),
+    "E47-D06": L.DocRef("docs/design/E47/E47-D06.md", BASE),
+    "E47-D07": L.DocRef("docs/design/E47/E47-D07.md", BASE),
+    "E47-D09": L.DocRef("docs/design/E47/E47-D09.md", BASE),
+    "E17-D02": L.DocRef("docs/design/E17/E17-D02.md", BASE),
+    "E17-D03": L.DocRef("docs/design/E17/E17-D03.md", BASE),
+    "E14-D10": L.DocRef("docs/design/E14/E14-D10.md", BASE),
+    "E08-D05": L.DocRef("docs/design/E08/E08-D05.md", BASE),
 }
 _ALTS = "|".join(re.escape(k) for k in sorted(KEYED, key=len, reverse=True))
 # `NN`:line, KEY:line or `KEY`:line, with an optional –end.
@@ -117,6 +130,21 @@ KEY_CITES: tuple[L.KeyCite, ...] = tuple(
         ("PREF", 92, "if (update.significant) return true;"),
         ("E08-D12", 106, "three objects"),
         ("DS", 15, "G-T2 miss is a Major"),
+        ("14", 2497, "announce price updates"),
+        ("E47-D04", 219, "Keys beyond the APG grid set"),
+        ("E47-D04", 223, "the ladder: best bid"),
+        ("E47-D04", 227, "a focused order cancels with `Ctrl+Delete`"),
+        ("E47-D04", 283, "the nearest surviving level by price"),
+        ("E47-D09", 163, "the row's menu (`Shift+F10`)"),
+        ("E47-D09", 165, "`Ctrl+Enter` at the focused row"),
+        ("E47-D09", 247, "`Ctrl+Shift+T` (KMAP:426, :564)"),
+        ("E47-D09", 248, "`Ctrl+Shift+X` (KMAP:370)"),
+        ("E47-D06", 240, "`Enter` on a row opens the level's history"),
+        ("E47-D06", 258, "**Refresh to current**"),
+        ("E47-D06", 428, "D06-C16"),
+        ("E47-D03", 311, "the column header at Compact"),
+        ("E47-D07", 210, "silent"),
+        ("E17-D03", 243, "the heatmap table's column set is missing"),
     )
 )
 
@@ -138,6 +166,7 @@ VERDICTS = (
     "non-compliant",
     "out of scope —",
     "not yet decidable —",
+    "ruled divergence — BQ-",
 )
 SCENARIOS = 3
 # Section 9.3: the carriers' pairs the parents leave unmeasured (F-11, G-06); the env badge's
@@ -155,14 +184,17 @@ REVIEW_PAIRS: tuple[tuple[str, str, float], ...] = (
     ("color.buy.default", "color.surface.raised", 4.5),
     ("color.sell.default", "color.surface.raised", 4.5),
 )
-HOLD = "**Hold:** E21-D02 (#440) and E21-D03 (#503) are not signed off while a Blocking row stands"
+HOLD = (
+    "**Hold:** E21-D02 (#440), E21-D03 (#503) and E21-D04 (#504) are not signed off while a"
+    " Blocking row stands"
+)
 F_HEAD_RE = re.compile(
     r"^## 12\. Findings — F (\d+) \(Blocking (\d+) · Major (\d+) · Minor (\d+) · Info (\d+)\)"
     r" <!-- audit:f=(\d+)/(\d+)/(\d+)/(\d+)/(\d+) -->$",
     re.MULTILINE | re.DOTALL,
 )
 F_MARK_RE = re.compile(r" audit:f=\d+/\d+/\d+/\d+/\d+ ", re.DOTALL)
-PREFIXES = "IB|AD|FO|KS|T2|LR|CR|SR|F|V|C|G|Q|A|H"
+PREFIXES = "IB|AD|FO|KS|T2|LR|CR|SR|RR|F|V|C|G|Q|A|H"
 ID_RE = re.compile(rf"(?:{PREFIXES})-\d\d")
 # An own id; another spec's ids carry its prefix ("D04 A-36", "M F-15") and are skipped.
 REF_RE = re.compile(rf"(?<![\w-])(?<!D0\d )(?<!M )(?:{PREFIXES})-\d\d(?![\w.]*\d)(?!\.\d)")
@@ -362,8 +394,8 @@ def g_inbox(t: L.Tree) -> list[str]:
     defined = defined_ids(spec(t))
     bad = (
         []
-        if [r[0] for r in got] == [f"IB-{i:02d}" for i in range(1, 21)]
-        else ["not IB-01 … IB-20"]
+        if [r[0] for r in got] == [f"IB-{i:02d}" for i in range(1, 23)]
+        else ["not IB-01 … IB-22"]
     )
     for r in got:
         if len(r) < 4 or r[2] not in DISPOSITIONS:
@@ -395,6 +427,10 @@ def g_keys(t: L.Tree) -> list[str]:
         bad.append("`Shift+Enter` not scoped to the DOM context")
     if "row action menu" not in keymap.get(("`Enter`", "grid row or cell"), ["", "", ""])[2]:
         bad.append("`Enter` is not the row menu")
+    if "row action menu" not in keymap.get(("`Shift+F10` / `Menu`", "grid row"), ["", "", ""])[2]:
+        bad.append("no `Shift+F10` / `Menu` path to the row menu")
+    if "first / last cell" not in keymap.get(("`Home` / `End`", "grid"), ["", "", ""])[2]:
+        bad.append("`Home` / `End` lose the APG grid meaning")
     for r in rows(t, "### 5.2"):
         if len(r) < 5 or "`" not in r[2] or POINTER_WORDS.search(r[2]) or "`" not in r[4]:
             bad.append(f"{r[0] if r else '?'} not keyboard-only with a way out")
@@ -497,6 +533,10 @@ def g_verdict(t: L.Tree) -> list[str]:
             bad.append(f"{r[0]} at risk names no F row or interim path")
         elif v.startswith("non-compliant") and not any(sev.get(f) == "Blocking" for f in fs):
             bad.append(f"{r[0]} non-compliant without a Blocking row")
+        elif v.startswith("ruled divergence") and not (
+            re.search(r"C-\d\d", v) and re.search(r"A-\d\d", v)
+        ):
+            bad.append(f"{r[0]} ruled divergence without its C row and A row")
     return bad
 
 
@@ -556,12 +596,32 @@ def g_walk(t: L.Tree) -> list[str]:
 def g_ruling(t: L.Tree) -> list[str]:
     return L.check_ruling(
         spec(t),
-        heading_line=f"## The questions BQ-0 … BQ-15 — defaults built; ruling pending (comment {BQ_LIST})",
+        heading_line=(
+            f"## The questions BQ-0 … BQ-15 — RULED (orchestrator, comment {RULING},"
+            f" on the BQ list {BQ_LIST})"
+        ),
         list_ref=f"comment {BQ_LIST} on #506",
         count=16,
-        verdict=lambda _n: f"PENDING (comment {BQ_LIST})",
-        need=("Default built:",),
+        verdict=lambda n: f"RULED ({RULING}), {'agreed' if n in AGREED else 'amended'}: ",
+        need=("Built as:",),
+        forbid=("PENDING (comment", "Default built:"),
     )
+
+
+def g_riders(t: L.Tree) -> list[str]:
+    got = rows(t, "## The ruling's riders")
+    defined = defined_ids(spec(t))
+    bad = (
+        []
+        if [r[0] for r in got] == [f"RR-{i:02d}" for i in range(1, RIDERS + 1)]
+        else [f"not RR-01 … RR-{RIDERS:02d}"]
+    )
+    for r in got:
+        if len(r) < 3 or not re.match(r"BQ-\d+|missed|cites", r[1]):
+            bad.append(f"{r[0] if r else '?'} source")
+        elif not ids_in(r[2]) or any(i not in defined for i in ids_in(r[2])):
+            bad.append(f"{r[0]} lands nowhere")
+    return bad
 
 
 def g_ruled(t: L.Tree) -> list[str]:
@@ -597,8 +657,8 @@ def g_mutlist(t: L.Tree) -> list[str]:
 # fmt: off
 GATES = tuple(L.Gate("G-" + f.__name__[2:].upper(), f) for f in (
     g_cite, g_keycite, g_version, g_ac, g_inbox, g_decisions, g_keys, g_t2, g_live, g_colour,
-    g_contrast, g_cvd, g_verdict, g_findings, g_ids, g_handoff, g_walk, g_ruling, g_ruled,
-    g_noclose, g_public, g_hygiene, g_helper, g_untouched, g_mutlist,
+    g_contrast, g_cvd, g_verdict, g_findings, g_ids, g_handoff, g_walk, g_ruling, g_riders,
+    g_ruled, g_noclose, g_public, g_hygiene, g_helper, g_untouched, g_mutlist,
 ))
 # fmt: on
 
@@ -645,7 +705,7 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-16", "G-VERDICT", "a compliant verdict names an F row", "spec",
        r"(\| V-14 \|[^\n]*?\| )at risk — F-03", r"\1compliant — F-03", regex=True),
     _M("M-17", "G-FINDINGS", "the heading count drifts", "spec",
-       "Major 2 · Minor 8 · Info 2)", "Major 2 · Minor 7 · Info 2)"),
+       "Major 3 · Minor 13 · Info 1)", "Major 3 · Minor 12 · Info 1)"),
     _M("M-18", "G-FINDINGS", "a finding loses its story", "spec",
        r"(\| F-02 \|[^\n]*?#504 PR 2 · E21-D07 #576) · E21-S01 #648", r"\1", regex=True),
     _M("M-19", "G-FINDINGS", "the hold sentence dropped", "spec",
@@ -656,9 +716,9 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-22", "G-WALK", "an eleventh walkthrough item", "spec",
        "10. Comment `approved`", "10. One more pass.\n11. Comment `approved`"),
     _M("M-23", "G-RULING", "the heading names another comment", "spec",
-       "ruling pending (comment 6596009389)", "ruling pending (comment 6596009388)"),
+       "RULED (orchestrator, comment 6599703549,", "RULED (orchestrator, comment 6599703548,"),
     _M("M-24", "G-RULED", "a BQ default edited without a re-pin", "spec",
-       "Default built: 24 / 32 px rows", "Default built: 24 / 30 px rows"),
+       "Built as: 24 / 32 px rows", "Built as: 24 / 30 px rows"),
     _M("M-25", "G-NOCLOSE", "a closing keyword", "spec",
        "nothing is filed.", "nothing is filed. " + "Clo" + "ses #506."),
     _M("M-26", "G-PUBLIC", "a URL", "spec",
@@ -674,6 +734,19 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "", "docs/plan/05-accessibility-standard.md"),
     _M("M-31", "G-MUTLIST", "the list drifts", "spec",
        r"\| M-01 +\| G-CITE +\|", "| M-01 | G-AC |", regex=True),
+    _M("M-32", "G-KEYS", "`Home` / `End` back on the best prices", "spec",
+       r"(\| `Home` / `End` +\| grid +\| )the row's first / last cell", r"\1the best ask / bid",
+       regex=True),
+    _M("M-33", "G-KEYS", "no `Shift+F10` path to the row menu", "spec",
+       r"(\| `Shift\+F10` / `Menu` +\| grid row +\| )the row action menu", r"\1the context menu",
+       regex=True),
+    _M("M-34", "G-VERDICT", "a ruled divergence without its A row", "spec",
+       "opens the row menu (C-04; A-03)", "opens the row menu (C-04)"),
+    _M("M-35", "G-RIDERS", "a rider built nowhere", "spec",
+       r"(\| RR-17 \|[^\n]*\| )CR-01( +\|)", r"\1§8\2", regex=True),
+    _M("M-36", "G-FINDINGS", "the hold drops #504", "spec",
+       "E21-D03 (#503) and E21-D04 (#504) are not signed off while",
+       "E21-D03 (#503) are not signed off while"),
 )
 # fmt: on
 
