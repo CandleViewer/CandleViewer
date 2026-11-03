@@ -92,8 +92,10 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 from candleviewer.storage.repositories.trade_groups import (
     ACCOUNT_NOT_LIVE,
     DEFINITION_NOT_LIVE,
+    MAX_PAYLOAD_CHARS,
     OPEN_GROUP_STATUSES,
     PROFILE_CHANGED,
+    PROFILE_SNAPSHOT_MAX_CHARS,
     TRADE_GROUP_CONFLICTS,
     TRADE_GROUP_RULES,
     UNPROTECTED_LEG_STATUSES,
@@ -211,11 +213,13 @@ _LEG_UUIDS: Final = typed_fields(TradeGroupLegRow, UUID)
 # -- binds -------------------------------------------------------------------------------------
 
 
-def _jsonb(value: JsonObject | None) -> sa.ColumnElement[Any]:
+def _jsonb(
+    value: JsonObject | None, *, max_chars: int = MAX_PAYLOAD_CHARS
+) -> sa.ColumnElement[Any]:
     """`value` as `render_json` text cast to `jsonb`; `None` as SQL NULL, never JSON `null`."""
     if value is None:
         return sa.null()
-    return sa.cast(sa.literal(render_json(value), sa.Text), JSONB)
+    return sa.cast(sa.literal(render_json(value, max_chars=max_chars), sa.Text), JSONB)
 
 
 def _set_once(column: sa.ColumnElement[Any], value: object) -> sa.ColumnElement[Any]:
@@ -305,7 +309,7 @@ def lock_profiles_statement(profile_ids: Iterable[UUID]) -> sa.Select[Any]:
 def _leg_values(group_id: UUID, leg: NewTradeGroupLeg) -> dict[str, Any]:
     values: dict[str, Any] = {f.name: getattr(leg, f.name) for f in fields(leg)}
     values["trade_group_id"] = group_id
-    values["profile_snapshot"] = _jsonb(leg.profile_snapshot)
+    values["profile_snapshot"] = _jsonb(leg.profile_snapshot, max_chars=PROFILE_SNAPSHOT_MAX_CHARS)
     values["rejection_code"] = _redacted_code(leg.rejection_code)
     values["rejection_message"] = _redacted_message(leg.rejection_message)
     return values

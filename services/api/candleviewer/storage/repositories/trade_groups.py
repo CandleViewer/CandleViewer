@@ -62,7 +62,8 @@ from candleviewer.storage.repositories.orders import (
 __all__ = [
     "ACCOUNT_NOT_LIVE", "CREATE_ONLY_GROUP_COLUMNS", "DEFINITION_NOT_LIVE", "GROUP_PATCH_COLUMNS",
     "LEG_PATCH_COLUMNS", "MAX_CODE_CHARS", "MAX_DEPTH", "MAX_GROUP_PAGE", "MAX_PAYLOAD_CHARS",
-    "NO_STOP_LEG_STATUSES", "OPEN_GROUP_STATUSES", "PROFILE_CHANGED", "TRADE_GROUP_CONFLICTS",
+    "NO_STOP_LEG_STATUSES", "OPEN_GROUP_STATUSES", "PROFILE_CHANGED", "PROFILE_SNAPSHOT_MAX_CHARS",
+    "TRADE_GROUP_CONFLICTS",
     "TRADE_GROUP_RULES", "UNPROTECTED_LEG_STATUSES", "WRITE_ONCE_GROUP_COLUMNS",
     "WRITE_ONCE_LEG_COLUMNS", "AccountScope", "AlgoKind", "EntryType", "ExchangeEnv",
     "GroupAnchor", "GroupCreated", "GroupExists", "GroupOrigin", "GroupPatch", "GroupWriteAhead",
@@ -78,6 +79,13 @@ __all__ = [
 #: A `jsonb` value as this store writes and reads it: no float anywhere (C2).
 type JsonValue = bool | int | str | list[JsonValue] | dict[str, JsonValue] | None
 type JsonObject = dict[str, JsonValue]
+
+#: The bound of a leg's `profile_snapshot` (24 Sec.9.2; #3969). The test's maximal `AccountProfile`
+#: (500 + 500 symbols of 21 characters, 1,000 * (21 + 3) = 24,000 characters, ten full-width ladder
+#: rungs, every number at its column width) dumps to 26,337 characters, over `MAX_PAYLOAD_CHARS`;
+#: 32 KiB leaves headroom and the profile's own caps stay the one limit on its size.
+#: `algo_params` keeps `MAX_PAYLOAD_CHARS`.
+PROFILE_SNAPSHOT_MAX_CHARS: Final = 32768
 
 #: The `trade_group_status`, `leg_status`, `algo_kind`, `sizing_mode` and `exchange_env` types and
 #: the `tg_origin`, `tg_policy` and `tg_entrytype` vocabularies (21 Sec.1.2, Sec.3.3.2-3.3.3); a
@@ -140,19 +148,20 @@ WRITE_ONCE_LEG_COLUMNS: Final = frozenset(
 # -- the JSON codec of `algo_params` and `profile_snapshot` ----------------------------------------
 
 
-def render_json(value: JsonObject) -> str:
+def render_json(value: JsonObject, *, max_chars: int = MAX_PAYLOAD_CHARS) -> str:
     """Compact JSON text of a `jsonb` object, bound as text and cast by the statement builders.
 
     Raises `TypeError` for a top level that is not an object, a float, a `Decimal`, a key that is
     not a `str` or anything else that is not JSON, and `ValueError` for text `jsonb` refuses
     (U+0000, an unpaired surrogate), nesting deeper than `MAX_DEPTH` containers or text longer
-    than `MAX_PAYLOAD_CHARS`. No message names a value: they are P1 (21 Sec.12)."""
+    than `max_chars` (`MAX_PAYLOAD_CHARS` unless the caller names another). No message names a
+    value: they are P1 (21 Sec.12)."""
     if not isinstance(value, dict):
         raise TypeError("a stored JSON value must be an object")
     _check_json(value, 1)
     text = json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-    if len(text) > MAX_PAYLOAD_CHARS:
-        raise ValueError(f"a stored JSON value is longer than {MAX_PAYLOAD_CHARS} characters")
+    if len(text) > max_chars:
+        raise ValueError(f"a stored JSON value is longer than {max_chars} characters")
     return text
 
 
@@ -296,7 +305,7 @@ class NewTradeGroupLeg:
     def __post_init__(self) -> None:
         check_fields(self, _LEG_MONEY, ())
         snapshot = self.profile_snapshot
-        render_json(snapshot)
+        render_json(snapshot, max_chars=PROFILE_SNAPSHOT_MAX_CHARS)
         if (
             _json_text(snapshot.get("account_id")) != str(self.exchange_account_id)
             or _json_text(snapshot.get("profile_id")) != str(self.account_profile_id)
