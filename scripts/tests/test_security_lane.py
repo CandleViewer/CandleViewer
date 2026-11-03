@@ -31,7 +31,8 @@ SARIF = {"contents": "read", "security-events": "write"}
 LANE = {
     "codeql": (SARIF, 25),
     "semgrep-bandit": (SARIF, 36),
-    "gitleaks": (READ, 10),
+    "gitleaks": (READ, 20),
+    "gitleaks-history": (READ, 30),  # #5697: report-only, full-depth
     "read-only-scans": (READ, 47),
     "trivy": (SARIF, 15),
 }
@@ -93,6 +94,7 @@ ACTIONS = {
     "codeql": BASE_ACTIONS | {CODEQL_ACTION + a for a in ("init", "analyze", "upload-sarif")},
     "semgrep-bandit": BASE_ACTIONS | {CODEQL_ACTION + "upload-sarif"},
     "gitleaks": BASE_ACTIONS,
+    "gitleaks-history": BASE_ACTIONS,
     "read-only-scans": BASE_ACTIONS | {"actions/setup-node", "actions/upload-artifact"},
     "trivy": BASE_ACTIONS | {"aquasecurity/trivy-action", CODEQL_ACTION + "upload-sarif"},
 }
@@ -127,7 +129,7 @@ def _ids(job: str) -> list[str | None]:
     return [step.get("id") for step in _steps(job)]
 
 
-def test_the_unchanged_caller_runs_five_jobs_with_exact_permissions() -> None:
+def test_the_unchanged_caller_runs_the_lane_jobs_with_exact_permissions() -> None:
     pr = yaml.safe_load((WORKFLOWS / "pr.yml").read_text(encoding="utf-8"))
     assert pr["jobs"]["security"] == CALLER
     shape = {job: (spec["permissions"], spec["timeout-minutes"]) for job, spec in JOBS.items()}
@@ -151,6 +153,34 @@ def test_scan_steps_keep_their_old_budgets_and_the_job_adds_five_minutes(job: st
     }
     assert gates == GATES.get(job, {})
     assert JOBS[job]["timeout-minutes"] == sum(spent.values()) + sum(gates.values()) + 5
+
+
+def test_gitleaks_gate_is_shallow_and_only_the_report_only_job_reads_history() -> None:
+    # #5697: the gate scans the tree (--no-git), so a full clone only cost it its time budget.
+    depth = {job: _steps(job)[0]["with"]["fetch-depth"] for job in ("gitleaks", "gitleaks-history")}
+    assert depth == {"gitleaks": 1, "gitleaks-history": 0}
+    history_reads = ('--log-opts="--all"', " git file:///repo ")
+    readers = {
+        job
+        for job in JOBS
+        for step in _steps(job)
+        if any(read in step.get("run", "") for read in history_reads)
+    }
+    assert readers == {"gitleaks-history"}
+    gate = json.dumps(JOBS["gitleaks"])
+    assert "security_gate.py --tool gitleaks" in gate and "--no-git" in gate
+    history = JOBS["gitleaks-history"]
+    # A crashed sweep or an SR-146 hit must still fail the job (review of #5697): findings are
+    # report-only through `|| true`, so nothing in the job, job or step, may be continue-on-error.
+    assert [n for n in (history, *history["steps"]) if "continue-on-error" in n] == []
+    sweep = next(s for s in history["steps"] if "gitleaks-history.json" in s.get("run", ""))
+    assert "|| true" in sweep["run"] and "len(json.load(open('gitleaks-history.json')))" in sweep["run"]
+    (sr146,) = [s for s in history["steps"] if "check_secrets_hygiene.py logs" in s.get("run", "")]
+    assert sr146["if"] == "always()" and "|| true" not in sr146["run"]
+    assert "security_gate.py" not in json.dumps(history)
+    # Both jobs self-scan their outputs (SR-146).
+    for job in ("gitleaks", "gitleaks-history"):
+        assert "check_secrets_hygiene.py logs" in json.dumps(JOBS[job]), job
 
 
 def test_register_pins_run_every_test_repo_register_pin_in_read_only_scans() -> None:

@@ -301,8 +301,9 @@ def _legs(axis: object, inputs: dict[str, object]) -> int:
     # shards `py-perf` in three (+2) and adds `py-perf-index` (+1): 5 / 33 / 33 / 63. #5275 runs the
     # vr job in fourteen shards (+4): 5 / 33 / 33 / 67. E10-Q02 runs `e2e-electron` on every e2e call
     # (C-9.1 #8), not on release/* heads only (+1): 5 / 33 / 33 / 68. E03-T14 adds the bench lane's
-    # `route` job beside its `bench` job (+1): 5 / 33 / 33 / 69.
-    [("docs", 5), ("py", 33), ("py,infra", 33), ("all", 69)],
+    # `route` job beside its `bench` job (+1): 5 / 33 / 33 / 69. #5697 splits the history sweeps
+    # out of `gitleaks` into `gitleaks-history` (+1): 5 / 34 / 34 / 70.
+    [("docs", 5), ("py", 34), ("py,infra", 34), ("all", 70)],
 )
 def test_executed_job_count_per_change_class(change: str, count: int) -> None:
     on = set(JOBS["changed-paths"]["outputs"]) if change == "all" else set(change.split(","))
@@ -476,8 +477,8 @@ def _scan_run(
 def test_secret_scan_reads_the_prs_commits_with_the_security_lanes_scanners() -> None:
     step, checkout = _scan(), JOBS["gates"]["steps"][0]
     assert checkout["with"] == {"fetch-depth": 0, "persist-credentials": False}
-    # The scanner versions of the security lane's gitleaks job, pinned by digest here.
-    lane = json.dumps(_load("_job-security.yml")["jobs"]["gitleaks"])
+    # The scanner versions of the security lane's gitleaks-history job, pinned by digest here.
+    lane = json.dumps(_load("_job-security.yml")["jobs"]["gitleaks-history"])  # #5697
     for name in ("GITLEAKS_IMAGE", "TRUFFLEHOG_IMAGE"):
         image, digest = step["env"][name].split("@")
         assert image in lane and re.fullmatch(r"sha256:[0-9a-f]{64}", digest), name

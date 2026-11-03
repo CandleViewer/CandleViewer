@@ -1591,6 +1591,10 @@ previous entry.
   agent hosts): `gitleaks detect --source . --log-opts="--all" --config .gitleaks.toml --redact -r sweep.json`
   then `gitleaks detect --no-git ...`; record ruleset version, result and per-hit disposition in
   `docs/plan/spikes`-style note. Any real hit: **rotate first** (IR-02, SR-143), then investigate.
+- In CI (#5697) the gate job `gitleaks` checks out shallow (`fetch-depth: 1`; its scan is
+  `--no-git`); the full-history sweep and trufflehog's git scan run in the `gitleaks-history`
+  job (`fetch-depth: 0`, not a required check): findings report-only, a crashed sweep or an
+  SR-146 hit fails it.
 
 ### Sweep record (executed 2026-10-03, gitleaks 8.30.1, ruleset = repo `.gitleaks.toml` on top of defaults)
 
