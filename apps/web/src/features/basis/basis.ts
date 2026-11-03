@@ -1,5 +1,5 @@
 // E24-S08 (#783) slice 1: the basis a tick yields for a source (`24` §7: `basis = <source> − index`,
-// `premium_pct = basis / index × 100`). Exact decimals through `decimal.ts` (PROPOSED, BQ 2); `null` when
+// `premium_pct = basis / index × 100`). Exact decimals through `decimal.ts` (ruled (6612480577), a recorded deviation until E24-T04 serves a live basis); `null` when
 // the source price or the index is missing, so a missing field is never drawn as 0.
 import { percentOf, subtractDecimals } from "./decimal";
 import type { BasisSource } from "./settings";
@@ -18,6 +18,7 @@ export function basisOf(tick: BasisTick, source: BasisSource): BasisReading | nu
   const price = source === "last" ? tick.last : tick.mark;
   if (price === null || tick.index === null) return null;
   const basis = subtractDecimals(price, tick.index);
-  const pct = percentOf(basis ?? "", tick.index, PCT_PLACES);
-  return basis === null || pct === null ? null : { source, basis, pct };
+  if (basis === null) return null;
+  const pct = percentOf(basis, tick.index, PCT_PLACES);
+  return pct === null ? null : { source, basis, pct };
 }

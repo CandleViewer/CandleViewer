@@ -68,3 +68,24 @@ export const StaleT1 = {
 export const StaleT2 = {
   render: () => <At snapshot={{ stale: { tier: "t2", ageMs: 21_000, lastTsMs: T } }} />,
 };
+
+/** The readout in a 360 px column (the narrow host): the rows and the selector wrap, nothing clips. */
+export const Narrow360 = {
+  render: () => (
+    <div style={{ inlineSize: "360px" }}>
+      <At />
+    </div>
+  ),
+};
+
+/** The compact density the derivatives header row uses. */
+export const Dense = {
+  render: () => (
+    <div data-density="compact">
+      <At />
+    </div>
+  ),
+};
+
+// States: Loading = WaitingForTicker; Delayed = StaleT1 / StaleT2. Disconnected (a failed source) is slice 2's
+// SourceFailed on the panel.

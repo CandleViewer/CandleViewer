@@ -1,7 +1,7 @@
 // E24-S08 (#783) slice 1: the basis header readout (D03 §3 Basis row): CMP-036 KeyValueRow pairs in one
 // `<dl>` (Mark, Index, Basis), each figure with its unit in the accessible name, the sign of the basis as
 // text, the source line, and the source selector as its own Tab stop (CMP-003 SegmentedControl, S54-6).
-// `aria-live="off"`: ticks are never announced; the only announcement is the one polite sentence after the
+// The rows are not a live region: ticks are never announced; the only announcement is the one polite sentence after the
 // user changes the source.
 import { useState, type JSX, type ReactNode } from "react";
 import { FreshnessMarker, KeyValueRow, SegmentedControl } from "@candleviewer/ui";
@@ -74,7 +74,7 @@ export function BasisReadout({
   };
   return (
     <div className="cv-basis" data-cmp="CMP-036" role="group" aria-label={copy.regionName(symbol)}>
-      <dl className="cv-basis__rows" aria-live="off">
+      <dl className="cv-basis__rows">
         <KeyValueRow
           label={copy.MARK_LABEL}
           value={price(latest?.mark ?? null)}
@@ -115,7 +115,7 @@ export function BasisReadout({
         onChange={choose}
       />
       {children}
-      <p className="cv-visually-hidden" role="status">
+      <p className="cv-visually-hidden" role="status" aria-label={copy.SOURCE_REGION}>
         {announce}
       </p>
     </div>

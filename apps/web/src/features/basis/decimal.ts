@@ -1,11 +1,15 @@
-// E24-S08 (#783) slice 1 (PROPOSED, BQ 2): exact decimal-string arithmetic for the live basis readout.
+// E24-S08 (#783) slice 1 (BQ 2, ruled (6612480577): a recorded deviation until E24-T04 serves a live basis): exact decimal-string arithmetic for the live basis readout.
 // The ticket says the client does no arithmetic beyond formatting, but `/market/metrics` serves `basis`
 // only on the latest bar and `23` §14.8's ticker carries `mark_price` / `index_price` / `last_price`, not a
 // basis. Until the engine serves a live basis, the readout takes one exact subtraction and one rounded
 // percentage on the served decimal strings, through BigInt: never a float, never a changed digit. Both go
 // away when the engine serves them (E24-T04 follow-up).
 
-const DECIMAL = /^(-?)(\d{1,30})(?:\.(\d{1,18}))?$/;
+/** One decimal: optional minus, 1-30 integer digits, up to 18 decimals (`22` / `23` decimal strings). */
+export const DECIMAL = /^(-?)(\d{1,30})(?:\.(\d{1,18}))?$/;
+
+export const isDecimalString = (v: unknown): v is string =>
+  typeof v === "string" && DECIMAL.test(v);
 
 interface Scaled {
   readonly units: bigint;

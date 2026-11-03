@@ -79,7 +79,7 @@ describe("basis readout (CMP-036 rows)", () => {
         onSourceChange={onChange}
       />,
     );
-    const status = screen.getByRole("status");
+    const status = screen.getByRole("status", { name: "Basis source change" });
     expect(status.textContent).toBe("");
     const picker = screen.getByRole("radiogroup", { name: "Basis source" });
     fireEvent.click(within(picker).getByRole("radio", { name: "mark" }));
@@ -89,7 +89,7 @@ describe("basis readout (CMP-036 rows)", () => {
 
   it("keeps the rows out of a live region: ticks are never announced", () => {
     render(stories.SourceLast.render());
-    expect(group().querySelector("dl")?.getAttribute("aria-live")).toBe("off");
+    expect(group().querySelector("dl")?.closest("[aria-live]")).toBeNull();
   });
 
   it("has no serious axe violation in any story", { timeout: 30_000 }, async () => {

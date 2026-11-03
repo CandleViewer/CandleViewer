@@ -2,7 +2,7 @@
 // through the existing `TopicHandle`, drained once per animation frame (never per message, rules/30);
 // React reads a coarse snapshot through `useSyncExternalStore`. Deviation (as E22-S01's tape and E24-S01's
 // OI feed, C-69): `apps/web` carries no RxJS or Jotai, so the stream is the handle's rAF read and the atom
-// an external store; the coalescing contract is the same. A live readout only (BQ 1, PROPOSED): ticker
+// an external store; the coalescing contract is the same. A live readout only (BQ 1, ruled (6612480577)): ticker
 // snapshots are not stored, so there is no history to draw a series from.
 import { useSyncExternalStore } from "react";
 import type { WsClient } from "../../lib/ws/api";
@@ -83,6 +83,9 @@ export function startBasisFeed(
   const handle = client.consume({ ch: `ticker.${symbol}`, paneId, priority: "other" });
   let snapshot: BasisSnapshot = INITIAL_BASIS_SNAPSHOT;
   let latest: BasisTick | null = null;
+  // the timestamp-ordering baseline: cleared on a reset (a restarted stream may carry older timestamps),
+  // while `latest` stays shown
+  let baselineTs: number | null = null;
   let version = 0;
   let lastArrival: number | null = null;
   let published = -Infinity;
@@ -103,15 +106,23 @@ export function startBasisFeed(
     if (stopped) return;
     const now = clock.now();
     for (const tick of parseBasisFrames(handle.read(), symbol)) {
-      if (tick === "reset") continue; // whole items: the next one replaces the state (`23` §8.2)
-      if (latest !== null && tick.tsMs < latest.tsMs) continue; // an older item never replaces a newer
+      if (tick === "reset") {
+        baselineTs = null; // whole items: the next one replaces the state (`23` §8.2)
+        continue;
+      }
+      if (baselineTs !== null && tick.tsMs < baselineTs) continue; // an older item never replaces a newer
       latest = tick;
+      baselineTs = tick.tsMs;
       lastArrival = now;
       version += 1;
     }
     const ageMs = lastArrival === null ? 0 : now - lastArrival;
-    const tier = latest === null || lastArrival === null ? "fresh" : staleTier(ageMs, latest.stale);
     const feed = handle.status;
+    // a `stale` topic is the stale chip at t2, the same as a served `stale: true`
+    const tier =
+      latest === null || lastArrival === null
+        ? "fresh"
+        : staleTier(ageMs, latest.stale || feed === "stale");
     // a state change publishes at once; a value change at most once a second; the chip's age per second
     const structural = tier !== shownTier || feed !== shownFeed;
     const valueDue = version !== shownVersion && now - published >= PUBLISH_INTERVAL_MS;

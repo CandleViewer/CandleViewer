@@ -108,6 +108,30 @@ describe("startBasisFeed", () => {
     expect(feed.getSnapshot().latest?.last).toBe("82751.20");
   });
 
+  it("accepts an older-ts snapshot after a reset, keeping the shown values meanwhile", () => {
+    const { d, feed, handle } = start();
+    handle.status = "live";
+    handle.queue.push(tickerSnap([at(0, 1_792_391_751_229)]));
+    d.frame();
+    handle.queue.push(tickerReset);
+    d.frame(1_000);
+    expect(feed.getSnapshot().latest?.tsMs).toBe(1_792_391_751_229);
+    handle.queue.push(tickerSnap([at(0, 1_792_391_746_229)]));
+    d.frame(1_000);
+    expect(feed.getSnapshot().latest?.tsMs).toBe(1_792_391_746_229);
+  });
+
+  it("maps a stale topic to the stale chip (t2) and keeps the values", () => {
+    const { d, feed, handle } = start();
+    handle.status = "live";
+    handle.queue.push(tickerSnap([at(0)]));
+    d.frame();
+    handle.status = "stale";
+    d.frame();
+    expect(feed.getSnapshot().stale.tier).toBe("t2");
+    expect(feed.getSnapshot().latest?.last).toBe("82751.20");
+  });
+
   it("goes stale at 5 s (t1) and 15 s (t2) without a new item, per whole second", () => {
     const { d, feed, handle } = start();
     handle.status = "live";

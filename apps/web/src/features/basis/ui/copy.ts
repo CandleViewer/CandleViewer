@@ -9,9 +9,14 @@ export const MARK_LABEL = "Mark";
 export const INDEX_LABEL = "Index";
 export const BASIS_LABEL = "Basis";
 /** PROPOSED: the readout's name, after `14:1201`'s "Derivatives context BTCUSDT". */
+export const panelName = (symbol: string): string => `Basis panel, ${symbol}`;
 export const regionName = (symbol: string): string => `Basis, ${symbol}`;
 
-/** D03 §3: `basis, mark − index · source`; with `last` it reads `basis, last − index`. */
+/**
+ * BQ 2, ruled (6612480577): the source line follows the contract default `last` (`24` §7: `basis = last − index`).
+ * D03 S54-6 draws `basis, mark − index` with default `mark`, which becomes a D03 A-row after merge. The selected
+ * source decides the word; D03's "· source" suffix is the selector beside it.
+ */
 export const sourceLine = (source: BasisSource): string => `basis, ${source} − index`;
 /** The spoken form of the source line (the minus sign in words). */
 export const sourceSpoken = (source: BasisSource): string => `basis, ${source} minus index`;
@@ -31,3 +36,6 @@ export const NO_BASIS = "no basis for this source";
 
 /** D03 §10.2 "Stale 7s · last 13:42:05": the chip carries the age, this the last-good time. */
 export const lastGood = (ms: number): string => `last ${utcTime(ms)}`;
+
+/** PROPOSED: the accessible name of the readout's polite region (the source change). */
+export const SOURCE_REGION = "Basis source change";

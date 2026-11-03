@@ -25,6 +25,24 @@ describe("subtractDecimals", () => {
   });
 });
 
+describe("decimal bounds and negative zero", () => {
+  it("refuses more than 18 decimals and more than 30 integer digits", () => {
+    expect(subtractDecimals("1.1234567890123456789", "1")).toBeNull(); // 19 decimals
+    expect(subtractDecimals("1.123456789012345678", "1")).toBe("0.123456789012345678");
+    expect(subtractDecimals(`1${"0".repeat(30)}`, "1")).toBeNull(); // 31 integer digits
+    expect(subtractDecimals("9".repeat(30), "1")).toBe(`${"9".repeat(29)}8`);
+    expect(percentOf("1", "1.1234567890123456789", 3)).toBeNull();
+    expect(percentOf(`1${"0".repeat(30)}`, "1", 3)).toBeNull();
+  });
+  it("treats -0 operands as zero, never as a negative result", () => {
+    expect(subtractDecimals("-0", "0")).toBe("0");
+    expect(subtractDecimals("-0.0", "-0.0")).toBe("0.0");
+    expect(subtractDecimals("0", "-0")).toBe("0");
+    expect(percentOf("-0", "5", 3)).toBe("0.000");
+    expect(percentOf("5", "-0", 3)).toBeNull();
+  });
+});
+
 describe("percentOf", () => {
   it("matches D03's sample: −31.17 over 82782.37 is −0.038 %", () => {
     expect(percentOf("-31.17", "82782.37", 3)).toBe("-0.038");

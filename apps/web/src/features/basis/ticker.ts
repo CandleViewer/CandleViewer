@@ -4,6 +4,7 @@
 // `index_price` are optional in the schema: absent or malformed reads `null`, never 0.
 import type { generated } from "@candleviewer/protocol";
 import type { TopicFrame } from "../../lib/ws/api";
+import { isDecimalString } from "./decimal";
 import type { DataBody } from "../../lib/ws/protocol/codec";
 
 type TickerItem = generated.ws.TickerSymbolTicker["tickers"][number];
@@ -20,9 +21,6 @@ export interface BasisTick {
 const get = (v: unknown, key: string): unknown =>
   typeof v === "object" && v !== null ? Reflect.get(v, key) : undefined;
 
-const isDecimal = (v: unknown): v is string =>
-  typeof v === "string" && /^-?\d{1,30}(\.\d{1,18})?$/.test(v);
-
 const isEpochMs = (v: unknown): v is number =>
   typeof v === "number" && Number.isSafeInteger(v) && v > 0;
 
@@ -32,12 +30,12 @@ export function parseBasisItem(item: unknown, symbol: string): BasisTick | null 
   const mark: unknown = get(item, "mark_price" satisfies keyof TickerItem);
   const index: unknown = get(item, "index_price" satisfies keyof TickerItem);
   const ts: unknown = get(item, "ts_ms" satisfies keyof TickerItem);
-  if (sym !== symbol || !isDecimal(last) || !isEpochMs(ts)) return null;
+  if (sym !== symbol || !isDecimalString(last) || !isEpochMs(ts)) return null;
   return {
     tsMs: ts,
     last,
-    mark: isDecimal(mark) ? mark : null,
-    index: isDecimal(index) ? index : null,
+    mark: isDecimalString(mark) ? mark : null,
+    index: isDecimalString(index) ? index : null,
     stale: get(item, "stale" satisfies keyof TickerItem) === true,
   };
 }

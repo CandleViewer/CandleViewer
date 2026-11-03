@@ -66,6 +66,9 @@ describe("basisOf (the D03 §3 sample)", () => {
   it("differs by source when mark differs", () => {
     expect(basisOf({ ...tick, mark: "82780.00" }, "mark")?.basis).toBe("-2.37");
   });
+  it("is null when the basis is not computable, before any percentage is tried", () => {
+    expect(basisOf({ ...tick, index: "0" }, "last")).toBeNull(); // zero index: no percentage
+  });
   it("is null without the index or without the source price", () => {
     expect(basisOf({ ...tick, index: null }, "last")).toBeNull();
     expect(basisOf({ ...tick, mark: null }, "mark")).toBeNull();
