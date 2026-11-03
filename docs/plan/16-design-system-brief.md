@@ -290,6 +290,13 @@ glyph or geometry; announcements never wait for motion and no transition moves f
 < 5 min warning appears in the frame it is known. The heatmap's per-redraw decay is not motion: reduced motion leaves
 it unchanged, and only forced colours drops it.
 
+### 7.5 Profile, preview and readiness motion (E28-D04; PROPOSED until the owner's approval)
+
+Spec: `docs/design/E28/E28-D04.md` §2 (the choreography table M-1 to M-12), §3 (the does-not-animate list NA-1 to NA-11,
+MS-1 and the stale-preview rule MS-2), §5 (the focus rules FR-1 to FR-12) and §7 (the four storyboards). No token is
+added: rows 2a, 6 and 7 of E05-D03 are cited, every other transition is a cut at `motion.duration.instant`, and
+nothing staggers or tweens a number.
+
 ---
 
 ## 8. Layout grid, docking rules, responsive & minimum sizes (desktop-only)

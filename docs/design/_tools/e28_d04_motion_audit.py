@@ -25,7 +25,10 @@ FAIL led by its code, at most one G1 FAIL per table row:
   every block that names #5482 says PENDING, and no "if ... merges" pre-stage wording is left.
 - [G8-HYGIENE] no local path, host, closing keyword or word on the lane's public-text list in the
   spec, the pins file or this tool; no own file name carries a reserved word.
-- [G9-BOARDS] section 7: four dark boards, names and exports in the pattern, every one PENDING.
+- [G9-BOARDS] section 7: four dark boards, names and exports in the pattern, every one drawn;
+  section 7.1 records each board's PNG (its file name, the IHDR size and the sha256 of the file in
+  the working tree), and section 7.2 embeds each PNG once, in order, every embed pinned to one
+  commit whose blob at that path has the same sha256.
 - [G10-RULED] the BQ rulings (comment 6601762417): section 1 names the ruling and BQ-01 to BQ-14;
   section 3's MS-2 is the joint stale-preview sentence (JOINT) verbatim, the same in #840, #841 and
   #842; no `opacity.muted` anywhere; FR-5 and FR-12 cite E47-D04's removed-row move
@@ -169,6 +172,10 @@ LOCAL_PATH = "|".join(
     re.escape(p) for p in ("/" + "home/", "/" + "tmp/", "/" + "mnt/", "no" + "tes/")
 )
 LOCAL_PATH += r"|[A-Z]:\\"
+EMBED = re.compile(
+    r"https://raw\.githubusercontent\.com/CandleViewer/CandleViewer/([0-9a-f]{40})/"
+    r"(docs/design/E28/img/E28-D04-\d\d-[a-z0-9-]+\.png)"
+)
 HOST = re.compile(
     r"\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|dev|app|cloud)\b", re.IGNORECASE
 )
@@ -179,6 +186,21 @@ def git_show(rev: str, rel: str) -> str:
         ["git", "-C", str(ROOT), "show", f"{rev}:{rel}"], capture_output=True, check=False
     )
     return out.stdout.decode("utf-8") if out.returncode == 0 else ""
+
+
+def git_blob(rev: str, rel: str) -> bytes | None:
+    out = subprocess.run(
+        ["git", "-C", str(ROOT), "show", f"{rev}:{rel}"], capture_output=True, check=False
+    )
+    return out.stdout if out.returncode == 0 else None
+
+
+def png_facts(data: bytes | None) -> tuple[str, str] | None:
+    """(the IHDR size "W × H", the sha256) of a PNG, or None when it is not one."""
+    if not data or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        return None
+    w, h = int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    return f"{w} × {h}", hashlib.sha256(data).hexdigest()
 
 
 def token_names(texts: list[str]) -> set[str]:
@@ -208,6 +230,8 @@ class Ctx(NamedTuple):
     tool: str
     base: dict[str, str]
     tokens: frozenset[str]
+    pngs: dict[str, bytes]
+    blob: Callable[[str, str], bytes | None]
 
 
 class Result:
@@ -224,7 +248,21 @@ def load_ctx() -> Ctx:
     tokens = frozenset(token_names([git_show(BASE, p) for p in TOKEN_FILES]))
     pins = PINS.read_text(encoding="utf-8") if PINS.exists() else ""
     tool = Path(__file__).read_text(encoding="utf-8")
-    return Ctx(SPEC.read_text(encoding="utf-8"), pins, tool, base, tokens)
+    spec = SPEC.read_text(encoding="utf-8")
+    pngs = {
+        rel: (ROOT / rel).read_bytes()
+        for rel in re.findall(r"`(docs/design/E28/img/E28-D04-[^`]+\.png)`", spec)
+        if (ROOT / rel).exists()
+    }
+    return Ctx(spec, pins, tool, base, tokens, pngs, git_blob)
+
+
+def subsection(spec: str, num: str) -> str:
+    """Subsection `### num` of the spec, to the next heading."""
+    m = re.search(
+        rf"^### {re.escape(num)} [^\n]*\n(.*?)(?=^#{{2,3}} |\Z)", spec, re.MULTILINE | re.DOTALL
+    )
+    return m.group(1) if m else ""
 
 
 def section(spec: str, num: int) -> str:
@@ -502,6 +540,7 @@ def gate_request(ctx: Ctx, r: Result) -> None:
 # --- G8, G9: hygiene and boards ---------------------------------------------------------------
 def gate_hygiene(ctx: Ctx, r: Result) -> None:
     for name, text in (("the spec", ctx.spec), ("the pins", ctx.pins), ("the tool", ctx.tool)):
+        text = EMBED.sub("", text)  # the board embeds (section 7.2) are G9's
         for word in BANNED:
             mixed = word[:1].isupper() and not word.isupper()  # a mixed-case word matches its case
             hay, needle = (text, word) if mixed else (text.lower(), word.lower())
@@ -514,7 +553,7 @@ def gate_hygiene(ctx: Ctx, r: Result) -> None:
         (r"https?://", "a host"),
         (r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?) #\d", "a closing keyword"),
     ):
-        if re.search(pat, ctx.spec, re.IGNORECASE):
+        if re.search(pat, EMBED.sub("", ctx.spec), re.IGNORECASE):
             r.fail("G8-HYGIENE", f"the spec: {what}")
     for rel in (SPEC_REL, PINS_REL, Path(__file__).name):
         if hit := [w for w in RESERVED_IN_NAMES if w in Path(rel).name.lower()]:
@@ -522,16 +561,43 @@ def gate_hygiene(ctx: Ctx, r: Result) -> None:
 
 
 def gate_boards(ctx: Ctx, r: Result) -> None:
-    bs = rows(section(ctx.spec, 7))
+    bs = rows(section(ctx.spec, 7).split("\n### 7.1 ")[0])
     for i, b in enumerate(bs, 1):
         m = re.fullmatch(r"`E28-D04 / (\d\d) ([a-z0-9-]+)`", b[1] if len(b) > 1 else "")
         exp = f"`docs/design/E28/img/E28-D04-{m.group(1)}-{m.group(2)}.png`" if m else ""
         ok = m and len(b) == 6 and b[0] == m.group(1) == f"{i:02d}" and b[2] == exp
-        if not ok or b[3] != "dark" or b[5] != "PENDING (boards)":
+        if not ok or b[3] != "dark" or b[5] != "drawn":
             r.fail("G9-BOARDS", f"board row {b[:2]}: name, export, theme or status off the pattern")
     if len(bs) != BOARDS:
         r.fail("G9-BOARDS", f"{len(bs)} boards (proposed {BOARDS} dark, no twins)")
     r.numbers["boards"] = len(bs)
+    exports = [b[2].strip("`") if len(b) > 2 else "" for b in bs]
+    built = {x[0]: x for x in rows(subsection(ctx.spec, "7.1")) if x}
+    sums: dict[str, str] = {}
+    for no, rel in zip([b[0] for b in bs], exports, strict=False):
+        x, facts = built.get(no), png_facts(ctx.pngs.get(rel))
+        if facts:
+            sums[rel] = facts[1]
+        if not x or len(x) != 4 or x[1] != f"`{Path(rel).name}`" or not facts:
+            r.fail(
+                "G9-BOARDS", f"board {no}: no section 7.1 row naming {Path(rel).name}, or no PNG"
+            )
+        elif (x[2], x[3]) != (facts[0], f"`{facts[1]}`"):
+            r.fail(
+                "G9-BOARDS", f"board {no}: section 7.1 records {x[2]} {x[3][:12]}, the PNG differs"
+            )
+    embeds = EMBED.findall(subsection(ctx.spec, "7.2"))
+    pins = [sha for sha, _ in embeds]
+    ref = max(set(pins), key=pins.count) if pins else ""
+    if [rel for _, rel in embeds] != exports:
+        r.fail("G9-BOARDS", "section 7.2 does not embed each board's export once, in order")
+    for sha, rel in embeds:
+        if rel not in sums:
+            continue  # no PNG: the section 7.1 FAIL above names it
+        blob = ctx.blob(sha, rel)
+        if sha != ref or blob is None or hashlib.sha256(blob).hexdigest() != sums.get(rel):
+            r.fail("G9-BOARDS", f"{Path(rel).name}: the embed's commit {sha[:10]} is not the PNG")
+    r.numbers["embeds"] = len(embeds)
 
 
 # --- G10: the rulings ------------------------------------------------------------------------
@@ -656,6 +722,17 @@ PROBES: tuple[tuple[str, Callable[[Ctx], Ctx]], ...] = (
         sub("re-pinned to `main` and cited by", "re-pinned once #5463 merges, cited by"),
     ),
     ("G10-RULED", sub('"- **Stale.** The same muting,', '"- **Stale.** The same muted,')),
+    ("G9-BOARDS", regex(r"^(\| 02 .*\| )drawn( +\|)$", r"\1PENDING (boards)\2")),
+    ("G9-BOARDS", regex(r"^(\| 03 +\| `[^`]+` +\| \d+ × )(\d+)", r"\g<1>1\2")),
+    ("G9-BOARDS", regex(r"^(\| 04 +\| `[^`]+` +\| \d[^|]+\| `)[0-9a-f]", r"\g<1>z")),
+    (
+        "G9-BOARDS",
+        regex(
+            r"(CandleViewer/CandleViewer/)[0-9a-f]{40}(/docs/design/E28/img/E28-D04-02)",
+            "\\g<1>" + "0" * 40 + "\\2",
+        ),
+    ),
+    ("G9-BOARDS", lambda ctx: ctx._replace(pngs={**ctx.pngs, next(iter(ctx.pngs), ""): b"x"})),
     (
         "G10-RULED",
         sub(
@@ -698,7 +775,7 @@ def self_test(ctx: Ctx, base: Result) -> list[str]:
     bad += [f"self-test: gate {g} has no mutation" for g, _ in GATE_FNS if g not in covered]
     for code, fn in (*MUTATIONS, *PROBES):
         mutated = fn(ctx)
-        if mutated.spec == ctx.spec and mutated.pins == ctx.pins:
+        if (mutated.spec, mutated.pins, mutated.pngs) == (ctx.spec, ctx.pins, ctx.pngs):
             bad.append(f"self-test {code}: the mutation did not apply")
             continue
         new = sorted(set(run(mutated).fails) - set(base.fails))
