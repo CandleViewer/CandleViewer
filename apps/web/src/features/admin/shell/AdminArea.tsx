@@ -7,6 +7,8 @@ import { useShellSelector } from "../../../shell/useShellSelector";
 import { OverviewPage } from "../overview/OverviewPage";
 import { useAdminHold, useAdminSelector } from "../overview/readStore";
 import { areaEntered, denial, STRIP_READS, stripItems } from "../overview/strip";
+import { useProfilesFlag } from "../profiles/flags";
+import { ProfilesPage } from "../profiles/ProfilesPage";
 import { routerLink } from "../routerLink";
 import { AdminDenied } from "./AdminDenied";
 import { SecurityCentrePlaceholder } from "./SecurityCentrePlaceholder";
@@ -29,10 +31,20 @@ export function adminRouteLabel(routeId: string): string {
   return routeId === "R-300" ? OVERVIEW : (ROUTE_TITLES[routeId] ?? routeId);
 }
 
+/** R-330: SCR-130 while the mirrored `admin.account_profiles` flag is on, else the stub (C-4.13). */
+function ProfilesRoute({ owner }: { readonly owner: string | null }): JSX.Element {
+  return useProfilesFlag() ? (
+    <ProfilesPage />
+  ) : (
+    <StubRoute routeId="R-330" owner={owner ?? "E42"} />
+  );
+}
+
 /** Each admin route's page: the one that ships today, else the stub naming its owner. */
 function pageFor(routeId: string, owner: string | null): ReactNode {
   if (routeId === "R-300") return <OverviewPage />; // SCR-120 (E42-S01)
   if (routeId === "R-303") return <AdminInviteScreen />; // SCR-123 (E09-S05)
+  if (routeId === "R-330") return <ProfilesRoute owner={owner} />; // SCR-130 (E28-S01, flagged)
   if (routeId === "R-354") return <SecurityCentrePlaceholder />; // until E43's SCR-137
   return <StubRoute routeId={routeId} owner={owner ?? "E42"} />;
 }
