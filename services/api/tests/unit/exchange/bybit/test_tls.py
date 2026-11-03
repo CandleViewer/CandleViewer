@@ -7,6 +7,7 @@ default, under the same values, takes them). No socket is opened here.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import ssl
 from pathlib import Path
@@ -160,14 +161,16 @@ async def test_each_rest_client_gets_its_own_context() -> None:
 async def test_a_socks_proxy_variable_never_reaches_the_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Guard: httpx's default client refuses to build under it (no SOCKS support installed)."""
+    """Guard: httpx's default client takes the variable: without SOCKS support installed it
+    refuses to build, and with it, it mounts the proxy."""
     clean_environment(monkeypatch)
     monkeypatch.setenv("ALL_PROXY", "socks5://127.0.0.1:9")
     rest = ExchangeBybitService().public_rest_client("demo")
     assert rest._client._mounts == {}
     await rest.aclose()
-    with pytest.raises(ImportError):
-        httpx.AsyncClient()
+    with contextlib.suppress(ImportError):
+        async with httpx.AsyncClient() as default:
+            assert default._mounts != {}
 
 
 async def test_the_trade_archive_client_takes_the_pinned_posture(every_variable: Path) -> None:

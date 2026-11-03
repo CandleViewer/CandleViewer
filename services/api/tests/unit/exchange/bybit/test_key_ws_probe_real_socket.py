@@ -12,6 +12,7 @@ import contextlib
 import json
 import os
 import ssl
+import subprocess
 import sys
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -290,8 +291,8 @@ async def test_a_root_ssl_cert_file_names_never_sees_the_signed_auth(
 
 #: Per variable, the scheme of the proxy the library's own dial takes for a `wss://` stream.
 TAKEN = {
-    "HTTPS_PROXY": "http", "https_proxy": "http", "WSS_PROXY": "http", "SOCKS_PROXY": "socks5h",
-    "ALL_PROXY": None, "all_proxy": None,
+    "HTTPS_PROXY": "http", "https_proxy": "http", "WSS_PROXY": "http", "wss_proxy": "http",
+    "SOCKS_PROXY": "socks5h", "socks_proxy": "socks5h", "ALL_PROXY": None, "all_proxy": None,
 }  # fmt: skip
 
 
@@ -301,9 +302,10 @@ async def test_a_proxy_the_environment_names_never_carries_the_dial(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, connector: str, name: str
 ) -> None:
     """C-2.7 and C-12.2, defence in depth: for a `wss://` stream the library's default dial takes
-    `wss_proxy`, `socks_proxy` or `https_proxy`, in either case, and never `all_proxy`; both of
-    production's connectors dial the stream itself in every row, so no proxy sees the signed
-    `auth`. `_TLS` trusts the stream's root here: the route is under test."""
+    `WSS_PROXY`, `SOCKS_PROXY` (as `socks5h`) and `HTTPS_PROXY`, each in either letter case, and
+    never `ALL_PROXY` in either; both of production's connectors dial the stream itself in every
+    row, so no proxy sees the signed `auth`. `_TLS` trusts the stream's root here: the route is
+    under test."""
     clean_environment(monkeypatch)
     root, served = _issue(tmp_path)
     monkeypatch.setattr(key_ws_probe, "_TLS", ssl.create_default_context(cafile=root))
@@ -340,6 +342,28 @@ async def test_neither_private_ws_connector_writes_a_key_log(
                 await key_ws_probe.connect_private_stream(url)
     assert (peer.handshakes, keys.exists()) == (0, False)
     assert_default_opens(keys)
+
+
+def test_a_process_started_with_a_key_log_variable_imports_the_connectors_and_opens_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#3461: `_TLS` is built at import, so a process that starts with `SSLKEYLOGFILE` set imports
+    the connectors and opens no key log; CPython's default context then opens it in that process.
+    The child runs this tree's `candleviewer` and opens no socket."""
+    keys = key_log(monkeypatch, tmp_path)
+    code = (
+        "import pathlib, ssl\n"
+        "import candleviewer.exchange.bybit.key_ws_probe\n"
+        f"keys = pathlib.Path({str(keys)!r})\n"
+        "opened = keys.exists()\n"
+        "ssl.create_default_context()\n"
+        "print(opened, keys.exists())\n"
+    )
+    api = Path(key_ws_probe.__file__).resolve().parents[3]
+    child = subprocess.run(  # noqa: S603 - this interpreter and a script built from constants here
+        [sys.executable, "-c", code], cwd=api, capture_output=True, text=True, timeout=60
+    )
+    assert (child.returncode, child.stdout.split()) == (0, ["False", "True"]), child.stderr
 
 
 async def test_the_streams_connector_reads_a_frame_above_1_mib_as_frame_too_large() -> None:
