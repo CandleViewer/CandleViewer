@@ -1,14 +1,15 @@
-"""Regression compare against a baseline (06-performance §7.4: 5 % on hard budgets).
+"""Regression compare against a baseline, one threshold per metric class (BQ-02, ruled 15:33Z).
 
-BQ-02 (rulings pending, ORCH default): 5 %, plus an absolute noise floor like engine-bench's
-`--min-delta-ms`. Latency-style metrics are lower-is-better; throughput is higher-is-better.
-The verdict names the series and the measured delta (AC3). A baseline is never rewritten here.
+- **frame** (frame time, draw calls, memory; lower is better): 5 % fail, C-9.1 #16 and
+  06-performance §7.4, with an absolute floor for `_ms` series like engine-bench's
+  `--min-delta-ms`. The 5 % outranks the 10 % in 26 :820 and 30 :320 (A-rows in 06).
+- **throughput** (prints/s; higher is better): T04's warn 10 % / fail 25 %
+  (`bar_determinism/run.py` `WARN_DROP`/`FAIL_DROP`), a different metric class. A-row in 06.
 
-The noise floor applies to latency series only (names ending `_ms`); throughput and other
-series have none. Differences from `ci-compare.mjs` (packages/chart-engine/bench): the floor is
-strict (`worse > min_delta`), a baseline series missing from the run is an error (not skipped),
-and a run series with no baseline is not compared; `new_series` lists them so a caller can
-report them as new.
+The verdict names the series and the measured delta (AC3); `exit_code` is 1 on any fail, so a
+seeded regression fails the job. Unlike `ci-compare.mjs` the floor is strict (`worse > floor`),
+a baseline series missing from the run is an error, and a run series with no baseline is only
+listed (`new_series`). A baseline is never rewritten here.
 """
 
 from __future__ import annotations
@@ -16,8 +17,25 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-REGRESSION_THRESHOLD = 0.05
 MIN_DELTA_MS = 0.2
+
+
+@dataclass(frozen=True, slots=True)
+class MetricClass:
+    name: str
+    warn: float  # fraction worse than baseline that warns
+    fail: float  # fraction worse than baseline that fails
+    higher_is_better: bool = False
+    floor_ms: float = 0.0  # absolute floor, applied to `_ms` series only
+
+
+FRAME = MetricClass("frame", warn=0.05, fail=0.05, floor_ms=MIN_DELTA_MS)
+THROUGHPUT = MetricClass("throughput", warn=0.10, fail=0.25, higher_is_better=True)
+
+
+def class_of(series: str) -> MetricClass:
+    """Throughput series are named `*prints_per_s`; everything else is frame-class."""
+    return THROUGHPUT if series.endswith("prints_per_s") else FRAME
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,57 +44,46 @@ class Delta:
     baseline: float
     measured: float
     fraction: float  # signed, positive = worse
-    regressed: bool
+    status: str  # "ok" | "warn" | "fail"
+
+    @property
+    def regressed(self) -> bool:
+        return self.status == "fail"
 
     def describe(self) -> str:
-        verdict = "REGRESSION" if self.regressed else "ok"
         return (
             f"{self.series}: {self.baseline:.4g} -> {self.measured:.4g} "
-            f"({self.fraction * 100:+.1f} % worse) {verdict}"
+            f"({self.fraction * 100:+.1f} % worse) {self.status.upper()}"
         )
 
 
 def compare_one(
-    series: str,
-    baseline: float,
-    measured: float,
-    *,
-    higher_is_better: bool = False,
-    threshold: float = REGRESSION_THRESHOLD,
-    min_delta: float = 0.0,
+    series: str, baseline: float, measured: float, cls: MetricClass | None = None
 ) -> Delta:
+    cls = cls or class_of(series)
     if baseline <= 0:
         raise ValueError(f"{series}: baseline must be > 0")
-    worse = (baseline - measured) if higher_is_better else (measured - baseline)
+    worse = (baseline - measured) if cls.higher_is_better else (measured - baseline)
     fraction = worse / baseline
-    regressed = fraction > threshold and worse > min_delta
-    return Delta(series, baseline, measured, fraction, regressed)
+    floor = cls.floor_ms if series.endswith("_ms") else 0.0
+    if fraction > cls.fail and worse > floor:
+        status = "fail"
+    elif fraction > cls.warn and worse > floor:
+        status = "warn"
+    else:
+        status = "ok"
+    return Delta(series, baseline, measured, fraction, status)
 
 
 def compare(
     baselines: Mapping[str, float],
     measured: Mapping[str, float],
-    *,
-    higher_is_better: frozenset[str] = frozenset(),
-    threshold: float = REGRESSION_THRESHOLD,
-    min_delta_ms: float = MIN_DELTA_MS,
 ) -> list[Delta]:
-    """One `Delta` per baseline series; a series missing from the run is an error, not a pass.
-    `min_delta_ms` is the floor of the `_ms` series only."""
+    """One `Delta` per baseline series; a series missing from the run is an error, not a pass."""
     missing = sorted(set(baselines) - set(measured))
     if missing:
         raise KeyError(f"series missing from the run: {', '.join(missing)}")
-    return [
-        compare_one(
-            name,
-            base,
-            measured[name],
-            higher_is_better=name in higher_is_better,
-            threshold=threshold,
-            min_delta=min_delta_ms if name.endswith("_ms") else 0.0,
-        )
-        for name, base in sorted(baselines.items())
-    ]
+    return [compare_one(name, base, measured[name]) for name, base in sorted(baselines.items())]
 
 
 def new_series(baselines: Mapping[str, float], measured: Mapping[str, float]) -> list[str]:
@@ -85,4 +92,9 @@ def new_series(baselines: Mapping[str, float], measured: Mapping[str, float]) ->
 
 
 def failures(deltas: list[Delta]) -> list[str]:
-    return [d.describe() for d in deltas if d.regressed]
+    return [d.describe() for d in deltas if d.status == "fail"]
+
+
+def exit_code(deltas: list[Delta]) -> int:
+    """What the CI job returns: 1 when any series fails (AC3), else 0; warnings never fail."""
+    return 1 if any(d.status == "fail" for d in deltas) else 0

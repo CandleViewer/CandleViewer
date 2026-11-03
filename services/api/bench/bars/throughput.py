@@ -1,12 +1,13 @@
 """Builder throughput harness (E12-Q05 slice 2, #528; budget #5).
 
-Replays a seeded synthetic tape (`bar_determinism.generator`, no network, C-13.5) through all
-six builder families at once, as one live symbol runs them, using the production factory
-(`production_factory`, renko on) and the tape's `Decimal` prices and sizes: no float fast path.
-Each print goes to every builder's `on_trade`, which is the per-print work the set's fan-out
-does; the set's bus/router/store composition is NOT included (a later slice). BQ-03: six
-families (time, tick, volume, range, delta, renko), not five. The delta series needs a tape
-whose |delta| reaches its threshold, so the tape is skewed to buys.
+Replays a seeded synthetic tape (`bar_determinism.generator`, no network, C-13.5) through the
+per-symbol spec matrix at once, as one live symbol runs it: T04's `STANDARD_SPECS` (BQ-03, one
+matrix with the determinism harness), ten specs over the six kinds (time, tick, volume, range,
+delta, renko), built by the shipped production builders on the tape's `Decimal` prices and
+sizes: no float fast path. Each print goes to every builder's `on_trade`, which is the per-print
+work the set's fan-out does; the set's bus/router/store composition is NOT included (a later
+slice). The delta specs need a tape whose |delta| reaches the threshold, so the tape is skewed
+to buys. Throughput is a `throughput`-class metric (warn 10 % / fail 25 %, `compare.py`).
 
 Time, resource and GC readings are injected (`Probes`), so the unit tests check the counting
 and sampling mechanics without measuring real speed. Only the builder loop is timed: the tape
@@ -34,6 +35,7 @@ from itertools import islice
 import structlog
 
 from bench.bar_determinism.generator import TICK, GenConfig, iter_trades
+from bench.bar_determinism.invariants import STANDARD_SPECS, make_builder
 from bench.bars import HARNESS_VERSION
 from bench.bars.scrub import scrub
 from bench.bars.stats import (
@@ -43,21 +45,10 @@ from bench.bars.stats import (
     median_run,
     relative_spread,
 )
-from candleviewer.bars.builder_set import production_factory
-from candleviewer.bars.models import BarBuilder, BarSpec
-from candleviewer.bars.spec import from_wire
+from candleviewer.bars.models import BarBuilder
 from candleviewer.exchange.base.models import TradeEvent
 
 SYMBOL = "BTCUSDT"
-#: The six families run together (BQ-03), as wire pairs.
-FAMILIES: tuple[tuple[str, str], ...] = (
-    ("time", "1"),
-    ("tick", "100"),
-    ("volume", "50"),
-    ("delta", "1"),
-    ("range", "10"),
-    ("renko", "30"),
-)
 SIZES = (100_000, 1_000_000, 5_000_000)
 SEED = 12528
 BUY_SKEW = 0.2  # so delta bars close (BQ-03); the soak feed's alternating prints leave them inert
@@ -96,9 +87,7 @@ class RunResult:
 
 
 def make_builders() -> list[BarBuilder]:
-    factory = production_factory(lambda _s: TICK, renko_enabled=True)
-    specs: list[BarSpec] = [from_wire(t, p) for t, p in FAMILIES]
-    return [factory(s, SYMBOL) for s in specs]
+    return [make_builder(spec, SYMBOL, TICK) for spec in STANDARD_SPECS.values()]
 
 
 def tape(prints: int, seed: int = SEED) -> Iterable[TradeEvent]:
@@ -176,7 +165,7 @@ def render(prints: int, median: RunResult, spread: float) -> str:
                 f"## builder throughput, {prints} prints (budget #5, median of 3)",
                 "",
                 f"- prints/s: {median.prints_per_s:.0f} (run spread {spread * 100:.1f} %)",
-                f"- six-builder step latency us (n={lat.n}, every {median.sample_every}th): "
+                f"- step latency us, all specs (n={lat.n}, every {median.sample_every}th): "
                 f"p50 {lat.p50:.1f} p95 {lat.p95:.1f} p99 {lat.p99:.1f}",
                 f"- peak RSS {median.peak_rss_mib:.0f} MiB; GC collections {median.gc_collections}",
                 f"- bars closed: {json.dumps(median.bars_by_kind, sort_keys=True)}",

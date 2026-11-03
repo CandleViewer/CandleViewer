@@ -1,10 +1,11 @@
 """E12-Q05 slice 2 (#528): the throughput harness mechanics, with injected probes.
-No real speed is asserted. Built on the BQ defaults; rulings pending."""
+No real speed is asserted. BQ ruling of record: #528, 15:33Z."""
 
 from __future__ import annotations
 
 import pytest
 
+from bench.bar_determinism.invariants import STANDARD_SPECS
 from bench.bars import throughput as tp
 from bench.bars.throughput import Probes, RunResult
 
@@ -22,9 +23,10 @@ def _probes(step_ns: int = 1_000) -> Probes:
     return Probes(now_ns=FakeClock(step_ns), peak_rss_mib=lambda: 2.0, gc_collections=lambda: 7)
 
 
-def test_six_families_in_production_set() -> None:
-    kinds = [b.spec.kind for b in tp.make_builders()]
-    assert kinds == ["time", "tick", "volume", "delta", "range", "renko"]
+def test_builders_are_the_t04_standard_matrix_over_six_kinds() -> None:
+    builders = tp.make_builders()
+    assert [b.spec for b in builders] == list(STANDARD_SPECS.values())
+    assert {b.spec.kind for b in builders} == {"time", "tick", "volume", "range", "delta", "renko"}
 
 
 def test_tape_is_seeded_and_exact_length() -> None:
@@ -37,7 +39,9 @@ def test_run_counts_prints_and_closed_bars_per_kind() -> None:
     r = tp.run_once(tp.tape(3_000), tp.make_builders(), probes=_probes())
     assert r.prints == 3_000
     assert set(r.bars_by_kind) == {"time", "tick", "volume", "delta", "range", "renko"}
-    assert 0 < r.bars_by_kind["tick"] <= 3_000 // 100  # drops/dups can only lower it
+    assert (
+        0 < r.bars_by_kind["tick"] <= 3_000 // 100 + 3_000 // 1_000
+    )  # two tick specs; drops lower it
     assert r.bars_by_kind["delta"] >= 1  # the buy skew makes the delta series active (BQ-03)
 
 

@@ -12,7 +12,8 @@ from dataclasses import dataclass
 
 from bench.ingestion.budgets import percentile
 
-RUNS_PER_CONFIG = 3
+RUNS_PER_CONFIG = 3  # k6 and Python rows (06 :182)
+ENGINE_RUNS = 5  # engine rows: median of 5 (C-9.1 #16)
 
 
 @dataclass(frozen=True, slots=True)
