@@ -313,6 +313,10 @@ jobs:
               - 'tools/a11y/**'
               - '.github/workflows/_job-a11y.yml'
               - 'scripts/tests/test_a11y_gates.py'
+              - 'scripts/tests/test_a11y_inventory.py'
+              - 'scripts/tests/test_a11y_redact.py'
+              - 'scripts/tests/test_a11y_workflow.py'
+              - 'docs/plan/a11y/findings.json' # the screen inventory (A11Y-G008) reads it
               # The e2e job and the guards its steps run (#3182). Dependency manifests stay out:
               # the nightly a11y sweep and e2e matrix are their accepted controls (#3383,
               # docs/ci-runbook.md section 2).
