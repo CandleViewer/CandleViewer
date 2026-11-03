@@ -19,8 +19,8 @@ values, the default-deny pins and the mutations).
 3. **Gates.** One FAIL line per gate: G-PENDING (the BQ heading carries the RULED stamp with the
    ruling's and the BQ list's comments; BQ-0 ... BQ-15 once each, each stamped RULED), G-PIN (the start line
    and the version line name every in-flight pack's PR and pinned sha and say they re-pin),
-   G-BOARDS (at most ten boards, light twins at most a third, each PENDING, the not-drawn
-   paragraph), G-INV (every inventory row fills its four layers, names a grammar, claims no
+   G-BOARDS (at most ten boards, light twins at most a third, each PENDING or drawn with its board
+   id, PNG, size, frames, nodes and its theme's gate, the not-drawn paragraph), G-INV (every inventory row fills its four layers, names a grammar, claims no
    exemption; every screen the register tags `canvas` is in the inventory), G-PARITY (every oracle
    row is complete and names an inventory surface; P-1 ... P-5 are AC2's five footprint columns;
    every surface designed here has a row), G-COLS (the footprint, profile and ladder sets equal
@@ -28,15 +28,16 @@ values, the default-deny pins and the mutations).
    merged or PROPOSED; no cap is added), G-T2 (§10 states the T2 paragraph; §7 cites it; the hand-off names CMP-079 and
    CMP-019), G-FINDINGS (§12 equals the register's E47-D06 rows), G-NOCLAIM (no conformance claim
    for the canvas alone), G-PUBLIC (no URL, host or local path), G-UNMERGED (no link to
-   an unmerged pack), G-KEYWORD (no closing keyword followed by an issue number), G-HEUR, G-WALK
+   another E47 pack; the packs are cited by KEY:line), G-KEYWORD (no closing keyword followed by an issue number), G-HEUR, G-WALK
    (at most ten items), G-OWNER (G-ledger owners are tickets or owners, never an agent),
-   G-UNTOUCHED (only this ticket's files differ from the merge base with origin/main), G-BUDGET,
+   G-UNTOUCHED (only this ticket's files, its boards and their kit differ from the merge base with
+   origin/main), G-BUDGET,
    G-MUTLIST (§15 equals this tool's list) and G-APPLY (the hand-off's §B is a three-column table
    whose rows name every §C A-row exactly once, each with a ticket or the owner as its applier).
 4. **Pins (G-RULED).** Every non-blank line of the BQ section is pinned in
    `e47_d06_ruled_pins.txt`; `--repin-ruled` is the only writer and refuses while a placeholder
    is unfilled. A pin finding while another gate FAILs in the BQ section prints as NOTE.
-5. **--self-test** applies every mutation (M-n) in memory with the values frozen at the filled
+5. **--self-test** applies every mutation (M-n) and probe (P-n) in memory with the values frozen at the filled
    baseline; each must add exactly one FAIL, from the gate it names; the texts on disk are checked
    byte-identical afterwards (sha256). Output is ASCII.
 
@@ -67,17 +68,29 @@ SPEC_REL = "docs/design/E47/E47-D06.md"
 HAND_REL = "docs/design/E47/E47-D06-handoff.md"
 TOOL_REL = "docs/design/_tools/e47_d06_canvas_audit.py"
 PIN_REL = "docs/design/_tools/e47_d06_ruled_pins.txt"
-BOARD_PREFIX = "docs/design/E47/img/E47-D06-"
+# the boards PR: the PNGs, the sheet kit, its MANIFEST lines and its .prettierignore entry
+OWN_BOARDS = re.compile(
+    r"docs/design/E47/img/E47-D06-\d\d-[a-z0-9-]+\.png|\.prettierignore"
+    r"|docs/design/_tools/sheets/(?:e47-d06/[A-Za-z0-9._/-]+|MANIFEST\.sha256)"
+)
+DRAWN_CELL = re.compile(
+    r"drawn: board id `[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`, "
+    r"`docs/design/E47/img/E47-D06-(?P<nn>\d\d)-(?P<slug>[a-z0-9-]+)\.png` \(\d+ × \d+\), "
+    r"\d+ frames?, [\d,]+ nodes; (?P<gate>dark|light) gate PASS \(own [\d,]+ px, other [\d,]+ px\)"
+)
 OWN = (SPEC_REL, HAND_REL, TOOL_REL, PIN_REL)
-SPEC_BUDGET = 490  # a deliberate ratchet: about 20 lines over the spec; raise it only with a reason
+SPEC_BUDGET = (
+    510  # a deliberate ratchet; raised from 490 for the As built record (§18) of the boards PR
+)
 HAND_BUDGET = 150
 
-# The in-flight packs (read at their PR heads, re-pinned at their merges) and E47-D03's merge.
+# The packs read at their PR heads while in flight, re-pinned at their merges (each head carries its merge's
+# text: 1ff5d8cb9, 3987edc89, 260bb0caf, 91e9bde44), and E47-D03's merge.
 INFLIGHT: dict[str, tuple[str, str, str]] = {
-    "D04": ("docs/design/E47/E47-D04.md", "1ff5d8cb9", "5387"),
-    "D05": ("docs/design/E47/E47-D05.md", "3987edc89", "5417"),
-    "D09": ("docs/design/E47/E47-D09.md", "260bb0caf", "5418"),
-    "D13": ("docs/design/E47/E47-D13.md", "91e9bde44", "5419"),
+    "D04": ("docs/design/E47/E47-D04.md", "48c711e64", "5387"),
+    "D05": ("docs/design/E47/E47-D05.md", "5e4065a44", "5417"),
+    "D09": ("docs/design/E47/E47-D09.md", "1c60258ba", "5418"),
+    "D13": ("docs/design/E47/E47-D13.md", "6801e6c46", "5419"),
 }
 D03_MERGE = ("73fefc62b", "5392")
 PLAN = {
@@ -381,10 +394,10 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "M-8",
         "G-PIN",
-        "give E47-D05's head a wrong sha in the start line",
+        "give E47-D05's merge a wrong sha in the start line",
         "spec",
-        "PR #5417 at `3987edc89` (D05)",
-        "PR #5417 at `3987edc88` (D05)",
+        "PR #5417 at `5e4065a44` (D05)",
+        "PR #5417 at `5e4065a43` (D05)",
     ),
     Mutation("M-9", "G-BOARDS", "blank board 01's status in §0", "spec", "", ""),
     Mutation("M-10", "G-INV", "blank IV-5's table alternative in §2", "spec", "", ""),
@@ -499,12 +512,32 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "M-28",
         "G-UNMERGED",
-        "link E47-D04's unmerged file in the start line",
+        "link E47-D04's file in the start line",
         "spec",
-        "re-pinned to its merge commit when it merges",
-        "re-pinned to its merge commit when it merges ([E47-D04](E47-D04.md))",
+        "re-pinned to its merge commit from its head",
+        "re-pinned to its merge commit from its head ([E47-D04](E47-D04.md))",
     ),
     Mutation("M-29", "G-APPLY", "paste §C cells into D06-A16's §B row", "hand", "", ""),
+)
+
+# Probes: run by --self-test like the mutations, kept out of §15 (a new §15 row would move the lines after it).
+PROBES: tuple[Mutation, ...] = (
+    Mutation(
+        "P-1",
+        "G-BOARDS",
+        "give board 08 another theme's gate in §0",
+        "spec",
+        "nodes; light gate PASS",
+        "nodes; dark gate PASS",
+    ),
+    Mutation(
+        "P-2",
+        "G-UNTOUCHED",
+        "touch another ticket's sheet kit",
+        "changed",
+        "",
+        "docs/design/_tools/sheets/e47-d07/BUILD.md",
+    ),
 )
 
 
@@ -716,7 +749,7 @@ def g_pin(t: Texts) -> list[Finding]:
             out.append(("G-PIN", f"{tag} does not say the heads re-pin", "spec", reg))
     for key, (rel, sha, _) in INFLIGHT.items():
         if FILE_BASE.get(rel) != sha:
-            out.append(("G-PIN", f"{key} is not read at its head", "spec", "(tool)"))
+            out.append(("G-PIN", f"{key} is not read at its pin", "spec", "(tool)"))
     return out
 
 
@@ -729,9 +762,20 @@ def g_boards(t: Texts) -> list[Finding]:
     twins = sum(1 for r in rows if len(r) > 3 and r[3] != "dark")
     if twins * 3 > len(rows):
         bad.append(f"{twins} twins exceed a third")
-    for r in rows:
-        if len(r) < 5 or r[4] != "PENDING":
-            bad.append(f"board {r[0]} is not PENDING")
+    for k, r in enumerate(rows, 1):
+        if len(r) < 5 or r[3] not in ("dark", "light"):
+            bad.append(f"board {r[0]} has no theme")
+            continue
+        name = re.fullmatch(r"`E47-D06 / (\d\d) ([a-z0-9-]+)`", r[1])
+        if not name or name.group(1) != r[0] or r[0] != f"{k:02d}":
+            bad.append(f"board {r[0]} is misnamed")
+        drawn = DRAWN_CELL.fullmatch(r[4])
+        if r[4] != "PENDING" and not (
+            drawn and name and (drawn["nn"], drawn["slug"]) == name.groups()
+        ):
+            bad.append(f"board {r[0]} is neither PENDING nor drawn")
+        elif drawn and drawn["gate"] != r[3]:
+            bad.append(f"board {r[0]}'s drawn cell names another theme's gate")
     if "**Not drawn — the text is binding**" not in "\n".join(body(t.spec, "## 0.")):
         bad.append("no not-drawn paragraph")
     return [("G-BOARDS", b, "spec", region) for b in bad]
@@ -892,7 +936,7 @@ def g_keyword(t: Texts) -> list[Finding]:
 
 
 def g_untouched(t: Texts) -> list[Finding]:
-    bad = [p for p in t.changed if p not in OWN and not p.startswith(BOARD_PREFIX)]
+    bad = [p for p in t.changed if p not in OWN and not OWN_BOARDS.fullmatch(p)]
     return [("G-UNTOUCHED", f"{p} differs from the merge base", "spec", "(tree)") for p in bad]
 
 
@@ -1055,7 +1099,7 @@ def self_test() -> int:
         print("FAIL self-test: the baseline is not clean:", *base, sep="\n  ")
         return 1
     bad = 0
-    for m in MUTATIONS:
+    for m in (*MUTATIONS, *PROBES):
         try:
             mt = apply_mutation(t, m)
         except AssertionError as exc:
@@ -1077,7 +1121,8 @@ def self_test() -> int:
     if hashlib.sha256((after.spec + after.hand).encode()).hexdigest() != digest:
         print("FAIL self-test: the texts on disk changed")
         return 1
-    print(f"self-test: {len(MUTATIONS) - bad} of {len(MUTATIONS)} ok")
+    n = len(MUTATIONS) + len(PROBES)
+    print(f"self-test: {n - bad} of {n} ok")
     return 1 if bad else 0
 
 
