@@ -573,6 +573,8 @@ class StreamWriter:
         self._next_counters_at = 0.0
         #: #5629: True while maintenance holds capture; read on every admission (a plain bool).
         self._held = False
+        #: #5629: holds ended so far; the anchors re-anchor every symbol when it moves.
+        self._releases = 0
         self._publish_gauges()
 
     async def open(self) -> None:
@@ -625,12 +627,20 @@ class StreamWriter:
 
     def release(self) -> bool:
         """Admit again. The delta sequence is forgotten, as on a re-add: the deltas missed while
-        held are the hold's gap, not a seq jump. True when this call ended a hold."""
+        held are the hold's gap, not a seq jump, and `releases` moves, so the anchors re-anchor
+        every symbol (its last anchor predates the lost deltas). True when this call ended a
+        hold."""
         ended, self._held = self._held, False
         if ended:
             self._last_update_id.clear()
             self._last_delta_ts.clear()
+            self._releases += 1
         return ended
+
+    @property
+    def releases(self) -> int:
+        """How many holds have ended (#5629): a plain counter the anchors compare each tick."""
+        return self._releases
 
     async def flush_queued(self) -> None:
         """Write every lane's queued rows. A spilling lane is left to its pump (its rows go to the

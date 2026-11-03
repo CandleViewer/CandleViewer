@@ -561,3 +561,23 @@ async def test_snapshot_anchors_a_symbol_anchored_before_a_hold_is_anchored_agai
     await anchors.tick()  # between slots
     clock.advance(1)
     assert len(await flushed_anchors(writer, sink)) > before
+
+
+async def test_snapshot_anchors_a_hold_shorter_than_a_slot_still_re_anchors_on_release(
+    tmp_path: Path,
+) -> None:
+    """#5629 review A: the release itself re-anchors, whatever the hold's length (no slot ran
+    while held, so no `held` shed unanchored the symbol)."""
+    anchors, books, writer, sink, _store, clock = await rig(tmp_path)
+    books.books["BTCUSDT"] = snapshot(1)
+    await anchors.tick()  # anchored at once (first LIVE book)
+    clock.advance(1)
+    before = len(await flushed_anchors(writer, sink))
+    assert before > 0
+    writer.hold()
+    writer.release()  # a hold of no time at all
+    await anchors.tick()  # between slots
+    clock.advance(1)
+    assert len(await flushed_anchors(writer, sink)) > before
+    assert writer.releases == 1 and not writer.release()  # a second release ends no hold
+    assert writer.releases == 1

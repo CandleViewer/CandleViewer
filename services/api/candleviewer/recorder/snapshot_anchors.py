@@ -23,8 +23,9 @@ the first tick that sees it, not a whole interval later.
   back to the previous anchor. Each skip is logged and counted in
   `recorder_anchor_skipped_total{reason}`; a resync's own gap and anchor, or a writer drop's
   `backpressure_drop` gap, already mark what the deltas lack. A maintenance hold (`held`,
-  #5629) is no skip: its `maintenance_pause` gap marks it, and the symbol is retried every tick,
-  so the first tick after the release anchors it.
+  #5629) is no skip: its `maintenance_pause` gap marks it. Every release (the writer's
+  `releases` counter moves) forgets every anchor, however short the hold, so the first tick
+  after it anchors each recorded symbol again.
 * Plain code, never a statechart (C-2.20).
 """
 
@@ -77,6 +78,9 @@ class AnchorSink(Protocol):
 
     def recorded(self) -> frozenset[str]: ...
 
+    @property
+    def releases(self) -> int: ...
+
     async def on_book_anchor(self, ev: BookSnapshotLike, *, at_us: int) -> AnchorShed | None: ...
 
 
@@ -98,12 +102,17 @@ class SnapshotAnchors:
         self._next_at: float | None = None
         #: Symbols anchored in this session; one LIVE for the first time is anchored at once.
         self._anchored: set[str] = set()
+        #: The sink's hold releases last seen (#5629): a release forgets every anchor.
+        self._releases = sink.releases
 
     async def tick(self) -> None:
         """On a due slot anchor every recorded symbol; otherwise anchor only the symbols with
         no anchor yet whose book is LIVE (quietly: a book not yet LIVE is not a skip)."""
         now, symbols = self._clock(), sorted(self._sink.recorded())
         self._anchored.intersection_update(symbols)  # a re-added symbol is new again
+        if (releases := self._sink.releases) != self._releases:  # a hold ended, however short:
+            self._releases = releases  # every anchor predates the deltas it lost (#5629)
+            self._anchored.clear()
         if self._next_at is None:
             self._next_at = now + self._interval
         elif now >= self._next_at:
