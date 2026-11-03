@@ -1,20 +1,23 @@
 /**
  * The machine view (E42-S08 §5.2; E42-D05 §11 SI-3 to SI-7): one machine, opened from the list as
  * the route's query state (`?machine=&env=`, wired with R-357 under BQ-1). Its `h2`, [Back to
- * machines], its facts as served, the acknowledge as T2 while the machine is latched (SI-7 "today",
- * BQ-5: the press sends nothing), the chart's drawing beside its text list with the configuration's
- * leaves marked "(current)" (SI-4; the drawing a feature-local SVG under BQ-6), and the event
- * timeline (SI-5). It shows served values only, never a derived state, transition or latch (C-2.19
- * to C-2.22).
+ * machines], its facts as served, a line while the topic's live state differs (BQ-7, §3.4), the
+ * acknowledge as T2 while the machine is latched (SI-7 "today", BQ-5: the press sends nothing), the
+ * chart's drawing beside its text list with the configuration's leaves marked "(current)" (SI-4;
+ * the drawing a feature-local SVG under BQ-6), and the event timeline (SI-5). It shows served
+ * values only, never a derived state, transition or latch (C-2.19 to C-2.22).
  */
 import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type CSSProperties,
   type JSX,
+  type RefObject,
 } from "react";
 import {
   ADMIN_COPY,
@@ -26,6 +29,7 @@ import {
   Skeleton,
 } from "@candleviewer/ui";
 import { announce, forget } from "../../app-shell/announcer";
+import { hms } from "../overview/tileModels";
 import { ChartDiagram } from "./ChartDiagram";
 import { layoutOf } from "./chartLayout";
 import { currentIds } from "./chartModel";
@@ -47,10 +51,13 @@ import {
   type MachineState,
 } from "./inspectorStore";
 import { kindLabel } from "./kinds";
+import { useMachineFeed, type LiveState } from "./machineFeed";
 import { Timeline } from "./Timeline";
 
 /** The shell announcer's key for the acknowledge's refused press: said again on every press. */
 const ACK_PRESS = "admin:statecharts:ack-press";
+/** A recovery's key: said again on each recovery (D05 §13 "recovery", polite once). */
+const RECOVERED = "admin:statecharts:recovered";
 const NO_STATES: ReadonlySet<string> = new Set();
 
 const SECTION: CSSProperties = { display: "grid", gap: "var(--space-stack-md)" };
@@ -191,13 +198,23 @@ function Chart({
   machine,
   configuration,
   store,
+  park,
 }: {
   readonly read: ChartRead;
   readonly machine: StatechartMachine;
   readonly configuration: readonly string[];
   readonly store: InspectorStore;
+  /** Marks the pressed control: focus waits on the view's heading once it goes (A-1137-02). */
+  readonly park: () => void;
 }): JSX.Element {
   const listId = useId();
+  // A Retry reads its chart again as `idle`: its error, and the Retry, stay until an answer
+  // replaces them, so a read that fails again leaves focus on the Retry (A-1137-d04).
+  const [failed, setFailed] = useState<string | null>(null);
+  const at = `${read.kind}@${read.hash}`;
+  if (read.phase === "unusable" && failed !== at) setFailed(at);
+  if (read.phase === "ok" && failed !== null) setFailed(null);
+  const retrying = read.phase === "idle" && failed === at;
   const chart = read.phase === "ok" ? read.chart : undefined;
   const same = chart?.machine_hash === machine.machine_hash;
   const current = useMemo(
@@ -205,12 +222,18 @@ function Chart({
     [chart, same, configuration],
   );
   if (chart === undefined) {
-    return read.phase === "unusable" ? (
+    return read.phase === "unusable" || retrying ? (
       <ErrorState
         form="inline"
         live="off"
         message={COPY.view.chartUnavailable}
-        retry={{ label: COPY.view.retry, onClick: () => store.retry("chart") }}
+        retry={{
+          label: COPY.view.retry,
+          onClick: () => {
+            park();
+            store.retry("chart");
+          },
+        }}
       />
     ) : (
       <div aria-busy="true">
@@ -223,7 +246,13 @@ function Chart({
       {same ? null : (
         <p style={LINE}>
           {COPY.view.chartChanged}{" "}
-          <Button size="sm" onClick={() => store.reread()}>
+          <Button
+            size="sm"
+            onClick={() => {
+              park();
+              store.reread();
+            }}
+          >
             {COPY.view.reread}
           </Button>
         </p>
@@ -240,6 +269,49 @@ function Chart({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The topic's live state against the saved snapshot (§3.4; BQ-7): a static line with [Re-read]
+ * while the state differs, or the latch is seen live that the snapshot shows clear, each side
+ * saying what differs. It is never announced and never reads anything itself; a clear is only ever
+ * shown from a REST read (`23` §6.4: the topic's latch never goes back to false).
+ */
+function LiveLine({
+  live,
+  machine,
+  store,
+  park,
+}: {
+  readonly live: LiveState | null;
+  readonly machine: StatechartMachine;
+  readonly store: InspectorStore;
+  readonly park: () => void;
+}): JSX.Element | null {
+  if (live === null) return null;
+  const latchedNow = live.degraded && !machine.degraded;
+  const sameState = live.state === machine.state;
+  if (sameState && !latchedNow) return null;
+  const words = latchedNow ? COPY.view.liveLatched(live.state) : live.state;
+  const saved = !latchedNow
+    ? machine.state
+    : sameState
+      ? COPY.view.savedClear
+      : COPY.view.savedStateClear(machine.state);
+  return (
+    <p style={LINE}>
+      {COPY.view.liveDiffers(words, hms(live.at), saved)}{" "}
+      <Button
+        size="sm"
+        onClick={() => {
+          park();
+          store.reread();
+        }}
+      >
+        {COPY.view.reread}
+      </Button>
+    </p>
   );
 }
 
@@ -262,10 +334,14 @@ function Events({
 /** What the store served for the machine, state by state (§5.2's table). */
 function Body({
   view,
+  live,
   store,
+  park,
 }: {
   readonly view: MachineState;
+  readonly live: LiveState | null;
   readonly store: InspectorStore;
+  readonly park: () => void;
 }): JSX.Element {
   if (view.phase === "not_found") return <p style={LINE}>{COPY.view.notFound}</p>;
   if (view.phase === "not_built") return <p style={LINE}>{COPY.view.notBuilt}</p>;
@@ -276,7 +352,13 @@ function Body({
         form="inline"
         live="off"
         message={COPY.view.failed}
-        retry={{ label: COPY.view.retry, onClick: () => store.retry("machine") }}
+        retry={{
+          label: COPY.view.retry,
+          onClick: () => {
+            park();
+            store.retry("machine");
+          },
+        }}
       />
     ) : null;
   const detail = view.detail;
@@ -297,6 +379,7 @@ function Body({
     <>
       {failed}
       <Facts machine={machine} today={today} />
+      <LiveLine live={live} machine={machine} store={store} park={park} />
       {machine.degraded ? <Acknowledge machine={machine.machine_key} /> : null}
       {view.chart === null ? null : (
         <Chart
@@ -304,6 +387,7 @@ function Body({
           machine={machine}
           configuration={detail.configuration ?? NO_IDS}
           store={store}
+          park={park}
         />
       )}
       <Events detail={detail} root={machine.machine_kind} today={today} />
@@ -322,10 +406,62 @@ export interface MachineViewProps {
 }
 
 /**
+ * Says once, politely, that a failed read of the machine or of its chart was read again (D05 §13
+ * "recovery"): its Retry has gone, and focus waited on the view's heading (A-1137-02). Opening
+ * another machine starts over.
+ */
+function useRecoveryLines(view: MachineState): void {
+  const failed = useRef({ machine: false, chart: false });
+  const { phase } = view;
+  const chart = view.chart?.phase;
+  useEffect(() => {
+    const was = failed.current.machine;
+    failed.current.machine = phase === "failed";
+    if (was && phase === "ok") sayRecovered(COPY.view.loaded);
+  }, [phase]);
+  useEffect(() => {
+    // A Retry reads the chart again as `idle`: the failure stands until an answer replaces it.
+    if (chart === "idle") return;
+    const was = failed.current.chart;
+    failed.current.chart = chart === "unusable";
+    if (was && chart === "ok") sayRecovered(COPY.view.chartLoaded);
+  }, [chart]);
+}
+
+function sayRecovered(text: string): void {
+  forget(RECOVERED);
+  announce("polite", text, RECOVERED);
+}
+
+/**
+ * Focus waits on the view's heading once the pressed control goes (A-1137-02): an inline Re-read
+ * or Retry keeps focus while it exists, so a read that fails again leaves focus on its Retry
+ * (A-1137-d04); when the control leaves the document holding focus, the heading takes it, never
+ * the document. `park` marks the focused control as the pressed one.
+ */
+function useParkOnLeave(heading: RefObject<HTMLHeadingElement | null>): () => void {
+  const pressed = useRef<Element | null>(null);
+  useLayoutEffect(() => {
+    const control = pressed.current;
+    if (control === null || control.isConnected) return;
+    pressed.current = null;
+    const active = document.activeElement;
+    if (active === null || active === document.body || !active.isConnected) {
+      heading.current?.focus();
+    }
+  });
+  return useCallback((): void => {
+    const active = document.activeElement;
+    pressed.current = active === document.body ? null : active;
+  }, []);
+}
+
+/**
  * An in-page section named by its `h2`, "{machine} · {ENV}". It opens the machine in the store
  * while mounted (its detail, then its chart) and is busy until the first answer. The Tab order:
  * [Back to machines], [Acknowledge latch…] when latched, the diagram's region while it scrolls,
- * then the timeline; the text list is browse-order text, not a stop.
+ * then the timeline; the text list is browse-order text, not a stop. An inline Re-read or Retry
+ * keeps focus while it exists; once its read succeeds and it goes, focus waits on the `h2`.
  */
 export function MachineView({
   machine,
@@ -336,8 +472,21 @@ export function MachineView({
   useOpenMachine(machine, store);
   const view = useInspectorSelector((s) => s.machine, store);
   const denied = useInspectorSelector((s) => s.denied !== null, store);
+  // The open machine's topic, in the shell's environment only; the saved snapshot is its baseline.
+  const saved =
+    view.ref?.key === machine.key && view.ref.env === machine.env
+      ? view.detail?.snapshots.status === "ok"
+        ? view.detail.machine
+        : undefined
+      : undefined;
+  const live = useMachineFeed(
+    machine,
+    saved === undefined ? undefined : { state: saved.state, degraded: saved.degraded },
+  );
   const headingId = useId();
   const heading = useRef<HTMLHeadingElement>(null);
+  const park = useParkOnLeave(heading);
+  useRecoveryLines(view);
   const { key, env } = machine;
   useEffect(() => {
     if (focusOnOpen) heading.current?.focus();
@@ -353,7 +502,11 @@ export function MachineView({
       <div>
         <Button onClick={onBack}>{COPY.view.back}</Button>
       </div>
-      {shown ? <Body view={view} store={store} /> : <Skeleton shape="text" count={4} />}
+      {shown ? (
+        <Body view={view} live={live} store={store} park={park} />
+      ) : (
+        <Skeleton shape="text" count={4} />
+      )}
     </section>
   );
 }
