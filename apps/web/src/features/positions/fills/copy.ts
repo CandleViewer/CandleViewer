@@ -341,11 +341,13 @@ export const STATE_WORDS = {
 
 /**
  * Words no merged design draws (G-W3, PROPOSED): the Type chips restated in the filter-empty
- * state (BQ-13; D02:380 restates the panel's chips as "Account: Sub-1 · Symbol: SOLUSDT"), the
- * Fills tab's export file name (D03:200's, without a scope), and a Viewer's role in the watermark.
+ * state (BQ-13; D02:380 restates the panel's chips as "Account: Sub-1 · Symbol: SOLUSDT"), and
+ * with none pressed; the Fills tab's export file name (D03:200's, without a scope); and a
+ * Viewer's role in the watermark.
  */
 export const PROPOSED_TEXT = {
   typeFilter: { string: "Type: Trade, ADL", params: { "Trade, ADL": "type words" } },
+  typeFilterNone: { string: "Type: none" },
   tabFileName: {
     string: "candleviewer-fills-20261022T140509Z.csv",
     params: { "20261022T140509Z": "date-time (UTC)" },

@@ -81,6 +81,8 @@ export interface FillRowModel {
 const USDT = /^([A-Z0-9]{2,20})USDT$/;
 const RFC3339 = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/;
 const ENVIRONMENTS: readonly Environment[] = ["live", "demo", "testnet"];
+/** A `Date`'s last instant (ECMA-262 §21.4.1.1): past it `toISOString` throws (the CSV's time). */
+const MAX_TIME_MS = 8.64e15;
 
 export const keyOfFill = (accountId: string, execId: string): string => `${accountId}|${execId}`;
 
@@ -93,7 +95,8 @@ export function plain(value: unknown): string | null {
 /** `23` §13 `epochMs`, or REST's RFC 3339 cut to its millisecond (the server's `epoch_ms`). */
 export function fillTime(item: { readonly ts_ms?: unknown; readonly ts?: unknown }): number | null {
   const ms = item.ts_ms;
-  if (typeof ms === "number") return Number.isSafeInteger(ms) && ms >= 0 ? ms : null;
+  if (typeof ms === "number")
+    return Number.isSafeInteger(ms) && ms >= 0 && ms <= MAX_TIME_MS ? ms : null;
   const match = typeof item.ts === "string" ? RFC3339.exec(item.ts) : null;
   if (match === null) return null;
   const [, base = "", fraction = "", zone = "Z"] = match;

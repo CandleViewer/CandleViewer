@@ -28,6 +28,8 @@ export function typeWord(type: FillType): string {
 
 export interface FillsViewInputs {
   readonly rows: readonly FillRowModel[];
+  /** Every fill held, the held-back new ones too (the store's `all`); `rows` when omitted. */
+  readonly all?: readonly FillRowModel[];
   /** The pressed Type chips (all of them by default, D02:299). */
   readonly types: ReadonlySet<FillKind>;
   readonly groupBy: GroupBy;
@@ -44,8 +46,10 @@ export interface FillsView {
   readonly filterEmpty: boolean;
   /** The pressed chips restated for the filter-empty state (PROPOSED), else `null`. */
   readonly typeFilter: string | null;
-  /** The rows the chips leave, newest first: what the tab's export writes (D-21). */
+  /** The rows shown that the chips leave, newest first. */
   readonly rows: readonly FillRowModel[];
+  /** Every held fill the chips leave, the held-back new ones too: the tab's export (D-21). */
+  readonly exportRows: readonly FillRowModel[];
 }
 
 export function buildFillsView(inputs: FillsViewInputs): FillsView {
@@ -56,9 +60,12 @@ export function buildFillsView(inputs: FillsViewInputs): FillsView {
     groups: groupFills(kept, inputs.groupBy, inputs.everyFill, inputs.labelOf),
     empty: inputs.rows.length === 0,
     filterEmpty,
-    typeFilter: filterEmpty
-      ? bindEntry(PROPOSED_TEXT.typeFilter, { "Trade, ADL": words.join(", ") })
-      : null,
+    typeFilter: !filterEmpty
+      ? null
+      : words.length === 0
+        ? PROPOSED_TEXT.typeFilterNone.string
+        : bindEntry(PROPOSED_TEXT.typeFilter, { "Trade, ADL": words.join(", ") }),
     rows: kept,
+    exportRows: inputs.all === undefined ? kept : applyTypeFilter(inputs.all, inputs.types),
   };
 }

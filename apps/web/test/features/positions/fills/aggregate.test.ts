@@ -19,6 +19,7 @@ import {
   splitOf,
   sumFills,
   type FillSums,
+  type OrderTerms,
 } from "../../../../src/features/positions/fills/model/aggregate";
 import { mapFill, type FillRowModel } from "../../../../src/features/positions/fills/model/fillRow";
 import { cmp, dec, toPlain } from "../../../../src/features/positions/model/decimal";
@@ -32,7 +33,7 @@ const avg = (s: FillSums): string | null => {
 };
 const fees = (s: FillSums): string[] =>
   feesOf(s).map((f) => `${figure(f.cash, 2, true)} ${f.coin} ${f.direction ?? ""}`.trim());
-function slip(s: FillSums, side: "buy" | "sell", terms: Parameters<typeof intentOf>[0]) {
+function slip(s: FillSums, side: "buy" | "sell", terms: OrderTerms) {
   const out = slippageOf(s, side, intentOf(terms), TICK);
   if (out === null) return null;
   return [
@@ -95,7 +96,7 @@ describe("slippage's other forms (D-7; D03 §3.4 board 05)", () => {
   });
 
   it("a triggered limit order's intent is its limit; a trigger only without one (BQ-8)", () => {
-    const both = { order_type: "limit", price: "63420.0", trigger_price: "63500.0" };
+    const both: OrderTerms = { order_type: "limit", price: "63420.0", trigger_price: "63500.0" };
     expect(toPlain(intentOf(both)?.price ?? dec("0"))).toBe("63420.0");
     expect(intentOf({ order_type: "market", price: "94942.5" })).toBeNull();
   });
@@ -122,7 +123,7 @@ describe("totals round the raw sums, never the rounded cells (D03:153)", () => {
 
 describe("board 04's fan-out: the Owner's total, a Manager's legs (D-8)", () => {
   const legs = rowsOf(restItems(), "rest").filter((r) => r.tradeGroupId === GROUP_7C1E);
-  const group = { order_type: "limit", price: "63500.0" };
+  const group: OrderTerms = { order_type: "limit", price: "63500.0" };
 
   it("the Owner's four fills: 63,497.83 · 33 % maker · −16.51 USDT · −2.17 (21.7 ticks) 1.30", () => {
     const sums = sumFills(legs);

@@ -11,6 +11,7 @@
  * the split, the fees and the slippage come from the fills. Funding and settlement rows count in
  * the fees only: their price and quantity are no trade's (D03 §3.6).
  */
+import type { generated } from "@candleviewer/protocol";
 import {
   abs,
   add,
@@ -126,13 +127,11 @@ export function feesOf(sums: FillSums): readonly FeeTotal[] {
     });
 }
 
-/** What an order says of its intended price (`22` `Order`, `OrderWithEvents.events`). */
-export interface OrderTerms {
-  readonly order_type?: unknown;
-  readonly price?: unknown;
-  readonly trigger_price?: unknown;
-  readonly events?: readonly { readonly kind?: unknown }[] | undefined;
-}
+/** What an order says of its intended price: `22` `OrderWithEvents`'s own members (C-4.16). */
+export type OrderTerms = Pick<
+  generated.rest.components["schemas"]["OrderWithEvents"],
+  "order_type" | "price" | "trigger_price" | "events"
+>;
 
 export interface Intent {
   readonly kind: "limit" | "trigger";

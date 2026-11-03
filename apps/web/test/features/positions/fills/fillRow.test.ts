@@ -72,6 +72,12 @@ describe("one fill, either wire form", () => {
       expect(fillTime(bad)).toBeNull();
   });
 
+  it("a ts_ms past a Date's range is no time: the CSV's time could not be written", () => {
+    expect(fillTime({ ts_ms: 8.64e15 })).toBe(8.64e15);
+    expect(fillTime({ ts_ms: 8.64e15 + 1 })).toBeNull();
+    expect(mapFill({ ...wsItem, ts_ms: 8.64e15 + 1 }, "ws")).toBeNull();
+  });
+
   it("WS carries no trade group (unknown), REST says none or names it; REST no environment", () => {
     expect(byExec(ws, "0010").tradeGroupId).toBeUndefined();
     expect(byExec(rest, "0010").tradeGroupId).toBe("0c000000-0000-4000-8000-000000007c1e");

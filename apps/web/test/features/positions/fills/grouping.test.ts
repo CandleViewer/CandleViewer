@@ -12,6 +12,7 @@ import {
   groupFills,
   TYPE_CHIPS,
 } from "../../../../src/features/positions/fills/model/grouping";
+import { PROPOSED_TEXT } from "../../../../src/features/positions/fills/copy";
 import {
   buildFillsView,
   typeWord,
@@ -138,9 +139,31 @@ describe("Empty state: an explicit empty state naming the active filter", () => 
     expect(view.typeFilter).toBe("Type: Funding");
   });
 
-  it("the rows the chips leave are the export's, newest first", () => {
+  it("with no chip pressed the restatement is PROPOSED's 'Type: none', never 'Type: '", () => {
+    const view = buildFillsView({ ...base, rows: rest, types: new Set<FillKind>() });
+    expect(view.typeFilter).toBe(PROPOSED_TEXT.typeFilterNone.string);
+  });
+
+  it("the rows the chips leave are the shown ones, newest first", () => {
     const view = buildFillsView({ ...base, rows: rest });
     expect(view.rows).toHaveLength(rest.length);
     expect(view.groups).toHaveLength(3);
+  });
+
+  it("the export takes every held fill the chips leave, the held-back new ones too (D-21)", () => {
+    const [newest, ...shown] = rest; // the ADL fill, held back above the top
+    const view = buildFillsView({ ...base, rows: shown, all: rest });
+    expect([view.rows.length, view.exportRows.length]).toEqual([rest.length - 1, rest.length]);
+    expect(view.exportRows[0]).toBe(newest);
+  });
+
+  it("the export's rows pass the chips too", () => {
+    const view = buildFillsView({
+      ...base,
+      rows: [],
+      all: rest,
+      types: new Set<FillKind>(["adl"]),
+    });
+    expect(view.exportRows.map((r) => tail(r.execId))).toEqual(["0014"]);
   });
 });

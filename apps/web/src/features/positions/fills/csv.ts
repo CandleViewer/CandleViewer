@@ -27,7 +27,7 @@ export function fillColumns(accountOf: AccountOf): readonly CsvColumn<FillRowMod
   };
   return [
     text("time_utc", (r) => new Date(r.tsMs).toISOString()),
-    text("account", (r) => accountOf(r.accountId)?.label ?? r.accountId),
+    text("account", (r) => accountOf(r.accountId)?.label ?? null), // never an id the screen hides
     text("environment", (r) => r.environment ?? accountOf(r.accountId)?.environment ?? null),
     text("symbol", (r) => r.symbol),
     text("side", (r) => r.side),

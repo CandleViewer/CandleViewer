@@ -70,6 +70,14 @@ describe("the columns: D03:200's, in order", () => {
     expect(rebate?.split(",")[9]).toBe("-0.12");
   });
 
+  it("an account the directory does not name is a blank cell, never its id", () => {
+    const [first] = orderRows("limit");
+    if (first === undefined) throw new Error("golden");
+    const line = fillsCsv([first], () => null, OWNER).split("\r\n")[2] ?? "";
+    expect(line.split(",")[1]).toBe("");
+    expect(line).not.toContain(first.accountId);
+  });
+
   it("a text cell that would be a formula is guarded; numbers stay numbers (D-21)", () => {
     const [first] = orderRows("limit");
     if (first === undefined) throw new Error("golden");
