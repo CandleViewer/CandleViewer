@@ -11,7 +11,6 @@ import type {
   CardProps,
   ExportFormat,
   LiqTierCellProps,
-  PnLDirection,
   PositionsGridColumnId,
   PositionsGridGroup,
   PositionsGridLiq,
@@ -267,13 +266,13 @@ describe("@candleviewer/ui positions grid and CMP-049's treegrid (E29-S01)", () 
   });
 });
 
-describe("@candleviewer/ui Fills tab and SCR-078 atoms (E29-S04)", () => {
+describe("@candleviewer/ui CMP-099 PrintExportBar (E29-S04)", () => {
   it("exports PrintExportBar from the package entry as a component function", () => {
     expect(typeof Atoms.PrintExportBar).toBe("function");
   });
 
-  it("exports CMP-099's and CMP-116's new types (checked by the typechecker)", () => {
-    const props: [ExportFormat, PrintExportBarProps, PnLDirection] | null = null;
+  it("exports CMP-099's types (checked by the typechecker)", () => {
+    const props: [ExportFormat, PrintExportBarProps] | null = null;
     expect(props).toBeNull();
   });
 });

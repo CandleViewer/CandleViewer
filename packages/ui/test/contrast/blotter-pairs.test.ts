@@ -51,6 +51,34 @@ function pairsOf(name: string): Pair[] {
   ];
 }
 
+/**
+ * CMP-099 PrintExportBar (E29-S04; E29-D04 §2.8.9): each format is a CMP-001 secondary button, its label
+ * color.text.primary on the secondary fill (label-on-fill.json's `secondary` role registers it for the gate), and the
+ * running arc takes the label's colour, because CMP-038's own arc colour would fail there.
+ */
+describe("CMP-099's contrast pairs (E29-S04)", () => {
+  it.each(["dark", "light", "high-contrast"])(
+    "%s: the label, and the running arc in its colour, on the secondary fill",
+    (name) => {
+      const theme = themes[name] as Theme;
+      const ratio = math.contrastRatio(
+        hexOf(theme, "color.text.primary"),
+        hexOf(theme, "color.action.secondary.default"),
+      );
+      expect(Math.floor(ratio * 1000) / 1000).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  it("CMP-038's own arc colour would fail on the secondary fill in dark, so the arc takes the label's", () => {
+    const dark = themes["dark"] as Theme;
+    const ratio = math.contrastRatio(
+      hexOf(dark, "color.action.primary.default"),
+      hexOf(dark, "color.action.secondary.default"),
+    );
+    expect(ratio).toBeLessThan(3);
+  });
+});
+
 describe("the blotter components' contrast pairs (E29-D04 §5)", () => {
   it.each(["dark", "light", "high-contrast"])(
     "%s: every opaque pair the stylesheets bind",
