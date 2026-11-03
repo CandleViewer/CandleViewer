@@ -131,6 +131,10 @@ describe("PrintExportBar (CMP-099, E29-S04; E29-D04 §2.8.9)", () => {
 describe("printexportbar.css contract (E29-D04 §2.8.9)", () => {
   const css = loadCss("printexportbar.css");
   itIsTokenOnlyAndStatic(css);
+  /** The sheet's rules that name CMP-014's spinner: the busy form's arc. */
+  const spinnerRules = [...css.all.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) =>
+    (m[1] ?? "").includes(".cv-spinner"),
+  );
 
   it("spaces the buttons as the toolbar does (E29-D02:493) and wraps rather than clip one", () => {
     const bar = find(css.normal, ".cv-print-export-bar", "gap");
@@ -160,14 +164,20 @@ describe("printexportbar.css contract (E29-D04 §2.8.9)", () => {
   });
 
   it("running shows the arc: no rule in the sheet hides CMP-014's spinner", () => {
-    const spinnerRules = [...css.all.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) =>
-      (m[1] ?? "").includes(".cv-spinner"),
-    );
     expect(spinnerRules.length).toBeGreaterThan(0);
     for (const [, selector, body] of spinnerRules) {
       expect(body, selector).not.toMatch(
         /\bdisplay\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0(?![.\d])/,
       );
+    }
+  });
+
+  it("running draws the arc in the label's colour: no rule in the sheet colours CMP-014's spinner", () => {
+    // CMP-038's arc colour, color.action.primary.default, measures 2.58:1 on the secondary fill in dark; the arc's
+    // `stroke: currentcolor` (spinner.css) takes the label's colour unless a rule here sets color, stroke or fill.
+    expect(spinnerRules.length).toBeGreaterThan(0);
+    for (const [, selector, body] of spinnerRules) {
+      expect(body, selector).not.toMatch(/(^|[\s;])(color|stroke|fill)\s*:/);
     }
   });
 });
