@@ -86,7 +86,8 @@ def test_funding_meta_is_the_coverage_shape_of_the_other_market_reads() -> None:
     for member in liq_coverage["required"]:
         assert coverage["properties"][member] == liq_coverage["properties"][member], member
     oi = next(p for p in _SCHEMAS["OpenInterestPageMeta"]["allOf"] if "properties" in p)
-    assert coverage["properties"]["gaps"] == oi["properties"]["coverage"]["properties"]["gaps"]
+    oi_gaps = oi["properties"]["coverage"]["properties"]["gaps"]
+    assert coverage["properties"]["gaps"] == {**oi_gaps, "maxItems": 64}  # Low 5: bounded
     assert coverage["required"] == [*liq_coverage["required"], "gaps"]
 
 
@@ -95,8 +96,14 @@ def test_funding_coverage_tells_not_recorded_from_none_settled() -> None:
         'an empty page there means "not recorded"',
         "An empty page with `no_coverage: false` means the window was covered and no funding "
         "settled in it",
-        "longer than one `funding_interval_minutes` between consecutive settlements, so a "
-        "missing settlement is reported and never filled",
+        "in which a settlement was due and none is stored, so a missing settlement is reported "
+        "and never filled",
+        "A gap's `from` is the stored settlement before it, or `covered_from` when none is "
+        "stored before it inside the covered part, and its `to` the stored settlement after it, "
+        "or `covered_to` when none is; both edges are exclusive",
+        "exceeds one `funding_interval_minutes`. At most 64",
+        "At most 64 gaps are listed, oldest first; past the cap the oldest are joined into one "
+        "span, which never leaves a missing settlement out",
         'a client reads an absent member as unknown, never as `0` or as "covered"',
     ):
         assert phrase in _FUNDING_DOC, phrase
@@ -162,9 +169,45 @@ def test_position_carries_a_server_computed_funding_estimate() -> None:
         "the position's value at mark times the symbol's accruing rate",
         "a client formats it and never multiplies",
         "every account for the Owner and the assigned ones for a Manager (C-12.4)",
-        "no operation of its own exists and a market-data read never carries it",
+        "no operation of its own exists, a market-data read never carries it, and the other "
+        "`Position` carriers send it absent",
+        "money is never annualised on the client",
     ):
         assert phrase in doc, phrase
+    amount = text(estimate["properties"]["amount"]["description"])
+    assert "never negative" in amount
+    assert "Quantised to 8 dp, `ROUND_HALF_UP`, as funding payments are (24 §1.5)" in amount
+    assert "| Funding payments        | 8 dp, `ROUND_HALF_UP`  |" in _RAW_24
+    member_doc = text(member["description"])
+    for phrase in (
+        '`null` here is the answer "no charge"',
+        "the `setPositionLeverage` `200` and `AccountConsequenceSummary.open_positions`, never "
+        "compute it and send it absent",
+    ):
+        assert phrase in member_doc, phrase
+
+
+def _position_refs(node: Any) -> int:
+    return repr(node).count("'#/components/schemas/Position'")
+
+
+def test_every_position_carrier_is_named_and_the_others_send_the_estimate_absent() -> None:
+    """m3: `Position` rides four answers; only the two position reads serve the estimate."""
+    paths = SPEC["paths"]
+    carriers = {
+        "listPositions": _position_refs(paths["/positions"]["get"]["responses"]["200"]),
+        "getPosition": _position_refs(paths["/positions/{positionId}"]["get"]["responses"]),
+        "setPositionLeverage": _position_refs(
+            paths["/positions/{positionId}/leverage"]["put"]["responses"]["200"]
+        ),
+        "AccountConsequenceSummary": _position_refs(_SCHEMAS["AccountConsequenceSummary"]),
+    }
+    assert all(count == 1 for count in carriers.values()), carriers
+    total = _position_refs(SPEC["paths"]) + _position_refs(_SCHEMAS)
+    assert total == len(carriers)  # no fifth carrier appeared unnamed
+    assert "send it absent" in text(
+        _SCHEMAS["Position"]["properties"]["funding_estimate"]["description"]
+    )
 
 
 @pytest.mark.parametrize("operation", ["listPositions", "getPosition"])
@@ -186,18 +229,24 @@ def test_only_position_references_the_estimate() -> None:
 
 
 _DERIV = {
-    "oi_mode": ["absolute", "delta"],
-    "oi_quadrant_colouring": None,
     "funding_style": ["line", "bars"],
     "funding_annualised": None,
-    "basis_source": ["mark", "last"],
-    "basis_annualised": None,
+    "basis_source": ["last", "mark"],  # the ruling on #783 (6612480577)
 }
 
 
 def test_settings_gain_the_deriv_group() -> None:
-    """G1: E24-D02 section 10's funding, basis and OI keys, one level deep, no liquidation key."""
-    leaves = _SCHEMAS["Settings"]["properties"]["deriv"]["properties"]
+    """G1: the funding keys and the basis source (6612480577), one level deep, closed."""
+    group = _SCHEMAS["Settings"]["properties"]["deriv"]
+    assert group["additionalProperties"] is False
+    assert (
+        "refuses an undeclared key or a value outside a leaf's enum or type with "
+        "`422 validation_failed`" in text(group["description"])
+    )
+    assert "a money amount (`FundingEstimate.amount`) is never annualised on the client" in text(
+        group["description"]
+    )
+    leaves = group["properties"]
     assert list(leaves) == list(_DERIV)
     for leaf, enum in _DERIV.items():
         if enum is None:
@@ -205,22 +254,27 @@ def test_settings_gain_the_deriv_group() -> None:
         else:
             assert leaves[leaf] == {**leaves[leaf], "type": "string", "enum": enum}, leaf
         assert "client default" in leaves[leaf]["description"], leaf
-    assert not any(leaf.startswith("liq") for leaf in leaves)
+    assert "client default `last`" in leaves["basis_source"]["description"]
 
 
 def test_the_settings_leaf_table_takes_the_deriv_leaves() -> None:
     """`/settings` reads its leaves off the regenerated models, so the group is writable."""
     assert {f"deriv.{leaf}" for leaf in _DERIV} <= set(settings_models.LEAVES)
     patch = settings_models.judge_patch(
-        b'{"deriv": {"funding_style": "bars", "basis_annualised": true, "oi_mode": null}}'
+        b'{"deriv": {"funding_style": "bars", "funding_annualised": true, "basis_source": null}}'
     )
     assert patch == {
         "deriv.funding_style": "bars",
-        "deriv.basis_annualised": True,
-        "deriv.oi_mode": None,
+        "deriv.funding_annualised": True,
+        "deriv.basis_source": None,
     }
-    with pytest.raises(settings_models.PatchRefused):
-        settings_models.judge_patch(b'{"deriv": {"funding_style": "area"}}')
+    for refused in (
+        b'{"deriv": {"funding_style": "area"}}',
+        b'{"deriv": {"basis_annualised": true}}',
+        b'{"deriv": {"oi_mode": "delta"}}',
+    ):
+        with pytest.raises(settings_models.PatchRefused):
+            settings_models.judge_patch(refused)
 
 
 def test_the_change_log_names_the_change() -> None:
@@ -234,6 +288,14 @@ def test_the_change_log_names_the_change() -> None:
     for phrase in (
         "Assigned by the orchestrator on #778 (6610230823)",
         "BQ items 3, 6, 7 and 8 as recommended, scope D02 §16 rec. 9",
+        "the basis key follows the ruling on #783 (6612480577)",
+        "§1 `InstrumentInfo`'s `upper_funding_rate` / `lower_funding_rate` become "
+        "`Decimal | None` (PROPOSED)",
+        "(`exchange/bybit/instruments.py:202-210`) is the serving slice's to change",
+        "a Manager reading an unassigned account's position",
+        "a caller without `positions:read`",
+        "Annualising is a display transform of a rate only; money is never annualised on the "
+        "client.",
         "Display preferences have no local-storage fallback, so the contract carries them.",
         "`upper_funding_rate` and `lower_funding_rate`",
         "`FundingPageMeta`",

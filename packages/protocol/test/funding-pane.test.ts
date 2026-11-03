@@ -32,12 +32,9 @@ const estimate = {
 } satisfies Estimate;
 
 const deriv = {
-  oi_mode: "delta",
-  oi_quadrant_colouring: true,
   funding_style: "bars",
   funding_annualised: false,
   basis_source: "last",
-  basis_annualised: false,
 } satisfies Deriv;
 
 describe("funding pane contract (consumer side, 22 getFundingHistory, Position, Settings)", () => {
@@ -68,8 +65,10 @@ describe("funding pane contract (consumer side, 22 getFundingHistory, Position, 
 
   it("persists the deriv display preferences as Settings leaves", () => {
     expectTypeOf<Deriv["funding_style"]>().toEqualTypeOf<"line" | "bars" | undefined>();
-    expectTypeOf<Deriv["basis_source"]>().toEqualTypeOf<"mark" | "last" | undefined>();
-    expectTypeOf<Deriv["oi_mode"]>().toEqualTypeOf<"absolute" | "delta" | undefined>();
-    expect(Object.keys(deriv)).toHaveLength(6);
+    expectTypeOf<Deriv["basis_source"]>().toEqualTypeOf<"last" | "mark" | undefined>();
+    expectTypeOf<keyof Deriv>().toEqualTypeOf<
+      "funding_style" | "funding_annualised" | "basis_source"
+    >();
+    expect(Object.keys(deriv)).toHaveLength(3);
   });
 });

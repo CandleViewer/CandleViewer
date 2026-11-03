@@ -2248,7 +2248,7 @@ class Coverage1(BaseModel):
     covered_from: AwareDatetime | None
     covered_to: AwareDatetime | None
     no_coverage: StrictBool
-    gaps: list[Gap]
+    gaps: Annotated[list[Gap], Field(max_length=64)]
 
 
 class FundingPageMeta(PageMeta):
@@ -3626,7 +3626,7 @@ class FundingEstimate(BaseModel):
     amount: Annotated[
         str,
         Field(
-            description="The charge's magnitude in the settle coin (USDT), never negative; its sign is `direction`.",
+            description="The charge's magnitude in the settle coin (USDT), never negative; its sign is `direction`. Quantised to 8 dp, `ROUND_HALF_UP`, as funding payments are (24 §1.5).",
             examples=["63120.50", "-0.0004", "0"],
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
@@ -5311,14 +5311,9 @@ class Data(BaseModel):
 
 
 class Deriv(BaseModel):
-    oi_mode: Annotated[
-        Literal["absolute", "delta"] | None,
-        Field(description="The OI sub-pane's mode; client default `absolute`."),
-    ] = None
-    oi_quadrant_colouring: Annotated[
-        StrictBool | None,
-        Field(description="The OI price/OI quadrant classification; client default `true`."),
-    ] = None
+    model_config = ConfigDict(
+        extra="forbid",
+    )
     funding_style: Annotated[
         Literal["line", "bars"] | None,
         Field(
@@ -5327,18 +5322,12 @@ class Deriv(BaseModel):
     ] = None
     funding_annualised: Annotated[
         StrictBool | None,
-        Field(description="Annualised funding display (E24-S04); client default `false`."),
+        Field(description="Annualised funding-rate display (E24-S04); client default `false`."),
     ] = None
     basis_source: Annotated[
-        Literal["mark", "last"] | None,
+        Literal["last", "mark"] | None,
         Field(
-            description="The basis readout's price, `mark − index` or `last − index`; client default `mark`."
-        ),
-    ] = None
-    basis_annualised: Annotated[
-        StrictBool | None,
-        Field(
-            description="Annualised basis display; client default `false` (PROPOSED in E24-D02)."
+            description="The basis readout's price, `last − index` or `mark − index`; client default `last` (the ruling on #783, 6612480577)."
         ),
     ] = None
     __null_refused = field_validator("oi_mode", "oi_quadrant_colouring", "funding_style", "funding_annualised", "basis_source", "basis_annualised", mode="before")(_refuse_null)
@@ -5364,7 +5353,7 @@ class Settings(BaseModel):
     deriv: Annotated[
         Deriv | None,
         Field(
-            description="The derivatives sub-panes' display preferences (E24-D02 §10, gap G1; E24-S03, #778), presentation only: no key changes what the server computes or what a rule sees. A leaf's dotted key is `deriv.<leaf>` (`deriv.funding_style` is E24-D02's `deriv.funding.style`), one level as every group's leaves are. With no deployment default set, an unset leaf takes the client's built-in default, named on each leaf. The liquidation keys (`deriv.liq.*` in E24-D02 §10) are not here yet."
+            description="The derivatives sub-panes' display preferences (E24-D02 §10, gap G1; E24-S03, #778; the basis key per the orchestrator's ruling on #783, 6612480577), presentation only: no key changes what the server computes or what a rule sees. Annualising is a display transform of a rate only; a money amount (`FundingEstimate.amount`) is never annualised on the client. A leaf's dotted key is `deriv.<leaf>` (`deriv.funding_style` is E24-D02's `deriv.funding.style`), one level as every group's leaves are. As for every group, `updateSettings` judges each patch leaf against `Settings`' leaf table and refuses an undeclared key or a value outside a leaf's enum or type with `422 validation_failed`, writing nothing. With no deployment default set, an unset leaf takes the client's built-in default, named on each leaf."
         ),
     ] = None
     field_meta: Annotated[FieldMeta | None, Field(alias="_meta")] = None
@@ -7863,7 +7852,7 @@ class Position(BaseModel):
     funding_estimate: Annotated[
         FundingEstimate | None,
         Field(
-            description="The charge this position meets at the symbol's next funding settlement, computed by the server (E24-S03, #778; E24-D02 G11). `null` when the position is flat or the server holds no accruing rate for the symbol, so a client shows no charge line, never a zero. Contract first (C-6.1): absent until the read serves it, which a client reads as `null`."
+            description='The charge this position meets at the symbol\'s next funding settlement, computed by the server (E24-S03, #778; E24-D02 G11). `listPositions` and `getPosition` send it and send `null` when the position is flat or the server holds no accruing rate for the symbol, so a client shows no charge line, never a zero: unlike the "a member a row holds no value for is absent" rule of `listPositions`, `null` here is the answer "no charge". The other carriers of `Position`, the `setPositionLeverage` `200` and `AccountConsequenceSummary.open_positions`, never compute it and send it absent. Contract first (C-6.1): absent until the reads serve it, which a client reads as `null`.'
         ),
     ] = None
     updated_at: AwareDatetime | None = None
