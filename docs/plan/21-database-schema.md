@@ -2451,6 +2451,14 @@ The unique `(exchange_account_id, exec_id)` is the **dedup key** — the private
 
 `order_events` and `executions` carry the `audit_log` guards of §3.10.1 beside their row triggers (C-5.7; [main-orchestrator ruling recorded on #845](https://github.com/CandleViewer/CandleViewer/issues/845#issuecomment-6220571436)): a `BEFORE TRUNCATE` statement trigger and no `UPDATE`, `DELETE` or `TRUNCATE` grant for `cv_app` or `cv_ro`, revoked by the migration wherever the role exists.
 
+**The walk's inputs (E29-S06, #981).** E29-S06's migration slice adds `closed_size`, the venue's `closedSize`, the size a fill closed, where its source states it: the private stream's fills do, and a REST-recovered fill's `""` stays NULL. From its store slices every writer also sets `position_idx` from the fill's order row, as the venue's fills carry none, and a fill with no order row keeps 0. The walk of `24-internal-schemas.md` §8.13 reads `closed_size` and keys a fill by its order row's `position_idx`. No row is backfilled, as a stored fill never changes (`trg_exec_append`); `ex_closed` is added `NOT VALID`, then validated (C-5.6), and the column takes the `PII:` comment every `numeric(38,18)` column here has (§12).
+
+```sql
+ALTER TABLE executions ADD COLUMN closed_size numeric(38,18);
+ALTER TABLE executions ADD CONSTRAINT ex_closed CHECK (closed_size IS NULL OR closed_size BETWEEN 0 AND exec_qty) NOT VALID;
+ALTER TABLE executions VALIDATE CONSTRAINT ex_closed;
+```
+
 #### 3.3.7 `positions` — latest snapshot + history
 
 Two tables: a current-state table keyed by (account, symbol, position_idx), and an append-only snapshot history used by the risk dashboard and journal reconstruction.
@@ -2517,6 +2525,14 @@ CREATE INDEX ix_psnap_sym_time  ON position_snapshots (symbol, snap_ts DESC);
 `ix_pos_no_sl` backs the same safety invariant as `ix_tgl_no_sl` but at exchange-truth level: an open position with no exchange-side stop is a `critical` system event.
 
 **Writes (E29-T01).** Rows are written only through the position store (`storage/repositories/positions_sqlalchemy.py`, behind the OMS's `PositionRepository` and `PositionSnapshotRepository`). Its upsert is `ON CONFLICT (exchange_account_id, symbol, position_idx) DO UPDATE`: the row takes the exchange's state and `recv_ts` and `updated_at` become `now()`, but only when the stored or the new `exchange_updated_ts` is NULL or the stored one is not later. A stale snapshot (a REST read that raced a newer push) changes nothing and the upsert returns the stored row, so `list_unprotected` cannot lose a newer position that has no stop-loss (C-2.6). An `exchange_updated_ts` more than 5 s ahead of the store's injected clock (the future skew of the ingest window, `24-internal-schemas.md` §14.2 rule 10) is a parse or unit error, not a push: the upsert refuses it (`FutureDatedPositionError`) and writes nothing, and a stored time that far ahead no longer wins the comparison, so the next write heals the row instead of one bad time freezing it. The refusal is a clock or parse fault, never a push to drop quietly, and the position stays as stored: the writers (E29-T05's `PositionProjection.take`, E29-T06's reconciliation) must log it with the account and symbol, count it, raise a critical clock-fault alert and apply the update again once the clock is back in sync (E29-T06 reads the position from the exchange again), and until then `list_unprotected` reads the last stored state. So the store's clock must be exchange-synchronised, the wall clock plus the offset of the `ClockSyncEvent` (`24-internal-schemas.md` §2.8), which E29-T04's composition root passes: a clock that lags the exchange by more than 5 s refuses newer pushes and lets an older write replace a newer stored row, because the stored time then lies beyond the lagging horizon. A write without an exchange time still applies, so the OMS must still apply an account's position updates in exchange order (`24-internal-schemas.md` §8.2 S5; E29-T05, E29-T06). A `take_profit`, `stop_loss` or `trailing_stop` of 0 or less is stored as NULL: Bybit's `"0"` means none, and a stored 0 would hide an unprotected position from `ix_pos_no_sl` (C-2.6). `list_unprotected` (an account's open positions with no stop-loss) and `list_open` render `size > 0` with a literal 0, so the planner matches `ix_pos_no_sl` and `ix_pos_open`.
+
+**A flat the venue confirmed (E29-S06, #981).** E29-S06's migration slice adds `exchange_updated_ts` to `position_snapshots`: the reading's own time at the venue (`Position.updated_at`), which the stream's and reconciliation's appends set from its store slice on, older rows keeping NULL. A row at `size` 0 with it set is a flat the venue confirmed, where the walk of `24-internal-schemas.md` §8.13 starts (§13.1 row 55); the index is built `CONCURRENTLY` (§9.3 rule 3).
+
+```sql
+ALTER TABLE position_snapshots ADD COLUMN exchange_updated_ts timestamptz;
+CREATE INDEX CONCURRENTLY ix_psnap_flat ON position_snapshots (exchange_account_id, symbol, position_idx, exchange_updated_ts)
+  WHERE size = 0 AND exchange_updated_ts IS NOT NULL;
+```
 
 #### 3.3.8 `wallet_balances`
 
@@ -2963,7 +2979,7 @@ ALTER TABLE oms_handovers ENABLE ALWAYS TRIGGER trg_oh_guard;
 
 #### 3.3.13 `closed_pnl_records` — the venue's closed-PnL records and their composition (E29-S06)
 
-The store of `24-internal-schemas.md` §8.13 (E29-S06, #981): one row per closing order's record, keyed by its account and the venue's `orderId`, written provisional from the stored closing fills and settled in place when the venue's record is read; `22` `listClosedPnl` reads it. E29-S06's migration slice creates it, and its revision joins §9.4 then, re-parented per merge order (C-5.3).
+The store of `24-internal-schemas.md` §8.13 (E29-S06, #981): one row per closing order's record, keyed by its account and the venue's `orderId`, written provisional from the stored closing fills, settled in place when the venue's record is read and frozen once final; `22` `listClosedPnl` reads it. E29-S06's migration slice creates it with the two columns §3.3.6 and §3.3.7 add, and its revision joins §9.4 then, re-parented per merge order (C-5.3).
 
 ```sql
 CREATE TABLE closed_pnl_records (
@@ -2972,11 +2988,11 @@ CREATE TABLE closed_pnl_records (
   exchange_order_id   text,                     -- the closing order's venue id; NULL: the venue wrote none
   symbol              symbol_code NOT NULL,
   side                text NOT NULL,            -- the closed position's
-  position_idx        smallint,                 -- the closing fills'; NULL when nothing local composes it
-  qty                 numeric(38,18),           -- the size closed
+  position_idx        smallint,                 -- the walk's key, its order rows'; NULL when nothing local composes it
+  qty                 numeric(38,18),           -- the size closed: the closing fills' while provisional
   avg_entry_price     numeric(38,18),
   avg_exit_price      numeric(38,18),
-  leverage            numeric(10,2),
+  leverage            numeric(10,2),            -- the venue's; NULL while provisional
   closed_pnl          numeric(38,18),           -- the venue's figure; NULL while provisional
   gross_pnl           numeric(38,18),           -- the local composition (24 §8.13); NULL: not composed
   fee_pnl             numeric(38,18),
@@ -2985,6 +3001,7 @@ CREATE TABLE closed_pnl_records (
   closed_at           timestamptz NOT NULL,     -- the venue's updatedTime once read, else the last closing fill's
   venue_created_at    timestamptz,              -- the venue's createdTime: the closing order's creation
   settled_at          timestamptz,              -- the venue's record stored; NULL: provisional
+  final_at            timestamptz,              -- the record final (24 §8.13): the venue's columns frozen
   divergent           boolean NOT NULL DEFAULT false,
   audited_local_net   numeric(38,18),           -- the pair pnl.divergence_detected last recorded
   audited_closed_pnl  numeric(38,18),
@@ -2992,8 +3009,14 @@ CREATE TABLE closed_pnl_records (
   CONSTRAINT cpr_side    CHECK (side IN ('long','short')),
   CONSTRAINT cpr_posidx  CHECK (position_idx IS NULL OR position_idx IN (0,1,2)),
   CONSTRAINT cpr_order   CHECK (exchange_order_id IS NULL OR char_length(exchange_order_id) BETWEEN 1 AND 64),
-  CONSTRAINT cpr_settled CHECK ((settled_at IS NULL) = (closed_pnl IS NULL)
-                                AND (exchange_order_id IS NOT NULL OR settled_at IS NOT NULL)),
+  CONSTRAINT cpr_settled CHECK (CASE WHEN settled_at IS NULL
+                                THEN exchange_order_id IS NOT NULL AND closed_pnl IS NULL AND leverage IS NULL
+                                     AND venue_created_at IS NULL
+                                ELSE closed_pnl IS NOT NULL AND qty IS NOT NULL AND avg_entry_price IS NOT NULL
+                                     AND avg_exit_price IS NOT NULL AND leverage IS NOT NULL
+                                     AND venue_created_at IS NOT NULL END),
+  CONSTRAINT cpr_final   CHECK (final_at IS NULL OR (settled_at IS NOT NULL AND exchange_order_id IS NOT NULL
+                                AND final_at >= settled_at)),
   CONSTRAINT cpr_qty     CHECK (qty IS NULL OR qty > 0),
   CONSTRAINT cpr_pair    CHECK ((audited_local_net IS NULL) = (audited_closed_pnl IS NULL)
                                 AND (NOT divergent OR (settled_at IS NOT NULL AND audited_closed_pnl IS NOT NULL))),
@@ -3002,12 +3025,19 @@ CREATE TABLE closed_pnl_records (
 );
 CREATE UNIQUE INDEX ux_cpr_order ON closed_pnl_records (exchange_account_id, exchange_order_id)
   WHERE exchange_order_id IS NOT NULL;
-CREATE INDEX ix_cpr_day         ON closed_pnl_records (exchange_account_id, closed_at, id);
-CREATE INDEX ix_cpr_provisional ON closed_pnl_records (exchange_account_id) WHERE settled_at IS NULL;
+CREATE INDEX ix_cpr_day     ON closed_pnl_records (exchange_account_id, closed_at, id);
+CREATE INDEX ix_cpr_pending ON closed_pnl_records (exchange_account_id)
+  WHERE final_at IS NULL AND exchange_order_id IS NOT NULL;
+CREATE TRIGGER trg_cpr_no_delete BEFORE DELETE ON closed_pnl_records
+  FOR EACH ROW EXECUTE FUNCTION forbid_mutation();
+CREATE TRIGGER trg_cpr_no_truncate BEFORE TRUNCATE ON closed_pnl_records
+  FOR EACH STATEMENT EXECUTE FUNCTION audit_refuse_truncate();
+ALTER TABLE closed_pnl_records ENABLE ALWAYS TRIGGER trg_cpr_no_delete;
+ALTER TABLE closed_pnl_records ENABLE ALWAYS TRIGGER trg_cpr_no_truncate;
 ```
 
-- **Writes.** Only through the store, behind the OMS's port, account-scoped (C-12.4), each statement under `CV_OMS_STATEMENT_TIMEOUT_MS` as the order store's are (§3.3.5). The composition upserts by `id`; settling sets the venue's columns, `venue_created_at` and `settled_at` once. `trg_cpr_guard` (BEFORE UPDATE, `ENABLE ALWAYS`, SQLSTATE 23514) refuses any change to `id`, `exchange_account_id`, `exchange_order_id`, `symbol` or `side`, and, once `settled_at` is set, to the venue's columns (`qty`, the prices, `leverage`, `closed_pnl`, `closed_at`, `venue_created_at`, `settled_at`): a later venue read that differs is logged and counted, never applied. The local figures may change after settling, as a late fill composes them again; `divergent` is set only with the pair its `pnl.divergence_detected` record names, written after that record (24 §8.13).
-- **Readers.** `listClosedPnl`'s window and totals (`ix_cpr_day`, §13.1 row 53), the sync's provisional check (`ix_cpr_provisional`, row 54) and its upsert by order (`ux_cpr_order`).
+- **Writes.** Only through the store, behind the OMS's port, account-scoped (C-12.4), each statement under `CV_OMS_STATEMENT_TIMEOUT_MS` as the order store's are (§3.3.5). The composition upserts by `id` and writes the local figures, and the provisional `qty`, prices and `closed_at`; settling sets the venue's columns, `venue_created_at` and `settled_at`; a later read that differs replaces the venue's columns until the record is final, when `final_at` is set (24 §8.13). `trg_cpr_guard` (BEFORE UPDATE, `ENABLE ALWAYS`, SQLSTATE 23514) refuses any change to `id`, `exchange_account_id`, `exchange_order_id`, `symbol` or `side`, a `settled_at` or `final_at` that changes once set, and, once `final_at` is set, any change to the venue's columns (`qty`, the prices, `leverage`, `closed_pnl`, `closed_at`, `venue_created_at`): a later read that differs is then logged and counted, never applied. `trg_cpr_no_delete` (`forbid_mutation()`) and `trg_cpr_no_truncate` (0003's `audit_refuse_truncate()`), both `ENABLE ALWAYS`, refuse a DELETE or a TRUNCATE by any role, as `executions`' guards do (§3.3.6). The local figures may change after settling, as a late fill composes them again; `divergent` is set only with the pair its `pnl.divergence_detected` record names, written after that record, and cleared by a later comparison within the tolerance (24 §8.13).
+- **Readers.** `listClosedPnl`'s window and totals (`ix_cpr_day`, §13.1 row 53), the sync's poll of the records not yet final (`ix_cpr_pending`, row 54) and its upsert by order (`ux_cpr_order`).
 - **Grants, class and retention.** `cv_app` keeps INSERT, SELECT and UPDATE; DELETE and TRUNCATE are revoked where the role exists (the 0024 idiom), as a record is never removed: it is kept for ever, as `executions` is (§7). There is no row-level security, as scope is the OMS's and the route's (C-12.4), and a row binds its account's environment (`exchange_accounts.env`, C-2.11). Every `numeric` column is the account's financial data, class P1 with a `PII:` comment (§12, C-5.9); no column holds a credential, a name, an email or an IP.
 
 ### 3.4 Rules engine
@@ -4406,7 +4436,8 @@ INSERT INTO kill_switch_state (id, scope, engaged) VALUES (gen_random_uuid(), 'g
 - **The day boundary (E29-S06, #981).** `day_boundary_utc_offset_minutes` is the ticket key
   `risk.day_boundary_utc_offset`: the offset, in minutes east of UTC, whose 00:00 starts the trading day, so +180
   (UTC+3) starts it at 21:00Z, and `rp_day` bounds it to UTC−12..UTC+14. One resolver reads it for the daily-loss
-  figure and the closed-PnL window (24 §8.13), so both days start at one instant; E39-K01 (#880) confirms the reading.
+  figure and the closed-PnL window (24 §8.13), so both days start at one instant, and a change never moves the day in
+  progress (24 §8.13); E39-K01 (#880) confirms the reading.
 - **Three release shapes.** `rl_release` admits an active row (nothing set), a person's release (`released_at`,
   `released_by` and `release_reason` together) and a clock release (`released_at` at or after a stored `until`, no
   releaser), so an early or unattributed release cannot pass for an expiry. `released_at` is written when the release
@@ -5769,7 +5800,8 @@ Each row: the screen/job that issues the query, the query shape, the serving ind
 | 53  | Order lookup by key (#2303)   | caller's `placeOrder` anchors by `client_ref = ANY($2)`, then their `orders` in scope  | `ux_ia_principal_ref`, then `orders` PK                                 | < 5 ms for 20 keys                    |
 | 54  | Order lookup by link (#2303)  | `orders WHERE order_link_id = ANY($1)`, in scope                                       | `ux_orders_link`                                                        | < 5 ms for 20 ids                     |
 | 53  | Closed PnL, the day's window  | `closed_pnl_records WHERE exchange_account_id = ANY($1)`, `closed_at` in the window    | `ix_cpr_day`                                                            | < 20 ms for a day's records           |
-| 54  | Closed-PnL settle poll        | `closed_pnl_records WHERE exchange_account_id = $1 AND settled_at IS NULL`             | `ix_cpr_provisional` (partial)                                          | < 2 ms                                |
+| 54  | Closed-PnL settle poll        | `closed_pnl_records WHERE exchange_account_id = $1`, not final, with an order id       | `ix_cpr_pending` (partial)                                              | < 2 ms                                |
+| 55  | Closed-PnL walk's start       | the key's latest `position_snapshots` row at `size` 0 before a time, by venue time     | `ix_psnap_flat` (partial)                                               | < 2 ms                                |
 
 **Why partial indexes dominate:** the hot predicates in this system are almost all "the small live subset of a large historical table" (open orders, open positions, unacked alerts, unprocessed outbox, live recordings, in-flight submits). Partial indexes keep those indexes a few pages large and permanently cache-resident, which is what makes the 1 s safety loop and the per-tick rule scheduler affordable. Full indexes are reserved for time-ordered history browsing (`*_time` descending) where the planner needs a backwards scan.
 
