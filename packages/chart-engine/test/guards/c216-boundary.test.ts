@@ -27,6 +27,7 @@ const GL = [
   "src/hit/probe.ts",
   "src/text/probe.ts",
   "src/theme/probe.ts",
+  "src/a11y/probe.ts",
 ];
 // Generous per-test budget for the loops, the tsc programs and the project-service lint: they
 // pass in ~2 s alone but share the runner with the whole unit project under load (C-9.3).

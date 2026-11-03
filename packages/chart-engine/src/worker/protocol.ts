@@ -11,7 +11,7 @@ import type {
 import type { LossDetails } from "../gl/context-loss.js";
 import type { AtlasDetails } from "../text/atlas.js";
 import type { ChartFont } from "../text/platform.js";
-import type { A11yWindow, CursorOrigin } from "../a11y/window.js";
+import type { A11yRows, A11yWindow, CursorOrigin } from "../a11y/window.js";
 import { INT32_TICKS } from "../viewport/transform.js";
 
 export type { CapabilityReport, DegradeReason, ReducedCapability, RenderProfile };
@@ -76,6 +76,8 @@ export interface ChartConfig {
   /** Bench mode posts `frame` every frame instead of sampling it at 1 Hz (§6). */
   readonly bench: boolean;
   readonly syncGroup: string | null;
+  /** E11-S13 BQ-S13-15 (additive): post the mirror window's rows with each `a11y` message. */
+  readonly a11yMirror?: boolean;
 }
 
 /** One column of a columnar buffer: `count` elements of `bytes` each from `offset`. */
@@ -222,6 +224,10 @@ export type A11yWire = Partial<
     readonly origin: CursorOrigin;
     readonly viewTimeStart: number;
     readonly viewTimeEnd: number;
+    /** E11-S13 PR-2: the loaded series' length (the mirror's aria-rowcount). */
+    readonly barCount: number;
+    /** E11-S13 PR-2: the window's rows (transferred), only when `ChartConfig.a11yMirror`. */
+    readonly rows: A11yRows;
   }
 >;
 

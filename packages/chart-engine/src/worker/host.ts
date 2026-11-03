@@ -300,6 +300,8 @@ export interface ChartHostOptions {
   readonly theme: ThemeLut;
   readonly syncGroup: string | null;
   readonly bench: boolean;
+  /** E11-S13 BQ-S13-15: the mirror flag; the worker sends the window's rows only when on. */
+  readonly a11yMirror?: boolean;
   /** The app's resolved motion mode at mount (E11-S04 BQ-104); `setMotion` updates it. */
   readonly reducedMotion?: boolean;
   /** The design fonts (E11-S11 BQ-258); every `init` carries them, a restart's included. */
@@ -412,7 +414,11 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   const init = (): void => {
     const canvas = o.canvas();
     const dpr = size?.dpr ?? o.dpr;
-    const config = { bench: o.bench, syncGroup: o.syncGroup };
+    const config = {
+      bench: o.bench,
+      syncGroup: o.syncGroup,
+      ...(o.a11yMirror === true && { a11yMirror: true }),
+    };
     const extra = {
       ...(forced && { profile: "degraded-2d" as const }),
       ...(reduce && { reducedMotion: true }),

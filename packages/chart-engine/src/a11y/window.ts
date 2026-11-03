@@ -27,6 +27,28 @@ export interface A11yWindow {
   readonly barsPerColumn: number;
 }
 
+/**
+ * E06-D03 D9 `A11yRows`: the mirror window's struct-of-arrays, prices as ticks from
+ * `priceOrigin` exactly as `CandleData`. The worker sends them with the window when the
+ * mirror flag is on (E11-S13 PR-2, `src/a11y/rows.ts`); the feed passes null otherwise.
+ */
+export interface A11yRows {
+  readonly firstBar: number;
+  readonly count: number;
+  readonly shifted: number;
+  readonly dirty: Uint16Array;
+  readonly time: Float64Array;
+  readonly open: Int32Array;
+  readonly high: Int32Array;
+  readonly low: Int32Array;
+  readonly close: Int32Array;
+  readonly volume: Float32Array;
+  readonly delta: Float32Array;
+  readonly priceOrigin: number;
+  readonly tickSize: number;
+  readonly priceDecimals: number;
+}
+
 export type MutableA11yWindow = { -readonly [K in keyof A11yWindow]: A11yWindow[K] };
 
 /** E06-D03 D1: the default window is 60 rows, configurable up to the 200-row cap. */

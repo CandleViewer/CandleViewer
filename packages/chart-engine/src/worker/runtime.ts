@@ -26,6 +26,7 @@ import {
   sameCursorWindow,
   sameView,
 } from "../a11y/window.js";
+import { type A11yBarSource, buildA11yRows, rowsTransfer } from "../a11y/rows.js";
 import type { RenderBackend } from "../gl/backend.js";
 import { ContextLoss, type LossDetails } from "../gl/context-loss.js";
 import { type OpenedBackend, openBackend } from "../gl/open-backend.js";
@@ -112,7 +113,8 @@ interface CanvasLike {
 
 export interface RuntimeDeps {
   readonly runMode: RunMode;
-  post(msg: FromWorker): void;
+  /** `transfer`: buffers moved with the message (the `a11y` rows, E11-S13); inline ignores it. */
+  post(msg: FromWorker, transfer?: ArrayBuffer[]): void;
   /** Schedules one frame callback (the worker's or the page's rAF). */
   requestFrame(cb: () => void): void;
   now(): number;
@@ -124,6 +126,8 @@ export interface RuntimeDeps {
   readonly timeMap?: IndexTimeMap;
   /** Internal (E11-S05, BQ-116): pane 0's price sources for autoscale until E12 attaches them. */
   readonly priceSources?: readonly PriceExtentSource[];
+  /** Internal (E11-S13 PR-2): pane 0's bars for the mirror rows until E12 attaches the store. */
+  readonly a11yBars?: A11yBarSource;
   /** The atlas's font, raster and cache platform (E11-S11, BQ-261); null or absent: none here. */
   readonly text?: TextPlatform | null;
 }
@@ -488,16 +492,23 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     computeA11yWindow(a.next, vp.map, vp, a.cursorTime, inst.lod);
     if (!inst.a11yDirty && sameCursorWindow(a.next, a.posted) && sameView(a.next, a.posted)) return;
     inst.a11yDirty = false;
+    const prevFirst = a.posted.lastBar < 0 ? -1 : a.posted.firstBar;
     copyA11yWindow(a.posted, a.next);
-    deps.post({
-      t: "a11y",
+    // PR-2: the mirror's rows ride on the same message, so they are never a frame apart (26 §12).
+    const bars = inst.config.a11yMirror === true ? deps.a11yBars : undefined;
+    const rows = bars === undefined ? null : buildA11yRows(a.posted, bars, prevFirst);
+    const msg = {
+      t: "a11y" as const,
       id: inst.id,
       cursorSummary: inst.summary,
       ...a.posted,
-      origin: "data", // PR-1 has no setCursor: the cursor only follows the data (D6)
+      origin: "data" as const, // PR-1 has no setCursor: the cursor only follows the data (D6)
       viewTimeStart: vp.timeStart,
       viewTimeEnd: vp.timeEnd,
-    });
+      barCount: vp.map.length,
+    };
+    if (rows === null) deps.post(msg);
+    else deps.post({ ...msg, rows }, rowsTransfer(rows));
   }
 
   /** F-13 (BQ-92): no export while the pixels cannot be trusted; the reason, never a stale PNG. */
@@ -1059,6 +1070,8 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         if (msg.store === "bars" && origin !== undefined && tick !== undefined) {
           moved(inst, inst.viewport.setPriceInfo(0, origin, tick));
         }
+        // E11-S13 PR-2: new values re-post the mirror rows even when the window did not move.
+        if (msg.store === "bars" && inst.config.a11yMirror === true) inst.a11yDirty = true;
         deps.post({ t: "ack", id: inst.id, store: msg.store });
         touch(inst);
         return;

@@ -20,16 +20,26 @@ export interface HostSurface {
    * crash recovery).
    */
   replaceCanvas(): HTMLCanvasElement;
+  /**
+   * E11-S13: the canvas `img` label, kept and re-applied on a replaced canvas; a no-op with the
+   * mirror flag off, where the canvas stays `aria-hidden`.
+   */
+  setCanvasLabel(text: string): void;
   /** Removes the canvas and the mirror root from the container. Idempotent. */
   unmount(): void;
 }
 
 /**
  * Mounts a canvas sized to the container (CSS px times the device pixel ratio) and, after it,
- * the visually hidden DOM mirror root that keyboard focus lands in (05 §6.1).
+ * the visually hidden DOM mirror root that keyboard focus lands in (05 §6.1). With `a11yMirror`
+ * (E11-S13 BQ-S13-15, default off) both go inside a `role="application"` wrapper and the canvas
+ * is a labelled `role="img"` (26 §12, E11-D07 §2, PROPOSED until E11-Q05); off, the tree is today's.
  */
-export function mountSurface(container: HTMLElement): HostSurface {
+export function mountSurface(container: HTMLElement, a11yMirror = false): HostSurface {
   const doc = container.ownerDocument;
+  // An `img` is never unnamed (axe role-img-alt): a provisional name until the mirror's first roll.
+  const provisionalLabel = "Chart";
+  let label = provisionalLabel;
 
   const makeCanvas = (): HTMLCanvasElement => {
     const dpr = doc.defaultView?.devicePixelRatio ?? 1;
@@ -42,8 +52,15 @@ export function mountSurface(container: HTMLElement): HostSurface {
     c.style.width = `${w / dpr}px`;
     c.style.height = `${h / dpr}px`;
     c.style.display = "block";
-    // The canvas is presentation only: the mirror below carries the semantics (05 §6.1).
-    c.setAttribute("aria-hidden", "true");
+    // Flag off, the canvas is hidden presentation and the mirror carries the semantics (05 §6.1).
+    // Flag on, it is an `img` whose rolling label the mirror writes (D06 §8 L-1), never a tab
+    // stop (E06-D03 D4: `tabindex="-1"`; the chart's one stop is the root's, PR-3).
+    if (!a11yMirror) c.setAttribute("aria-hidden", "true");
+    else {
+      c.setAttribute("role", "img");
+      c.setAttribute("aria-label", label);
+      c.setAttribute("tabindex", "-1");
+    }
     c.setAttribute("data-cv-chart-canvas", "");
     return c;
   };
@@ -58,8 +75,20 @@ export function mountSurface(container: HTMLElement): HostSurface {
   mirrorRoot.style.overflow = "hidden";
   mirrorRoot.style.clipPath = "inset(50%)";
 
-  container.appendChild(canvas);
-  container.appendChild(mirrorRoot);
+  // The wrapper's static name is the symbol and interval (26 §12); the engine has neither until
+  // PR-3's options, so the provisional name is generic (E47-D07's words, #1306).
+  let parent: HTMLElement = container;
+  if (a11yMirror) {
+    parent = doc.createElement("div");
+    parent.setAttribute("role", "application");
+    parent.setAttribute("aria-roledescription", "trading chart"); // E06-D03 D4
+    parent.setAttribute("aria-label", "Chart");
+    parent.setAttribute("data-cv-chart-root", "");
+    parent.style.position = "relative";
+    container.appendChild(parent);
+  }
+  parent.appendChild(canvas);
+  parent.appendChild(mirrorRoot);
 
   let mounted = true;
   return {
@@ -71,16 +100,22 @@ export function mountSurface(container: HTMLElement): HostSurface {
       const next = makeCanvas();
       if (mounted) {
         canvas.remove();
-        container.insertBefore(next, mirrorRoot);
+        parent.insertBefore(next, mirrorRoot);
       }
       canvas = next;
       return next;
+    },
+    setCanvasLabel(text: string): void {
+      if (!a11yMirror) return;
+      label = text === "" ? provisionalLabel : text;
+      canvas.setAttribute("aria-label", label);
     },
     unmount(): void {
       if (!mounted) return;
       mounted = false;
       canvas.remove();
       mirrorRoot.remove();
+      if (parent !== container) parent.remove();
     },
   };
 }
