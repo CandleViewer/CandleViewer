@@ -4,6 +4,14 @@
  * key: each is marked PROPOSED (owner E42-D05) and listed in `14`'s As-built line.
  */
 export const INSPECTOR_COPY = {
+  /** The page (§5.1). */
+  page: {
+    /** The `h1` and R-357's page title (BQ-1; board 09's "E42-S08 inspector" is a placeholder). */
+    title: "Statechart inspector",
+    /** E42-D03's `meta.asof` "All times UTC · as of {hh:mm:ss}"; its first half alone before an answer. */
+    utc: "All times UTC",
+    asOf: (hms: string): string => `All times UTC · as of ${hms}`,
+  },
   /** `machine.current`. */
   current: "current",
   /** The chart's text list (§4.2), the normative non-visual equivalent of the drawing. */
