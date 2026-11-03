@@ -212,7 +212,7 @@ describe("PnLBadge direction and provisional (CMP-116, E29-S04; D04H:111-114)", 
     }
   });
 
-  it("a missing figure keeps the host's reason, and the tag still says the fees are pending", async () => {
+  it("a missing figure keeps the host's reason, and the tag still shows and says the fees are pending", async () => {
     const host = await mount(
       <PnLBadge value={null} nullReading="fee not reported yet" provisional />,
     );
@@ -220,6 +220,10 @@ describe("PnLBadge direction and provisional (CMP-116, E29-S04; D04H:111-114)", 
       "—",
       "fee not reported yet, Provisional — fees pending",
     ]);
+    // The tag is drawn beside "—" too, hidden from assistive technology as the sentence says it.
+    const tag = badgeOf(host).querySelector(".cv-pnl-badge__tag");
+    expect(tag).toHaveTextContent("Provisional — fees pending");
+    expect(tag).toHaveAttribute("aria-hidden", "true");
   });
 
   it("the type-level contract: a direction is a money figure's alone (tsc checks this file)", () => {
