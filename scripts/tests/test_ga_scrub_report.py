@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -234,6 +235,117 @@ def test_input_values_in_frame_snapshots_are_all_redacted() -> None:
     out = _scrubbed(json.dumps({"type": "frame-snapshot", "snapshot": snap}, separators=(",", ":")))
     assert FAKE not in out and str(NUMERIC) not in out and "ann@example.test" not in out
     assert out.count(f'"__playwright_value_":"{MASK}"') == 3 and '"type":"password"' in out
+
+
+# Recorded node shapes (Playwright 1.64.1 frame-snapshot of a page whose input handler sets the
+# `value` attribute, as React 18 does for a controlled field; values replaced by fakes).
+FIELD_NODES: list[Any] = [
+    [
+        "INPUT",
+        {
+            "__playwright_value_": FAKE,
+            "__playwright_target__": "",
+            "type": "password",
+            "name": "pw",
+            "value": FAKE,
+        },
+    ],
+    [
+        "INPUT",
+        {
+            "__playwright_value_": str(NUMERIC),
+            "name": "code",
+            "inputmode": "numeric",
+            "value": str(NUMERIC),
+        },
+    ],
+    ["INPUT", {"name": "email", "value": "ann@example.test"}],
+    ["TEXTAREA", {"__playwright_value_": FAKE, "name": "note"}, FAKE],
+    ["SELECT", {"name": "pick"}, ["OPTION", {"__playwright_selected_": "true", "value": "b"}, "b"]],
+]
+
+
+def test_input_value_attributes_in_frame_snapshots_are_all_redacted_raw_and_escaped() -> None:
+    snap = {"callId": "c@1", "html": ["HTML", {}, ["BODY", {}, ["FORM", {}, *FIELD_NODES]]]}
+    raw = json.dumps({"type": "frame-snapshot", "snapshot": snap}, separators=(",", ":"))
+    for text in (raw, json.dumps({"text": raw}), json.dumps({"text": json.dumps({"t": raw})})):
+        out = _scrubbed(text)
+        assert FAKE not in out and str(NUMERIC) not in out and "ann@example.test" not in out
+    out = _scrubbed(raw)
+    assert out.count(f'"value":"{MASK}"') == 3 and f'"name":"note"}},"{MASK}"]' in out
+    # Option values are the page's own, not typed: they stay.
+    assert '"value":"b"},"b"]' in out and '"type":"password"' in out
+    assert json.loads(json.loads(_scrubbed(json.dumps({"text": raw})))["text"])
+
+
+def test_page_html_input_values_and_textarea_bodies_are_redacted() -> None:
+    html = (
+        f'<form><input type="password" value="{FAKE}" name=pw><input value={NUMERIC}>'
+        f"<input name=e value='{FAKE}'><textarea name=n>{FAKE}</textarea>"
+        '<select><option value="b">b</option></select></form>'
+    )
+    for text in (html, json.dumps({"text": html})):
+        out = _scrubbed(text)
+        assert FAKE not in out and str(NUMERIC) not in out and "option value=" in out
+    assert json.loads(_scrubbed(json.dumps({"text": html})))["text"].count(MASK) == 4
+
+
+@pytest.mark.parametrize("suffix", [".html", ".xml"])
+def test_html_and_xml_files_and_trace_members_are_scrubbed(tmp_path: Path, suffix: str) -> None:
+    body = f"<r><input value='{FAKE}'/><a href='?token={FAKE}'/></r>"
+    (tmp_path / f"page{suffix}").write_text(body, encoding="utf-8")
+    with zipfile.ZipFile(tmp_path / "trace.zip", "w") as z:
+        z.writestr(f"resources/0a1b{suffix}", body)
+    assert scrub_artifacts.scrub_tree(tmp_path) == {"files": 2, "changed": 2, "failed": 0}
+    assert FAKE not in (tmp_path / f"page{suffix}").read_text(encoding="utf-8")
+    with zipfile.ZipFile(tmp_path / "trace.zip") as z:
+        assert FAKE not in z.read(f"resources/0a1b{suffix}").decode()
+
+
+def test_url_userinfo_is_redacted_and_plain_hosts_stay() -> None:
+    text = json.dumps(
+        {"url": f"http://ann:{FAKE}@127.0.0.1:4173/", "log": f"wss://u:{NUMERIC}@h.test/ws"}
+    )
+    out = _scrubbed(text)
+    assert FAKE not in out and str(NUMERIC) not in out
+    assert json.loads(out)["url"] == f"http://{MASK}@127.0.0.1:4173/"
+    keep = "http://127.0.0.1:4173/login and mailto:ann@example.test"
+    assert _scrubbed(keep) == keep
+
+
+MB = 1 << 20
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        "password" * (MB // 8),
+        "\\" * MB,
+        "\\" * MB + '"x',
+        '"' + "api_key" * (MB // 7),
+        "x-" + "token" * (MB // 5),
+        '["INPUT",{' * (MB // 10),
+        "<input " * (MB // 7),
+        "https://" * (MB // 8),
+        '"name":"' * (MB // 8),
+    ],
+    ids=[
+        "words",
+        "backslashes",
+        "backslash-quote",
+        "quoted-key",
+        "header",
+        "nodes",
+        "html",
+        "urls",
+        "records",
+    ],
+)
+def test_a_megabyte_token_run_scrubs_within_a_generous_wall_budget(run: str) -> None:
+    # Unbounded key wrappers and quote depths made these quadratic (minutes per megabyte).
+    start = time.perf_counter()
+    scrub_artifacts.scrub_text(run)
+    assert time.perf_counter() - start < 5.0
 
 
 ARIA = (
