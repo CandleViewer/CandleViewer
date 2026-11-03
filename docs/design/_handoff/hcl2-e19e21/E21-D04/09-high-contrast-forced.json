@@ -2,7 +2,7 @@
  "board": {
   "name": "E21-D04 / 09 high-contrast-forced",
   "w": 3584,
-  "h": 1176,
+  "h": 1090,
   "x": 18000,
   "y": 3600,
   "o": {
@@ -1567,11 +1567,42 @@
      "clip": true
     },
     "w": 880,
-    "h": 320,
+    "h": 376,
     "note": "specimen frame: CMP-108 · DomLadderRow / Forced colours (no library component)",
     "x": 1040,
     "y": 80,
     "kids": [
+     {
+      "t": "board",
+      "name": "header notice (G-T2.5)",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "icon",
+        "name": "CMP-019 lock",
+        "icon": "locked",
+        "color": "color.text.tertiary",
+        "size": "size.icon.sm",
+        "note": "CMP-019 Icon \"lock\", accessible name \"Not available\""
+       },
+       {
+        "t": "text",
+        "name": "reason",
+        "chars": "Orders from here come later; cancel and close work as usual.",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 840,
+      "h": 24,
+      "note": "the notice node; reason key ladder.not_built (PROPOSED; vocabulary owner E09-D09 #192)"
+     },
      {
       "t": "board",
       "name": "CMP-108 rows",
@@ -3014,37 +3045,55 @@
    "into": "CMP-108 · DomLadderRow ∕ Forced colours · high contrast",
    "node": {
     "t": "board",
-    "name": "T2 item · limit",
+    "name": "T2 control with its reason (2a)",
     "o": {
-     "dir": "row",
-     "align": "center",
-     "gap": "space.inset.xs",
-     "padX": "space.inset.sm",
-     "stroke": "color.text.primary",
-     "strokeWidth": "border.hairline",
-     "strokeAlign": "inner",
-     "radius": "radius.control"
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
     },
     "kids": [
      {
-      "t": "icon",
-      "name": "CMP-019 lock",
-      "icon": "locked",
-      "color": "color.text.tertiary",
-      "size": "size.icon.sm",
-      "note": "CMP-019 Icon \"lock\", accessible name \"Not available\""
+      "t": "board",
+      "name": "T2 item · limit",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm",
+       "stroke": "color.text.primary",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "icon",
+        "name": "CMP-019 lock",
+        "icon": "locked",
+        "color": "color.text.tertiary",
+        "size": "size.icon.sm",
+        "note": "CMP-019 Icon \"lock\", accessible name \"Not available\""
+       },
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "limit",
+        "typo": "type.ui.body",
+        "color": "color.text.tertiary"
+       }
+      ],
+      "w": 200,
+      "h": 24,
+      "note": "menuitem, aria-disabled=\"true\", described by the notice"
      },
      {
       "t": "text",
-      "name": "label",
-      "chars": "limit",
-      "typo": "type.ui.body",
-      "color": "color.text.tertiary"
+      "name": "reason (aria-hidden here)",
+      "chars": "Orders from here come later; cancel and close work as usual.",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary"
      }
-    ],
-    "w": 200,
-    "h": 24,
-    "note": "menuitem, aria-disabled=\"true\", described by the notice"
+    ]
    }
   },
   {
@@ -3585,7 +3634,7 @@
     "h": 344,
     "note": "specimen frame: CMP-230 · OwnOrderMarker / High contrast (no library component)",
     "x": 80,
-    "y": 480
+    "y": 536
    }
   },
   {
@@ -5029,7 +5078,7 @@
     "h": 344,
     "note": "specimen frame: CMP-230 · OwnOrderMarker / Forced colours (no library component)",
     "x": 1040,
-    "y": 480,
+    "y": 536,
     "kids": [
      {
       "t": "board",
@@ -6449,7 +6498,7 @@
     "typo": "type.ui.caption",
     "color": "color.text.tertiary",
     "x": 80,
-    "y": 452
+    "y": 508
    }
   },
   {
@@ -6461,7 +6510,7 @@
     "typo": "type.ui.caption",
     "color": "color.text.tertiary",
     "x": 1040,
-    "y": 452
+    "y": 508
    }
   },
   {
@@ -6473,7 +6522,7 @@
     "typo": "type.ui.caption",
     "color": "color.text.secondary",
     "x": 80,
-    "y": 848,
+    "y": 904,
     "w": 2944
    }
   },
@@ -6534,7 +6583,7 @@
        {
         "t": "text",
         "name": "value-3",
-        "chars": "Theme: high contrast at export (§0's 'dark' column read with the file-wide theme rule: the hc rows are only true under the high-contrast set; reading 3)",
+        "chars": "Theme: high contrast, the export's set (drawn under dark, exported under the high-contrast set: themes are file-wide and the hc rows are only true under it; reading 3)",
         "typo": "type.ui.caption",
         "color": "color.text.primary",
         "w": 368
@@ -6622,7 +6671,15 @@
        {
         "t": "text",
         "name": "value-2",
-        "chars": "forced-colors: active per §5.5 (L294): bars hidden, side letters and words in CanvasText, stale surface to Canvas, ring Highlight 2 px with a 1 px Canvas gap, T2 label GrayText with a ButtonText border",
+        "chars": "T2 (R-3, §5.5): the row menu's limit item in 2a, its lock kept and W-20 under it (aria-hidden there), described by the panel's one header notice above, ladder.not_built W-20 in CanvasText on Canvas (G-T2.1c, G-T2.2, G-T2.5)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "forced-colors: active per §5.5 (L294): bars hidden; side letters and words in CanvasText; stale surface to Canvas; ring Highlight 2 px, 1 px Canvas gap (drawn as a stand-in token: Penpot has no system colour); T2 label GrayText, ButtonText border",
         "typo": "type.ui.caption",
         "color": "color.text.primary",
         "w": 368
@@ -6694,7 +6751,7 @@
        {
         "t": "text",
         "name": "value-2",
-        "chars": "forced-colors: active per §5.5 (L294): bars hidden, side letters and words in CanvasText, stale surface to Canvas, ring Highlight 2 px with a 1 px Canvas gap, T2 label GrayText with a ButtonText border",
+        "chars": "forced-colors: active per §5.5 (L294): bars hidden; side letters and words in CanvasText; stale surface to Canvas; ring Highlight 2 px, 1 px Canvas gap (drawn as a stand-in token: Penpot has no system colour); T2 label GrayText, ButtonText border",
         "typo": "type.ui.caption",
         "color": "color.text.primary",
         "w": 368
@@ -6766,7 +6823,7 @@
        {
         "t": "text",
         "name": "value-2",
-        "chars": "forced-colors: active per §5.5 (L294): bars hidden, side letters and words in CanvasText, stale surface to Canvas, ring Highlight 2 px with a 1 px Canvas gap, T2 label GrayText with a ButtonText border",
+        "chars": "forced-colors: active per §5.5 (L294): bars hidden; side letters and words in CanvasText; stale surface to Canvas; ring Highlight 2 px, 1 px Canvas gap (drawn as a stand-in token: Penpot has no system colour); T2 label GrayText, ButtonText border",
         "typo": "type.ui.caption",
         "color": "color.text.primary",
         "w": 368
@@ -6804,12 +6861,13 @@
    "the kit: W-21 … W-23, the cancel results (§4.8 L228–L230), spoken once through the panel's status node (R-5 L100); §0 draws no cancel result."
   ],
   "sources": [
-   "spec E21-D04.md md5 db638a7e and hand-off md5 d2486898 (§0 L75; §1-§8; RULED comment 6580397401)",
+   "spec E21-D04.md md5 356c7d86 and hand-off md5 67fa3748 (§0 L75; §1-§8; RULED comment 6580397401)",
    "packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a (tick size and qty step only)",
    "tokens: tools/token-sync.json (names bound; values only for the computed figures)"
   ],
   "copy_keys": [
    "W-2 (own order, verbatim): \"Buy 0.5 limit\" (L209)",
+   "W-20 (ladder.not_built, verbatim (PROPOSED there)): \"Orders from here come later; cancel and close work as usual.\" (L227)",
    "W-10 (legend, bid, verbatim (PROPOSED there)): \"Bid: resting buy liquidity, left column, below the best price\" (L217)",
    "W-11 (legend, ask, verbatim (PROPOSED there)): \"Ask: resting sell liquidity, right column, above the best price\" (L218)",
    "W-12 (legend, colour words, PROPOSED): \"bids green, asks red\" (L219)",
@@ -6861,6 +6919,7 @@
    "color.action.primary.default",
    "size.icon.sm",
    "type.ui.body",
+   "space.stack.xs",
    "color.heatmap.bid.1",
    "color.heatmap.bid.2",
    "color.heatmap.bid.3",
@@ -6872,7 +6931,6 @@
    "color.heatmap.ask.4",
    "color.heatmap.ask.5",
    "color.heatmap.zero",
-   "space.stack.xs",
    "radius.card",
    "color.border.strong",
    "radius.pill",
@@ -6886,14 +6944,14 @@
    "space.stack.sm"
   ],
   "live_checks": [
-   "root 'E21-D04 / 09 high-contrast-forced' at (18000, 3600): read back the name exactly after the first section call; size 3584 x 1176",
-   "after touchTexts + relayout: the annotation column (estimated 1008 px) ends inside the root (h 1176); raise the root's h to max(annotation end, footer end) + 80 if not (SHEET-FIX: MEASURED_H)",
+   "root 'E21-D04 / 09 high-contrast-forced' at (18000, 3600): read back the name exactly after the first section call; size 3584 x 1090",
+   "after touchTexts + relayout: the root h 1090 is the live check's max(annotation end, footer end) + 80 (estimated 1127: the annotation column 967 px); re-measure it if the annotations change",
    "frame 'CMP-108 · DomLadderRow ∕ High contrast · high contrast': read back 880 x 288 at (80, 80); clip on, no child spills",
-   "frame 'CMP-108 · DomLadderRow ∕ Forced colours · high contrast': read back 880 x 320 at (1040, 80); clip on, no child spills",
+   "frame 'CMP-108 · DomLadderRow ∕ Forced colours · high contrast': read back 880 x 376 at (1040, 80); clip on, no child spills",
    "frame 'CMP-113 · HeatmapLegend ∕ High contrast · high contrast': read back 472 x 160 at (2000, 80); clip on, no child spills",
    "frame 'CMP-113 · HeatmapLegend ∕ Forced colours · high contrast': read back 472 x 160 at (2552, 80); clip on, no child spills",
-   "frame 'CMP-230 · OwnOrderMarker ∕ High contrast · high contrast': read back 880 x 344 at (80, 480); clip on, no child spills",
-   "frame 'CMP-230 · OwnOrderMarker ∕ Forced colours · high contrast': read back 880 x 344 at (1040, 480); clip on, no child spills",
+   "frame 'CMP-230 · OwnOrderMarker ∕ High contrast · high contrast': read back 880 x 344 at (80, 536); clip on, no child spills",
+   "frame 'CMP-230 · OwnOrderMarker ∕ Forced colours · high contrast': read back 880 x 344 at (1040, 536); clip on, no child spills",
    "theme: board 09 renders under dark and exports under the high-contrast set (line 3)",
    "export docs/design/E21/img/E21-D04-09-high-contrast-forced.png; record the board id and the PNG size in §0"
   ],

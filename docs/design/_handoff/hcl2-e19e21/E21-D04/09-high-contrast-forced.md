@@ -2,7 +2,7 @@
 
 File `E21-D04 boards`, page `E21-D04`; export `docs/design/E21/img/E21-D04-09-high-contrast-forced.png`; sheet `09-high-contrast-forced.json` (validated); theme high-contrast.
 
-Board 09 of ten (§0 L75: boards 01, 04 and 06's rows in high contrast and under forced-colors: active). Grid (18000, 3600); 3584 x 1176 px; "page E21-D04 · board 09 · r2".
+Board 09 of ten (§0 L75: boards 01, 04 and 06's rows in high contrast and under forced-colors: active). Grid (18000, 3600); 3584 x 1090 px; "page E21-D04 · board 09 · r2".
 
 ## Frames
 
@@ -15,19 +15,19 @@ Board 09 of ten (§0 L75: boards 01, 04 and 06's rows in high contrast and under
 
 ## Validator and size
 
-- `09-high-contrast-forced.json: 0 errors, 8 warnings, 31 sections, 104680 bytes` (exit 0)
-- 31 sections, 104680 bytes
+- `09-high-contrast-forced.json: 0 errors, 9 warnings, 31 sections, 106254 bytes` (exit 0)
+- 31 sections, 106254 bytes
 
 ## Live checks (10)
 
-- root 'E21-D04 / 09 high-contrast-forced' at (18000, 3600): read back the name exactly after the first section call; size 3584 x 1176
-- after touchTexts + relayout: the annotation column (estimated 1008 px) ends inside the root (h 1176); raise the root's h to max(annotation end, footer end) + 80 if not (SHEET-FIX: MEASURED_H)
+- root 'E21-D04 / 09 high-contrast-forced' at (18000, 3600): read back the name exactly after the first section call; size 3584 x 1090
+- after touchTexts + relayout: the root h 1090 is the live check's max(annotation end, footer end) + 80 (estimated 1127: the annotation column 967 px); re-measure it if the annotations change
 - frame 'CMP-108 · DomLadderRow ∕ High contrast · high contrast': read back 880 x 288 at (80, 80); clip on, no child spills
-- frame 'CMP-108 · DomLadderRow ∕ Forced colours · high contrast': read back 880 x 320 at (1040, 80); clip on, no child spills
+- frame 'CMP-108 · DomLadderRow ∕ Forced colours · high contrast': read back 880 x 376 at (1040, 80); clip on, no child spills
 - frame 'CMP-113 · HeatmapLegend ∕ High contrast · high contrast': read back 472 x 160 at (2000, 80); clip on, no child spills
 - frame 'CMP-113 · HeatmapLegend ∕ Forced colours · high contrast': read back 472 x 160 at (2552, 80); clip on, no child spills
-- frame 'CMP-230 · OwnOrderMarker ∕ High contrast · high contrast': read back 880 x 344 at (80, 480); clip on, no child spills
-- frame 'CMP-230 · OwnOrderMarker ∕ Forced colours · high contrast': read back 880 x 344 at (1040, 480); clip on, no child spills
+- frame 'CMP-230 · OwnOrderMarker ∕ High contrast · high contrast': read back 880 x 344 at (80, 536); clip on, no child spills
+- frame 'CMP-230 · OwnOrderMarker ∕ Forced colours · high contrast': read back 880 x 344 at (1040, 536); clip on, no child spills
 - theme: board 09 renders under dark and exports under the high-contrast set (line 3)
 - export docs/design/E21/img/E21-D04-09-high-contrast-forced.png; record the board id and the PNG size in §0
 
@@ -58,9 +58,10 @@ Board 09 of ten (§0 L75: boards 01, 04 and 06's rows in high contrast and under
 
 ## Deviations (0)
 
-## Copy keys (10)
+## Copy keys (11)
 
 - W-2 (own order, verbatim): "Buy 0.5 limit" (L209)
+- W-20 (ladder.not_built, verbatim (PROPOSED there)): "Orders from here come later; cancel and close work as usual." (L227)
 - W-10 (legend, bid, verbatim (PROPOSED there)): "Bid: resting buy liquidity, left column, below the best price" (L217)
 - W-11 (legend, ask, verbatim (PROPOSED there)): "Ask: resting sell liquidity, right column, above the best price" (L218)
 - W-12 (legend, colour words, PROPOSED): "bids green, asks red" (L219)
@@ -85,7 +86,7 @@ Board 09 of ten (§0 L75: boards 01, 04 and 06's rows in high contrast and under
 
 ## Sources (3)
 
-- spec E21-D04.md md5 db638a7e and hand-off md5 d2486898 (§0 L75; §1-§8; RULED comment 6580397401)
+- spec E21-D04.md md5 356c7d86 and hand-off md5 67fa3748 (§0 L75; §1-§8; RULED comment 6580397401)
 - packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a (tick size and qty step only)
 - tokens: tools/token-sync.json (names bound; values only for the computed figures)
 
@@ -114,6 +115,7 @@ Board 09 of ten (§0 L75: boards 01, 04 and 06's rows in high contrast and under
 - color.action.primary.default
 - size.icon.sm
 - type.ui.body
+- space.stack.xs
 - color.heatmap.bid.1
 - color.heatmap.bid.2
 - color.heatmap.bid.3
@@ -125,7 +127,6 @@ Board 09 of ten (§0 L75: boards 01, 04 and 06's rows in high contrast and under
 - color.heatmap.ask.4
 - color.heatmap.ask.5
 - color.heatmap.zero
-- space.stack.xs
 - radius.card
 - color.border.strong
 - radius.pill
