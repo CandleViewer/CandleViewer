@@ -18,6 +18,7 @@ import importlib
 import importlib.util
 import subprocess
 import sys
+from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 from types import ModuleType
@@ -25,6 +26,9 @@ from typing import Any
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
+
+import candleviewer.api._generated.openapi_models as openapi_models
+import candleviewer.ws._generated.ws_models as ws_models
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[2]
 _SCRIPT = _SERVICE_ROOT / "scripts" / "generate_protocol_models.py"
@@ -51,14 +55,32 @@ def generated_rest_module():  # type: ignore[no-untyped-def]
     stale-but-uncommitted regen never masks an import/type defect in what
     actually ships.
     """
-    module = importlib.import_module("candleviewer.api._generated.openapi_models")
-    return importlib.reload(module)
+    return importlib.import_module("candleviewer.api._generated.openapi_models")
 
 
 @pytest.fixture(scope="module")
 def generated_ws_module():  # type: ignore[no-untyped-def]
-    module = importlib.import_module("candleviewer.ws._generated.ws_models")
-    return importlib.reload(module)
+    return importlib.import_module("candleviewer.ws._generated.ws_models")
+
+
+_SHARED_CLASSES = {
+    (_mod.__name__, _name): getattr(_mod, _name)
+    for _mod, _name in (
+        (openapi_models, "Problem"),
+        (ws_models, "Model"),
+    )
+}
+
+
+@pytest.fixture(autouse=True)
+def _shared_generated_modules_are_left_alone() -> Iterator[None]:
+    """Fail any test that rebuilds the shared generated pydantic classes (#2745, as #2554).
+
+    A reload swaps every class for a new one, so identity checks elsewhere depend on test order.
+    """
+    yield
+    for (mod_name, name), original in _SHARED_CLASSES.items():
+        assert getattr(sys.modules[mod_name], name) is original, f"{mod_name}.{name} was rebuilt"
 
 
 def test_rest_models_module_defines_a_decimal_backed_money_type(generated_rest_module) -> None:  # type: ignore[no-untyped-def]
