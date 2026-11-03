@@ -6885,9 +6885,9 @@ The orchestrator assigned this number on #2303 (2026-11-03); it is kept through 
 - The `/orders` description states the resume reconciliation: `GET /orders?open_only=true` for the working set, plus `GET /orders?idempotency_key=` for every `placeOrder` request whose response was not received; the WS `orders` topic stays the source of truth, REST the backstop (C-2.5).
 - With them: `21-database-schema.md` §13.1 gains rows 53 (the key lookup on `ux_ia_principal_ref`, then `orders` by id in scope) and 54 (`ux_orders_link`). The key stays class P1 (21 §12): the read commit keeps its values out of the access log. No new index, table, column, migration, `x-error-codes` entry, schema, WS frame, chart or `machine_hash`.
 
-### 19.102 2026-11-03 — §8.4, §8.4.1, §8.6, §8.12 and 21 §3.2.1, §3.2.2: a refused credential's durable reaction (E29-T04 Q10, #4243)
+### 19.102 2026-11-03 — §8.4, §8.4.1, §8.6, §8.12, 21 §3.2.1, §3.2.2 and 22 `KeyStatus`: a refused credential's durable reaction (E29-T04 Q10, #4243)
 
-The orchestrator assigned this number on #4243 (2026-11-03); it is kept through every rebase.
+The orchestrator assigned this number on #5559 (2026-11-03); it is kept through every rebase.
 
 - §8.4 "A refused credential" states the durable half of §8.6's `AUTH_ERROR` reaction for a venue's verdict (the create's report, the consumer's `auth_refused`), through the stored-key self-check's path: the account is disarmed first, with the refusal as its code and its owed `account.disabled_by_policy`; then each usable key not already failed is held failed and marked with the rule the self-check gives the same refusal (a write-ahead `account.tested`, then `last_error_code`); the failing-key gauge alerts the Owner. The key's status is not moved to `invalid`, since the report names no key and a pass must clear the mark. One episode writes one record per key and one disarm record; one reaction per account runs, 32 at once, others waiting in one pending slot an account (256 accounts); the reaction latches nothing system-wide, though a later check of a marked key with no verdict latches as for any standing failure; a pass or error whose check began before the mark leaves it; after a restart the stored code and the disarm keep the account refused, a later pass clears the mark and only the Owner re-arms.
 - `CredentialRejections.refused` gains a keyword-only `verdict: bool` with no default, which every caller names (the create's report `True`): the consumer's `key_unusable`, a local secrets fault, reports `verdict=False` and is held in memory and paged, never durably marked (§8.12); a create's code outside the verdict table (`10004`) is never durable either.
@@ -6895,7 +6895,8 @@ The orchestrator assigned this number on #4243 (2026-11-03); it is kept through 
 - §8.6: the `10003` and `33004` rows defer to §8.4's refused-credential rule (durable through the self-check, each usable key given its stored failure rule, never `invalid`), and the `10004` row holds the code in memory and pages only, as it is outside the key-verdict table.
 - §8.12: the `auth_refused` / `key_unusable` row's call names `verdict`, and only `auth_refused` is durable.
 - 21 §3.2.1: `policy_disarm_code` may hold a refused credential's code; the CHECK's format already admits the four codes. 21 §3.2.2: a pass, or an error write, keeps an error stored after its check began.
-- No action registered, no table, column, WS, OpenAPI, chart or `machine_hash` change, and no migration.
+- 22 `KeyStatus`: its description no longer says §8.6 marks a key `invalid` on `10003` / `10004`; `invalid` is the stored-key self-check's own failed verdict, and a refused credential is held, paged and disarmed through the self-check (`10004` held and paged only). A description change only: no enum value, field or shape changes.
+- No action registered, no table, column, WS, chart or `machine_hash` change, and no migration.
 
 ### 19.103 2026-11-03 — §9.2 the snapshot bound of a leg's `profile_snapshot` (E28-T01, #3969)
 

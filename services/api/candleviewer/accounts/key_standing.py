@@ -79,10 +79,11 @@ from candleviewer.accounts.verification import Refusal
 from candleviewer.storage.repositories.accounts import SelfCheckTargetRow
 
 #: 24-internal-schemas.md section 8.6, what a rejected credential does to the account's standing
-#: until a later pass: `None` leaves it with no active key (AUTH_ERROR marks the key `invalid`, and
-#: an expired key is no better); a `DisabledReason` disables it by policy (PERMISSION_DENIED
-#: disables trading on the account, IP_NOT_ALLOWED the account). A refusal missing here leaves no
-#: active key: fail closed.
+#: until a later pass: `None` leaves it with no active key (AUTH_ERROR never marks the key
+#: `invalid`: it is held here, and for a venue's verdict section 8.4 "A refused credential"
+#: disarms the account through the self-check; an expired key is no better); a `DisabledReason`
+#: disables it by policy (PERMISSION_DENIED disables trading on the account, IP_NOT_ALLOWED the
+#: account). A refusal missing here leaves no active key: fail closed.
 REACTIONS: Final[Mapping[Refusal, DisabledReason | None]] = {
     Refusal.UNKNOWN_KEY: None,
     Refusal.KEY_EXPIRED: None,
