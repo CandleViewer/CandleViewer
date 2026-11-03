@@ -172,7 +172,7 @@ from candleviewer.bars.metrics import (
     bars_spec_cap_rejected_total,
 )
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
-from candleviewer.bars.reader import BarTail, degrade_reason
+from candleviewer.bars.reader import BarTail, Withheld, degrade_reason
 from candleviewer.bars.rows import BUILD_VERSIONS
 
 #: The WS `history` cap (`23-ws-protocol.md` §6.1).
@@ -230,7 +230,8 @@ class Latest(NamedTuple):
     among those bars when below the running code (None: all current or unknown; §6.1
     `meta.build_version`). `stale_build`: one of those bars was built below the running code or
     has no recorded version (§6.1 `meta.stale_build`, #5396); the forming bar is the running
-    build."""
+    build. `withheld`: the rows the last read folded withheld for a failed checksum (#452 F9),
+    which the snapshot names in `meta.coverage_holes` where it sends no bar in their place."""
 
     version: int
     generation: int | None
@@ -238,6 +239,7 @@ class Latest(NamedTuple):
     forming: Bar | None
     oldest_build: int | None
     stale_build: bool = False
+    withheld: tuple[Withheld, ...] = ()
 
 
 class LiveTail(NamedTuple):
@@ -344,12 +346,15 @@ class _Series:
     replay: deque[Close] | None = None
     #: Set when the read in flight ends, however it ends; a fresh one per read.
     ready: asyncio.Event = field(default_factory=asyncio.Event)
+    #: The rows the last read folded withheld (`BarTail.withheld`, #452 F9); a reset drops them.
+    withheld: tuple[Withheld, ...] = ()
 
 
 def _clear(s: _Series) -> None:
     s.closed.clear()
     s.stale.clear()
     s.forming = None
+    s.withheld = ()
 
 
 def _holds(s: _Series, bar: Bar) -> bool:
@@ -729,7 +734,8 @@ class SeriesStore:
         closed.reverse()
         marks = [s.stale[b.index] for b in closed if b.index in s.stale]
         oldest = min((m for m in marks if m is not None), default=None)
-        return Latest(s.version, s.generation, closed, forming, oldest, stale_build=bool(marks))
+        return Latest(s.version, s.generation, closed, forming, oldest, stale_build=bool(marks),
+                      withheld=s.withheld)  # fmt: skip
 
     def live_tail(self, symbol: str, spec: BarSpec, since_us: int | None) -> LiveTail | None:
         """The series' generation, its closed bars opening at or after `since_us` (none for
@@ -874,6 +880,7 @@ class SeriesStore:
         # Clean (no row withheld, SR-E12-11, nor skipped, #3614) and no live swap during it (D2-H1c)
         s.hydrated = not (tail.integrity_degraded or tail.skipped or s.swapped)
         s.since_us, s.bounded = tail.since_us, tail.bounded  # the read's start (D2-M4)
+        s.withheld = tail.withheld  # named by the snapshot where no bar is sent instead (F9)
         # The named generation's rows: not another epoch's, nor an unflipped ADR-0033 rebuild's.
         rows = [(g, bar) for g, bar in tail.bars if g == gen]
         if rows and tail.integrity_degraded:  # a withheld row never drops its held bar (D2-H1b)

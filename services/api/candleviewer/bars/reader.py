@@ -3,8 +3,9 @@
 `read_bars` returns oldest->newest with a cursor (the last raw row's `ts`, and for non-time
 kinds its `(ts, generation, index)` key, #2017), parameterised queries only
 (`symbol`/`bar_param` come from the client). Rows whose `row_checksum` does not verify are
-dropped and counted (SR-E12-11). Rows at an older `build_version` than the running code are
-served as-is and a rebuild is scheduled **once** per `(symbol, spec_hash)` window, not per poll.
+dropped and counted (SR-E12-11), and `read_bars` says where each stood (`BarPage.withheld`,
+#452 F9). Rows at an older `build_version` than the running code are served as-is and a rebuild
+is scheduled **once** per `(symbol, spec_hash)` window, not per poll.
 `read_tail` (E12-T06, #2195) is the WS snapshot store's one bounded newest-first read: closed,
 tape-built bars only, oldest first, inside a `ts` window measured back from the wall clock.
 """
@@ -14,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Final, Protocol
@@ -99,6 +100,56 @@ class BarPage:
     #: Non-time kinds only (#2017): `(ts, generation, index)` of the last RAW row of a full
     #: fetch, i.e. the next page's first row (resume with `at_key=`); None = no more rows.
     next_key: BarKey | None = None
+    #: The withheld rows, in fetch order, by where each stood (#452 F9, #538): the caller names
+    #: their ranges in `meta.coverage_holes` (22 `DataMeta`), never a silent gap.
+    withheld: tuple[Withheld, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class Withheld:
+    """A row withheld for an integrity failure (SR-E12-11), by where it stood: its stored key and
+    the range `[start_us, end_us)` it leaves unserved, `[open, next open)` (the #5581 ruling): its
+    open `ts` up to the open `ts` of the next raw row of the same fetch that opens later (the
+    fetch's order is the store's, so it is trusted). The last such row of a fetch has no next
+    open: a time bar then ends at its open plus the spec's width, any other bar one microsecond
+    after its open; the caller clips every range to its span. The row failed its checksum, so
+    nothing else in it is relied on: never its `close_ts` (a tampered row can carry a far-future
+    close), and a key part that does not read as an integer reads as `row_key`'s NULL
+    (generation 0, index -1)."""
+
+    key: BarKey
+    start_us: int
+    end_us: int
+
+
+def withheld_rows(
+    rows: Sequence[dict[str, object]], at: Sequence[int], spec: BarSpec
+) -> tuple[Withheld, ...]:
+    """The `Withheld` of `rows[i]` for each `i` in `at` (ascending), `rows` in fetch order, oldest
+    first. One backward pass over the fetch, and only when a row was withheld."""
+    if not at:
+        return ()
+    width = int(spec.param_value) * 1_000 if spec.kind == "time" else 1
+    later: dict[int, int | None] = {}
+    wanted, nxt, run = set(at), None, None  # `nxt`: the first open after the run at `run`
+    for i in range(len(rows) - 1, at[0] - 1, -1):
+        ts = ts_us_from_row(rows[i]["ts"])
+        if run is not None and ts != run:
+            nxt = run
+        run = ts
+        if i in wanted:
+            later[i] = nxt
+    out: list[Withheld] = []
+    for i in at:
+        row = rows[i]
+        ts = ts_us_from_row(row["ts"])
+        try:
+            key = row_key(row)
+        except (ValueError, TypeError):
+            key = (ts, 0, -1)
+        end = later[i]
+        out.append(Withheld(key, ts, ts + width if end is None else end))
+    return tuple(out)
 
 
 #: Ordering (#2017, 21 §9.5 choice (a)). `ts` stays primary everywhere: `index` restarts at 0 in
@@ -376,8 +427,15 @@ class BarReader:
             spec.kind, symbol, bar_param_for(spec), from_us, to_us, after_us, limit, at_key=at_key
         )
         raw = await self._conn.fetch(sql, *params)
-        rows = [r for r in raw if not _untrusted(r, spec)]
-        dropped = len(raw) - len(rows)
+        rows: list[dict[str, object]] = []
+        at: list[int] = []
+        for i, r in enumerate(raw):
+            if _untrusted(r, spec):
+                at.append(i)
+            else:
+                rows.append(r)
+        withheld = withheld_rows(raw, at, spec)
+        dropped = len(withheld)
         current = BUILD_VERSIONS[spec.kind]
         stale = any((build_version_of(r) or 0) < current for r in rows)
         if stale:
@@ -387,7 +445,13 @@ class BarReader:
         cursor = ts_us_from_row(raw[-1]["ts"]) if more and raw else None
         key = row_key(raw[-1]) if more and raw and spec.kind != "time" else None
         return BarPage(
-            rows, cursor, stale, integrity_degraded=dropped > 0, dropped=dropped, next_key=key
+            rows,
+            cursor,
+            stale,
+            integrity_degraded=dropped > 0,
+            dropped=dropped,
+            next_key=key,
+            withheld=withheld,
         )
 
     def _truncated(self, spec: BarSpec, window_us: int, since_us: int) -> None:
@@ -475,13 +539,15 @@ class BarReader:
         current = BUILD_VERSIONS[spec.kind]
         bars: list[tuple[int, Bar]] = []
         builds: dict[BuildKey, int | None] = {}
-        dropped = skipped = malformed = 0
+        ordered = raw[::-1]  # oldest first
+        at: list[int] = []
+        skipped = malformed = 0
         error = ""
-        for n, row in enumerate(reversed(raw)):
+        for n, row in enumerate(ordered):
             if n and n % TAIL_YIELD_EVERY == 0:
                 await asyncio.sleep(0)  # C-2.17: never hold the loop for a whole 1 000-row tail
             if _untrusted(row, spec):
-                dropped += 1
+                at.append(n)
                 continue
             try:
                 got = _tail_bar(row, spec)
@@ -503,9 +569,10 @@ class BarReader:
             )  # fmt: skip
         if bounded:
             self._truncated(spec, window, since)
+        withheld = withheld_rows(ordered, at, spec)
         return BarTail(
-            bars, skipped=skipped + malformed, builds=builds, dropped=dropped, since_us=since,
-            fetched=len(raw), bounded=bounded,
+            bars, skipped=skipped + malformed, builds=builds, dropped=len(withheld), since_us=since,
+            fetched=len(raw), bounded=bounded, withheld=withheld,
         )  # fmt: skip
 
 
@@ -548,6 +615,9 @@ class BarTail:
     #: rows below it, so an empty read says only that none lies from `since_us` on, and the
     #: series store judges no first close above index 0 against it (D2-H1a).
     bounded: bool = False
+    #: The withheld rows, oldest first, by where each stood (`BarPage.withheld`, #452 F9): the
+    #: WS snapshot names them in `meta.coverage_holes` as REST does.
+    withheld: tuple[Withheld, ...] = ()
 
     @property
     def integrity_degraded(self) -> bool:
