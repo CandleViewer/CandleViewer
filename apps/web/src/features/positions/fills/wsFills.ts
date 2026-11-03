@@ -146,14 +146,14 @@ export function startFillsFeed(options: FillsFeedOptions): FillsFeed {
   }
 
   /** One read: newest first, at most two pages; past the cap it names the subscription's 25. */
-  function readRest(): void {
+  function readRest(signal = store.readSignal()): void {
     const named =
       accountIds !== null && accountIds.length > MAX_ACCOUNT_IDS
         ? { accountIds: accountIds.slice(0, MAX_ACCOUNT_IDS) }
         : {};
     const seq = (readSeq += 1);
-    void readExecutions(api, named, BACKFILL_PAGES, abort.signal).then((out) => {
-      if (stopped) return;
+    void readExecutions(api, named, BACKFILL_PAGES, signal).then((out) => {
+      if (stopped || signal.aborted) return; // a Retry after a revoke starts the reads afresh
       if (seq === readSeq) {
         readLost = out.kind !== "ok" || out.value.failure !== null;
         showLost();
