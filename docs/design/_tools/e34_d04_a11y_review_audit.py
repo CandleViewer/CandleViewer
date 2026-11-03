@@ -52,13 +52,18 @@ RQ3_HEAD = "78475be5063ecc6e553ce020f16ed2bc3bff9108"  # #5619, E28-D05
 # a push changes the pushed head, never the blob
 LANDED: dict[str, tuple[str, str]] = {
     "RQ-1": (
-        "b84bab0169bf59a084f78f9c125ba818ec90d357",
-        "8edee5699007744166eaba41373ef17425f8298d",
+        "3dd5f17749dc2566d9ee4ea36c697e1ea6b88d57",
+        "c547be2f532fca307ed9c9505b7ee21072623d5c",
     ),
     "RQ-2": (
-        "118196285de453a132ca9a865873ddac7f7a3ca5",
-        "08dc2ea85dcd049245601e76d6bcc724acf5ffff",
+        "438a046f617902dd450d315554fca388213699a8",
+        "1108cc3d8c0a39a7f4e4857c153aed368843ba1d",
     ),
+}
+# each spec's own cite pins, read at its landed head: a cite inside a quoted New is the spec's own
+RQ_PINS = {
+    "RQ-1": "docs/design/_tools/e34_d02_ruled_pins.txt",
+    "RQ-2": "docs/design/_tools/e34_d03_ruled_pins.txt",
 }
 FIX_FORWARD = "fix-forward slice after merge"
 THEMES = ("dark", "light", "high-contrast")
@@ -222,6 +227,7 @@ class Texts(NamedTuple):
     files: dict[str, list[str]]  # KEY -> lines at the base
     rq: dict[str, str]  # RQ-n -> the text at its pushed head
     landed: dict[str, str]  # RQ-n -> the text with the A-rows applied, by content
+    rq_pins: dict[str, str]  # RQ-n -> its own cite pins at its landed head
 
 
 def git_show(ref: str, rel: str) -> str:
@@ -243,6 +249,7 @@ def read_texts() -> Texts:
         {k: git_show(ref, p).splitlines() for k, (p, ref) in KEYS.items()},
         {k: git_show(ref, p) for k, (p, ref) in RQ.items()},
         {k: git_show(blob, "") for k, (blob, _) in LANDED.items()},
+        {k: git_show(LANDED[k][1], p) for k, p in RQ_PINS.items()},
     )
 
 
@@ -352,6 +359,9 @@ F_HEAD = re.compile(
 )
 
 
+TICKET = re.compile(r"\b(E\d\d-[A-Z]\d\d) \(#(\d+)\)")
+
+
 def a_rows(spec: str) -> list[list[str]]:
     return rows_of(section(spec, "### 13.1 ", "### 13.2 "), r"^\|\s*A-\d+\s*\|")
 
@@ -384,6 +394,12 @@ def g_findings(t: Texts, p: list[str]) -> dict[str, Any]:
             p.append(f"[D] {r[0]}: a High row without its A-rows")
         if r[1] in ("Medium", "Low") and DATE not in r[6]:
             p.append(f"[D] {r[0]}: a {r[1]} row logged without its date")
+    nums: dict[str, set[str]] = {}
+    for key, num in TICKET.findall(t.spec):
+        nums.setdefault(key, set()).add(num)
+    for key, got in sorted(nums.items()):
+        if len(got) > 1:
+            p.append(f"[D] {key} is given {len(got)} issue numbers")
     ids = {r[0] for r in rows}
     for ref in sorted(set(re.findall(r"\bF-\d\d\b", t.spec)) - ids):
         p.append(f"[D] {ref} is cited but not in the table")
@@ -414,6 +430,16 @@ def word(n: int) -> str:
     return ("twenty", "thirty", "forty")[tens - 2] + (f"-{NUM[one]}" if one else "")
 
 
+def bounded(text: str, old: str) -> list[int]:
+    """Where `old` stands whole: a word character at either end is not continued in the text."""
+    rx = ("(?<!\\w)" if re.match(r"\w", old) else "") + re.escape(old)
+    rx += "(?!\\w)" if re.search(r"\w$", old) else ""
+    return [m.start() for m in re.finditer(rx, text)]
+
+
+SPEC_CITE = re.compile(r"`([A-Za-z0-9-]+)`:(\d+(?:–\d+)?)")
+
+
 def g_amend(t: Texts, p: list[str]) -> dict[str, Any]:
     rows = a_rows(t.spec)
     fids = {r[0] for r in f_rows(t.spec)}
@@ -429,10 +455,15 @@ def g_amend(t: Texts, p: list[str]) -> dict[str, Any]:
         per[tm.group(1)] += 1
         text, old, new = t.rq[tm.group(1)], r[3][1:-1], r[4][1:-1]
         a, z = heading_span(text, tm.group(2))
-        if text.count(old) != 1 or not (a <= text.find(old) < z):
+        at = bounded(text, old)
+        if len(at) != 1 or text.count(old) != 1 or not (a <= at[0] < z):
             p.append(f"[E] {r[0]}: the Old is not once in {tm.group(1)} under §{tm.group(2)}")
         if new in text:
             p.append(f"[E] {r[0]}: the New is already in {tm.group(1)}")
+        own = {ln.split("\t", 1)[0] for ln in t.rq_pins[tm.group(1)].splitlines()}
+        for key, n in SPEC_CITE.findall(new):
+            if f"{key}:{n}" not in own:
+                p.append(f"[E] {r[0]}: its New cites {key}:{n}, not in {tm.group(1)}'s own pins")
         lt = t.landed[tm.group(1)]
         if r[5] == f"{tm.group(1)} landed":
             if lt.count(new) != 1 or old in lt.replace(new, ""):
@@ -551,6 +582,14 @@ def label_in_name(label: str, name: str) -> bool:
     return any(nw[i : i + len(lw)] == lw for i in range(len(nw) - len(lw) + 1))
 
 
+# the name forms F-03 replaced (AN-01, AN-02, A-08); none may stand in a landed spec
+OLD_NAMES = (
+    '"Send group …7c1e to 5 accounts: …"',
+    "accepted legs of group …7c1e…",
+    'accessible name with "…"',
+)
+
+
 def g_names(t: Texts, p: list[str]) -> dict[str, Any]:
     rows = rows_of(section(t.spec, "## 6. ", "## 7. "), r"^\|\s*AN-\d+\s*\|")
     fails = 0
@@ -568,6 +607,10 @@ def g_names(t: Texts, p: list[str]) -> dict[str, Any]:
             p.append(f"[J] {r[0]}: the fixed name does not begin with its visible label")
         if "…" in r[5]:
             p.append(f"[J] {r[0]}: the fixed name keeps an ellipsis")
+    for k, lt in t.landed.items():
+        for i, form in enumerate(OLD_NAMES, 1):
+            if form in lt:
+                p.append(f"[J] {k} landed still gives the old name form no. {i} (F-03)")
     if fails and "F-03" not in high_ids(t.spec):
         p.append("[J] a 2.5.3 FAIL without its High F row")
     return {"rows": len(rows), "fail": fails}
@@ -612,6 +655,25 @@ ATOMIC = '`role="alert"` is implicitly `aria-atomic="true"`'
 GROUP_ID = re.compile(r"group …[0-9a-f]{4}")
 
 
+BARE_ALERT = re.compile(r'`role="alert"`,? once')
+# the single-message summaries stay one alert (A-24): refused whole, all failed, all-or-none unwound
+WHOLE = ("| S061-11 ", "| S061-22 ", "| S061-23 ")
+EXEMPT = ("one-shot", "all-failed", "unwind-incomplete")
+
+
+def bare_summary_alerts(text: str) -> list[int]:
+    """Lines that still call a growing summary a bare `role="alert"` once (BQ-7)."""
+    out = []
+    for i, ln in enumerate(text.splitlines(), 1):
+        if "summary" not in ln or ln.startswith(WHOLE):
+            continue
+        for c in re.split(r"[|;]", ln):
+            if BARE_ALERT.search(c) and not any(w in c for w in EXEMPT):
+                out.append(i)
+                break
+    return out
+
+
 def g_ruled(t: Texts, p: list[str]) -> dict[str, Any]:
     """The #998 ruling: BQ-7 as amended (one-shot nodes) and BQ-6 ("group ending 7c1e")."""
     s7 = section(t.spec, "## 7. ", "## 8. ")
@@ -627,6 +689,9 @@ def g_ruled(t: Texts, p: list[str]) -> dict[str, Any]:
         p.append('[L] the visible summary is not one aria-live="off" row (BQ-7)')
     if ATOMIC not in s7:
         p.append("[L] section 7 does not state the implicit aria-atomic behaviour (BQ-7)")
+    for k, lt in t.landed.items():
+        for i in bare_summary_alerts(lt):
+            p.append(f'[L] {k} landed line {i}: a summary still a bare role="alert" once (BQ-7)')
     named = [(r[0], r[5]) for r in rows_of(section(t.spec, "## 6. ", "## 7. "), r"^\|\s*AN-")]
     named += [(r[0], r[4]) for r in a_rows(t.spec)]
     s8 = section(t.spec, "## 8. ", "## 9. ")
@@ -700,6 +765,16 @@ def landed_back(t: Texts) -> Texts:
     return t._replace(landed={**t.landed, "RQ-2": t.landed["RQ-2"].replace(new, 'protection "—"')})
 
 
+def old_name_back(t: Texts) -> Texts:
+    extra = '\nIts accessible name with "…" again.\n'
+    return t._replace(landed={**t.landed, "RQ-2": t.landed["RQ-2"] + extra})
+
+
+def bare_alert_back(t: Texts) -> Texts:
+    extra = '\n| M62-99 | x | the summary `role="alert"` once |\n'
+    return t._replace(landed={**t.landed, "RQ-2": t.landed["RQ-2"] + extra})
+
+
 MUTATIONS: list[tuple[str, Callable[[Texts], Texts]]] = [
     ("A: a pin's words no longer on its line", pin_words_off),
     ("B: a measured contrast cell retyped", row_sub("CT-13", "PASS", "PASS?")),
@@ -707,9 +782,15 @@ MUTATIONS: list[tuple[str, Callable[[Texts], Texts]]] = [
     ("D: the findings stamp off by one", sp("f=19/0/5/9/2/3", "f=19/0/5/9/2/2")),
     ("D: a finding with two owners", row_sub("F-11", "E34-D03 (#997)", "E34-D03 (#997); E34-D02")),
     ("D: a Medium row logged without its date", row_sub("F-13", " · by 2027-01-14", "")),
+    ("D: a ticket key given two issue numbers", row_sub("F-19", "(#1179)", "(#1145)")),
     ("E: an Old not in its target", sp('"a re-preview: the last', '"a re-preview, the last')),
     ("E: an Old found twice in its target", rq_moved),
-    ("E: a per-target A count retyped", sp("twelve to E34-D03's", "ten to E34-D03's")),
+    ("E: a per-target A count retyped", sp("seventeen to E34-D03's", "ten to E34-D03's")),
+    ("E: an Old truncated mid-word", row_sub("A-21", 'boxes gated"', 'boxes gate"')),
+    (
+        "E: a New's cite not in its target's pins",
+        row_sub("A-14", "before Send (`14`:1503)", "before Send (`14`:1502)"),
+    ),
     ("E: an A-row not landed at its content", landed_back),
     (
         "F: a subsection loses its return",
@@ -721,10 +802,12 @@ MUTATIONS: list[tuple[str, Callable[[Texts], Texts]]] = [
     ("I: a keymap column retyped", row_sub("KB-07", "`positions.close`", "none")),
     ("J: a label check retyped", row_sub("AN-06", "| FAIL", "| pass")),
     ("J: a fixed name loses its label", row_sub("AN-06", "| Close group: all", "| Close all")),
+    ("J: an old name form back in a landed spec", old_name_back),
     ("K: a line cite into an unmerged spec", sp("RQ-1 §7 names a", "`D02`:277 names a")),
-    ("K: a landed content pin retyped", sp("content `b84bab016", "content `b84bab017")),
+    ("K: a landed content pin retyped", sp("content `3dd5f1774", "content `3dd5f1775")),
     ("L: the visible summary made assertive", row_sub("LR-15", "| off ", "| assertive ")),
     ("L: a rejection back on the growing summary", row_sub("LR-04", "its own one-shot", "the")),
+    ("L: a landed summary a bare alert again", bare_alert_back),
     (
         "L: a heard name reads the group id with an ellipsis",
         row_sub("SR-10", "ending 7c1e", "…7c1e"),
