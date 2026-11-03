@@ -29,6 +29,9 @@
  *   account's fills (a withdrawn one's line can be dismissed; the account stays out until stop),
  *   and after `revoked`, a snapshot or not, no read applies until Retry. Any other reset voids the
  *   WS baseline and keeps the fills: they are records, and the next `snap` follows.
+ * - **Reads.** `readSignal()` is the signal of the REST reads that feed the store, and the feed
+ *   drops the answer of an aborted one. Retry after a revoke starts them afresh: the reads asked
+ *   before it are aborted, and the next carry a new signal. Stop aborts them all.
  */
 import { useSyncExternalStore } from "react";
 import type { TopicFrame } from "../../../lib/ws/api";
@@ -91,7 +94,10 @@ export interface FillsStore {
   markSnapshotFailed(): void;
   /** Whether the last REST read failed, or a page of it. */
   setReadFailed(failed: boolean): void;
+  /** S-02's Retry: clears the failures; after a revoke it also starts the reads afresh. */
   markRetrying(): void;
+  /** What the REST reads carry: a Retry after a revoke, and stop, abort the ones asked before. */
+  readSignal(): AbortSignal;
   /** Accounts past the 25 a subscription names (`23` §13.5): never live, so never shown. */
   setOverCap(accountIds: readonly string[]): void;
   /** Whether a narrowing came since the last call (taken once): the feed re-reads the directory. */
@@ -167,10 +173,17 @@ export function createFillsStore(): FillsStore {
   let asOfMs: number | null = null;
   let atTop = true;
   let anchor: FillRowModel | null = null;
+  let readAbort = new AbortController(); // the REST reads asked so far, until a Retry after a revoke
 
   const touch = (): void => {
     dirty = true;
   };
+
+  /** The reads asked so far are aborted, and the next ones carry a new signal. */
+  function restartReads(): void {
+    readAbort.abort();
+    readAbort = new AbortController();
+  }
 
   function barred(accountId: string): boolean {
     return (
@@ -327,6 +340,7 @@ export function createFillsStore(): FillsStore {
       if (next === started) return;
       started = next;
       if (!next) {
+        restartReads();
         held.clear();
         perAccount.clear();
         crossed.clear();
@@ -430,11 +444,13 @@ export function createFillsStore(): FillsStore {
       touch();
     },
     markRetrying() {
+      if (revoked) restartReads(); // the reads asked before this Retry never apply
       snapshotFailed = false;
       revoked = false;
       readFailed = false;
       touch();
     },
+    readSignal: () => readAbort.signal,
     setOverCap(accountIds) {
       if (accountIds.length === overCap.length && accountIds.every((id, i) => overCap[i] === id))
         return;
