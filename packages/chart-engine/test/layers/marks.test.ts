@@ -3,7 +3,7 @@
 // ring after any mutation sequence (a seeded property); a confirm patches exactly one ring slot
 // and drops the mark in the same sync; an evicted forming slot drops its mark without an event;
 // the series draws the marks at L0 only, while a marked bar is in view; `barState` reads the bits.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mulberry32 } from "../../bench/fixtures/rng.mjs";
 import {
   CANDLE_DIR,
@@ -132,6 +132,25 @@ describe("MarkRing", () => {
     ring.sync(store, store.append(live, true));
     expect(of("marks").at(-1)).toEqual(["marks", 0, 1]);
     expect(wordsOk(marks, store)).toBe(true);
+  });
+
+  it("a sync that touches a mark makes no typed-array view (no subarray)", () => {
+    const { store, ring, marks } = setup();
+    ring.sync(store, store.replace(flagged(0, 3, [0, 0, FORMING])));
+    events(marks);
+    const live = flagged(2, 1, [FORMING]);
+    (live.high as Int32Array)[0] = 9;
+    const spies = [Int32Array, Float64Array, Uint8Array].map((T) =>
+      vi.spyOn(T.prototype, "subarray"),
+    );
+    try {
+      const r = store.append(live, true);
+      ring.sync(store, r);
+      expect(marks.count).toBe(1);
+      expect(spies.map((spy) => spy.mock.calls.length)).toEqual([0, 0, 0]);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
   });
 
   it("confirm: a merge-patch clearing the bit patches one ring slot and drops the mark", () => {

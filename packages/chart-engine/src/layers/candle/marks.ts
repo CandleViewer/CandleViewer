@@ -167,8 +167,10 @@ export class MarkRing {
       this.prev = new Int32Array(this.ints.length);
       this.prevTimes = new Float64Array(this.times.length);
     }
-    this.prev.set(this.ints.subarray(0, before * CANDLE_STRIDE));
-    this.prevTimes.set(this.times.subarray(0, before));
+    // Loops, not `subarray` views: a view is an allocation per sync (as seams.ts copies).
+    const words = before * CANDLE_STRIDE;
+    for (let j = 0; j < words; j += 1) this.prev[j] = this.ints[j] as number;
+    for (let j = 0; j < before; j += 1) this.prevTimes[j] = this.times[j] as number;
   }
 
   private prevIndex(k: number, head: number, mask: number): number {

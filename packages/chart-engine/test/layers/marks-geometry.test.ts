@@ -218,6 +218,29 @@ describe("the shader and the twin agree (E12-S10)", () => {
     expect(CANDLE.fragment).toContain(`((s / (${MARK_GEOM.dash} * t)) & 1) != 0`);
   });
 
+  it("a zero-range bar's ring is as wide as its body at fractional dpr: one expression", () => {
+    const expr = "floor(3.0 * u_geom[1].x + 0.5)"; // roundHalfUp(3 dpr), the twin's `floor(3 * dpr + 0.5)`
+    expect(CANDLE.vertex.split(expr)).toHaveLength(3); // the body part's min width and the ring's
+    expect(CANDLE.vertex).toContain(`dir == 3 ? max(body, ${expr}) : body`);
+    expect(CANDLE.vertex).not.toContain("max(body, 3.0 * h)");
+    const out = new Float64Array(4);
+    const body = new Float64Array(4);
+    for (const dpr of [1, 1.25, 1.5, 1.75, 2, 2.5]) {
+      const g = geom(3, dpr);
+      const hair = g[GEOM.hair] as number;
+      const pad = (MARK_GEOM.ringOffset + MARK_GEOM.ringWeight) * hair;
+      const bar = [100, 100, 100, 100] as const; // o = h = l = c: zero range
+      const dir = candleDir(...bar);
+      expect(dir, `dpr ${dpr}`).toBe(CANDLE_DIR.zeroRange);
+      candleRect(CANDLE_PART.body, 3, 100, 100, 100, 100, dir, K, 0, 0, g, body);
+      markRect(FORMING, 3, 100, 100, 100, dir << 4, K, 0, 0, g, out); // the entry's word 4
+      const minWidth = Math.floor(3 * dpr + 0.5);
+      expect(body[2], `body at dpr ${dpr}`).toBeGreaterThanOrEqual(minWidth);
+      expect(out[2], `ring at dpr ${dpr}`).toBe((body[2] as number) + 2 * pad);
+      expect(out[0], `ring x at dpr ${dpr}`).toBe((body[0] as number) - pad);
+    }
+  });
+
   it("every `in` the vertex shader declares is bound by CANDLE_ATTRIBUTES, as an int", () => {
     const declared = [
       ...CANDLE.vertex.matchAll(/^layout\(location = (\d+)\) in (ivec4|int) (\w+);$/gm),
