@@ -10,6 +10,7 @@ import { ROUTE_MANIFEST, type ManifestEntry } from "../../routes/manifest";
 import { evaluateAccess, type MeClaims } from "../../routes/rbac";
 import { ROUTE_TITLES } from "../../routes/titles";
 import { GROUPS } from "./copy";
+import { COMMAND_GATES, gateReason, type CommandGate } from "./gates";
 
 export type PaletteGroup = (typeof GROUPS)[keyof typeof GROUPS];
 
@@ -48,6 +49,8 @@ export interface SourceContext {
   readonly bindings: ReadonlyMap<string, string>;
   /** `isCommandValid`: a handler is registered and its predicate holds. */
   readonly isValid: (commandId: string) => boolean;
+  /** The view-as context (`gates.ts`); `null` while none is active, and always today (no client source yet). */
+  readonly viewAs: { readonly user: string } | null;
 }
 
 export interface PaletteSource {
@@ -112,6 +115,7 @@ export const PALETTE_COMMAND = "global.palette";
 export function actionRows(
   ctx: SourceContext,
   commands: readonly KeymapCommand[] = KEYMAP,
+  gates: Readonly<Record<string, CommandGate>> = COMMAND_GATES,
 ): PaletteRow[] {
   const rows: PaletteRow[] = [];
   for (const c of commands) {
@@ -119,6 +123,8 @@ export function actionRows(
     const meta = commandMeta(c.id);
     const binding = ctx.bindings.get(c.id) ?? c.defaultBinding;
     const destructive = c.destructive || meta?.confirm === true;
+    // T2 (E09-D09): the row stays, with its reason; a gated row never runs from here.
+    const reason = gateReason(gates[c.id], ctx);
     rows.push({
       id: `command:${c.id}`,
       label: meta?.label ?? c.label,
@@ -126,6 +132,7 @@ export function actionRows(
       target: { kind: "command", commandId: c.id },
       ...(binding === "" ? {} : { shortcut: bindingKeys(binding) }),
       ...(destructive ? { destructive: true } : {}),
+      ...(reason === undefined ? {} : { disabledReason: reason }),
     });
   }
   return rows;

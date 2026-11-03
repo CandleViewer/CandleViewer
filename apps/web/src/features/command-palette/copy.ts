@@ -43,3 +43,10 @@ export function noResultsText(query: string, symbolsSearched: boolean): string {
 /** PROPOSED: said once, politely, when `runCommand` refuses a row (no handler, or the arm reads unarmed). */
 export const refusedText = (label: string): string =>
   `${label} did not run: it is not available here.`;
+
+/** E09-D09 §3.1 `rbac.view_as`, verbatim: every write while viewing as another user (not a protective command). */
+export const viewAsReason = (user: string): string => `Read-only while viewing as ${user}.`;
+/** E09-D09 §3.1 `rbac.permission`, verbatim, with §3.2's verb. */
+export const permissionReason = (verb: string): string => `Your role can't ${verb}.`;
+/** E09-D09 §3.1 `rbac.owner_only`, verbatim, with §3.2's verb or the action's own. */
+export const ownerOnlyReason = (verb: string): string => `Only the owner can ${verb}.`;

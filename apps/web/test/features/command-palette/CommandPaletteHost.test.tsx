@@ -7,10 +7,14 @@ import { buildRoutes } from "../../../src/routes/tree";
 import { resetMeClaims, setMeClaims } from "../../../src/lib/auth/meCache";
 import type { Role } from "../../../src/routes/rbac";
 import { clearAnnouncements } from "../../../src/features/app-shell/announcer";
-import { KeymapHost } from "../../../src/keymap/KeymapHost";
+import { KeymapHost, registerCommand } from "../../../src/keymap/KeymapHost";
+import { KEYMAP } from "../../../src/keymap/keymap";
+import { commandMeta, isCommandValid } from "../../../src/keymap/registry";
 import { resetShellState, setShellState, type Me } from "../../../src/shell/bootstrap/store.js";
 import { THEME_ANALYTICS_EVENT } from "../../../src/shell/bootstrap/themeStore";
 import { closePalette } from "../../../src/features/command-palette/CommandPaletteHost";
+import { missingGates } from "../../../src/features/command-palette/gates";
+import { ADMIN_READ, registerPaletteSource } from "../../../src/features/command-palette/sources";
 
 // E10-S05 (#5236): SCR-012 mounted in the real shell route tree beside the real keymap host, by role and label.
 
@@ -52,7 +56,24 @@ const options = (): string[] =>
   screen.getAllByRole("option").map((o) => o.getAttribute("aria-label") ?? "");
 const trigger = (): HTMLElement => screen.getByRole("button", { name: "Search commands Ctrl+K" });
 
+/** What the shell's polite region holds now (every region of that politeness, as `top-bar.test.tsx` reads it). */
+const polite = (): string =>
+  [...document.querySelectorAll('[aria-live="polite"]')].map((n) => n.textContent).join("");
+/** CMP-059's own status region: the count, the no-results sentence, a re-shown reason. */
+const status = (): string =>
+  within(screen.getByRole("dialog")).getByRole("status").textContent ?? "";
+const groups = (): string[] =>
+  screen
+    .getAllByRole("group")
+    .map((g) => g.getAttribute("aria-labelledby") ?? "")
+    .map((id) => document.getElementById(id)?.textContent ?? "");
+
+const offs: (() => void)[] = [];
+afterEach(() => offs.splice(0).forEach((off) => off()));
+
 beforeEach(() => {
+  // jsdom has no layout: CMP-059 scrolls the active row into view on a key move.
+  Element.prototype.scrollIntoView = vi.fn();
   resetMeClaims();
   resetShellState();
   clearAnnouncements();
@@ -123,5 +144,194 @@ describe("E10-S05 scenario 8: Esc closes and focus returns", () => {
     fireEvent.keyDown(input(), { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull();
     expect(trigger()).toHaveFocus();
+  });
+});
+
+describe("E10-S05 scenario 2: typing filters and the count is said once", () => {
+  it("groups in the fixed order with no header for an empty group, and says the count after it settles", async () => {
+    await shellAt("/journal");
+    pressCtrlK();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    fireEvent.change(input(), { target: { value: "a" } });
+    fireEvent.change(input(), { target: { value: "al" } });
+    fireEvent.change(input(), { target: { value: "alr" } });
+    expect(options()).toEqual(["Alerts"]);
+    expect(within(screen.getByRole("option", { name: "Alerts" })).getByText("Al").tagName).toBe(
+      "MARK",
+    );
+    expect(groups()).toEqual(["Navigate"]);
+    act(() => void vi.advanceTimersByTime(400));
+    expect(status()).toBe(""); // never once per keystroke
+    act(() => void vi.advanceTimersByTime(100));
+    expect(status()).toBe("1 result");
+    fireEvent.change(input(), { target: { value: "t" } });
+    expect(groups()).toEqual(["Navigate", "Action"]); // Navigate before Action, whatever the score
+  });
+});
+
+describe("E10-S05 scenario 4: an action runs through the keymap registry", () => {
+  it("runs the Hotkey cheatsheet through runCommand, the handler Ctrl+/ reaches: SCR-013 opens", async () => {
+    await shellAt("/journal");
+    pressCtrlK();
+    fireEvent.change(input(), { target: { value: "cheatsheet" } });
+    expect(options()).toEqual(["Hotkey cheatsheet"]);
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeVisible();
+  });
+
+  it("lists every registered, valid command except the palette and range commands (completeness)", async () => {
+    await shellAt("/journal");
+    pressCtrlK();
+    const listed = new Set(options());
+    const expected = KEYMAP.filter(
+      (c) => isCommandValid(c.id) && c.id !== "global.palette" && !c.defaultBinding.includes(".."),
+    ).map((c) => commandMeta(c.id)?.label);
+    expect(expected.length).toBeGreaterThan(3);
+    for (const label of expected) expect(listed).toContain(label);
+    expect(listed).not.toContain("Command palette");
+    expect(listed).not.toContain("Navigate rail item 1-9");
+  });
+
+  it("every registered dangerous command has a gate row (none registered today)", async () => {
+    await shellAt("/journal");
+    const registered = KEYMAP.filter((c) => isCommandValid(c.id)).map((c) => ({
+      meta: commandMeta(c.id) ?? (undefined as never),
+      destructive: c.destructive,
+    }));
+    expect(missingGates(registered)).toEqual([]);
+  });
+
+  it("a command runCommand refuses (an order entry, unarmed) runs nothing and says so once", async () => {
+    const order = vi.fn();
+    offs.push(registerCommand("chart.market_order", order));
+    await shellAt("/journal");
+    pressCtrlK();
+    fireEvent.change(input(), { target: { value: "market order" } });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(order).not.toHaveBeenCalled();
+    expect(polite()).toBe(
+      "Market order at market (arm-gated) did not run: it is not available here.",
+    );
+  });
+});
+
+describe("E10-S05 scenario 5: a dangerous command routes into its own confirmation", () => {
+  it("is tagged confirms with a glyph; Enter closes the palette, then the handler opens its confirm", async () => {
+    const executed = vi.fn();
+    // When the handler runs, the palette has closed: its layer is inert and focus has left it.
+    const openConfirm = vi.fn(() => {
+      const layer = document.querySelector("[data-cv-layer]");
+      return [layer?.getAttribute("data-state") ?? "gone", layer?.contains(document.activeElement)];
+    });
+    offs.push(registerCommand("positions.close", openConfirm));
+    await shellAt("/journal");
+    trigger().focus(); // the element focus returns to (E10-D04 T-11)
+    pressCtrlK();
+    fireEvent.change(input(), { target: { value: "close selected" } });
+    const row = screen.getByRole("option", { name: "Close selected position (confirm), confirms" });
+    expect(row.closest("[data-kind]")).toHaveAttribute("data-kind", "destructive");
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(openConfirm).toHaveBeenCalledTimes(1);
+    expect(openConfirm.mock.results[0]?.value).toEqual(["closing", false]);
+    expect(executed).not.toHaveBeenCalled(); // the palette never fires the action itself
+    expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull();
+  });
+});
+
+describe("E10-S05 scenario 6: admin destinations are absent without admin:read", () => {
+  const unknownWord = (word: string): string =>
+    `No command matches “${word}”. Try fewer letters, or use the nav rail.`;
+
+  it("a manager without admin:read: no /admin/* row, and admin words read as unknown words", async () => {
+    await shellAt("/journal", "manager");
+    pressCtrlK();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    for (const word of ["admin", "users", "audit", "zzzq"]) {
+      fireEvent.change(input(), { target: { value: word } });
+      act(() => void vi.advanceTimersByTime(500));
+      expect(screen.queryAllByRole("option")).toEqual([]);
+      expect(status()).toBe(unknownWord(word));
+    }
+  });
+
+  it("an owner with admin:read finds Profile and security and Invite user by name (2.4.5)", async () => {
+    const { router } = await shellAt("/journal", "owner", [ADMIN_READ]);
+    pressCtrlK();
+    fireEvent.change(input(), { target: { value: "profile" } });
+    expect(options()).toContain("Profile and security");
+    fireEvent.change(input(), { target: { value: "invite user" } });
+    expect(options()[0]).toBe("Invite user");
+    fireEvent.keyDown(input(), { key: "Enter" });
+    await screen.findByRole("heading", { level: 1, name: /R-303|Invite/ });
+    expect(router.state.location.pathname).toBe("/admin/users/new");
+  });
+
+  it("re-filters in place when the claims change while open", async () => {
+    await shellAt("/journal", "owner", [ADMIN_READ]);
+    pressCtrlK();
+    fireEvent.change(input(), { target: { value: "invite user" } });
+    expect(options()).toContain("Invite user");
+    act(() => {
+      setMeClaims({ authenticated: true, role: "owner", permissions: [] });
+      setShellState({ me: me("owner", []) });
+    });
+    expect(screen.queryByRole("option", { name: "Invite user" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Command palette" })).toBeVisible();
+  });
+});
+
+describe("E10-S05 scenario 9: a screen reader can operate it by keyboard alone", () => {
+  it("reaches a T2 row, keeps its reason in its description, and Enter re-shows it without running", async () => {
+    const run = vi.fn();
+    const reason = "Your role can't change positions.";
+    offs.push(
+      registerPaletteSource({
+        id: "fixture",
+        group: "Action",
+        rows: () => [
+          {
+            id: "fixture:lev",
+            label: "Set leverage",
+            group: "Action",
+            target: { kind: "command", commandId: "fixture.lev" },
+            disabledReason: reason,
+          },
+        ],
+      }),
+    );
+    offs.push(registerCommand("positions.close", run));
+    await shellAt("/journal", "viewer");
+    pressCtrlK();
+    fireEvent.change(input(), { target: { value: "set leverage" } });
+    const option = screen.getByRole("option", { name: "Set leverage" });
+    expect(input()).toHaveAttribute("aria-activedescendant", option.id);
+    expect(option).toHaveAttribute("aria-disabled", "true");
+    expect(option).toHaveAccessibleDescription(reason);
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(status()).toContain(reason);
+    expect(run).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Command palette" })).toBeVisible();
+  });
+
+  it("arrows wrap, Home and End jump, and the active option is named with its tag", async () => {
+    offs.push(registerCommand("positions.close", vi.fn()));
+    await shellAt("/journal");
+    pressCtrlK();
+    fireEvent.change(input(), { target: { value: "o" } });
+    const all = screen.getAllByRole("option");
+    const active = (): string | null =>
+      document
+        .getElementById(input().getAttribute("aria-activedescendant") ?? "")
+        ?.getAttribute("aria-label") ?? null;
+    fireEvent.keyDown(input(), { key: "End" });
+    expect(input()).toHaveAttribute("aria-activedescendant", all[all.length - 1]?.id);
+    fireEvent.keyDown(input(), { key: "ArrowDown" });
+    expect(input()).toHaveAttribute("aria-activedescendant", all[0]?.id);
+    fireEvent.keyDown(input(), { key: "ArrowUp" });
+    fireEvent.keyDown(input(), { key: "Home" });
+    expect(input()).toHaveAttribute("aria-activedescendant", all[0]?.id);
+    fireEvent.change(input(), { target: { value: "close selected" } });
+    expect(active()).toBe("Close selected position (confirm), confirms");
   });
 });

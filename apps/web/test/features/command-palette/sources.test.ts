@@ -24,6 +24,7 @@ const ctx = (c: MeClaims, valid: readonly string[] = []): SourceContext => ({
   claims: c,
   bindings: new Map(),
   isValid: (id) => valid.includes(id),
+  viewAs: null,
 });
 const paths = (c: MeClaims): string[] =>
   routeRows(ctx(c)).map((r) => (r.target.kind === "route" ? r.target.path : ""));
