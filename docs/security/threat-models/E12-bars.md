@@ -439,7 +439,8 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
   - BR-09 and BR-31 stay open until E12-S12 ships the rebuild controls ADR-0033 (Accepted) specifies; today only
     the existing `build_version` rule and the architecture-level rebuild description apply. Inherent High, residual
     Medium once shipped.
-  - BR-06/BR-07/BR-08 evidence integrity: inherent High, residual Medium. A trusted-host attacker with
+  - BR-06/BR-07 evidence integrity: inherent High, residual Medium (BR-08: inherent Medium, residual
+    Medium, as the table rates it). A trusted-host attacker with
     write access to QuestDB can still alter rows between checksum verification points; the checksum detects
     but does not prevent. Bounded by the project's single-host threat model (`04-security-program.md` §3) and
     tracked as **RSK-058** (Open, not accepted).
