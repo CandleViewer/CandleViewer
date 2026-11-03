@@ -681,6 +681,30 @@ ran.
   report artifact, find the new violation's rule id and selector, fix the
   markup (see `docs/plan/05-accessibility-standard.md`) — never suppress a
   rule repo-wide to unblock one PR.
+- **A11Y-G008** (a mounted screen is absent from the axe report; `gates.py inventory`, inside the
+  required `a11y` check; E47-Q04): `tools/a11y/inventory.py` reads `docs/plan/a11y/findings.json` and
+  `apps/web/src/routes/manifest.ts`. A row whose `coverage` is `unreachable: ...` is `pending <ticket>`
+  (counted, never failed); a `reserved` row is not counted; a `covered` or `partial` row that has its
+  own route (`R-nnn ->` in its `coverageReason`) must be in `reports/a11y/axe.json`: in the per-PR run
+  when `apps/web/e2e/a11y/screens.ts` scans that route, in the nightly full sweep always (`--tier
+full`). The message names the screen id and route. A screen that just landed: add its route to
+  `PR_IDS` or `SIGNED_IN` in `screens.ts` (a guarded one needs its `/me` stub heading); and update its
+  row in `findings.json`. Never edit the inventory to hide a screen. Reproduce: `python -m
+tools.a11y.gates inventory reports/a11y/axe.json`.
+- **A11Y-G001 baseline entry expired or incomplete** (same check): `tools/a11y/axe-baseline.json`
+  entries are `{fingerprint, finding, owner, ticket, target, expiry}` in `entries` (serious/critical,
+  shrink-only), `minor_entries` (moderate/minor, `rule|stable selector path`) and `pa11y_entries`. The
+  message names the entry's owner and ticket: the owner fixes the defect, or renews the entry with a
+  new `expiry` in a PR that names the `A11Y-F` finding id (CODEOWNERS: the Accessibility role). A new
+  moderate/minor finding above the baseline fails the same way; fix it rather than baselining it.
+- **A11Y-G009** (pa11y-ci found an error the baseline does not list; `gates.py pa11y`): the second
+  engine, over the inventory's mounted, public routes (`gates.py pa11y-config`). Open
+  `reports/a11y/pa11y.json` (in the `a11y-reports` artifact): the message gives the URL, the
+  HTML_CodeSniffer code and the selector. When axe and pa11y disagree, triage in the finding register;
+  do not suppress. A page pa11y could not load is `A11Y-INFRA` (exit 3), not a pass.
+- **Report redaction** (`python -m tools.a11y.redact reports/a11y`): the step after the gates rewrites
+  the reports, so the `a11y-reports` artifact holds no API-key-like, TOTP or email value. It runs after
+  the gates have read the originals; if a gate needs a value, read it from the runner, not the artifact.
 - **CI-A11Y-002** (Storybook stories failed, `_job-a11y.yml`'s `storybook` job, in `pr.yml` and
   `storybook-nightly.yml`): a story's play function threw, or axe found a serious or critical
   violation in it. The log names the story, the rule and the element; the job summary counts passed
